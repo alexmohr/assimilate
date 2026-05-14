@@ -1,0 +1,214 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+name: CI
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+  rust:
+    name: Rust (fmt + clippy + test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt, clippy
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      - name: Check formatting
+        run: >
+          cargo +nightly fmt -- --config error_on_unformatted=true,error_on_line_overflow=true,format_strings=true,group_imports=StdExternalCrate,imports_granularity=Crate
+
+      - name: Clippy
+        run: cargo +nightly clippy --workspace -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --lib --bins
+  frontend:
+    name: Frontend (fmt + lint + test + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend
+      - name: Check formatting
+        run: npm run format:check
+        working-directory: frontend
+      - name: Lint
+        run: npm run lint
+        working-directory: frontend
+      - name: Unit tests
+        run: npm run test
+        working-directory: frontend
+      - name: Build
+        run: npm run build
+        working-directory: frontend
+  db-integration:
+    name: Database Integration Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:latest
+        env:
+          POSTGRES_DB: borg
+          POSTGRES_USER: borg
+          POSTGRES_PASSWORD: borg_secret
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U borg -d borg" --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-db-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-db-
+      - name: Run database integration tests
+        env:
+          DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
+        run: cargo +nightly test -p server --test db_queries
+      - name: Run ignored integration tests
+        env:
+          DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
+        run: cargo +nightly test -p server --test integration -- --ignored --test-threads=1
+  docs:
+    name: Documentation (mkdocs build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r docs/requirements.txt
+      - name: Build docs (strict)
+        run: mkdocs build --strict
+  coverage:
+    name: Rust Code Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: llvm-tools-preview
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-cov-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-cov-
+      - name: Generate coverage
+        run: cargo +nightly llvm-cov --workspace --lcov --output-path lcov.info
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+  e2e:
+    name: Playwright E2E
+    runs-on: ubuntu-latest
+    needs: [docker]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend
+      - name: Install Playwright browsers
+        run: npm run e2e:install
+        working-directory: frontend
+      - name: Build frontend
+        run: npm run build
+        working-directory: frontend
+      - name: Start Docker services
+        env:
+          ASSIMILATE_SECRET_KEY: ci_test_key_not_real
+        run: |
+          docker compose up -d postgres server
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/ > /dev/null 2>&1; then break; fi
+            sleep 2
+          done
+      - name: Run Playwright tests
+        run: npm run e2e
+        working-directory: frontend
+        env:
+          E2E_BASE_URL: http://localhost:8080
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7
+      - name: Stop services
+        if: always()
+        run: docker compose down
+  docker:
+    name: Docker Compose (build + start)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build images
+        run: docker compose build
+        env:
+          ASSIMILATE_SECRET_KEY: ci_test_key_not_real
+      - name: Start services
+        run: docker compose up -d postgres server
+        env:
+          ASSIMILATE_SECRET_KEY: ci_test_key_not_real
+      - name: Wait for healthy
+        run: |
+          for i in $(seq 1 30); do
+            if docker compose ps --format json | grep -q '"Health":"healthy"'; then
+              echo "Postgres healthy"
+              break
+            fi
+            sleep 2
+          done
+      - name: Check server is running
+        run: |
+          sleep 5
+          docker compose ps
+          curl --retry 10 --retry-delay 2 --retry-all-errors -sf http://localhost:8080/ > /dev/null
+          echo "Server responding OK"
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs

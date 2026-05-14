@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+set -euo pipefail
+
+if [[ -n "${MOCK_BORG_LOG:-}" ]]; then
+  printf '%s %s\n' "$(date -u +%s)" "$*" >> "$MOCK_BORG_LOG"
+fi
+
+if [[ "${MOCK_BORG_FAIL:-0}" == "1" ]]; then
+  printf '%s\n' 'borg: Remote Exception (ConnectionClosed): Connection closed by remote host.' >&2
+  exit 2
+fi
+
+SUBCOMMAND="${1:-}"
+
+case "$SUBCOMMAND" in
+  create)
+    if [[ "${MOCK_BORG_SIMULATE_WARNING:-0}" == "1" ]]; then
+      printf '%s\n' '/tmp/test.log: file changed while we backed it up' >&2
+      printf '%s\n' 'WARNING: /var/log/syslog: file changed while we backed it up' >&2
+    fi
+
+    if [[ " $* " == *" --json "* ]]; then
+      cat <<'JSON'
+{
+  "archive": {
+    "name": "test-archive-2024-01-01T00:00:00",
+    "id": "abc123",
+    "start": "2024-01-01T00:00:00.000000",
+    "end": "2024-01-01T00:00:05.000000",
+    "duration": 5.0,
+    "stats": {
+      "original_size": 1073741824,
+      "compressed_size": 536870912,
+      "deduplicated_size": 268435456,
+      "nfiles": 1234
+    }
+  },
+  "cache": {},
+  "encryption": {"mode": "repokey"},
+  "repository": {"id": "repo123", "location": "ssh://borg-backup/backup/test", "last_modified": "2024-01-01T00:00:05.000000"}
+}
+JSON
+    fi
+
+    if [[ "${MOCK_BORG_SIMULATE_WARNING:-0}" == "1" ]]; then
+      exit 1
+    fi
+
+    exit 0
+    ;;
+  prune)
+    if [[ " $* " == *" --json "* || " $* " == *" --list "* ]]; then
+      printf '%s\n' '{"archives": []}'
+    fi
+    exit 0
+    ;;
+  compact)
+    exit 0
+    ;;
+  list)
+    if [[ " $* " == *" --json-lines "* ]]; then
+      printf '%s\n' '{"type": "d", "mode": "drwxr-xr-x", "user": "root", "group": "root", "path": "etc", "size": 0, "mtime": "2024-01-01T00:00:00.000000"}'
+      printf '%s\n' '{"type": "-", "mode": "-rw-r--r--", "user": "root", "group": "root", "path": "etc/hostname", "size": 16, "mtime": "2024-01-01T00:00:00.000000"}'
+    elif [[ " $* " == *" --json "* ]]; then
+      cat <<'JSON'
+{
+  "archives": [
+    {
+      "name": "bell-inhouse-2024-01-01T00:00:00",
+      "id": "abc123",
+      "start": "2024-01-01T00:00:00.000000",
+      "time": "2024-01-01T00:00:00.000000",
+      "hostname": "bell"
+    }
+  ],
+  "encryption": {"mode": "repokey"},
+  "repository": {"id": "repo123", "location": "ssh://borg-backup/backup/test", "last_modified": "2024-01-01T00:00:05.000000"}
+}
+JSON
+    fi
+    exit 0
+    ;;
+  info)
+    cat <<'JSON'
+{
+  "archives": [
+    {
+      "name": "bell-inhouse-2024-01-01T00:00:00",
+      "id": "abc123",
+      "start": "2024-01-01T00:00:00.000000",
+      "end": "2024-01-01T00:00:05.000000",
+      "duration": 5.0,
+      "stats": {
+        "original_size": 1073741824,
+        "compressed_size": 536870912,
+        "deduplicated_size": 268435456,
+        "nfiles": 1234
+      },
+      "hostname": "bell",
+      "username": "root",
+      "comment": ""
+    }
+  ],
+  "cache": {},
+  "encryption": {"mode": "repokey"},
+  "repository": {"id": "repo123", "location": "ssh://borg-backup/backup/test", "last_modified": "2024-01-01T00:00:05.000000"}
+}
+JSON
+    exit 0
+    ;;
+  extract)
+    if [[ " $* " == *" --stdout "* ]]; then
+      printf '%s\n' 'mock-file-content-from-borg-extract'
+    fi
+    exit 0
+    ;;
+  *)
+    printf '%s\n' "mock-borg: unknown subcommand: $SUBCOMMAND" >&2
+    exit 1
+    ;;
+esac

@@ -1,0 +1,181 @@
+# Host & Agent Management
+
+A *host* is a machine running the Assimilate agent. The server tracks each host by its hostname, issues it a cryptographically random token, and communicates with it over a persistent WebSocket connection.
+
+See [Getting Started](getting-started.md) for initial setup instructions.
+
+## Adding a Host
+
+1. Navigate to **Clients** in the sidebar.
+2. Click **Add Host**.
+3. Enter the machine's hostname (must be unique).
+4. Optionally set a display name.
+5. Click **Create** — the server generates a 32-byte random token and shows it once.
+6. Copy the token immediately; it is not shown again.
+
+Pass the token to the agent via the `BORG_AGENT_TOKEN` environment variable:
+
+```bash
+BORG_SERVER_URL=https://your-server BORG_AGENT_TOKEN=<token> assimilate-agent
+```
+
+![Hosts](assets/screenshots/hosts.png)
+
+## Agent Deployment
+
+### Manual
+
+Download the `assimilate-agent` binary for your platform and install it on the target machine:
+
+```bash
+install -m 755 assimilate-agent /usr/local/bin/assimilate-agent
+```
+
+Create a systemd unit at `/etc/systemd/system/assimilate-agent.service`:
+
+```ini
+[Unit]
+Description=Assimilate backup agent
+After=network.target
+
+[Service]
+Environment=BORG_SERVER_URL=https://your-server
+Environment=BORG_AGENT_TOKEN=<token>
+ExecStart=/usr/local/bin/assimilate-agent
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+systemctl daemon-reload
+systemctl enable --now assimilate-agent
+```
+
+### Docker
+
+```bash
+docker run -d \
+  --name assimilate-agent \
+  --restart unless-stopped \
+  -e BORG_SERVER_URL=https://your-server \
+  -e BORG_AGENT_TOKEN=<token> \
+  ghcr.io/your-org/assimilate-agent:latest
+```
+
+### SSH Deploy from Dashboard
+
+The dashboard can push the agent binary and install a systemd unit on a remote host over SSH — no manual steps required on the target machine.
+
+**Prerequisites:**
+
+- The server's SSH public key must be in `~/.ssh/authorized_keys` on the remote host. The key is shown under **System** in the admin UI (see [Security](security.md)).
+- The remote user must have write access to the install path (default `/usr/local/bin`) and permission to manage systemd units.
+
+**Steps:**
+
+1. Open the host detail page and click **Deploy Agent**.
+2. Fill in the SSH connection fields:
+
+    | Field | Description |
+    |-------|-------------|
+    | SSH Host | Hostname or IP of the remote machine |
+    | SSH User | SSH user on the remote machine |
+    | SSH Port | SSH port (default: 22) |
+    | Server URL | URL the agent will use to connect back to the server |
+    | Install Path | Binary destination (default: `/usr/local/bin/assimilate-agent`) |
+
+3. Click **Deploy**. The server copies the binary, writes the systemd unit, and regenerates the agent token automatically.
+
+If the agent is already at the latest version, the deploy is skipped and the existing token is preserved.
+
+!!! note
+    SSH deploy requires admin privileges. The server uses the same Ed25519 key pair used for [SSH Agent Forwarding](ssh-agent-forwarding.md).
+
+## Token Management
+
+Each host has exactly one active token. Tokens are stored as bcrypt hashes — the plaintext is never persisted.
+
+To regenerate a token:
+
+1. Open the host detail page.
+2. Click **Regenerate Token**.
+3. Copy the new token immediately.
+
+!!! warning
+    Regenerating a token **immediately invalidates the old one**. The running agent will be disconnected and will fail to reconnect until it is restarted with the new token. Update `BORG_AGENT_TOKEN` in the agent's environment or systemd unit before restarting.
+
+SSH deploy automatically regenerates the token as part of the deployment process.
+
+## Agent Restart
+
+The dashboard can send a remote restart command to a connected agent.
+
+**Requirements:**
+
+- The agent must be currently connected (online).
+- The agent must report the `supports_restart` capability. This is available when the agent is managed by systemd and can signal its own service manager.
+
+To restart:
+
+1. Open the host detail page.
+2. Click **Restart Agent**.
+
+If restart is not supported, the button is disabled and a reason is shown (e.g., "not running under systemd"). The server returns HTTP 400 in this case.
+
+## Agent Status
+
+Each host card and detail page shows a live connection indicator:
+
+| Status | Meaning |
+|--------|---------|
+| **Online** | Agent has an active WebSocket connection to the server |
+| **Offline** | No active connection; `last_seen` shows when the agent last disconnected |
+
+The server tracks liveness via WebSocket pings. If the agent stops responding to pings, the connection is closed and the host transitions to **Offline**. `last_seen` is updated whenever the agent disconnects cleanly or times out.
+
+"Disconnected" does not mean the host is deleted or its data is lost — it simply means the agent is not currently reachable. Scheduled backups for that host will fail until the agent reconnects.
+
+## Host Detail View
+
+The host detail page shows:
+
+- **Connection status** and last seen timestamp
+- **Agent version** (populated after the first connection or SSH deploy)
+- **Repositories** associated with this host — see [Repositories](repositories.md)
+- **Backup reports** — recent backup run history and warnings
+- **Schedules** — active backup schedules for this host — see [Scheduling](scheduling.md)
+
+![Host Detail](assets/screenshots/host-detail.png)
+
+## Host Tags
+
+Tags let you organize hosts for filtering on the Hosts list page.
+
+- Add tags when creating or editing a host.
+- Filter the host list by one or more tags using the tag filter bar.
+- Tags are free-form strings; no predefined taxonomy is enforced.
+
+## Deleting a Host
+
+1. Open the host detail page.
+2. Click **Delete Host** and confirm.
+
+**What is removed:**
+
+- The host record and its token hash
+- Any SSH reverse tunnel configured for this host (the tunnel is stopped immediately)
+
+**What is retained:**
+
+- Repositories, schedules, and backup reports are **not** automatically deleted. They become orphaned and should be cleaned up manually from the [Repositories](repositories.md) page.
+
+!!! warning
+    Deleting a host does not remove borg archives from the repository server. Use `borg delete` or the [Archives](archives.md) page to remove archive data.
+
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: 2026 Alexander Mohr
+-->

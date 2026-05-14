@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+site_name: Assimilate Documentation
+site_description: Centralized Borg backup server and dashboard
+site_dir: docs_html
+use_directory_urls: true
+docs_dir: docs
+theme:
+  name: material
+  logo: assets/icon.png
+  favicon: assets/icon.png
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - search.suggest
+    - content.code.copy
+markdown_extensions:
+  - admonition
+  - codehilite
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+plugins:
+  - search
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Dashboard: dashboard.md
+  - Architecture: architecture.md
+  - Configuration: configuration.md
+  - Security & Auth:
+      - Overview: security.md
+      - Access Control: access-control.md
+  - SSH Agent Forwarding: ssh-agent-forwarding.md
+  - Host & Agent Management: hosts.md
+  - Repository Management: repositories.md
+  - Scheduling & Retention: scheduling.md
+  - Archive Browsing: archives.md
+  - Global Excludes: excludes.md
+  - Activity Log: activity.md
+  - SSH Tunnels: ssh-tunnels.md
+  - Profile & Preferences: profile.md
+  - API Reference: api-reference.md
+  - Contributing:
+      - Style Guide: contributing/style-guide.md

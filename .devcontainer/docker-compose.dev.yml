@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ..:/workspace:cached
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      - target-dir:/workspace/target
+      - node-modules:/workspace/frontend/node_modules
+      - dev-ssh-keys:/ssh-keys
+    environment:
+      DATABASE_URL: postgres://borg:borg_dev@postgres:5432/borg
+      ASSIMILATE_SECRET_KEY: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+      ASSIMILATE_BIND_ADDR: "0.0.0.0:8080"
+      SSH_KEY_DIR: /ssh-keys
+      BORG_SERVER_URL: "http://localhost:8080"
+      BORG_REPO_HOST: borg-repo
+      BORG_REPO_SSH_USER: borg
+      BORG_REPO_SSH_PORT: "22"
+    ports:
+      - "8080:8080"
+      - "5173:5173"
+    command: sleep infinity
+    depends_on:
+      postgres:
+        condition: service_healthy
+      borg-repo:
+        condition: service_started
+  postgres:
+    image: postgres:latest
+    environment:
+      POSTGRES_DB: borg
+      POSTGRES_USER: borg
+      POSTGRES_PASSWORD: borg_dev
+    volumes:
+      - pgdata:/var/lib/postgresql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U borg -d borg"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+  borg-repo:
+    build:
+      context: borg-repo
+    volumes:
+      - dev-ssh-keys:/ssh-keys:ro
+      - borg-repos:/backup/repos
+    ports:
+      - "2222:22"
+volumes:
+  pgdata:
+  cargo-registry:
+  cargo-git:
+  target-dir:
+  node-modules:
+  dev-ssh-keys:
+  borg-repos:

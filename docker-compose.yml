@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+services:
+  postgres:
+    image: postgres:latest
+    environment:
+      POSTGRES_DB: borg
+      POSTGRES_USER: borg
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-borg_secret}
+    volumes:
+      - pgdata:/var/lib/postgresql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U borg -d borg"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://borg:${POSTGRES_PASSWORD:-borg_secret}@postgres:5432/borg
+      ASSIMILATE_SECRET_KEY: ${ASSIMILATE_SECRET_KEY:?ASSIMILATE_SECRET_KEY must be set}
+      ASSIMILATE_BIND_ADDR: "0.0.0.0:8080"
+      ASSIMILATE_STATIC_DIR: /app/static
+    volumes:
+      - ssh_keys:/app/ssh
+    depends_on:
+      postgres:
+        condition: service_healthy
+volumes:
+  pgdata:
+  ssh_keys:

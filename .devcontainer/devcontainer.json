@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+{
+  "name": "Assimilate Dev",
+  "dockerComposeFile": "docker-compose.dev.yml",
+  "service": "dev",
+  "workspaceFolder": "/workspace",
+  "forwardPorts": [8080, 5173, 5432],
+  "postStartCommand": "/workspace/.devcontainer/dev-init.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "Vue.volar",
+        "tamasfe.even-better-toml"
+      ],
+      "settings": {
+        "rust-analyzer.cargo.features": "all",
+        "rust-analyzer.check.command": "clippy"
+      }
+    }
+  }
+}

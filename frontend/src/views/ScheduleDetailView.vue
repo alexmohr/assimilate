@@ -1,0 +1,923 @@
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: 2026 Alexander Mohr
+-->
+
+<script setup lang="ts">
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { apiClient } from '../api/client'
+import { formatDateShort } from '../utils/format'
+import { cronToHuman } from '../utils/cron'
+import { extractError } from '../utils/error'
+import { parseLines } from '../utils/validation'
+import ToggleSwitch from '../components/ToggleSwitch.vue'
+import CronBuilder from '../components/CronBuilder.vue'
+import BaseSpinner from '../components/BaseSpinner.vue'
+
+type ScheduleType = 'backup' | 'check' | 'verify'
+
+interface ScheduleRow {
+  id: number
+  client_id: number
+  repo_id: number
+  schedule_type: string
+  cron_expression: string
+  enabled: boolean
+  canary_enabled: boolean
+  last_run_at: string | null
+  next_run_at: string | null
+  exclude_patterns: string[]
+  ignore_global_excludes: boolean
+  keep_daily: number
+  keep_weekly: number
+  keep_monthly: number
+  keep_yearly: number
+  compact_enabled: boolean
+  pre_backup_commands: string
+  post_backup_commands: string
+}
+
+interface ClientRow {
+  id: number
+  hostname: string
+  display_name: string | null
+}
+
+interface RepoRow {
+  id: number
+  name: string
+  repo_path: string
+}
+
+const props = defineProps<{ id: string }>()
+const route = useRoute()
+const router = useRouter()
+
+const isCreate = computed(() => props.id === 'new')
+
+const schedule = ref<ScheduleRow | null>(null)
+const clients = ref<ClientRow[]>([])
+const repos = ref<RepoRow[]>([])
+const client = ref<ClientRow | null>(null)
+const repo = ref<RepoRow | null>(null)
+const loading = ref(false)
+const error = ref<string | null>(null)
+const saving = ref(false)
+const saveError = ref<string | null>(null)
+const saveSuccess = ref(false)
+const refOpen = ref(false)
+
+const selectedClientId = ref<number | null>(null)
+const selectedRepoId = ref<number | null>(null)
+const selectedType = ref<ScheduleType>('backup')
+
+type TabId = 'settings' | 'advanced'
+const activeTab = computed<TabId>({
+  get() {
+    const t = route.query.tab as string | undefined
+    if (t === 'advanced') return t
+    return 'settings'
+  },
+  set(val: TabId) {
+    router.replace({ query: { ...route.query, tab: val } })
+  },
+})
+
+const scheduleType = computed(() =>
+  isCreate.value ? selectedType.value : (schedule.value?.schedule_type ?? 'backup'),
+)
+const isBackup = computed(() => scheduleType.value === 'backup')
+
+const form = ref({
+  cron_expression: '0 2 * * *',
+  enabled: true,
+  canary_enabled: false,
+  exclude_patterns: '',
+  ignore_global_excludes: false,
+  keep_daily: 7,
+  keep_weekly: 4,
+  keep_monthly: 6,
+  keep_yearly: 0,
+  compact_enabled: true,
+  pre_backup_commands: '',
+  post_backup_commands: '',
+  backup_sources: '',
+})
+
+function populateForm(s: ScheduleRow): void {
+  form.value = {
+    cron_expression: s.cron_expression,
+    enabled: s.enabled,
+    canary_enabled: s.canary_enabled,
+    exclude_patterns: s.exclude_patterns.join('\n'),
+    ignore_global_excludes: s.ignore_global_excludes,
+    keep_daily: s.keep_daily,
+    keep_weekly: s.keep_weekly,
+    keep_monthly: s.keep_monthly,
+    keep_yearly: s.keep_yearly,
+    compact_enabled: s.compact_enabled,
+    pre_backup_commands: (JSON.parse(s.pre_backup_commands || '[]') as string[]).join('\n'),
+    post_backup_commands: (JSON.parse(s.post_backup_commands || '[]') as string[]).join('\n'),
+    backup_sources: '',
+  }
+}
+
+function scheduleTypeLabel(t: string): string {
+  switch (t) {
+    case 'backup':
+      return 'Backup'
+    case 'check':
+      return 'Integrity Check'
+    case 'verify':
+      return 'Verify (extract dry-run)'
+    default:
+      return t
+  }
+}
+
+async function loadData(): Promise<void> {
+  loading.value = true
+  error.value = null
+  try {
+    if (isCreate.value) {
+      const [clientsRes, reposRes] = await Promise.all([
+        apiClient.get<ClientRow[]>('/clients'),
+        apiClient.get<RepoRow[]>('/repos'),
+      ])
+      clients.value = clientsRes.data
+      repos.value = reposRes.data
+      const queryClientId = Number(route.query.client_id)
+      if (queryClientId && clients.value.some((c) => c.id === queryClientId)) {
+        selectedClientId.value = queryClientId
+      } else {
+        selectedClientId.value = clients.value.length > 0 ? clients.value[0].id : null
+      }
+      selectedRepoId.value = repos.value.length > 0 ? repos.value[0].id : null
+    } else {
+      const [schedRes, clientsRes, reposRes] = await Promise.all([
+        apiClient.get<ScheduleRow>(`/schedules/${props.id}`),
+        apiClient.get<ClientRow[]>('/clients'),
+        apiClient.get<RepoRow[]>('/repos'),
+      ])
+      schedule.value = schedRes.data
+      clients.value = clientsRes.data
+      repos.value = reposRes.data
+      client.value = clientsRes.data.find((c) => c.id === schedRes.data.client_id) ?? null
+      repo.value = reposRes.data.find((r) => r.id === schedRes.data.repo_id) ?? null
+      populateForm(schedRes.data)
+    }
+  } catch (e: unknown) {
+    error.value = extractError(e, 'Failed to load schedule')
+  } finally {
+    loading.value = false
+  }
+}
+
+async function save(): Promise<void> {
+  saving.value = true
+  saveError.value = null
+  saveSuccess.value = false
+  try {
+    const payload = {
+      cron_expression: form.value.cron_expression,
+      enabled: form.value.enabled,
+      canary_enabled: form.value.canary_enabled,
+      exclude_patterns: parseLines(form.value.exclude_patterns),
+      ignore_global_excludes: form.value.ignore_global_excludes,
+      keep_daily: form.value.keep_daily,
+      keep_weekly: form.value.keep_weekly,
+      keep_monthly: form.value.keep_monthly,
+      keep_yearly: form.value.keep_yearly,
+      compact_enabled: form.value.compact_enabled,
+      pre_backup_commands: parseLines(form.value.pre_backup_commands),
+      post_backup_commands: parseLines(form.value.post_backup_commands),
+      backup_sources: parseLines(form.value.backup_sources),
+    }
+
+    if (isCreate.value) {
+      if (!selectedClientId.value || !selectedRepoId.value) {
+        saveError.value = 'Please select a client and repository.'
+        return
+      }
+      const res = await apiClient.post<ScheduleRow>('/schedules', {
+        ...payload,
+        client_id: selectedClientId.value,
+        repo_id: selectedRepoId.value,
+        schedule_type: selectedType.value,
+      })
+      router.push(`/schedules/${res.data.id}`)
+    } else {
+      const res = await apiClient.put<ScheduleRow>(`/schedules/${schedule.value!.id}`, payload)
+      schedule.value = res.data
+      populateForm(res.data)
+      saveSuccess.value = true
+      setTimeout(() => {
+        saveSuccess.value = false
+      }, 3000)
+    }
+  } catch (e: unknown) {
+    saveError.value = extractError(e, 'Failed to save schedule')
+  } finally {
+    saving.value = false
+  }
+}
+
+onMounted(loadData)
+watch(() => props.id, loadData)
+</script>
+
+<template>
+  <div class="schedule-detail">
+    <nav class="breadcrumb">
+      <RouterLink
+        to="/schedules"
+        class="crumb-link"
+      >
+        Schedules
+      </RouterLink>
+      <span class="crumb-sep">/</span>
+      <span class="crumb-current">
+        <template v-if="isCreate">New</template>
+        <template v-else-if="schedule">{{ scheduleTypeLabel(schedule.schedule_type) }}</template>
+        <template v-else>#{{ props.id }}</template>
+      </span>
+    </nav>
+
+    <div class="page-header">
+      <h1 class="page-title">
+        <template v-if="isCreate">New Schedule</template>
+        <template v-else-if="schedule">
+          {{ scheduleTypeLabel(schedule.schedule_type) }} Schedule
+        </template>
+        <template v-else>Schedule</template>
+      </h1>
+    </div>
+
+    <div
+      v-if="error"
+      class="error-banner"
+    >
+      {{ error }}
+    </div>
+
+    <BaseSpinner
+      v-if="loading && !schedule && !isCreate"
+      size="lg"
+    />
+
+    <template v-if="schedule || isCreate">
+      <div class="tab-bar">
+        <button
+          class="tab-btn"
+          :class="{ active: activeTab === 'settings' }"
+          @click="activeTab = 'settings'"
+        >
+          Settings
+        </button>
+        <button
+          v-if="isBackup"
+          class="tab-btn"
+          :class="{ active: activeTab === 'advanced' }"
+          @click="activeTab = 'advanced'"
+        >
+          Advanced
+        </button>
+      </div>
+
+      <!-- Settings Tab -->
+      <div
+        v-if="activeTab === 'settings'"
+        class="tab-content"
+      >
+        <div class="form-grid">
+          <!-- Create-only: target selection -->
+          <div
+            v-if="isCreate"
+            class="form-card"
+          >
+            <h3 class="info-title">Target</h3>
+            <div class="form-group">
+              <label class="form-label">Client <span class="required">*</span></label>
+              <select
+                v-model.number="selectedClientId"
+                class="form-select"
+              >
+                <option
+                  :value="null"
+                  disabled
+                >
+                  Select a client...
+                </option>
+                <option
+                  v-for="m in clients"
+                  :key="m.id"
+                  :value="m.id"
+                >
+                  {{ m.display_name ?? m.hostname }}
+                </option>
+              </select>
+              <span class="field-hint">The agent client that will execute this schedule</span>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Repository <span class="required">*</span></label>
+              <select
+                v-model.number="selectedRepoId"
+                class="form-select"
+              >
+                <option
+                  :value="null"
+                  disabled
+                >
+                  Select a repository...
+                </option>
+                <option
+                  v-for="r in repos"
+                  :key="r.id"
+                  :value="r.id"
+                >
+                  {{ r.name }}
+                </option>
+              </select>
+              <span class="field-hint">The borg repository to back up to</span>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Schedule Type</label>
+              <select
+                v-model="selectedType"
+                class="form-select"
+              >
+                <option value="backup">Backup</option>
+                <option value="check">Integrity Check</option>
+                <option value="verify">Verify (extract dry-run)</option>
+              </select>
+              <span class="field-hint"
+                >Backup creates archives; Check validates repo integrity; Verify tests
+                extractability.</span
+              >
+            </div>
+          </div>
+
+          <!-- Edit-only: info card -->
+          <div
+            v-if="!isCreate && schedule"
+            class="info-card"
+          >
+            <h3 class="info-title">Schedule Info</h3>
+            <div class="info-row">
+              <span class="info-label">Client</span>
+              <span class="info-value">{{
+                client?.display_name ?? client?.hostname ?? `#${schedule.client_id}`
+              }}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Repository</span>
+              <span class="info-value">{{ repo?.name ?? `#${schedule.repo_id}` }}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Type</span>
+              <span class="info-value">{{ scheduleTypeLabel(schedule.schedule_type) }}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Next Run</span>
+              <span class="info-value">{{ formatDateShort(schedule.next_run_at) ?? 'N/A' }}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Last Run</span>
+              <span class="info-value">{{ formatDateShort(schedule.last_run_at) ?? 'Never' }}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Cron (human)</span>
+              <span class="info-value">{{
+                cronToHuman(form.cron_expression) ?? form.cron_expression
+              }}</span>
+            </div>
+          </div>
+
+          <div class="form-card">
+            <h3 class="info-title">Timing</h3>
+            <div class="form-group">
+              <label class="form-label">Schedule</label>
+              <CronBuilder v-model="form.cron_expression" />
+            </div>
+            <div class="form-group form-group-inline">
+              <label class="form-label">Enabled</label>
+              <ToggleSwitch v-model="form.enabled" />
+            </div>
+          </div>
+
+          <template v-if="isBackup">
+            <div class="form-card">
+              <h3 class="info-title">Backup Paths</h3>
+              <div class="form-group">
+                <textarea
+                  v-model="form.backup_sources"
+                  class="form-input area-input"
+                  placeholder="Directories to back up, one per line"
+                  spellcheck="false"
+                />
+                <span class="field-hint"
+                  >Leave empty to use the default paths configured for this host.</span
+                >
+              </div>
+            </div>
+
+            <div class="form-card">
+              <h3 class="info-title">Retention</h3>
+              <div class="retention-grid">
+                <div class="form-group">
+                  <label class="form-label">Daily</label>
+                  <input
+                    v-model.number="form.keep_daily"
+                    type="number"
+                    min="0"
+                    class="form-input"
+                  />
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Weekly</label>
+                  <input
+                    v-model.number="form.keep_weekly"
+                    type="number"
+                    min="0"
+                    class="form-input"
+                  />
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Monthly</label>
+                  <input
+                    v-model.number="form.keep_monthly"
+                    type="number"
+                    min="0"
+                    class="form-input"
+                  />
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Yearly</label>
+                  <input
+                    v-model.number="form.keep_yearly"
+                    type="number"
+                    min="0"
+                    class="form-input"
+                  />
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- Advanced Tab (backup only) -->
+      <div
+        v-if="activeTab === 'advanced' && isBackup"
+        class="tab-content"
+      >
+        <div class="form-grid">
+          <div class="form-card">
+            <h3 class="info-title">Options</h3>
+            <div class="form-group form-group-inline">
+              <label class="form-label">Canary Verification</label>
+              <ToggleSwitch v-model="form.canary_enabled" />
+            </div>
+            <div class="form-group form-group-inline">
+              <label class="form-label">Ignore Global Excludes</label>
+              <ToggleSwitch v-model="form.ignore_global_excludes" />
+            </div>
+            <div class="form-group form-group-inline">
+              <label class="form-label">Compact after backup</label>
+              <ToggleSwitch v-model="form.compact_enabled" />
+            </div>
+          </div>
+
+          <div class="form-card">
+            <h3 class="info-title">Exclude Patterns</h3>
+            <div class="form-group">
+              <div class="form-label-row">
+                <label class="form-label">Patterns</label>
+                <button
+                  type="button"
+                  class="ref-toggle"
+                  @click="refOpen = !refOpen"
+                >
+                  {{ refOpen ? 'Close Reference' : 'Pattern Reference' }}
+                </button>
+              </div>
+              <textarea
+                v-model="form.exclude_patterns"
+                class="form-input area-input"
+                placeholder="One pattern per line&#10;e.g. *.cache&#10;pp:__pycache__"
+                spellcheck="false"
+              />
+              <span class="field-hint"
+                >Leave empty to use only global and host-level default excludes.</span
+              >
+              <div
+                v-if="refOpen"
+                class="ref-panel"
+              >
+                <div class="ref-title">Borg Pattern Syntax</div>
+                <div class="ref-section">
+                  <div class="ref-section-title">Shell Patterns (default)</div>
+                  <div class="ref-entry">
+                    <code>*.cache</code> <span>any file ending in .cache</span>
+                  </div>
+                  <div class="ref-entry">
+                    <code>home/*/Downloads</code> <span>Downloads in any home dir</span>
+                  </div>
+                </div>
+                <div class="ref-section">
+                  <div class="ref-section-title">Path Prefix <code>pp:</code></div>
+                  <div class="ref-entry">
+                    <code>pp:__pycache__</code>
+                    <span>any path component named __pycache__</span>
+                  </div>
+                </div>
+                <div class="ref-section">
+                  <div class="ref-section-title">Regex <code>re:</code></div>
+                  <div class="ref-entry">
+                    <code>re:\.git/objects/</code> <span>regex match anywhere in path</span>
+                  </div>
+                </div>
+                <div class="ref-section">
+                  <div class="ref-section-title">Fnmatch <code>fm:</code></div>
+                  <div class="ref-entry">
+                    <code>fm:*.log</code> <span>fnmatch pattern (case-sensitive)</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-card">
+            <h3 class="info-title">Commands</h3>
+            <div class="form-group">
+              <label class="form-label">Pre-backup Commands</label>
+              <textarea
+                v-model="form.pre_backup_commands"
+                class="form-input cmd-area"
+                placeholder="One command per line, e.g.&#10;docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"
+                spellcheck="false"
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Post-backup Commands</label>
+              <textarea
+                v-model="form.post_backup_commands"
+                class="form-input cmd-area"
+                placeholder="One command per line (optional)"
+                spellcheck="false"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Save bar -->
+      <div class="save-bar">
+        <div
+          v-if="saveError"
+          class="error-inline"
+        >
+          {{ saveError }}
+        </div>
+        <span
+          v-if="saveSuccess"
+          class="save-success"
+          >Saved</span
+        >
+        <button
+          class="btn btn-primary"
+          :disabled="saving"
+          @click="save"
+        >
+          {{ saving ? 'Saving...' : isCreate ? 'Create Schedule' : 'Save Changes' }}
+        </button>
+      </div>
+    </template>
+  </div>
+</template>
+
+<style scoped>
+.schedule-detail {
+  color: var(--text-primary);
+  max-width: 900px;
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  font-size: 0.875rem;
+}
+
+.crumb-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.crumb-link:hover {
+  color: var(--accent-hover);
+}
+
+.crumb-sep {
+  color: var(--text-muted);
+}
+
+.crumb-current {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-family: var(--mono);
+}
+
+.page-title {
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin: 0 0 0.4rem;
+}
+
+.error-banner {
+  background: var(--danger-subtle);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-sm);
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+}
+
+.tab-bar {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  margin-top: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.tab-btn {
+  padding: 0.6rem 1.2rem;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
+}
+
+.tab-btn:hover {
+  color: var(--text-primary);
+}
+
+.tab-btn.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.form-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.info-card,
+.form-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+}
+
+.info-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin: 0 0 1rem;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.info-row:last-child {
+  border-bottom: none;
+}
+
+.info-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.info-value {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.form-group {
+  margin-bottom: 1rem;
+}
+
+.form-group:last-child {
+  margin-bottom: 0;
+}
+
+.form-group-inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.form-label {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 0.35rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.form-group-inline .form-label {
+  margin-bottom: 0;
+}
+
+.required {
+  color: var(--danger);
+}
+
+.field-hint {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
+
+.form-input,
+.form-select {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  outline: none;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+}
+
+.form-input:focus,
+.form-select:focus {
+  border-color: var(--accent);
+}
+
+.area-input {
+  min-height: 80px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.cmd-area {
+  min-height: 60px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.retention-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.form-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.35rem;
+}
+
+.form-label-row .form-label {
+  margin-bottom: 0;
+}
+
+.ref-toggle {
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+
+.ref-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.ref-panel {
+  margin-top: 0.5rem;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.875rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.ref-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.ref-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.ref-section-title {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.ref-section-title code {
+  font-family: var(--mono);
+  color: var(--accent);
+  text-transform: none;
+  letter-spacing: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.ref-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.ref-entry code {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  padding: 0.1rem 0.35rem;
+  border-radius: var(--radius-sm);
+}
+
+.ref-entry span {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}
+
+.save-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.error-inline {
+  font-size: 0.8rem;
+  color: var(--danger);
+}
+
+.save-success {
+  font-size: 0.8rem;
+  color: var(--success);
+  font-weight: 600;
+}
+</style>

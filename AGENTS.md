@@ -1,0 +1,595 @@
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: 2026 Alexander Mohr
+-->
+
+# Instructions
+
+## Build & Lint
+
+* Run `cargo +nightly fmt -- --config error_on_unformatted=true,error_on_line_overflow=true,format_strings=true,group_imports=StdExternalCrate,imports_granularity=Crate` to format the code.
+* Run `cargo +nightly clippy --workspace -- -D warnings` to check for common mistakes.
+* Run `cargo test --workspace` to run all tests.
+* Clippy pedantic is enforced at workspace level (`deny`). Do not disable or suppress clippy warnings.
+
+## Database Integration Tests
+
+The test file `crates/server/tests/db_queries.rs` runs against a real PostgreSQL instance. These tests use `#[sqlx::test(migrations = "./migrations")]` which automatically creates and drops isolated databases per test.
+
+### Requirements
+
+* A PostgreSQL server must be running and accessible.
+* Set `DATABASE_URL` to a valid connection string with a superuser or a user that has `CREATEDB` privilege (sqlx creates temporary databases per test).
+* Example: `DATABASE_URL=postgres://borg:borg_dev@localhost:5432/borg cargo +nightly test -p server --test db_queries`
+
+### Local development (Docker)
+
+```bash
+docker run -d --name borg-postgres \
+  -e POSTGRES_USER=borg \
+  -e POSTGRES_PASSWORD=borg_dev \
+  -e POSTGRES_DB=borg \
+  -p 5432:5432 \
+  postgres:latest
+```
+
+Then run:
+
+```bash
+DATABASE_URL=postgres://borg:borg_dev@localhost:5432/borg cargo +nightly test -p server --test db_queries
+```
+
+### CI
+
+The GitHub Actions workflow (`.github/workflows/ci.yml`) has a `db-integration` job that spins up a PostgreSQL service container and runs both `db_queries` and the ignored `integration` tests automatically.
+
+### Writing new DB tests
+
+* Add tests to `crates/server/tests/db_queries.rs`.
+* Use `#[sqlx::test(migrations = "./migrations")]` — each test gets a fresh database with all migrations applied.
+* Do not rely on specific auto-increment IDs; migrations seed roles (`admin`, `operator`, `viewer`), so use unique names for test data to avoid conflicts.
+* The pool argument (`PgPool`) is provided automatically by the macro.
+
+## Frontend Lint & Format
+
+* Run `npm run format:check` (in `frontend/`) to verify formatting. Run `npm run format` to auto-fix.
+* Run `npm run lint` (in `frontend/`) to check for lint errors. Run `npm run lint:fix` to auto-fix.
+* Prettier is the formatter. ESLint handles code quality rules. Both must pass in CI.
+* All functions must have explicit return type annotations.
+* Never use `any` — use proper types or `unknown` with narrowing.
+* Use `type` imports for type-only values (`import type { Foo } from '...'`).
+* No `console.log` in production code (use sparingly, warned by linter).
+* No `debugger` statements.
+* Vue templates must use single attribute per line for elements with multiple attributes.
+
+## Project Structure
+
+* This is a Cargo workspace with three crates: `crates/server`, `crates/agent`, `crates/shared`.
+* `crates/shared` contains domain types, the WebSocket protocol schema, and crypto utilities. Both server and agent depend on it.
+* `crates/server` is the axum-based HTTP + WebSocket server that serves the Vue.js frontend and provides the REST API.
+* `crates/agent` is the client binary that runs on each backup machine, connects to the server, and executes borg commands.
+* `frontend/` contains the Vue.js 3 + Vite SPA (TypeScript).
+* Modules should mirror the logical architecture. Group related functionality into sub-modules. If a file exceeds ~300 lines or contains multiple logical units, split it.
+* Never modify dependencies in `Cargo.toml` without approval. If you think a new dependency is needed, ask first.
+
+## Security
+
+* Passphrases are encrypted at rest using AES-256-GCM. Never store, log, or transmit passphrases in plaintext.
+* Agent tokens must be cryptographically random (32+ bytes).
+* Never log sensitive data (passphrases, tokens, SSH keys). Use `[REDACTED]` placeholders in debug output.
+* All user-facing input must be validated. Never trust input from agents or API callers without validation.
+
+## Type Safety
+
+* Use strongly typed logic everywhere. String-based logic is forbidden.
+* Never use `unwrap()`, `expect()`, or `panic!()` in production code. Always handle errors gracefully with `Result` and the `?` operator.
+* `unwrap()` is permitted only in `#[cfg(test)]` code.
+* Avoid `unsafe` code.
+* Do not use string comparisons for control flow. Use enums or structs instead.
+* Prefer newtypes for domain identifiers (e.g., `struct MachineId(i64)`, `struct AgentToken(String)`).
+
+## Style Guide
+
+### Prefer `map_or`
+
+```rust
+// DO
+let s = Some("test").map_or("default".to_string(), |s| s.to_uppercase());
+
+// DON'T
+let s = Some("test").map(|s| s.to_uppercase()).unwrap_or("default".to_string());
+```
+
+```rust
+// DO
+let s = Some("test").map_or(<_>::default(), |s| s.to_uppercase());
+
+// DON'T
+let s = Some("test").map(|s| s.to_uppercase()).unwrap_or_default();
+```
+
+### Control Flow: Use Iterator Chains, Not for Loops
+
+```rust
+// DO
+let results: Vec<_> = items
+    .iter()
+    .filter(|item| item.is_valid())
+    .map(|item| item.process())
+    .collect();
+
+// DON'T
+let mut results = Vec::new();
+for item in items {
+    if item.is_valid() {
+        results.push(item.process());
+    }
+}
+```
+
+```rust
+// DO
+let total: i64 = values.iter().map(|v| v.amount()).sum();
+
+// DON'T
+let mut total = 0;
+for value in values {
+    total += value.amount();
+}
+```
+
+### Error Handling: Use `?` Operator
+
+```rust
+// DO
+fn read_file(path: &str) -> Result<String, std::io::Error> {
+    std::fs::read_to_string(path)
+}
+
+// DON'T
+fn read_file(path: &str) -> String {
+    std::fs::read_to_string(path).expect("Failed to read file")
+}
+```
+
+### Early Returns: Use `let ... else`
+
+```rust
+// DO
+let Some(user) = get_user(id) else {
+    return Err(Error::NotFound);
+};
+let Ok(session) = user.active_session() else {
+    return Err(Error::NoSession);
+};
+
+// DON'T
+if let Some(user) = get_user(id) {
+    if let Ok(session) = user.active_session() {
+        // deeply nested code
+    } else {
+        return Err(Error::NoSession);
+    }
+} else {
+    return Err(Error::NotFound);
+}
+```
+
+```rust
+// DO
+let Some(value) = maybe_value else { continue };
+let Ok(parsed) = input.parse::<i32>() else { continue };
+
+// DON'T
+if let Some(value) = maybe_value {
+    if let Ok(parsed) = input.parse::<i32>() {
+        // ...
+    }
+}
+```
+
+### Variable Naming: Shadow, Don't Rename
+
+```rust
+// DO
+let input = get_raw_input();
+let input = input.trim();
+let input = input.to_lowercase();
+let input = parse(input)?;
+
+// DON'T
+let raw_input = get_raw_input();
+let trimmed_input = raw_input.trim();
+let lowercase_input = trimmed_input.to_lowercase();
+let parsed_input = parse(lowercase_input)?;
+```
+
+### Comments
+
+* Keep to a minimum, no obvious comments.
+* Good code should be self-explanatory.
+* If using comments, explain the "why" behind a decision, not the "what".
+* Do not use banner-style comments (lines of `====`, `----`, `////`, etc.) to separate sections. Use modules instead.
+
+### Pattern Matching: Never Use Wildcard Matches
+
+```rust
+// DO
+match status {
+    Status::Pending => handle_pending(),
+    Status::Active => handle_active(),
+    Status::Completed => handle_completed(),
+}
+
+// DON'T
+match status {
+    Status::Pending => handle_pending(),
+    _ => handle_other(),
+}
+```
+
+If a wildcard genuinely makes sense, ask the user for approval.
+
+### Ownership: Borrow Instead of Clone
+
+Prefer borrowing (`&T`, `&mut T`) over cloning. Only clone when ownership transfer is truly needed.
+
+```rust
+// DO
+fn process(data: &str) -> Result<()> {
+    println!("{data}");
+    Ok(())
+}
+
+// DON'T
+fn process(data: String) -> Result<()> {
+    println!("{data}");
+    Ok(())
+}
+```
+
+### Conversions: Use `From`/`Into` Traits
+
+```rust
+// DO
+impl From<RawConfig> for AppConfig {
+    fn from(raw: RawConfig) -> Self {
+        Self {
+            name: raw.name,
+            timeout: Duration::from_secs(raw.timeout_secs),
+        }
+    }
+}
+let config: AppConfig = raw_config.into();
+
+// DON'T
+impl RawConfig {
+    fn to_app_config(&self) -> AppConfig { /* ... */ }
+}
+```
+
+### Display: Implement `Display`, Not Custom `to_string()` Methods
+
+```rust
+// DO
+impl fmt::Display for Status {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Status::Pending => write!(f, "pending"),
+            Status::Active => write!(f, "active"),
+            Status::Completed => write!(f, "completed"),
+        }
+    }
+}
+
+// DON'T
+impl Status {
+    fn to_string(&self) -> String { /* ... */ }
+}
+```
+
+### Strings: Use Format Strings, Not Concatenation
+
+```rust
+// DO
+let msg = format!("{name} has {count} items");
+println!("Processing {path:?}");
+
+// DON'T
+let msg = name.to_string() + " has " + &count.to_string() + " items";
+println!("Processing {:?}", path);
+```
+
+### Constructors: Use `Default` and Builder Patterns
+
+```rust
+// DO
+#[derive(Default)]
+struct Config {
+    retries: u32,
+    verbose: bool,
+    timeout: Option<Duration>,
+}
+
+let config = Config {
+    retries: 3,
+    ..Config::default()
+};
+
+// DON'T
+let config = Config {
+    retries: 3,
+    verbose: false,
+    timeout: None,
+};
+```
+
+### Derive: Use Derive Macros Over Manual Implementations
+
+Derive standard traits instead of implementing them manually when the default derivation is correct.
+
+```rust
+// DO
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+```
+
+### Newtype Pattern: Wrap Primitive Types for Semantic Meaning
+
+```rust
+// DO
+struct UserId(u64);
+struct Email(String);
+
+fn send_email(to: &Email, from: &Email) { /* ... */ }
+
+// DON'T
+fn send_email(to: &str, from: &str) { /* ... */ }
+```
+
+### Closures: Prefer Closures Over Named Functions for Short Logic
+
+```rust
+// DO
+items.iter().filter(|i| i.is_active()).count()
+
+// DON'T
+fn is_active(item: &&Item) -> bool { item.is_active() }
+items.iter().filter(is_active).count()
+```
+
+### Option/Result Combinators: Use `map`, `and_then`, `unwrap_or_else`
+
+```rust
+// DO
+let name = user
+    .nickname()
+    .or_else(|| user.full_name())
+    .unwrap_or_else(|| "anonymous".to_string());
+
+// DON'T
+let name = if let Some(n) = user.nickname() {
+    n
+} else if let Some(n) = user.full_name() {
+    n
+} else {
+    "anonymous".to_string()
+};
+```
+
+```rust
+// DO
+let port = config.port.unwrap_or(8080);
+
+// DON'T
+let port = match config.port {
+    Some(p) => p,
+    None => 8080,
+};
+```
+
+### Slices: Accept `&[T]` and `&str`, Not `&Vec<T>` and `&String`
+
+```rust
+// DO
+fn process(items: &[Item]) { /* ... */ }
+fn greet(name: &str) { /* ... */ }
+
+// DON'T
+fn process(items: &Vec<Item>) { /* ... */ }
+fn greet(name: &String) { /* ... */ }
+```
+
+### Enums: Use Enums With Data Over Separate Structs
+
+```rust
+// DO
+enum Shape {
+    Circle { radius: f64 },
+    Rectangle { width: f64, height: f64 },
+}
+
+fn area(shape: &Shape) -> f64 {
+    match shape {
+        Shape::Circle { radius } => std::f64::consts::PI * radius * radius,
+        Shape::Rectangle { width, height } => width * height,
+    }
+}
+```
+
+### Iterators: Prefer `iter()` Method Chains Over Index Access
+
+```rust
+// DO
+for (i, item) in items.iter().enumerate() {
+    println!("{i}: {item}");
+}
+
+// DON'T
+for i in 0..items.len() {
+    println!("{}: {}", i, items[i]);
+}
+```
+
+### Tests: Use `#[cfg(test)]` Module in the Same File
+
+```rust
+// DO — tests at the bottom of the same file
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_valid_input() {
+        let result = parse("42");
+        assert_eq!(result, Ok(42));
+    }
+}
+```
+
+## Code Navigation: Always Use rust-analyzer LSP
+
+When searching or navigating Rust code, always use the LSP tools:
+
+* `lsp_goto_definition` — Find where a symbol is defined
+* `lsp_find_references` — Find all references to a symbol
+* `lsp_symbols` — Get all symbols in a file or workspace
+* `lsp_diagnostics` — Check for errors/warnings before building
+
+## Async IO
+
+* **Never use manual `loop { read(); write(); }` patterns for bidirectional IO.** Use two independent async tasks joined with `tokio::join!` — one per direction.
+* **Never call blocking IO inside async tasks.** Blocking calls (`std::fs::read_to_string`, `std::fs::write`, `std::thread::sleep`, etc.) must be wrapped in `tokio::task::spawn_blocking`.
+* For byte-stream proxying between two `AsyncRead + AsyncWrite` endpoints use `tokio::io::copy_bidirectional`. When one endpoint is frame-based (e.g. WebSocket), use two directional tasks instead.
+* Use `tokio::fs` for all async file operations.
+* Use `tokio::time::sleep` — never `std::thread::sleep` — in async contexts.
+
+```rust
+// DO — two directional tasks
+let a_to_b = async { while let Some(data) = stream_a.next().await { sink_b.send(data).await?; } };
+let b_to_a = async { while let Some(data) = stream_b.next().await { sink_a.send(data).await?; } };
+tokio::join!(a_to_b, b_to_a);
+
+// DO — blocking work off the async executor
+tokio::task::spawn_blocking(move || std::fs::write(path, data)).await??;
+
+// DON'T — manual select loop for bidirectional IO
+loop {
+    tokio::select! {
+        data = stream_a.next() => { sink_b.send(data).await; }
+        data = stream_b.next() => { sink_a.send(data).await; }
+    }
+}
+
+// DON'T — blocking IO in async context
+async fn save(path: &Path, data: &str) {
+    std::fs::write(path, data).unwrap(); // blocks the executor thread
+}
+```
+
+## SSH Agent Forwarding
+
+Agents can tunnel the server's SSH agent socket to `borg` for passwordless repository access. This avoids distributing SSH keys to agent machines.
+
+### How it works
+
+1. The server exposes a WebSocket endpoint at `/ws/ssh-agent/:hostname/:token`.
+2. On each backup, the agent creates a temporary Unix domain socket (`$TMPDIR/assimilate-XXXX/agent.sock`).
+3. For each connection from borg/ssh to that socket, the agent opens a new WebSocket to the server relay endpoint and pipes bytes bidirectionally.
+4. The server connects to its own `SSH_AUTH_SOCK` and relays SSH agent protocol between the WebSocket and the local agent socket.
+5. `SSH_AUTH_SOCK` is injected into the borg subprocess environment, giving it transparent access to the server's keys.
+
+### Server setup
+
+Load your borg SSH private key into an ssh-agent on the server and ensure `SSH_AUTH_SOCK` is set in the server's environment:
+
+```bash
+eval $(ssh-agent)
+ssh-add /path/to/borg_ed25519_key
+```
+
+For systemd services, forward the socket via `SSH_AUTH_SOCK` in the unit's `Environment=` or `EnvironmentFile=`:
+
+```ini
+[Service]
+Environment=SSH_AUTH_SOCK=/run/user/1000/gnupg/S.gpg-agent.ssh
+```
+
+For Docker, the container manages its own SSH key pair — no host agent or key mounting required:
+
+```yaml
+services:
+  server:
+    volumes:
+      - ssh_keys:/app/ssh
+volumes:
+  ssh_keys:
+```
+
+On first start the container generates an Ed25519 key pair in the `ssh_keys` volume and loads it into a container-local ssh-agent. The public key is printed to container logs at startup and is visible in the admin UI under **System**. Add it to `~/.ssh/authorized_keys` on the borg repository host.
+
+### Agent setup
+
+No configuration required. The agent automatically attempts SSH forwarding before each backup using the same `BORG_SERVER_URL` and `BORG_AGENT_TOKEN` it uses for the main WebSocket connection.
+
+If the server's `SSH_AUTH_SOCK` is not set or unreachable, the backup proceeds without forwarding — SSH authentication falls back to whatever keys are available on the agent machine.
+
+### Borg repository authorization
+
+The borg repository server (typically accessed via `ssh://user@host/path`) must authorize the SSH key loaded in the server's ssh-agent. Add the server's public key to `~/.ssh/authorized_keys` on the borg server host (or use `borg serve --append-only` with a `command=` restriction).
+
+## Documentation
+
+Every user-facing feature or behavioral change must be accompanied by documentation. If the feature maps to an existing page, update that page. If it introduces a new concept, create a new page and add it to `nav:` in `mkdocs.yml`.
+
+### MkDocs Setup
+
+Install dependencies and serve locally:
+
+```bash
+pip install -r docs/requirements.txt
+mkdocs serve
+```
+
+Verify before committing:
+
+```bash
+mkdocs build --strict
+```
+
+Strict mode catches broken links and missing pages. Always run it before committing doc changes.
+
+### Docs Directory Structure
+
+* `docs/` — all source Markdown files
+* `docs_html/` — build output (gitignored; generated by `mkdocs build`)
+* `mkdocs.yml` — site configuration at the repo root
+
+### Writing Docs
+
+* Follow the style guide at `docs/contributing/style-guide.md`.
+* Use Mermaid fenced blocks for diagrams: ` ```mermaid `.
+* Use admonitions for callouts: `!!! note`, `!!! warning`, `!!! tip`.
+
+### Screenshots
+
+Every documentation page that describes a UI feature **must** include a screenshot. Screenshots are stored in `docs/assets/screenshots/` as PNG files at 1280×800 viewport resolution.
+
+* When adding or changing a UI feature, capture a fresh screenshot and save it to `docs/assets/screenshots/<name>.png`.
+* Reference screenshots in Markdown with `![Alt text](assets/screenshots/<name>.png)`.
+* Place the screenshot immediately after the introductory paragraph of the section it illustrates.
+* If a feature change visually affects an existing screenshot, recapture it.
+* Screenshot file names use lowercase kebab-case matching the page or view name (e.g., `schedule-detail.png`, `repo-detail.png`, `host-detail.png`).
+
+### Nav
+
+All new pages must be added to the `nav:` section in `mkdocs.yml`. The file `dependency-manifest.md` is intentionally excluded from nav.
+
+* Do not disable clippy warnings or prefix parameters with `_` to silence warnings. Fix the underlying issue.
+* Do not use `as` casts for numeric conversions. Use `From`/`TryFrom` or explicit conversion methods.
+* Do not use `Box<dyn Error>` as a return type. Define concrete error enums with `thiserror`.
+* Do not commit code with `todo!()`, `unimplemented!()`, or `dbg!()` macros.
+* Do not add `#[allow(...)]` attributes without explicit approval.

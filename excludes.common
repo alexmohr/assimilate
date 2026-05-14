@@ -1,0 +1,169 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+#
+# borg-backup -- common exclude patterns
+# Shared across all machines. Machine-specific excludes go in excludes.local.
+#
+# Pattern reference (borg shell-style, default):
+#   .cache          matches any path component named ".cache" at any depth
+#   /var/cache      matches the absolute path /var/cache
+#   *.pyc           matches any file ending in .pyc at any depth
+#
+# Drop a ".nobackup" file into any directory to exclude it on the fly.
+
+# ===========================================================
+# OS: temporary, runtime, virtual filesystems
+# ===========================================================
+/tmp
+/var/tmp
+/var/run
+/var/lock
+/var/spool
+/dev
+/proc
+/sys
+/run
+lost+found
+
+# ===========================================================
+# OS: logs
+# ===========================================================
+/var/log
+*.log
+
+# ===========================================================
+# OS: system-level caches
+# ===========================================================
+/var/cache
+
+# ===========================================================
+# User: caches, trash, thumbnails
+# ===========================================================
+.cache
+.thumbnails
+.local/share/Trash
+.Trash
+.Trash-*
+
+# ===========================================================
+# Package managers — system
+# ===========================================================
+# Debian / Ubuntu
+/var/lib/apt/lists
+
+# Arch
+/var/lib/pacman/sync
+
+# ===========================================================
+# Package managers — language / userland
+# ===========================================================
+# Node.js
+node_modules
+.npm
+.yarn/cache
+.pnpm-store
+.bower_cache
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+.tox
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.virtualenvs
+.venv
+
+# Rust
+.cargo/registry
+.cargo/git
+.rustup
+target/debug
+target/release
+
+# Go
+go/pkg/mod/cache
+
+# Ruby
+.gem
+.bundle/cache
+
+# Java / JVM
+.gradle/caches
+.gradle/daemon
+.gradle/wrapper
+.m2/repository
+
+# Homebrew
+.homebrew/cache
+
+# ===========================================================
+# IDEs & editors — extensions, plugins (re-downloadable)
+# ===========================================================
+# VS Code
+.vscode*
+
+# Neovim / Vim
+.local/share/nvim/lazy
+.local/share/nvim/site/pack
+.local/share/nvim/mason
+.vim/plugged
+.vim/bundle
+
+# JetBrains
+.local/share/JetBrains
+
+# Emacs
+.emacs.d/elpa
+.emacs.d/straight
+
+# ===========================================================
+# Browsers — caches & session storage
+# ===========================================================
+.mozilla/firefox/*/cache2
+.mozilla/firefox/*/thumbnails
+.config/google-chrome/*/Cache
+.config/google-chrome/*/Code Cache
+.config/google-chrome/*/Service Worker/CacheStorage
+.config/chromium/*/Cache
+.config/chromium/*/Code Cache
+
+# ===========================================================
+# Containers & VMs
+# ===========================================================
+/var/lib/docker
+/var/lib/containerd
+/var/lib/lxc
+/var/lib/lxd
+.docker/machine
+.local/share/containers
+
+# ===========================================================
+# BSD-specific (ignored harmlessly on Linux)
+# ===========================================================
+/usr/ports/distfiles
+/usr/obj
+/var/db/portsnap
+
+# ===========================================================
+# Miscellaneous re-downloadable / generated data
+# ===========================================================
+.electron
+.nvm/.cache
+.sdkman/archives
+.android/cache
+.gradle/native
+
+# ===========================================================
+# Build artifacts & junk
+# ===========================================================
+*.swp
+*.swo
+core
+core.*
+
+# ===========================================================
+# Catch-all: nuke anything with "cache" in the name
+# ===========================================================
+*cache*

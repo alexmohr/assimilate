@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+## Unwrap is disallowed but accept it in test code
+allow-unwrap-in-tests = true

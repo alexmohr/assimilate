@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+version = 1
+
+[[annotations]]
+path = ["Cargo.lock", "package-lock.json", "*.png", "*.ico", "*.svg", "*.woff", "*.woff2"]
+SPDX-FileCopyrightText = "2026 Alexander Mohr"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = [".gitignore", ".dockerignore", ".env.example"]
+SPDX-FileCopyrightText = "2026 Alexander Mohr"
+SPDX-License-Identifier = "Apache-2.0"

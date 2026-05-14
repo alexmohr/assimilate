@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+export interface SshTunnel {
+  id: number
+  client_id: number
+  ssh_host: string
+  ssh_user: string
+  ssh_port: number
+  tunnel_port: number
+  enabled: boolean
+  created_at: string
+}
+
+export type TunnelStatus =
+  | 'connected'
+  | 'disconnected'
+  | 'reconnecting'
+  | { error: { message: string } }
+
+export interface TunnelWithStatus extends SshTunnel {
+  status: TunnelStatus
+  client_hostname?: string
+}
+
+export interface CreateTunnelRequest {
+  client_id: number
+  ssh_host: string
+  ssh_user: string
+  ssh_port: number
+  tunnel_port: number
+  enabled: boolean
+}
+
+export interface UpdateTunnelRequest {
+  ssh_host?: string
+  ssh_user?: string
+  ssh_port?: number
+  tunnel_port?: number
+  enabled?: boolean
+}

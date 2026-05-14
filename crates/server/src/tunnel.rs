@@ -1,0 +1,436 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+
+use russh::{
+    Channel, client,
+    keys::{PrivateKeyWithHashAlg, PublicKey},
+};
+use shared::protocol::{ServerToUi, TunnelStatus};
+use sqlx::PgPool;
+use tokio::{io::copy_bidirectional, net::TcpStream, sync::RwLock};
+use tokio_util::sync::CancellationToken;
+use tracing::{error, warn};
+
+use crate::{db, ws::ui_broadcast::UiBroadcast};
+
+pub struct TunnelSshHandler {
+    pub server_addr: SocketAddr,
+    pub ui_broadcast: UiBroadcast,
+    pub client_id: i64,
+}
+
+impl client::Handler for TunnelSshHandler {
+    type Error = russh::Error;
+
+    async fn check_server_key(
+        &mut self,
+        _server_public_key: &PublicKey,
+    ) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
+
+    async fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: Channel<client::Msg>,
+        _connected_address: &str,
+        _connected_port: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        _session: &mut client::Session,
+    ) -> Result<(), Self::Error> {
+        let server_addr = self.server_addr;
+
+        tokio::spawn(async move {
+            let mut tcp = match TcpStream::connect(server_addr).await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(
+                        addr = %server_addr,
+                        "tunnel: failed to connect to local addr: {e}"
+                    );
+                    return;
+                }
+            };
+
+            let mut stream = channel.into_stream();
+            if let Err(e) = copy_bidirectional(&mut stream, &mut tcp).await {
+                error!("tunnel: copy_bidirectional error: {e}");
+            }
+        });
+
+        Ok(())
+    }
+}
+
+pub fn tunnel_ssh_config() -> Arc<client::Config> {
+    Arc::new(client::Config {
+        inactivity_timeout: None,
+        keepalive_interval: Some(Duration::from_secs(15)),
+        keepalive_max: 3,
+        ..client::Config::default()
+    })
+}
+
+#[derive(Clone)]
+pub struct TunnelManager {
+    pool: PgPool,
+    ui_broadcast: UiBroadcast,
+    server_addr: SocketAddr,
+    tunnels: Arc<RwLock<HashMap<i64, TunnelState>>>,
+}
+
+#[derive(Clone)]
+struct TunnelState {
+    client_id: i64,
+    status: TunnelStatus,
+    cancel: CancellationToken,
+}
+
+impl TunnelManager {
+    pub fn new(pool: PgPool, ui_broadcast: UiBroadcast, server_addr: SocketAddr) -> Self {
+        Self {
+            pool,
+            ui_broadcast,
+            server_addr,
+            tunnels: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    pub async fn run(&self) {
+        let tunnels = match db::list_enabled_tunnels(&self.pool).await {
+            Ok(t) => t,
+            Err(e) => {
+                error!("failed to load tunnels: {e}");
+                return;
+            }
+        };
+        for tunnel in tunnels {
+            let delay_ms = u64::from(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0u32, |d| d.subsec_nanos())
+                    % 450
+                    + 50,
+            );
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            self.start_tunnel(tunnel.id).await;
+        }
+    }
+
+    pub async fn start_tunnel(&self, tunnel_id: i64) {
+        let tunnel = match db::get_tunnel_by_id(&self.pool, tunnel_id).await {
+            Ok(t) => t,
+            Err(e) => {
+                error!(tunnel_id, "failed to load tunnel: {e}");
+                return;
+            }
+        };
+
+        let cancel = CancellationToken::new();
+        let hostname = tunnel.ssh_host.clone();
+
+        {
+            let mut map = self.tunnels.write().await;
+            map.insert(
+                tunnel_id,
+                TunnelState {
+                    client_id: tunnel.client_id,
+                    status: TunnelStatus::Disconnected,
+                    cancel: cancel.clone(),
+                },
+            );
+        }
+
+        let manager = self.clone();
+        tokio::spawn(async move {
+            let mut backoff = Duration::from_secs(1);
+            loop {
+                let current = match db::get_tunnel_by_id(&manager.pool, tunnel_id).await {
+                    Ok(t) => t,
+                    Err(e) => {
+                        error!(tunnel_id, "tunnel DB lookup failed: {e}");
+                        return;
+                    }
+                };
+
+                if !current.enabled {
+                    manager
+                        .set_status(tunnel_id, &hostname, TunnelStatus::Disconnected)
+                        .await;
+                    return;
+                }
+
+                let ssh_port = match u16::try_from(current.ssh_port) {
+                    Ok(p) => p,
+                    Err(_) => {
+                        manager
+                            .set_status(
+                                tunnel_id,
+                                &hostname,
+                                TunnelStatus::Error {
+                                    message: format!("invalid ssh_port: {}", current.ssh_port),
+                                },
+                            )
+                            .await;
+                        return;
+                    }
+                };
+
+                let tunnel_port = match u32::try_from(current.tunnel_port) {
+                    Ok(p) => p,
+                    Err(_) => {
+                        manager
+                            .set_status(
+                                tunnel_id,
+                                &hostname,
+                                TunnelStatus::Error {
+                                    message: format!(
+                                        "invalid tunnel_port: {}",
+                                        current.tunnel_port
+                                    ),
+                                },
+                            )
+                            .await;
+                        return;
+                    }
+                };
+
+                let key = match crate::ssh::load_server_private_key() {
+                    Ok(k) => k,
+                    Err(e) => {
+                        manager
+                            .set_status(
+                                tunnel_id,
+                                &hostname,
+                                TunnelStatus::Error {
+                                    message: e.to_string(),
+                                },
+                            )
+                            .await;
+                        return;
+                    }
+                };
+
+                let handler = TunnelSshHandler {
+                    server_addr: manager.server_addr,
+                    ui_broadcast: manager.ui_broadcast.clone(),
+                    client_id: current.client_id,
+                };
+
+                let mut session = match client::connect(
+                    tunnel_ssh_config(),
+                    (current.ssh_host.as_str(), ssh_port),
+                    handler,
+                )
+                .await
+                {
+                    Ok(s) => s,
+                    Err(e) => {
+                        warn!(tunnel_id, "tunnel connect failed: {e}");
+                        manager
+                            .set_status(tunnel_id, &hostname, TunnelStatus::Reconnecting)
+                            .await;
+                        tokio::select! {
+                            () = cancel.cancelled() => return,
+                            () = tokio::time::sleep(backoff) => {}
+                        }
+                        backoff = (backoff * 2).min(Duration::from_secs(120));
+                        continue;
+                    }
+                };
+
+                let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), None);
+                let auth = match session
+                    .authenticate_publickey(&current.ssh_user, key_with_alg)
+                    .await
+                {
+                    Ok(a) => a,
+                    Err(e) => {
+                        warn!(tunnel_id, "tunnel auth error: {e}");
+                        manager
+                            .set_status(
+                                tunnel_id,
+                                &hostname,
+                                TunnelStatus::Error {
+                                    message: format!("auth error: {e}"),
+                                },
+                            )
+                            .await;
+                        return;
+                    }
+                };
+
+                if !auth.success() {
+                    manager
+                        .set_status(
+                            tunnel_id,
+                            &hostname,
+                            TunnelStatus::Error {
+                                message: "public key authentication rejected".to_string(),
+                            },
+                        )
+                        .await;
+                    return;
+                }
+
+                match session.tcpip_forward("127.0.0.1", tunnel_port).await {
+                    Ok(_bound_port) => {
+                        manager
+                            .set_status(tunnel_id, &hostname, TunnelStatus::Connected)
+                            .await;
+                        backoff = Duration::from_secs(1);
+                    }
+                    Err(e) => {
+                        warn!(tunnel_id, "tcpip_forward failed: {e}");
+                        manager
+                            .set_status(tunnel_id, &hostname, TunnelStatus::Reconnecting)
+                            .await;
+                        tokio::select! {
+                            () = cancel.cancelled() => return,
+                            () = tokio::time::sleep(backoff) => {}
+                        }
+                        backoff = (backoff * 2).min(Duration::from_secs(120));
+                        continue;
+                    }
+                }
+
+                loop {
+                    tokio::select! {
+                        () = cancel.cancelled() => {
+                            if let Err(e) = session
+                                .disconnect(russh::Disconnect::ByApplication, "", "en")
+                                .await
+                            {
+                                tracing::debug!(error = %e, "tunnel disconnect failed");
+                            }
+                            manager
+                                .set_status(tunnel_id, &hostname, TunnelStatus::Disconnected)
+                                .await;
+                            return;
+                        }
+                        () = tokio::time::sleep(Duration::from_secs(5)) => {
+                            if session.is_closed() {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                manager
+                    .set_status(tunnel_id, &hostname, TunnelStatus::Reconnecting)
+                    .await;
+
+                tokio::select! {
+                    () = cancel.cancelled() => {
+                        manager
+                            .set_status(tunnel_id, &hostname, TunnelStatus::Disconnected)
+                            .await;
+                        return;
+                    }
+                    () = tokio::time::sleep(backoff) => {}
+                }
+                backoff = (backoff * 2).min(Duration::from_secs(120));
+            }
+        });
+    }
+
+    pub async fn stop_tunnel(&self, tunnel_id: i64) {
+        if let Some(state) = self.tunnels.write().await.remove(&tunnel_id) {
+            state.cancel.cancel();
+        }
+    }
+
+    pub async fn tunnel_status(&self, tunnel_id: i64) -> Option<TunnelStatus> {
+        self.tunnels
+            .read()
+            .await
+            .get(&tunnel_id)
+            .map(|s| s.status.clone())
+    }
+
+    pub async fn all_statuses(&self) -> Vec<(i64, TunnelStatus)> {
+        self.tunnels
+            .read()
+            .await
+            .iter()
+            .map(|(id, s)| (*id, s.status.clone()))
+            .collect()
+    }
+
+    pub async fn shutdown(&self) {
+        let tunnels = self.tunnels.read().await;
+        for state in tunnels.values() {
+            state.cancel.cancel();
+        }
+    }
+
+    async fn set_status(&self, tunnel_id: i64, hostname: &str, status: TunnelStatus) {
+        let client_id = {
+            let mut map = self.tunnels.write().await;
+            if let Some(state) = map.get_mut(&tunnel_id) {
+                state.status = status.clone();
+                Some(state.client_id)
+            } else {
+                None
+            }
+        };
+
+        if let Some(cid) = client_id {
+            self.ui_broadcast.send(ServerToUi::TunnelStatusChanged {
+                client_id: cid,
+                hostname: hostname.to_string(),
+                status,
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{net::SocketAddr, time::Duration};
+
+    use super::{TunnelManager, tunnel_ssh_config};
+    use crate::ws::ui_broadcast::UiBroadcast;
+
+    fn dummy_manager() -> TunnelManager {
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
+        let ui = UiBroadcast::new();
+        let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+        TunnelManager::new(pool, ui, addr)
+    }
+
+    #[test]
+    fn tunnel_ssh_config_no_inactivity_timeout() {
+        let config = tunnel_ssh_config();
+        assert_eq!(config.inactivity_timeout, None);
+    }
+
+    #[test]
+    fn tunnel_ssh_config_keepalive() {
+        let config = tunnel_ssh_config();
+        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(15)));
+    }
+
+    #[test]
+    fn tunnel_ssh_config_keepalive_max() {
+        let config = tunnel_ssh_config();
+        assert_eq!(config.keepalive_max, 3);
+    }
+
+    #[tokio::test]
+    async fn tunnel_manager_new_creates_empty_map() {
+        let mgr = dummy_manager();
+        let statuses = mgr.all_statuses().await;
+        assert!(statuses.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stop_nonexistent_tunnel_is_no_op() {
+        let mgr = dummy_manager();
+        mgr.stop_tunnel(999).await;
+        let statuses = mgr.all_statuses().await;
+        assert!(statuses.is_empty());
+    }
+}

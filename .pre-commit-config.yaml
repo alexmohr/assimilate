@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+        args: ['--unsafe']
+      - id: check-toml
+      - id: check-json
+        exclude: '(\.devcontainer/devcontainer\.json|tsconfig\..*\.json)$'
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        exclude: '\.(patch|diff)$'
+      - id: mixed-line-ending
+
+  - repo: https://github.com/google/yamlfmt
+    rev: v0.21.0
+    hooks:
+      - id: yamlfmt
+
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.48.0
+    hooks:
+      - id: markdownlint-docker
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/koalaman/shellcheck-precommit
+    rev: v0.11.0
+    hooks:
+      - id: shellcheck
+        args: ['--severity=warning']
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.12
+    hooks:
+      - id: ruff
+        alias: ruff-check
+      - id: ruff-format
+
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.4.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+
+  - repo: https://github.com/eclipse-opensovd/cicd-workflows
+    rev: f43fba4e91b39a92b0948633fbbdc080ef4bb3d3
+    hooks:
+      - id: reuse-annotate
+        args: ['--ignore-paths', 'tests/mock-borg/borg,excludes.common,excludes.local.example']
+      - id: no-unicode-check
+        args:
+          - --allowed-chars=µ,§
+      - id: no-banner-comment-check
+      - id: validate-cargo-lints
+      - id: cargo-fmt
+      - id: clippy
+      - id: check-hooks

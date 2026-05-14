@@ -1,0 +1,155 @@
+# Repository Management
+
+A repository is a borg backup destination — an SSH-accessible path where archives are stored. Each repository has its own encryption passphrase, compression settings, and access controls.
+
+## SSH Setup Prerequisites
+
+Assimilate connects to borg repositories over SSH using the server's Ed25519 key pair. Before creating a repository, the server's public key must be authorized on the repository host.
+
+**View the server's public key** under **System** in the admin UI, or retrieve it via:
+
+```bash
+ssh-add -L
+```
+
+Add the key to `~/.ssh/authorized_keys` on the borg repository host:
+
+```bash
+echo "<server-public-key>" >> ~/.ssh/authorized_keys
+```
+
+For append-only access, use a `command=` restriction in `authorized_keys`:
+
+```text
+command="borg serve --append-only --restrict-to-path /backup/repos",restrict ssh-ed25519 AAAA...
+```
+
+Once the key is in place, use the **Test Connection** button in the repository form to verify SSH connectivity and confirm that `borg` is installed on the remote host.
+
+For the full SSH agent forwarding setup — including Docker and systemd configurations — see [SSH Agent Forwarding](ssh-agent-forwarding.md).
+
+## Creating a Repository
+
+There are two paths for adding a repository:
+
+| Path | When to use |
+|------|-------------|
+| **Init new** | The remote path does not yet exist — Assimilate runs `borg init` |
+| **Import existing** | A borg repository already exists at the path — register it without reinitializing |
+
+Both paths are available from **Repositories → New Repository** in the UI.
+
+![Repositories](assets/screenshots/repositories.png)
+
+![Repository Detail](assets/screenshots/repo-detail.png)
+
+## Init New Repository
+
+Use this path when the remote directory is empty or does not exist yet.
+
+1. Enter the SSH connection details: host, user, port (default 22), and repository path.
+2. Use the **Browse** button to navigate the remote filesystem and select a path (see [Folder Browser](#folder-browser)).
+3. Select an encryption type (see [Encryption Types](#encryption-types)).
+4. Enter a passphrase. Choose a strong, unique passphrase — it cannot be recovered if lost.
+5. Optionally select a compression algorithm (see [Compression](#compression)).
+6. Click **Initialize**. The server runs `borg init` on the remote host and registers the repository.
+
+The borg output is shown after initialization. If the remote path already contains a borg repository, the server returns a conflict error — use **Import Existing** instead.
+
+## Import Existing Repository
+
+Use this path when a borg repository already exists at the remote path and you want to register it in Assimilate without reinitializing.
+
+1. Enter the SSH connection details and the exact path to the existing repository.
+2. Enter the passphrase that was used when the repository was originally initialized.
+3. Click **Save**. The repository is registered and will appear in the repository list.
+
+No `borg init` is run. The passphrase is stored encrypted at rest and used for all future backup and archive operations.
+
+## Folder Browser
+
+The built-in folder browser lets you navigate the remote filesystem over SFTP to select a repository path without typing it manually.
+
+Click the **Browse** button next to the repository path field. The browser connects to the SSH host using the server's key and lists directories. Navigate to the desired parent directory and either select an existing directory or type a new subdirectory name.
+
+The selected path is written back into the repository path field.
+
+The folder browser requires the SSH host and user fields to be filled in first.
+
+## Encryption Types
+
+Assimilate supports all borg encryption modes. The encryption type is set at `borg init` time and cannot be changed afterwards.
+
+| Mode | Description |
+|------|-------------|
+| `repokey` | Passphrase-protected key stored in the repository |
+| `repokey-blake2` | Same as `repokey` with BLAKE2b MAC — **recommended** |
+| `keyfile` | Passphrase-protected key stored on the client machine |
+| `keyfile-blake2` | Same as `keyfile` with BLAKE2b MAC |
+| `authenticated` | No encryption, HMAC authentication only |
+| `authenticated-blake2` | No encryption, BLAKE2b authentication only |
+| `none` | No encryption, no authentication |
+
+**Recommendation:** Use `repokey-blake2`. It stores the key in the repository (no separate key file to manage), uses the faster and more secure BLAKE2b MAC, and is the most common choice for server-managed backups.
+
+Avoid `none` for any data that should remain confidential. For details on borg encryption internals, see the [BorgBackup documentation](https://borgbackup.readthedocs.io/en/stable/usage/init.html).
+
+## Compression
+
+Compression is applied per-archive at backup time. It can be changed on an existing repository — the new setting applies to future archives only.
+
+| Algorithm | Trade-off |
+|-----------|-----------|
+| `lz4` | Very fast, low CPU, moderate ratio — **default, good for most cases** |
+| `zstd` (level 1–22) | Balanced speed and ratio; level 3 is a good starting point |
+| `zlib` (level 1–9) | Slower than lz4, similar ratio; legacy option |
+| `none` | No compression — useful when data is already compressed (e.g., media files) |
+
+For general-purpose backups, `lz4` is the default and works well. Use `zstd,3` when storage space is a priority and CPU overhead is acceptable.
+
+## Repository Tags
+
+Tags are short labels that help organize repositories when managing many hosts. A repository can have multiple tags.
+
+Tags are set in the repository edit form and are visible in the repository list. They have no effect on backup behavior — they are purely organizational.
+
+## Passphrase Management
+
+The passphrase is required by borg to encrypt and decrypt archives. Assimilate stores it encrypted at rest using AES-256-GCM, derived from the `ASSIMILATE_SECRET_KEY` environment variable.
+
+**Viewing the passphrase** is restricted to admins. Navigate to the repository detail page and click **Show Passphrase**. The decrypted passphrase is fetched from the server and displayed once.
+
+The passphrase is never logged or transmitted in plaintext. See [Security](security.md) for details on the encryption scheme.
+
+!!! warning "Passphrase is irrecoverable"
+    If you lose the passphrase, the repository contents are permanently inaccessible. Assimilate cannot recover it. Store the passphrase in a secure location (e.g., a password manager) independent of Assimilate.
+    If `ASSIMILATE_SECRET_KEY` is changed or lost, all stored passphrases become unreadable. Keep this value stable and back it up separately. See [Configuration](configuration.md) for details.
+
+## Editing and Deleting
+
+**Editing** a repository updates the SSH connection details, compression, and enabled state. The passphrase and encryption type cannot be changed after initialization — borg does not support re-encrypting an existing repository.
+
+Changing the SSH host or path does not move or modify the remote repository. It only updates the connection details Assimilate uses to reach it.
+
+**Deleting** a repository removes it from Assimilate — the database record, stored passphrase, and associated schedules are deleted. The remote borg repository and its archives are **not** deleted. You must remove the remote data manually if desired.
+
+Deletion requires admin privileges.
+
+## Repository Permissions
+
+By default, repository visibility follows the owner model. Admins can grant per-user access to specific repositories using the permissions panel on the repository detail page.
+
+| Permission | Effect |
+|------------|--------|
+| `can_view` | User can see the repository and its archives |
+| `can_backup` | User can trigger manual backups |
+| `can_modify_schedules` | User can create, edit, and delete backup schedules for this repository |
+| `can_extract` | User can browse and extract files from archives |
+| `can_delete` | User can delete archives |
+
+Admins always have full access regardless of per-user permissions. For a broader overview of access control, see [Security](security.md).
+
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: 2026 Alexander Mohr
+-->

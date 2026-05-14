@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+version = 1
+
+[[annotations]]
+path = ["tests/mock-borg/borg", "excludes.common", "excludes.local.example"]
+SPDX-License-Identifier = "Apache-2.0"
+SPDX-FileCopyrightText = "2026 Alexander Mohr"

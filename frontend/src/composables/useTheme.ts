@@ -1,0 +1,98 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+import { ref, watch } from 'vue'
+import { apiClient } from '../api/client'
+import { logger } from '../utils/logger'
+
+export type Theme = 'light' | 'dark' | 'auto'
+type ResolvedTheme = 'light' | 'dark'
+
+const STORAGE_KEY = 'theme'
+
+function getSystemPreference(): ResolvedTheme {
+  if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    return 'dark'
+  }
+  return 'light'
+}
+
+function getStoredTheme(): Theme | null {
+  const stored = localStorage.getItem(STORAGE_KEY)
+  if (stored === 'light' || stored === 'dark' || stored === 'auto') {
+    return stored
+  }
+  return null
+}
+
+function resolveTheme(t: Theme): ResolvedTheme {
+  if (t === 'auto') {
+    return getSystemPreference()
+  }
+  return t
+}
+
+function applyTheme(t: ResolvedTheme): void {
+  const html = document.documentElement
+  if (t === 'dark') {
+    html.classList.add('dark')
+  } else {
+    html.classList.remove('dark')
+  }
+}
+
+const theme = ref<Theme>(getStoredTheme() ?? 'auto')
+applyTheme(resolveTheme(theme.value))
+
+const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+mediaQuery.addEventListener('change', () => {
+  if (theme.value === 'auto') {
+    applyTheme(getSystemPreference())
+  }
+})
+
+let syncing = false
+
+async function syncToBackend(t: Theme): Promise<void> {
+  try {
+    await apiClient.put('/auth/preferences', { theme: t })
+  } catch (e: unknown) {
+    logger.debug('theme sync failed', e)
+  }
+}
+
+watch(theme, (val) => {
+  if (!syncing) {
+    syncToBackend(val).catch(logger.debug)
+  }
+})
+
+export function useTheme(): {
+  theme: typeof theme
+  setTheme: (t: Theme) => void
+  loadFromBackend: () => Promise<void>
+} {
+  function setTheme(t: Theme): void {
+    theme.value = t
+    localStorage.setItem(STORAGE_KEY, t)
+    applyTheme(resolveTheme(t))
+  }
+
+  async function loadFromBackend(): Promise<void> {
+    try {
+      const res = await apiClient.get<{ theme?: string }>('/auth/preferences')
+      const backendTheme = res.data?.theme
+      if (backendTheme === 'light' || backendTheme === 'dark' || backendTheme === 'auto') {
+        syncing = true
+        theme.value = backendTheme
+        localStorage.setItem(STORAGE_KEY, backendTheme)
+        applyTheme(resolveTheme(backendTheme))
+        syncing = false
+      }
+    } catch (e: unknown) {
+      logger.debug('loadFromBackend: preferences fetch failed', e)
+    }
+  }
+
+  return { theme, setTheme, loadFromBackend }
+}

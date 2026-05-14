@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+[package]
+name = "shared"
+version = "0.1.0"
+edition = "2024"
+description = "Shared domain types, WebSocket protocol schema, and crypto utilities for Assimilate"
+license = "Apache-2.0"
+repository = "https://github.com/alexmohr/assimilate"
+authors = ["Alexander Mohr"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+aes-gcm = { workspace = true }
+rand = { workspace = true }
+hkdf = { workspace = true }
+sha2 = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+chrono-tz = { workspace = true }
+iana-time-zone = "0.1"
+croner = { workspace = true }
+tokio-tungstenite = { workspace = true }

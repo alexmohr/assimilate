@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+FROM rust:latest
+
+RUN rustup default nightly && rustup component add rustfmt clippy
+
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
+    apt-get install -y --no-install-recommends \
+        nodejs \
+        borgbackup \
+        openssh-client \
+        openssh-server \
+        postgresql-client \
+        git \
+        pkg-config \
+        libssl-dev \
+        && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /run/sshd \
+    && useradd -m -s /bin/bash borg \
+    && mkdir -p /home/borg/.ssh /backup/repos /mnt \
+    && chmod 700 /home/borg/.ssh \
+    && chown -R borg:borg /home/borg /backup /mnt
+
+RUN cargo install cargo-watch
+
+WORKDIR /workspace

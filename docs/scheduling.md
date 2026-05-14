@@ -1,0 +1,131 @@
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: 2026 Alexander Mohr
+-->
+
+# Scheduling & Retention
+
+Assimilate runs backups on a schedule you define per repository. Each schedule carries its own cron expression, retention policy, exclude patterns, and optional pre/post commands.
+
+## Creating a Schedule
+
+1. Navigate to **Clients** and select the host you want to back up.
+2. Choose the repository to back up to (see [Repositories](repositories.md)).
+3. Click **Add Schedule**.
+4. Set the cron expression (see [Cron Expression Builder](#cron-expression-builder)).
+5. Configure the retention policy (see [Retention Policy](#retention-policy)).
+6. Optionally add exclude patterns, backup sources, and pre/post commands.
+7. Click **Save**. The server validates the cron expression and, if the schedule is enabled, verifies SSH connectivity to the repository before saving.
+
+![Schedules](assets/screenshots/schedules.png)
+
+![Schedule Detail](assets/screenshots/schedule-detail.png)
+
+## Cron Expression Builder
+
+Schedules use standard five-field cron syntax: `minute hour day-of-month month day-of-week`.
+
+The UI provides a visual builder with common presets:
+
+| Preset | Expression | Description |
+|--------|-----------|-------------|
+| Hourly | `0 * * * *` | Every hour on the hour |
+| Every 6 hours | `0 */6 * * *` | Four times a day |
+| Daily | `0 2 * * *` | Every day at 02:00 |
+| Weekly | `0 2 * * 0` | Every Sunday at 02:00 |
+| Monthly | `0 2 1 * *` | First day of each month at 02:00 |
+
+You can also type a custom expression directly. The builder validates the expression in real time and shows the next five scheduled run times.
+
+For a full reference of cron syntax, see [crontab.guru](https://crontab.guru).
+
+## Retention Policy
+
+After each successful backup, Assimilate runs `borg prune` using the retention settings on the schedule. Archives that fall outside the policy are deleted automatically.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `keep_daily` | 7 | Keep the most recent N daily archives |
+| `keep_weekly` | 4 | Keep the most recent N weekly archives |
+| `keep_monthly` | 6 | Keep the most recent N monthly archives |
+| `keep_yearly` | 0 | Keep the most recent N yearly archives (0 = disabled) |
+
+!!! tip "Sensible defaults"
+    The defaults (7 daily, 4 weekly, 6 monthly) give you roughly six months of recovery points without consuming excessive repository space. For critical data, increase `keep_monthly` or enable `keep_yearly`. For high-frequency backups, reduce `keep_daily` to avoid accumulating too many archives.
+
+Pruning runs immediately after the backup completes. Only archives created by this schedule are considered — archives from other schedules or manual runs are not affected.
+
+## Exclude Patterns
+
+Each schedule can carry its own list of exclude patterns. These are passed directly to `borg create --exclude` and follow [borg's pattern syntax](https://borgbackup.readthedocs.io/en/stable/usage/help.html#borg-patterns).
+
+Patterns are configured per schedule in the **Exclude Patterns** field. If **Ignore global excludes** is unchecked, any repository-level exclude patterns (see [Repositories](repositories.md)) are merged with the schedule's own patterns. Check **Ignore global excludes** to use only the schedule's patterns.
+
+## Schedule Status
+
+Each schedule row in the UI shows:
+
+| Field | Description |
+|-------|-------------|
+| **Enabled** | Toggle to pause or resume the schedule without deleting it |
+| **Next run** | UTC timestamp of the next scheduled execution |
+| **Last run** | UTC timestamp of the most recent execution |
+| **Last result** | `success`, `warning`, or `error` from the last run |
+
+Disabling a schedule clears the next-run time. Re-enabling it recalculates the next occurrence from the current time.
+
+## Manual Trigger
+
+To run a backup immediately without waiting for the next scheduled time, click **Run now** on the schedule row. The server sends a `RunBackupNow` message to the connected agent. The agent starts the backup immediately and reports the result back to the server.
+
+Manual runs follow the same retention policy and exclude patterns as scheduled runs.
+
+## Backup Notifications
+
+Assimilate does not send email or push notifications directly. Monitor backup outcomes through:
+
+- **Dashboard** — the activity feed shows recent backup results across all hosts.
+- **Activity log** — per-host and per-repository views list every run with its result, duration, and archive size.
+- **Schedule status** — the **Last result** column on the Schedules page turns red on failure.
+
+For alerting, poll the REST API (see [API Reference](api-reference.md)) and integrate with your monitoring stack.
+
+## Pruning
+
+Pruning is automatic and runs as part of the backup lifecycle:
+
+1. `borg create` runs and creates a new archive.
+2. On success, `borg prune` runs with the schedule's retention settings.
+3. Pruned archives are removed from the repository.
+4. If `compact_enabled` is set (default: true), `borg compact` runs to reclaim freed space.
+
+Pruning only removes archives whose names match the prefix used by this schedule. Archives created outside Assimilate are not touched.
+
+## Timezone Handling
+
+All cron expressions are evaluated in the **server's local timezone**. There is no per-schedule timezone setting. If your server runs in UTC (recommended), `0 2 * * *` fires at 02:00 UTC every day.
+
+To verify the server's timezone, check the system clock or the `TZ` environment variable on the server host.
+
+## Editing and Deleting Schedules
+
+**Editing:** Changes take effect on the next scheduled run. If a backup is already in progress when you save an edit, the running backup completes with the old settings. The updated cron expression and retention policy apply from the next run onward.
+
+**Deleting:** Deleting a schedule removes it from the database and pushes an updated configuration to the agent. Any backup currently in progress is not interrupted — it runs to completion. Archives already created by the deleted schedule remain in the repository and must be pruned manually if desired.
+
+## Backup Flow
+
+```mermaid
+sequenceDiagram
+    participant Scheduler
+    participant Agent
+    participant Borg
+    participant Server
+
+    Scheduler->>Agent: trigger backup (RunBackupNow / scheduled)
+    Agent->>Borg: borg create <archive>
+    Borg-->>Agent: exit code + stats
+    Agent->>Server: report result (BackupResult)
+    Server->>Server: run borg prune (retention policy)
+    Server->>Server: update last_run, last_result, next_run
+```

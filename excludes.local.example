@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+#
+# borg-backup -- machine-specific exclude patterns
+# Copy to /etc/borg-backup/excludes.local and edit.
+#
+# Add paths specific to THIS machine that should never be backed up.
+# Common excludes (caches, node_modules, etc.) are already in excludes.common.
+
+# Example: Jellyfin media server
+# /mnt/jellyfin/cache
+# /mnt/jellyfin/config/transcodes
+# /mnt/jellyfin/config/cache
+# /mnt/jellyfin/config/metadata
+
+# Example: Large media / downloads (re-downloadable)
+# /mnt/media
+# /home/*/Downloads
+
+# Example: VM disk images
+# /var/lib/libvirt/images

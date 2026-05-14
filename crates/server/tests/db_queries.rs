@@ -1,0 +1,1608 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+//! Database integration tests that exercise every SQL statement in `db.rs`.
+//!
+//! Run with:
+//! ```sh
+//! DATABASE_URL=postgres://borg:borg_secret@localhost:5432/borg \
+//!   cargo test -p server --test db_queries -- --test-threads=1
+//! ```
+//!
+//! Each test uses `#[sqlx::test]` which creates an isolated database per test
+//! and applies migrations automatically.
+
+use chrono::{Duration, Utc};
+use server::db::{self, *};
+use sqlx::PgPool;
+
+#[sqlx::test(migrations = "./migrations")]
+async fn client_insert_and_get(pool: PgPool) {
+    let client = db::insert_client(&pool, "test-host", Some("Test Host"), "hash123", None)
+        .await
+        .unwrap();
+
+    assert_eq!(client.hostname, "test-host");
+    assert_eq!(client.display_name.as_deref(), Some("Test Host"));
+    assert!(client.agent_version.is_none());
+    assert!(client.last_seen_at.is_none());
+
+    let fetched = db::get_client_by_hostname(&pool, "test-host")
+        .await
+        .unwrap();
+    assert_eq!(fetched.id, client.id);
+    assert_eq!(fetched.hostname, "test-host");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn client_not_found(pool: PgPool) {
+    let result = db::get_client_by_hostname(&pool, "nonexistent").await;
+    assert!(result.is_err());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn client_token_hash(pool: PgPool) {
+    db::insert_client(&pool, "token-host", None, "secret_hash", None)
+        .await
+        .unwrap();
+
+    let (id, hash) = db::get_client_token_hash(&pool, "token-host")
+        .await
+        .unwrap();
+    assert!(id > 0);
+    assert_eq!(hash, "secret_hash");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn client_update_last_seen(pool: PgPool) {
+    let client = db::insert_client(&pool, "seen-host", None, "hash", None)
+        .await
+        .unwrap();
+
+    db::update_last_seen(&pool, client.id).await.unwrap();
+
+    let fetched = db::get_client_by_hostname(&pool, "seen-host")
+        .await
+        .unwrap();
+    assert!(fetched.last_seen_at.is_some());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn client_update_last_seen_and_version(pool: PgPool) {
+    let client = db::insert_client(&pool, "ver-host", None, "hash", None)
+        .await
+        .unwrap();
+
+    db::update_last_seen_and_version(&pool, client.id, "2.0.0")
+        .await
+        .unwrap();
+
+    let fetched = db::get_client_by_hostname(&pool, "ver-host").await.unwrap();
+    assert_eq!(fetched.agent_version.as_deref(), Some("2.0.0"));
+    assert!(fetched.last_seen_at.is_some());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn client_update_last_seen_by_hostname(pool: PgPool) {
+    db::insert_client(&pool, "hostname-seen", None, "hash", None)
+        .await
+        .unwrap();
+
+    db::update_last_seen_by_hostname(&pool, "hostname-seen")
+        .await
+        .unwrap();
+
+    let fetched = db::get_client_by_hostname(&pool, "hostname-seen")
+        .await
+        .unwrap();
+    assert!(fetched.last_seen_at.is_some());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn client_list(pool: PgPool) {
+    db::insert_client(&pool, "alpha", None, "h1", None)
+        .await
+        .unwrap();
+    db::insert_client(&pool, "beta", None, "h2", None)
+        .await
+        .unwrap();
+
+    let clients = db::list_clients(&pool).await.unwrap();
+    assert_eq!(clients.len(), 2);
+    assert_eq!(clients[0].hostname, "alpha");
+    assert_eq!(clients[1].hostname, "beta");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn client_update(pool: PgPool) {
+    db::insert_client(&pool, "upd-host", Some("Old Name"), "hash", None)
+        .await
+        .unwrap();
+
+    let updated = db::update_client(&pool, "upd-host", Some("New Name"), &[], &[])
+        .await
+        .unwrap();
+    assert_eq!(updated.display_name.as_deref(), Some("New Name"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn client_regenerate_token(pool: PgPool) {
+    db::insert_client(&pool, "regen-host", None, "old_hash", None)
+        .await
+        .unwrap();
+
+    let updated = db::regenerate_client_token(&pool, "regen-host", "new_hash")
+        .await
+        .unwrap();
+    assert_eq!(updated.hostname, "regen-host");
+
+    let (_, hash) = db::get_client_token_hash(&pool, "regen-host")
+        .await
+        .unwrap();
+    assert_eq!(hash, "new_hash");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn client_delete(pool: PgPool) {
+    db::insert_client(&pool, "del-host", None, "hash", None)
+        .await
+        .unwrap();
+
+    db::delete_client(&pool, "del-host").await.unwrap();
+
+    let result = db::get_client_by_hostname(&pool, "del-host").await;
+    assert!(result.is_err());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn client_delete_not_found(pool: PgPool) {
+    let result = db::delete_client(&pool, "ghost").await;
+    assert!(result.is_err());
+}
+
+async fn create_test_repo(pool: &PgPool) -> RepoRow {
+    db::insert_repo(
+        pool,
+        &InsertRepoParams {
+            name: "test-repo",
+            repo_path: "/backups/test",
+            ssh_user: "backup",
+            ssh_host: "storage.local",
+            ssh_port: 22,
+            passphrase_encrypted: b"encrypted_data",
+            compression: "lz4",
+            encryption: "repokey",
+            owner_id: None,
+        },
+    )
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_insert_and_list(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    assert_eq!(repo.name, "test-repo");
+    assert_eq!(repo.repo_path, "/backups/test");
+    assert_eq!(repo.ssh_user, "backup");
+    assert_eq!(repo.ssh_host, "storage.local");
+    assert_eq!(repo.ssh_port, 22);
+    assert_eq!(repo.compression, "lz4");
+    assert_eq!(repo.encryption, "repokey");
+    assert!(repo.enabled);
+
+    let all = db::list_all_repos(&pool).await.unwrap();
+    assert_eq!(all.len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_connection(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    let conn = db::get_repo_connection(&pool, repo.id).await.unwrap();
+    assert_eq!(conn.ssh_user, "backup");
+    assert_eq!(conn.ssh_host, "storage.local");
+    assert_eq!(conn.ssh_port, 22);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_update(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    let updated = db::update_repo(
+        &pool,
+        &UpdateRepoParams {
+            repo_id: repo.id,
+            repo_path: "/backups/v2",
+            ssh_user: "user2",
+            ssh_host: "host2.local",
+            ssh_port: 2222,
+            compression: "zstd,3",
+            encryption: "repokey-blake2",
+            enabled: false,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(updated.repo_path, "/backups/v2");
+    assert_eq!(updated.ssh_user, "user2");
+    assert_eq!(updated.ssh_host, "host2.local");
+    assert_eq!(updated.ssh_port, 2222);
+    assert!(!updated.enabled);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_delete(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    db::delete_repo(&pool, repo.id).await.unwrap();
+
+    let result = db::get_repo_connection(&pool, repo.id).await;
+    assert!(result.is_err());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_passphrase(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    let passphrase = db::get_repo_passphrase(&pool, repo.id).await.unwrap();
+    assert_eq!(passphrase, b"encrypted_data");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_with_passphrase(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    let row = db::get_repo_with_passphrase(&pool, repo.id).await.unwrap();
+    assert_eq!(row.name, "test-repo");
+    assert_eq!(row.passphrase_encrypted, b"encrypted_data");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_name(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    let name = db::get_repo_name(&pool, repo.id).await.unwrap();
+    assert_eq!(name, "test-repo");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn tunnel_crud(pool: PgPool) {
+    let client = db::insert_client(&pool, "tunnel-host", None, "hash", None)
+        .await
+        .unwrap();
+
+    let tunnel = db::insert_tunnel(
+        &pool,
+        &NewSshTunnel {
+            client_id: client.id,
+            ssh_host: "repo.example.com".to_string(),
+            ssh_user: "borg".to_string(),
+            ssh_port: Some(2222),
+            tunnel_port: 2200,
+            enabled: Some(true),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(tunnel.ssh_host, "repo.example.com");
+    assert_eq!(tunnel.ssh_port, 2222);
+    assert_eq!(tunnel.tunnel_port, 2200);
+    assert!(tunnel.enabled);
+
+    let by_id = db::get_tunnel_by_id(&pool, tunnel.id).await.unwrap();
+    assert_eq!(by_id.id, tunnel.id);
+
+    let by_client = db::get_tunnel_by_client_id(&pool, client.id).await.unwrap();
+    assert_eq!(by_client.id, tunnel.id);
+
+    let enabled = db::list_enabled_tunnels(&pool).await.unwrap();
+    assert_eq!(enabled.len(), 1);
+
+    let all = db::list_all_tunnels(&pool).await.unwrap();
+    assert_eq!(all.len(), 1);
+
+    let updated = db::update_tunnel(
+        &pool,
+        tunnel.id,
+        &UpdateSshTunnel {
+            ssh_host: Some("new.example.com".to_string()),
+            ssh_user: None,
+            ssh_port: None,
+            tunnel_port: None,
+            enabled: Some(false),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(updated.ssh_host, "new.example.com");
+    assert!(!updated.enabled);
+
+    let enabled = db::list_enabled_tunnels(&pool).await.unwrap();
+    assert!(enabled.is_empty());
+
+    db::delete_tunnel(&pool, tunnel.id).await.unwrap();
+    let result = db::get_tunnel_by_id(&pool, tunnel.id).await;
+    assert!(result.is_err());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn tunnel_defaults(pool: PgPool) {
+    let client = db::insert_client(&pool, "def-host", None, "hash", None)
+        .await
+        .unwrap();
+
+    let tunnel = db::insert_tunnel(
+        &pool,
+        &NewSshTunnel {
+            client_id: client.id,
+            ssh_host: "host.com".to_string(),
+            ssh_user: "user".to_string(),
+            ssh_port: None,
+            tunnel_port: 3000,
+            enabled: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(tunnel.ssh_port, 22);
+    assert!(tunnel.enabled);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn excludes_crud(pool: PgPool) {
+    let excl = db::insert_global_exclude(&pool, "*.tmp", 1).await.unwrap();
+    assert_eq!(excl.pattern, "*.tmp");
+    assert_eq!(excl.sort_order, 1);
+
+    let all = db::list_global_excludes(&pool).await.unwrap();
+    assert_eq!(all.len(), 1);
+
+    let updated = db::update_global_exclude(&pool, excl.id, "*.log", 2)
+        .await
+        .unwrap();
+    assert_eq!(updated.pattern, "*.log");
+    assert_eq!(updated.sort_order, 2);
+
+    db::delete_global_exclude(&pool, excl.id).await.unwrap();
+    let all = db::list_global_excludes(&pool).await.unwrap();
+    assert!(all.is_empty());
+}
+
+async fn create_test_schedule(pool: &PgPool) -> (ClientRow, RepoRow, ScheduleRow) {
+    let client = db::insert_client(pool, "sched-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = db::insert_repo(
+        pool,
+        &InsertRepoParams {
+            name: "sched-repo",
+            repo_path: "/backups/sched",
+            ssh_user: "user",
+            ssh_host: "host.local",
+            ssh_port: 22,
+            passphrase_encrypted: b"enc",
+            compression: "none",
+            encryption: "none",
+            owner_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    let schedule = db::insert_schedule(
+        pool,
+        client.id,
+        repo.id,
+        &ScheduleParams {
+            schedule_type: "backup",
+            cron_expression: "0 3 * * *",
+            enabled: true,
+            canary_enabled: false,
+            exclude_patterns: &[],
+            ignore_global_excludes: false,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 1,
+            compact_enabled: true,
+            pre_backup_commands: "",
+            post_backup_commands: "",
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    (client, repo, schedule)
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_insert_and_list(pool: PgPool) {
+    let (_, _, schedule) = create_test_schedule(&pool).await;
+
+    assert_eq!(schedule.schedule_type, "backup");
+    assert_eq!(schedule.cron_expression, "0 3 * * *");
+    assert!(schedule.enabled);
+    assert_eq!(schedule.keep_daily, 7);
+
+    let all = db::list_schedules(&pool).await.unwrap();
+    assert_eq!(all.len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_update(pool: PgPool) {
+    let (_, _, schedule) = create_test_schedule(&pool).await;
+
+    let updated = db::update_schedule(
+        &pool,
+        schedule.id,
+        &ScheduleParams {
+            schedule_type: "backup",
+            cron_expression: "0 6 * * *",
+            enabled: false,
+            canary_enabled: true,
+            exclude_patterns: &["*.cache".to_string()],
+            ignore_global_excludes: true,
+            keep_daily: 14,
+            keep_weekly: 8,
+            keep_monthly: 12,
+            keep_yearly: 2,
+            compact_enabled: false,
+            pre_backup_commands: "echo pre",
+            post_backup_commands: "echo post",
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(updated.cron_expression, "0 6 * * *");
+    assert!(!updated.enabled);
+    assert!(updated.canary_enabled);
+    assert_eq!(updated.exclude_patterns, vec!["*.cache"]);
+    assert!(updated.ignore_global_excludes);
+    assert_eq!(updated.keep_daily, 14);
+    assert!(!updated.compact_enabled);
+    assert_eq!(updated.pre_backup_commands, "echo pre");
+    assert_eq!(updated.post_backup_commands, "echo post");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_get_by_id(pool: PgPool) {
+    let (_, _, schedule) = create_test_schedule(&pool).await;
+
+    let fetched = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
+    assert_eq!(fetched.id, schedule.id);
+    assert_eq!(fetched.cron_expression, "0 3 * * *");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_for_repo(pool: PgPool) {
+    let (_, repo, _) = create_test_schedule(&pool).await;
+
+    let result = db::get_schedule_for_repo(&pool, repo.id).await.unwrap();
+    assert!(result.is_some());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_for_hostname_repo(pool: PgPool) {
+    let (_, repo, _) = create_test_schedule(&pool).await;
+
+    let result = db::get_backup_schedule_for_hostname_repo(&pool, "sched-host", repo.id)
+        .await
+        .unwrap();
+    assert!(result.is_some());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_list_for_repo(pool: PgPool) {
+    let (_, repo, _) = create_test_schedule(&pool).await;
+
+    let schedules = db::list_schedules_for_repo(&pool, repo.id).await.unwrap();
+    assert_eq!(schedules.len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_list_for_client(pool: PgPool) {
+    let (client, _, _) = create_test_schedule(&pool).await;
+
+    let schedules = db::list_schedules_for_client(&pool, client.id)
+        .await
+        .unwrap();
+    assert_eq!(schedules.len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_delete(pool: PgPool) {
+    let (_, _, schedule) = create_test_schedule(&pool).await;
+
+    db::delete_schedule(&pool, schedule.id).await.unwrap();
+
+    let result = db::get_schedule_by_id(&pool, schedule.id).await;
+    assert!(result.is_err());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_due_and_trigger(pool: PgPool) {
+    let (_, _, schedule) = create_test_schedule(&pool).await;
+    let now = Utc::now();
+    let past = now - Duration::hours(1);
+
+    db::set_next_run_at(&pool, schedule.id, past).await.unwrap();
+
+    let due = db::list_due_schedules(&pool, now).await.unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].schedule_id, schedule.id);
+
+    let future = now + Duration::hours(3);
+    db::mark_schedule_triggered(&pool, schedule.id, now, future)
+        .await
+        .unwrap();
+
+    let fetched = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
+    assert!(fetched.last_run_at.is_some());
+    assert!(fetched.next_run_at.is_some());
+
+    let due = db::list_due_schedules(&pool, now).await.unwrap();
+    assert!(due.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_client_hostname(pool: PgPool) {
+    let (_, _, schedule) = create_test_schedule(&pool).await;
+
+    let hostname = db::get_client_hostname_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(hostname, "sched-host");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn backup_sources_crud(pool: PgPool) {
+    let (_, _, schedule) = create_test_schedule(&pool).await;
+
+    db::insert_backup_source_for_schedule(&pool, schedule.id, "/home", 1)
+        .await
+        .unwrap();
+    db::insert_backup_source_for_schedule(&pool, schedule.id, "/etc", 2)
+        .await
+        .unwrap();
+
+    let sources = db::list_backup_sources_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(sources.len(), 2);
+    assert_eq!(sources[0], "/home");
+    assert_eq!(sources[1], "/etc");
+
+    db::delete_backup_sources_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+
+    let sources = db::list_backup_sources_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert!(sources.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn canary_results_crud(pool: PgPool) {
+    let (_, _, schedule) = create_test_schedule(&pool).await;
+
+    db::insert_canary_result(
+        &pool,
+        schedule.id,
+        true,
+        "canary_20240101.txt",
+        None,
+        Some("archive-001"),
+    )
+    .await
+    .unwrap();
+
+    db::insert_canary_result(
+        &pool,
+        schedule.id,
+        false,
+        "canary_20240102.txt",
+        Some("file not found"),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let latest = db::get_latest_canary_result(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert!(latest.is_some());
+    let latest = latest.unwrap();
+    assert!(!latest.success);
+    assert_eq!(latest.error_message.as_deref(), Some("file not found"));
+
+    let all = db::list_canary_results(&pool, schedule.id, 10)
+        .await
+        .unwrap();
+    assert_eq!(all.len(), 2);
+}
+
+async fn insert_test_report(pool: &PgPool, client_id: i64, repo_id: i64) {
+    let now = Utc::now();
+    db::insert_backup_report(
+        pool,
+        &InsertReportParams {
+            client_id,
+            repo_id,
+            started_at: now - Duration::minutes(5),
+            finished_at: now,
+            status: "success".to_string(),
+            original_size: 1_000_000,
+            compressed_size: 500_000,
+            deduplicated_size: 250_000,
+            files_processed: 1000,
+            duration_secs: 300,
+            error_message: None,
+            warnings: vec![],
+            borg_version: Some("1.4.0".to_string()),
+        },
+    )
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn backup_report_insert_and_list(pool: PgPool) {
+    let client = db::insert_client(&pool, "report-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let reports = db::list_reports_for_client(&pool, client.id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].status, "success");
+    assert_eq!(reports[0].original_size, 1_000_000);
+    assert_eq!(reports[0].compressed_size, 500_000);
+    assert_eq!(reports[0].deduplicated_size, 250_000);
+    assert_eq!(reports[0].files_processed, 1000);
+    assert_eq!(reports[0].duration_secs, 300);
+    assert_eq!(reports[0].borg_version.as_deref(), Some("1.4.0"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn backup_report_list_with_target(pool: PgPool) {
+    let client = db::insert_client(&pool, "target-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let reports = db::list_reports_for_client(&pool, client.id, Some("test-repo"), 10)
+        .await
+        .unwrap();
+    assert_eq!(reports.len(), 1);
+
+    let reports = db::list_reports_for_client(&pool, client.id, Some("nonexistent"), 10)
+        .await
+        .unwrap();
+    assert!(reports.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn backup_report_with_warnings(pool: PgPool) {
+    let client = db::insert_client(&pool, "warn-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            client_id: client.id,
+            repo_id: repo.id,
+            started_at: now - Duration::minutes(5),
+            finished_at: now,
+            status: "warning".to_string(),
+            original_size: 100,
+            compressed_size: 50,
+            deduplicated_size: 25,
+            files_processed: 10,
+            duration_secs: 60,
+            error_message: Some("partial failure".to_string()),
+            warnings: vec!["file skipped".to_string(), "permission denied".to_string()],
+            borg_version: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let reports = db::list_reports_for_client(&pool, client.id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(reports[0].warnings.len(), 2);
+    assert_eq!(reports[0].error_message.as_deref(), Some("partial failure"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn backup_report_delete_before(pool: PgPool) {
+    let client = db::insert_client(&pool, "del-report-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let future = Utc::now() + Duration::hours(1);
+    let deleted = db::delete_backup_reports_before(&pool, future)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn storage_stats_with_sum(pool: PgPool) {
+    let client = db::insert_client(&pool, "stats-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, client.id, repo.id).await;
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let stats = db::get_storage_stats(&pool).await.unwrap();
+    assert_eq!(stats.len(), 1);
+    assert_eq!(stats[0].hostname, "stats-host");
+    assert_eq!(stats[0].total_original_size, 2_000_000);
+    assert_eq!(stats[0].total_compressed_size, 1_000_000);
+    assert_eq!(stats[0].total_deduplicated_size, 500_000);
+    assert_eq!(stats[0].report_count, 2);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn storage_stats_empty(pool: PgPool) {
+    let stats = db::get_storage_stats(&pool).await.unwrap();
+    assert!(stats.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn activity_feed(pool: PgPool) {
+    let client = db::insert_client(&pool, "act-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let activity = db::get_activity_feed(&pool, 10).await.unwrap();
+    assert_eq!(activity.len(), 1);
+    assert_eq!(activity[0].hostname, "act-host");
+    assert_eq!(activity[0].target_name, "test-repo");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn activity_feed_days(pool: PgPool) {
+    let client = db::insert_client(&pool, "days-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let activity = db::get_activity_feed_days(&pool, 7).await.unwrap();
+    assert_eq!(activity.len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn health_summary(pool: PgPool) {
+    let (client, repo, _) = create_test_schedule(&pool).await;
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let health = db::get_health_summary(&pool).await.unwrap();
+    assert_eq!(health.len(), 1);
+    assert_eq!(health[0].hostname, "sched-host");
+    assert_eq!(health[0].last_status.as_deref(), Some("success"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repos_with_stats(pool: PgPool) {
+    let client = db::insert_client(&pool, "rws-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let repos = db::list_repos_with_stats(&pool).await.unwrap();
+    assert_eq!(repos.len(), 1);
+    assert_eq!(repos[0].name, "test-repo");
+    assert_eq!(repos[0].archive_count, 1);
+    assert_eq!(repos[0].total_original_size, 1_000_000);
+    assert_eq!(repos[0].total_compressed_size, 500_000);
+    assert_eq!(repos[0].total_deduplicated_size, 250_000);
+    assert_eq!(repos[0].client_count, 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repos_with_stats_empty(pool: PgPool) {
+    create_test_repo(&pool).await;
+
+    let repos = db::list_repos_with_stats(&pool).await.unwrap();
+    assert_eq!(repos.len(), 1);
+    assert_eq!(repos[0].total_original_size, 0);
+    assert_eq!(repos[0].total_deduplicated_size, 0);
+    assert_eq!(repos[0].archive_count, 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_with_stats_single(pool: PgPool) {
+    let client = db::insert_client(&pool, "single-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let result = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
+    assert_eq!(result.total_deduplicated_size, 250_000);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn storage_breakdown(pool: PgPool) {
+    let client = db::insert_client(&pool, "brk-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let breakdown = db::get_storage_breakdown(&pool).await.unwrap();
+    assert_eq!(breakdown.len(), 1);
+    assert_eq!(breakdown[0].name, "test-repo");
+    assert_eq!(breakdown[0].deduplicated_size, 250_000);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn storage_breakdown_by_host(pool: PgPool) {
+    let client = db::insert_client(&pool, "brk-host-h", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let breakdown = db::get_storage_breakdown_by_host(&pool).await.unwrap();
+    assert!(!breakdown.is_empty());
+    assert_eq!(breakdown[0].name, "brk-host-h");
+    assert_eq!(breakdown[0].deduplicated_size, 250_000);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn storage_breakdown_by_server(pool: PgPool) {
+    let client = db::insert_client(&pool, "brk-host-s", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let breakdown = db::get_storage_breakdown_by_server(&pool).await.unwrap();
+    assert!(!breakdown.is_empty());
+    assert_eq!(breakdown[0].name, "storage.local");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn dashboard_summary(pool: PgPool) {
+    let (client, repo, _) = create_test_schedule(&pool).await;
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let summary = db::get_dashboard_summary(&pool).await.unwrap();
+    assert_eq!(summary.total_clients, 1);
+    assert_eq!(summary.total_repos, 1);
+    assert_eq!(summary.total_schedules, 1);
+    assert_eq!(summary.active_schedules, 1);
+    assert!(summary.last_backup_at.is_some());
+    assert_eq!(summary.success_30d, 1);
+    assert_eq!(summary.failed_30d, 0);
+    assert_eq!(summary.total_30d, 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn dashboard_summary_empty(pool: PgPool) {
+    let summary = db::get_dashboard_summary(&pool).await.unwrap();
+    assert_eq!(summary.total_clients, 0);
+    assert_eq!(summary.total_repos, 0);
+    assert_eq!(summary.total_storage_bytes, 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn user_crud(pool: PgPool) {
+    let user = db::insert_user(&pool, "testuser", "hashed_pw", "admin")
+        .await
+        .unwrap();
+    assert_eq!(user.username, "testuser");
+    assert_eq!(user.role, "admin");
+    assert!(!user.must_change_password);
+
+    let fetched = db::get_user_by_username(&pool, "testuser").await.unwrap();
+    assert_eq!(fetched.id, user.id);
+
+    let by_id = db::get_user_by_id(&pool, user.id).await.unwrap();
+    assert_eq!(by_id.username, "testuser");
+
+    let users = db::list_users(&pool).await.unwrap();
+    assert_eq!(users.len(), 1);
+
+    let count = db::user_count(&pool).await.unwrap();
+    assert_eq!(count, 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn user_password_hash(pool: PgPool) {
+    db::insert_user(&pool, "pwuser", "the_hash", "user")
+        .await
+        .unwrap();
+
+    let (user, hash) = db::get_user_password_hash(&pool, "pwuser").await.unwrap();
+    assert_eq!(user.username, "pwuser");
+    assert_eq!(hash, "the_hash");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn user_update_role(pool: PgPool) {
+    let user = db::insert_user(&pool, "roleuser", "hash", "user")
+        .await
+        .unwrap();
+
+    let updated = db::update_user_role(&pool, user.id, "admin").await.unwrap();
+    assert_eq!(updated.role, "admin");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn user_update_password(pool: PgPool) {
+    let user = db::insert_user(&pool, "passuser", "old_hash", "user")
+        .await
+        .unwrap();
+
+    db::update_user_password(&pool, user.id, "new_hash")
+        .await
+        .unwrap();
+
+    let (_, hash) = db::get_user_password_hash(&pool, "passuser").await.unwrap();
+    assert_eq!(hash, "new_hash");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn user_update_last_login(pool: PgPool) {
+    let user = db::insert_user(&pool, "loginuser", "hash", "user")
+        .await
+        .unwrap();
+
+    db::update_last_login(&pool, user.id).await.unwrap();
+
+    let fetched = db::get_user_by_id(&pool, user.id).await.unwrap();
+    assert!(fetched.last_login_at.is_some());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn user_delete(pool: PgPool) {
+    let user = db::insert_user(&pool, "deluser", "hash", "user")
+        .await
+        .unwrap();
+
+    db::delete_user(&pool, user.id).await.unwrap();
+
+    let result = db::get_user_by_id(&pool, user.id).await;
+    assert!(result.is_err());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn user_preferences(pool: PgPool) {
+    let user = db::insert_user(&pool, "prefuser", "hash", "user")
+        .await
+        .unwrap();
+
+    let prefs = serde_json::json!({"theme": "dark", "lang": "en"});
+    db::set_user_preferences(&pool, user.id, &prefs)
+        .await
+        .unwrap();
+
+    let fetched = db::get_user_preferences(&pool, user.id).await.unwrap();
+    assert_eq!(fetched["theme"], "dark");
+    assert_eq!(fetched["lang"], "en");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_crud(pool: PgPool) {
+    let user = db::insert_user(&pool, "sessuser", "hash", "user")
+        .await
+        .unwrap();
+
+    let expires = Utc::now() + Duration::hours(24);
+    db::insert_session(&pool, "sess_abc123", user.id, expires)
+        .await
+        .unwrap();
+
+    let session = db::get_session(&pool, "sess_abc123").await.unwrap();
+    assert_eq!(session.user_id, user.id);
+    assert_eq!(session.id, "sess_abc123");
+
+    db::delete_session(&pool, "sess_abc123").await.unwrap();
+
+    let result = db::get_session(&pool, "sess_abc123").await;
+    assert!(result.is_err());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_expired(pool: PgPool) {
+    let user = db::insert_user(&pool, "expuser", "hash", "user")
+        .await
+        .unwrap();
+
+    let expired = Utc::now() - Duration::hours(1);
+    db::insert_session(&pool, "sess_expired", user.id, expired)
+        .await
+        .unwrap();
+
+    let result = db::get_session(&pool, "sess_expired").await;
+    assert!(result.is_err());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_delete_expired(pool: PgPool) {
+    let user = db::insert_user(&pool, "cleanuser", "hash", "user")
+        .await
+        .unwrap();
+
+    let expired = Utc::now() - Duration::hours(1);
+    db::insert_session(&pool, "sess_old", user.id, expired)
+        .await
+        .unwrap();
+
+    let deleted = db::delete_expired_sessions(&pool).await.unwrap();
+    assert_eq!(deleted, 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn login_attempts(pool: PgPool) {
+    db::insert_login_attempt(&pool, "user1", "192.168.1.1", false)
+        .await
+        .unwrap();
+    db::insert_login_attempt(&pool, "user1", "192.168.1.1", false)
+        .await
+        .unwrap();
+    db::insert_login_attempt(&pool, "user1", "192.168.1.1", true)
+        .await
+        .unwrap();
+
+    let count = db::count_failed_login_attempts(&pool, "user1", "192.168.1.1", 60)
+        .await
+        .unwrap();
+    assert_eq!(count, 2);
+
+    let count_other_ip = db::count_failed_login_attempts(&pool, "user1", "10.0.0.1", 60)
+        .await
+        .unwrap();
+    assert_eq!(count_other_ip, 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn api_token_crud(pool: PgPool) {
+    let user = db::insert_user(&pool, "tokenuser", "hash", "user")
+        .await
+        .unwrap();
+
+    let token = db::insert_api_token(&pool, user.id, "My Token", "token_hash_abc")
+        .await
+        .unwrap();
+    assert_eq!(token.name, "My Token");
+    assert_eq!(token.user_id, user.id);
+
+    let tokens = db::list_api_tokens_for_user(&pool, user.id).await.unwrap();
+    assert_eq!(tokens.len(), 1);
+
+    let all_tokens = db::list_all_api_tokens(&pool).await.unwrap();
+    assert_eq!(all_tokens.len(), 1);
+
+    let owner = db::get_api_token_owner(&pool, token.id).await.unwrap();
+    assert_eq!(owner, user.id);
+
+    let lookup = db::get_user_by_token_hash(&pool, "token_hash_abc")
+        .await
+        .unwrap();
+    assert_eq!(lookup.user_id, user.id);
+
+    db::update_api_token_last_used(&pool, "token_hash_abc")
+        .await
+        .unwrap();
+
+    db::delete_api_token(&pool, token.id).await.unwrap();
+    let tokens = db::list_api_tokens_for_user(&pool, user.id).await.unwrap();
+    assert!(tokens.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_permissions_crud(pool: PgPool) {
+    let user = db::insert_user(&pool, "permuser", "hash", "user")
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    let perm = db::upsert_repo_permission(
+        &pool,
+        &UpsertRepoPermissionParams {
+            user_id: user.id,
+            repo_id: repo.id,
+            can_view: true,
+            can_backup: true,
+            can_modify_schedules: false,
+            can_extract: false,
+            can_delete: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(perm.can_view);
+    assert!(perm.can_backup);
+    assert!(!perm.can_delete);
+
+    let fetched = db::get_repo_permission(&pool, user.id, repo.id)
+        .await
+        .unwrap();
+    assert!(fetched.is_some());
+
+    let upserted = db::upsert_repo_permission(
+        &pool,
+        &UpsertRepoPermissionParams {
+            user_id: user.id,
+            repo_id: repo.id,
+            can_view: true,
+            can_backup: true,
+            can_modify_schedules: true,
+            can_extract: true,
+            can_delete: true,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(upserted.can_delete);
+    assert!(upserted.can_modify_schedules);
+
+    let by_user = db::list_repo_permissions_for_user(&pool, user.id)
+        .await
+        .unwrap();
+    assert_eq!(by_user.len(), 1);
+
+    let by_repo = db::list_repo_permissions_for_repo(&pool, repo.id)
+        .await
+        .unwrap();
+    assert_eq!(by_repo.len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn system_events_crud(pool: PgPool) {
+    db::insert_system_event(&pool, "backup_complete", Some("host-1"), "Backup finished")
+        .await
+        .unwrap();
+    db::insert_system_event(&pool, "error", None, "Something failed")
+        .await
+        .unwrap();
+
+    let events = db::get_system_events(&pool, 10).await.unwrap();
+    assert_eq!(events.len(), 2);
+
+    let future = Utc::now() + Duration::hours(1);
+    let deleted = db::delete_system_events_before(&pool, future)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 2);
+
+    let events = db::get_system_events(&pool, 10).await.unwrap();
+    assert!(events.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn system_settings_crud(pool: PgPool) {
+    let val = db::get_setting(&pool, "ssh_public_key").await.unwrap();
+    assert!(val.is_none());
+
+    db::set_setting(&pool, "ssh_public_key", "ssh-ed25519 AAAA...")
+        .await
+        .unwrap();
+
+    let val = db::get_setting(&pool, "ssh_public_key").await.unwrap();
+    assert_eq!(val.as_deref(), Some("ssh-ed25519 AAAA..."));
+
+    db::set_setting(&pool, "ssh_public_key", "updated_key")
+        .await
+        .unwrap();
+
+    let val = db::get_setting(&pool, "ssh_public_key").await.unwrap();
+    assert_eq!(val.as_deref(), Some("updated_key"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn tags_crud(pool: PgPool) {
+    let tag = db::insert_tag(&pool, "production", "#ff0000", "repo")
+        .await
+        .unwrap();
+    assert_eq!(tag.name, "production");
+    assert_eq!(tag.color, "#ff0000");
+    assert_eq!(tag.scope, "repo");
+
+    let tags = db::list_tags(&pool, "repo").await.unwrap();
+    assert_eq!(tags.len(), 1);
+
+    let host_tags = db::list_tags(&pool, "host").await.unwrap();
+    assert!(host_tags.is_empty());
+
+    db::delete_tag(&pool, tag.id).await.unwrap();
+    let tags = db::list_tags(&pool, "repo").await.unwrap();
+    assert!(tags.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_tags_assignment(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    let tag1 = db::insert_tag(&pool, "env:prod", "#f00", "repo")
+        .await
+        .unwrap();
+    let tag2 = db::insert_tag(&pool, "env:dev", "#0f0", "repo")
+        .await
+        .unwrap();
+
+    db::set_repo_tags(&pool, repo.id, &[tag1.id, tag2.id])
+        .await
+        .unwrap();
+
+    let tags = db::list_tags_for_repo(&pool, repo.id).await.unwrap();
+    assert_eq!(tags.len(), 2);
+
+    let all_repo_tags = db::list_all_repo_tags(&pool).await.unwrap();
+    assert_eq!(all_repo_tags.len(), 2);
+
+    db::set_repo_tags(&pool, repo.id, &[tag1.id]).await.unwrap();
+    let tags = db::list_tags_for_repo(&pool, repo.id).await.unwrap();
+    assert_eq!(tags.len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn host_tags_assignment(pool: PgPool) {
+    let client = db::insert_client(&pool, "tagged-host", None, "hash", None)
+        .await
+        .unwrap();
+    let tag = db::insert_tag(&pool, "critical", "#f00", "host")
+        .await
+        .unwrap();
+
+    db::set_host_tags(&pool, client.id, &[tag.id])
+        .await
+        .unwrap();
+
+    let tags = db::list_tags_for_host(&pool, client.id).await.unwrap();
+    assert_eq!(tags.len(), 1);
+    assert_eq!(tags[0].name, "critical");
+
+    let all = db::list_all_host_tags(&pool).await.unwrap();
+    assert_eq!(all.len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn groups_crud(pool: PgPool) {
+    let group = db::insert_group(&pool, "engineering", Some("Dev team"))
+        .await
+        .unwrap();
+    assert_eq!(group.name, "engineering");
+    assert_eq!(group.description.as_deref(), Some("Dev team"));
+
+    let fetched = db::get_group(&pool, group.id).await.unwrap();
+    assert!(fetched.is_some());
+
+    let updated = db::update_group(&pool, group.id, "eng", Some("Engineering"))
+        .await
+        .unwrap();
+    assert_eq!(updated.name, "eng");
+
+    let groups = db::list_groups(&pool).await.unwrap();
+    assert_eq!(groups.len(), 1);
+
+    db::delete_group(&pool, group.id).await.unwrap();
+    let groups = db::list_groups(&pool).await.unwrap();
+    assert!(groups.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn group_members(pool: PgPool) {
+    let user1 = db::insert_user(&pool, "grp-user1", "hash", "user")
+        .await
+        .unwrap();
+    let user2 = db::insert_user(&pool, "grp-user2", "hash", "user")
+        .await
+        .unwrap();
+    let group = db::insert_group(&pool, "team", None).await.unwrap();
+
+    db::set_group_members(&pool, group.id, &[user1.id, user2.id])
+        .await
+        .unwrap();
+
+    let members = db::list_group_members(&pool, group.id).await.unwrap();
+    assert_eq!(members.len(), 2);
+
+    let user_groups = db::list_user_groups(&pool, user1.id).await.unwrap();
+    assert_eq!(user_groups.len(), 1);
+    assert_eq!(user_groups[0].name, "team");
+
+    let shared = db::user_shares_group_with(&pool, user1.id, user2.id)
+        .await
+        .unwrap();
+    assert!(shared);
+
+    let user3 = db::insert_user(&pool, "grp-user3", "hash", "user")
+        .await
+        .unwrap();
+    let not_shared = db::user_shares_group_with(&pool, user1.id, user3.id)
+        .await
+        .unwrap();
+    assert!(!not_shared);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn roles_crud(pool: PgPool) {
+    let initial_roles = db::list_roles(&pool).await.unwrap();
+    let initial_count = initial_roles.len();
+
+    let role = db::insert_role(
+        &pool,
+        &InsertRoleParams {
+            name: "test-operator",
+            can_create_client: true,
+            can_delete_client: false,
+            can_delete_own_client: true,
+            can_create_repo: true,
+            can_delete_repo: false,
+            can_delete_own_repo: true,
+            can_create_schedule: true,
+            can_delete_schedule: false,
+            can_delete_own_schedule: true,
+            can_manage_tags: false,
+            can_view_all_repos: false,
+            can_manage_tunnels: false,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(role.name, "test-operator");
+    assert!(role.can_create_client);
+    assert!(!role.can_delete_client);
+    assert!(role.can_delete_own_client);
+
+    let fetched = db::get_role(&pool, role.id).await.unwrap();
+    assert!(fetched.is_some());
+
+    let updated = db::update_role(
+        &pool,
+        role.id,
+        &InsertRoleParams {
+            name: "test-senior-operator",
+            can_create_client: true,
+            can_delete_client: true,
+            can_delete_own_client: true,
+            can_create_repo: true,
+            can_delete_repo: true,
+            can_delete_own_repo: true,
+            can_create_schedule: true,
+            can_delete_schedule: true,
+            can_delete_own_schedule: true,
+            can_manage_tags: true,
+            can_view_all_repos: true,
+            can_manage_tunnels: true,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(updated.name, "test-senior-operator");
+    assert!(updated.can_delete_client);
+    assert!(updated.can_manage_tunnels);
+
+    let roles = db::list_roles(&pool).await.unwrap();
+    assert_eq!(roles.len(), initial_count + 1);
+
+    db::delete_role(&pool, role.id).await.unwrap();
+    let roles = db::list_roles(&pool).await.unwrap();
+    assert_eq!(roles.len(), initial_count);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn user_roles_and_effective_permissions(pool: PgPool) {
+    let user = db::insert_user(&pool, "rbac-user", "hash", "user")
+        .await
+        .unwrap();
+
+    let role1 = db::insert_role(
+        &pool,
+        &InsertRoleParams {
+            name: "test-viewer",
+            can_create_client: false,
+            can_delete_client: false,
+            can_delete_own_client: false,
+            can_create_repo: false,
+            can_delete_repo: false,
+            can_delete_own_repo: false,
+            can_create_schedule: false,
+            can_delete_schedule: false,
+            can_delete_own_schedule: false,
+            can_manage_tags: false,
+            can_view_all_repos: true,
+            can_manage_tunnels: false,
+        },
+    )
+    .await
+    .unwrap();
+
+    let role2 = db::insert_role(
+        &pool,
+        &InsertRoleParams {
+            name: "test-creator",
+            can_create_client: true,
+            can_delete_client: false,
+            can_delete_own_client: false,
+            can_create_repo: true,
+            can_delete_repo: false,
+            can_delete_own_repo: false,
+            can_create_schedule: true,
+            can_delete_schedule: false,
+            can_delete_own_schedule: false,
+            can_manage_tags: false,
+            can_view_all_repos: false,
+            can_manage_tunnels: false,
+        },
+    )
+    .await
+    .unwrap();
+
+    db::set_user_roles(&pool, user.id, &[role1.id, role2.id])
+        .await
+        .unwrap();
+
+    let user_roles = db::list_user_roles(&pool, user.id).await.unwrap();
+    assert_eq!(user_roles.len(), 2);
+
+    let effective = db::get_effective_permissions(&pool, user.id).await.unwrap();
+    assert!(effective.can_create_client);
+    assert!(effective.can_create_repo);
+    assert!(effective.can_create_schedule);
+    assert!(effective.can_view_all_repos);
+    assert!(!effective.can_delete_client);
+    assert!(!effective.can_manage_tunnels);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repos_for_client(pool: PgPool) {
+    let (client, repo, _) = create_test_schedule(&pool).await;
+
+    let repos = db::list_repos_for_client(&pool, client.id).await.unwrap();
+    assert_eq!(repos.len(), 1);
+    assert_eq!(repos[0].id, repo.id);
+
+    let public_repos = db::list_repos_for_client_public(&pool, client.id)
+        .await
+        .unwrap();
+    assert_eq!(public_repos.len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn backup_sources_for_repo(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    sqlx::query("INSERT INTO backup_sources (repo_id, path, sort_order) VALUES ($1, $2, $3)")
+        .bind(repo.id)
+        .bind("/data")
+        .bind(1_i32)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let sources = db::list_backup_sources_for_repo(&pool, repo.id)
+        .await
+        .unwrap();
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0], "/data");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn ssh_tunnel_crud(pool: PgPool) {
+    use server::error::ApiError;
+
+    let client = db::insert_client(&pool, "tun-host-1", None, "tun-token-1", None)
+        .await
+        .unwrap();
+    let client_2 = db::insert_client(&pool, "tun-host-2", None, "tun-token-2", None)
+        .await
+        .unwrap();
+
+    let tunnel = db::insert_tunnel(
+        &pool,
+        &db::NewSshTunnel {
+            client_id: client.id,
+            ssh_host: "repo.example.com".to_string(),
+            ssh_user: "borg".to_string(),
+            ssh_port: Some(2222),
+            tunnel_port: 2200,
+            enabled: Some(true),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(tunnel.client_id, client.id);
+    assert_eq!(tunnel.ssh_host, "repo.example.com");
+    assert_eq!(tunnel.ssh_user, "borg");
+    assert_eq!(tunnel.ssh_port, 2222);
+    assert_eq!(tunnel.tunnel_port, 2200);
+    assert!(tunnel.enabled);
+
+    let by_id = db::get_tunnel_by_id(&pool, tunnel.id).await.unwrap();
+    assert_eq!(by_id.id, tunnel.id);
+
+    let by_client_id = db::get_tunnel_by_client_id(&pool, client.id).await.unwrap();
+    assert_eq!(by_client_id.id, tunnel.id);
+
+    let enabled_tunnels = db::list_enabled_tunnels(&pool).await.unwrap();
+    assert_eq!(enabled_tunnels.len(), 1);
+    assert_eq!(enabled_tunnels[0].id, tunnel.id);
+
+    let updated = db::update_tunnel(
+        &pool,
+        tunnel.id,
+        &db::UpdateSshTunnel {
+            ssh_host: Some("repo.internal".to_string()),
+            ssh_user: None,
+            ssh_port: Some(2022),
+            tunnel_port: Some(2201),
+            enabled: Some(false),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(updated.ssh_host, "repo.internal");
+    assert_eq!(updated.ssh_user, "borg");
+    assert_eq!(updated.ssh_port, 2022);
+    assert_eq!(updated.tunnel_port, 2201);
+    assert!(!updated.enabled);
+
+    let all_tunnels = db::list_all_tunnels(&pool).await.unwrap();
+    assert_eq!(all_tunnels.len(), 1);
+    assert_eq!(all_tunnels[0].id, tunnel.id);
+
+    db::delete_tunnel(&pool, tunnel.id).await.unwrap();
+    assert!(matches!(
+        db::get_tunnel_by_id(&pool, tunnel.id).await,
+        Err(ApiError::NotFound(_))
+    ));
+
+    let tunnel_2 = db::insert_tunnel(
+        &pool,
+        &db::NewSshTunnel {
+            client_id: client_2.id,
+            ssh_host: "repo2.example.com".to_string(),
+            ssh_user: "borg".to_string(),
+            ssh_port: None,
+            tunnel_port: 2300,
+            enabled: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    db::delete_client(&pool, "tun-host-2").await.unwrap();
+    assert!(matches!(
+        db::get_tunnel_by_id(&pool, tunnel_2.id).await,
+        Err(ApiError::NotFound(_))
+    ));
+}

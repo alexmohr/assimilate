@@ -1,0 +1,739 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+use std::{path::PathBuf, sync::Arc, time::Duration};
+
+use russh::{
+    client,
+    keys::{PrivateKey, PublicKey, key::PrivateKeyWithHashAlg},
+};
+use russh_sftp::client::SftpSession;
+use serde::{Deserialize, Serialize};
+use tracing::{info, warn};
+
+#[derive(Debug, thiserror::Error)]
+pub enum SshError {
+    #[error("SSH connection failed: {0}")]
+    Connection(String),
+    #[error("SSH authentication failed: {0}")]
+    Auth(String),
+    #[error("SFTP error: {0}")]
+    Sftp(String),
+    #[error("command execution failed: {0}")]
+    Exec(String),
+    #[error("server public key not found at {0}")]
+    PublicKeyNotFound(PathBuf),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct TestConnectionRequest {
+    pub ssh_host: String,
+    #[serde(default = "default_ssh_user")]
+    pub ssh_user: String,
+    pub ssh_port: Option<u16>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct TestConnectionResponse {
+    pub ssh_ok: bool,
+    pub borg_installed: bool,
+    pub borg_version: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct DeployKeyRequest {
+    pub ssh_host: String,
+    #[serde(default = "default_ssh_user")]
+    pub ssh_user: String,
+    pub ssh_port: Option<u16>,
+    pub password: String,
+    #[serde(default = "default_use_sftp")]
+    pub use_sftp: bool,
+}
+
+fn default_ssh_user() -> String {
+    "root".to_string()
+}
+
+fn default_use_sftp() -> bool {
+    true
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct DeployKeyResponse {
+    pub success: bool,
+    pub already_deployed: bool,
+    pub error: Option<String>,
+}
+
+struct SshClientHandler;
+
+impl client::Handler for SshClientHandler {
+    type Error = russh::Error;
+
+    async fn check_server_key(
+        &mut self,
+        _server_public_key: &PublicKey,
+    ) -> Result<bool, Self::Error> {
+        // Accept all host keys (similar to StrictHostKeyChecking=accept-new)
+        Ok(true)
+    }
+}
+
+fn ssh_config() -> Arc<client::Config> {
+    Arc::new(client::Config {
+        inactivity_timeout: Some(Duration::from_secs(30)),
+        ..client::Config::default()
+    })
+}
+
+pub fn read_server_public_key() -> Result<String, SshError> {
+    let ssh_key_dir = std::env::var("SSH_KEY_DIR").unwrap_or_else(|_| "/ssh-keys".to_string());
+    let pub_key_path = PathBuf::from(&ssh_key_dir).join("id_ed25519.pub");
+
+    std::fs::read_to_string(&pub_key_path)
+        .map(|s| s.trim().to_string())
+        .map_err(|_| SshError::PublicKeyNotFound(pub_key_path))
+}
+
+pub fn load_server_private_key() -> Result<PrivateKey, SshError> {
+    let ssh_key_dir = std::env::var("SSH_KEY_DIR").unwrap_or_else(|_| "/ssh-keys".to_string());
+    let key_path = PathBuf::from(&ssh_key_dir).join("id_ed25519");
+
+    let key_data = std::fs::read_to_string(&key_path)
+        .map_err(|_| SshError::PublicKeyNotFound(key_path.clone()))?;
+
+    russh::keys::decode_secret_key(&key_data, None).map_err(|e| {
+        SshError::Auth(format!(
+            "failed to decode private key at {}: {e}",
+            key_path.display()
+        ))
+    })
+}
+
+async fn connect_with_key(
+    host: &str,
+    user: &str,
+    port: u16,
+) -> Result<client::Handle<SshClientHandler>, SshError> {
+    let config = ssh_config();
+    let handler = SshClientHandler;
+
+    let mut session = client::connect(config, (host, port), handler)
+        .await
+        .map_err(|e| SshError::Connection(format!("{host}:{port}: {e}")))?;
+
+    let key = load_server_private_key()?;
+    let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), None);
+
+    let auth_result = session
+        .authenticate_publickey(user, key_with_alg)
+        .await
+        .map_err(|e| SshError::Auth(e.to_string()))?;
+
+    if !auth_result.success() {
+        return Err(SshError::Auth(
+            "public key authentication rejected".to_string(),
+        ));
+    }
+
+    Ok(session)
+}
+
+async fn connect_with_password(
+    host: &str,
+    user: &str,
+    port: u16,
+    password: &str,
+) -> Result<client::Handle<SshClientHandler>, SshError> {
+    let config = ssh_config();
+    let handler = SshClientHandler;
+
+    let mut session = client::connect(config, (host, port), handler)
+        .await
+        .map_err(|e| SshError::Connection(format!("{host}:{port}: {e}")))?;
+
+    let auth_result = session
+        .authenticate_password(user, password)
+        .await
+        .map_err(|e| SshError::Auth(e.to_string()))?;
+
+    if !auth_result.success() {
+        return Err(SshError::Auth("password authentication failed".to_string()));
+    }
+
+    Ok(session)
+}
+
+async fn open_sftp(session: &client::Handle<SshClientHandler>) -> Result<SftpSession, SshError> {
+    let channel = session
+        .channel_open_session()
+        .await
+        .map_err(|e| SshError::Sftp(format!("failed to open channel: {e}")))?;
+
+    channel
+        .request_subsystem(true, "sftp")
+        .await
+        .map_err(|e| SshError::Sftp(format!("failed to request sftp subsystem: {e}")))?;
+
+    SftpSession::new(channel.into_stream())
+        .await
+        .map_err(|e| SshError::Sftp(format!("failed to init sftp session: {e}")))
+}
+
+async fn exec_command(
+    session: &client::Handle<SshClientHandler>,
+    command: &str,
+) -> Result<(u32, String, String), SshError> {
+    let mut channel = session
+        .channel_open_session()
+        .await
+        .map_err(|e| SshError::Exec(format!("failed to open channel: {e}")))?;
+
+    channel
+        .exec(true, command)
+        .await
+        .map_err(|e| SshError::Exec(format!("failed to exec command: {e}")))?;
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut exit_status = 0u32;
+
+    loop {
+        let Some(msg) = channel.wait().await else {
+            break;
+        };
+        match msg {
+            russh::ChannelMsg::Data { data } => stdout.extend_from_slice(&data),
+            russh::ChannelMsg::ExtendedData { data, ext: 1 } => {
+                stderr.extend_from_slice(&data);
+            }
+            russh::ChannelMsg::ExitStatus { exit_status: code } => exit_status = code,
+            _ => {}
+        }
+    }
+
+    Ok((
+        exit_status,
+        String::from_utf8_lossy(&stdout).into_owned(),
+        String::from_utf8_lossy(&stderr).into_owned(),
+    ))
+}
+
+pub async fn test_connection(req: &TestConnectionRequest) -> TestConnectionResponse {
+    let port = req.ssh_port.unwrap_or(22);
+
+    let session = match connect_with_key(&req.ssh_host, &req.ssh_user, port).await {
+        Ok(s) => s,
+        Err(e) => {
+            return TestConnectionResponse {
+                ssh_ok: false,
+                borg_installed: false,
+                borg_version: None,
+                error: Some(e.to_string()),
+            };
+        }
+    };
+
+    let (exit_code, stdout, _stderr) = match exec_command(&session, "borg --version").await {
+        Ok(result) => result,
+        Err(e) => {
+            return TestConnectionResponse {
+                ssh_ok: true,
+                borg_installed: false,
+                borg_version: None,
+                error: Some(format!("SSH ok, but failed to check borg: {e}")),
+            };
+        }
+    };
+
+    if exit_code == 0 {
+        let version = stdout.trim().to_string();
+        info!(host = %req.ssh_host, version = %version, "connection test: borg found");
+        TestConnectionResponse {
+            ssh_ok: true,
+            borg_installed: true,
+            borg_version: Some(version),
+            error: None,
+        }
+    } else {
+        TestConnectionResponse {
+            ssh_ok: true,
+            borg_installed: false,
+            borg_version: None,
+            error: None,
+        }
+    }
+}
+
+pub async fn deploy_key(req: &DeployKeyRequest) -> DeployKeyResponse {
+    let port = req.ssh_port.unwrap_or(22);
+
+    if connect_with_key(&req.ssh_host, &req.ssh_user, port)
+        .await
+        .is_ok()
+    {
+        info!(host = %req.ssh_host, "key already deployed");
+        return DeployKeyResponse {
+            success: true,
+            already_deployed: true,
+            error: None,
+        };
+    }
+
+    let our_key = match read_server_public_key() {
+        Ok(k) => k,
+        Err(e) => {
+            return DeployKeyResponse {
+                success: false,
+                already_deployed: false,
+                error: Some(e.to_string()),
+            };
+        }
+    };
+
+    let session =
+        match connect_with_password(&req.ssh_host, &req.ssh_user, port, &req.password).await {
+            Ok(s) => s,
+            Err(e) => {
+                return DeployKeyResponse {
+                    success: false,
+                    already_deployed: false,
+                    error: Some(e.to_string()),
+                };
+            }
+        };
+
+    let deploy_result = if req.use_sftp {
+        deploy_key_sftp(&session, &our_key).await
+    } else {
+        deploy_key_shell(&session, &our_key).await
+    };
+
+    if let Err(e) = deploy_result {
+        return DeployKeyResponse {
+            success: false,
+            already_deployed: false,
+            error: Some(e.to_string()),
+        };
+    }
+
+    match connect_with_key(&req.ssh_host, &req.ssh_user, port).await {
+        Ok(_) => {
+            info!(host = %req.ssh_host, "key deployed and verified");
+            DeployKeyResponse {
+                success: true,
+                already_deployed: false,
+                error: None,
+            }
+        }
+        Err(e) => {
+            warn!(host = %req.ssh_host, error = %e, "key deployed but verification failed");
+            DeployKeyResponse {
+                success: false,
+                already_deployed: false,
+                error: Some(format!("key was uploaded but verification failed: {e}")),
+            }
+        }
+    }
+}
+
+async fn deploy_key_sftp(
+    session: &client::Handle<SshClientHandler>,
+    public_key: &str,
+) -> Result<(), SshError> {
+    let sftp = open_sftp(session).await?;
+
+    if let Err(e) = sftp.create_dir(".ssh").await {
+        tracing::debug!(error = %e, "sftp create_dir .ssh failed (may already exist)");
+    }
+
+    let existing = match sftp.read(".ssh/authorized_keys").await {
+        Ok(data) => String::from_utf8_lossy(&data).into_owned(),
+        Err(e) => {
+            tracing::debug!(error = %e, "reading .ssh/authorized_keys failed (may not exist)");
+            String::new()
+        }
+    };
+
+    if existing.contains(public_key) {
+        return Ok(());
+    }
+
+    let new_content = if existing.is_empty() {
+        format!("{public_key}\n")
+    } else {
+        format!("{}\n{public_key}\n", existing.trim_end())
+    };
+
+    sftp.write(".ssh/authorized_keys", new_content.as_bytes())
+        .await
+        .map_err(|e| SshError::Sftp(format!("failed to write authorized_keys: {e}")))?;
+
+    Ok(())
+}
+
+async fn deploy_key_shell(
+    session: &client::Handle<SshClientHandler>,
+    public_key: &str,
+) -> Result<(), SshError> {
+    let mut channel = session
+        .channel_open_session()
+        .await
+        .map_err(|e| SshError::Exec(format!("failed to open channel: {e}")))?;
+
+    channel
+        .exec(true, "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys")
+        .await
+        .map_err(|e| SshError::Exec(format!("failed to exec: {e}")))?;
+
+    channel
+        .data(format!("{public_key}\n").as_bytes())
+        .await
+        .map_err(|e| SshError::Exec(format!("failed to send key data: {e}")))?;
+
+    channel
+        .eof()
+        .await
+        .map_err(|e| SshError::Exec(format!("failed to send eof: {e}")))?;
+
+    loop {
+        let Some(msg) = channel.wait().await else {
+            break;
+        };
+        if let russh::ChannelMsg::ExitStatus { exit_status } = msg
+            && exit_status != 0
+        {
+            return Err(SshError::Exec(format!(
+                "shell deploy command exited with status {exit_status}"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct ListDirRequest {
+    pub ssh_host: String,
+    #[serde(default = "default_ssh_user")]
+    pub ssh_user: String,
+    pub ssh_port: Option<u16>,
+    pub path: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct DirEntryInfo {
+    pub name: String,
+    pub is_dir: bool,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ListDirResponse {
+    pub path: String,
+    pub entries: Vec<DirEntryInfo>,
+    pub error: Option<String>,
+}
+
+pub async fn list_dir(req: &ListDirRequest) -> ListDirResponse {
+    let port = req.ssh_port.unwrap_or(22);
+    let path = if req.path.is_empty() { "/" } else { &req.path };
+
+    let session = match connect_with_key(&req.ssh_host, &req.ssh_user, port).await {
+        Ok(s) => s,
+        Err(e) => {
+            return ListDirResponse {
+                path: path.to_string(),
+                entries: Vec::new(),
+                error: Some(e.to_string()),
+            };
+        }
+    };
+
+    let sftp = match open_sftp(&session).await {
+        Ok(s) => s,
+        Err(e) => {
+            return ListDirResponse {
+                path: path.to_string(),
+                entries: Vec::new(),
+                error: Some(e.to_string()),
+            };
+        }
+    };
+
+    let canonical = sftp
+        .canonicalize(path.to_string())
+        .await
+        .unwrap_or_else(|_| path.to_string());
+
+    let read_dir = match sftp.read_dir(canonical.clone()).await {
+        Ok(rd) => rd,
+        Err(e) => {
+            return ListDirResponse {
+                path: canonical,
+                entries: Vec::new(),
+                error: Some(format!("failed to read directory: {e}")),
+            };
+        }
+    };
+
+    let mut entries: Vec<DirEntryInfo> = read_dir
+        .map(|entry| DirEntryInfo {
+            name: entry.file_name(),
+            is_dir: entry.file_type().is_dir(),
+        })
+        .collect();
+
+    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
+
+    ListDirResponse {
+        path: canonical,
+        entries,
+        error: None,
+    }
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct MkdirRequest {
+    pub ssh_host: String,
+    #[serde(default = "default_ssh_user")]
+    pub ssh_user: String,
+    pub ssh_port: Option<u16>,
+    pub path: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MkdirResponse {
+    pub success: bool,
+    pub path: String,
+    pub error: Option<String>,
+}
+
+pub async fn mkdir(req: &MkdirRequest) -> MkdirResponse {
+    let port = req.ssh_port.unwrap_or(22);
+    let path = if req.path.is_empty() {
+        return MkdirResponse {
+            success: false,
+            path: String::new(),
+            error: Some("path must not be empty".to_string()),
+        };
+    } else {
+        &req.path
+    };
+
+    let session = match connect_with_key(&req.ssh_host, &req.ssh_user, port).await {
+        Ok(s) => s,
+        Err(e) => {
+            return MkdirResponse {
+                success: false,
+                path: path.to_string(),
+                error: Some(e.to_string()),
+            };
+        }
+    };
+
+    let sftp = match open_sftp(&session).await {
+        Ok(s) => s,
+        Err(e) => {
+            return MkdirResponse {
+                success: false,
+                path: path.to_string(),
+                error: Some(e.to_string()),
+            };
+        }
+    };
+
+    if let Err(e) = sftp.create_dir(path.to_string()).await {
+        return MkdirResponse {
+            success: false,
+            path: path.to_string(),
+            error: Some(format!("failed to create directory: {e}")),
+        };
+    }
+
+    let canonical = sftp
+        .canonicalize(path.to_string())
+        .await
+        .unwrap_or_else(|_| path.to_string());
+
+    MkdirResponse {
+        success: true,
+        path: canonical,
+        error: None,
+    }
+}
+
+pub struct DeployAgentParams<'a> {
+    pub host: &'a str,
+    pub user: &'a str,
+    pub port: u16,
+    pub local_binary: &'a std::path::Path,
+    pub remote_path: &'a str,
+    pub server_url: &'a str,
+    pub token: &'a str,
+    pub use_sudo: bool,
+    pub sudo_password: Option<&'a str>,
+    pub systemd_service_content: Option<&'a str>,
+}
+
+fn default_unit_content(remote_path: &str, server_url: &str, token: &str) -> String {
+    format!(
+        "\
+[Unit]
+Description=Assimilate Backup Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={remote_path}
+Environment=BORG_SERVER_URL={server_url}
+Environment=BORG_AGENT_TOKEN={token}
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+"
+    )
+}
+
+async fn exec_sudo_command(
+    session: &client::Handle<SshClientHandler>,
+    command: &str,
+    password: Option<&str>,
+) -> Result<(u32, String, String), SshError> {
+    let sudo_cmd = match password {
+        Some(pw) => format!(
+            "echo {} | sudo -S sh -c {}",
+            shell_escape(pw),
+            shell_escape(command)
+        ),
+        None => format!("sudo sh -c {}", shell_escape(command)),
+    };
+    exec_command(session, &sudo_cmd).await
+}
+
+fn shell_escape(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+fn inject_env_vars(content: &str, server_url: &str, token: &str) -> String {
+    let mut result = content.to_string();
+
+    let url_placeholder = "BORG_SERVER_URL=<will be set automatically>";
+    let token_placeholder = "BORG_AGENT_TOKEN=<will be set automatically>";
+
+    if result.contains(url_placeholder) {
+        result = result.replace(url_placeholder, &format!("BORG_SERVER_URL={server_url}"));
+    } else if !result.contains("BORG_SERVER_URL=") {
+        result = result.replace(
+            "[Service]\n",
+            &format!("[Service]\nEnvironment=BORG_SERVER_URL={server_url}\n"),
+        );
+    }
+
+    if result.contains(token_placeholder) {
+        result = result.replace(token_placeholder, &format!("BORG_AGENT_TOKEN={token}"));
+    } else if !result.contains("BORG_AGENT_TOKEN=") {
+        result = result.replace(
+            "[Service]\n",
+            &format!("[Service]\nEnvironment=BORG_AGENT_TOKEN={token}\n"),
+        );
+    }
+
+    result
+}
+
+pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError> {
+    let session = connect_with_key(params.host, params.user, params.port).await?;
+    let sftp = open_sftp(&session).await?;
+
+    let binary_data = tokio::fs::read(params.local_binary).await.map_err(|e| {
+        SshError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("failed to read agent binary: {e}"),
+        ))
+    })?;
+
+    // SFTP runs as unprivileged user; upload to /tmp then sudo-move to target
+    let upload_path = if params.use_sudo {
+        format!("/tmp/assimilate-agent-{}", std::process::id())
+    } else {
+        params.remote_path.to_string()
+    };
+
+    sftp.write(upload_path.clone(), &binary_data)
+        .await
+        .map_err(|e| SshError::Sftp(format!("failed to upload agent binary: {e}")))?;
+
+    if params.use_sudo {
+        let move_cmd = format!(
+            "mv {} {} && chmod +x {}",
+            upload_path, params.remote_path, params.remote_path
+        );
+        let (exit_code, _, stderr) =
+            exec_sudo_command(&session, &move_cmd, params.sudo_password).await?;
+        if exit_code != 0 {
+            return Err(SshError::Exec(format!(
+                "sudo mv/chmod failed (exit {exit_code}): {stderr}"
+            )));
+        }
+    } else {
+        let chmod_cmd = format!("chmod +x {}", params.remote_path);
+        let (exit_code, _, stderr) = exec_command(&session, &chmod_cmd).await?;
+        if exit_code != 0 {
+            return Err(SshError::Exec(format!(
+                "chmod failed (exit {exit_code}): {stderr}"
+            )));
+        }
+    }
+
+    let unit_content = params.systemd_service_content.map_or_else(
+        || default_unit_content(params.remote_path, params.server_url, params.token),
+        |custom| inject_env_vars(custom, params.server_url, params.token),
+    );
+
+    let unit_path = "/etc/systemd/system/assimilate-agent.service";
+    let write_cmd = format!("cat > {unit_path} << 'ASSIMILATE_EOF'\n{unit_content}ASSIMILATE_EOF");
+
+    if params.use_sudo {
+        let (exit_code, _, stderr) =
+            exec_sudo_command(&session, &write_cmd, params.sudo_password).await?;
+        if exit_code != 0 {
+            return Err(SshError::Exec(format!(
+                "failed to write systemd unit via sudo (exit {exit_code}): {stderr}"
+            )));
+        }
+
+        let enable_cmd = "systemctl daemon-reload && systemctl enable --now assimilate-agent";
+        let (exit_code, _, stderr) =
+            exec_sudo_command(&session, enable_cmd, params.sudo_password).await?;
+        if exit_code != 0 {
+            return Err(SshError::Exec(format!(
+                "systemctl enable/start via sudo failed (exit {exit_code}): {stderr}"
+            )));
+        }
+    } else {
+        let (exit_code, _, stderr) = exec_command(&session, &write_cmd).await?;
+        if exit_code != 0 {
+            return Err(SshError::Exec(format!(
+                "failed to write systemd unit (exit {exit_code}): {stderr}"
+            )));
+        }
+
+        let enable_cmd = "systemctl daemon-reload && systemctl enable --now assimilate-agent";
+        let (exit_code, _, stderr) = exec_command(&session, enable_cmd).await?;
+        if exit_code != 0 {
+            return Err(SshError::Exec(format!(
+                "systemctl enable/start failed (exit {exit_code}): {stderr}"
+            )));
+        }
+    }
+
+    info!(host = %params.host, "agent deployed and service started");
+    Ok(())
+}

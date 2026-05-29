@@ -18,6 +18,12 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 * This validates formatting, linting, license headers, secrets detection, shell scripts, markdown, and more.
 * If hooks modify files (e.g., trailing whitespace fixes), stage the changes and re-run until clean.
 
+## CI Requirements
+
+* All CI jobs MUST pass. Never exclude or skip tests to fix CI — fix the underlying issue or provide the required infrastructure (e.g., PostgreSQL service) instead.
+* Integration tests MUST always run in CI. Any job that executes tests (`cargo test`, `cargo llvm-cov`, etc.) against code with database dependencies MUST have a PostgreSQL service container configured.
+* Never use `--lib --bins` or other flags to avoid running integration tests in CI.
+
 ## Database Integration Tests
 
 The test file `crates/server/tests/db_queries.rs` runs against a real PostgreSQL instance. These tests use `#[sqlx::test(migrations = "./migrations")]` which automatically creates and drops isolated databases per test.

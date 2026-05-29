@@ -71,7 +71,7 @@ See [Scheduling](scheduling.md) for per-schedule exclude configuration.
 
 A reasonable starting set for Linux systems:
 
-```
+```text
 pp:__pycache__
 pp:.cache
 pp:node_modules

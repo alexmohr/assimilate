@@ -318,6 +318,12 @@ pre code {
   box-shadow: var(--shadow-md);
 }
 
+.hero-img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
 .screenshot-ui {
   display: flex;
   height: 340px;
@@ -816,6 +822,12 @@ pre code {
 .vs-table .no {
   color: var(--text-muted);
   text-align: center;
+}
+
+.vs-table .na {
+  color: var(--text-muted);
+  text-align: center;
+  font-style: italic;
 }
 
 @media (max-width: 640px) {

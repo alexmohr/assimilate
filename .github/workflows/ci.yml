@@ -153,6 +153,8 @@ jobs:
     name: Playwright E2E
     runs-on: ubuntu-latest
     needs: [docker]
+    env:
+      ASSIMILATE_SECRET_KEY: ci_test_key_not_real
     steps:
       - uses: actions/checkout@v4
       - name: Setup Node.js
@@ -171,8 +173,6 @@ jobs:
         run: npm run build
         working-directory: frontend
       - name: Start Docker services
-        env:
-          ASSIMILATE_SECRET_KEY: ci_test_key_not_real
         run: |
           docker compose up -d postgres server
           for i in $(seq 1 30); do
@@ -197,16 +197,14 @@ jobs:
   docker:
     name: Docker Compose (build + start)
     runs-on: ubuntu-latest
+    env:
+      ASSIMILATE_SECRET_KEY: ci_test_key_not_real
     steps:
       - uses: actions/checkout@v4
       - name: Build images
         run: docker compose build
-        env:
-          ASSIMILATE_SECRET_KEY: ci_test_key_not_real
       - name: Start services
         run: docker compose up -d postgres server
-        env:
-          ASSIMILATE_SECRET_KEY: ci_test_key_not_real
       - name: Wait for healthy
         run: |
           for i in $(seq 1 30); do

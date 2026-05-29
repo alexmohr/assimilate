@@ -92,12 +92,43 @@ async fn build_test_app(pool: PgPool) -> Router {
         .with_state(state)
 }
 
+const TEST_SESSION_ID: &str = "test-integration-session-id-00000000";
+
 async fn setup_pool() -> PgPool {
     let database_url =
         std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for integration tests");
     let pool = PgPool::connect(&database_url).await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     pool
+}
+
+async fn create_test_user_and_session(pool: &PgPool) {
+    sqlx::query("DELETE FROM sessions WHERE id = $1")
+        .bind(TEST_SESSION_ID)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM users WHERE username = 'integration-admin'")
+        .execute(pool)
+        .await
+        .unwrap();
+
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash, role) VALUES ('integration-admin', \
+         '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'admin') RETURNING id",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+
+    let expires = chrono::Utc::now() + chrono::Duration::hours(24);
+    sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3)")
+        .bind(TEST_SESSION_ID)
+        .bind(user_id)
+        .bind(expires)
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 async fn clean_tables(pool: &PgPool) {
@@ -127,18 +158,25 @@ async fn clean_tables(pool: &PgPool) {
         .unwrap();
 }
 
+fn session_cookie() -> &'static str {
+    const COOKIE_VAL: &str = const_format::concatcp!("session=", TEST_SESSION_ID);
+    COOKIE_VAL
+}
+
 fn json_request(method: &str, uri: &str, body: Option<Value>) -> Request<Body> {
     match body {
         Some(val) => Request::builder()
             .uri(uri)
             .method(method)
             .header("content-type", "application/json")
+            .header("cookie", session_cookie())
             .body(Body::from(serde_json::to_vec(&val).unwrap()))
             .unwrap(),
         None => Request::builder()
             .uri(uri)
             .method(method)
             .header("content-type", "application/json")
+            .header("cookie", session_cookie())
             .body(Body::empty())
             .unwrap(),
     }
@@ -148,6 +186,7 @@ fn get_request(uri: &str) -> Request<Body> {
     Request::builder()
         .uri(uri)
         .method("GET")
+        .header("cookie", session_cookie())
         .body(Body::empty())
         .unwrap()
 }
@@ -156,6 +195,7 @@ fn delete_request(uri: &str) -> Request<Body> {
     Request::builder()
         .uri(uri)
         .method("DELETE")
+        .header("cookie", session_cookie())
         .body(Body::empty())
         .unwrap()
 }

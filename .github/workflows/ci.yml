@@ -112,6 +112,17 @@ jobs:
   coverage:
     name: Rust Code Coverage
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:latest
+        env:
+          POSTGRES_DB: borg
+          POSTGRES_USER: borg
+          POSTGRES_PASSWORD: borg_secret
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U borg -d borg" --health-interval 5s --health-timeout 3s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust nightly
@@ -130,6 +141,8 @@ jobs:
           key: ${{ runner.os }}-cargo-cov-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-cov-
       - name: Generate coverage
+        env:
+          DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
         run: cargo +nightly llvm-cov --workspace --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4

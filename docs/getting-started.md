@@ -2,21 +2,9 @@
 
 This guide walks you through installing and running Assimilate for the first time, from prerequisites to your first completed backup.
 
-## Prerequisites
-
-Install the following before proceeding:
-
-- **Rust nightly** — install via [rustup](https://rustup.rs/): `rustup toolchain install nightly`
-- **Node.js 20+** — required to build the frontend
-- **PostgreSQL** — the server stores all state in a PostgreSQL database
-- **BorgBackup** — must be installed on every machine running the agent
-
-!!! tip
-    The [Devcontainer Setup](#devcontainer-setup) section provides a fully self-contained environment with all dependencies pre-installed — recommended for contributors and evaluation.
-
 ## Using Pre-built Docker Images
 
-Pre-built images for the server and agent are published to the GitHub Container Registry on every release and nightly from `main`:
+The fastest way to get started. Pre-built images for the server and agent are published to the GitHub Container Registry on every release and nightly from `main`:
 
 | Image | Tags |
 |---|---|
@@ -170,6 +158,18 @@ docker compose run -e BORG_AGENT_TOKEN=<other-token> agent
 ```
 
 ## Manual Build
+
+### Prerequisites
+
+Install the following before proceeding:
+
+- **Rust nightly** — install via [rustup](https://rustup.rs/): `rustup toolchain install nightly`
+- **Node.js 20+** — required to build the frontend
+- **PostgreSQL** — the server stores all state in a PostgreSQL database
+- **BorgBackup** — must be installed on every machine running the agent
+
+!!! tip
+    The [Devcontainer Setup](#devcontainer-setup) section provides a fully self-contained environment with all dependencies pre-installed — recommended for contributors and evaluation.
 
 Build the server and agent binaries:
 

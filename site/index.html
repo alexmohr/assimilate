@@ -24,7 +24,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
         <a href="#how-it-works">How it works</a>
         <a href="#vs">Why Assimilate?</a>
         <a href="#quickstart">Quickstart</a>
-        <a href="/docs/">Docs</a>
+        <a href="https://github.com/alexmohr/assimilate/tree/main/docs">Docs</a>
         <a href="https://github.com/alexmohr/assimilate" class="nav-cta" target="_blank" rel="noopener">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
@@ -70,44 +70,8 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
             View on GitHub
           </a>
         </div>
-        <div class="hero-screenshot" aria-label="Dashboard screenshot">
-          <div class="screenshot-ui">
-            <div class="screenshot-sidebar">
-              <div class="ss-brand">Assimilate</div>
-              <div class="ss-nav">
-                <div class="ss-nav-item active">Dashboard</div>
-                <div class="ss-nav-item">Hosts</div>
-                <div class="ss-nav-item">Archives</div>
-                <div class="ss-nav-item">Activity</div>
-              </div>
-            </div>
-            <div class="screenshot-main">
-              <div class="ss-header">
-                <div class="ss-title">Dashboard</div>
-                <div class="ss-badge-row">
-                  <span class="ss-badge green">4 online</span>
-                  <span class="ss-badge yellow">1 warning</span>
-                </div>
-              </div>
-              <div class="ss-cards">
-                <div class="ss-card">
-                  <div class="ss-card-host">k3s.home</div>
-                  <div class="ss-card-status green">● Healthy</div>
-                  <div class="ss-card-meta">Last: 2h ago · 3 repos</div>
-                </div>
-                <div class="ss-card">
-                  <div class="ss-card-host">unifi.home</div>
-                  <div class="ss-card-status green">● Healthy</div>
-                  <div class="ss-card-meta">Last: 4h ago · 1 repo</div>
-                </div>
-                <div class="ss-card">
-                  <div class="ss-card-host">gremlin.proxmox</div>
-                  <div class="ss-card-status yellow">⚠ Warning</div>
-                  <div class="ss-card-meta">Last: 26h ago · 2 repos</div>
-                </div>
-              </div>
-            </div>
-          </div>
+        <div class="hero-screenshot">
+          <img src="dashboard.png" alt="Assimilate dashboard showing host status, backup health, and repository overview" class="hero-img" width="1280" height="800" loading="eager">
         </div>
       </div>
     </section>
@@ -180,6 +144,15 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
             </div>
             <h3>SSH Reverse Tunnels</h3>
             <p>Manage persistent SSH reverse tunnels to NAT-blocked agents. The server connects out via SSH and forwards a local port — agents behind firewalls connect back through <code>localhost</code>.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>
+              </svg>
+            </div>
+            <h3>No FUSE or SSHFS</h3>
+            <p>The agent runs borg directly on the source machine and talks to the remote repository over native SSH — no filesystem mounts, no FUSE kernel module, no fragile network mount dependencies.</p>
           </div>
         </div>
       </div>
@@ -270,15 +243,15 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
         <div class="vs-grid">
           <div class="vs-card">
             <h3 class="vs-title">vs. BorgUI</h3>
-            <p>BorgUI is a local desktop GUI for browsing and restoring archives on a single machine. Assimilate is a centralized server for managing multiple remote backup agents — built for infrastructure, not a desktop.</p>
+            <p>BorgUI is a self-hosted web UI for running borg backups with scheduling, archive browsing, and remote machine support. It relies on SSHFS/FUSE mounts for remote operations. Assimilate takes a different approach — a lightweight agent runs directly on each machine and orchestrates borg locally against the remote repository over SSH, with no filesystem mounts needed. Real-time WebSocket push and SSH agent forwarding complete the picture.</p>
           </div>
           <div class="vs-card">
             <h3 class="vs-title">vs. Borgmatic</h3>
-            <p>Borgmatic is a CLI wrapper that runs borg on a single host with no web UI and no multi-host model. Assimilate replaces borgmatic on each machine while adding central scheduling, monitoring, and a REST API.</p>
+            <p>Borgmatic is a powerful CLI wrapper with deep integrations (databases, filesystem snapshots, 11+ monitoring services). It runs per-host with no central coordination. Assimilate adds a management plane — one dashboard to orchestrate agents, push config changes, and monitor all machines in real time.</p>
           </div>
           <div class="vs-card">
             <h3 class="vs-title">vs. Borg Backup Server</h3>
-            <p>BBS serves borg repositories over SSH. Assimilate is a management layer — it orchestrates agents, stores credentials securely, surfaces warnings and history, and provides a modern dashboard. They are complementary.</p>
+            <p>BBS is a PHP-based agent system with file-level restore catalog search and S3 offsite sync. Assimilate is a Rust/Vue.js stack with WebSocket push (no polling), built-in SSH agent forwarding, and a lighter agent footprint — no Python runtime required on endpoints.</p>
           </div>
         </div>
         <div class="vs-table-wrap">
@@ -288,20 +261,27 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
                 <th>Capability</th>
                 <th>Assimilate</th>
                 <th>BorgUI</th>
+                <th>BBS</th>
                 <th>Borgmatic</th>
               </tr>
             </thead>
             <tbody>
-              <tr><td>Multi-host management</td><td class="yes">✓</td><td class="no">✗</td><td class="no">✗</td></tr>
-              <tr><td>Web dashboard</td><td class="yes">✓</td><td class="no">✗</td><td class="no">✗</td></tr>
-              <tr><td>Per-agent token auth</td><td class="yes">✓</td><td class="no">✗</td><td class="no">✗</td></tr>
-              <tr><td>SSH agent forwarding</td><td class="yes">✓</td><td class="no">✗</td><td class="no">✗</td></tr>
-              <tr><td>Encrypted passphrase storage</td><td class="yes">✓</td><td class="no">✗</td><td class="no">✗</td></tr>
-              <tr><td>Pre/post backup hooks</td><td class="yes">✓</td><td class="no">✗</td><td class="yes">✓</td></tr>
-              <tr><td>Live WebSocket status</td><td class="yes">✓</td><td class="no">✗</td><td class="no">✗</td></tr>
-              <tr><td>Archive browsing</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">✗</td></tr>
-              <tr><td>RBAC + API tokens</td><td class="yes">✓</td><td class="no">✗</td><td class="no">✗</td></tr>
-              <tr><td>Self-hosted, no cloud</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+              <tr><td>Persistent agent architecture</td><td class="yes">✓</td><td class="no">✗</td><td class="yes">✓</td><td class="no">✗</td></tr>
+              <tr><td>Real-time WebSocket push</td><td class="yes">✓</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td></tr>
+              <tr><td>SSH agent forwarding</td><td class="yes">✓</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td></tr>
+              <tr><td>Web dashboard</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">✗</td></tr>
+              <tr><td>Scheduling</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+              <tr><td>Multi-host management</td><td class="yes">✓</td><td class="no">✗</td><td class="yes">✓</td><td class="no">✗</td></tr>
+              <tr><td>Archive browsing</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">✗</td></tr>
+              <tr><td>REST API</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">✗</td></tr>
+              <tr><td>RBAC + API tokens</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">✗</td></tr>
+              <tr><td>Pre/post backup hooks</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+              <tr><td>Database dump integration</td><td class="yes">✓ <small>(via hooks)</small></td><td class="yes">✓ <small>(via hooks)</small></td><td class="yes">✓</td><td class="yes">✓</td></tr>
+              <tr><td>Encrypted passphrase storage</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">✗</td><td class="no">✗</td></tr>
+              <tr><td>Notifications</td><td class="no">✗</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+              <tr><td>Static binary agent (no interpreter)</td><td class="yes">✓</td><td class="na">—</td><td class="no">✗</td><td class="na">—</td></tr>
+              <tr><td>No FUSE/SSHFS mounts required</td><td class="yes">✓</td><td class="no">✗</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+              <tr><td>Self-hosted, no cloud</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
             </tbody>
           </table>
         </div>
@@ -323,28 +303,37 @@ services:
   db:
     image: postgres:16
     environment:
-      POSTGRES_DB: assimilate
-      POSTGRES_USER: assimilate
-      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: borg
+      POSTGRES_USER: borg
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-borg_secret}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U borg -d borg"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   server:
-    image: ghcr.io/alexmohr/assimilate-server:latest
+    image: ghcr.io/alexmohr/assimilate:latest
     ports:
       - "8080:8080"
     environment:
-      DATABASE_URL: postgres://assimilate:changeme@db/assimilate
-      ASSIMILATE_SECRET_KEY: <span class="hl">your-secret-key-here</span>
-      SSH_AUTH_SOCK: /tmp/ssh-agent.sock  <span class="cm"># optional, for SSH forwarding</span>
-    depends_on: [db]
+      DATABASE_URL: postgres://borg:${POSTGRES_PASSWORD:-borg_secret}@db:5432/borg
+      ASSIMILATE_SECRET_KEY: <span class="hl">${ASSIMILATE_SECRET_KEY:?must be set}</span>
+      ASSIMILATE_BIND_ADDR: "0.0.0.0:8080"
+      ASSIMILATE_STATIC_DIR: /app/static
     volumes:
-      - ${SSH_AUTH_SOCK:-/dev/null}:/tmp/ssh-agent.sock
+      - ssh_keys:/app/ssh
+    depends_on:
+      db:
+        condition: service_healthy
 
 volumes:
-  pgdata:</code></pre>
+  pgdata:
+  ssh_keys:</code></pre>
           <div class="qs-run">
-            <code>docker compose up -d</code>
+            <code>export ASSIMILATE_SECRET_KEY=$(openssl rand -hex 32) && docker compose up -d</code>
             <span class="qs-then">Then open <a href="http://localhost:8080">http://localhost:8080</a></span>
           </div>
         </div>
@@ -406,7 +395,7 @@ export ASSIMILATE_SECRET_KEY=your-secret-key
             </svg>
             Star on GitHub
           </a>
-          <a href="#quickstart" class="btn btn-outline">Read the docs</a>
+          <a href="https://github.com/alexmohr/assimilate/tree/main/docs" class="btn btn-outline">Read the docs</a>
         </div>
       </div>
     </section>

@@ -12,6 +12,12 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 * Run `cargo test --workspace` to run all tests.
 * Clippy pedantic is enforced at workspace level (`deny`). Do not disable or suppress clippy warnings.
 
+## Pre-commit
+
+* Run `uv run pre-commit run --all-files --show-diff-on-failure` before committing. All hooks MUST pass.
+* This validates formatting, linting, license headers, secrets detection, shell scripts, markdown, and more.
+* If hooks modify files (e.g., trailing whitespace fixes), stage the changes and re-run until clean.
+
 ## Database Integration Tests
 
 The test file `crates/server/tests/db_queries.rs` runs against a real PostgreSQL instance. These tests use `#[sqlx::test(migrations = "./migrations")]` which automatically creates and drops isolated databases per test.

@@ -6,14 +6,20 @@ on:
     tags: ["v*"]
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
 jobs:
   release:
-    name: Build & Push Docker Image
+    name: Build & Push Docker Images
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    strategy:
+      matrix:
+        include:
+          - image: assimilate
+            dockerfile: Dockerfile.server
+          - image: assimilate-agent
+            dockerfile: Dockerfile.agent
     steps:
       - uses: actions/checkout@v4
       - name: Set up Docker Buildx
@@ -28,17 +34,18 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
+            type=raw,value=latest
             type=sha
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile.server
+          file: ${{ matrix.dockerfile }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

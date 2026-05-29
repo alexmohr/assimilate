@@ -158,9 +158,8 @@ async fn clean_tables(pool: &PgPool) {
         .unwrap();
 }
 
-fn session_cookie() -> &'static str {
-    const COOKIE_VAL: &str = const_format::concatcp!("session=", TEST_SESSION_ID);
-    COOKIE_VAL
+fn session_cookie() -> String {
+    format!("session={TEST_SESSION_ID}")
 }
 
 fn json_request(method: &str, uri: &str, body: Option<Value>) -> Request<Body> {
@@ -205,6 +204,7 @@ fn delete_request(uri: &str) -> Request<Body> {
 async fn test_client_crud() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone()).await;
 
     let req = json_request(
@@ -261,6 +261,7 @@ async fn test_client_crud() {
 async fn test_repo_crud() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone()).await;
 
     let req = json_request(
@@ -331,6 +332,7 @@ async fn test_repo_crud() {
 async fn test_excludes_crud() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone()).await;
 
     let req = json_request(
@@ -415,6 +417,7 @@ async fn test_excludes_crud() {
 async fn test_schedule_crud() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone()).await;
 
     let req = json_request(
@@ -492,6 +495,7 @@ async fn test_schedule_crud() {
 async fn test_reports() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone()).await;
 
     let req = json_request(
@@ -574,6 +578,7 @@ async fn test_reports() {
 async fn test_stats_endpoints() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone()).await;
 
     let req = json_request(
@@ -667,6 +672,7 @@ async fn test_stats_endpoints() {
 async fn test_client_not_found() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone()).await;
 
     let req = get_request("/api/clients/nonexistent");
@@ -679,6 +685,7 @@ async fn test_client_not_found() {
 async fn test_duplicate_client_hostname() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone()).await;
 
     let req = json_request(
@@ -703,6 +710,7 @@ async fn test_duplicate_client_hostname() {
 async fn test_empty_hostname_rejected() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone()).await;
 
     let req = json_request("POST", "/api/clients", Some(json!({ "hostname": "" })));

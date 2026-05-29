@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/icon.png" alt="Assimilate Logo" width="200">
+</p>
+
 # Assimilate
 
 [![CI](https://github.com/alexmohr/assimilate/actions/workflows/ci.yml/badge.svg)](https://github.com/alexmohr/assimilate/actions/workflows/ci.yml)

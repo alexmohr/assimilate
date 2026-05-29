@@ -90,32 +90,26 @@ async fn setup_pool() -> PgPool {
 }
 
 async fn create_test_user_and_session(pool: &PgPool) {
-    sqlx::query("DELETE FROM sessions WHERE id = $1")
-        .bind(TEST_SESSION_ID)
-        .execute(pool)
-        .await
-        .unwrap();
-    sqlx::query("DELETE FROM users WHERE username = 'integration-admin'")
-        .execute(pool)
-        .await
-        .unwrap();
-
     let user_id: i64 = sqlx::query_scalar(
         "INSERT INTO users (username, password_hash, role) VALUES ('integration-admin', \
-         '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'admin') RETURNING id",
+         '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'admin') \
+         ON CONFLICT (username) DO UPDATE SET username = EXCLUDED.username RETURNING id",
     )
     .fetch_one(pool)
     .await
     .unwrap();
 
     let expires = chrono::Utc::now() + chrono::Duration::hours(24);
-    sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3)")
-        .bind(TEST_SESSION_ID)
-        .bind(user_id)
-        .bind(expires)
-        .execute(pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3) \
+         ON CONFLICT (id) DO UPDATE SET expires_at = EXCLUDED.expires_at",
+    )
+    .bind(TEST_SESSION_ID)
+    .bind(user_id)
+    .bind(expires)
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 async fn clean_tables(pool: &PgPool) {

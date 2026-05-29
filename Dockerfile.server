@@ -17,7 +17,7 @@ COPY mkdocs.yml .
 RUN pip install --no-cache-dir -r docs/requirements.txt && mkdocs build --strict
 
 # Stage 3: Build Rust server binary
-FROM rust:latest AS rust-builder
+FROM rust:bookworm AS rust-builder
 WORKDIR /app
 RUN rustup default nightly
 

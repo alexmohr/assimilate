@@ -14,7 +14,81 @@ Install the following before proceeding:
 !!! tip
     The [Devcontainer Setup](#devcontainer-setup) section provides a fully self-contained environment with all dependencies pre-installed — recommended for contributors and evaluation.
 
-## Docker Compose Quickstart
+## Using Pre-built Docker Images
+
+Pre-built images for the server and agent are published to the GitHub Container Registry on every release and nightly from `main`:
+
+| Image | Tags |
+|---|---|
+| `ghcr.io/alexmohr/assimilate` | `latest`, semver (`1.2.3`, `1.2`, `1`), `nightly`, `sha-<commit>` |
+| `ghcr.io/alexmohr/assimilate-agent` | `latest`, semver (`1.2.3`, `1.2`, `1`), `nightly`, `sha-<commit>` |
+
+!!! tip
+    Use `nightly` for the latest development build from `main`, or pin to a release tag for stability.
+
+### docker-compose.yml (pre-built images)
+
+```yaml
+services:
+  postgres:
+    image: postgres:latest
+    environment:
+      POSTGRES_DB: borg
+      POSTGRES_USER: borg
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-borg_secret}
+    volumes:
+      - pgdata:/var/lib/postgresql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U borg -d borg"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  server:
+    image: ghcr.io/alexmohr/assimilate:latest
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://borg:${POSTGRES_PASSWORD:-borg_secret}@postgres:5432/borg
+      ASSIMILATE_SECRET_KEY: ${ASSIMILATE_SECRET_KEY:?ASSIMILATE_SECRET_KEY must be set}
+      ASSIMILATE_BIND_ADDR: "0.0.0.0:8080"
+      ASSIMILATE_STATIC_DIR: /app/static
+    volumes:
+      - ssh_keys:/app/ssh
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  agent:
+    image: ghcr.io/alexmohr/assimilate-agent:latest
+    environment:
+      BORG_SERVER_URL: http://server:8080
+      BORG_AGENT_TOKEN: ${BORG_AGENT_TOKEN:?BORG_AGENT_TOKEN must be set}
+    depends_on:
+      - server
+
+volumes:
+  pgdata:
+  ssh_keys:
+```
+
+### Running with pre-built images
+
+```bash
+export ASSIMILATE_SECRET_KEY=$(openssl rand -hex 32)
+docker compose up -d postgres server
+```
+
+Once the server is running, create a host in the UI, copy its token, then start the agent:
+
+```bash
+export BORG_AGENT_TOKEN=<token from server UI>
+docker compose up -d agent
+```
+
+## Docker Compose Quickstart (build from source)
 
 The included `docker-compose.yml` runs the full stack: PostgreSQL, the Assimilate server, and one agent.
 

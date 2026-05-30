@@ -45,7 +45,7 @@ interface UseArchiveBrowserReturn {
   loadContents: (path: string) => Promise<void>
   navigateTo: (path: string) => void
   entryName: (entry: ContentEntry) => string
-  downloadFile: (entry: ContentEntry) => void
+  downloadEntry: (entry: ContentEntry) => void
 }
 
 export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn {
@@ -65,9 +65,9 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
 
   const breadcrumbs = computed<BreadcrumbSegment[]>(() => {
     const path = currentPath.value
-    if (path === '/') return [{ label: '/', path: '/' }]
+    if (path === '/') return [{ label: '~', path: '/' }]
     const parts = path.replace(/^\//, '').split('/')
-    const segments: BreadcrumbSegment[] = [{ label: '/', path: '/' }]
+    const segments: BreadcrumbSegment[] = [{ label: '~', path: '/' }]
     let accumulated = ''
     for (const part of parts) {
       accumulated += `/${part}`
@@ -132,12 +132,17 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     return entry.path.split('/').pop() ?? entry.path
   }
 
-  function downloadFile(entry: ContentEntry): void {
+  function downloadEntry(entry: ContentEntry): void {
     if (!selectedArchive.value) return
-    const url = `/api/repos/${repoId.value}/archives/${encodeURIComponent(selectedArchive.value.name)}/extract?path=${encodeURIComponent(entry.path)}`
+    const archiveName = encodeURIComponent(selectedArchive.value.name)
+    const encodedPath = encodeURIComponent(entry.path)
+    const isDir = entry.type === 'd'
+    const url = isDir
+      ? `/api/repos/${repoId.value}/archives/${archiveName}/export?path=${encodedPath}`
+      : `/api/repos/${repoId.value}/archives/${archiveName}/extract?path=${encodedPath}`
     const a = document.createElement('a')
     a.href = url
-    a.download = entryName(entry)
+    a.download = isDir ? `${entryName(entry)}.tar.lz4` : entryName(entry)
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
@@ -161,6 +166,6 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     loadContents,
     navigateTo,
     entryName,
-    downloadFile,
+    downloadEntry,
   }
 }

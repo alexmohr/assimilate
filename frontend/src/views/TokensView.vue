@@ -201,7 +201,7 @@ onMounted(fetchTokens)
               <button
                 type="submit"
                 class="btn btn-primary"
-                :disabled="createSubmitting"
+                :disabled="createSubmitting || !createName.trim()"
               >
                 Create
               </button>

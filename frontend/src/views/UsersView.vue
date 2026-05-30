@@ -440,7 +440,7 @@ onMounted(fetchUsers)
               <button
                 type="submit"
                 class="btn btn-primary"
-                :disabled="createSubmitting"
+                :disabled="createSubmitting || !createForm.username.trim() || !createForm.password"
               >
                 Create
               </button>

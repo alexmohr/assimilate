@@ -372,7 +372,7 @@ onMounted(async () => {
             <button
               type="submit"
               class="btn btn-primary"
-              :disabled="createSubmitting"
+              :disabled="createSubmitting || !createForm.name.trim()"
             >
               {{ createSubmitting ? 'Creating...' : 'Create' }}
             </button>
@@ -428,7 +428,7 @@ onMounted(async () => {
             <button
               type="submit"
               class="btn btn-primary"
-              :disabled="editSubmitting"
+              :disabled="editSubmitting || !editForm.name.trim()"
             >
               {{ editSubmitting ? 'Saving...' : 'Save' }}
             </button>

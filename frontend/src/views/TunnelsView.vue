@@ -444,7 +444,9 @@ onMounted(() => {
             </button>
             <button
               class="btn btn-primary"
-              :disabled="addLoading"
+              :disabled="
+                addLoading || !addForm.client_id || !addForm.ssh_host.trim() || !addForm.tunnel_port
+              "
               @click="submitAdd"
             >
               {{ addLoading ? 'Creating...' : 'Create' }}
@@ -535,7 +537,7 @@ onMounted(() => {
             </button>
             <button
               class="btn btn-primary"
-              :disabled="editLoading"
+              :disabled="editLoading || !editForm.ssh_host?.trim() || !editForm.tunnel_port"
               @click="submitEdit"
             >
               {{ editLoading ? 'Saving...' : 'Save' }}

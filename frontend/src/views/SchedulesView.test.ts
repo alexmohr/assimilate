@@ -1,172 +1,366 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
 
-interface HealthEntry {
-  hostname: string
-  target_name: string
-  last_status: string | null
-  last_backup_at: string | null
-  is_overdue: boolean
-  last_error_message: string | null
-  cron_expression: string | null
-  schedule_enabled: boolean | null
+vi.mock('../api/client', () => ({
+  apiClient: {
+    get: vi.fn(),
+    post: vi.fn(),
+    delete: vi.fn(),
+  },
+}))
+
+vi.mock('../composables/useWebSocket', () => ({
+  useWebSocket: (): { onMessage: ReturnType<typeof vi.fn> } => ({
+    onMessage: vi.fn(),
+  }),
+}))
+
+vi.mock('../composables/useMobile', () => ({
+  useMobile: (): { isMobile: boolean } => ({ isMobile: false }),
+}))
+
+vi.mock('../utils/cron', () => ({
+  cronToHuman: (expr: string): string => `human(${expr})`,
+}))
+
+vi.mock('../utils/logger', () => ({
+  logger: { error: vi.fn() },
+}))
+
+vi.mock('../composables/useTimezone', () => ({
+  getConfiguredTimezone: (): string | undefined => undefined,
+}))
+
+vi.mock('../components/BaseSpinner.vue', () => ({
+  default: { template: '<div class="base-spinner" />' },
+}))
+
+vi.mock('../components/EmptyState.vue', () => ({
+  default: {
+    props: ['icon', 'title', 'description', 'action'],
+    emits: ['action'],
+    template: '<div class="empty-state"><slot /><span>{{ title }}</span></div>',
+  },
+}))
+
+import { apiClient } from '../api/client'
+import { renderWithPlugins } from '../test-utils'
+import SchedulesView from './SchedulesView.vue'
+
+const mockApiClient = apiClient as {
+  get: ReturnType<typeof vi.fn>
+  post: ReturnType<typeof vi.fn>
+  delete: ReturnType<typeof vi.fn>
 }
 
-interface RepoRow {
-  id: number
-  name: string
-  repo_path: string
-  enabled: boolean
-}
+const mockSchedules = [
+  {
+    id: 1,
+    client_id: 10,
+    repo_id: 20,
+    schedule_type: 'backup',
+    cron_expression: '0 2 * * *',
+    enabled: true,
+    canary_enabled: false,
+    last_run_at: '2026-05-30T02:00:00Z',
+    next_run_at: '2026-05-31T02:00:00Z',
+    exclude_patterns: [],
+    ignore_global_excludes: false,
+    keep_daily: 7,
+    keep_weekly: 4,
+    keep_monthly: 6,
+    keep_yearly: 1,
+    compact_enabled: true,
+    pre_backup_commands: '',
+    post_backup_commands: '',
+  },
+  {
+    id: 2,
+    client_id: 11,
+    repo_id: 21,
+    schedule_type: 'check',
+    cron_expression: '0 * * * *',
+    enabled: true,
+    canary_enabled: false,
+    last_run_at: '2026-05-30T01:00:00Z',
+    next_run_at: '2026-05-31T01:00:00Z',
+    exclude_patterns: [],
+    ignore_global_excludes: false,
+    keep_daily: 0,
+    keep_weekly: 0,
+    keep_monthly: 0,
+    keep_yearly: 0,
+    compact_enabled: false,
+    pre_backup_commands: '',
+    post_backup_commands: '',
+  },
+  {
+    id: 3,
+    client_id: 12,
+    repo_id: 22,
+    schedule_type: 'backup',
+    cron_expression: '0 3 * * 0',
+    enabled: false,
+    canary_enabled: false,
+    last_run_at: null,
+    next_run_at: null,
+    exclude_patterns: [],
+    ignore_global_excludes: false,
+    keep_daily: 0,
+    keep_weekly: 52,
+    keep_monthly: 12,
+    keep_yearly: 5,
+    compact_enabled: true,
+    pre_backup_commands: '',
+    post_backup_commands: '',
+  },
+]
 
-interface ScheduleRow {
-  id: number
-  repo_id: number
-  enabled: boolean
-}
+const mockClients = [
+  { id: 10, hostname: 'web-server-01', display_name: 'Web Server' },
+  { id: 11, hostname: 'db-server-01', display_name: null },
+  { id: 12, hostname: 'media-store-01', display_name: 'Media Store' },
+]
 
-function buildHealthByRepo(health: HealthEntry[]): Map<string, HealthEntry[]> {
-  const m = new Map<string, HealthEntry[]>()
-  health.forEach((h) => {
-    const entries = m.get(h.target_name) ?? []
-    entries.push(h)
-    m.set(h.target_name, entries)
-  })
-  return m
-}
+const mockRepos = [
+  { id: 20, name: 'server-daily', repo_path: '/repo/daily', enabled: true },
+  { id: 21, name: 'database-hourly', repo_path: '/repo/db', enabled: true },
+  { id: 22, name: 'media-weekly', repo_path: '/repo/media', enabled: true },
+]
 
-function pickHealthForSchedule(
-  schedule: ScheduleRow,
-  repoMap: Map<number, RepoRow>,
-  healthByRepo: Map<string, HealthEntry[]>,
-): HealthEntry | null {
-  const repo = repoMap.get(schedule.repo_id) ?? null
-  const entries = repo ? (healthByRepo.get(repo.name) ?? []) : []
-  return (
-    entries.find((h) => h.is_overdue) ??
-    entries.find((h) => h.last_status === 'failed') ??
-    entries[0] ??
-    null
-  )
-}
-
-function makeHealth(overrides: Partial<HealthEntry> = {}): HealthEntry {
-  return {
-    hostname: 'host-01',
-    target_name: 'my-repo',
+const mockHealth = [
+  {
+    hostname: 'web-server-01',
+    target_name: 'server-daily',
     last_status: 'success',
-    last_backup_at: '2026-01-01T00:00:00Z',
+    last_backup_at: '2026-05-30T02:00:00Z',
     is_overdue: false,
     last_error_message: null,
     cron_expression: '0 2 * * *',
     schedule_enabled: true,
-    ...overrides,
-  }
+  },
+  {
+    hostname: 'db-server-01',
+    target_name: 'database-hourly',
+    last_status: 'failed',
+    last_backup_at: '2026-05-29T01:00:00Z',
+    is_overdue: true,
+    last_error_message: 'Connection refused',
+    cron_expression: '0 * * * *',
+    schedule_enabled: true,
+  },
+]
+
+function setupApiSuccess(): void {
+  mockApiClient.get.mockImplementation((url: string) => {
+    if (url === '/schedules') return Promise.resolve({ data: mockSchedules })
+    if (url === '/repos') return Promise.resolve({ data: mockRepos })
+    if (url === '/clients') return Promise.resolve({ data: mockClients })
+    if (url === '/stats/health') return Promise.resolve({ data: mockHealth })
+    return Promise.resolve({ data: [] })
+  })
 }
 
-describe('SchedulesView health enrichment', () => {
-  const repo: RepoRow = { id: 1, name: 'my-repo', repo_path: '/repo', enabled: true }
-  const repoMap = new Map<number, RepoRow>([[1, repo]])
-
-  describe('buildHealthByRepo', () => {
-    it('groups entries by target_name', () => {
-      const entries = [
-        makeHealth({ hostname: 'host-01', target_name: 'repo-a' }),
-        makeHealth({ hostname: 'host-02', target_name: 'repo-a' }),
-        makeHealth({ hostname: 'host-01', target_name: 'repo-b' }),
-      ]
-      const map = buildHealthByRepo(entries)
-      expect(map.get('repo-a')).toHaveLength(2)
-      expect(map.get('repo-b')).toHaveLength(1)
-      expect(map.has('repo-c')).toBe(false)
-    })
-
-    it('returns empty map for empty input', () => {
-      expect(buildHealthByRepo([])).toEqual(new Map())
-    })
+describe('SchedulesView', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
   })
 
-  describe('pickHealthForSchedule', () => {
-    it('returns null when repo not found', () => {
-      const schedule: ScheduleRow = { id: 1, repo_id: 999, enabled: true }
-      const result = pickHealthForSchedule(schedule, repoMap, new Map())
-      expect(result).toBeNull()
-    })
-
-    it('returns null when no health entries exist for repo', () => {
-      const schedule: ScheduleRow = { id: 1, repo_id: 1, enabled: true }
-      const result = pickHealthForSchedule(schedule, repoMap, new Map())
-      expect(result).toBeNull()
-    })
-
-    it('returns first entry when all are successful', () => {
-      const entries = [makeHealth({ hostname: 'host-01' }), makeHealth({ hostname: 'host-02' })]
-      const healthByRepo = buildHealthByRepo(entries)
-      const schedule: ScheduleRow = { id: 1, repo_id: 1, enabled: true }
-      const result = pickHealthForSchedule(schedule, repoMap, healthByRepo)
-      expect(result?.hostname).toBe('host-01')
-      expect(result?.is_overdue).toBe(false)
-    })
-
-    it('prioritizes overdue entry over success', () => {
-      const entries = [
-        makeHealth({ hostname: 'host-01', is_overdue: false }),
-        makeHealth({ hostname: 'host-02', is_overdue: true }),
-      ]
-      const healthByRepo = buildHealthByRepo(entries)
-      const schedule: ScheduleRow = { id: 1, repo_id: 1, enabled: true }
-      const result = pickHealthForSchedule(schedule, repoMap, healthByRepo)
-      expect(result?.hostname).toBe('host-02')
-      expect(result?.is_overdue).toBe(true)
-    })
-
-    it('prioritizes overdue over failed', () => {
-      const entries = [
-        makeHealth({ hostname: 'host-01', last_status: 'failed', is_overdue: false }),
-        makeHealth({ hostname: 'host-02', is_overdue: true }),
-      ]
-      const healthByRepo = buildHealthByRepo(entries)
-      const schedule: ScheduleRow = { id: 1, repo_id: 1, enabled: true }
-      const result = pickHealthForSchedule(schedule, repoMap, healthByRepo)
-      expect(result?.hostname).toBe('host-02')
-    })
-
-    it('falls back to failed when none are overdue', () => {
-      const entries = [
-        makeHealth({ hostname: 'host-01', last_status: 'success' }),
-        makeHealth({ hostname: 'host-02', last_status: 'failed' }),
-      ]
-      const healthByRepo = buildHealthByRepo(entries)
-      const schedule: ScheduleRow = { id: 1, repo_id: 1, enabled: true }
-      const result = pickHealthForSchedule(schedule, repoMap, healthByRepo)
-      expect(result?.hostname).toBe('host-02')
-      expect(result?.last_status).toBe('failed')
-    })
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
-  describe('overdue filter integration', () => {
-    it('filter matches schedules with overdue health', () => {
-      const entries = [makeHealth({ target_name: 'my-repo', is_overdue: true })]
-      const healthByRepo = buildHealthByRepo(entries)
-      const schedule: ScheduleRow = { id: 1, repo_id: 1, enabled: true }
-      const health = pickHealthForSchedule(schedule, repoMap, healthByRepo)
-      expect(health?.is_overdue).toBe(true)
-    })
+  it('renders schedule cards with client hostname and repo name', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
 
-    it('filter does NOT match schedules without overdue health', () => {
-      const entries = [makeHealth({ target_name: 'my-repo', is_overdue: false })]
-      const healthByRepo = buildHealthByRepo(entries)
-      const schedule: ScheduleRow = { id: 1, repo_id: 1, enabled: true }
-      const health = pickHealthForSchedule(schedule, repoMap, healthByRepo)
-      expect(health?.is_overdue).toBe(false)
-    })
+    expect(wrapper.text()).toContain('web-server-01')
+    expect(wrapper.text()).toContain('server-daily')
+    expect(wrapper.text()).toContain('db-server-01')
+    expect(wrapper.text()).toContain('database-hourly')
+    expect(wrapper.text()).toContain('media-store-01')
+    expect(wrapper.text()).toContain('media-weekly')
+  })
 
-    it('filter does NOT match schedules with no health data', () => {
-      const schedule: ScheduleRow = { id: 1, repo_id: 1, enabled: true }
-      const health = pickHealthForSchedule(schedule, repoMap, new Map())
-      expect(health?.is_overdue).toBeUndefined()
-    })
+  it('shows enabled/disabled badge', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('Enabled')
+    expect(text).toContain('Disabled')
+  })
+
+  it('renders schedule type badges', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Backup')
+    expect(wrapper.text()).toContain('Integrity Check')
+  })
+
+  it('displays human-readable cron expression', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('human(0 2 * * *)')
+  })
+
+  it('shows health badge for success status', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Success')
+  })
+
+  it('shows overdue health badge', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Overdue')
+  })
+
+  it('shows last backup failed error toggle when error message present', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Last backup failed')
+  })
+
+  it('shows empty state when no schedules exist', async () => {
+    mockApiClient.get.mockResolvedValue({ data: [] })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    expect(wrapper.find('.empty-state').exists()).toBe(true)
+    expect(wrapper.text()).toContain('No schedules configured')
+  })
+
+  it('shows error banner on API failure', async () => {
+    mockApiClient.get.mockRejectedValue(new Error('Network error'))
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    expect(wrapper.find('.error-banner').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Failed to load schedules.')
+  })
+
+  it('filters by enabled status', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const selects = wrapper.findAll('select')
+    const statusSelect = selects.find((s) => s.find('option[value="enabled"]').exists())
+    expect(statusSelect).toBeTruthy()
+    await statusSelect!.setValue('enabled')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('web-server-01')
+    expect(wrapper.text()).not.toContain('media-store-01')
+  })
+
+  it('filters by schedule type', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const selects = wrapper.findAll('select')
+    const typeSelect = selects.find((s) => s.find('option[value="check"]').exists())
+    expect(typeSelect).toBeTruthy()
+    await typeSelect!.setValue('check')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('db-server-01')
+    expect(wrapper.text()).not.toContain('web-server-01')
+  })
+
+  it('filters by text search', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const searchInput = wrapper.find('input.search-input')
+    await searchInput.setValue('web-server')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('web-server-01')
+    expect(wrapper.text()).not.toContain('db-server-01')
+  })
+
+  it('calls run now API on run button click', async () => {
+    setupApiSuccess()
+    mockApiClient.post.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const runButtons = wrapper.findAll('button').filter((b) => b.text() === 'Run')
+    expect(runButtons.length).toBeGreaterThan(0)
+    await runButtons[0].trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.post).toHaveBeenCalledWith(
+      expect.stringMatching(/^\/schedules\/\d+\/run$/),
+    )
+  })
+
+  it('calls delete API after confirmation', async () => {
+    setupApiSuccess()
+    mockApiClient.delete.mockResolvedValue({ data: {} })
+    vi.stubGlobal('confirm', vi.fn().mockReturnValue(true))
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const deleteButtons = wrapper
+      .findAll('button')
+      .filter((b) => b.attributes('title') === 'Delete schedule')
+    expect(deleteButtons.length).toBeGreaterThan(0)
+    await deleteButtons[0].trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.delete).toHaveBeenCalled()
+  })
+
+  it('does not delete when confirm is cancelled', async () => {
+    setupApiSuccess()
+    vi.stubGlobal('confirm', vi.fn().mockReturnValue(false))
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const deleteButtons = wrapper
+      .findAll('button')
+      .filter((b) => b.attributes('title') === 'Delete schedule')
+    await deleteButtons[0].trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.delete).not.toHaveBeenCalled()
+  })
+
+  it('has New button linking to /schedules/new', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const newLink = wrapper.find('a[href="/schedules/new"]')
+    expect(newLink.exists()).toBe(true)
+  })
+
+  it('page title is Schedules', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    expect(wrapper.find('h1').text()).toBe('Schedules')
   })
 })

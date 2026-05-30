@@ -23,7 +23,22 @@ vi.mock('chart.js', () => ({
 
 vi.mock('../api/client', () => ({
   apiClient: {
-    get: vi.fn().mockResolvedValue({ data: [] }),
+    get: vi.fn().mockImplementation((url: string) => {
+      if (url.startsWith('/stats/summary')) {
+        return Promise.resolve({
+          data: {
+            total_hosts: 0,
+            online_hosts: 0,
+            total_repos: 0,
+            total_size_bytes: 0,
+            total_backups: 0,
+            recent_failures: 0,
+            storage_by_repo: [],
+          },
+        })
+      }
+      return Promise.resolve({ data: [] })
+    }),
   },
 }))
 

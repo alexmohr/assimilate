@@ -413,6 +413,10 @@ async fn main() -> Result<(), StartupError> {
             post(api::tunnels::enable_tunnel),
         )
         .route(
+            "/api/tunnels/{id}/reconnect",
+            post(api::tunnels::reconnect_tunnel),
+        )
+        .route(
             "/api/tunnels/{id}/disable",
             post(api::tunnels::disable_tunnel),
         )

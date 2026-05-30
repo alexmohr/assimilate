@@ -59,8 +59,10 @@ pub struct SearchResponse {
         ("repo_id" = i64, Path, description = "Repository ID"),
         ("archive_name" = String, Path, description = "Archive name"),
         ("pattern" = String, Query, description = "Glob pattern to match files"),
-        ("path_prefix" = Option<String>, Query, description = "Filter results to paths starting with this prefix"),
-        ("limit" = Option<usize>, Query, description = "Max entries to return (default: 100, max: 1000)"),
+        ("path_prefix" = Option<String>, Query,
+            description = "Filter results to paths starting with this prefix"),
+        ("limit" = Option<usize>, Query,
+            description = "Max entries to return (default: 100, max: 1000)"),
         ("offset" = Option<usize>, Query, description = "Number of entries to skip (default: 0)"),
     ),
     responses(

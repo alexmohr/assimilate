@@ -291,3 +291,196 @@ fn is_overdue(
     };
     Utc::now() > expected_next + grace
 }
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct TrendsQuery {
+    pub repo_id: Option<i64>,
+    pub days: Option<i64>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct TrendEntry {
+    pub date: String,
+    pub original_size: i64,
+    pub compressed_size: i64,
+    pub deduplicated_size: i64,
+    pub dedup_ratio: f64,
+    pub file_count: i64,
+    pub duration_seconds: i64,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/stats/trends",
+    tag = "Statistics",
+    operation_id = "getBackupTrends",
+    summary = "Get backup size trends over time",
+    params(
+        ("repo_id" = Option<i64>, Query, description = "Filter by repository ID"),
+        ("days" = Option<i64>, Query, description = "Number of days (30, 90, 365)"),
+    ),
+    responses(
+        (status = 200, description = "Backup trends", body = Vec<TrendEntry>),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
+pub async fn trends(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Query(query): Query<TrendsQuery>,
+) -> Result<Json<Vec<TrendEntry>>, ApiError> {
+    let days = query.days.unwrap_or(30);
+    let rows = db::get_backup_trends(&state.pool, query.repo_id, days).await?;
+    let entries = rows
+        .into_iter()
+        .map(|row| {
+            let dedup_ratio = if row.original_size > 0 {
+                let scaled = row.deduplicated_size.saturating_mul(10_000) / row.original_size;
+                f64::from(i32::try_from(scaled).unwrap_or(10_000)) / 100.0
+            } else {
+                0.0
+            };
+            TrendEntry {
+                date: row.date.to_string(),
+                original_size: row.original_size,
+                compressed_size: row.compressed_size,
+                deduplicated_size: row.deduplicated_size,
+                dedup_ratio,
+                file_count: row.file_count,
+                duration_seconds: row.duration_seconds,
+            }
+        })
+        .collect();
+    Ok(Json(entries))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct CalendarQuery {
+    pub month: String,
+    pub repo_id: Option<i64>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CalendarEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub status: String,
+    pub repo_name: String,
+    pub time: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CalendarDay {
+    pub date: String,
+    pub events: Vec<CalendarEvent>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/stats/calendar",
+    tag = "Statistics",
+    operation_id = "getCalendar",
+    summary = "Get calendar view of backups for a month",
+    params(
+        ("month" = String, Query, description = "Month in YYYY-MM format"),
+        ("repo_id" = Option<i64>, Query, description = "Filter by repository ID"),
+    ),
+    responses(
+        (status = 200, description = "Calendar events", body = Vec<CalendarDay>),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
+pub async fn calendar(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Query(query): Query<CalendarQuery>,
+) -> Result<Json<Vec<CalendarDay>>, ApiError> {
+    let parts: Vec<&str> = query.month.split('-').collect();
+    if parts.len() != 2 {
+        return Err(ApiError::BadRequest(
+            "month must be in YYYY-MM format".to_string(),
+        ));
+    }
+    let year: i32 = parts[0]
+        .parse()
+        .map_err(|_| ApiError::BadRequest("invalid year".to_string()))?;
+    let month: u32 = parts[1]
+        .parse()
+        .map_err(|_| ApiError::BadRequest("invalid month".to_string()))?;
+
+    let rows = db::get_calendar_events(&state.pool, year, month, query.repo_id).await?;
+
+    let tz = db::get_schedule_timezone(&state.pool).await?;
+    let schedules = db::get_enabled_schedules_for_calendar(&state.pool).await?;
+    let now = Utc::now();
+
+    let month_start = chrono::NaiveDate::from_ymd_opt(year, month, 1)
+        .ok_or_else(|| ApiError::BadRequest("invalid month".to_string()))?;
+    let month_end = if month == 12 {
+        chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
+    } else {
+        chrono::NaiveDate::from_ymd_opt(year, month + 1, 1)
+    }
+    .ok_or_else(|| ApiError::BadRequest("invalid month".to_string()))?;
+
+    let mut day_map: std::collections::BTreeMap<String, Vec<CalendarEvent>> =
+        std::collections::BTreeMap::new();
+
+    for row in rows {
+        day_map
+            .entry(row.date.to_string())
+            .or_default()
+            .push(CalendarEvent {
+                event_type: row.event_type,
+                status: row.status,
+                repo_name: row.repo_name,
+                time: row.time,
+            });
+    }
+
+    let repos = db::list_all_repos(&state.pool).await?;
+
+    for schedule in &schedules {
+        if query.repo_id.is_some_and(|rid| schedule.repo_id != rid) {
+            continue;
+        }
+        let repo_name = repos
+            .iter()
+            .find(|r| r.id == schedule.repo_id)
+            .map(|r| r.name.clone())
+            .unwrap_or_default();
+
+        let mut cursor = now;
+        for _ in 0..62 {
+            let Ok(next) =
+                shared::schedule::calculate_next_run(&schedule.cron_expression, cursor, tz)
+            else {
+                break;
+            };
+            let next_date = next.date_naive();
+            if next_date >= month_end {
+                break;
+            }
+            if next_date >= month_start && next > now {
+                let time_str = next.format("%H:%M").to_string();
+                day_map
+                    .entry(next_date.to_string())
+                    .or_default()
+                    .push(CalendarEvent {
+                        event_type: "backup".to_string(),
+                        status: "scheduled".to_string(),
+                        repo_name: repo_name.clone(),
+                        time: time_str,
+                    });
+            }
+            cursor = next;
+        }
+    }
+
+    let result = day_map
+        .into_iter()
+        .map(|(date, events)| CalendarDay { date, events })
+        .collect();
+
+    Ok(Json(result))
+}

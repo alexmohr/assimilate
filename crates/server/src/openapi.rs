@@ -109,6 +109,8 @@ use crate::{
         crate::api::stats::activity,
         crate::api::stats::system_events,
         crate::api::stats::health,
+        crate::api::stats::trends,
+        crate::api::stats::calendar,
         crate::api::system::ssh_public_key,
         crate::api::system::ssh_regenerate_key,
         crate::api::system::get_settings,
@@ -122,6 +124,7 @@ use crate::{
         crate::api::keys::export_key,
         crate::api::keys::import_key,
         crate::api::keys::change_passphrase,
+        crate::api::restore::download_files,
     ),
     components(schemas(
         LoginRequest,
@@ -172,6 +175,11 @@ use crate::{
         DashboardSummaryResponse,
         StorageRepoEntry,
         HealthResponse,
+        crate::api::stats::TrendsQuery,
+        crate::api::stats::TrendEntry,
+        crate::api::stats::CalendarQuery,
+        crate::api::stats::CalendarEvent,
+        crate::api::stats::CalendarDay,
         StorageStatRow,
         ActivityRow,
         SystemEventRow,
@@ -192,6 +200,7 @@ use crate::{
         crate::log_buffer::LogEntry,
         crate::api::keys::ImportKeyRequest,
         crate::api::keys::ChangePassphraseRequest,
+        crate::api::restore::DownloadFilesRequest,
     ))
 )]
 pub struct ApiDoc;

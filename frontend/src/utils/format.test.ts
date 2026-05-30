@@ -14,6 +14,11 @@ describe('formatBytes', () => {
     expect(formatBytes(0)).toBe('0 B')
   })
 
+  it('returns "0 B" for null or undefined', () => {
+    expect(formatBytes(null as unknown as number)).toBe('0 B')
+    expect(formatBytes(undefined as unknown as number)).toBe('0 B')
+  })
+
   it('formats bytes correctly', () => {
     expect(formatBytes(512)).toBe('512.0 B')
     expect(formatBytes(1024)).toBe('1.0 KB')

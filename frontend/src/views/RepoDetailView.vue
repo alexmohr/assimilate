@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
@@ -16,6 +16,7 @@ import { useToast } from '../composables/useToast'
 import { formatBytes, formatDate } from '../utils/format'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
+import { Folder, File, Download } from '@lucide/vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import QuotaPanel from '../components/QuotaPanel.vue'
@@ -197,7 +198,7 @@ const {
   selectArchive,
   navigateTo: archiveNavigateTo,
   entryName,
-  downloadFile,
+  downloadEntry,
 } = useArchiveBrowser(repoIdRef)
 
 const unmatchedCount = computed(
@@ -390,8 +391,28 @@ onMounted(async () => {
   await loadRepo()
   if (repo.value) {
     await Promise.all([loadTags(), loadArchives()])
+    await selectArchiveFromQuery()
   }
 })
+
+async function selectArchiveFromQuery(): Promise<void> {
+  const archiveQuery = route.query.archive as string | undefined
+  if (archiveQuery && activeTab.value === 'archives') {
+    const match = sortedArchives.value.find((a) => a.name === archiveQuery)
+    if (match) {
+      await selectArchive(match)
+    }
+  }
+}
+
+watch(
+  () => route.query.archive,
+  async () => {
+    if (sortedArchives.value.length > 0) {
+      await selectArchiveFromQuery()
+    }
+  },
+)
 
 async function rescanArchives(): Promise<void> {
   rescanLoading.value = true
@@ -467,34 +488,6 @@ async function syncRepo(): Promise<void> {
         v-if="activeTab === 'overview'"
         class="tab-content"
       >
-        <!-- Stats cards -->
-        <div class="stats-row">
-          <div class="stat-card">
-            <span class="stat-card-value">{{ repo.archive_count }}</span>
-            <span class="stat-card-label">Archives</span>
-          </div>
-          <div class="stat-card">
-            <span class="stat-card-value">{{ formatBytes(repo.total_original_size) }}</span>
-            <span class="stat-card-label">Original</span>
-          </div>
-          <div class="stat-card">
-            <span class="stat-card-value">{{ formatBytes(repo.total_compressed_size) }}</span>
-            <span class="stat-card-label">Compressed</span>
-          </div>
-          <div class="stat-card">
-            <span class="stat-card-value">{{ formatBytes(repo.total_deduplicated_size) }}</span>
-            <span class="stat-card-label">Deduplicated</span>
-          </div>
-          <div class="stat-card">
-            <span class="stat-card-value">{{ formatLastBackup(repo.last_backup_at) }}</span>
-            <span class="stat-card-label">Last Backup</span>
-          </div>
-          <div class="stat-card">
-            <span class="stat-card-value">{{ repo.client_count }}</span>
-            <span class="stat-card-label">Clients</span>
-          </div>
-        </div>
-
         <!-- Info card -->
         <div class="info-card">
           <div class="info-card-header">
@@ -563,6 +556,18 @@ async function syncRepo(): Promise<void> {
                   }}
                 </span>
               </dd>
+              <dt>Archives</dt>
+              <dd>{{ repo.archive_count }}</dd>
+              <dt>Original Size</dt>
+              <dd>{{ formatBytes(repo.total_original_size) }}</dd>
+              <dt>Compressed</dt>
+              <dd>{{ formatBytes(repo.total_compressed_size) }}</dd>
+              <dt>Deduplicated</dt>
+              <dd>{{ formatBytes(repo.total_deduplicated_size) }}</dd>
+              <dt>Last Backup</dt>
+              <dd>{{ formatLastBackup(repo.last_backup_at) }}</dd>
+              <dt>Clients</dt>
+              <dd>{{ repo.client_count }}</dd>
             </dl>
           </template>
 
@@ -660,6 +665,7 @@ async function syncRepo(): Promise<void> {
         <QuotaPanel
           :repo-id="repoId"
           :is-admin="isAdmin"
+          :current-usage-bytes="repo.total_deduplicated_size"
         />
 
         <!-- Tags -->
@@ -854,12 +860,18 @@ async function syncRepo(): Promise<void> {
               v-else
               class="data-table"
             >
+              <colgroup>
+                <col style="width: 40%" />
+                <col style="width: 30%" />
+                <col style="width: 22%" />
+                <col style="width: 8%" />
+              </colgroup>
               <thead>
                 <tr>
                   <th>Name</th>
                   <th>Date</th>
                   <th>Host</th>
-                  <th />
+                  <th class="th-match">&nbsp;</th>
                 </tr>
               </thead>
               <tbody>
@@ -958,19 +970,33 @@ async function syncRepo(): Promise<void> {
                   @click="archiveNavigateTo(entry.path)"
                 >
                   <td class="td-name">
-                    <span class="icon-dir">&#128193;</span>
+                    <Folder
+                      :size="16"
+                      class="entry-icon"
+                    />
                     {{ entryName(entry) }}
                   </td>
                   <td class="td-size muted">&mdash;</td>
                   <td class="td-date">{{ formatDate(entry.mtime) }}</td>
-                  <td />
+                  <td class="td-action">
+                    <button
+                      class="btn btn-sm btn-ghost"
+                      title="Download as .tar.lz4"
+                      @click.stop="downloadEntry(entry)"
+                    >
+                      <Download :size="14" />
+                    </button>
+                  </td>
                 </tr>
                 <tr
                   v-for="entry in files"
                   :key="entry.path"
                 >
                   <td class="td-name">
-                    <span class="icon-file">&#128196;</span>
+                    <File
+                      :size="16"
+                      class="entry-icon"
+                    />
                     {{ entryName(entry) }}
                   </td>
                   <td class="td-size">{{ formatBytes(entry.size) }}</td>
@@ -978,9 +1004,10 @@ async function syncRepo(): Promise<void> {
                   <td class="td-action">
                     <button
                       class="btn btn-sm btn-ghost"
-                      @click="downloadFile(entry)"
+                      title="Download"
+                      @click.stop="downloadEntry(entry)"
                     >
-                      Download
+                      <Download :size="14" />
                     </button>
                   </td>
                 </tr>
@@ -1252,40 +1279,6 @@ async function syncRepo(): Promise<void> {
   }
 }
 
-/* Stats row */
-.stats-row {
-  display: flex;
-  gap: 1rem;
-  margin-bottom: 1.5rem;
-  flex-wrap: wrap;
-}
-
-.stat-card {
-  flex: 1;
-  min-width: 120px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1rem 1.25rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.stat-card-value {
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.stat-card-label {
-  font-size: 0.7rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
 /* Info card */
 .info-card {
   background: var(--bg-card);
@@ -1519,7 +1512,7 @@ async function syncRepo(): Promise<void> {
 /* Archives layout */
 .archives-layout {
   display: grid;
-  grid-template-columns: 380px 1fr;
+  grid-template-columns: 1fr 1.2fr;
   gap: 1rem;
   align-items: start;
 }
@@ -1547,15 +1540,20 @@ async function syncRepo(): Promise<void> {
   color: var(--text-muted);
 }
 
-.data-table {
+.archives-panel .data-table {
+  table-layout: fixed;
   width: 100%;
+}
+
+.data-table {
+  min-width: 100%;
   border-collapse: collapse;
   font-size: 0.85rem;
 }
 
 .data-table th {
   text-align: left;
-  padding: 0.5rem 1rem;
+  padding: 0.5rem 0.75rem;
   color: var(--text-muted);
   font-weight: 600;
   font-size: 0.75rem;
@@ -1565,7 +1563,7 @@ async function syncRepo(): Promise<void> {
 }
 
 .data-table td {
-  padding: 0.6rem 1rem;
+  padding: 0.6rem 0.75rem;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border-subtle);
 }
@@ -1591,7 +1589,6 @@ async function syncRepo(): Promise<void> {
 .td-mono {
   font-family: var(--mono);
   font-size: 0.8rem;
-  max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1626,10 +1623,9 @@ async function syncRepo(): Promise<void> {
   text-align: right;
 }
 
-.icon-dir,
-.icon-file {
-  font-size: 0.9rem;
+.entry-icon {
   flex-shrink: 0;
+  color: var(--text-muted);
 }
 
 .archive-breadcrumb {
@@ -1743,17 +1739,9 @@ async function syncRepo(): Promise<void> {
 }
 
 /* Responsive */
-@media (max-width: 768px) {
+@media (max-width: 1100px) {
   .archives-layout {
     grid-template-columns: 1fr;
-  }
-
-  .stats-row {
-    flex-direction: column;
-  }
-
-  .stat-card {
-    min-width: 0;
   }
 }
 
@@ -1776,9 +1764,14 @@ async function syncRepo(): Promise<void> {
 }
 
 .td-match {
-  width: 2rem;
+  width: 2.5rem;
+  min-width: 2.5rem;
   text-align: center;
   font-size: 0.9rem;
+}
+
+.th-match {
+  width: 2.5rem;
 }
 
 .match-ok {

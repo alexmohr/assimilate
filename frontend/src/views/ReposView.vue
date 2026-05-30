@@ -882,14 +882,6 @@ onMounted(loadRepos)
             <span class="stat-label">Archives</span>
           </div>
           <div class="stat">
-            <span class="stat-value">{{ formatBytes(repo.total_original_size) }}</span>
-            <span class="stat-label">Original</span>
-          </div>
-          <div class="stat">
-            <span class="stat-value">{{ formatBytes(repo.total_compressed_size) }}</span>
-            <span class="stat-label">Compressed</span>
-          </div>
-          <div class="stat">
             <span class="stat-value">{{ formatBytes(repo.total_deduplicated_size) }}</span>
             <span class="stat-label">Deduplicated</span>
           </div>
@@ -996,14 +988,6 @@ onMounted(loadRepos)
               <div class="stat">
                 <span class="stat-value">{{ repo.archive_count }}</span>
                 <span class="stat-label">Archives</span>
-              </div>
-              <div class="stat">
-                <span class="stat-value">{{ formatBytes(repo.total_original_size) }}</span>
-                <span class="stat-label">Original</span>
-              </div>
-              <div class="stat">
-                <span class="stat-value">{{ formatBytes(repo.total_compressed_size) }}</span>
-                <span class="stat-label">Compressed</span>
               </div>
               <div class="stat">
                 <span class="stat-value">{{ formatBytes(repo.total_deduplicated_size) }}</span>

@@ -8,6 +8,7 @@ import { ref, computed, onMounted } from 'vue'
 import { FilterMatchMode } from '@primevue/core/api'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
+import { Folder, File, Download } from '@lucide/vue'
 import { apiClient } from '../api/client'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useClipboard } from '../composables/useClipboard'
@@ -78,7 +79,7 @@ const breadcrumbs = computed<BreadcrumbSegment[]>(() => {
   const path = currentPath.value
   if (path === '/') return [{ label: '/', path: '/' }]
   const parts = path.replace(/^\//, '').split('/')
-  const segments: BreadcrumbSegment[] = [{ label: '/', path: '/' }]
+  const segments: BreadcrumbSegment[] = [{ label: '~', path: '/' }]
   let accumulated = ''
   for (const part of parts) {
     accumulated += `/${part}`
@@ -185,12 +186,17 @@ function entryName(entry: ContentEntry): string {
   return entry.path.split('/').pop() ?? entry.path
 }
 
-function downloadFile(entry: ContentEntry): void {
+function downloadEntry(entry: ContentEntry): void {
   if (selectedRepoId.value === null || !selectedArchive.value) return
-  const url = `/api/repos/${selectedRepoId.value}/archives/${encodeURIComponent(selectedArchive.value.name)}/extract?path=${encodeURIComponent(entry.path)}`
+  const archiveName = encodeURIComponent(selectedArchive.value.name)
+  const encodedPath = encodeURIComponent(entry.path)
+  const isDir = entry.type === 'd'
+  const url = isDir
+    ? `/api/repos/${selectedRepoId.value}/archives/${archiveName}/export?path=${encodedPath}`
+    : `/api/repos/${selectedRepoId.value}/archives/${archiveName}/extract?path=${encodedPath}`
   const a = document.createElement('a')
   a.href = url
-  a.download = entryName(entry)
+  a.download = isDir ? `${entryName(entry)}.tar.lz4` : entryName(entry)
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
@@ -492,9 +498,16 @@ onMounted(loadRepos)
               </template>
               <template #body="{ data }">
                 <span class="td-name">
-                  <span :class="data.isDir ? 'icon-dir' : 'icon-file'">{{
-                    data.isDir ? '&#128193;' : '&#128196;'
-                  }}</span>
+                  <Folder
+                    v-if="data.isDir"
+                    :size="16"
+                    class="entry-icon"
+                  />
+                  <File
+                    v-else
+                    :size="16"
+                    class="entry-icon"
+                  />
                   {{ data.displayName }}
                 </span>
               </template>
@@ -541,11 +554,11 @@ onMounted(loadRepos)
               <template #body="{ data }">
                 <span class="td-action">
                   <button
-                    v-if="!data.isDir"
                     class="btn btn-sm btn-ghost"
-                    @click.stop="downloadFile(data)"
+                    :title="data.isDir ? 'Download as .tar.lz4' : 'Download'"
+                    @click.stop="downloadEntry(data)"
                   >
-                    Download
+                    <Download :size="14" />
                   </button>
                 </span>
               </template>
@@ -824,10 +837,9 @@ onMounted(loadRepos)
   border-color: var(--accent);
 }
 
-.icon-dir,
-.icon-file {
-  font-size: 0.9rem;
+.entry-icon {
   flex-shrink: 0;
+  color: var(--text-muted);
 }
 
 .breadcrumb {

@@ -424,7 +424,9 @@ onMounted(loadRepos)
               </template>
               <template #body="{ data }">
                 <span class="td-name">
-                  <span :class="data.isDir ? 'icon-dir' : 'icon-file'">{{ data.isDir ? '&#128193;' : '&#128196;' }}</span>
+                  <span :class="data.isDir ? 'icon-dir' : 'icon-file'">{{
+                    data.isDir ? '&#128193;' : '&#128196;'
+                  }}</span>
                   {{ data.displayName }}
                 </span>
               </template>

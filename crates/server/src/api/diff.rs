@@ -112,8 +112,10 @@ fn classify_borg_diff_error(exit_code: i32, stderr: &str) -> ApiError {
         ("repo_id" = i64, Path, description = "Repository ID"),
         ("archive1" = String, Query, description = "First archive name"),
         ("archive2" = String, Query, description = "Second archive name"),
-        ("limit" = Option<usize>, Query, description = "Max entries to return per category (default: 100)"),
-        ("offset" = Option<usize>, Query, description = "Offset into combined sorted change list (default: 0)"),
+        ("limit" = Option<usize>, Query,
+            description = "Max entries to return per category (default: 100)"),
+        ("offset" = Option<usize>, Query,
+            description = "Offset into combined sorted change list (default: 0)"),
     ),
     responses(
         (status = 200, description = "Diff result", body = DiffResponse),

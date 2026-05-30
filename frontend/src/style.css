@@ -319,6 +319,22 @@
     color: var(--text-muted);
   }
 
+  .status-importing {
+    background: var(--warning-subtle, #fef3c7);
+    color: var(--warning, #d97706);
+    animation: pulse-importing 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse-importing {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.6;
+    }
+  }
+
   .mono {
     font-family: var(--mono);
     font-size: 0.82rem;

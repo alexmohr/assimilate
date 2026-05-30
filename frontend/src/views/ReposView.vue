@@ -67,6 +67,7 @@ interface RepoWithStats {
   compression: string
   encryption: string
   enabled: boolean
+  importing: boolean
   archive_count: number
   last_backup_at: string | null
   total_original_size: number
@@ -834,9 +835,15 @@ onMounted(loadRepos)
           </div>
           <span
             class="status-badge"
-            :class="repo.enabled ? 'status-online' : 'status-offline'"
+            :class="
+              repo.importing
+                ? 'status-importing'
+                : repo.enabled
+                  ? 'status-online'
+                  : 'status-offline'
+            "
           >
-            {{ repo.enabled ? 'Enabled' : 'Disabled' }}
+            {{ repo.importing ? 'Importing\u2026' : repo.enabled ? 'Enabled' : 'Disabled' }}
           </span>
         </div>
         <div class="card-meta">
@@ -929,9 +936,15 @@ onMounted(loadRepos)
               </div>
               <span
                 class="status-badge"
-                :class="repo.enabled ? 'status-online' : 'status-offline'"
+                :class="
+                  repo.importing
+                    ? 'status-importing'
+                    : repo.enabled
+                      ? 'status-online'
+                      : 'status-offline'
+                "
               >
-                {{ repo.enabled ? 'Enabled' : 'Disabled' }}
+                {{ repo.importing ? 'Importing\u2026' : repo.enabled ? 'Enabled' : 'Disabled' }}
               </span>
             </div>
             <div class="card-meta">

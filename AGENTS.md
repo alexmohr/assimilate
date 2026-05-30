@@ -658,3 +658,13 @@ When adding a new user-facing feature or documentation page, update `seed-demo.s
 * Do not use `Box<dyn Error>` as a return type. Define concrete error enums with `thiserror`.
 * Do not commit code with `todo!()`, `unimplemented!()`, or `dbg!()` macros.
 * Do not add `#[allow(...)]` attributes without explicit approval.
+
+## Test Change Policy
+
+* A failing test is an implementation error signal, not a test error signal; investigate and fix the implementation first.
+* If a test failure conflicts with task instructions, stop immediately and ask a human for clarification before proceeding.
+* Do not change, delete, or weaken tests to make CI pass without explicit human approval.
+* Changing test assertions requires human approval when the goal is unclear or test expectations conflict with task requirements.
+* New features must include tests, and test coverage must not decrease.
+* If a legitimate refactor changes observable behavior, update the tests and explain why in the commit message.
+* When in doubt, stop and ask; never silently "fix" a test to unblock work.

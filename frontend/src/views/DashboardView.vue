@@ -16,6 +16,7 @@ import BackupCalendar from '../components/BackupCalendar.vue'
 
 interface StorageRepoEntry {
   name: string
+  compressed_size: number
   deduplicated_size: number
   percentage: number
 }
@@ -197,7 +198,14 @@ const clientIndicatorColor = computed((): string => {
 })
 
 const storageDonuts = computed(
-  (): Array<{ name: string; percentage: number; size: number; color: string; offset: number }> => {
+  (): Array<{
+    name: string
+    percentage: number
+    size: number
+    compressedSize: number
+    color: string
+    offset: number
+  }> => {
     if (storageBreakdown.value.length === 0) return []
     const circumference = 2 * Math.PI * 54
     let cumulative = 0
@@ -208,6 +216,7 @@ const storageDonuts = computed(
         name: entry.name,
         percentage: entry.percentage,
         size: entry.deduplicated_size,
+        compressedSize: entry.compressed_size,
         color: DONUT_COLORS[i % DONUT_COLORS.length],
         offset,
       }
@@ -513,7 +522,8 @@ function healthStatusColor(entry: HealthEntry): string {
                 />
                 <span class="legend-name">{{ seg.name }}</span>
                 <span class="legend-detail"
-                  >{{ seg.percentage }}% &middot; {{ formatBytes(seg.size) }}</span
+                  >{{ formatBytes(seg.compressedSize) }} compressed &middot;
+                  {{ formatBytes(seg.size) }} dedup</span
                 >
               </div>
             </div>

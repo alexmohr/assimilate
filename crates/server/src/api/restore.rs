@@ -10,10 +10,11 @@ use axum::{
     http::header,
     response::{IntoResponse, Response},
 };
+use lz4_flex::frame::FrameEncoder;
 use serde::{Deserialize, Serialize};
 use shared::{protocol::ServerToAgent, types::RepoId};
-use tokio::{process::Command, sync::oneshot};
-use tokio_util::io::ReaderStream;
+use tokio::{io::AsyncReadExt, process::Command, sync::oneshot};
+use tokio_util::io::{ReaderStream, SyncIoBridge};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -94,54 +95,29 @@ pub async fn download_files(
         .take()
         .ok_or_else(|| ApiError::Internal("failed to capture borg stdout".to_string()))?;
 
-    let lz4_available = Command::new("lz4")
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .await
-        .map(|s| s.success())
-        .unwrap_or(false);
+    let (reader, writer) = tokio::io::duplex(64 * 1024);
 
-    let (body_stream, filename) = if lz4_available {
-        let mut lz4 = Command::new("lz4")
-            .arg("-")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|e| ApiError::Internal(format!("failed to spawn lz4: {e}")))?;
+    tokio::spawn(async move {
+        let mut stdout = borg_stdout;
+        let mut buf = Vec::new();
+        let read_result = stdout.read_to_end(&mut buf).await;
+        let _r = borg.wait().await;
 
-        let lz4_stdin = lz4
-            .stdin
-            .take()
-            .ok_or_else(|| ApiError::Internal("failed to capture lz4 stdin".to_string()))?;
+        if read_result.is_ok() {
+            let bridge = SyncIoBridge::new(writer);
+            tokio::task::spawn_blocking(move || {
+                let mut encoder = FrameEncoder::new(bridge);
+                std::io::copy(&mut buf.as_slice(), &mut encoder).ok();
+                encoder.finish().ok();
+            })
+            .await
+            .ok();
+        }
+    });
 
-        let lz4_stdout = lz4
-            .stdout
-            .take()
-            .ok_or_else(|| ApiError::Internal("failed to capture lz4 stdout".to_string()))?;
-
-        tokio::spawn(async move {
-            let mut stdin = lz4_stdin;
-            let mut stdout = borg_stdout;
-            tokio::io::copy(&mut stdout, &mut stdin).await.ok();
-            drop(stdin);
-            let _r = borg.wait().await;
-            let _r = lz4.wait().await;
-        });
-
-        let stream = ReaderStream::new(lz4_stdout);
-        (Body::from_stream(stream), format!("{archive_name}.tar.lz4"))
-    } else {
-        tokio::spawn(async move {
-            let _r = borg.wait().await;
-        });
-
-        let stream = ReaderStream::new(borg_stdout);
-        (Body::from_stream(stream), format!("{archive_name}.tar"))
-    };
+    let stream = ReaderStream::new(reader);
+    let body_stream = Body::from_stream(stream);
+    let filename = format!("{archive_name}.tar.lz4");
 
     if let Err(e) = db::audit::insert_audit_entry(
         &state.pool,

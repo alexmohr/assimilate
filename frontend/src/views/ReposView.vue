@@ -292,7 +292,7 @@ const defaultRepoForm = (): RepoForm => ({
   ssh_port: 22,
   passphrase: '',
   compression: 'lz4',
-  encryption: 'repokey',
+  encryption: 'repokey-blake2',
   enabled: true,
 })
 
@@ -882,16 +882,20 @@ onMounted(loadRepos)
             <span class="stat-label">Archives</span>
           </div>
           <div class="stat">
+            <span class="stat-value">{{ formatBytes(repo.total_original_size) }}</span>
+            <span class="stat-label">Original</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value">{{ formatBytes(repo.total_compressed_size) }}</span>
+            <span class="stat-label">Compressed</span>
+          </div>
+          <div class="stat">
             <span class="stat-value">{{ formatBytes(repo.total_deduplicated_size) }}</span>
-            <span class="stat-label">Size</span>
+            <span class="stat-label">Deduplicated</span>
           </div>
           <div class="stat">
             <span class="stat-value">{{ formatLastBackup(repo.last_backup_at) }}</span>
             <span class="stat-label">Last backup</span>
-          </div>
-          <div class="stat">
-            <span class="stat-value">{{ repo.client_count }}</span>
-            <span class="stat-label">Clients</span>
           </div>
         </div>
         <div
@@ -994,16 +998,20 @@ onMounted(loadRepos)
                 <span class="stat-label">Archives</span>
               </div>
               <div class="stat">
+                <span class="stat-value">{{ formatBytes(repo.total_original_size) }}</span>
+                <span class="stat-label">Original</span>
+              </div>
+              <div class="stat">
+                <span class="stat-value">{{ formatBytes(repo.total_compressed_size) }}</span>
+                <span class="stat-label">Compressed</span>
+              </div>
+              <div class="stat">
                 <span class="stat-value">{{ formatBytes(repo.total_deduplicated_size) }}</span>
-                <span class="stat-label">Size</span>
+                <span class="stat-label">Deduplicated</span>
               </div>
               <div class="stat">
                 <span class="stat-value">{{ formatLastBackup(repo.last_backup_at) }}</span>
                 <span class="stat-label">Last backup</span>
-              </div>
-              <div class="stat">
-                <span class="stat-value">{{ repo.client_count }}</span>
-                <span class="stat-label">Clients</span>
               </div>
             </div>
             <div

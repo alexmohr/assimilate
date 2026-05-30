@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+#
+# Demo environment for documentation screenshots.
+# Starts server + postgres + borg-repo, spawns 3 agents inside the dev container,
+# and seeds realistic demo data.
+#
+# Usage:
+#   docker compose -f .devcontainer/demo/docker-compose.demo.yml up --build
+#   # Then open http://localhost:8080 (admin/admin)
+
+services:
+  demo:
+    build:
+      context: ../..
+      dockerfile: .devcontainer/demo/Dockerfile.demo
+    volumes:
+      - demo-ssh-keys:/ssh-keys
+      - demo-borg-repos:/backup/repos
+    environment:
+      DATABASE_URL: postgres://borg:borg_demo@postgres:5432/borg
+      ASSIMILATE_SECRET_KEY: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+      ASSIMILATE_BIND_ADDR: "0.0.0.0:8080"
+      SSH_KEY_DIR: /ssh-keys
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["/app/start-demo.sh"]
+
+  postgres:
+    image: postgres:latest
+    environment:
+      POSTGRES_DB: borg
+      POSTGRES_USER: borg
+      POSTGRES_PASSWORD: borg_demo
+    volumes:
+      - demo-pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U borg -d borg"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
+volumes:
+  demo-pgdata:
+  demo-ssh-keys:
+  demo-borg-repos:

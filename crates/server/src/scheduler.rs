@@ -5,21 +5,33 @@ use std::time::Duration;
 
 use chrono::Utc;
 use shared::{
-    protocol::ServerToAgent,
+    protocol::{ServerToAgent, ServerToUi},
     schedule::calculate_next_run,
     types::{RepoId, ScheduleType},
 };
 use sqlx::PgPool;
 
-use crate::{db, ws::registry::AgentRegistry};
+use crate::{
+    api::repos::sync_existing_archives,
+    db,
+    ws::{registry::AgentRegistry, ui_broadcast::UiBroadcast},
+};
 
 const TICK_INTERVAL: Duration = Duration::from_secs(30);
 const RETENTION_INTERVAL: Duration = Duration::from_secs(3600);
+const SYNC_INTERVAL: Duration = Duration::from_secs(900);
+const SYNC_WARN_DURATION: Duration = Duration::from_secs(300);
 const DEFAULT_RETENTION_DAYS: i64 = 7;
 
-pub async fn run(pool: PgPool, registry: AgentRegistry) {
+pub async fn run(
+    pool: PgPool,
+    registry: AgentRegistry,
+    encryption_key: [u8; 32],
+    ui_broadcast: UiBroadcast,
+) {
     let schedule_pool = pool.clone();
-    let retention_pool = pool;
+    let retention_pool = pool.clone();
+    let sync_pool = pool;
 
     let schedule_task = async move {
         let mut interval = tokio::time::interval(TICK_INTERVAL);
@@ -41,7 +53,82 @@ pub async fn run(pool: PgPool, registry: AgentRegistry) {
         }
     };
 
-    tokio::join!(schedule_task, retention_task);
+    let sync_task = async {
+        let mut interval = tokio::time::interval(SYNC_INTERVAL);
+        loop {
+            interval.tick().await;
+            run_repo_sync(&sync_pool, &encryption_key, &ui_broadcast).await;
+        }
+    };
+
+    tokio::join!(schedule_task, retention_task, sync_task);
+}
+
+async fn run_repo_sync(pool: &PgPool, encryption_key: &[u8; 32], ui_broadcast: &UiBroadcast) {
+    let repos = match db::list_all_repos(pool).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to list repos for sync");
+            return;
+        }
+    };
+
+    for repo in repos {
+        if !repo.enabled {
+            continue;
+        }
+
+        let start = std::time::Instant::now();
+        match sync_existing_archives(pool, encryption_key, repo.id).await {
+            Ok(imported) => {
+                let elapsed = start.elapsed();
+                let duration_secs = elapsed.as_secs();
+
+                if let Err(e) = db::update_repo_last_synced(pool, repo.id).await {
+                    tracing::error!(repo_id = repo.id, error = %e, "failed to update last_synced_at");
+                }
+
+                if imported > 0 {
+                    let msg = format!(
+                        "periodic sync for '{}': imported {imported} new archives in \
+                         {duration_secs}s",
+                        repo.name
+                    );
+                    tracing::info!("{msg}");
+                    if let Err(e) = db::insert_system_event(pool, "repo_sync", None, &msg).await {
+                        tracing::error!(error = %e, "failed to log sync event");
+                    }
+                    ui_broadcast.send(ServerToUi::DataChanged);
+                }
+
+                if elapsed > SYNC_WARN_DURATION {
+                    let msg = format!(
+                        "periodic sync for '{}' took {duration_secs}s (exceeds {}s threshold)",
+                        repo.name,
+                        SYNC_WARN_DURATION.as_secs()
+                    );
+                    tracing::error!("{msg}");
+                    if let Err(e) =
+                        db::insert_system_event(pool, "repo_sync_slow", None, &msg).await
+                    {
+                        tracing::error!(error = %e, "failed to log slow sync event");
+                    }
+                }
+            }
+            Err(e) => {
+                let elapsed = start.elapsed();
+                let msg = format!(
+                    "periodic sync failed for '{}' after {:.1}s: {e}",
+                    repo.name,
+                    elapsed.as_secs_f64()
+                );
+                tracing::error!("{msg}");
+                if let Err(log_err) = db::insert_system_event(pool, "repo_sync", None, &msg).await {
+                    tracing::error!(error = %log_err, "failed to log sync event");
+                }
+            }
+        }
+    }
 }
 
 async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiError> {

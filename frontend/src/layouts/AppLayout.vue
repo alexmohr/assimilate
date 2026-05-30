@@ -551,6 +551,7 @@ onMounted(loadTimezone)
 .sidebar-footer {
   margin-top: auto;
   padding-top: 1rem;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
   border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;

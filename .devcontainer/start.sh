@@ -6,7 +6,24 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+DEMO_FLAG=false
+for _arg in "$@"; do
+    case "$_arg" in
+        --demo) DEMO_FLAG=true ;;
+    esac
+done
+
 if [ ! -f "/.dockerenv" ] && [ ! -f "/run/.containerenv" ]; then
+    if [ "$DEMO_FLAG" = "true" ]; then
+        COMPOSE_FILE="$SCRIPT_DIR/demo/docker-compose.demo.yml"
+        if echo "$*" | grep -q -- "--clear"; then
+            echo "Stopping and removing demo containers + volumes..."
+            docker compose -f "$COMPOSE_FILE" down --remove-orphans --volumes
+        fi
+        echo "Starting demo environment..."
+        exec docker compose -f "$COMPOSE_FILE" up --build
+    fi
+
     echo "Stopping existing containers..."
     docker compose -f "$SCRIPT_DIR/docker-compose.dev.yml" down --remove-orphans
     echo "Starting devcontainer services..."

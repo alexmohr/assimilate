@@ -30,6 +30,8 @@ tower-http = { workspace = true }
 sha2 = { workspace = true }
 russh = { workspace = true }
 russh-sftp = { workspace = true }
+ssh-key = { workspace = true }
+lz4_flex = { workspace = true }
 shared = { path = "../shared" }
 reqwest = { workspace = true }
 lettre = { workspace = true }

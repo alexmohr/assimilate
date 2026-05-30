@@ -17,7 +17,7 @@ COPY mkdocs.yml .
 RUN pip install --no-cache-dir -r docs/requirements.txt && mkdocs build --strict
 
 # Stage 3: Build Rust server binary
-FROM rust:bookworm AS rust-builder
+FROM rust:trixie AS rust-builder
 WORKDIR /app
 RUN rustup default nightly
 
@@ -26,7 +26,7 @@ COPY crates/ crates/
 RUN cargo build --release -p server -p agent
 
 # Stage 4: Runtime
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \

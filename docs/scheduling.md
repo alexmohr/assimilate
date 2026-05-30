@@ -5,7 +5,9 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 # Scheduling & Retention
 
-Assimilate runs backups on a schedule you define per repository. Each schedule carries its own cron expression, retention policy, exclude patterns, and optional pre/post commands.
+Assimilate runs backups on a schedule you define per repository. Each schedule carries its own cron expression, retention policy, exclude patterns, optional pre/post commands, and optional Borg bandwidth cap.
+
+When set, the bandwidth cap is passed to Borg as `--remote-ratelimit` in kB/s.
 
 ## Creating a Schedule
 
@@ -14,7 +16,7 @@ Assimilate runs backups on a schedule you define per repository. Each schedule c
 3. Click **Add Schedule**.
 4. Set the cron expression (see [Cron Expression Builder](#cron-expression-builder)).
 5. Configure the retention policy (see [Retention Policy](#retention-policy)).
-6. Optionally add exclude patterns, backup sources, and pre/post commands.
+6. Optionally add exclude patterns, backup sources, pre/post commands, and a remote bandwidth limit.
 7. Click **Save**. The server validates the cron expression and, if the schedule is enabled, verifies SSH connectivity to the repository before saving.
 
 ![Schedules](assets/screenshots/schedules.png)

@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 pub mod archives;
+pub mod audit;
 pub mod auth;
 pub mod clients;
 pub mod deploy;
@@ -11,6 +12,7 @@ pub mod helpers;
 pub mod logs;
 pub mod notifications;
 pub mod permissions;
+pub mod quota;
 pub mod rbac;
 pub mod reports;
 pub mod repos;

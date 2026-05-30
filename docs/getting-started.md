@@ -14,7 +14,9 @@ The fastest way to get started. Pre-built images for the server and agent are pu
 !!! tip
     Use `nightly` for the latest development build from `main`, or pin to a release tag for stability.
 
-### docker-compose.yml (pre-built images)
+### Server: docker-compose.yml (pre-built images)
+
+Deploy this on the machine hosting the Assimilate server:
 
 ```yaml
 services:
@@ -49,36 +51,43 @@ services:
       postgres:
         condition: service_healthy
 
-  agent:
-    image: ghcr.io/alexmohr/assimilate-agent:latest
-    environment:
-      BORG_SERVER_URL: http://server:8080
-      BORG_AGENT_TOKEN: ${BORG_AGENT_TOKEN:?BORG_AGENT_TOKEN must be set}
-    depends_on:
-      - server
-
 volumes:
   pgdata:
   ssh_keys:
 ```
 
+### Agent: docker-compose.yml (pre-built images)
+
+Deploy this on **each machine you want to back up** — not on the server:
+
+```yaml
+services:
+  agent:
+    image: ghcr.io/alexmohr/assimilate-agent:latest
+    environment:
+      BORG_SERVER_URL: http://<server-address>:8080
+      BORG_AGENT_TOKEN: ${BORG_AGENT_TOKEN:?BORG_AGENT_TOKEN must be set}
+```
+
 ### Running with pre-built images
+
+**On the server machine:**
 
 ```bash
 export ASSIMILATE_SECRET_KEY=$(openssl rand -hex 32)
-docker compose up -d postgres server
+docker compose up -d
 ```
 
-Once the server is running, create a host in the UI, copy its token, then start the agent:
+Once the server is running, create a host in the UI and copy its token.
+
+**On each backup machine:**
 
 ```bash
 export BORG_AGENT_TOKEN=<token from server UI>
-docker compose up -d agent
+docker compose up -d
 ```
 
 ## Docker Compose Quickstart (build from source)
-
-The included `docker-compose.yml` runs the full stack: PostgreSQL, the Assimilate server, and one agent.
 
 ### Environment variables
 
@@ -91,7 +100,9 @@ The included `docker-compose.yml` runs the full stack: PostgreSQL, the Assimilat
 !!! warning "Protect `ASSIMILATE_SECRET_KEY`"
     This key derives the AES-256-GCM encryption key that protects all repository passphrases stored in the database. If you lose or rotate this value, every encrypted passphrase becomes **permanently unrecoverable**. Store it in a secrets manager or a secure `.env` file that is never committed to version control.
 
-### `docker-compose.yml`
+### Server: `docker-compose.yml`
+
+Deploy this on the machine hosting the Assimilate server:
 
 ```yaml
 services:
@@ -133,28 +144,37 @@ volumes:
   ssh_keys:
 ```
 
+### Agent: `docker-compose.yml`
+
+Deploy this on **each machine you want to back up** — not on the server:
+
+```yaml
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    environment:
+      BORG_SERVER_URL: http://<server-address>:8080
+      BORG_AGENT_TOKEN: ${BORG_AGENT_TOKEN:?BORG_AGENT_TOKEN must be set}
+```
+
 ### First run
 
 Generate a secret key and start the server:
 
 ```bash
 export ASSIMILATE_SECRET_KEY=$(openssl rand -hex 32)
-docker compose up -d postgres server
+docker compose up -d
 ```
 
 The server creates a default admin account and generates an Ed25519 SSH key pair on first start. The SSH key pair is persisted in the `ssh_keys` volume and the public key is visible under **System** in the admin UI.
 
-Once the server is running, create a host in the UI, copy its token, then start the agent:
+Once the server is running, create a host in the UI and copy its token. Then on each backup machine:
 
 ```bash
 export BORG_AGENT_TOKEN=<token from server UI>
-docker compose up -d agent
-```
-
-To run multiple agents for different machines, pass the token per instance:
-
-```bash
-docker compose run -e BORG_AGENT_TOKEN=<other-token> agent
+docker compose up -d
 ```
 
 ## Manual Build

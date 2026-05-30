@@ -69,6 +69,15 @@ pub async fn assemble_config(
                 schedule.keep_yearly
             ))
         })?;
+        let rate_limit_kbps = match schedule.rate_limit_kbps {
+            Some(rate_limit_kbps) => Some(u32::try_from(rate_limit_kbps).map_err(|_| {
+                ApiError::Internal(format!(
+                    "rate_limit_kbps {} out of u32 range",
+                    rate_limit_kbps
+                ))
+            })?),
+            None => None,
+        };
 
         let mut backup_sources = db::list_backup_sources_for_schedule(pool, schedule.id).await?;
 
@@ -93,6 +102,7 @@ pub async fn assemble_config(
             cron_expression: schedule.cron_expression,
             enabled: schedule.enabled,
             backup_sources,
+            rate_limit_kbps,
             canary_enabled: schedule.canary_enabled,
             exclude_patterns: schedule.exclude_patterns,
             ignore_global_excludes: schedule.ignore_global_excludes,

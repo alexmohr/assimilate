@@ -46,6 +46,7 @@ pub struct BackupTarget {
     pub post_backup_commands: Vec<String>,
     pub skip_targets: Vec<String>,
     pub exclude_patterns: Vec<String>,
+    pub rate_limit_kbps: Option<u32>,
     pub ssh_auth_sock: Option<PathBuf>,
     pub canary_enabled: bool,
 }
@@ -211,25 +212,7 @@ impl BackupEngine {
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%S");
         let archive_name = format!("{hostname}-{now}", hostname = target.hostname);
 
-        let mut args = vec![
-            "create".to_owned(),
-            "--lock-wait".to_owned(),
-            "600".to_owned(),
-            "--show-rc".to_owned(),
-            "--json".to_owned(),
-            "--compression".to_owned(),
-            Self::compression_arg(&target.compression),
-            "--exclude-caches".to_owned(),
-            "--exclude-if-present".to_owned(),
-            ".nobackup".to_owned(),
-            "--exclude-from".to_owned(),
-            exclude_file.to_string_lossy().into_owned(),
-            format!("::{archive_name}"),
-        ];
-
-        for source in backup_sources {
-            args.push(source.clone());
-        }
+        let args = Self::borg_create_args(target, backup_sources, exclude_file, &archive_name);
 
         let env_vars = Self::borg_env(target);
 
@@ -276,6 +259,41 @@ impl BackupEngine {
                 "borg create exited with code {exit_code}: {stderr}"
             ))),
         }
+    }
+
+    fn borg_create_args(
+        target: &BackupTarget,
+        backup_sources: &[String],
+        exclude_file: &Path,
+        archive_name: &str,
+    ) -> Vec<String> {
+        let mut args = vec![
+            "create".to_owned(),
+            "--lock-wait".to_owned(),
+            "600".to_owned(),
+            "--show-rc".to_owned(),
+            "--json".to_owned(),
+            "--compression".to_owned(),
+            Self::compression_arg(&target.compression),
+            "--exclude-caches".to_owned(),
+            "--exclude-if-present".to_owned(),
+            ".nobackup".to_owned(),
+            "--exclude-from".to_owned(),
+            exclude_file.to_string_lossy().into_owned(),
+        ];
+
+        if let Some(rate_limit_kbps) = target.rate_limit_kbps {
+            args.push("--remote-ratelimit".to_owned());
+            args.push(rate_limit_kbps.to_string());
+        }
+
+        args.push(format!("::{archive_name}"));
+
+        for source in backup_sources {
+            args.push(source.clone());
+        }
+
+        args
     }
 
     async fn run_borg_prune(&self, target: &BackupTarget) -> Result<(), BackupError> {
@@ -693,9 +711,40 @@ mod tests {
             post_backup_commands: Vec::new(),
             skip_targets: Vec::new(),
             exclude_patterns: vec!["*.tmp".to_owned(), "/proc/*".to_owned()],
+            rate_limit_kbps: None,
             ssh_auth_sock: None,
             canary_enabled: false,
         }
+    }
+
+    #[test]
+    fn test_rate_limit_flag_included() {
+        let mut target = test_target();
+        target.rate_limit_kbps = Some(5000);
+
+        let args = BackupEngine::borg_create_args(
+            &target,
+            &target.backup_sources,
+            Path::new("/tmp/excludes"),
+            "archive-name",
+        );
+
+        assert!(args.iter().any(|arg| arg == "--remote-ratelimit"));
+        assert!(args.iter().any(|arg| arg == "5000"));
+    }
+
+    #[test]
+    fn test_rate_limit_flag_absent() {
+        let target = test_target();
+
+        let args = BackupEngine::borg_create_args(
+            &target,
+            &target.backup_sources,
+            Path::new("/tmp/excludes"),
+            "archive-name",
+        );
+
+        assert!(!args.iter().any(|arg| arg == "--remote-ratelimit"));
     }
 
     #[tokio::test]

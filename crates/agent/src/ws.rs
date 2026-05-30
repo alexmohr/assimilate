@@ -129,6 +129,7 @@ async fn connect_and_run(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 async fn handle_text_message(
     text: &str,
     exec_cmd_tx: &mpsc::Sender<ExecutorCommand>,
@@ -152,7 +153,7 @@ async fn handle_text_message(
                 warn!("Executor command channel closed");
             }
         }
-        ServerToAgent::RunBackupNow { repo_id } => {
+        ServerToAgent::RunBackupNow { repo_id, .. } => {
             info!("Received RunBackupNow for repo {repo_id:?}");
             if exec_cmd_tx
                 .send(ExecutorCommand::RunNow { repo_id })
@@ -162,7 +163,7 @@ async fn handle_text_message(
                 warn!("Executor command channel closed");
             }
         }
-        ServerToAgent::RunCheckNow { repo_id } => {
+        ServerToAgent::RunCheckNow { repo_id, .. } => {
             info!("Received RunCheckNow for repo {repo_id:?}");
             if exec_cmd_tx
                 .send(ExecutorCommand::RunCheckNow { repo_id })
@@ -172,7 +173,7 @@ async fn handle_text_message(
                 warn!("Executor command channel closed");
             }
         }
-        ServerToAgent::RunVerifyNow { repo_id } => {
+        ServerToAgent::RunVerifyNow { repo_id, .. } => {
             info!("Received RunVerifyNow for repo {repo_id:?}");
             if exec_cmd_tx
                 .send(ExecutorCommand::RunVerifyNow { repo_id })
@@ -189,6 +190,7 @@ async fn handle_text_message(
             ssh_port,
             passphrase,
             encryption,
+            ..
         } => {
             info!("Received InitRepo for {repo_path}");
             if exec_cmd_tx
@@ -215,6 +217,27 @@ async fn handle_text_message(
         ServerToAgent::RestartAgent => {
             info!("Received RestartAgent command, exiting for systemd restart");
             process::exit(0);
+        }
+        ServerToAgent::SearchArchive { .. } => {
+            warn!("SearchArchive not yet implemented in agent");
+        }
+        ServerToAgent::RestoreFiles { .. } => {
+            warn!("RestoreFiles not yet implemented in agent");
+        }
+        ServerToAgent::DryRun { .. } => {
+            warn!("DryRun not yet implemented in agent");
+        }
+        ServerToAgent::ExportArchive { .. } => {
+            warn!("ExportArchive not yet implemented in agent");
+        }
+        ServerToAgent::KeyExport { .. } => {
+            warn!("KeyExport not yet implemented in agent");
+        }
+        ServerToAgent::KeyImport { .. } => {
+            warn!("KeyImport not yet implemented in agent");
+        }
+        ServerToAgent::ChangePassphrase { .. } => {
+            warn!("ChangePassphrase not yet implemented in agent");
         }
     }
 

@@ -15,7 +15,11 @@ pub mod ssh;
 pub mod tunnel;
 pub mod ws;
 
+use std::{collections::HashMap, sync::Arc};
+
+use shared::types::DryRunFile;
 use sqlx::PgPool;
+use tokio::sync::{Mutex, oneshot};
 
 use crate::{
     log_buffer::LogBuffer,
@@ -23,6 +27,9 @@ use crate::{
     tunnel::TunnelManager,
     ws::{registry::AgentRegistry, ui_broadcast::UiBroadcast},
 };
+
+pub type PendingDryRuns =
+    Arc<Mutex<HashMap<String, oneshot::Sender<(Vec<DryRunFile>, i64, Option<String>)>>>>;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -33,4 +40,5 @@ pub struct AppState {
     pub tunnel_manager: TunnelManager,
     pub log_buffer: LogBuffer,
     pub notification_service: NotificationService,
+    pub pending_dryruns: PendingDryRuns,
 }

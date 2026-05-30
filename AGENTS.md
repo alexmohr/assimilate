@@ -641,7 +641,7 @@ The `seed-demo.sh` script populates every documented scenario:
 * **Hostname aliases**: Glob pattern `web-server-*` on `web-server-01` for the unmatched archive scenario
 * **Tags**: Host tags (production, staging) and repo tags (critical, archival)
 * **Access control**: 3 users (admin, operator1, viewer1), groups (backend-team, data-team), built-in roles
-* **Global excludes**: Standard patterns (node_modules, __pycache__, etc.)
+* **Global excludes**: Standard patterns (node\_modules, \_\_pycache\_\_, etc.)
 * **Quotas**: Warn/critical thresholds on server-daily and database-hourly repos
 * **System events**: Agent connect/disconnect, backup failures/warnings
 * **Audit log**: Repository creation, host registration, schedule creation, login events, quota configuration

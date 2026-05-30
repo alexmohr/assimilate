@@ -53,6 +53,10 @@ nav:
   - Repository Management: repositories.md
   - Scheduling & Retention: scheduling.md
   - Archive Browsing: archives.md
+  - Restoring Files: restore.md
+  - Storage Quotas: quotas.md
+  - Key Management: key-management.md
+  - Audit Log: audit-log.md
   - Global Excludes: excludes.md
   - Activity Log: activity.md
   - SSH Tunnels: ssh-tunnels.md

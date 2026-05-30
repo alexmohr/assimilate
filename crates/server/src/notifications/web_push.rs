@@ -17,10 +17,9 @@ pub async fn send(
 ) -> Result<(), NotificationError> {
     let subscription = SubscriptionInfo::new(endpoint, p256dh, auth);
 
-    let partial_builder = VapidSignatureBuilder::from_base64_no_sub(vapid_private_key)
+    let mut sig_builder = VapidSignatureBuilder::from_base64(vapid_private_key, &subscription)
         .map_err(|e| NotificationError::Config(format!("VAPID key parse error: {e}")))?;
-
-    let sig_builder = partial_builder.add_sub_info(&subscription);
+    sig_builder.add_claim("sub", "mailto:noreply@assimilate.local");
 
     let content = serde_json::to_vec(payload)?;
 

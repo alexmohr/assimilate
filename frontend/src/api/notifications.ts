@@ -91,3 +91,15 @@ export async function listDeliveries(limit?: number): Promise<NotificationDelive
   })
   return response.data
 }
+
+export interface ValidateSmtpRequest {
+  smtp_host: string
+  smtp_port: number
+  smtp_user: string
+  smtp_password: string
+  security: string
+}
+
+export async function validateSmtp(data: ValidateSmtpRequest): Promise<void> {
+  await apiClient.post('/notifications/validate-smtp', data)
+}

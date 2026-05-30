@@ -156,6 +156,16 @@ impl NotificationService {
         Self { pool, http_client }
     }
 
+    #[must_use]
+    pub fn http_client(&self) -> &reqwest::Client {
+        &self.http_client
+    }
+
+    #[must_use]
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
     pub async fn ensure_vapid_keys(&self) -> Result<(), NotificationError> {
         let existing = crate::db::get_setting(&self.pool, "vapid_private_key")
             .await
@@ -255,7 +265,7 @@ pub async fn dispatch(
         let event_type_str = event.event_type.as_db_str().to_owned();
 
         tokio::spawn(async move {
-            let result = deliver(
+            let result = deliver_to_channel(
                 channel.channel_type,
                 &channel_config,
                 &payload,
@@ -296,7 +306,7 @@ pub async fn dispatch(
     Ok(())
 }
 
-async fn deliver(
+pub async fn deliver_to_channel(
     channel_type: ChannelType,
     config: &serde_json::Value,
     payload: &serde_json::Value,
@@ -333,17 +343,67 @@ async fn deliver(
             .fetch_all(pool)
             .await?;
 
+            let title = payload
+                .get("event_type")
+                .and_then(serde_json::Value::as_str)
+                .map_or_else(|| "Assimilate".to_owned(), |t| t.replace('_', " "));
+            let body = format!(
+                "{} — {}",
+                payload
+                    .get("hostname")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("unknown"),
+                payload
+                    .get("status")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+            );
+            let push_url = if let Some(schedule_id) = payload
+                .get("schedule_id")
+                .and_then(serde_json::Value::as_i64)
+            {
+                format!("/schedules/{schedule_id}")
+            } else if let Some(hostname) =
+                payload.get("hostname").and_then(serde_json::Value::as_str)
+            {
+                format!("/clients/{hostname}")
+            } else if let Some(repo_id) = payload.get("repo_id").and_then(serde_json::Value::as_i64)
+            {
+                format!("/repos/{repo_id}")
+            } else {
+                "/".to_owned()
+            };
+
+            let push_payload = serde_json::json!({
+                "title": title,
+                "body": body,
+                "tag": payload.get("event_type").and_then(serde_json::Value::as_str).unwrap_or("notification"),
+                "url": push_url,
+            });
+
             for sub in &subscriptions {
-                if let Err(e) = web_push::send(
+                match web_push::send(
                     &vapid_private_key,
                     sub.endpoint.clone(),
                     sub.p256dh.clone(),
                     sub.auth.clone(),
-                    payload,
+                    &push_payload,
                 )
                 .await
                 {
-                    tracing::error!(endpoint = %sub.endpoint, error = %e, "web push delivery failed");
+                    Ok(()) => {}
+                    Err(NotificationError::WebPush(
+                        ::web_push::WebPushError::EndpointNotValid(_),
+                    )) => {
+                        tracing::warn!(endpoint = %sub.endpoint, "removing stale push subscription (410 Gone)");
+                        let _ = sqlx::query("DELETE FROM push_subscriptions WHERE endpoint = $1")
+                            .bind(&sub.endpoint)
+                            .execute(pool)
+                            .await;
+                    }
+                    Err(e) => {
+                        tracing::error!(endpoint = %sub.endpoint, error = %e, "web push delivery failed");
+                    }
                 }
             }
             Ok(())

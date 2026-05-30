@@ -14,7 +14,7 @@ use super::auth::{AuthUser, RequireAdmin};
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
-    notifications::{ChannelType, EventType, NotificationEvent, dispatch},
+    notifications::{ChannelType, EventType},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -306,23 +306,23 @@ pub async fn test_channel(
     .await?
     .ok_or_else(|| ApiError::NotFound(format!("channel {id} not found")))?;
 
-    let _channel = channel;
+    let payload = serde_json::json!({
+        "event_type": "backup_success",
+        "hostname": "test-host",
+        "repo_name": "test-repo",
+        "status": "This is a test notification from Assimilate",
+        "timestamp": Utc::now().to_rfc3339(),
+    });
 
-    let event = NotificationEvent {
-        event_type: EventType::BackupSuccess,
-        hostname: "test-host".to_owned(),
-        repo_name: "test-repo".to_owned(),
-        status: "Test notification".to_owned(),
-        error_message: None,
-        timestamp: Utc::now(),
-        repo_id: None,
-        client_id: None,
-        schedule_id: None,
-    };
-
-    dispatch(&state.notification_service, event)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    crate::notifications::deliver_to_channel(
+        channel.channel_type,
+        &channel.config,
+        &payload,
+        state.notification_service.http_client(),
+        state.notification_service.pool(),
+    )
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -486,4 +486,46 @@ pub async fn list_deliveries(
     .fetch_all(&state.pool)
     .await?;
     Ok(Json(deliveries))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ValidateSmtpRequest {
+    pub smtp_host: String,
+    pub smtp_port: u16,
+    pub smtp_user: String,
+    pub smtp_password: String,
+    #[serde(default)]
+    pub security: crate::notifications::email::SmtpSecurity,
+    #[serde(default)]
+    pub use_tls: bool,
+}
+
+pub async fn validate_smtp(
+    _admin: RequireAdmin,
+    ApiJson(req): ApiJson<ValidateSmtpRequest>,
+) -> Result<StatusCode, ApiError> {
+    crate::notifications::email::validate_credentials(
+        &req.smtp_host,
+        req.smtp_port,
+        &req.smtp_user,
+        &req.smtp_password,
+        req.effective_security(),
+    )
+    .await
+    .map_err(|e| ApiError::BadRequest(format!("SMTP validation failed: {e}")))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+impl ValidateSmtpRequest {
+    fn effective_security(&self) -> crate::notifications::email::SmtpSecurity {
+        if self.security != crate::notifications::email::SmtpSecurity::Starttls {
+            return self.security;
+        }
+        if self.use_tls {
+            crate::notifications::email::SmtpSecurity::Tls
+        } else {
+            crate::notifications::email::SmtpSecurity::Starttls
+        }
+    }
 }

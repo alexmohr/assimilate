@@ -67,26 +67,12 @@ pub async fn send(
 
     let creds = Credentials::new(config.smtp_user.clone(), config.smtp_password.clone());
 
-    let transport: AsyncSmtpTransport<Tokio1Executor> = match config.effective_security() {
-        SmtpSecurity::Tls => AsyncSmtpTransport::<Tokio1Executor>::relay(&config.smtp_host)
-            .map_err(|e| NotificationError::Config(format!("smtp relay error: {e}")))?
-            .port(config.smtp_port)
-            .credentials(creds)
-            .build(),
-        SmtpSecurity::Starttls => {
-            AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.smtp_host)
-                .map_err(|e| NotificationError::Config(format!("smtp starttls error: {e}")))?
-                .port(config.smtp_port)
-                .credentials(creds)
-                .build()
-        }
-        SmtpSecurity::None => {
-            AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&config.smtp_host)
-                .port(config.smtp_port)
-                .credentials(creds)
-                .build()
-        }
-    };
+    let transport = build_transport(
+        &config.smtp_host,
+        config.smtp_port,
+        config.effective_security(),
+        creds,
+    )?;
 
     for to_addr in &config.to_addresses {
         let to: Mailbox = to_addr
@@ -105,4 +91,45 @@ pub async fn send(
     }
 
     Ok(())
+}
+
+pub async fn validate_credentials(
+    host: &str,
+    port: u16,
+    user: &str,
+    password: &str,
+    security: SmtpSecurity,
+) -> Result<(), NotificationError> {
+    let creds = Credentials::new(user.to_owned(), password.to_owned());
+    let transport = build_transport(host, port, security, creds)?;
+    transport
+        .test_connection()
+        .await
+        .map_err(|e| NotificationError::Config(format!("SMTP login failed: {e}")))?;
+    Ok(())
+}
+
+fn build_transport(
+    host: &str,
+    port: u16,
+    security: SmtpSecurity,
+    creds: Credentials,
+) -> Result<AsyncSmtpTransport<Tokio1Executor>, NotificationError> {
+    let transport = match security {
+        SmtpSecurity::Tls => AsyncSmtpTransport::<Tokio1Executor>::relay(host)
+            .map_err(|e| NotificationError::Config(format!("smtp relay error: {e}")))?
+            .port(port)
+            .credentials(creds)
+            .build(),
+        SmtpSecurity::Starttls => AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(host)
+            .map_err(|e| NotificationError::Config(format!("smtp starttls error: {e}")))?
+            .port(port)
+            .credentials(creds)
+            .build(),
+        SmtpSecurity::None => AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host)
+            .port(port)
+            .credentials(creds)
+            .build(),
+    };
+    Ok(transport)
 }

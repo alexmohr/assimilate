@@ -433,6 +433,10 @@ async fn main() -> Result<(), StartupError> {
             get(api::notifications::list_deliveries),
         )
         .route(
+            "/api/notifications/validate-smtp",
+            post(api::notifications::validate_smtp),
+        )
+        .route(
             "/api/openapi.json",
             get(|| async { Json(ApiDoc::openapi()) }),
         )

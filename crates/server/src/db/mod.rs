@@ -498,6 +498,24 @@ pub async fn delete_tunnel(pool: &PgPool, id: i64) -> Result<(), ApiError> {
     Ok(())
 }
 
+pub async fn update_repo_passphrase(
+    pool: &PgPool,
+    repo_id: i64,
+    passphrase_encrypted: &[u8],
+) -> Result<(), ApiError> {
+    let result =
+        sqlx::query("UPDATE repos SET passphrase_encrypted = $2 WHERE id = $1")
+            .bind(repo_id)
+            .bind(passphrase_encrypted)
+            .execute(pool)
+            .await
+            .map_err(ApiError::Database)?;
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound(format!("repo {repo_id} not found")));
+    }
+    Ok(())
+}
+
 pub async fn get_repo_passphrase(pool: &PgPool, repo_id: i64) -> Result<Vec<u8>, ApiError> {
     let row: (Vec<u8>,) = sqlx::query_as("SELECT passphrase_encrypted FROM repos WHERE id = $1")
         .bind(repo_id)

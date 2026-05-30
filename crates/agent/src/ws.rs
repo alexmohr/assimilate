@@ -224,8 +224,23 @@ async fn handle_text_message(
         ServerToAgent::RestoreFiles { .. } => {
             warn!("RestoreFiles not yet implemented in agent");
         }
-        ServerToAgent::DryRun { .. } => {
-            warn!("DryRun not yet implemented in agent");
+        ServerToAgent::DryRun {
+            request_id,
+            repo_id,
+            schedule_id,
+        } => {
+            info!("Received DryRun for repo {repo_id:?} schedule {schedule_id}");
+            if exec_cmd_tx
+                .send(ExecutorCommand::DryRun {
+                    repo_id,
+                    schedule_id,
+                    request_id,
+                })
+                .await
+                .is_err()
+            {
+                warn!("Executor command channel closed");
+            }
         }
         ServerToAgent::ExportArchive { .. } => {
             warn!("ExportArchive not yet implemented in agent");

@@ -247,6 +247,8 @@ pub struct RepoConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleConfig {
+    #[serde(default)]
+    pub id: i64,
     pub schedule_type: ScheduleType,
     pub cron_expression: String,
     pub enabled: bool,

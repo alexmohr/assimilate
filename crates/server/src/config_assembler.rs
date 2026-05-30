@@ -98,6 +98,7 @@ pub async fn assemble_config(
         backup_sources.extend(exclude_patterns.iter().map(|p| format!("!{p}")));
 
         let schedule_config = ScheduleConfig {
+            id: schedule.id,
             schedule_type: schedule_type_from_str(&schedule.schedule_type),
             cron_expression: schedule.cron_expression,
             enabled: schedule.enabled,

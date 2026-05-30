@@ -151,7 +151,6 @@ use crate::{
         ArchiveEntry,
         ArchiveInfo,
         ContentEntry,
-        DiffResponse,
         DeployAgentRequest,
         DeployAgentResponse,
         CreateScheduleRequest,

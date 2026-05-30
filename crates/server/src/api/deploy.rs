@@ -190,3 +190,23 @@ pub async fn deploy_agent(
         })),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_binary_path_respects_env_var() {
+        unsafe { std::env::set_var("AGENT_BINARY_PATH", "/custom/path/agent") };
+        let path = agent_binary_path();
+        unsafe { std::env::remove_var("AGENT_BINARY_PATH") };
+        assert_eq!(path, PathBuf::from("/custom/path/agent"));
+    }
+
+    #[test]
+    fn agent_binary_path_falls_back_to_docker_path_when_unset() {
+        unsafe { std::env::remove_var("AGENT_BINARY_PATH") };
+        let path = agent_binary_path();
+        assert_eq!(path.file_name().unwrap(), "agent");
+    }
+}

@@ -36,6 +36,7 @@ lettre = { workspace = true }
 web-push = { workspace = true }
 p256 = { workspace = true }
 base64 = { workspace = true }
+glob-match = { workspace = true }
 utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
 utoipa-axum = "0.1"
 utoipa-scalar = { version = "0.3", features = ["axum"] }
@@ -43,3 +44,6 @@ utoipa-scalar = { version = "0.3", features = ["axum"] }
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+
+[build-dependencies]
+chrono = { workspace = true }

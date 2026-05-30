@@ -266,6 +266,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 error_message: report.error_message,
                 warnings: report.warnings,
                 borg_version: report.borg_version,
+                matched: true,
             };
             if let Err(e) = db::insert_backup_report(&state.pool, &params).await {
                 tracing::error!(hostname = %hostname, error = %e, "failed to persist backup report");
@@ -536,6 +537,21 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                     hostname = %hostname,
                     request_id = %request_id,
                     "unexpected RestoreCompleted with no pending request"
+                );
+            }
+        }
+        AgentToServer::MigrateEncryptionCompleted {
+            request_id,
+            success,
+            error_message,
+        } => {
+            if let Some(tx) = state.pending_migrations.lock().await.remove(&request_id) {
+                let _ = tx.send((success, error_message));
+            } else {
+                tracing::warn!(
+                    hostname = %hostname,
+                    request_id = %request_id,
+                    "unexpected MigrateEncryptionCompleted with no pending request"
                 );
             }
         }

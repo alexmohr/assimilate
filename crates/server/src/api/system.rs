@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
 
+use super::deploy::{agent_binary_path, query_available_agent_version};
 use crate::{AppState, api::auth::RequireAdmin, db, error::ApiError};
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -204,5 +205,48 @@ pub async fn update_settings(
     Ok(Json(SettingsResponse {
         retention_days: body.retention_days,
         timezone: effective_tz.name().to_owned(),
+    }))
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct VersionResponse {
+    pub server_version: String,
+    pub server_git_sha: String,
+    pub build_timestamp: String,
+    pub agent_version: Option<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/system/version",
+    tag = "System",
+    operation_id = "getVersion",
+    summary = "Get server and agent version information",
+    responses(
+        (status = 200, description = "Version information", body = VersionResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden -- admin only"),
+    )
+)]
+pub async fn get_version(_admin: RequireAdmin) -> Result<Json<VersionResponse>, ApiError> {
+    let binary_path = agent_binary_path();
+    let agent_version = if binary_path.exists() {
+        query_available_agent_version(&binary_path).await
+    } else {
+        None
+    };
+
+    let git_sha = env!("GIT_SHA");
+    let server_version = if git_sha.is_empty() {
+        env!("CARGO_PKG_VERSION").to_owned()
+    } else {
+        format!("{}+{}", env!("CARGO_PKG_VERSION"), git_sha)
+    };
+
+    Ok(Json(VersionResponse {
+        server_version,
+        server_git_sha: git_sha.to_owned(),
+        build_timestamp: env!("BUILD_TIMESTAMP").to_owned(),
+        agent_version,
     }))
 }

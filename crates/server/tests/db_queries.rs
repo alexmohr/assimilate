@@ -13,7 +13,7 @@
 //! and applies migrations automatically.
 
 use chrono::{Datelike, Duration, Utc};
-use server::db::{self, *};
+use server::db::{self, patterns, *};
 use sqlx::PgPool;
 
 #[sqlx::test(migrations = "./migrations")]
@@ -813,6 +813,7 @@ async fn insert_test_report(pool: &PgPool, client_id: i64, repo_id: i64) {
             error_message: None,
             warnings: vec![],
             borg_version: Some("1.4.0".to_string()),
+            matched: true,
         },
     )
     .await
@@ -885,6 +886,7 @@ async fn backup_report_with_warnings(pool: PgPool) {
             error_message: Some("partial failure".to_string()),
             warnings: vec!["file skipped".to_string(), "permission denied".to_string()],
             borg_version: None,
+            matched: true,
         },
     )
     .await
@@ -2072,4 +2074,197 @@ async fn test_audit_filter_by_date_range(pool: PgPool) {
 
     assert_eq!(total, 0);
     assert!(items.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_hostname_pattern_crud(pool: PgPool) {
+    let client = db::insert_client(
+        &pool,
+        "pattern-crud-host",
+        Some("Pattern CRUD"),
+        "hash",
+        None,
+    )
+    .await
+    .unwrap();
+
+    let pattern = patterns::add_hostname_pattern(&pool, client.id, "crud.*")
+        .await
+        .unwrap();
+
+    let patterns = patterns::list_patterns_for_client(&pool, client.id)
+        .await
+        .unwrap();
+    assert_eq!(patterns.len(), 1);
+    assert_eq!(patterns[0].pattern, "crud.*");
+
+    patterns::delete_hostname_pattern(&pool, pattern.id)
+        .await
+        .unwrap();
+
+    let patterns = patterns::list_patterns_for_client(&pool, client.id)
+        .await
+        .unwrap();
+    assert!(patterns.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_find_client_by_pattern_glob_match(pool: PgPool) {
+    let client = db::insert_client(
+        &pool,
+        "pattern-glob-client",
+        Some("Pattern Glob"),
+        "hash",
+        None,
+    )
+    .await
+    .unwrap();
+
+    patterns::add_hostname_pattern(&pool, client.id, "bell*")
+        .await
+        .unwrap();
+
+    let matched = patterns::find_client_by_pattern(&pool, "bell.home.mohr.io")
+        .await
+        .unwrap();
+
+    let matched = matched.unwrap();
+    assert_eq!(matched.id, client.id);
+    assert_eq!(matched.hostname, "pattern-glob-client");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_find_client_by_pattern_no_match(pool: PgPool) {
+    let client = db::insert_client(
+        &pool,
+        "pattern-no-match-client",
+        Some("Pattern No Match"),
+        "hash",
+        None,
+    )
+    .await
+    .unwrap();
+
+    patterns::add_hostname_pattern(&pool, client.id, "bell*")
+        .await
+        .unwrap();
+
+    let matched = patterns::find_client_by_pattern(&pool, "gamma.home.mohr.io")
+        .await
+        .unwrap();
+
+    assert!(matched.is_none());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_add_duplicate_pattern_returns_error(pool: PgPool) {
+    let client_one = db::insert_client(
+        &pool,
+        "duplicate-pattern-one",
+        Some("Duplicate One"),
+        "hash",
+        None,
+    )
+    .await
+    .unwrap();
+    let client_two = db::insert_client(
+        &pool,
+        "duplicate-pattern-two",
+        Some("Duplicate Two"),
+        "hash",
+        None,
+    )
+    .await
+    .unwrap();
+
+    patterns::add_hostname_pattern(&pool, client_one.id, "dup*")
+        .await
+        .unwrap();
+
+    let result = patterns::add_hostname_pattern(&pool, client_two.id, "dup*").await;
+    assert!(result.is_err());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_resolve_client_exact_match_priority(pool: PgPool) {
+    let exact = db::insert_client(&pool, "foo", Some("Exact Foo"), "hash", None)
+        .await
+        .unwrap();
+    let patterned = db::insert_client(
+        &pool,
+        "pattern-priority-client",
+        Some("Pattern Foo"),
+        "hash",
+        None,
+    )
+    .await
+    .unwrap();
+
+    patterns::add_hostname_pattern(&pool, patterned.id, "foo*")
+        .await
+        .unwrap();
+
+    let resolved = db::resolve_client_for_hostname(&pool, "foo").await.unwrap();
+    match resolved {
+        db::ResolveResult::ExactMatch(client) => assert_eq!(client.id, exact.id),
+        other => panic!("unexpected resolve result: {other:?}"),
+    }
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_merge_client_moves_reports(pool: PgPool) {
+    let placeholder = db::insert_client(
+        &pool,
+        "merge-placeholder",
+        Some("Merge Placeholder"),
+        "imported:no-auth",
+        None,
+    )
+    .await
+    .unwrap();
+    let target = db::insert_client(&pool, "merge-target", Some("Merge Target"), "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, placeholder.id, repo.id).await;
+
+    db::merge_client(&pool, placeholder.id, target.id)
+        .await
+        .unwrap();
+
+    let reports = db::list_reports_for_client(&pool, target.id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(reports.len(), 1);
+
+    let matched =
+        sqlx::query_scalar::<_, bool>("SELECT matched FROM backup_reports WHERE client_id = $1")
+            .bind(target.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(matched);
+
+    let source = db::get_client_by_hostname(&pool, "merge-placeholder").await;
+    assert!(source.is_err());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_merge_client_refuses_non_placeholder(pool: PgPool) {
+    let source = db::insert_client(&pool, "merge-source", Some("Merge Source"), "hash", None)
+        .await
+        .unwrap();
+    let target = db::insert_client(
+        &pool,
+        "merge-target-real",
+        Some("Merge Target Real"),
+        "hash",
+        None,
+    )
+    .await
+    .unwrap();
+
+    let result = db::merge_client(&pool, source.id, target.id).await;
+    assert!(result.is_err());
 }

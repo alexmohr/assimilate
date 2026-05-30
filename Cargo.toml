@@ -37,6 +37,7 @@ lettre = { version = "0.11", default-features = false, features = ["builder", "h
 web-push = "0.11"
 p256 = { version = "0.13", features = ["ecdsa"] }
 base64 = "0.22"
+glob-match = "0.2"
 
 [workspace.lints.clippy]
 pedantic = { level = "deny", priority = -1 }

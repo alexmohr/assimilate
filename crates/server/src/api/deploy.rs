@@ -41,7 +41,7 @@ pub struct DeployAgentResponse {
     pub error: Option<String>,
 }
 
-fn agent_binary_path() -> PathBuf {
+pub fn agent_binary_path() -> PathBuf {
     if let Ok(path) = std::env::var("AGENT_BINARY_PATH") {
         return PathBuf::from(path);
     }
@@ -63,7 +63,7 @@ fn agent_binary_path() -> PathBuf {
     docker_path
 }
 
-async fn query_available_agent_version(binary_path: &std::path::Path) -> Option<String> {
+pub async fn query_available_agent_version(binary_path: &std::path::Path) -> Option<String> {
     let output = tokio::process::Command::new(binary_path)
         .arg("--version")
         .output()

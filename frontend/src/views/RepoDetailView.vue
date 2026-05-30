@@ -12,6 +12,7 @@ import { useEscapeKey } from '../composables/useEscapeKey'
 import { useClipboard } from '../composables/useClipboard'
 import { useArchiveBrowser } from '../composables/useArchiveBrowser'
 import { useWebSocket } from '../composables/useWebSocket'
+import { useToast } from '../composables/useToast'
 import { formatBytes, formatDate } from '../utils/format'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
@@ -143,6 +144,15 @@ const breakLockError = ref<string | null>(null)
 const breakLockResult = ref<string | null>(null)
 const activeBackupClient = ref<string | null>(null)
 
+// Re-scan
+const rescanLoading = ref(false)
+const { success: toastSuccess, error: toastError } = useToast()
+
+interface RescanResult {
+  matched: number
+  remaining_unmatched: number
+}
+
 useEscapeKey(showBreakLockDialog, () => {
   showBreakLockDialog.value = false
 })
@@ -183,6 +193,10 @@ const {
   entryName,
   downloadFile,
 } = useArchiveBrowser(repoIdRef)
+
+const unmatchedCount = computed(
+  () => sortedArchives.value.filter((a) => a.matched === false).length,
+)
 
 const isAdmin = computed(() => authStore.user?.role === 'admin')
 
@@ -372,6 +386,21 @@ onMounted(async () => {
     await Promise.all([loadTags(), loadArchives()])
   }
 })
+
+async function rescanArchives(): Promise<void> {
+  rescanLoading.value = true
+  try {
+    const res = await apiClient.post<RescanResult>(`/repos/${repoId.value}/rescan`)
+    toastSuccess(
+      `Matched ${res.data.matched} archives. ${res.data.remaining_unmatched} remaining unmatched.`,
+    )
+    await loadArchives()
+  } catch (e: unknown) {
+    toastError(extractError(e))
+  } finally {
+    rescanLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -737,6 +766,24 @@ onMounted(async () => {
         v-if="activeTab === 'archives'"
         class="tab-content"
       >
+        <!-- Unmatched banner -->
+        <div
+          v-if="!archivesLoading && unmatchedCount > 0"
+          class="unmatched-banner"
+        >
+          <span class="unmatched-banner-text">
+            {{ unmatchedCount }} archive{{ unmatchedCount === 1 ? '' : 's' }} unmatched. Configure
+            hostname patterns on your hosts, then re-scan.
+          </span>
+          <button
+            class="btn btn-sm btn-primary"
+            :disabled="rescanLoading"
+            @click="rescanArchives"
+          >
+            {{ rescanLoading ? 'Scanning...' : 'Re-scan' }}
+          </button>
+        </div>
+
         <div class="archives-layout">
           <!-- Archive list -->
           <div class="panel archives-panel">
@@ -779,6 +826,7 @@ onMounted(async () => {
                   <th>Name</th>
                   <th>Date</th>
                   <th>Host</th>
+                  <th />
                 </tr>
               </thead>
               <tbody>
@@ -790,7 +838,31 @@ onMounted(async () => {
                 >
                   <td class="td-mono">{{ archive.name }}</td>
                   <td class="td-date">{{ formatDate(archive.start) }}</td>
-                  <td class="td-host">{{ archive.hostname }}</td>
+                  <td class="td-host">
+                    <RouterLink
+                      v-if="archive.matched === false"
+                      :to="`/clients`"
+                      class="unmatched-host-link"
+                      @click.stop
+                    >
+                      {{ archive.hostname }}
+                    </RouterLink>
+                    <span v-else>{{ archive.hostname }}</span>
+                  </td>
+                  <td class="td-match">
+                    <span
+                      v-if="archive.matched === true"
+                      class="match-icon match-ok"
+                      title="Matched"
+                      >&#10003;</span
+                    >
+                    <span
+                      v-else-if="archive.matched === false"
+                      class="match-icon match-warn"
+                      title="Unmatched"
+                      >&#9888;</span
+                    >
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -1650,5 +1722,48 @@ onMounted(async () => {
   .stat-card {
     min-width: 0;
   }
+}
+
+/* Unmatched banner */
+.unmatched-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  background: var(--warning-subtle, oklch(0.97 0.04 80));
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+}
+
+.unmatched-banner-text {
+  color: var(--text-primary);
+}
+
+.td-match {
+  width: 2rem;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.match-ok {
+  color: var(--success);
+}
+
+.match-warn {
+  color: var(--warning);
+}
+
+.unmatched-host-link {
+  color: var(--warning);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: text-decoration-color 0.15s;
+}
+
+.unmatched-host-link:hover {
+  text-decoration-color: var(--warning);
 }
 </style>

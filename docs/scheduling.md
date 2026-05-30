@@ -111,6 +111,52 @@ All cron expressions are evaluated in the **server's local timezone**. There is 
 
 To verify the server's timezone, check the system clock or the `TZ` environment variable on the server host.
 
+## Rate Limiting
+
+Each schedule can cap the bandwidth that borg uses when communicating with the repository server. This prevents backups from saturating network links during business hours.
+
+Set the **Remote rate limit** field (in kB/s) when creating or editing a schedule. The value is passed to borg as `--remote-ratelimit`. Set to `0` to disable rate limiting on that schedule.
+
+!!! tip
+    For schedules that run during the day, set a low rate limit (e.g. 1000 kB/s) to avoid impacting other traffic. Remove the limit for overnight schedules where full bandwidth is available.
+
+## Cloning a Schedule
+
+To create a new schedule with the same settings as an existing one:
+
+1. Open the schedule detail view.
+2. Click **Clone**.
+3. Adjust the cron expression, repository, or any other fields as needed.
+4. Click **Save**.
+
+The cloned schedule starts disabled. Enable it once you have verified its settings.
+
+!!! note
+    Cloning copies all fields including retention policy, exclude patterns, pre/post commands, and the rate limit. The clone is always created in the disabled state regardless of the source schedule's state.
+
+## Dry-Run Preview
+
+Before running a backup for real, you can preview what borg would do without writing any data to the repository.
+
+1. Open the schedule detail view.
+2. Click **Dry Run**.
+3. The server sends a `DryRunBackup` message to the agent.
+4. The agent runs `borg create --dry-run` and reports the result back.
+
+The dry-run result shows:
+
+| Field | Description |
+|-------|-------------|
+| **Files scanned** | Number of files that would be included |
+| **Data volume** | Estimated uncompressed data volume |
+| **New data** | Estimated new (non-deduplicated) data that would be written |
+| **Output** | Full borg stdout/stderr for inspection |
+
+<!-- screenshot: schedule-dry-run -->
+
+!!! note
+    Dry-run uses the same exclude patterns, backup sources, and pre-commands as the real backup. Post-commands are not executed during a dry run. No archive is created and no data is written to the repository.
+
 ## Editing and Deleting Schedules
 
 **Editing:** Changes take effect on the next scheduled run. If a backup is already in progress when you save an edit, the running backup completes with the old settings. The updated cron expression and retention policy apply from the next run onward.

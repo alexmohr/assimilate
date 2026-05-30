@@ -12,7 +12,7 @@
 //! Each test uses `#[sqlx::test]` which creates an isolated database per test
 //! and applies migrations automatically.
 
-use chrono::{Duration, Utc};
+use chrono::{Datelike, Duration, Utc};
 use server::db::{self, *};
 use sqlx::PgPool;
 
@@ -1851,4 +1851,210 @@ async fn ssh_tunnel_crud(pool: PgPool) {
         db::get_tunnel_by_id(&pool, tunnel_2.id).await,
         Err(ApiError::NotFound(_))
     ));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_quota_evaluate_warning(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    let quota = db::quota::upsert_quota(&pool, repo.id, Some(100), Some(500), true)
+        .await
+        .unwrap();
+
+    assert_eq!(db::quota::evaluate_quota(&quota, 50), db::quota::QuotaStatus::Ok);
+    assert_eq!(db::quota::evaluate_quota(&quota, 100), db::quota::QuotaStatus::Warning);
+    assert_eq!(db::quota::evaluate_quota(&quota, 300), db::quota::QuotaStatus::Warning);
+    assert_eq!(db::quota::evaluate_quota(&quota, 500), db::quota::QuotaStatus::Critical);
+    assert_eq!(db::quota::evaluate_quota(&quota, 999), db::quota::QuotaStatus::Critical);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_quota_upsert_overwrites(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    db::quota::upsert_quota(&pool, repo.id, Some(100), Some(200), true)
+        .await
+        .unwrap();
+
+    let updated = db::quota::upsert_quota(&pool, repo.id, Some(500), Some(1000), false)
+        .await
+        .unwrap();
+
+    assert_eq!(updated.warn_bytes, Some(500));
+    assert_eq!(updated.critical_bytes, Some(1000));
+    assert!(!updated.enabled);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_quota_get_nonexistent(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    let result = db::quota::get_quota(&pool, repo.id).await.unwrap();
+    assert!(result.is_none());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_backup_trends_empty(pool: PgPool) {
+    let trends = db::get_backup_trends(&pool, None, 30).await.unwrap();
+    assert!(trends.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_backup_trends_with_data(pool: PgPool) {
+    let client = db::insert_client(&pool, "trends-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let trends = db::get_backup_trends(&pool, None, 30).await.unwrap();
+    assert_eq!(trends.len(), 1);
+    assert_eq!(trends[0].backup_count, 1);
+    assert!(trends[0].original_size > 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_backup_trends_filtered_by_repo(pool: PgPool) {
+    let client = db::insert_client(&pool, "trends-filter-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let trends = db::get_backup_trends(&pool, Some(repo.id), 30)
+        .await
+        .unwrap();
+    assert_eq!(trends.len(), 1);
+
+    let trends_other = db::get_backup_trends(&pool, Some(repo.id + 999), 30)
+        .await
+        .unwrap();
+    assert!(trends_other.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_calendar_events_empty(pool: PgPool) {
+    let events = db::get_calendar_events(&pool, 2026, 1, None).await.unwrap();
+    assert!(events.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_calendar_events_with_data(pool: PgPool) {
+    let client = db::insert_client(&pool, "cal-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let now = Utc::now();
+    let events = db::get_calendar_events(
+        &pool,
+        now.date_naive().year(),
+        now.date_naive().month(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event_type, "backup");
+    assert_eq!(events[0].status, "success");
+    assert_eq!(events[0].repo_name, "test-repo");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_calendar_events_filtered_by_repo(pool: PgPool) {
+    let client = db::insert_client(&pool, "cal-filter-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let now = Utc::now();
+    let events = db::get_calendar_events(
+        &pool,
+        now.date_naive().year(),
+        now.date_naive().month(),
+        Some(repo.id),
+    )
+    .await
+    .unwrap();
+    assert_eq!(events.len(), 1);
+
+    let events_other = db::get_calendar_events(
+        &pool,
+        now.date_naive().year(),
+        now.date_naive().month(),
+        Some(repo.id + 999),
+    )
+    .await
+    .unwrap();
+    assert!(events_other.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_enabled_schedules_for_calendar(pool: PgPool) {
+    let (_client, _repo, _schedule) = create_test_schedule(&pool).await;
+
+    let schedules = db::get_enabled_schedules_for_calendar(&pool).await.unwrap();
+    assert_eq!(schedules.len(), 1);
+    assert!(schedules[0].enabled);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_audit_filter_by_date_range(pool: PgPool) {
+    db::audit::insert_audit_entry(
+        &pool,
+        &db::audit::NewAuditEntry {
+            user_id: Some(1),
+            username: "admin",
+            action: "date_test",
+            target_type: None,
+            target_id: None,
+            details: None,
+            ip_address: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let now = Utc::now();
+    let (items, total) = db::audit::list_audit_entries(
+        &pool,
+        &db::audit::AuditEntryFilters {
+            page: 1,
+            per_page: 50,
+            filter_user_id: None,
+            filter_action: None,
+            filter_target_type: None,
+            filter_from: Some(now - Duration::hours(1)),
+            filter_to: Some(now + Duration::hours(1)),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(total, 1);
+    assert_eq!(items.len(), 1);
+
+    let (items, total) = db::audit::list_audit_entries(
+        &pool,
+        &db::audit::AuditEntryFilters {
+            page: 1,
+            per_page: 50,
+            filter_user_id: None,
+            filter_action: None,
+            filter_target_type: None,
+            filter_from: Some(now + Duration::hours(1)),
+            filter_to: Some(now + Duration::hours(2)),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(total, 0);
+    assert!(items.is_empty());
 }

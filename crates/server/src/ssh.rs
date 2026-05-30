@@ -10,6 +10,7 @@ use russh::{
 use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
+use base64::Engine;
 use tracing::{info, warn};
 
 #[derive(Debug, thiserror::Error)]
@@ -653,6 +654,11 @@ fn inject_env_vars(content: &str, server_url: &str, token: &str) -> String {
     result
 }
 
+fn build_write_unit_cmd(content: &str, path: &str) -> String {
+    let encoded = base64::engine::general_purpose::STANDARD.encode(content.as_bytes());
+    format!("echo {encoded} | base64 -d > {path}")
+}
+
 pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError> {
     let session = match params.password {
         Some(pw) => connect_with_password(params.host, params.user, params.port, pw).await?,
@@ -706,7 +712,7 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
     );
 
     let unit_path = "/etc/systemd/system/assimilate-agent.service";
-    let write_cmd = format!("cat > {unit_path} << 'ASSIMILATE_EOF'\n{unit_content}ASSIMILATE_EOF");
+    let write_cmd = build_write_unit_cmd(&unit_content, unit_path);
 
     if params.use_sudo {
         let (exit_code, _, stderr) =
@@ -813,5 +819,93 @@ mod tests {
         assert!(content.contains("[Unit]"));
         assert!(content.contains("[Service]"));
         assert!(content.contains("[Install]"));
+    }
+
+    #[test]
+    fn build_write_unit_cmd_produces_valid_shell_command() {
+        let unit = default_unit_content("/usr/local/bin/agent", "https://example.com", "tok123");
+        let out_path = "/tmp/assimilate-test-unit.service";
+        let cmd = build_write_unit_cmd(&unit, out_path);
+
+        assert!(cmd.starts_with("echo "));
+        assert!(cmd.contains("| base64 -d > "));
+        assert!(cmd.contains(out_path));
+    }
+
+    #[test]
+    fn build_write_unit_cmd_roundtrips_via_shell() {
+        let unit = default_unit_content("/usr/local/bin/agent", "https://example.com", "tok123");
+        let tmp = std::env::temp_dir().join("assimilate-test-unit-nosudo.service");
+        let cmd = build_write_unit_cmd(&unit, tmp.to_str().unwrap());
+
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&cmd)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "shell command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let written = std::fs::read_to_string(&tmp).unwrap();
+        std::fs::remove_file(&tmp).unwrap();
+        assert_eq!(written, unit);
+    }
+
+    #[test]
+    fn build_write_unit_cmd_roundtrips_via_sudo_shell_escape() {
+        let unit = default_unit_content("/usr/local/bin/agent", "https://srv.io", "secret-tok");
+        let tmp = std::env::temp_dir().join("assimilate-test-unit-sudo.service");
+        let cmd = build_write_unit_cmd(&unit, tmp.to_str().unwrap());
+
+        let escaped = shell_escape(&cmd);
+        let sudo_sim = format!("sh -c {escaped}");
+
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&sudo_sim)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "sudo-style shell command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let written = std::fs::read_to_string(&tmp).unwrap();
+        std::fs::remove_file(&tmp).unwrap();
+        assert_eq!(written, unit);
+    }
+
+    #[test]
+    fn build_write_unit_cmd_handles_custom_content_with_special_chars() {
+        let custom = "[Unit]\nDescription=Test's \"special\" $VARS & more\n\n[Service]\nExecStart=/bin/true\n\n[Install]\nWantedBy=multi-user.target\n";
+        let tmp = std::env::temp_dir().join("assimilate-test-unit-special.service");
+        let cmd = build_write_unit_cmd(custom, tmp.to_str().unwrap());
+
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&cmd)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let written = std::fs::read_to_string(&tmp).unwrap();
+        std::fs::remove_file(&tmp).unwrap();
+        assert_eq!(written, custom);
+
+        let cmd = build_write_unit_cmd(custom, tmp.to_str().unwrap());
+        let escaped = shell_escape(&cmd);
+        let sudo_sim = format!("sh -c {escaped}");
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&sudo_sim)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let written = std::fs::read_to_string(&tmp).unwrap();
+        std::fs::remove_file(&tmp).unwrap();
+        assert_eq!(written, custom);
     }
 }

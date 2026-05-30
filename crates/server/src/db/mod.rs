@@ -348,6 +348,16 @@ pub struct UpdateRepoParams<'a> {
     pub enabled: bool,
 }
 
+pub async fn set_repo_importing(pool: &PgPool, repo_id: i64, importing: bool) -> Result<(), ApiError> {
+    sqlx::query("UPDATE repos SET importing = $2 WHERE id = $1")
+        .bind(repo_id)
+        .bind(importing)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(())
+}
+
 pub async fn insert_repo(
     pool: &PgPool,
     params: &InsertRepoParams<'_>,
@@ -1931,6 +1941,7 @@ pub struct RepoWithStatsRow {
     pub compression: String,
     pub encryption: String,
     pub enabled: bool,
+    pub importing: bool,
     pub owner_id: Option<i64>,
     pub visibility: String,
     pub archive_count: i64,
@@ -1944,13 +1955,14 @@ pub struct RepoWithStatsRow {
 pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow>, ApiError> {
     sqlx::query_as::<_, RepoWithStatsRow>(
         "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.compression, \
-         r.encryption, r.enabled, r.owner_id, r.visibility, COALESCE(COUNT(br.id), 0) AS \
-         archive_count, MAX(br.finished_at) AS last_backup_at, COALESCE(SUM(br.original_size), \
-         0)::INT8 AS total_original_size, COALESCE(SUM(br.compressed_size), 0)::INT8 AS \
-         total_compressed_size, COALESCE(SUM(br.deduplicated_size), 0)::INT8 AS \
-         total_deduplicated_size, COALESCE(COUNT(DISTINCT br.client_id), 0) AS client_count FROM \
-         repos r LEFT JOIN backup_reports br ON br.repo_id = r.id AND br.status = 'success' GROUP \
-         BY r.id ORDER BY r.name",
+         r.encryption, r.enabled, r.importing, r.owner_id, r.visibility, COALESCE(COUNT(br.id), \
+         0) AS archive_count, MAX(br.finished_at) AS last_backup_at, \
+         COALESCE(SUM(br.original_size), 0)::INT8 AS total_original_size, \
+         COALESCE(SUM(br.compressed_size), 0)::INT8 AS total_compressed_size, \
+         COALESCE(SUM(br.deduplicated_size), 0)::INT8 AS total_deduplicated_size, \
+         COALESCE(COUNT(DISTINCT br.client_id), 0) AS client_count FROM repos r LEFT JOIN \
+         backup_reports br ON br.repo_id = r.id AND br.status = 'success' GROUP BY r.id ORDER BY \
+         r.name",
     )
     .fetch_all(pool)
     .await
@@ -1963,13 +1975,14 @@ pub async fn get_repo_with_stats(
 ) -> Result<RepoWithStatsRow, ApiError> {
     sqlx::query_as::<_, RepoWithStatsRow>(
         "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.compression, \
-         r.encryption, r.enabled, r.owner_id, r.visibility, COALESCE(COUNT(br.id), 0) AS \
-         archive_count, MAX(br.finished_at) AS last_backup_at, COALESCE(SUM(br.original_size), \
-         0)::INT8 AS total_original_size, COALESCE(SUM(br.compressed_size), 0)::INT8 AS \
-         total_compressed_size, COALESCE(SUM(br.deduplicated_size), 0)::INT8 AS \
-         total_deduplicated_size, COALESCE(COUNT(DISTINCT br.client_id), 0) AS client_count FROM \
-         repos r LEFT JOIN backup_reports br ON br.repo_id = r.id AND br.status = 'success' WHERE \
-         r.id = $1 GROUP BY r.id",
+         r.encryption, r.enabled, r.importing, r.owner_id, r.visibility, COALESCE(COUNT(br.id), \
+         0) AS archive_count, MAX(br.finished_at) AS last_backup_at, \
+         COALESCE(SUM(br.original_size), 0)::INT8 AS total_original_size, \
+         COALESCE(SUM(br.compressed_size), 0)::INT8 AS total_compressed_size, \
+         COALESCE(SUM(br.deduplicated_size), 0)::INT8 AS total_deduplicated_size, \
+         COALESCE(COUNT(DISTINCT br.client_id), 0) AS client_count FROM repos r LEFT JOIN \
+         backup_reports br ON br.repo_id = r.id AND br.status = 'success' WHERE r.id = $1 GROUP \
+         BY r.id",
     )
     .bind(repo_id)
     .fetch_one(pool)

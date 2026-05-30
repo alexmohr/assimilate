@@ -6,16 +6,18 @@ Archives are point-in-time snapshots created by each backup run. Assimilate lets
 
 Navigate to **Repos** in the sidebar, select a repository, then open the **Archives** tab. The list shows every archive stored in that repository, ordered by creation time (newest first).
 
+The table supports **sorting** (click any column header) and **inline filtering** (type in the filter row below headers to narrow results).
+
 Each row displays:
 
 | Column | Description |
 |--------|-------------|
 | Name | Archive name (timestamp-based, see [Archive Naming](#archive-naming)) |
 | Date | When the backup started |
-| Hostname | Agent machine that created the archive |
-| Duration | How long the backup took |
+| Host | Agent machine that created the archive |
+| Size | Original (uncompressed) size of the archive |
 
-Click an archive name to open its detail view.
+Click an archive row to open its detail view.
 
 ![Archives](assets/screenshots/archives.png)
 

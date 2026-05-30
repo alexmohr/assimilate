@@ -576,6 +576,7 @@ pub struct DeployAgentParams<'a> {
     pub token: &'a str,
     pub use_sudo: bool,
     pub sudo_password: Option<&'a str>,
+    pub password: Option<&'a str>,
     pub systemd_service_content: Option<&'a str>,
 }
 
@@ -649,7 +650,10 @@ fn inject_env_vars(content: &str, server_url: &str, token: &str) -> String {
 }
 
 pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError> {
-    let session = connect_with_key(params.host, params.user, params.port).await?;
+    let session = match params.password {
+        Some(pw) => connect_with_password(params.host, params.user, params.port, pw).await?,
+        None => connect_with_key(params.host, params.user, params.port).await?,
+    };
     let sftp = open_sftp(&session).await?;
 
     let binary_data = tokio::fs::read(params.local_binary).await.map_err(|e| {

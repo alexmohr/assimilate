@@ -211,6 +211,41 @@ pub async fn list_clients(pool: &PgPool) -> Result<Vec<ClientRow>, ApiError> {
     .map_err(ApiError::Database)
 }
 
+/// Finds a client by hostname, or creates a placeholder client for archive imports.
+///
+/// Placeholder clients have a dummy token hash and cannot authenticate. They serve
+/// only as a foreign key target for imported `backup_reports`.
+pub async fn get_or_create_client_by_hostname(
+    pool: &PgPool,
+    hostname: &str,
+) -> Result<ClientRow, ApiError> {
+    let existing = sqlx::query_as::<_, ClientRow>(
+        "SELECT id, hostname, display_name, agent_version, created_at, last_seen_at, owner_id, \
+         visibility, default_backup_paths, default_exclude_patterns FROM clients WHERE hostname = \
+         $1",
+    )
+    .bind(hostname)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    if let Some(client) = existing {
+        return Ok(client);
+    }
+
+    sqlx::query_as::<_, ClientRow>(
+        "INSERT INTO clients (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, \
+         $3, NULL) RETURNING id, hostname, display_name, agent_version, created_at, last_seen_at, \
+         owner_id, visibility, default_backup_paths, default_exclude_patterns",
+    )
+    .bind(hostname)
+    .bind(Some(format!("{hostname} (imported)")))
+    .bind("imported:no-auth")
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
 pub async fn insert_client(
     pool: &PgPool,
     hostname: &str,

@@ -11,7 +11,7 @@ The audit log records every state-changing action performed through the Assimila
 
 ## Accessing the Audit Log
 
-Navigate to **Audit Log** in the sidebar. The log is available to users with the **admin** role only.
+Navigate to **Settings → Access Control → Audit Log**. The log is available to users with the **admin** role only.
 
 ## Log Entries
 

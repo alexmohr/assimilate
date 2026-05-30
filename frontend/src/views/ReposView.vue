@@ -579,7 +579,6 @@ async function submitRepo(): Promise<void> {
           ssh_port: repoForm.ssh_port,
           passphrase: repoForm.passphrase,
           compression: repoForm.compression,
-          encryption: repoForm.encryption,
         })
       } else {
         await apiClient.post('/repos/init', {

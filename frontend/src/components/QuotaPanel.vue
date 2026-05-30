@@ -14,12 +14,11 @@ interface QuotaData {
   warn_bytes: number
   critical_bytes: number
   enabled: boolean
-  current_usage_bytes: number
 }
 
 type QuotaStatus = 'ok' | 'warning' | 'critical'
 
-const props = defineProps<{ repoId: number; isAdmin: boolean }>()
+const props = defineProps<{ repoId: number; isAdmin: boolean; currentUsageBytes: number }>()
 
 const quota = ref<QuotaData | null>(null)
 const loading = ref(false)
@@ -36,7 +35,7 @@ const editForm = reactive({
 
 const quotaStatus = computed((): QuotaStatus => {
   if (!quota.value || !quota.value.enabled) return 'ok'
-  const usage = quota.value.current_usage_bytes
+  const usage = props.currentUsageBytes
   if (quota.value.critical_bytes > 0 && usage >= quota.value.critical_bytes) return 'critical'
   if (quota.value.warn_bytes > 0 && usage >= quota.value.warn_bytes) return 'warning'
   return 'ok'
@@ -46,7 +45,7 @@ const usagePercent = computed((): number => {
   if (!quota.value || !quota.value.enabled) return 0
   const limit = quota.value.critical_bytes || quota.value.warn_bytes
   if (limit <= 0) return 0
-  return Math.min(100, (quota.value.current_usage_bytes / limit) * 100)
+  return Math.min(100, (props.currentUsageBytes / limit) * 100)
 })
 
 const statusLabel = computed((): string => {
@@ -197,7 +196,7 @@ onMounted(loadQuota)
       <template v-else>
         <div class="quota-usage">
           <div class="usage-labels">
-            <span class="usage-current">{{ formatBytes(quota.current_usage_bytes) }} used</span>
+            <span class="usage-current">{{ formatBytes(props.currentUsageBytes) }} used</span>
             <span class="usage-limit">
               {{ formatBytes(quota.critical_bytes || quota.warn_bytes) }} limit
             </span>

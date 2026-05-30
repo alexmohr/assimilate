@@ -337,22 +337,27 @@ pub async fn list_contents(
     Query(query): Query<ContentsQuery>,
 ) -> Result<Json<Vec<ContentEntry>>, ApiError> {
     check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_view).await?;
-    let path = query.path.as_deref().unwrap_or("/");
+    let path = query.path.as_deref();
     let limit = query.limit.unwrap_or(100);
 
-    validate_path(path)?;
+    if let Some(p) = path {
+        validate_path(p)?;
+    }
 
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
 
     let repo_archive = format!("{borg_repo}::{archive_name}");
 
-    let output = Command::new(borg_binary())
-        .arg("list")
+    let mut cmd = Command::new(borg_binary());
+    cmd.arg("list")
         .arg("--json-lines")
         .arg("--lock-wait")
         .arg(LOCK_WAIT_SECS)
-        .arg(&repo_archive)
-        .arg(path)
+        .arg(&repo_archive);
+    if let Some(p) = path {
+        cmd.arg(p);
+    }
+    let output = cmd
         .envs(&env)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -466,4 +471,48 @@ pub async fn extract_file(
         body,
     )
         .into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_path_rejects_empty() {
+        let err = validate_path("").unwrap_err();
+        assert!(err.to_string().contains("must not be empty"));
+    }
+
+    #[test]
+    fn validate_path_rejects_absolute() {
+        let err = validate_path("/etc/passwd").unwrap_err();
+        assert!(err.to_string().contains("absolute paths not allowed"));
+    }
+
+    #[test]
+    fn validate_path_rejects_traversal() {
+        let err = validate_path("foo/../bar").unwrap_err();
+        assert!(err.to_string().contains("path traversal not allowed"));
+    }
+
+    #[test]
+    fn validate_path_rejects_null_bytes() {
+        let err = validate_path("foo\0bar").unwrap_err();
+        assert!(err.to_string().contains("null bytes not allowed"));
+    }
+
+    #[test]
+    fn validate_path_accepts_relative() {
+        assert!(validate_path("home/user/documents").is_ok());
+    }
+
+    #[test]
+    fn validate_path_accepts_single_segment() {
+        assert!(validate_path("file.txt").is_ok());
+    }
+
+    #[test]
+    fn validate_path_accepts_nested_relative() {
+        assert!(validate_path("a/b/c/d.txt").is_ok());
+    }
 }

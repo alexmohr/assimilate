@@ -5,9 +5,66 @@ pub mod email;
 pub mod web_push;
 pub mod webhook;
 
+use std::fmt;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelType {
+    Email,
+    Webhook,
+    WebPush,
+}
+
+impl fmt::Display for ChannelType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Email => write!(f, "email"),
+            Self::Webhook => write!(f, "webhook"),
+            Self::WebPush => write!(f, "web_push"),
+        }
+    }
+}
+
+impl ChannelType {
+    fn as_db_str(self) -> &'static str {
+        match self {
+            Self::Email => "email",
+            Self::Webhook => "webhook",
+            Self::WebPush => "web_push",
+        }
+    }
+}
+
+impl sqlx::Type<sqlx::Postgres> for ChannelType {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <&str as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for ChannelType {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let s = <&str as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
+        match s {
+            "email" => Ok(Self::Email),
+            "webhook" => Ok(Self::Webhook),
+            "web_push" => Ok(Self::WebPush),
+            other => Err(format!("unknown channel type: {other}").into()),
+        }
+    }
+}
+
+impl<'q> sqlx::Encode<'q, sqlx::Postgres> for ChannelType {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        <&str as sqlx::Encode<sqlx::Postgres>>::encode(self.as_db_str(), buf)
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum NotificationError {
@@ -38,6 +95,29 @@ pub enum EventType {
 }
 
 impl EventType {
+    pub const ALL_DB_STRS: &[&'static str] = &[
+        "backup_success",
+        "backup_warning",
+        "backup_failed",
+        "check_success",
+        "check_failed",
+        "agent_connected",
+        "agent_disconnected",
+    ];
+
+    pub fn from_db_str(s: &str) -> Option<Self> {
+        match s {
+            "backup_success" => Some(Self::BackupSuccess),
+            "backup_warning" => Some(Self::BackupWarning),
+            "backup_failed" => Some(Self::BackupFailed),
+            "check_success" => Some(Self::CheckSuccess),
+            "check_failed" => Some(Self::CheckFailed),
+            "agent_connected" => Some(Self::AgentConnected),
+            "agent_disconnected" => Some(Self::AgentDisconnected),
+            _ => None,
+        }
+    }
+
     fn as_db_str(self) -> &'static str {
         match self {
             Self::BackupSuccess => "backup_success",
@@ -119,7 +199,7 @@ impl NotificationService {
 #[derive(Debug, FromRow)]
 struct MatchedChannel {
     id: i64,
-    channel_type: String,
+    channel_type: ChannelType,
     config: serde_json::Value,
 }
 
@@ -176,7 +256,7 @@ pub async fn dispatch(
 
         tokio::spawn(async move {
             let result = deliver(
-                &channel.channel_type,
+                channel.channel_type,
                 &channel_config,
                 &payload,
                 &http_client,
@@ -217,22 +297,22 @@ pub async fn dispatch(
 }
 
 async fn deliver(
-    channel_type: &str,
+    channel_type: ChannelType,
     config: &serde_json::Value,
     payload: &serde_json::Value,
     http_client: &reqwest::Client,
     pool: &PgPool,
 ) -> Result<(), NotificationError> {
     match channel_type {
-        "email" => {
+        ChannelType::Email => {
             let cfg: email::EmailConfig = serde_json::from_value(config.clone())?;
             email::send(&cfg, payload).await
         }
-        "webhook" => {
+        ChannelType::Webhook => {
             let cfg: webhook::WebhookConfig = serde_json::from_value(config.clone())?;
             webhook::send(http_client, &cfg, payload).await
         }
-        "web_push" => {
+        ChannelType::WebPush => {
             #[derive(Deserialize)]
             struct WebPushChannelConfig {
                 user_id: i64,
@@ -268,8 +348,5 @@ async fn deliver(
             }
             Ok(())
         }
-        other => Err(NotificationError::Config(format!(
-            "unknown channel type: {other}"
-        ))),
     }
 }

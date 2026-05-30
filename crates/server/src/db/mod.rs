@@ -480,6 +480,33 @@ pub async fn set_repo_import_error(
     Ok(())
 }
 
+pub async fn update_repo_last_synced(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
+    sqlx::query("UPDATE repos SET last_synced_at = NOW() WHERE id = $1")
+        .bind(repo_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+pub async fn clear_relocation_pending(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
+    sqlx::query("UPDATE repos SET relocation_pending = false WHERE id = $1")
+        .bind(repo_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+pub async fn set_relocation_pending(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
+    sqlx::query("UPDATE repos SET relocation_pending = true WHERE id = $1")
+        .bind(repo_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(())
+}
+
 pub async fn update_repo_encryption(
     pool: &PgPool,
     repo_id: i64,
@@ -714,7 +741,7 @@ pub async fn get_repo_with_passphrase(
 ) -> Result<RepoWithPassphraseRow, ApiError> {
     sqlx::query_as::<_, RepoWithPassphraseRow>(
         "SELECT id, name, repo_path, ssh_user, ssh_host, ssh_port, passphrase_encrypted, \
-         compression, encryption, enabled FROM repos WHERE id = $1",
+         compression, encryption, enabled, relocation_pending FROM repos WHERE id = $1",
     )
     .bind(repo_id)
     .fetch_one(pool)
@@ -929,6 +956,7 @@ pub struct RepoWithPassphraseRow {
     pub compression: String,
     pub encryption: String,
     pub enabled: bool,
+    pub relocation_pending: bool,
 }
 
 pub async fn list_all_repos(pool: &PgPool) -> Result<Vec<RepoRow>, ApiError> {
@@ -947,8 +975,8 @@ pub async fn list_repos_for_client(
 ) -> Result<Vec<RepoWithPassphraseRow>, ApiError> {
     sqlx::query_as::<_, RepoWithPassphraseRow>(
         "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, \
-         r.passphrase_encrypted, r.compression, r.encryption, r.enabled FROM repos r JOIN \
-         schedules s ON s.repo_id = r.id WHERE s.client_id = $1 ORDER BY r.id",
+         r.passphrase_encrypted, r.compression, r.encryption, r.enabled, r.relocation_pending \
+         FROM repos r JOIN schedules s ON s.repo_id = r.id WHERE s.client_id = $1 ORDER BY r.id",
     )
     .bind(client_id)
     .fetch_all(pool)
@@ -1376,7 +1404,7 @@ pub async fn insert_backup_report(
         "INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, \
          original_size, compressed_size, deduplicated_size, files_processed, duration_secs, \
          error_message, warnings, borg_version, matched) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, \
-         $9, $10, $11, $12, $13, $14)",
+         $9, $10, $11, $12, $13, $14) ON CONFLICT (repo_id, client_id, started_at) DO NOTHING",
     )
     .bind(params.client_id)
     .bind(params.repo_id)
@@ -2326,14 +2354,16 @@ pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow,
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct StorageBreakdownRow {
     pub name: String,
+    pub compressed_size: i64,
     pub deduplicated_size: i64,
 }
 
 pub async fn get_storage_breakdown(pool: &PgPool) -> Result<Vec<StorageBreakdownRow>, ApiError> {
     sqlx::query_as::<_, StorageBreakdownRow>(
-        "SELECT r.name, COALESCE(sub.dedup, 0) AS deduplicated_size FROM repos r LEFT JOIN \
-         LATERAL (SELECT br.deduplicated_size AS dedup FROM backup_reports br WHERE br.repo_id = \
-         r.id AND br.status = 'success' ORDER BY br.started_at DESC LIMIT 1) sub ON true ORDER BY \
+        "SELECT r.name, COALESCE(sub.comp, 0) AS compressed_size, COALESCE(sub.dedup, 0) AS \
+         deduplicated_size FROM repos r LEFT JOIN LATERAL (SELECT br.compressed_size AS comp, \
+         br.deduplicated_size AS dedup FROM backup_reports br WHERE br.repo_id = r.id AND \
+         br.status = 'success' ORDER BY br.started_at DESC LIMIT 1) sub ON true ORDER BY \
          sub.dedup DESC NULLS LAST",
     )
     .fetch_all(pool)
@@ -2345,11 +2375,12 @@ pub async fn get_storage_breakdown_by_host(
     pool: &PgPool,
 ) -> Result<Vec<StorageBreakdownRow>, ApiError> {
     sqlx::query_as::<_, StorageBreakdownRow>(
-        "SELECT c.hostname AS name, COALESCE(SUM(latest.dedup), 0)::INT8 AS deduplicated_size \
-         FROM clients c LEFT JOIN LATERAL ( SELECT DISTINCT ON (br.repo_id) br.deduplicated_size \
-         AS dedup FROM backup_reports br WHERE br.client_id = c.id AND br.status = 'success' \
-         ORDER BY br.repo_id, br.started_at DESC ) latest ON true GROUP BY c.hostname ORDER BY \
-         deduplicated_size DESC",
+        "SELECT c.hostname AS name, COALESCE(SUM(latest.comp), 0)::INT8 AS compressed_size, \
+         COALESCE(SUM(latest.dedup), 0)::INT8 AS deduplicated_size FROM clients c LEFT JOIN \
+         LATERAL ( SELECT DISTINCT ON (br.repo_id) br.compressed_size AS comp, \
+         br.deduplicated_size AS dedup FROM backup_reports br WHERE br.client_id = c.id AND \
+         br.status = 'success' ORDER BY br.repo_id, br.started_at DESC ) latest ON true GROUP BY \
+         c.hostname ORDER BY deduplicated_size DESC",
     )
     .fetch_all(pool)
     .await
@@ -2360,8 +2391,9 @@ pub async fn get_storage_breakdown_by_server(
     pool: &PgPool,
 ) -> Result<Vec<StorageBreakdownRow>, ApiError> {
     sqlx::query_as::<_, StorageBreakdownRow>(
-        "SELECT r.ssh_host AS name, COALESCE(SUM(sub.dedup), 0)::INT8 AS deduplicated_size FROM \
-         repos r LEFT JOIN LATERAL ( SELECT br.deduplicated_size AS dedup FROM backup_reports br \
+        "SELECT r.ssh_host AS name, COALESCE(SUM(sub.comp), 0)::INT8 AS compressed_size, \
+         COALESCE(SUM(sub.dedup), 0)::INT8 AS deduplicated_size FROM repos r LEFT JOIN LATERAL ( \
+         SELECT br.compressed_size AS comp, br.deduplicated_size AS dedup FROM backup_reports br \
          WHERE br.repo_id = r.id ORDER BY br.started_at DESC LIMIT 1 ) sub ON true GROUP BY \
          r.ssh_host ORDER BY deduplicated_size DESC",
     )

@@ -509,6 +509,7 @@ async fn run_init_repo_task(
         exclude_patterns: Vec::new(),
         ssh_auth_sock: None,
         canary_enabled: false,
+        accept_relocation: false,
     };
 
     let _ssh_forward =
@@ -723,6 +724,7 @@ pub fn backup_target_from_repo(repo: &RepoConfig, hostname: &str) -> BackupTarge
         exclude_patterns: Vec::new(),
         ssh_auth_sock: None,
         canary_enabled: schedule.is_some_and(|s| s.canary_enabled),
+        accept_relocation: repo.accept_relocation,
     }
 }
 
@@ -758,6 +760,7 @@ async fn run_check_task(
         exclude_patterns: Vec::new(),
         ssh_auth_sock: None,
         canary_enabled: false,
+        accept_relocation: target.accept_relocation,
     };
 
     let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
@@ -816,6 +819,7 @@ async fn run_verify_task(
         exclude_patterns: Vec::new(),
         ssh_auth_sock: None,
         canary_enabled: false,
+        accept_relocation: target.accept_relocation,
     };
 
     let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
@@ -1097,11 +1101,14 @@ fn build_borg_env(target: &BackupTarget) -> Vec<(String, String)> {
             "BORG_RSH".to_owned(),
             "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new".to_owned(),
         ),
-        (
+    ];
+
+    if target.accept_relocation {
+        env.push((
             "BORG_RELOCATED_REPO_ACCESS_IS_OK".to_owned(),
             "yes".to_owned(),
-        ),
-    ];
+        ));
+    }
 
     if let Some(sock) = &target.ssh_auth_sock {
         env.push((

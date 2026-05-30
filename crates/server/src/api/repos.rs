@@ -275,6 +275,11 @@ pub async fn update_repo(
 
     let compression = helpers::validate_compression(req.compression.as_deref())?;
 
+    let existing = db::get_repo_with_passphrase(&state.pool, repo_id).await?;
+    let location_changed = existing.repo_path != req.repo_path
+        || existing.ssh_host != req.ssh_host
+        || existing.ssh_port != req.ssh_port.unwrap_or(22);
+
     let encryption = req
         .encryption
         .map_or_else(|| "repokey-blake2".to_string(), |e| e.to_string());
@@ -293,6 +298,10 @@ pub async fn update_repo(
         },
     )
     .await?;
+
+    if location_changed {
+        db::set_relocation_pending(&state.pool, repo_id).await?;
+    }
 
     Ok(Json(repo))
 }
@@ -681,33 +690,23 @@ async fn run_ssh_command(
     ssh_port: i32,
     command: &str,
 ) -> Result<(), String> {
-    let ssh_auth_sock = std::env::var("SSH_AUTH_SOCK").ok();
-    let port_str = ssh_port.to_string();
+    let port = u16::try_from(ssh_port).map_err(|e| format!("invalid SSH port: {e}"))?;
 
-    let mut cmd = Command::new("ssh");
-    cmd.args([
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "StrictHostKeyChecking=accept-new",
-        "-p",
-        &port_str,
-        &format!("{ssh_user}@{ssh_host}"),
-        command,
-    ]);
-
-    if let Some(sock) = &ssh_auth_sock {
-        cmd.env("SSH_AUTH_SOCK", sock);
-    }
-
-    let output = tokio::time::timeout(std::time::Duration::from_secs(30), cmd.output())
+    let session = crate::ssh::connect_with_key(ssh_host, ssh_user, port)
         .await
-        .map_err(|_| "SSH command timed out after 30 seconds".to_owned())?
-        .map_err(|e| format!("failed to execute SSH: {e}"))?;
+        .map_err(|e| e.to_string())?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(stderr.into_owned());
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        crate::ssh::exec_command(&session, command),
+    )
+    .await
+    .map_err(|_| "SSH command timed out after 30 seconds".to_owned())?
+    .map_err(|e| e.to_string())?;
+
+    let (exit_code, _stdout, stderr) = result;
+    if exit_code != 0 {
+        return Err(stderr);
     }
 
     Ok(())
@@ -1113,5 +1112,106 @@ pub async fn rescan_repo(
     Ok(Json(RescanResponse {
         matched: matched_count,
         remaining_unmatched,
+    }))
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SyncResponse {
+    pub imported: u64,
+    pub duration_secs: u64,
+}
+
+const SYNC_WARN_DURATION: Duration = Duration::from_secs(300);
+
+#[utoipa::path(
+    post,
+    path = "/api/repos/{repo_id}/sync",
+    tag = "Repositories",
+    operation_id = "syncRepo",
+    summary = "Full repository sync — re-reads all archives from borg",
+    params(
+        ("repo_id" = i64, Path, description = "Repository ID"),
+    ),
+    responses(
+        (status = 200, description = "Sync results", body = SyncResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Not found"),
+        (status = 409, description = "Sync already in progress"),
+    )
+)]
+pub async fn sync_repo(
+    State(state): State<AppState>,
+    _admin: RequireAdmin,
+    Path(repo_id): Path<i64>,
+) -> Result<Json<SyncResponse>, ApiError> {
+    let repo = db::get_repo_with_stats(&state.pool, repo_id).await?;
+    if repo.importing {
+        return Err(ApiError::Conflict("sync already in progress".to_string()));
+    }
+
+    db::set_repo_importing(&state.pool, repo_id, true).await?;
+
+    let start = std::time::Instant::now();
+    let result = sync_existing_archives(&state.pool, &state.encryption_key, repo_id).await;
+    let elapsed = start.elapsed();
+
+    db::set_repo_importing(&state.pool, repo_id, false).await?;
+    db::update_repo_last_synced(&state.pool, repo_id).await?;
+
+    let imported = match result {
+        Ok(n) => n,
+        Err(e) => {
+            let msg = format!(
+                "repo sync failed for '{}' after {:.1}s: {e}",
+                repo.name,
+                elapsed.as_secs_f64()
+            );
+            error!("{msg}");
+            if let Err(log_err) =
+                db::insert_system_event(&state.pool, "repo_sync", None, &msg).await
+            {
+                error!(error = %log_err, "failed to log sync event");
+            }
+            return Err(e);
+        }
+    };
+
+    let duration_secs = elapsed.as_secs();
+    let msg = format!(
+        "repo sync completed for '{}': imported {imported} archives in {duration_secs}s",
+        repo.name
+    );
+
+    if elapsed > SYNC_WARN_DURATION {
+        error!(
+            repo_id,
+            duration_secs,
+            "repo sync exceeded {}s threshold",
+            SYNC_WARN_DURATION.as_secs()
+        );
+        let warn_msg = format!(
+            "repo sync for '{}' took {duration_secs}s (exceeds {}s threshold)",
+            repo.name,
+            SYNC_WARN_DURATION.as_secs()
+        );
+        if let Err(log_err) =
+            db::insert_system_event(&state.pool, "repo_sync_slow", None, &warn_msg).await
+        {
+            error!(error = %log_err, "failed to log slow sync event");
+        }
+    }
+
+    info!("{msg}");
+    if let Err(log_err) = db::insert_system_event(&state.pool, "repo_sync", None, &msg).await {
+        error!(error = %log_err, "failed to log sync event");
+    }
+
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::DataChanged);
+
+    Ok(Json(SyncResponse {
+        imported,
+        duration_secs,
     }))
 }

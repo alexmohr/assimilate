@@ -272,6 +272,8 @@ pub struct RepoConfig {
     pub passphrase: String,
     pub compression: Compression,
     pub enabled: bool,
+    #[serde(default)]
+    pub accept_relocation: bool,
     pub schedules: Vec<ScheduleConfig>,
 }
 

@@ -159,6 +159,7 @@ pub async fn assemble_config(
             passphrase,
             compression,
             enabled: repo.enabled,
+            accept_relocation: repo.relocation_pending,
             schedules,
         });
     }

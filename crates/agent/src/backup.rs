@@ -49,6 +49,7 @@ pub struct BackupTarget {
     pub rate_limit_kbps: Option<u32>,
     pub ssh_auth_sock: Option<PathBuf>,
     pub canary_enabled: bool,
+    pub accept_relocation: bool,
 }
 
 #[derive(Debug)]
@@ -183,11 +184,14 @@ impl BackupEngine {
                 "BORG_RSH".to_owned(),
                 "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new".to_owned(),
             ),
-            (
+        ];
+
+        if target.accept_relocation {
+            env.push((
                 "BORG_RELOCATED_REPO_ACCESS_IS_OK".to_owned(),
                 "yes".to_owned(),
-            ),
-        ];
+            ));
+        }
 
         if let Some(sock) = &target.ssh_auth_sock {
             env.push((
@@ -714,6 +718,7 @@ mod tests {
             rate_limit_kbps: None,
             ssh_auth_sock: None,
             canary_enabled: false,
+            accept_relocation: false,
         }
     }
 

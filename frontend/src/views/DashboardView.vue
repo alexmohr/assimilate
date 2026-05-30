@@ -13,6 +13,11 @@ import { logger } from '../utils/logger'
 import BaseSkeleton from '../components/BaseSkeleton.vue'
 import TrendsChart from '../components/TrendsChart.vue'
 import BackupCalendar from '../components/BackupCalendar.vue'
+import RecentActivityWidget from '../components/RecentActivityWidget.vue'
+import NextScheduledWidget from '../components/NextScheduledWidget.vue'
+import BackupStatsWidget from '../components/BackupStatsWidget.vue'
+import RepoHealthWidget from '../components/RepoHealthWidget.vue'
+import StorageTrendWidget from '../components/StorageTrendWidget.vue'
 
 interface StorageRepoEntry {
   name: string
@@ -28,6 +33,8 @@ interface DashboardSummary {
   last_backup_at: string | null
   next_backup_at: string | null
   last_backup_schedule_id: number | null
+  last_backup_repo_id: number | null
+  last_backup_archive_name: string | null
   next_backup_schedule_id: number | null
   active_schedules: number
   total_schedules: number
@@ -36,6 +43,10 @@ interface DashboardSummary {
   failed_30d: number
   total_30d: number
   storage_by_repo: StorageRepoEntry[]
+  last_failure_at: string | null
+  last_warning_at: string | null
+  last_failure_schedule_id: number | null
+  last_warning_schedule_id: number | null
 }
 
 interface HealthEntry {
@@ -89,10 +100,15 @@ interface ActiveBackup {
 
 const activeBackups = ref<ActiveBackup[]>([])
 
+const activityDaysFilter = ref<number>(14)
+const activityRepoFilter = ref<number | undefined>(undefined)
+const successDaysFilter = ref<number>(30)
+const successRepoFilter = ref<number | undefined>(undefined)
+
 type StorageViewMode = 'repo' | 'host' | 'server'
 const storageViewMode = ref<StorageViewMode>('repo')
 const storageBreakdown = ref<StorageRepoEntry[]>([])
-
+const hiddenSegments = ref<Set<string>>(new Set())
 const DONUT_COLORS = [
   'oklch(0.62 0.19 255)',
   'oklch(0.72 0.17 162)',
@@ -109,19 +125,38 @@ async function fetchStorageBreakdown(): Promise<void> {
   storageBreakdown.value = response.data
 }
 
+const successActivity = ref<ActivityEntry[]>([])
+
+async function fetchActivity(): Promise<void> {
+  const params = new URLSearchParams({ days: String(activityDaysFilter.value) })
+  if (activityRepoFilter.value !== undefined) {
+    params.set('repo_id', String(activityRepoFilter.value))
+  }
+  const response = await apiClient.get<ActivityEntry[]>(`/stats/activity?${params.toString()}`)
+  activity.value = response.data
+}
+
+async function fetchSuccessActivity(): Promise<void> {
+  const params = new URLSearchParams({ days: String(successDaysFilter.value) })
+  if (successRepoFilter.value !== undefined) {
+    params.set('repo_id', String(successRepoFilter.value))
+  }
+  const response = await apiClient.get<ActivityEntry[]>(`/stats/activity?${params.toString()}`)
+  successActivity.value = response.data
+}
+
 async function fetchAll(): Promise<void> {
   try {
-    const [s, h, a, r] = await Promise.all([
+    const [s, h, r] = await Promise.all([
       apiClient.get<DashboardSummary>('/stats/summary'),
       apiClient.get<HealthEntry[]>('/stats/health'),
-      apiClient.get<ActivityEntry[]>('/stats/activity?days=14'),
       apiClient.get<RepoOption[]>('/repos'),
     ])
     summary.value = s.data
     health.value = h.data
-    activity.value = a.data
     repoOptions.value = r.data.map((repo) => ({ id: repo.id, name: repo.name }))
     storageBreakdown.value = s.data.storage_by_repo
+    await Promise.all([fetchActivity(), fetchSuccessActivity()])
   } finally {
     loading.value = false
   }
@@ -129,7 +164,18 @@ async function fetchAll(): Promise<void> {
 
 function setStorageViewMode(mode: StorageViewMode): void {
   storageViewMode.value = mode
+  hiddenSegments.value = new Set()
   fetchStorageBreakdown().catch(logger.error)
+}
+
+function toggleSegment(name: string): void {
+  const next = new Set(hiddenSegments.value)
+  if (next.has(name)) {
+    next.delete(name)
+  } else {
+    next.add(name)
+  }
+  hiddenSegments.value = next
 }
 
 const { onMessage, status: wsStatus } = useWebSocket()
@@ -170,11 +216,27 @@ onMounted(() => {
   fetchAll().catch(logger.error)
 })
 
+watch([activityDaysFilter, activityRepoFilter], () => {
+  fetchActivity().catch(logger.error)
+})
+
+watch([successDaysFilter, successRepoFilter], () => {
+  fetchSuccessActivity().catch(logger.error)
+})
+
 const overdueCount = computed((): number => health.value.filter((h) => h.is_overdue).length)
 
+const successTotal = computed((): number => successActivity.value.length)
+const successCount = computed(
+  (): number => successActivity.value.filter((a) => a.status === 'success').length,
+)
+const failedCount = computed(
+  (): number => successActivity.value.filter((a) => a.status !== 'success').length,
+)
+
 const successRate = computed((): number => {
-  if (!summary.value || summary.value.total_30d === 0) return 0
-  return Math.round((summary.value.success_30d / summary.value.total_30d) * 100)
+  if (successTotal.value === 0) return 0
+  return Math.round((successCount.value / successTotal.value) * 100)
 })
 
 const successRingColor = computed((): string => {
@@ -207,26 +269,50 @@ const storageDonuts = computed(
     offset: number
   }> => {
     if (storageBreakdown.value.length === 0) return []
+    const visible = storageBreakdown.value.filter((entry) => !hiddenSegments.value.has(entry.name))
+    if (visible.length === 0) return []
+    const totalPct = visible.reduce((sum, e) => sum + e.percentage, 0)
     const circumference = 2 * Math.PI * 54
     let cumulative = 0
-    return storageBreakdown.value.map((entry, i) => {
+    return visible.map((entry) => {
+      const normalizedPct = totalPct > 0 ? (entry.percentage / totalPct) * 100 : 0
       const offset = cumulative
-      cumulative += (entry.percentage / 100) * circumference
+      cumulative += (normalizedPct / 100) * circumference
+      const originalIndex = storageBreakdown.value.indexOf(entry)
       return {
         name: entry.name,
-        percentage: entry.percentage,
+        percentage: normalizedPct,
         size: entry.deduplicated_size,
         compressedSize: entry.compressed_size,
-        color: DONUT_COLORS[i % DONUT_COLORS.length],
+        color: DONUT_COLORS[originalIndex % DONUT_COLORS.length],
         offset,
       }
     })
   },
 )
 
+const storageLegendItems = computed(
+  (): Array<{
+    name: string
+    size: number
+    compressedSize: number
+    color: string
+    hidden: boolean
+  }> => {
+    return storageBreakdown.value.map((entry, i) => ({
+      name: entry.name,
+      size: entry.deduplicated_size,
+      compressedSize: entry.compressed_size,
+      color: DONUT_COLORS[i % DONUT_COLORS.length],
+      hidden: hiddenSegments.value.has(entry.name),
+    }))
+  },
+)
+
 const activityDays = computed((): string[] => {
   const days: string[] = []
-  for (let i = 13; i >= 0; i--) {
+  const count = activityDaysFilter.value
+  for (let i = count - 1; i >= 0; i--) {
     const d = new Date()
     d.setDate(d.getDate() - i)
     days.push(d.toISOString().slice(0, 10))
@@ -234,23 +320,64 @@ const activityDays = computed((): string[] => {
   return days
 })
 
+const activityHourRange = computed((): { min: number; max: number } => {
+  if (activity.value.length === 0) return { min: 0, max: 24 }
+  let min = 24
+  let max = 0
+  for (const entry of activity.value) {
+    const d = new Date(entry.started_at)
+    const hour = d.getHours() + d.getMinutes() / 60
+    if (hour < min) min = hour
+    if (hour > max) max = hour
+  }
+  // Add 1h padding on each side, clamped to 0–24
+  min = Math.max(0, Math.floor(min) - 1)
+  max = Math.min(24, Math.ceil(max) + 1)
+  // Ensure at least 2h range
+  if (max - min < 2) {
+    min = Math.max(0, min - 1)
+    max = Math.min(24, max + 1)
+  }
+  return { min, max }
+})
+
+const activityYTicks = computed((): Array<{ hour: number; y: number }> => {
+  const { min, max } = activityHourRange.value
+  const range = max - min
+  const padY = 30
+  const plotH = 200 - padY * 2
+  // Choose step: 1h, 2h, 3h, 4h, 6h depending on range
+  let step = 1
+  if (range > 12) step = 4
+  else if (range > 8) step = 3
+  else if (range > 4) step = 2
+
+  const ticks: Array<{ hour: number; y: number }> = []
+  const startHour = Math.ceil(min / step) * step
+  for (let h = startHour; h <= max; h += step) {
+    const y = padY + ((h - min) / range) * plotH
+    ticks.push({ hour: h, y })
+  }
+  return ticks
+})
+
 const activityDots = computed((): Array<{ x: number; y: number; color: string; key: number }> => {
   const days = activityDays.value
   if (days.length === 0) return []
-  const width = 900
-  const height = 200
   const padX = 60
   const padY = 30
-  const plotW = width - padX * 2
-  const plotH = height - padY * 2
+  const plotW = 900 - padX * 2
+  const plotH = 200 - padY * 2
+  const { min, max } = activityHourRange.value
+  const range = max - min
 
   return activity.value.map((entry) => {
     const date = entry.started_at.slice(0, 10)
     const dayIndex = days.indexOf(date)
-    const x = dayIndex >= 0 ? padX + (dayIndex / 13) * plotW : padX
+    const x = dayIndex >= 0 ? padX + (dayIndex / Math.max(days.length - 1, 1)) * plotW : padX
     const hour =
       new Date(entry.started_at).getHours() + new Date(entry.started_at).getMinutes() / 60
-    const y = padY + (hour / 24) * plotH
+    const y = padY + ((hour - min) / range) * plotH
 
     let color = 'var(--success)'
     if (entry.status === 'warning') color = 'var(--warning)'
@@ -265,6 +392,15 @@ function healthStatusColor(entry: HealthEntry): string {
   if (entry.last_status === 'success') return 'var(--success)'
   if (entry.last_status === 'warning') return 'var(--warning)'
   return 'var(--danger)'
+}
+
+function navigateToLastBackup(): void {
+  if (!summary.value?.last_backup_repo_id) return
+  const query: Record<string, string> = { tab: 'archives' }
+  if (summary.value.last_backup_archive_name) {
+    query.archive = summary.value.last_backup_archive_name
+  }
+  router.push({ path: `/repos/${summary.value.last_backup_repo_id}`, query })
 }
 </script>
 
@@ -334,11 +470,8 @@ function healthStatusColor(entry: HealthEntry): string {
         </div>
         <div
           class="stat-card"
-          :class="{ 'stat-card-link': summary?.last_backup_schedule_id }"
-          @click="
-            summary?.last_backup_schedule_id &&
-            router.push(`/schedules/${summary.last_backup_schedule_id}`)
-          "
+          :class="{ 'stat-card-link': summary?.last_backup_repo_id }"
+          @click="navigateToLastBackup"
         >
           <span class="stat-label">Last Backup</span>
           <span class="stat-value stat-value-sm">
@@ -355,13 +488,48 @@ function healthStatusColor(entry: HealthEntry): string {
         >
           <span class="stat-label">Next Backup</span>
           <span class="stat-value stat-value-sm">
-            {{ summary?.next_backup_at ? relativeTime(summary.next_backup_at) : '\u2014' }}
+            <template v-if="activeBackups.length > 0">Active</template>
+            <template v-else>
+              {{ summary?.next_backup_at ? relativeTime(summary.next_backup_at) : '—' }}
+            </template>
           </span>
         </div>
         <div class="stat-card">
           <span class="stat-label">Total Storage</span>
           <span class="stat-value stat-value-sm">
             {{ formatBytes(summary?.total_storage_bytes ?? 0) }}
+          </span>
+        </div>
+        <div
+          class="stat-card"
+          :class="{ 'stat-card-link': summary?.last_failure_schedule_id }"
+          @click="
+            summary?.last_failure_schedule_id &&
+            router.push(`/schedules/${summary.last_failure_schedule_id}`)
+          "
+        >
+          <span class="stat-label">Last Failure</span>
+          <span
+            class="stat-value stat-value-sm"
+            :class="{ 'stat-danger': summary?.last_failure_at }"
+          >
+            {{ summary?.last_failure_at ? relativeTime(summary.last_failure_at) : '\u2014' }}
+          </span>
+        </div>
+        <div
+          class="stat-card"
+          :class="{ 'stat-card-link': summary?.last_warning_schedule_id }"
+          @click="
+            summary?.last_warning_schedule_id &&
+            router.push(`/schedules/${summary.last_warning_schedule_id}`)
+          "
+        >
+          <span class="stat-label">Last Warning</span>
+          <span
+            class="stat-value stat-value-sm"
+            :class="{ 'stat-warning': summary?.last_warning_at }"
+          >
+            {{ summary?.last_warning_at ? relativeTime(summary.last_warning_at) : '\u2014' }}
           </span>
         </div>
       </section>
@@ -392,7 +560,54 @@ function healthStatusColor(entry: HealthEntry): string {
         <div class="left-col">
           <!-- Section 2: 30-Day Success Ring -->
           <section class="panel">
-            <h2 class="panel-title">30-Day Success Rate</h2>
+            <div class="panel-header">
+              <h2 class="panel-title">Success Rate</h2>
+              <div class="trends-controls">
+                <select
+                  v-model="successRepoFilter"
+                  class="trends-select"
+                >
+                  <option :value="undefined">All Repos</option>
+                  <option
+                    v-for="repo in repoOptions"
+                    :key="repo.id"
+                    :value="repo.id"
+                  >
+                    {{ repo.name }}
+                  </option>
+                </select>
+                <div class="view-toggle">
+                  <button
+                    class="toggle-btn"
+                    :class="{ active: successDaysFilter === 7 }"
+                    @click="successDaysFilter = 7"
+                  >
+                    7d
+                  </button>
+                  <button
+                    class="toggle-btn"
+                    :class="{ active: successDaysFilter === 14 }"
+                    @click="successDaysFilter = 14"
+                  >
+                    14d
+                  </button>
+                  <button
+                    class="toggle-btn"
+                    :class="{ active: successDaysFilter === 30 }"
+                    @click="successDaysFilter = 30"
+                  >
+                    30d
+                  </button>
+                  <button
+                    class="toggle-btn"
+                    :class="{ active: successDaysFilter === 90 }"
+                    @click="successDaysFilter = 90"
+                  >
+                    90d
+                  </button>
+                </div>
+              </div>
+            </div>
             <div class="ring-container">
               <svg
                 viewBox="0 0 128 128"
@@ -422,19 +637,23 @@ function healthStatusColor(entry: HealthEntry): string {
               </svg>
               <div class="ring-center">
                 <span class="ring-pct">{{ successRate }}%</span>
-                <span class="ring-sub">
-                  {{ summary?.success_30d ?? 0 }}/{{ summary?.total_30d ?? 0 }} OK
-                </span>
+                <span class="ring-sub"> {{ successCount }}/{{ successTotal }} OK </span>
               </div>
             </div>
             <div class="ring-legend">
-              <span class="legend-item legend-pass">
+              <span
+                class="legend-item legend-pass legend-link"
+                @click="router.push({ name: 'schedules', query: { filter: 'success' } })"
+              >
                 <span class="legend-dot" />
-                Passed: {{ summary?.success_30d ?? 0 }}
+                Passed: {{ successCount }}
               </span>
-              <span class="legend-item legend-fail">
+              <span
+                class="legend-item legend-fail legend-link"
+                @click="router.push({ name: 'schedules', query: { filter: 'failed' } })"
+              >
                 <span class="legend-dot" />
-                Failed: {{ summary?.failed_30d ?? 0 }}
+                Failed: {{ failedCount }}
               </span>
             </div>
           </section>
@@ -512,13 +731,15 @@ function healthStatusColor(entry: HealthEntry): string {
             </div>
             <div class="storage-legend">
               <div
-                v-for="seg in storageDonuts"
+                v-for="seg in storageLegendItems"
                 :key="seg.name"
                 class="storage-legend-item"
+                :class="{ 'storage-legend-item-hidden': seg.hidden }"
+                @click="toggleSegment(seg.name)"
               >
                 <span
                   class="legend-color"
-                  :style="{ background: seg.color }"
+                  :style="{ background: seg.hidden ? 'var(--border)' : seg.color }"
                 />
                 <span class="legend-name">{{ seg.name }}</span>
                 <span class="legend-detail"
@@ -571,125 +792,139 @@ function healthStatusColor(entry: HealthEntry): string {
         </div>
       </div>
 
-      <!-- Section 5: Activity Timeline -->
-      <section class="panel panel-timeline">
-        <h2 class="panel-title">Activity (14 Days)</h2>
-        <div
-          v-if="activity.length === 0 && !loading"
-          class="state-msg"
-        >
-          No activity in the last 14 days.
-        </div>
-        <div
-          v-else
-          class="timeline-wrap"
-        >
-          <svg
-            viewBox="0 0 900 200"
-            class="timeline-svg"
-            preserveAspectRatio="xMidYMid meet"
+      <!-- Section 5: Activity Timeline + Repo Health -->
+      <div class="activity-row">
+        <section class="panel panel-timeline">
+          <div class="panel-header">
+            <h2 class="panel-title">Activity</h2>
+            <div class="trends-controls">
+              <select
+                v-model="activityRepoFilter"
+                class="trends-select"
+              >
+                <option :value="undefined">All Repos</option>
+                <option
+                  v-for="repo in repoOptions"
+                  :key="repo.id"
+                  :value="repo.id"
+                >
+                  {{ repo.name }}
+                </option>
+              </select>
+              <div class="view-toggle">
+                <button
+                  class="toggle-btn"
+                  :class="{ active: activityDaysFilter === 7 }"
+                  @click="activityDaysFilter = 7"
+                >
+                  7d
+                </button>
+                <button
+                  class="toggle-btn"
+                  :class="{ active: activityDaysFilter === 14 }"
+                  @click="activityDaysFilter = 14"
+                >
+                  14d
+                </button>
+                <button
+                  class="toggle-btn"
+                  :class="{ active: activityDaysFilter === 30 }"
+                  @click="activityDaysFilter = 30"
+                >
+                  30d
+                </button>
+                <button
+                  class="toggle-btn"
+                  :class="{ active: activityDaysFilter === 90 }"
+                  @click="activityDaysFilter = 90"
+                >
+                  90d
+                </button>
+              </div>
+            </div>
+          </div>
+          <div
+            v-if="activity.length === 0 && !loading"
+            class="state-msg"
           >
-            <!-- Y-axis labels -->
-            <text
-              x="50"
-              y="34"
-              class="axis-label"
+            No activity in the selected period.
+          </div>
+          <div
+            v-else
+            class="timeline-wrap"
+          >
+            <svg
+              viewBox="0 0 900 200"
+              class="timeline-svg"
+              preserveAspectRatio="xMidYMid meet"
             >
-              0h
-            </text>
-            <text
-              x="50"
-              y="69"
-              class="axis-label"
-            >
-              6h
-            </text>
-            <text
-              x="50"
-              y="104"
-              class="axis-label"
-            >
-              12h
-            </text>
-            <text
-              x="50"
-              y="139"
-              class="axis-label"
-            >
-              18h
-            </text>
-            <text
-              x="50"
-              y="174"
-              class="axis-label"
-            >
-              24h
-            </text>
-            <!-- Grid lines -->
-            <line
-              x1="60"
-              y1="30"
-              x2="840"
-              y2="30"
-              class="grid-line"
-            />
-            <line
-              x1="60"
-              y1="65"
-              x2="840"
-              y2="65"
-              class="grid-line"
-            />
-            <line
-              x1="60"
-              y1="100"
-              x2="840"
-              y2="100"
-              class="grid-line"
-            />
-            <line
-              x1="60"
-              y1="135"
-              x2="840"
-              y2="135"
-              class="grid-line"
-            />
-            <line
-              x1="60"
-              y1="170"
-              x2="840"
-              y2="170"
-              class="grid-line"
-            />
-            <!-- X-axis labels -->
-            <text
-              v-for="(day, idx) in activityDays"
-              :key="day"
-              :x="60 + (idx / 13) * 780"
-              y="195"
-              class="axis-label axis-label-x"
-            >
-              {{ day.slice(5) }}
-            </text>
-            <!-- Dots -->
-            <circle
-              v-for="dot in activityDots"
-              :key="dot.key"
-              :cx="dot.x"
-              :cy="dot.y"
-              r="4"
-              :fill="dot.color"
-              opacity="0.85"
-            />
-          </svg>
-        </div>
-      </section>
+              <!-- Y-axis labels -->
+              <text
+                v-for="tick in activityYTicks"
+                :key="`y-${tick.hour}`"
+                x="50"
+                :y="tick.y + 4"
+                class="axis-label"
+              >
+                {{ tick.hour }}h
+              </text>
+              <!-- Grid lines -->
+              <line
+                v-for="tick in activityYTicks"
+                :key="`g-${tick.hour}`"
+                x1="60"
+                :y1="tick.y"
+                x2="840"
+                :y2="tick.y"
+                class="grid-line"
+              />
+              <!-- X-axis labels -->
+              <template
+                v-for="(day, idx) in activityDays"
+                :key="day"
+              >
+                <text
+                  v-if="idx % Math.max(1, Math.floor(activityDays.length / 14)) === 0"
+                  :x="60 + (idx / Math.max(activityDays.length - 1, 1)) * 780"
+                  y="195"
+                  class="axis-label axis-label-x"
+                >
+                  {{ day.slice(5) }}
+                </text>
+              </template>
+              <!-- Dots -->
+              <circle
+                v-for="dot in activityDots"
+                :key="dot.key"
+                :cx="dot.x"
+                :cy="dot.y"
+                r="4"
+                :fill="dot.color"
+                opacity="0.85"
+              />
+            </svg>
+          </div>
+        </section>
+        <RepoHealthWidget :health="health" />
+      </div>
+
+      <!-- Section 5b: Widget Row -->
+      <div class="widgets-row">
+        <BackupStatsWidget :repos="repoOptions" />
+        <StorageTrendWidget />
+      </div>
 
       <!-- Section 6: Trends Chart -->
       <TrendsChart :repos="repoOptions" />
 
-      <!-- Section 7: Backup Calendar -->
-      <BackupCalendar :repos="repoOptions" />
+      <!-- Section 7: Calendar + Sidebar -->
+      <div class="calendar-row">
+        <BackupCalendar :repos="repoOptions" />
+        <div class="calendar-sidebar">
+          <RecentActivityWidget />
+          <NextScheduledWidget />
+        </div>
+      </div>
     </template>
   </div>
 </template>
@@ -767,6 +1002,10 @@ function healthStatusColor(entry: HealthEntry): string {
   color: var(--danger);
 }
 
+.stat-warning {
+  color: var(--warning);
+}
+
 .stat-dot {
   width: 10px;
   height: 10px;
@@ -832,6 +1071,21 @@ function healthStatusColor(entry: HealthEntry): string {
 .panel-header .panel-title {
   margin: 0;
   white-space: nowrap;
+}
+
+.trends-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.trends-select {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--text-primary);
 }
 
 .view-toggle {
@@ -946,6 +1200,18 @@ function healthStatusColor(entry: HealthEntry): string {
   background: var(--danger);
 }
 
+.legend-link {
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 2px 6px;
+  transition: background 0.15s;
+}
+
+.legend-link:hover {
+  background: var(--hover);
+  text-decoration: underline;
+}
+
 /* Storage legend */
 .storage-legend {
   display: flex;
@@ -958,6 +1224,21 @@ function healthStatusColor(entry: HealthEntry): string {
   align-items: center;
   gap: 0.5rem;
   font-size: 0.75rem;
+  cursor: pointer;
+  user-select: none;
+  transition: opacity 0.15s;
+}
+
+.storage-legend-item:hover {
+  opacity: 0.7;
+}
+
+.storage-legend-item-hidden {
+  opacity: 0.4;
+}
+
+.storage-legend-item-hidden .legend-name {
+  text-decoration: line-through;
 }
 
 .legend-color {
@@ -1066,25 +1347,94 @@ function healthStatusColor(entry: HealthEntry): string {
 
 .timeline-svg {
   width: 100%;
-  min-width: 600px;
   height: auto;
 }
 
+@media (max-width: 600px) {
+  .timeline-wrap {
+    overflow-x: auto;
+  }
+
+  .timeline-svg {
+    min-width: 500px;
+  }
+}
+
 .axis-label {
-  font-size: 10px;
+  font-size: 8px;
   fill: var(--text-muted);
   text-anchor: end;
 }
 
 .axis-label-x {
   text-anchor: middle;
-  font-size: 9px;
+  font-size: 8px;
+}
+
+@media (max-width: 600px) {
+  .axis-label {
+    font-size: 18px;
+  }
+
+  .axis-label-x {
+    font-size: 18px;
+  }
+
+  .timeline-svg {
+    min-width: 500px;
+    min-height: 180px;
+  }
 }
 
 .grid-line {
   stroke: var(--border);
   stroke-width: 0.5;
   stroke-dasharray: 3 3;
+}
+
+/* Calendar Row */
+.calendar-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+@media (max-width: 900px) {
+  .calendar-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.calendar-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* Widgets Row */
+.widgets-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.5rem;
+}
+
+@media (max-width: 900px) {
+  .widgets-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Activity Row */
+.activity-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 1.5rem;
+}
+
+@media (max-width: 900px) {
+  .activity-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Active Backups */

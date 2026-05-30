@@ -19,9 +19,9 @@ use super::{auth::AuthUser, permissions::check_repo_permission};
 use crate::{AppState, db, error::ApiError};
 
 const EXTRACT_TIMEOUT: Duration = Duration::from_secs(300);
-const LOCK_WAIT_SECS: &str = "60";
+pub const LOCK_WAIT_SECS: &str = "60";
 
-fn borg_binary() -> String {
+pub fn borg_binary() -> String {
     std::env::var("BORG_BINARY").unwrap_or_else(|_| "borg".to_string())
 }
 
@@ -68,7 +68,7 @@ fn validate_extract_path(path: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
-async fn get_repo_env(
+pub async fn get_repo_env(
     pool: &PgPool,
     encryption_key: &[u8; 32],
     repo_id: i64,
@@ -97,7 +97,7 @@ async fn get_repo_env(
     Ok((borg_repo, env))
 }
 
-fn classify_borg_error(exit_code: i32, stderr: &str) -> ApiError {
+pub fn classify_borg_error(exit_code: i32, stderr: &str) -> ApiError {
     if exit_code == 1 && stderr.to_lowercase().contains("lock") {
         return ApiError::Conflict("repository is locked by another operation".to_string());
     }

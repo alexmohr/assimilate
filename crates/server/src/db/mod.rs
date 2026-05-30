@@ -503,13 +503,12 @@ pub async fn update_repo_passphrase(
     repo_id: i64,
     passphrase_encrypted: &[u8],
 ) -> Result<(), ApiError> {
-    let result =
-        sqlx::query("UPDATE repos SET passphrase_encrypted = $2 WHERE id = $1")
-            .bind(repo_id)
-            .bind(passphrase_encrypted)
-            .execute(pool)
-            .await
-            .map_err(ApiError::Database)?;
+    let result = sqlx::query("UPDATE repos SET passphrase_encrypted = $2 WHERE id = $1")
+        .bind(repo_id)
+        .bind(passphrase_encrypted)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
     if result.rows_affected() == 0 {
         return Err(ApiError::NotFound(format!("repo {repo_id} not found")));
     }
@@ -2595,17 +2594,13 @@ pub async fn get_backup_trends(
 ) -> Result<Vec<TrendRow>, ApiError> {
     if let Some(rid) = repo_id {
         sqlx::query_as::<_, TrendRow>(
-            "SELECT started_at::date AS date, \
-             COALESCE(AVG(original_size), 0)::INT8 AS original_size, \
-             COALESCE(AVG(compressed_size), 0)::INT8 AS compressed_size, \
+            "SELECT started_at::date AS date, COALESCE(AVG(original_size), 0)::INT8 AS \
+             original_size, COALESCE(AVG(compressed_size), 0)::INT8 AS compressed_size, \
              COALESCE(AVG(deduplicated_size), 0)::INT8 AS deduplicated_size, \
-             COALESCE(AVG(files_processed), 0)::INT8 AS file_count, \
-             COALESCE(AVG(duration_secs), 0)::INT8 AS duration_seconds, \
-             COUNT(*)::INT8 AS backup_count \
-             FROM backup_reports \
-             WHERE repo_id = $1 AND started_at > NOW() - make_interval(days => $2) \
-             GROUP BY started_at::date \
-             ORDER BY date",
+             COALESCE(AVG(files_processed), 0)::INT8 AS file_count, COALESCE(AVG(duration_secs), \
+             0)::INT8 AS duration_seconds, COUNT(*)::INT8 AS backup_count FROM backup_reports \
+             WHERE repo_id = $1 AND started_at > NOW() - make_interval(days => $2) GROUP BY \
+             started_at::date ORDER BY date",
         )
         .bind(rid)
         .bind(i32::try_from(days).unwrap_or(30))
@@ -2614,17 +2609,13 @@ pub async fn get_backup_trends(
         .map_err(ApiError::Database)
     } else {
         sqlx::query_as::<_, TrendRow>(
-            "SELECT started_at::date AS date, \
-             COALESCE(AVG(original_size), 0)::INT8 AS original_size, \
-             COALESCE(AVG(compressed_size), 0)::INT8 AS compressed_size, \
+            "SELECT started_at::date AS date, COALESCE(AVG(original_size), 0)::INT8 AS \
+             original_size, COALESCE(AVG(compressed_size), 0)::INT8 AS compressed_size, \
              COALESCE(AVG(deduplicated_size), 0)::INT8 AS deduplicated_size, \
-             COALESCE(AVG(files_processed), 0)::INT8 AS file_count, \
-             COALESCE(AVG(duration_secs), 0)::INT8 AS duration_seconds, \
-             COUNT(*)::INT8 AS backup_count \
-             FROM backup_reports \
-             WHERE started_at > NOW() - make_interval(days => $1) \
-             GROUP BY started_at::date \
-             ORDER BY date",
+             COALESCE(AVG(files_processed), 0)::INT8 AS file_count, COALESCE(AVG(duration_secs), \
+             0)::INT8 AS duration_seconds, COUNT(*)::INT8 AS backup_count FROM backup_reports \
+             WHERE started_at > NOW() - make_interval(days => $1) GROUP BY started_at::date ORDER \
+             BY date",
         )
         .bind(i32::try_from(days).unwrap_or(30))
         .fetch_all(pool)
@@ -2659,15 +2650,11 @@ pub async fn get_calendar_events(
 
     if let Some(rid) = repo_id {
         sqlx::query_as::<_, CalendarEventRow>(
-            "SELECT br.started_at::date AS date, \
-             'backup' AS event_type, \
-             CASE WHEN br.status = 'success' THEN 'success' ELSE 'failed' END AS status, \
-             r.name AS repo_name, \
-             to_char(br.started_at, 'HH24:MI') AS time \
-             FROM backup_reports br \
-             JOIN repos r ON r.id = br.repo_id \
-             WHERE br.started_at::date >= $1 AND br.started_at::date < $2 AND br.repo_id = $3 \
-             ORDER BY br.started_at",
+            "SELECT br.started_at::date AS date, 'backup' AS event_type, CASE WHEN br.status = \
+             'success' THEN 'success' ELSE 'failed' END AS status, r.name AS repo_name, \
+             to_char(br.started_at, 'HH24:MI') AS time FROM backup_reports br JOIN repos r ON \
+             r.id = br.repo_id WHERE br.started_at::date >= $1 AND br.started_at::date < $2 AND \
+             br.repo_id = $3 ORDER BY br.started_at",
         )
         .bind(start)
         .bind(end)
@@ -2677,15 +2664,11 @@ pub async fn get_calendar_events(
         .map_err(ApiError::Database)
     } else {
         sqlx::query_as::<_, CalendarEventRow>(
-            "SELECT br.started_at::date AS date, \
-             'backup' AS event_type, \
-             CASE WHEN br.status = 'success' THEN 'success' ELSE 'failed' END AS status, \
-             r.name AS repo_name, \
-             to_char(br.started_at, 'HH24:MI') AS time \
-             FROM backup_reports br \
-             JOIN repos r ON r.id = br.repo_id \
-             WHERE br.started_at::date >= $1 AND br.started_at::date < $2 \
-             ORDER BY br.started_at",
+            "SELECT br.started_at::date AS date, 'backup' AS event_type, CASE WHEN br.status = \
+             'success' THEN 'success' ELSE 'failed' END AS status, r.name AS repo_name, \
+             to_char(br.started_at, 'HH24:MI') AS time FROM backup_reports br JOIN repos r ON \
+             r.id = br.repo_id WHERE br.started_at::date >= $1 AND br.started_at::date < $2 ORDER \
+             BY br.started_at",
         )
         .bind(start)
         .bind(end)
@@ -2702,8 +2685,8 @@ pub async fn get_enabled_schedules_for_calendar(
         "SELECT id, client_id, repo_id, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns, ignore_global_excludes, keep_daily, \
          keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
-         pre_backup_commands, post_backup_commands, owner_id, visibility \
-         FROM schedules WHERE enabled = true",
+         pre_backup_commands, post_backup_commands, owner_id, visibility FROM schedules WHERE \
+         enabled = true",
     )
     .fetch_all(pool)
     .await

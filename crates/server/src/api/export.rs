@@ -159,10 +159,7 @@ pub async fn export_archive(
         });
 
         let stream = ReaderStream::new(lz4_stdout);
-        (
-            Body::from_stream(stream),
-            format!("{archive_name}.tar.lz4"),
-        )
+        (Body::from_stream(stream), format!("{archive_name}.tar.lz4"))
     } else {
         tokio::spawn(async move {
             let _r = borg.wait().await;
@@ -176,10 +173,7 @@ pub async fn export_archive(
 
     Ok((
         [
-            (
-                header::CONTENT_TYPE,
-                "application/octet-stream".to_string(),
-            ),
+            (header::CONTENT_TYPE, "application/octet-stream".to_string()),
             (header::CONTENT_DISPOSITION, disposition),
         ],
         body,

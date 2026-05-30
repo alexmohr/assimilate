@@ -11,6 +11,9 @@ import { useClipboard } from '../composables/useClipboard'
 import { formatBytes, formatDate } from '../utils/format'
 import { extractError } from '../utils/error'
 import BaseSpinner from '../components/BaseSpinner.vue'
+import RestoreWizard from '../components/RestoreWizard.vue'
+import ArchiveDiff from '../components/ArchiveDiff.vue'
+import FileSearch from '../components/FileSearch.vue'
 
 interface RepoOption {
   id: number
@@ -163,6 +166,9 @@ function downloadFile(entry: ContentEntry): void {
   document.body.removeChild(a)
 }
 
+const showRestoreWizard = ref(false)
+const showArchiveDiff = ref(false)
+
 const passphrase = ref<string | null>(null)
 const passphraseLoading = ref(false)
 const passphraseError = ref<string | null>(null)
@@ -258,13 +264,29 @@ onMounted(loadRepos)
         <div class="panel archives-panel">
           <div class="panel-header">
             <span class="panel-title">Archives</span>
-            <button
-              class="btn btn-sm btn-ghost"
-              :disabled="archivesLoading"
-              @click="loadArchives"
-            >
-              {{ archivesLoading ? '...' : '&#8635;' }}
-            </button>
+            <div class="panel-actions">
+              <button
+                class="btn btn-sm btn-ghost"
+                :disabled="archives.length < 1"
+                @click="showRestoreWizard = true"
+              >
+                Restore
+              </button>
+              <button
+                class="btn btn-sm btn-ghost"
+                :disabled="archives.length < 2"
+                @click="showArchiveDiff = true"
+              >
+                Diff
+              </button>
+              <button
+                class="btn btn-sm btn-ghost"
+                :disabled="archivesLoading"
+                @click="loadArchives"
+              >
+                {{ archivesLoading ? '...' : '&#8635;' }}
+              </button>
+            </div>
           </div>
 
           <div
@@ -418,6 +440,11 @@ onMounted(loadRepos)
           <span class="muted">Select an archive to browse its contents.</span>
         </div>
       </div>
+
+      <FileSearch
+        :repo-id="selectedRepoId"
+        :archives="archives.map((a) => ({ name: a.name }))"
+      />
     </template>
 
     <!-- Passphrase Dialog -->
@@ -470,6 +497,21 @@ onMounted(loadRepos)
         </div>
       </div>
     </Teleport>
+    <!-- Restore Wizard -->
+    <RestoreWizard
+      :open="showRestoreWizard"
+      :repo-id="selectedRepoId"
+      :archives="archives"
+      @close="showRestoreWizard = false"
+    />
+
+    <!-- Archive Diff -->
+    <ArchiveDiff
+      :open="showArchiveDiff"
+      :repo-id="selectedRepoId"
+      :archives="archives"
+      @close="showArchiveDiff = false"
+    />
   </div>
 </template>
 
@@ -553,6 +595,11 @@ onMounted(loadRepos)
   justify-content: space-between;
   padding: 0.875rem 1.25rem;
   border-bottom: 1px solid var(--border);
+}
+
+.panel-actions {
+  display: flex;
+  gap: 0.25rem;
 }
 
 .panel-title {

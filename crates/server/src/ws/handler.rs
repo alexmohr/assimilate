@@ -516,13 +516,28 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
             );
         }
         AgentToServer::SearchResult { .. }
-        | AgentToServer::RestoreCompleted { .. }
         | AgentToServer::ExportReady { .. }
         | AgentToServer::KeyExportResult { .. }
         | AgentToServer::KeyImportResult { .. }
         | AgentToServer::PassphraseChanged { .. }
         | AgentToServer::OperationProgress { .. } => {
             tracing::warn!(hostname = %hostname, "unexpected agent response");
+        }
+        AgentToServer::RestoreCompleted {
+            request_id,
+            success,
+            files_restored,
+            error_message,
+        } => {
+            if let Some(tx) = state.pending_restores.lock().await.remove(&request_id) {
+                let _ = tx.send((success, files_restored, error_message));
+            } else {
+                tracing::warn!(
+                    hostname = %hostname,
+                    request_id = %request_id,
+                    "unexpected RestoreCompleted with no pending request"
+                );
+            }
         }
         AgentToServer::DryRunResult {
             request_id,
@@ -543,6 +558,8 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
         AgentToServer::OperationFailed { request_id, error } => {
             if let Some(tx) = state.pending_dryruns.lock().await.remove(&request_id) {
                 let _ = tx.send((Vec::new(), 0, Some(error)));
+            } else if let Some(tx) = state.pending_restores.lock().await.remove(&request_id) {
+                let _ = tx.send((false, 0, Some(error)));
             } else {
                 tracing::warn!(
                     hostname = %hostname,

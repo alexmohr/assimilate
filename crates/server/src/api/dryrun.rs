@@ -14,8 +14,7 @@ use uuid::Uuid;
 
 use super::auth::AuthUser;
 use crate::{
-    AppState,
-    db,
+    AppState, db,
     error::{ApiError, ApiJson},
 };
 
@@ -70,9 +69,7 @@ pub async fn dry_run(
     let hostname = db::get_client_hostname_for_schedule(&state.pool, req.schedule_id).await?;
 
     if !state.registry.is_connected(&hostname).await {
-        return Err(ApiError::ServiceUnavailable(
-            "agent is offline".to_owned(),
-        ));
+        return Err(ApiError::ServiceUnavailable("agent is offline".to_owned()));
     }
 
     let request_id = Uuid::new_v4().to_string();
@@ -92,15 +89,13 @@ pub async fn dry_run(
 
     if state.registry.send_to(&hostname, msg).await.is_err() {
         state.pending_dryruns.lock().await.remove(&request_id);
-        return Err(ApiError::ServiceUnavailable(
-            "agent is offline".to_owned(),
-        ));
+        return Err(ApiError::ServiceUnavailable("agent is offline".to_owned()));
     }
 
     match tokio::time::timeout(Duration::from_secs(30), rx).await {
-        Ok(Ok((_files, _total_size, Some(error)))) => Err(ApiError::Internal(format!(
-            "dry-run failed: {error}"
-        ))),
+        Ok(Ok((_files, _total_size, Some(error)))) => {
+            Err(ApiError::Internal(format!("dry-run failed: {error}")))
+        }
         Ok(Ok((files, total_size, None))) => Ok(Json(DryRunResponse {
             files: files
                 .into_iter()

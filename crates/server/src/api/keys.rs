@@ -10,15 +10,18 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::Deserialize;
-use tokio::{
-    io::AsyncWriteExt,
-    process::Command,
-};
+use tokio::{io::AsyncWriteExt, process::Command};
 
-use super::{archives::{borg_binary, classify_borg_error, get_repo_env}, auth::RequireAdmin};
+use super::{
+    archives::{borg_binary, classify_borg_error, get_repo_env},
+    auth::RequireAdmin,
+};
 use crate::{
     AppState,
-    db::{self, audit::{NewAuditEntry, insert_audit_entry}},
+    db::{
+        self,
+        audit::{NewAuditEntry, insert_audit_entry},
+    },
     error::ApiError,
 };
 

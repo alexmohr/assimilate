@@ -205,10 +205,7 @@ async fn main() -> Result<(), StartupError> {
             "/api/repos/{repo_id}/break-lock",
             post(api::repos::break_lock),
         )
-        .route(
-            "/api/repos/{repo_id}/dry-run",
-            post(api::dryrun::dry_run),
-        )
+        .route("/api/repos/{repo_id}/dry-run", post(api::dryrun::dry_run))
         .route(
             "/api/repos/{repo_id}/tags",
             get(api::tags::get_repo_tags).put(api::tags::set_repo_tags),

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::process::Stdio;
-use std::time::Duration;
+use std::{process::Stdio, time::Duration};
 
 use axum::{
     Json,
@@ -235,8 +234,17 @@ mod tests {
         entries.sort_by(|a, b| a.0.cmp(&b.0));
 
         assert_eq!(entries.len(), 3);
-        assert_eq!(entries[0], ("etc/hosts".to_string(), ChangeCategory::Modified));
-        assert_eq!(entries[1], ("etc/new-file".to_string(), ChangeCategory::Added));
-        assert_eq!(entries[2], ("etc/old-file".to_string(), ChangeCategory::Removed));
+        assert_eq!(
+            entries[0],
+            ("etc/hosts".to_string(), ChangeCategory::Modified)
+        );
+        assert_eq!(
+            entries[1],
+            ("etc/new-file".to_string(), ChangeCategory::Added)
+        );
+        assert_eq!(
+            entries[2],
+            ("etc/old-file".to_string(), ChangeCategory::Removed)
+        );
     }
 }

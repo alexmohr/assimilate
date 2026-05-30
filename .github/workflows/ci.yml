@@ -276,7 +276,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Create and push manifest (nightly)
         run: |
-          docker manifest create ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:nightly \
+          docker manifest create --amend ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:nightly \
             ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:nightly-amd64 \
             ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:nightly-arm64
           docker manifest push ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:nightly

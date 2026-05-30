@@ -63,6 +63,36 @@ A scatter plot showing backup activity over the last 14 days. Each dot represent
 
 This visualization helps identify patterns: regular schedules appear as horizontal bands, failures cluster visibly, and gaps indicate missed runs.
 
+## Storage Trends Chart
+
+The trends chart shows how deduplicated repository storage has changed over time. Use it to project future storage needs and detect unexpected growth.
+
+- **X-axis** — date (last 30 days by default)
+- **Y-axis** — total deduplicated storage across all repositories (or per-repository when filtered)
+- **Tooltip** — hover over a data point to see the exact size and date
+
+Use the **Group by** toggle to view trends per repository, per host, or as a fleet-wide total. Use the **Range** selector to switch between 7-day, 30-day, and 90-day views.
+
+<!-- screenshot: dashboard-trends -->
+
+## Backup Calendar
+
+The calendar view shows backup activity for the current month. Each day cell is coloured based on the worst backup result for that day:
+
+| Colour | Meaning |
+|--------|---------|
+| Green | All backups succeeded |
+| Yellow | At least one backup produced a warning |
+| Red | At least one backup failed |
+| Empty | No backups scheduled or run |
+
+Click any day to see a list of backup runs for that date with their result, duration, and archive size.
+
+<!-- screenshot: dashboard-calendar -->
+
+!!! tip
+    Use the calendar to quickly identify days when backups failed or were skipped, especially after holidays or maintenance windows.
+
 ## Real-Time Updates
 
 The dashboard refreshes automatically via WebSocket when:

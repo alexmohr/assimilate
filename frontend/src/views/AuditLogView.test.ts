@@ -197,7 +197,10 @@ describe('AuditLogView', () => {
       mountView('admin')
       await flushPromises()
 
-      expect(mockGet).toHaveBeenCalledWith('/audit-log', expect.objectContaining({ params: expect.any(Object) }))
+      expect(mockGet).toHaveBeenCalledWith(
+        '/audit-log',
+        expect.objectContaining({ params: expect.any(Object) }),
+      )
     })
   })
 

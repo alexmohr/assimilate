@@ -381,9 +381,9 @@ describe('ActivityLogView', () => {
       const wrapper = mountView()
       await flushPromises()
 
-      const statusSelect = wrapper.findAll('select.select-input').find((s) =>
-        s.findAll('option').some((o) => o.text() === 'Failed'),
-      )
+      const statusSelect = wrapper
+        .findAll('select.select-input')
+        .find((s) => s.findAll('option').some((o) => o.text() === 'Failed'))
       await statusSelect?.setValue('failed')
       await flushPromises()
 
@@ -397,9 +397,9 @@ describe('ActivityLogView', () => {
       const wrapper = mountView()
       await flushPromises()
 
-      const statusSelect = wrapper.findAll('select.select-input').find((s) =>
-        s.findAll('option').some((o) => o.text() === 'Failed'),
-      )
+      const statusSelect = wrapper
+        .findAll('select.select-input')
+        .find((s) => s.findAll('option').some((o) => o.text() === 'Failed'))
       await statusSelect?.setValue('failed')
       await flushPromises()
 
@@ -415,7 +415,9 @@ describe('ActivityLogView', () => {
       mockGet.mockImplementation((url: string) => {
         if (url === '/clients') return Promise.resolve({ data: CLIENTS })
         if (url === '/stats/activity')
-          return Promise.resolve({ data: Array.from({ length: 50 }, (_, i) => ({ ...ACTIVITY_ROWS[0], id: i + 1 })) })
+          return Promise.resolve({
+            data: Array.from({ length: 50 }, (_, i) => ({ ...ACTIVITY_ROWS[0], id: i + 1 })),
+          })
         if (url === '/stats/system-events') return Promise.resolve({ data: [] })
         return Promise.resolve({ data: [] })
       })
@@ -444,7 +446,14 @@ describe('ActivityLogView', () => {
         if (url === '/stats/system-events') return Promise.resolve({ data: [] })
         if (url === '/logs')
           return Promise.resolve({
-            data: [{ timestamp: '2026-01-01T10:00:00Z', level: 'info', target: 'server', message: 'Started' }],
+            data: [
+              {
+                timestamp: '2026-01-01T10:00:00Z',
+                level: 'info',
+                target: 'server',
+                message: 'Started',
+              },
+            ],
           })
         return Promise.resolve({ data: [] })
       })
@@ -456,9 +465,9 @@ describe('ActivityLogView', () => {
       await logsBtn?.trigger('click')
       await flushPromises()
 
-      const levelSelect = wrapper.findAll('select.select-input').find((s) =>
-        s.findAll('option').some((o) => o.text() === 'Error'),
-      )
+      const levelSelect = wrapper
+        .findAll('select.select-input')
+        .find((s) => s.findAll('option').some((o) => o.text() === 'Error'))
       expect(levelSelect?.exists()).toBe(true)
       expect(wrapper.find('input.search-input').exists()).toBe(true)
     })

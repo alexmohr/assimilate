@@ -24,4 +24,28 @@ describe('service worker (sw.js)', () => {
     expect(swContent).toContain("addEventListener('install'")
     expect(swContent).toContain("addEventListener('activate'")
   })
+
+  it('defines a cache name', () => {
+    expect(swContent).toContain('CACHE_NAME')
+  })
+
+  it('registers a fetch event listener that caches responses', () => {
+    expect(swContent).toContain("addEventListener('fetch'")
+    expect(swContent).toContain('caches.open')
+    expect(swContent).toContain('cache.put')
+  })
+
+  it('serves from cache on network failure', () => {
+    expect(swContent).toContain('caches.match')
+  })
+
+  it('skips API and WebSocket requests', () => {
+    expect(swContent).toContain("/api/")
+    expect(swContent).toContain("/ws/")
+  })
+
+  it('cleans up old caches on activate', () => {
+    expect(swContent).toContain('caches.keys')
+    expect(swContent).toContain('caches.delete')
+  })
 })

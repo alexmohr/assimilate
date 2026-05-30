@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { Search } from 'lucide-vue-next'
+import { Search } from '@lucide/vue'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import { apiClient } from '../api/client'
@@ -34,7 +34,7 @@ interface SingleArchiveResponse {
 }
 
 interface Props {
-  repoId: number
+  repoId: number | null
   archives: ArchiveOption[]
 }
 
@@ -57,7 +57,7 @@ const canSearch = computed<boolean>(() => {
 })
 
 async function doSearch(): Promise<void> {
-  if (!canSearch.value) return
+  if (!canSearch.value || props.repoId === null) return
   loading.value = true
   error.value = null
   results.value = []

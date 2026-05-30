@@ -46,6 +46,11 @@ enum ChangeCategory {
 }
 
 fn classify_change(change_type: &str) -> ChangeCategory {
+    // Matches all known borg diff change type strings. The fallback treats
+    // any unrecognised future borg output as Modified, which is safe for
+    // display purposes. This is intentionally matching external string data
+    // from borg's JSON output, not an enum — exhaustive matching is not
+    // possible here.
     match change_type {
         "added" => ChangeCategory::Added,
         "removed" => ChangeCategory::Removed,

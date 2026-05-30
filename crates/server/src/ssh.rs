@@ -71,7 +71,7 @@ pub struct DeployKeyResponse {
     pub error: Option<String>,
 }
 
-struct SshClientHandler;
+pub(crate) struct SshClientHandler;
 
 impl client::Handler for SshClientHandler {
     type Error = russh::Error;
@@ -116,7 +116,7 @@ pub fn load_server_private_key() -> Result<PrivateKey, SshError> {
     })
 }
 
-async fn connect_with_key(
+pub(crate) async fn connect_with_key(
     host: &str,
     user: &str,
     port: u16,
@@ -186,7 +186,7 @@ async fn open_sftp(session: &client::Handle<SshClientHandler>) -> Result<SftpSes
         .map_err(|e| SshError::Sftp(format!("failed to init sftp session: {e}")))
 }
 
-async fn exec_command(
+pub(crate) async fn exec_command(
     session: &client::Handle<SshClientHandler>,
     command: &str,
 ) -> Result<(u32, String, String), SshError> {

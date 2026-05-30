@@ -105,6 +105,8 @@ async fn main() -> Result<(), StartupError> {
     tokio::spawn(server::scheduler::run(
         state.pool.clone(),
         state.registry.clone(),
+        state.encryption_key,
+        state.ui_broadcast.clone(),
     ));
 
     let tm = tunnel_manager.clone();
@@ -217,6 +219,7 @@ async fn main() -> Result<(), StartupError> {
             post(api::repos::break_lock),
         )
         .route("/api/repos/{repo_id}/rescan", post(api::repos::rescan_repo))
+        .route("/api/repos/{repo_id}/sync", post(api::repos::sync_repo))
         .route("/api/repos/{repo_id}/dry-run", post(api::dryrun::dry_run))
         .route(
             "/api/repos/{repo_id}/tags",

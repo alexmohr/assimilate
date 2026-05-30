@@ -106,7 +106,7 @@ const editForm = reactive<EditForm>({
   ssh_host: '',
   ssh_port: 22,
   compression: 'lz4',
-  encryption: 'repokey',
+  encryption: 'repokey-blake2',
   enabled: true,
 })
 
@@ -146,11 +146,17 @@ const activeBackupClient = ref<string | null>(null)
 
 // Re-scan
 const rescanLoading = ref(false)
+const syncLoading = ref(false)
 const { success: toastSuccess, error: toastError } = useToast()
 
 interface RescanResult {
   matched: number
   remaining_unmatched: number
+}
+
+interface SyncResult {
+  imported: number
+  duration_secs: number
 }
 
 useEscapeKey(showBreakLockDialog, () => {
@@ -401,6 +407,22 @@ async function rescanArchives(): Promise<void> {
     rescanLoading.value = false
   }
 }
+
+async function syncRepo(): Promise<void> {
+  syncLoading.value = true
+  try {
+    const res = await apiClient.post<SyncResult>(`/repos/${repoId.value}/sync`)
+    toastSuccess(
+      `Sync complete: imported ${res.data.imported} archives in ${res.data.duration_secs}s.`,
+    )
+    await loadRepo()
+    await loadArchives()
+  } catch (e: unknown) {
+    toastError(extractError(e))
+  } finally {
+    syncLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -452,12 +474,16 @@ async function rescanArchives(): Promise<void> {
             <span class="stat-card-label">Archives</span>
           </div>
           <div class="stat-card">
-            <span class="stat-card-value">{{ formatBytes(repo.total_deduplicated_size) }}</span>
-            <span class="stat-card-label">Deduplicated</span>
-          </div>
-          <div class="stat-card">
             <span class="stat-card-value">{{ formatBytes(repo.total_original_size) }}</span>
             <span class="stat-card-label">Original</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-card-value">{{ formatBytes(repo.total_compressed_size) }}</span>
+            <span class="stat-card-label">Compressed</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-card-value">{{ formatBytes(repo.total_deduplicated_size) }}</span>
+            <span class="stat-card-label">Deduplicated</span>
           </div>
           <div class="stat-card">
             <span class="stat-card-value">{{ formatLastBackup(repo.last_backup_at) }}</span>
@@ -475,6 +501,13 @@ async function rescanArchives(): Promise<void> {
             <h3 class="info-title">Repository Information</h3>
             <div class="info-header-actions">
               <template v-if="isAdmin && !isEditing">
+                <button
+                  class="btn btn-sm btn-ghost"
+                  :disabled="syncLoading"
+                  @click="syncRepo"
+                >
+                  {{ syncLoading ? 'Syncing...' : 'Sync' }}
+                </button>
                 <button
                   class="btn btn-sm btn-ghost"
                   :disabled="passphraseLoading"

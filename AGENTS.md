@@ -606,6 +606,54 @@ Every documentation page that describes a UI feature **must** include a screensh
 
 All new pages must be added to the `nav:` section in `mkdocs.yml`. The file `dependency-manifest.md` is intentionally excluded from nav.
 
+## Demo Environment (Screenshots)
+
+The demo devcontainer at `.devcontainer/demo/` provides a self-contained environment pre-populated with realistic data for capturing documentation screenshots. It covers **all scenarios described in the docs**.
+
+### Running
+
+```bash
+.devcontainer/start.sh --demo
+```
+
+Or equivalently:
+
+```bash
+docker compose -f .devcontainer/demo/docker-compose.demo.yml up --build
+```
+
+Open `http://localhost:8080` — login: `admin` / `admin`.
+
+To tear down and reset all demo data (volumes), pass `--clear`:
+
+```bash
+.devcontainer/start.sh --demo --clear
+```
+
+### What it sets up
+
+The `seed-demo.sh` script populates every documented scenario:
+
+* **Hosts**: 3 connected agents (`web-server-01`, `db-server-01`, `media-store-01`) with display names, plus 2 unmatched imported placeholder clients (`old-webserver (imported)`, `legacy-db-prod (imported)`)
+* **Repositories**: 3 repos with different compression (lz4, zstd), encryption (repokey-blake2), and quotas configured
+* **Schedules**: Daily, hourly, and weekly with varying retention policies, rate limits, pre-backup commands, and backup sources
+* **Backup reports**: 30 days of daily backups (including 1 warning, 1 failure), 72 hours of hourly DB backups (1 failure), 12 weeks of weekly media backups — all with realistic sizes/durations
+* **Hostname aliases**: Glob pattern `web-server-*` on `web-server-01` for the unmatched archive scenario
+* **Tags**: Host tags (production, staging) and repo tags (critical, archival)
+* **Access control**: 3 users (admin, operator1, viewer1), groups (backend-team, data-team), built-in roles
+* **Global excludes**: Standard patterns (node_modules, __pycache__, etc.)
+* **Quotas**: Warn/critical thresholds on server-daily and database-hourly repos
+* **System events**: Agent connect/disconnect, backup failures/warnings
+* **Audit log**: Repository creation, host registration, schedule creation, login events, quota configuration
+* **Archives**: Real borg archives with browsable file trees for archive browsing, diff, and export screenshots
+* **Archive tags**: `pre-upgrade` and `weekly-baseline` tags on archives
+* **Notifications**: Webhook and email channels with rules for failures, warnings, and agent events
+* **SSH tunnels**: A reverse tunnel configured for `media-store-01`
+
+### Maintenance rule
+
+When adding a new user-facing feature or documentation page, update `seed-demo.sh` to include demo data for that feature. The demo environment must always cover all documented scenarios so screenshots can be captured without manual setup.
+
 * Do not disable clippy warnings or prefix parameters with `_` to silence warnings. Fix the underlying issue.
 * Do not use `as` casts for numeric conversions. Use `From`/`TryFrom` or explicit conversion methods.
 * Do not use `Box<dyn Error>` as a return type. Define concrete error enums with `thiserror`.

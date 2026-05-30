@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 # Stage 1: Build Rust agent binary
-FROM rust:1.87-bookworm AS rust-builder
+FROM rust:1.87-trixie AS rust-builder
 WORKDIR /app
 RUN rustup default nightly
 
@@ -11,7 +11,7 @@ COPY crates/ crates/
 RUN cargo build --release -p agent
 
 # Stage 2: Runtime
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3 \

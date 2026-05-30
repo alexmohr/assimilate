@@ -59,6 +59,7 @@ pub struct DashboardSummaryResponse {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct StorageRepoEntry {
     pub name: String,
+    pub compressed_size: i64,
     pub deduplicated_size: i64,
     pub percentage: f64,
 }
@@ -93,6 +94,7 @@ pub async fn summary(
             };
             StorageRepoEntry {
                 name: b.name,
+                compressed_size: b.compressed_size,
                 deduplicated_size: b.deduplicated_size,
                 percentage,
             }
@@ -186,6 +188,7 @@ pub async fn storage_breakdown(
             };
             StorageRepoEntry {
                 name: b.name,
+                compressed_size: b.compressed_size,
                 deduplicated_size: b.deduplicated_size,
                 percentage,
             }

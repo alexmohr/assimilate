@@ -14,7 +14,7 @@ pub struct RestartCapability {
 }
 
 pub async fn detect_restart_capability() -> RestartCapability {
-    let Some(systemctl) = which_systemctl().await else {
+    let Some(systemctl) = which_systemctl() else {
         return RestartCapability {
             supported: false,
             unavailable_reason: Some("systemd is not available on this system".to_owned()),
@@ -68,18 +68,8 @@ pub async fn detect_restart_capability() -> RestartCapability {
     }
 }
 
-async fn which_systemctl() -> Option<String> {
-    let output = Command::new("which")
-        .arg("systemctl")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .await
-        .ok()?;
-
-    if output.status.success() {
-        Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-    } else {
-        None
-    }
+fn which_systemctl() -> Option<String> {
+    which::which("systemctl")
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
 }

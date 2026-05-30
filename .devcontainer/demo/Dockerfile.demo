@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+FROM rust:1-trixie AS builder
+
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY crates/ crates/
+
+RUN cargo build --release -p server -p agent
+
+FROM node:24-slim AS frontend
+
+WORKDIR /app
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ .
+RUN npm run build
+
+FROM debian:trixie-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        borgbackup \
+        openssh-client \
+        openssh-server \
+        postgresql-client \
+        curl \
+        jq \
+        && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /run/sshd \
+    && useradd -m -s /bin/bash borg \
+    && mkdir -p /home/borg/.ssh /backup/repos \
+    && chmod 700 /home/borg/.ssh \
+    && chown -R borg:borg /home/borg /backup
+
+COPY --from=builder /src/target/release/server /app/server
+COPY --from=builder /src/target/release/agent /app/agent
+COPY --from=frontend /app/dist /app/static
+COPY .devcontainer/demo/start-demo.sh /app/start-demo.sh
+COPY .devcontainer/demo/seed-demo.sh /app/seed-demo.sh
+RUN chmod +x /app/start-demo.sh /app/seed-demo.sh
+
+ENV ASSIMILATE_STATIC_DIR=/app/static
+
+EXPOSE 8080
+
+ENTRYPOINT ["/app/start-demo.sh"]

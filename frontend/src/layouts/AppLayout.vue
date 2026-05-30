@@ -9,7 +9,9 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useUiStore } from '../stores/ui'
+import { useTheme } from '../composables/useTheme'
 import { useTimezone } from '../composables/useTimezone'
+import BackendUnreachable from '../components/BackendUnreachable.vue'
 import {
   Activity,
   Bell,
@@ -109,8 +111,12 @@ watch(
   },
 )
 
+const { loadFromBackend: loadTheme } = useTheme()
 const { loadFromBackend: loadTimezone } = useTimezone()
-onMounted(loadTimezone)
+onMounted(() => {
+  loadTheme()
+  loadTimezone()
+})
 </script>
 
 <template>
@@ -297,6 +303,8 @@ onMounted(loadTimezone)
         </Transition>
       </RouterView>
     </main>
+
+    <BackendUnreachable />
   </div>
 </template>
 

@@ -14,7 +14,10 @@ use futures_util::{SinkExt, StreamExt};
 use shared::protocol::{AgentToServer, ServerToAgent, ServerToUi};
 use tokio::sync::mpsc;
 
-use crate::{AppState, config_assembler, db};
+use crate::{
+    AppState, config_assembler, db,
+    notifications::{self, EventType, NotificationEvent},
+};
 
 const PING_INTERVAL: Duration = Duration::from_secs(30);
 const CHANNEL_BUFFER: usize = 32;
@@ -248,6 +251,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 shared::types::BackupStatus::Warning => "warning",
                 shared::types::BackupStatus::Failed => "failed",
             };
+            let notification_error_message = report.error_message.clone();
             let params = db::InsertReportParams {
                 client_id,
                 repo_id: report.repo_id.0,
@@ -266,6 +270,30 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
             if let Err(e) = db::insert_backup_report(&state.pool, &params).await {
                 tracing::error!(hostname = %hostname, error = %e, "failed to persist backup report");
             }
+
+            let event_type = match report.status {
+                shared::types::BackupStatus::Success => EventType::BackupSuccess,
+                shared::types::BackupStatus::Warning => EventType::BackupWarning,
+                shared::types::BackupStatus::Failed => EventType::BackupFailed,
+            };
+            let event = NotificationEvent {
+                event_type,
+                hostname: hostname.to_owned(),
+                repo_name: report.repo_id.0.to_string(),
+                status: status.to_string(),
+                error_message: notification_error_message,
+                timestamp: chrono::Utc::now(),
+                repo_id: Some(report.repo_id.0),
+                client_id: Some(client_id),
+                schedule_id: None,
+            };
+            let service = state.notification_service.clone();
+            tokio::spawn(async move {
+                if let Err(e) = notifications::dispatch(&service, event).await {
+                    tracing::error!(error = %e, "notification dispatch failed");
+                }
+            });
+
             state.ui_broadcast.send(ServerToUi::DataChanged);
         }
         AgentToServer::StatusUpdate { repo_id, status } => {
@@ -302,9 +330,33 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                     hostname: hostname.to_owned(),
                     target_name,
                     success,
-                    error_message,
+                    error_message: error_message.clone(),
                 });
             }
+
+            let event_type = if success {
+                EventType::CheckSuccess
+            } else {
+                EventType::CheckFailed
+            };
+            let event = NotificationEvent {
+                event_type,
+                hostname: hostname.to_owned(),
+                repo_name: repo_id.0.to_string(),
+                status: if success { "success" } else { "failed" }.to_owned(),
+                error_message,
+                timestamp: chrono::Utc::now(),
+                repo_id: Some(repo_id.0),
+                client_id: Some(client_id),
+                schedule_id: None,
+            };
+            let service = state.notification_service.clone();
+            tokio::spawn(async move {
+                if let Err(e) = notifications::dispatch(&service, event).await {
+                    tracing::error!(error = %e, "notification dispatch failed");
+                }
+            });
+
             state.ui_broadcast.send(ServerToUi::DataChanged);
         }
         AgentToServer::VerifyCompleted {

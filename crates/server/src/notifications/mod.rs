@@ -348,7 +348,7 @@ pub async fn deliver_to_channel(
                 .and_then(serde_json::Value::as_str)
                 .map_or_else(|| "Assimilate".to_owned(), |t| t.replace('_', " "));
             let body = format!(
-                "{} — {}",
+                "{} - {}",
                 payload
                     .get("hostname")
                     .and_then(serde_json::Value::as_str)
@@ -377,7 +377,9 @@ pub async fn deliver_to_channel(
             let push_payload = serde_json::json!({
                 "title": title,
                 "body": body,
-                "tag": payload.get("event_type").and_then(serde_json::Value::as_str).unwrap_or("notification"),
+                "tag": payload.get("event_type")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("notification"),
                 "url": push_url,
             });
 

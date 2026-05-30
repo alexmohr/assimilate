@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 The audit log records every state-changing action performed through the Assimilate web UI or REST API. Use it to trace who made a change, when, and from which IP address.
 
-<!-- screenshot: audit-log -->
+![Audit Log](assets/screenshots/audit-log.png)
 
 ## Accessing the Audit Log
 

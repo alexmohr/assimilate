@@ -4,7 +4,6 @@
 set -e
 
 BASE_URL="http://localhost:8080"
-DB_URL="postgres://borg:borg_demo@postgres:5432/borg"
 
 login() {
     SESSION=$(curl -sf -X POST "$BASE_URL/api/auth/login" \
@@ -41,6 +40,23 @@ for REPO_NAME in server-daily database-hourly media-weekly; do
     fi
 done
 
+echo "==> Cleaning up existing demo data (idempotent re-run)..."
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<'SQL' > /dev/null 2>&1
+DELETE FROM backup_reports WHERE client_id IN (SELECT id FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver (imported)','legacy-db-prod (imported)'));
+DELETE FROM schedules WHERE client_id IN (SELECT id FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
+DELETE FROM ssh_tunnels WHERE client_id IN (SELECT id FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
+DELETE FROM client_hostname_patterns WHERE client_id IN (SELECT id FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
+DELETE FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver (imported)','legacy-db-prod (imported)');
+DELETE FROM repo_quotas WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly'));
+DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly'));
+DELETE FROM notification_rules;
+DELETE FROM notification_channels;
+DELETE FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly');
+DELETE FROM system_events;
+DELETE FROM audit_log;
+DELETE FROM users WHERE username IN ('operator1','viewer1');
+SQL
+
 echo "==> Registering hosts..."
 WEB01_TOKEN=$(api POST "/api/clients" '{"hostname":"web-server-01","display_name":"Production Web Server"}' | jq -r '.token')
 DB01_TOKEN=$(api POST "/api/clients" '{"hostname":"db-server-01","display_name":"Primary Database"}' | jq -r '.token')
@@ -59,7 +75,7 @@ api POST "/api/repos" "{
     \"ssh_port\": 22,
     \"passphrase\": \"demo-passphrase-123\",
     \"compression\": \"lz4\"
-}" > /dev/null
+}" > /dev/null 2>&1 || true
 
 api POST "/api/repos" "{
     \"name\": \"database-hourly\",
@@ -69,7 +85,7 @@ api POST "/api/repos" "{
     \"ssh_port\": 22,
     \"passphrase\": \"demo-passphrase-123\",
     \"compression\": \"zstd,3\"
-}" > /dev/null
+}" > /dev/null 2>&1 || true
 
 api POST "/api/repos" "{
     \"name\": \"media-weekly\",
@@ -79,7 +95,7 @@ api POST "/api/repos" "{
     \"ssh_port\": 22,
     \"passphrase\": \"demo-passphrase-123\",
     \"compression\": \"lz4\"
-}" > /dev/null
+}" > /dev/null 2>&1 || true
 
 echo "==> Creating sample borg archives for browsing/diff..."
 for i in 1 2 3; do
@@ -126,7 +142,7 @@ api POST "/api/schedules" "{
     \"keep_weekly\": 4,
     \"keep_monthly\": 6,
     \"backup_sources\": [\"/var/www\", \"/etc/nginx\"]
-}" > /dev/null
+}" > /dev/null 2>&1 || true
 
 api POST "/api/schedules" "{
     \"client_id\": $DB01_ID,
@@ -139,7 +155,7 @@ api POST "/api/schedules" "{
     \"pre_backup_commands\": [\"pg_dump -U postgres mydb > /tmp/mydb.sql\"],
     \"backup_sources\": [\"/tmp/mydb.sql\", \"/var/lib/postgresql\"],
     \"rate_limit_kbps\": 5000
-}" > /dev/null
+}" > /dev/null 2>&1 || true
 
 api POST "/api/schedules" "{
     \"client_id\": $MEDIA_ID,
@@ -151,7 +167,7 @@ api POST "/api/schedules" "{
     \"keep_monthly\": 12,
     \"keep_yearly\": 2,
     \"backup_sources\": [\"/mnt/media/photos\", \"/mnt/media/videos\"]
-}" > /dev/null
+}" > /dev/null 2>&1 || true
 
 echo "==> Adding global excludes..."
 for PATTERN in "pp:__pycache__" "pp:.cache" "pp:node_modules" "*.pyc" "*.swp" "*~" "/proc" "/sys" "/tmp"; do

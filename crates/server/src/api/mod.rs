@@ -20,6 +20,7 @@ pub mod quota;
 pub mod rbac;
 pub mod reports;
 pub mod repos;
+pub mod restore;
 pub mod schedules;
 pub mod search;
 pub mod ssh;

@@ -31,6 +31,10 @@ use crate::{
 pub type PendingDryRuns =
     Arc<Mutex<HashMap<String, oneshot::Sender<(Vec<DryRunFile>, i64, Option<String>)>>>>;
 
+/// (success, files_restored, error_message)
+pub type PendingRestores =
+    Arc<Mutex<HashMap<String, oneshot::Sender<(bool, u64, Option<String>)>>>>;
+
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
@@ -41,4 +45,5 @@ pub struct AppState {
     pub log_buffer: LogBuffer,
     pub notification_service: NotificationService,
     pub pending_dryruns: PendingDryRuns,
+    pub pending_restores: PendingRestores,
 }

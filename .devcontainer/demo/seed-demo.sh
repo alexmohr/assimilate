@@ -6,17 +6,10 @@ set -e
 BASE_URL="http://localhost:8080"
 
 login() {
-    SESSION=$(curl -sf -X POST "$BASE_URL/api/auth/login" \
+    COOKIE=$(curl -sf -D - -X POST "$BASE_URL/api/auth/login" \
         -H "Content-Type: application/json" \
-        -d '{"username":"admin","password":"admin"}' | jq -r '.session_id // .token // .id')
-    if [ -z "$SESSION" ] || [ "$SESSION" = "null" ]; then
-        COOKIE=$(curl -sf -D - -X POST "$BASE_URL/api/auth/login" \
-            -H "Content-Type: application/json" \
-            -d '{"username":"admin","password":"admin"}' | grep -i set-cookie | head -1 | sed 's/.*: //' | cut -d';' -f1)
-        AUTH_HEADER="Cookie: $COOKIE"
-    else
-        AUTH_HEADER="Authorization: Bearer $SESSION"
-    fi
+        -d '{"username":"admin","password":"admin"}' | grep -i set-cookie | head -1 | sed 's/.*: //' | cut -d';' -f1)
+    AUTH_HEADER="Cookie: $COOKIE"
 }
 
 api() {
@@ -28,9 +21,6 @@ api() {
         curl -sf -X "$METHOD" "$BASE_URL$PATH_" -H "$AUTH_HEADER"
     fi
 }
-
-echo "==> Logging in..."
-login
 
 echo "==> Creating borg repositories on disk..."
 for REPO_NAME in server-daily database-hourly media-weekly; do
@@ -54,8 +44,20 @@ DELETE FROM notification_channels;
 DELETE FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly');
 DELETE FROM system_events;
 DELETE FROM audit_log;
+DELETE FROM login_attempts;
 DELETE FROM users WHERE username IN ('operator1','viewer1');
+-- Reset admin password to 'admin' (bcrypt cost 10, pre-computed)
+UPDATE users SET password_hash = '$2b$10$HvauZloS2N8QIfViDXmtp.rpWOawMeLdgWdBQQDHl3jD7Mhw7C3/e', must_change_password = false WHERE username = 'admin';
+INSERT INTO users (username, password_hash, role, must_change_password)
+VALUES ('admin', '$2b$10$HvauZloS2N8QIfViDXmtp.rpWOawMeLdgWdBQQDHl3jD7Mhw7C3/e', 'admin', false)
+ON CONFLICT (username) DO NOTHING;
 SQL
+
+echo "==> Logging in..."
+login
+
+echo "==> Setting timezone to Europe/Berlin..."
+api PUT /api/system/settings '{"timezone":"Europe/Berlin","retention_days":7}'
 
 echo "==> Registering hosts..."
 WEB01_TOKEN=$(api POST "/api/clients" '{"hostname":"web-server-01","display_name":"Production Web Server"}' | jq -r '.token')
@@ -75,7 +77,7 @@ api POST "/api/repos" "{
     \"ssh_port\": 22,
     \"passphrase\": \"demo-passphrase-123\",
     \"compression\": \"lz4\"
-}" > /dev/null 2>&1 || true
+}" > /dev/null
 
 api POST "/api/repos" "{
     \"name\": \"database-hourly\",
@@ -85,7 +87,7 @@ api POST "/api/repos" "{
     \"ssh_port\": 22,
     \"passphrase\": \"demo-passphrase-123\",
     \"compression\": \"zstd,3\"
-}" > /dev/null 2>&1 || true
+}" > /dev/null
 
 api POST "/api/repos" "{
     \"name\": \"media-weekly\",
@@ -95,7 +97,7 @@ api POST "/api/repos" "{
     \"ssh_port\": 22,
     \"passphrase\": \"demo-passphrase-123\",
     \"compression\": \"lz4\"
-}" > /dev/null 2>&1 || true
+}" > /dev/null
 
 echo "==> Creating sample borg archives for browsing/diff..."
 for i in 1 2 3; do
@@ -106,7 +108,7 @@ for i in 1 2 3; do
     echo "<html><body>Version $i</body></html>" > "$ARCHIVE_DIR/var/www/html/index.html"
     echo "server { listen 80; }" > "$ARCHIVE_DIR/etc/nginx/conf.d/default.conf"
     dd if=/dev/urandom of="$ARCHIVE_DIR/var/www/html/app.js" bs=1024 count=$((50 + i * 10)) 2>/dev/null
-    su -c "BORG_PASSPHRASE=demo-passphrase-123 borg create /backup/repos/server-daily::web-server-01-backup-$ARCHIVE_DATE $ARCHIVE_DIR" borg
+    su -c "cd $ARCHIVE_DIR && BORG_PASSPHRASE=demo-passphrase-123 borg create /backup/repos/server-daily::web-server-01-backup-$ARCHIVE_DATE ." borg
     rm -rf "$ARCHIVE_DIR"
 done
 
@@ -117,12 +119,36 @@ for i in 1 2; do
     mkdir -p "$ARCHIVE_DIR/tmp" "$ARCHIVE_DIR/var/lib/postgresql"
     echo "-- pg_dump output v$i" > "$ARCHIVE_DIR/tmp/mydb.sql"
     dd if=/dev/urandom of="$ARCHIVE_DIR/var/lib/postgresql/data.bin" bs=1024 count=$((100 + i * 20)) 2>/dev/null
-    su -c "BORG_PASSPHRASE=demo-passphrase-123 borg create /backup/repos/database-hourly::db-server-01-backup-$ARCHIVE_DATE $ARCHIVE_DIR" borg
+    su -c "cd $ARCHIVE_DIR && BORG_PASSPHRASE=demo-passphrase-123 borg create /backup/repos/database-hourly::db-server-01-backup-$ARCHIVE_DATE ." borg
+    rm -rf "$ARCHIVE_DIR"
+done
+
+echo "==> Creating unmatched archives (unknown hostnames)..."
+UNMATCHED_DATE=$(date -u -d "5 days ago" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -v-5d +%Y-%m-%dT%H:%M:%S)
+for repo in server-daily database-hourly; do
+    ARCHIVE_DIR=$(mktemp -d)
+    chmod 755 "$ARCHIVE_DIR"
+    mkdir -p "$ARCHIVE_DIR/tmp"
+    echo "old backup data" > "$ARCHIVE_DIR/tmp/data.txt"
+    su -c "cd $ARCHIVE_DIR && BORG_PASSPHRASE=demo-passphrase-123 borg create /backup/repos/$repo::unknown-host-backup-$UNMATCHED_DATE ." borg
     rm -rf "$ARCHIVE_DIR"
 done
 
 echo "==> Waiting for repo import to settle..."
 sleep 5
+
+echo "==> Syncing repos to import borg archives..."
+api POST /api/repos/1/sync > /dev/null
+api POST /api/repos/2/sync > /dev/null
+api POST /api/repos/3/sync > /dev/null
+
+echo "==> Marking known archives as matched..."
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
+UPDATE backup_reports SET matched = true
+WHERE archive_name LIKE 'web-server-01-backup-%'
+   OR archive_name LIKE 'db-server-01-backup-%'
+   OR archive_name LIKE 'media-store-01-backup-%';
+SQL
 
 echo "==> Fetching IDs..."
 WEB01_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM clients WHERE hostname='web-server-01'")
@@ -142,7 +168,7 @@ api POST "/api/schedules" "{
     \"keep_weekly\": 4,
     \"keep_monthly\": 6,
     \"backup_sources\": [\"/var/www\", \"/etc/nginx\"]
-}" > /dev/null 2>&1 || true
+}" > /dev/null
 
 api POST "/api/schedules" "{
     \"client_id\": $DB01_ID,
@@ -155,7 +181,7 @@ api POST "/api/schedules" "{
     \"pre_backup_commands\": [\"pg_dump -U postgres mydb > /tmp/mydb.sql\"],
     \"backup_sources\": [\"/tmp/mydb.sql\", \"/var/lib/postgresql\"],
     \"rate_limit_kbps\": 5000
-}" > /dev/null 2>&1 || true
+}" > /dev/null
 
 api POST "/api/schedules" "{
     \"client_id\": $MEDIA_ID,
@@ -167,7 +193,7 @@ api POST "/api/schedules" "{
     \"keep_monthly\": 12,
     \"keep_yearly\": 2,
     \"backup_sources\": [\"/mnt/media/photos\", \"/mnt/media/videos\"]
-}" > /dev/null 2>&1 || true
+}" > /dev/null
 
 echo "==> Adding global excludes..."
 for PATTERN in "pp:__pycache__" "pp:.cache" "pp:node_modules" "*.pyc" "*.swp" "*~" "/proc" "/sys" "/tmp"; do
@@ -271,6 +297,41 @@ FROM clients c, generate_series(0, 14) AS n
 WHERE c.hostname = 'old-webserver (imported)';
 SQL
 
+echo "==> Linking backup reports to actual borg archives..."
+# Get real archive names from borg and update matching report rows
+DAILY_ARCHIVES=$(su -c "BORG_PASSPHRASE=demo-passphrase-123 borg list --short /backup/repos/server-daily" borg | grep '^web-server-01-backup-' | sort -r)
+HOURLY_ARCHIVES=$(su -c "BORG_PASSPHRASE=demo-passphrase-123 borg list --short /backup/repos/database-hourly" borg | grep '^db-server-01-backup-' | sort -r)
+
+# For each real daily archive, update the report row closest to that archive's date
+i=1
+for archive in $DAILY_ARCHIVES; do
+    PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -c "
+        UPDATE backup_reports SET archive_name = '$archive'
+        WHERE id = (
+            SELECT id FROM backup_reports
+            WHERE client_id = $WEB01_ID AND repo_id = $REPO_DAILY_ID AND status = 'success' AND archive_name IS NULL
+            ORDER BY started_at DESC
+            LIMIT 1 OFFSET $((i - 1))
+        );
+    " > /dev/null
+    i=$((i + 1))
+done
+
+# For each real hourly archive, update the report row closest to that archive's date
+i=1
+for archive in $HOURLY_ARCHIVES; do
+    PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -c "
+        UPDATE backup_reports SET archive_name = '$archive'
+        WHERE id = (
+            SELECT id FROM backup_reports
+            WHERE client_id = $DB01_ID AND repo_id = $REPO_HOURLY_ID AND status = 'success' AND archive_name IS NULL
+            ORDER BY started_at DESC
+            LIMIT 1 OFFSET $((i - 1))
+        );
+    " > /dev/null
+    i=$((i + 1))
+done
+
 echo "==> Setting up repo quotas..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
 INSERT INTO repo_quotas (repo_id, warn_bytes, critical_bytes, enabled) VALUES
@@ -327,10 +388,7 @@ WHERE c.name = 'Admin Email';
 SQL
 
 echo "==> Adding SSH tunnel entry..."
-PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
-INSERT INTO ssh_tunnels (client_id, ssh_host, ssh_user, ssh_port, tunnel_port, enabled) VALUES
-    ($MEDIA_ID, '203.0.113.50', 'deploy', 22, 18080, true);
-SQL
+api POST "/api/tunnels" "{\"client_id\":$MEDIA_ID,\"ssh_host\":\"127.0.0.1\",\"ssh_user\":\"borg\",\"ssh_port\":22,\"tunnel_port\":18080,\"enabled\":true}" > /dev/null
 
 echo "==> Adding archive tags..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL

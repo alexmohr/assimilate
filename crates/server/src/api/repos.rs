@@ -198,10 +198,17 @@ pub async fn create_repo(
     let repo_id = repo.id;
     let pool = state.pool.clone();
     let encryption_key = state.encryption_key;
+    let ui_broadcast = state.ui_broadcast.clone();
+    db::set_repo_importing(&state.pool, repo_id, true).await?;
+    ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
     tokio::spawn(async move {
         if let Err(e) = sync_existing_archives(&pool, &encryption_key, repo_id).await {
             warn!(repo_id, error = %e, "failed to sync existing archives on import");
         }
+        if let Err(e) = db::set_repo_importing(&pool, repo_id, false).await {
+            warn!(repo_id, error = %e, "failed to clear importing flag");
+        }
+        ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
     });
 
     Ok((StatusCode::CREATED, Json(repo)))

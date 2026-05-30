@@ -1155,6 +1155,7 @@ pub async fn list_schedules_for_client(
 pub struct DueScheduleRow {
     pub schedule_id: i64,
     pub repo_id: i64,
+    pub client_id: i64,
     pub hostname: String,
     pub schedule_type: String,
     pub cron_expression: String,
@@ -1165,10 +1166,10 @@ pub async fn list_due_schedules(
     now: DateTime<Utc>,
 ) -> Result<Vec<DueScheduleRow>, ApiError> {
     sqlx::query_as::<_, DueScheduleRow>(
-        "SELECT s.id AS schedule_id, s.repo_id, c.hostname, s.schedule_type, s.cron_expression \
-         FROM schedules s JOIN repos r ON r.id = s.repo_id JOIN clients c ON c.id = s.client_id \
-         WHERE s.enabled = true AND r.enabled = true AND s.next_run_at IS NOT NULL AND \
-         s.next_run_at <= $1",
+        "SELECT s.id AS schedule_id, s.repo_id, s.client_id, c.hostname, s.schedule_type, \
+         s.cron_expression FROM schedules s JOIN repos r ON r.id = s.repo_id JOIN clients c ON \
+         c.id = s.client_id WHERE s.enabled = true AND r.enabled = true AND s.next_run_at IS NOT \
+         NULL AND s.next_run_at <= $1",
     )
     .bind(now)
     .fetch_all(pool)

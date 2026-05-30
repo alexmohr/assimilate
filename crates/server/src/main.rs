@@ -107,6 +107,7 @@ async fn main() -> Result<(), StartupError> {
         state.registry.clone(),
         state.encryption_key,
         state.ui_broadcast.clone(),
+        state.tunnel_manager.clone(),
     ));
 
     let tm = tunnel_manager.clone();

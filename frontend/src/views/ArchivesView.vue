@@ -30,6 +30,8 @@ interface ArchiveEntry {
   start: string
   hostname: string
   comment: string
+  original_size: number
+  deduplicated_size: number
 }
 
 interface ContentEntry {
@@ -64,6 +66,13 @@ const showPassphraseDialog = ref(false)
 const sortedArchives = computed(() =>
   [...archives.value].sort((a, b) => b.start.localeCompare(a.start)),
 )
+
+const archiveFilters = ref({
+  name: { value: '', matchMode: FilterMatchMode.CONTAINS },
+  start: { value: '', matchMode: FilterMatchMode.CONTAINS },
+  hostname: { value: '', matchMode: FilterMatchMode.CONTAINS },
+  original_size: { value: '', matchMode: FilterMatchMode.CONTAINS },
+})
 
 const breadcrumbs = computed<BreadcrumbSegment[]>(() => {
   const path = currentPath.value
@@ -329,36 +338,95 @@ onMounted(loadRepos)
           >
             No archives found.
           </div>
-          <table
+          <DataTable
             v-else
-            class="data-table"
+            v-model:filters="archiveFilters"
+            :value="sortedArchives"
+            :row-class="
+              (data: ArchiveEntry) =>
+                selectedArchive?.name === data.name ? 'selected clickable' : 'clickable'
+            "
+            filter-display="row"
+            table-class="data-table"
+            @row-click="(e: { data: ArchiveEntry }) => selectArchive(e.data)"
           >
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Date</th>
-                <th>Host</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="archive in sortedArchives"
-                :key="archive.name"
-                :class="['clickable', { selected: selectedArchive?.name === archive.name }]"
-                @click="selectArchive(archive)"
-              >
-                <td class="td-mono">
-                  {{ archive.name }}
-                </td>
-                <td class="td-date">
-                  {{ formatDate(archive.start) }}
-                </td>
-                <td class="td-host">
-                  {{ archive.hostname }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+            <Column
+              field="name"
+              header="Name"
+              :sortable="true"
+              :show-filter-menu="false"
+            >
+              <template #filter="{ filterModel, filterCallback }">
+                <input
+                  v-model="filterModel.value"
+                  class="filter-input"
+                  type="text"
+                  placeholder="Filter..."
+                  @input="filterCallback()"
+                />
+              </template>
+              <template #body="{ data }">
+                <span class="td-mono">{{ data.name }}</span>
+              </template>
+            </Column>
+            <Column
+              field="start"
+              header="Date"
+              :sortable="true"
+              :show-filter-menu="false"
+            >
+              <template #filter="{ filterModel, filterCallback }">
+                <input
+                  v-model="filterModel.value"
+                  class="filter-input"
+                  type="text"
+                  placeholder="Filter..."
+                  @input="filterCallback()"
+                />
+              </template>
+              <template #body="{ data }">
+                <span class="td-date">{{ formatDate(data.start) }}</span>
+              </template>
+            </Column>
+            <Column
+              field="hostname"
+              header="Host"
+              :sortable="true"
+              :show-filter-menu="false"
+            >
+              <template #filter="{ filterModel, filterCallback }">
+                <input
+                  v-model="filterModel.value"
+                  class="filter-input"
+                  type="text"
+                  placeholder="Filter..."
+                  @input="filterCallback()"
+                />
+              </template>
+              <template #body="{ data }">
+                <span class="td-host">{{ data.hostname }}</span>
+              </template>
+            </Column>
+            <Column
+              field="original_size"
+              header="Size"
+              :sortable="true"
+              :show-filter-menu="false"
+            >
+              <template #filter="{ filterModel, filterCallback }">
+                <input
+                  v-model="filterModel.value"
+                  class="filter-input"
+                  type="text"
+                  placeholder="Filter..."
+                  @input="filterCallback()"
+                />
+              </template>
+              <template #body="{ data }">
+                <span class="td-size">{{ formatBytes(data.original_size) }}</span>
+              </template>
+            </Column>
+          </DataTable>
         </div>
 
         <!-- File browser -->
@@ -629,7 +697,7 @@ onMounted(loadRepos)
 
 .main-layout {
   display: grid;
-  grid-template-columns: 380px 1fr;
+  grid-template-columns: 480px 1fr;
   gap: 1rem;
   align-items: start;
 }

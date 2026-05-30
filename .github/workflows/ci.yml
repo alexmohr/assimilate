@@ -15,18 +15,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
+          toolchain: nightly
           components: rustfmt, clippy
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
       - name: Check formatting
         run: >
           cargo +nightly fmt -- --config error_on_unformatted=true,error_on_line_overflow=true,format_strings=true,group_imports=StdExternalCrate,imports_granularity=Crate
@@ -78,16 +70,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
-      - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-db-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-db-
+          toolchain: nightly
       - name: Run database integration tests
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
@@ -126,20 +111,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
+          toolchain: nightly
           components: llvm-tools-preview
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-cov-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-cov-
       - name: Generate coverage
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg

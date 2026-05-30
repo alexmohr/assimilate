@@ -33,6 +33,8 @@ pub enum ApiError {
     Conflict(String),
     #[error("bad gateway: {0}")]
     BadGateway(String),
+    #[error("service unavailable: {0}")]
+    ServiceUnavailable(String),
     #[error("internal error: {0}")]
     Internal(String),
 }
@@ -162,6 +164,10 @@ impl IntoResponse for ApiError {
                 let id = generate_error_id();
                 tracing::error!(error_id = %id, "bad gateway: {msg}");
                 (StatusCode::BAD_GATEWAY, msg.clone(), Some(id))
+            }
+            Self::ServiceUnavailable(msg) => {
+                tracing::warn!(error = %msg, "service unavailable");
+                (StatusCode::SERVICE_UNAVAILABLE, msg.clone(), None)
             }
             Self::Internal(msg) => {
                 let id = generate_error_id();

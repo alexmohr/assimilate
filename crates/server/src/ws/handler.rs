@@ -517,14 +517,39 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
         }
         AgentToServer::SearchResult { .. }
         | AgentToServer::RestoreCompleted { .. }
-        | AgentToServer::DryRunResult { .. }
         | AgentToServer::ExportReady { .. }
         | AgentToServer::KeyExportResult { .. }
         | AgentToServer::KeyImportResult { .. }
         | AgentToServer::PassphraseChanged { .. }
-        | AgentToServer::OperationProgress { .. }
-        | AgentToServer::OperationFailed { .. } => {
+        | AgentToServer::OperationProgress { .. } => {
             tracing::warn!(hostname = %hostname, "unexpected agent response");
+        }
+        AgentToServer::DryRunResult {
+            request_id,
+            files,
+            total_size,
+            error_message,
+        } => {
+            if let Some(tx) = state.pending_dryruns.lock().await.remove(&request_id) {
+                let _ = tx.send((files, total_size, error_message));
+            } else {
+                tracing::warn!(
+                    hostname = %hostname,
+                    request_id = %request_id,
+                    "unexpected DryRunResult with no pending request"
+                );
+            }
+        }
+        AgentToServer::OperationFailed { request_id, error } => {
+            if let Some(tx) = state.pending_dryruns.lock().await.remove(&request_id) {
+                let _ = tx.send((Vec::new(), 0, Some(error)));
+            } else {
+                tracing::warn!(
+                    hostname = %hostname,
+                    request_id = %request_id,
+                    "unexpected OperationFailed with no pending request"
+                );
+            }
         }
     }
 }

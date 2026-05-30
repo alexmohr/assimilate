@@ -64,7 +64,7 @@ const mainNav = [
   { to: '/activity', label: 'Activity', icon: 'activity' },
 ]
 
-const adminNav = [{ to: '/audit-log', label: 'Audit Log', icon: 'activity' }]
+const adminNav: NavItem[] = []
 
 interface NavItem {
   to: string
@@ -95,6 +95,7 @@ const settingsNav = computed((): NavGroup[] => {
         { to: '/users', label: 'Users', icon: 'users' },
         { to: '/admin/groups', label: 'Groups', icon: 'groups' },
         { to: '/admin/roles', label: 'Roles', icon: 'roles' },
+        { to: '/audit-log', label: 'Audit Log', icon: 'activity' },
       ],
     })
   }

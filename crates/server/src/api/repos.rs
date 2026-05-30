@@ -1,17 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+use std::process::Stdio;
+
 use axum::{
     Json,
     extract::{Path, State},
     http::StatusCode,
 };
+use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use shared::{crypto::encrypt_passphrase, types::BorgEncryption};
+use sqlx::PgPool;
 use tokio::process::Command;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use super::{
+    archives::{borg_binary, LOCK_WAIT_SECS},
     auth::{AuthUser, RequireAdmin, Role},
     helpers,
     permissions::is_visible_to_user,
@@ -114,8 +119,6 @@ pub struct CreateRepoRequest {
     pub ssh_port: Option<i32>,
     pub passphrase: String,
     pub compression: Option<String>,
-    #[schema(value_type = Option<String>)]
-    pub encryption: Option<BorgEncryption>,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -169,14 +172,12 @@ pub async fn create_repo(
         port = ssh_port,
         path = req.repo_path,
     );
-    run_borg_info(&repo_url, &req.passphrase).await?;
+    let info = run_borg_info(&repo_url, &req.passphrase).await?;
 
     let passphrase_encrypted = encrypt_passphrase(&req.passphrase, &state.encryption_key)?;
 
     let compression = helpers::validate_compression(req.compression.as_deref())?;
-    let encryption = req
-        .encryption
-        .map_or_else(|| "repokey-blake2".to_string(), |e| e.to_string());
+    let encryption = info.encryption.to_string();
 
     let repo = db::insert_repo(
         &state.pool,
@@ -193,6 +194,15 @@ pub async fn create_repo(
         },
     )
     .await?;
+
+    let repo_id = repo.id;
+    let pool = state.pool.clone();
+    let encryption_key = state.encryption_key;
+    tokio::spawn(async move {
+        if let Err(e) = sync_existing_archives(&pool, &encryption_key, repo_id).await {
+            warn!(repo_id, error = %e, "failed to sync existing archives on import");
+        }
+    });
 
     Ok((StatusCode::CREATED, Json(repo)))
 }
@@ -491,7 +501,11 @@ pub async fn break_lock(
     }))
 }
 
-async fn run_borg_info(repo_url: &str, passphrase: &str) -> Result<String, ApiError> {
+struct BorgInfoResult {
+    encryption: BorgEncryption,
+}
+
+async fn run_borg_info(repo_url: &str, passphrase: &str) -> Result<BorgInfoResult, ApiError> {
     let borg_binary = std::env::var("BORG_BINARY").unwrap_or_else(|_| "borg".to_string());
     let ssh_auth_sock = std::env::var("SSH_AUTH_SOCK").ok();
 
@@ -540,7 +554,22 @@ async fn run_borg_info(repo_url: &str, passphrase: &str) -> Result<String, ApiEr
         )));
     }
 
-    Ok(stdout)
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|e| ApiError::Internal(format!("failed to parse borg info JSON: {e}")))?;
+
+    let mode_str = json
+        .get("encryption")
+        .and_then(|e| e.get("mode"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            ApiError::Internal("borg info JSON missing encryption.mode field".to_string())
+        })?;
+
+    let encryption = mode_str.parse::<BorgEncryption>().map_err(|e| {
+        ApiError::Internal(format!("unsupported encryption mode from borg info: {e}"))
+    })?;
+
+    Ok(BorgInfoResult { encryption })
 }
 
 async fn run_borg_break_lock(repo_url: &str, passphrase: &str) -> Result<String, ApiError> {
@@ -637,4 +666,125 @@ async fn run_borg_init(
     };
 
     Ok(combined.trim().to_string())
+}
+
+pub async fn sync_existing_archives(
+    pool: &PgPool,
+    encryption_key: &[u8; 32],
+    repo_id: i64,
+) -> Result<u64, ApiError> {
+    let (borg_repo, env) =
+        super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
+
+    let output = Command::new(borg_binary())
+        .arg("list")
+        .arg("--json")
+        .arg("--lock-wait")
+        .arg(LOCK_WAIT_SECS)
+        .arg(&borg_repo)
+        .envs(&env)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| ApiError::Internal(format!("failed to execute borg list: {e}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(ApiError::Internal(format!("borg list failed: {stderr}")));
+    }
+
+    let json_output: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| ApiError::Internal(format!("failed to parse borg list output: {e}")))?;
+
+    let archives = json_output["archives"]
+        .as_array()
+        .map_or_else(Vec::new, Clone::clone);
+
+    if archives.is_empty() {
+        return Ok(0);
+    }
+
+    let mut imported = 0u64;
+
+    for archive in &archives {
+        let name = archive["name"].as_str().unwrap_or_default();
+        let hostname = archive["hostname"].as_str().unwrap_or("unknown");
+
+        if name.is_empty() {
+            continue;
+        }
+
+        let client = db::get_or_create_client_by_hostname(pool, hostname).await?;
+
+        let repo_archive = format!("{borg_repo}::{name}");
+        let info_output = Command::new(borg_binary())
+            .arg("info")
+            .arg("--json")
+            .arg("--lock-wait")
+            .arg(LOCK_WAIT_SECS)
+            .arg(&repo_archive)
+            .envs(&env)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| ApiError::Internal(format!("failed to execute borg info: {e}")))?;
+
+        if !info_output.status.success() {
+            warn!(archive = name, "borg info failed for archive, skipping");
+            continue;
+        }
+
+        let info_json: serde_json::Value =
+            serde_json::from_slice(&info_output.stdout).map_err(|e| {
+                ApiError::Internal(format!("failed to parse borg info output: {e}"))
+            })?;
+
+        let Some(archive_info) = info_json["archives"].as_array().and_then(|a| a.first())
+        else {
+            continue;
+        };
+
+        let stats = &archive_info["stats"];
+        let start_str = archive_info["start"].as_str().unwrap_or_default();
+        let end_str = archive_info["end"].as_str().unwrap_or_default();
+        let duration = archive_info["duration"].as_f64().unwrap_or(0.0);
+
+        let started_at = DateTime::parse_from_rfc3339(start_str)
+            .or_else(|_| DateTime::parse_from_str(start_str, "%Y-%m-%dT%H:%M:%S%.f"))
+            .map(|dt| dt.to_utc())
+            .unwrap_or_default();
+        let finished_at = DateTime::parse_from_rfc3339(end_str)
+            .or_else(|_| DateTime::parse_from_str(end_str, "%Y-%m-%dT%H:%M:%S%.f"))
+            .map(|dt| dt.to_utc())
+            .unwrap_or_default();
+
+        #[allow(clippy::cast_possible_truncation)]
+        let params = db::InsertReportParams {
+            client_id: client.id,
+            repo_id,
+            started_at,
+            finished_at,
+            status: "success".to_string(),
+            original_size: stats["original_size"].as_i64().unwrap_or(0),
+            compressed_size: stats["compressed_size"].as_i64().unwrap_or(0),
+            deduplicated_size: stats["deduplicated_size"].as_i64().unwrap_or(0),
+            files_processed: stats["nfiles"].as_i64().unwrap_or(0),
+            duration_secs: duration as i64,
+            error_message: None,
+            warnings: vec![],
+            borg_version: None,
+        };
+
+        if let Err(e) = db::insert_backup_report(pool, &params).await {
+            warn!(archive = name, error = %e, "failed to insert imported archive report");
+            continue;
+        }
+
+        imported += 1;
+    }
+
+    info!(repo_id, imported, total = archives.len(), "synced existing archives");
+    Ok(imported)
 }

@@ -79,6 +79,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../views/TunnelsView.vue'),
     meta: { requiresAdmin: true },
   },
+  {
+    path: '/notifications',
+    name: 'notifications',
+    component: () => import('../views/NotificationsView.vue'),
+    meta: { requiresAdmin: true },
+  },
   { path: '/tokens', component: () => import('../views/TokensView.vue'), name: 'tokens' },
   { path: '/profile', component: () => import('../views/ProfileView.vue'), name: 'profile' },
   { path: '/appearance', redirect: '/profile' },

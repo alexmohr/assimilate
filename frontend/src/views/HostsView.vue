@@ -219,7 +219,9 @@ function isOnline(client: ClientRow): boolean {
 
 function formatLastSeen(iso: string | null): string {
   if (!iso) return 'Never'
-  const diff = Date.now() - new Date(iso).getTime()
+  const ts = new Date(iso).getTime()
+  if (isNaN(ts) || ts === 0) return 'Never'
+  const diff = Date.now() - ts
   const mins = Math.floor(diff / 60000)
   if (mins < 1) return 'Just now'
   if (mins < 60) return `${mins}m ago`

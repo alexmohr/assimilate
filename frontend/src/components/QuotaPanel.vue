@@ -85,7 +85,12 @@ async function loadQuota(): Promise<void> {
     const res = await apiClient.get<QuotaData>(`/repos/${props.repoId}/quota`)
     quota.value = res.data
   } catch (e: unknown) {
-    error.value = extractError(e)
+    const status = (e as { response?: { status?: number } }).response?.status
+    if (status === 404) {
+      quota.value = null
+    } else {
+      error.value = extractError(e)
+    }
   } finally {
     loading.value = false
   }
@@ -96,6 +101,14 @@ function startEdit(): void {
   editForm.warn_gb = bytesToGb(quota.value.warn_bytes)
   editForm.critical_gb = bytesToGb(quota.value.critical_bytes)
   editForm.enabled = quota.value.enabled
+  editError.value = null
+  isEditing.value = true
+}
+
+function startNewQuota(): void {
+  editForm.warn_gb = 0
+  editForm.critical_gb = 0
+  editForm.enabled = true
   editError.value = null
   isEditing.value = true
 }
@@ -161,6 +174,18 @@ onMounted(loadQuota)
     >
       {{ error }}
     </div>
+
+    <template v-else-if="!quota && !isEditing">
+      <div class="muted">No quota configured for this repository.</div>
+      <button
+        v-if="isAdmin"
+        class="btn btn-sm btn-ghost"
+        style="margin-top: 0.75rem"
+        @click="startNewQuota"
+      >
+        Configure Quota
+      </button>
+    </template>
 
     <template v-else-if="quota && !isEditing">
       <div

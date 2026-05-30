@@ -1993,16 +1993,13 @@ pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow
          COALESCE(latest.original_size, 0)::INT8 AS total_original_size, \
          COALESCE(latest.compressed_size, 0)::INT8 AS total_compressed_size, \
          COALESCE(latest.deduplicated_size, 0)::INT8 AS total_deduplicated_size, \
-         COALESCE(agg.client_count, 0) AS client_count \
-         FROM repos r \
-         LEFT JOIN LATERAL (SELECT br.original_size, br.compressed_size, br.deduplicated_size \
-         FROM backup_reports br WHERE br.repo_id = r.id AND br.status = 'success' \
-         ORDER BY br.started_at DESC LIMIT 1) latest ON true \
-         LEFT JOIN LATERAL (SELECT COUNT(br.id) AS archive_count, \
-         MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' THEN br.finished_at END) \
-         AS last_backup_at, COUNT(DISTINCT br.client_id) AS client_count \
-         FROM backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true \
-         ORDER BY r.name",
+         COALESCE(agg.client_count, 0) AS client_count FROM repos r LEFT JOIN LATERAL (SELECT \
+         br.original_size, br.compressed_size, br.deduplicated_size FROM backup_reports br WHERE \
+         br.repo_id = r.id AND br.status = 'success' ORDER BY br.started_at DESC LIMIT 1) latest \
+         ON true LEFT JOIN LATERAL (SELECT COUNT(br.id) AS archive_count, MAX(CASE WHEN \
+         br.finished_at > '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, \
+         COUNT(DISTINCT br.client_id) AS client_count FROM backup_reports br WHERE br.repo_id = \
+         r.id AND br.status = 'success') agg ON true ORDER BY r.name",
     )
     .fetch_all(pool)
     .await
@@ -2020,16 +2017,13 @@ pub async fn get_repo_with_stats(
          COALESCE(latest.original_size, 0)::INT8 AS total_original_size, \
          COALESCE(latest.compressed_size, 0)::INT8 AS total_compressed_size, \
          COALESCE(latest.deduplicated_size, 0)::INT8 AS total_deduplicated_size, \
-         COALESCE(agg.client_count, 0) AS client_count \
-         FROM repos r \
-         LEFT JOIN LATERAL (SELECT br.original_size, br.compressed_size, br.deduplicated_size \
-         FROM backup_reports br WHERE br.repo_id = r.id AND br.status = 'success' \
-         ORDER BY br.started_at DESC LIMIT 1) latest ON true \
-         LEFT JOIN LATERAL (SELECT COUNT(br.id) AS archive_count, \
-         MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' THEN br.finished_at END) \
-         AS last_backup_at, COUNT(DISTINCT br.client_id) AS client_count \
-         FROM backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true \
-         WHERE r.id = $1",
+         COALESCE(agg.client_count, 0) AS client_count FROM repos r LEFT JOIN LATERAL (SELECT \
+         br.original_size, br.compressed_size, br.deduplicated_size FROM backup_reports br WHERE \
+         br.repo_id = r.id AND br.status = 'success' ORDER BY br.started_at DESC LIMIT 1) latest \
+         ON true LEFT JOIN LATERAL (SELECT COUNT(br.id) AS archive_count, MAX(CASE WHEN \
+         br.finished_at > '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, \
+         COUNT(DISTINCT br.client_id) AS client_count FROM backup_reports br WHERE br.repo_id = \
+         r.id AND br.status = 'success') agg ON true WHERE r.id = $1",
     )
     .bind(repo_id)
     .fetch_one(pool)
@@ -2200,20 +2194,23 @@ pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow,
     sqlx::query_as::<_, DashboardSummaryRow>(
         "SELECT (SELECT COUNT(*) FROM clients) AS total_clients, (SELECT COUNT(*) FROM repos) AS \
          total_repos, (SELECT COUNT(*) FROM schedules WHERE enabled = true) AS active_schedules, \
-         (SELECT COUNT(*) FROM schedules) AS total_schedules, COALESCE((SELECT SUM(sub.dedup)::INT8 FROM (SELECT DISTINCT ON (br.repo_id) \
-         br.deduplicated_size AS dedup FROM backup_reports br WHERE br.status = 'success' ORDER BY \
-         br.repo_id, br.started_at DESC) sub), 0)::INT8 AS total_storage_bytes, (SELECT MAX(finished_at) FROM backup_reports WHERE status = 'success' AND finished_at > '1970-01-01T00:00:00Z') AS last_backup_at, \
-         (SELECT MIN(s.next_run_at) FROM schedules s JOIN repos r ON r.id = s.repo_id WHERE \
-         s.enabled = true AND r.enabled = true AND s.next_run_at IS NOT NULL AND s.next_run_at > \
-         NOW()) AS next_backup_at, (SELECT s.id FROM schedules s JOIN backup_reports br ON \
-         br.repo_id = s.repo_id AND br.client_id = s.client_id ORDER BY br.finished_at DESC LIMIT \
-         1) AS last_backup_schedule_id, (SELECT s.id FROM schedules s JOIN repos r ON r.id = \
+         (SELECT COUNT(*) FROM schedules) AS total_schedules, COALESCE((SELECT \
+         SUM(sub.dedup)::INT8 FROM (SELECT DISTINCT ON (br.repo_id) br.deduplicated_size AS dedup \
+         FROM backup_reports br WHERE br.status = 'success' ORDER BY br.repo_id, br.started_at \
+         DESC) sub), 0)::INT8 AS total_storage_bytes, (SELECT MAX(finished_at) FROM \
+         backup_reports WHERE status = 'success' AND finished_at > '1970-01-01T00:00:00Z') AS \
+         last_backup_at, (SELECT MIN(s.next_run_at) FROM schedules s JOIN repos r ON r.id = \
          s.repo_id WHERE s.enabled = true AND r.enabled = true AND s.next_run_at IS NOT NULL AND \
-         s.next_run_at > NOW() ORDER BY s.next_run_at LIMIT 1) AS next_backup_schedule_id, \
-         (SELECT COUNT(*) FROM backup_reports WHERE status = 'success' AND started_at > NOW() - \
-         INTERVAL '30 days') AS success_30d, (SELECT COUNT(*) FROM backup_reports WHERE status != \
-         'success' AND started_at > NOW() - INTERVAL '30 days') AS failed_30d, (SELECT COUNT(*) \
-         FROM backup_reports WHERE started_at > NOW() - INTERVAL '30 days') AS total_30d",
+         s.next_run_at > NOW()) AS next_backup_at, (SELECT s.id FROM schedules s JOIN \
+         backup_reports br ON br.repo_id = s.repo_id AND br.client_id = s.client_id ORDER BY \
+         br.finished_at DESC LIMIT 1) AS last_backup_schedule_id, (SELECT s.id FROM schedules s \
+         JOIN repos r ON r.id = s.repo_id WHERE s.enabled = true AND r.enabled = true AND \
+         s.next_run_at IS NOT NULL AND s.next_run_at > NOW() ORDER BY s.next_run_at LIMIT 1) AS \
+         next_backup_schedule_id, (SELECT COUNT(*) FROM backup_reports WHERE status = 'success' \
+         AND started_at > NOW() - INTERVAL '30 days') AS success_30d, (SELECT COUNT(*) FROM \
+         backup_reports WHERE status != 'success' AND started_at > NOW() - INTERVAL '30 days') AS \
+         failed_30d, (SELECT COUNT(*) FROM backup_reports WHERE started_at > NOW() - INTERVAL '30 \
+         days') AS total_30d",
     )
     .fetch_one(pool)
     .await
@@ -2230,8 +2227,8 @@ pub async fn get_storage_breakdown(pool: &PgPool) -> Result<Vec<StorageBreakdown
     sqlx::query_as::<_, StorageBreakdownRow>(
         "SELECT r.name, COALESCE(sub.dedup, 0) AS deduplicated_size FROM repos r LEFT JOIN \
          LATERAL (SELECT br.deduplicated_size AS dedup FROM backup_reports br WHERE br.repo_id = \
-         r.id AND br.status = 'success' ORDER BY br.started_at DESC LIMIT 1) sub ON true ORDER \
-         BY sub.dedup DESC NULLS LAST",
+         r.id AND br.status = 'success' ORDER BY br.started_at DESC LIMIT 1) sub ON true ORDER BY \
+         sub.dedup DESC NULLS LAST",
     )
     .fetch_all(pool)
     .await

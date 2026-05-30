@@ -1128,7 +1128,7 @@ const SYNC_WARN_DURATION: Duration = Duration::from_secs(300);
     path = "/api/repos/{repo_id}/sync",
     tag = "Repositories",
     operation_id = "syncRepo",
-    summary = "Full repository sync — re-reads all archives from borg",
+    summary = "Full repository sync - re-reads all archives from borg",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),

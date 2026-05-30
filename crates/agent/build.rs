@@ -1,16 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::process::Command;
+use std::path::Path;
+
+fn resolve_git_sha() -> Option<String> {
+    let git_dir = Path::new("../.git");
+    let head_content = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let head = head_content.trim();
+
+    let full_sha = if let Some(ref_path) = head.strip_prefix("ref: ") {
+        std::fs::read_to_string(git_dir.join(ref_path))
+            .ok()?
+            .trim()
+            .to_owned()
+    } else {
+        head.to_owned()
+    };
+
+    Some(full_sha.get(..7)?.to_owned())
+}
 
 fn main() {
-    let sha = Command::new("git")
-        .args(["rev-parse", "--short=7", "HEAD"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
-        .unwrap_or_default();
+    let sha = resolve_git_sha().unwrap_or_default();
 
     println!("cargo::rustc-env=GIT_SHA={sha}");
     println!("cargo::rerun-if-changed=../.git/HEAD");

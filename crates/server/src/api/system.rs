@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
+use ssh_key::{Algorithm, LineEnding, rand_core::OsRng};
 
 use super::deploy::{agent_binary_path, query_available_agent_version};
 use crate::{AppState, api::auth::RequireAdmin, db, error::ApiError};
@@ -80,28 +81,40 @@ pub async fn ssh_regenerate_key(
     }
 
     let key_path_clone = key_path.clone();
-    let output = tokio::task::spawn_blocking(move || {
-        std::process::Command::new("ssh-keygen")
-            .args([
-                "-t",
-                "ed25519",
-                "-f",
-                &key_path_clone.to_string_lossy(),
-                "-N",
-                "",
-                "-C",
-                "assimilate-server",
-            ])
-            .output()
+    let pub_path_clone = pub_path.clone();
+    tokio::task::spawn_blocking(move || -> Result<(), ApiError> {
+        let private_key = ssh_key::PrivateKey::random(&mut OsRng, Algorithm::Ed25519)
+            .map_err(|e| ApiError::Internal(format!("failed to generate key: {e}")))?;
+
+        let private_pem = private_key
+            .to_openssh(LineEnding::LF)
+            .map_err(|e| ApiError::Internal(format!("failed to encode private key: {e}")))?;
+
+        std::fs::write(&key_path_clone, private_pem.as_bytes())
+            .map_err(|e| ApiError::Internal(format!("failed to write private key: {e}")))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&key_path_clone, std::fs::Permissions::from_mode(0o600))
+                .map_err(|e| {
+                    ApiError::Internal(format!("failed to set private key permissions: {e}"))
+                })?;
+        }
+
+        let public_key = private_key.public_key();
+        let pub_str = public_key
+            .to_openssh()
+            .map_err(|e| ApiError::Internal(format!("failed to encode public key: {e}")))?;
+
+        let pub_with_comment = format!("{pub_str} assimilate-server\n");
+        std::fs::write(&pub_path_clone, pub_with_comment.as_bytes())
+            .map_err(|e| ApiError::Internal(format!("failed to write public key: {e}")))?;
+
+        Ok(())
     })
     .await
-    .map_err(|e| ApiError::Internal(format!("key generation task failed: {e}")))?
-    .map_err(|e| ApiError::Internal(format!("failed to run ssh-keygen: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(ApiError::Internal(format!("ssh-keygen failed: {stderr}")));
-    }
+    .map_err(|e| ApiError::Internal(format!("key generation task failed: {e}")))??;
 
     let public_key = tokio::fs::read_to_string(&pub_path)
         .await

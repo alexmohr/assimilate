@@ -16,11 +16,8 @@ done
 if [ ! -f "/.dockerenv" ] && [ ! -f "/run/.containerenv" ]; then
     if [ "$DEMO_FLAG" = "true" ]; then
         COMPOSE_FILE="$SCRIPT_DIR/demo/docker-compose.demo.yml"
-        if echo "$*" | grep -q -- "--clear"; then
-            echo "Stopping and removing demo containers + volumes..."
-            docker compose -f "$COMPOSE_FILE" down --remove-orphans --volumes
-        fi
-        echo "Starting demo environment..."
+        echo "Resetting demo environment..."
+        docker compose -f "$COMPOSE_FILE" down --remove-orphans --volumes 2>/dev/null || true
         exec docker compose -f "$COMPOSE_FILE" up --build
     fi
 

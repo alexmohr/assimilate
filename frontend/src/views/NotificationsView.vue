@@ -21,6 +21,7 @@ import {
   getVapidPublicKey,
   subscribePush,
   listDeliveries,
+  validateSmtp,
 } from '../api/notifications'
 import { Plus, Trash2, Bell, Send, Mail, Globe, BellRing } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
@@ -126,6 +127,9 @@ const testResult = ref<{ id: number; success: boolean; message: string } | null>
 
 const currentPushSubscription = ref<PushSubscription | null>(null)
 const vapidConfigured = ref(false)
+
+const smtpValidating = ref(false)
+const smtpValidationResult = ref<{ success: boolean; message: string } | null>(null)
 
 const EVENT_TYPES: NotificationEventType[] = [
   'backup_success',
@@ -251,9 +255,13 @@ async function loadPushStatus(): Promise<void> {
   try {
     const vapidStatus = await getVapidPublicKey()
     vapidConfigured.value = vapidStatus.configured
-    if (isPushSupported.value) {
+    if (isPushSupported.value && vapidStatus.configured) {
       const registration = await navigator.serviceWorker.ready
-      currentPushSubscription.value = await registration.pushManager.getSubscription()
+      const existing = await registration.pushManager.getSubscription()
+      currentPushSubscription.value = existing
+      if (existing) {
+        await subscribePush(existing.toJSON())
+      }
     }
   } catch (e: unknown) {
     logger.error('loadPushStatus failed', e)
@@ -321,6 +329,7 @@ function openAddChannel(): void {
   wizardStep.value = 1
   wizardEvents.value = []
   wizardScope.value = {}
+  smtpValidationResult.value = null
   showAddChannelDialog.value = true
 }
 
@@ -339,6 +348,14 @@ async function submitAddChannel(): Promise<void> {
   addChannelLoading.value = true
   addChannelError.value = ''
   try {
+    if (addChannelForm.value.channel_type === 'email') {
+      const cfg = addChannelForm.value.config as EmailConfig
+      const valid = await validateSmtpCredentials(cfg)
+      if (!valid) {
+        addChannelError.value = smtpValidationResult.value?.message ?? 'SMTP validation failed'
+        return
+      }
+    }
     if (addChannelForm.value.channel_type === 'web_push') {
       await ensurePushSubscription()
     }
@@ -401,6 +418,7 @@ function openEditChannel(channel: NotificationChannel): void {
     editToAddressesInput.value = (channel.config as EmailConfig).to_addresses.join(', ')
   }
   editChannelError.value = ''
+  smtpValidationResult.value = null
   showEditChannelDialog.value = true
 }
 
@@ -421,6 +439,14 @@ async function submitEditChannel(): Promise<void> {
   editChannelLoading.value = true
   editChannelError.value = ''
   try {
+    if (editChannelType() === 'email' && editChannelForm.value.config) {
+      const cfg = editChannelForm.value.config as EmailConfig
+      const valid = await validateSmtpCredentials(cfg)
+      if (!valid) {
+        editChannelError.value = smtpValidationResult.value?.message ?? 'SMTP validation failed'
+        return
+      }
+    }
     const updated = await updateChannel(editChannelId.value, editChannelForm.value)
     const idx = channels.value.findIndex((c) => c.id === editChannelId.value)
     if (idx !== -1) {
@@ -431,6 +457,27 @@ async function submitEditChannel(): Promise<void> {
     editChannelError.value = extractError(e)
   } finally {
     editChannelLoading.value = false
+  }
+}
+
+async function validateSmtpCredentials(cfg: EmailConfig): Promise<boolean> {
+  smtpValidating.value = true
+  smtpValidationResult.value = null
+  try {
+    await validateSmtp({
+      smtp_host: cfg.smtp_host,
+      smtp_port: cfg.smtp_port,
+      smtp_user: cfg.smtp_user,
+      smtp_password: cfg.smtp_password,
+      security: cfg.security ?? 'starttls',
+    })
+    smtpValidationResult.value = { success: true, message: 'SMTP login successful' }
+    return true
+  } catch (e: unknown) {
+    smtpValidationResult.value = { success: false, message: extractError(e) }
+    return false
+  } finally {
+    smtpValidating.value = false
   }
 }
 
@@ -473,6 +520,10 @@ async function handleTestChannel(id: number): Promise<void> {
   testingChannelId.value = id
   testResult.value = null
   try {
+    const channel = channels.value.find((c) => c.id === id)
+    if (channel?.channel_type === 'web_push') {
+      await ensurePushSubscription()
+    }
     await testChannel(id)
     testResult.value = { id, success: true, message: 'Test sent' }
   } catch (e: unknown) {
@@ -547,14 +598,33 @@ async function ensurePushSubscription(): Promise<void> {
   if (!isPushSupported.value) {
     throw new Error('Push notifications are not supported in this browser')
   }
-  if (currentPushSubscription.value) {
-    return
+
+  if (Notification.permission === 'denied') {
+    throw new Error('Notification permission was denied. Please enable it in browser settings.')
   }
+
+  if (Notification.permission !== 'granted') {
+    let result = await Notification.requestPermission()
+    if (result === 'default') {
+      result = await Notification.requestPermission()
+    }
+    if (result !== 'granted') {
+      throw new Error('Notification permission is required for web push')
+    }
+  }
+
   const vapidStatus = await getVapidPublicKey()
   if (!vapidStatus.configured) {
     throw new Error('VAPID keys not configured on the server')
   }
+
   const registration = await navigator.serviceWorker.ready
+
+  const existing = await registration.pushManager.getSubscription()
+  if (existing) {
+    await existing.unsubscribe()
+  }
+
   const subscription = await registration.pushManager.subscribe({
     userVisibleOnly: true,
     applicationServerKey: urlBase64ToUint8Array(vapidStatus.key),
@@ -891,6 +961,22 @@ onMounted(() => {
                     <option value="none">None (insecure)</option>
                   </select>
                 </div>
+                <div class="field">
+                  <button
+                    class="btn btn-sm btn-ghost"
+                    :disabled="smtpValidating"
+                    @click="validateSmtpCredentials(addChannelForm.config as EmailConfig)"
+                  >
+                    {{ smtpValidating ? 'Testing...' : 'Test Connection' }}
+                  </button>
+                  <span
+                    v-if="smtpValidationResult"
+                    class="smtp-validation-result"
+                    :class="smtpValidationResult.success ? 'test-success' : 'test-failure'"
+                  >
+                    {{ smtpValidationResult.message }}
+                  </span>
+                </div>
               </template>
 
               <!-- Webhook Config -->
@@ -1139,6 +1225,22 @@ onMounted(() => {
                   <option value="tls">SSL/TLS (port 465)</option>
                   <option value="none">None (insecure)</option>
                 </select>
+              </div>
+              <div class="field">
+                <button
+                  class="btn btn-sm btn-ghost"
+                  :disabled="smtpValidating"
+                  @click="validateSmtpCredentials(editChannelForm.config as EmailConfig)"
+                >
+                  {{ smtpValidating ? 'Testing...' : 'Test Connection' }}
+                </button>
+                <span
+                  v-if="smtpValidationResult"
+                  class="smtp-validation-result"
+                  :class="smtpValidationResult.success ? 'test-success' : 'test-failure'"
+                >
+                  {{ smtpValidationResult.message }}
+                </span>
               </div>
             </template>
 
@@ -1495,6 +1597,13 @@ onMounted(() => {
 .test-failure {
   background: var(--danger-subtle);
   color: var(--danger);
+}
+
+.smtp-validation-result {
+  margin-left: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
 }
 
 .channel-meta {

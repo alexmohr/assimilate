@@ -16,7 +16,7 @@ use tokio::process::Command;
 use tracing::{error, info, warn};
 
 use super::{
-    archives::{borg_binary, LOCK_WAIT_SECS},
+    archives::{LOCK_WAIT_SECS, borg_binary},
     auth::{AuthUser, RequireAdmin, Role},
     helpers,
     permissions::is_visible_to_user,
@@ -673,8 +673,7 @@ pub async fn sync_existing_archives(
     encryption_key: &[u8; 32],
     repo_id: i64,
 ) -> Result<u64, ApiError> {
-    let (borg_repo, env) =
-        super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
+    let (borg_repo, env) = super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
 
     let output = Command::new(borg_binary())
         .arg("list")
@@ -736,13 +735,10 @@ pub async fn sync_existing_archives(
             continue;
         }
 
-        let info_json: serde_json::Value =
-            serde_json::from_slice(&info_output.stdout).map_err(|e| {
-                ApiError::Internal(format!("failed to parse borg info output: {e}"))
-            })?;
+        let info_json: serde_json::Value = serde_json::from_slice(&info_output.stdout)
+            .map_err(|e| ApiError::Internal(format!("failed to parse borg info output: {e}")))?;
 
-        let Some(archive_info) = info_json["archives"].as_array().and_then(|a| a.first())
-        else {
+        let Some(archive_info) = info_json["archives"].as_array().and_then(|a| a.first()) else {
             continue;
         };
 
@@ -785,6 +781,11 @@ pub async fn sync_existing_archives(
         imported += 1;
     }
 
-    info!(repo_id, imported, total = archives.len(), "synced existing archives");
+    info!(
+        repo_id,
+        imported,
+        total = archives.len(),
+        "synced existing archives"
+    );
     Ok(imported)
 }

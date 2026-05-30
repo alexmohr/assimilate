@@ -56,6 +56,7 @@ nav:
   - Global Excludes: excludes.md
   - Activity Log: activity.md
   - SSH Tunnels: ssh-tunnels.md
+  - Notifications: notifications.md
   - Profile & Preferences: profile.md
   - API Reference: api-reference.md
   - Contributing:

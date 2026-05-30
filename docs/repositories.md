@@ -66,6 +66,55 @@ Use this path when a borg repository already exists at the remote path and you w
 
 No `borg init` is run. The passphrase is stored encrypted at rest and used for all future backup and archive operations.
 
+### Import Progress
+
+After saving, the server runs `borg info` and `borg list` in the background to sync existing archives. While this is in progress:
+
+- The repository card shows an **Importing** spinner badge.
+- The repository detail page shows an importing indicator.
+- If the import fails (e.g. SSH timeout, wrong passphrase), the error is displayed on the repository card and detail page.
+
+For large repositories with many archives, the initial import may take several minutes. You can navigate away — the import continues in the background and the UI updates automatically via WebSocket.
+
+### Archive-to-Host Matching
+
+During import, each archive's hostname is resolved to a registered client:
+
+1. **Exact match** — the archive hostname matches a client's hostname directly.
+2. **Pattern match** — the hostname matches a glob pattern configured on a client (see [Hosts — Hostname Aliases](hosts.md#hostname-aliases-glob-patterns)).
+3. **Unmatched** — a placeholder client is created with an "(imported)" badge.
+
+Unmatched archives can be resolved later by adding hostname patterns and running a re-scan.
+
+## Re-scanning Unmatched Archives
+
+After adding hostname aliases to clients, you can re-scan a repository to match previously unmatched archives against the updated patterns.
+
+1. Open the repository detail page.
+2. Click **Re-scan Archives** (admin only).
+3. The server evaluates all unmatched archives against current hostname patterns.
+4. A toast shows how many archives were matched and how many remain unmatched.
+5. Placeholder clients with no remaining archives are automatically cleaned up.
+
+## Encryption Migration
+
+Admins can migrate a repository to a different encryption mode (e.g. from `repokey` to `repokey-blake2`).
+
+1. Open the repository detail page.
+2. Click **Migrate Encryption** and select the target encryption mode.
+3. Click **Confirm**.
+
+The server:
+
+1. Renames the existing repository to `<path>.migrated-<date>` on the remote host.
+2. Runs `borg init` at the original path with the new encryption mode.
+3. Updates the database record.
+
+The old repository is preserved at the `.migrated-*` path and can be removed manually once you've confirmed the migration is successful. This operation is audit-logged.
+
+!!! warning
+    Migration creates a new empty repository. Existing archives remain in the old (renamed) repository. You will need to run new backups to populate the migrated repository.
+
 ## Folder Browser
 
 The built-in folder browser lets you navigate the remote filesystem over SFTP to select a repository path without typing it manually.

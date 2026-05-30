@@ -144,11 +144,58 @@ The host detail page shows:
 
 - **Connection status** and last seen timestamp
 - **Agent version** (populated after the first connection or SSH deploy)
+- **Hostname Aliases** — glob patterns for archive matching (see below)
 - **Repositories** associated with this host — see [Repositories](repositories.md)
 - **Backup reports** — recent backup run history and warnings
 - **Schedules** — active backup schedules for this host — see [Scheduling](scheduling.md)
 
 ![Host Detail](assets/screenshots/host-detail.png)
+
+## Hostname Aliases (Glob Patterns)
+
+When importing an existing borg repository, archives may have hostnames that don't match the registered client name (e.g. the machine was renamed, or borg was configured with a custom hostname). Hostname aliases let you define glob patterns so these archives are automatically matched to the correct client.
+
+### Adding a Pattern
+
+1. Open the host detail page.
+2. Scroll to the **Hostname Aliases** section.
+3. Enter a glob pattern (e.g. `webserver-*`, `prod-web-??.example.com`).
+4. Click **Add**.
+
+Patterns use standard glob syntax:
+
+| Pattern | Matches |
+|---------|---------|
+| `web-*` | `web-01`, `web-prod`, `web-anything` |
+| `srv-?.local` | `srv-1.local`, `srv-a.local` (single character) |
+| `*-backup` | `host1-backup`, `my-machine-backup` |
+
+### How Matching Works
+
+During repository import (and re-scan), each archive's hostname is resolved in order:
+
+1. **Exact match** — hostname equals a registered client's hostname
+2. **Pattern match** — hostname matches a glob pattern attached to a client
+3. **Unmatched** — a placeholder client is created with an "(imported)" suffix
+
+Patterns are evaluated across all clients. The first matching pattern wins.
+
+### Re-scanning Unmatched Archives
+
+After adding patterns, you can re-scan a repository to match previously unmatched archives. See [Repositories — Re-scan](repositories.md#re-scanning-unmatched-archives).
+
+## Merging Imported Clients
+
+When a repository is imported, placeholder clients are created for archive hostnames that don't match any existing client. These appear in the Hosts list with an **Imported** badge.
+
+To merge a placeholder into a real client:
+
+1. On the **Hosts** list, click the **Merge** button on the imported client row.
+2. Select the target client from the dropdown.
+3. Optionally check **Save as hostname alias** to automatically create a glob pattern (pre-filled with the placeholder's hostname followed by `*`).
+4. Click **Merge**.
+
+Merging transfers all backup reports from the placeholder to the target client and deletes the placeholder. If you saved a pattern, future imports will match automatically.
 
 ## Host Tags
 

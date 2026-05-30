@@ -155,6 +155,23 @@ impl std::fmt::Display for BorgEncryption {
     }
 }
 
+impl FromStr for BorgEncryption {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "repokey" => Ok(Self::Repokey),
+            "repokey-blake2" => Ok(Self::RepokeyBlake2),
+            "keyfile" => Ok(Self::Keyfile),
+            "keyfile-blake2" => Ok(Self::KeyfileBlake2),
+            "authenticated" => Ok(Self::Authenticated),
+            "authenticated-blake2" => Ok(Self::AuthenticatedBlake2),
+            "none" => Ok(Self::None),
+            other => Err(format!("unknown borg encryption mode: {other}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ScheduleType {

@@ -17,17 +17,18 @@ import { useAuthStore } from '../stores/auth'
 
 interface AuditEntry {
   id: number
-  timestamp: string
-  user: string
+  user_id: number | null
+  username: string
   action: string
-  target_type: string
-  target_id: string
-  details: string | null
+  target_type: string | null
+  target_id: number | null
+  details: Record<string, unknown> | null
   ip_address: string | null
+  created_at: string
 }
 
 interface AuditResponse {
-  entries: AuditEntry[]
+  items: AuditEntry[]
   total: number
   page: number
   per_page: number
@@ -68,7 +69,7 @@ async function fetchAuditLog(): Promise<void> {
     if (filters.to) params.to = filters.to
 
     const res = await apiClient.get<AuditResponse>('/audit-log', { params })
-    entries.value = res.data.entries
+    entries.value = res.data.items
     total.value = res.data.total
   } catch (e: unknown) {
     error.value = extractError(e)
@@ -215,20 +216,20 @@ onMounted(fetchAuditLog)
       >
         <Column
           header="Timestamp"
-          field="timestamp"
+          field="created_at"
           :sortable="true"
         >
           <template #body="{ data }">
-            <span class="cell-ts">{{ formatDateShort(data.timestamp) }}</span>
+            <span class="cell-ts">{{ formatDateShort(data.created_at) }}</span>
           </template>
         </Column>
         <Column
           header="User"
-          field="user"
+          field="username"
           :sortable="true"
         >
           <template #body="{ data }">
-            <span class="cell-user">{{ data.user }}</span>
+            <span class="cell-user">{{ data.username }}</span>
           </template>
         </Column>
         <Column

@@ -109,9 +109,10 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     contentsError.value = null
     currentPath.value = path
     try {
+      const apiPath = path === '/' ? undefined : path.replace(/^\//, '')
       const res = await apiClient.get<ContentEntry[]>(
         `/repos/${repoId.value}/archives/${encodeURIComponent(selectedArchive.value.name)}/contents`,
-        { params: { path } },
+        { params: apiPath ? { path: apiPath } : {} },
       )
       contents.value = res.data
     } catch (e: unknown) {

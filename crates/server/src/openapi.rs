@@ -125,6 +125,7 @@ use crate::{
         crate::api::keys::import_key,
         crate::api::keys::change_passphrase,
         crate::api::restore::download_files,
+        crate::api::restore::restore_files,
     ),
     components(schemas(
         LoginRequest,
@@ -201,6 +202,8 @@ use crate::{
         crate::api::keys::ImportKeyRequest,
         crate::api::keys::ChangePassphraseRequest,
         crate::api::restore::DownloadFilesRequest,
+        crate::api::restore::RestoreFilesRequest,
+        crate::api::restore::RestoreFilesResponse,
     ))
 )]
 pub struct ApiDoc;

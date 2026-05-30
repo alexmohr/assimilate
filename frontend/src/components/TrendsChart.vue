@@ -21,7 +21,16 @@ import { apiClient } from '../api/client'
 import { formatBytes } from '../utils/format'
 import { logger } from '../utils/logger'
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler,
+)
 
 interface TrendEntry {
   date: string
@@ -69,32 +78,41 @@ watch([selectedRepoId, selectedDays], () => {
   fetchTrends().catch(logger.error)
 })
 
-const chartData = computed((): {
-  labels: string[]
-  datasets: { label: string; data: number[]; borderColor: string; backgroundColor: string; fill: boolean; tension: number }[]
-} => {
-  return {
-    labels: trends.value.map((t) => t.date.slice(5)),
-    datasets: [
-      {
-        label: 'Compressed',
-        data: trends.value.map((t) => t.compressed_size),
-        borderColor: 'oklch(0.62 0.19 255)',
-        backgroundColor: 'oklch(0.62 0.19 255 / 0.1)',
-        fill: true,
-        tension: 0.3,
-      },
-      {
-        label: 'Deduplicated',
-        data: trends.value.map((t) => t.deduplicated_size),
-        borderColor: 'oklch(0.72 0.17 162)',
-        backgroundColor: 'oklch(0.72 0.17 162 / 0.1)',
-        fill: true,
-        tension: 0.3,
-      },
-    ],
-  }
-})
+const chartData = computed(
+  (): {
+    labels: string[]
+    datasets: {
+      label: string
+      data: number[]
+      borderColor: string
+      backgroundColor: string
+      fill: boolean
+      tension: number
+    }[]
+  } => {
+    return {
+      labels: trends.value.map((t) => t.date.slice(5)),
+      datasets: [
+        {
+          label: 'Compressed',
+          data: trends.value.map((t) => t.compressed_size),
+          borderColor: 'oklch(0.62 0.19 255)',
+          backgroundColor: 'oklch(0.62 0.19 255 / 0.1)',
+          fill: true,
+          tension: 0.3,
+        },
+        {
+          label: 'Deduplicated',
+          data: trends.value.map((t) => t.deduplicated_size),
+          borderColor: 'oklch(0.72 0.17 162)',
+          backgroundColor: 'oklch(0.72 0.17 162 / 0.1)',
+          fill: true,
+          tension: 0.3,
+        },
+      ],
+    }
+  },
+)
 
 const chartOptions = computed(() => ({
   responsive: true,
@@ -135,24 +153,33 @@ const chartOptions = computed(() => ({
   },
 }))
 
-const dedupRatioData = computed((): {
-  labels: string[]
-  datasets: { label: string; data: number[]; borderColor: string; backgroundColor: string; fill: boolean; tension: number }[]
-} => {
-  return {
-    labels: trends.value.map((t) => t.date.slice(5)),
-    datasets: [
-      {
-        label: 'Dedup Ratio %',
-        data: trends.value.map((t) => t.dedup_ratio),
-        borderColor: 'oklch(0.75 0.16 75)',
-        backgroundColor: 'oklch(0.75 0.16 75 / 0.1)',
-        fill: true,
-        tension: 0.3,
-      },
-    ],
-  }
-})
+const dedupRatioData = computed(
+  (): {
+    labels: string[]
+    datasets: {
+      label: string
+      data: number[]
+      borderColor: string
+      backgroundColor: string
+      fill: boolean
+      tension: number
+    }[]
+  } => {
+    return {
+      labels: trends.value.map((t) => t.date.slice(5)),
+      datasets: [
+        {
+          label: 'Dedup Ratio %',
+          data: trends.value.map((t) => t.dedup_ratio),
+          borderColor: 'oklch(0.75 0.16 75)',
+          backgroundColor: 'oklch(0.75 0.16 75 / 0.1)',
+          fill: true,
+          tension: 0.3,
+        },
+      ],
+    }
+  },
+)
 
 const dedupOptions = computed(() => ({
   responsive: true,

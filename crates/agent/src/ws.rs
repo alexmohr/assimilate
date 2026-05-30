@@ -221,8 +221,27 @@ async fn handle_text_message(
         ServerToAgent::SearchArchive { .. } => {
             warn!("SearchArchive not yet implemented in agent");
         }
-        ServerToAgent::RestoreFiles { .. } => {
-            warn!("RestoreFiles not yet implemented in agent");
+        ServerToAgent::RestoreFiles {
+            request_id,
+            repo_id,
+            archive_name,
+            paths,
+            target_path,
+        } => {
+            info!("Received RestoreFiles for repo {repo_id:?} archive {archive_name}");
+            if exec_cmd_tx
+                .send(ExecutorCommand::RestoreFiles {
+                    repo_id,
+                    archive_name,
+                    paths,
+                    target_path,
+                    request_id,
+                })
+                .await
+                .is_err()
+            {
+                warn!("Executor command channel closed");
+            }
         }
         ServerToAgent::DryRun {
             request_id,

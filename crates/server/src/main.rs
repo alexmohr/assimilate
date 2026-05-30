@@ -25,6 +25,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use tracing_subscriber::{EnvFilter, Layer as _, layer::SubscriberExt, util::SubscriberInitExt};
 use utoipa::OpenApi as _;
 use utoipa_scalar::{Scalar, Servable as _};
+use utoipa_swagger_ui::SwaggerUi;
 
 #[derive(Debug, thiserror::Error)]
 enum StartupError {
@@ -470,6 +471,10 @@ async fn main() -> Result<(), StartupError> {
             get(|| async { Json(ApiDoc::openapi()) }),
         )
         .merge(Scalar::with_url("/api/docs", ApiDoc::openapi()))
+        .merge(
+            SwaggerUi::new("/api/swagger-ui")
+                .url("/api/swagger-ui/openapi.json", ApiDoc::openapi()),
+        )
         .with_state(state)
         .layer(axum_middleware::from_fn(csp_headers))
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024));

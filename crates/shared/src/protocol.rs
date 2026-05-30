@@ -4,7 +4,9 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::types::{AgentConfig, AgentStatus, BackupReport, BorgEncryption, RepoId};
+use crate::types::{
+    AgentConfig, AgentStatus, BackupReport, BorgEncryption, DryRunFile, RepoId, SearchEntry,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
@@ -12,12 +14,18 @@ pub enum ServerToAgent {
     ConfigUpdate(AgentConfig),
     RunBackupNow {
         repo_id: RepoId,
+        #[serde(default)]
+        request_id: Option<String>,
     },
     RunCheckNow {
         repo_id: RepoId,
+        #[serde(default)]
+        request_id: Option<String>,
     },
     RunVerifyNow {
         repo_id: RepoId,
+        #[serde(default)]
+        request_id: Option<String>,
     },
     InitRepo {
         repo_path: String,
@@ -26,6 +34,48 @@ pub enum ServerToAgent {
         ssh_port: u16,
         passphrase: String,
         encryption: BorgEncryption,
+        #[serde(default)]
+        request_id: Option<String>,
+    },
+    SearchArchive {
+        request_id: String,
+        repo_id: RepoId,
+        #[serde(default)]
+        archive_name: Option<String>,
+        pattern: String,
+        #[serde(default)]
+        max_archives: Option<u32>,
+    },
+    RestoreFiles {
+        request_id: String,
+        repo_id: RepoId,
+        archive_name: String,
+        paths: Vec<String>,
+        target_path: String,
+    },
+    DryRun {
+        request_id: String,
+        repo_id: RepoId,
+        schedule_id: i64,
+    },
+    ExportArchive {
+        request_id: String,
+        repo_id: RepoId,
+        archive_name: String,
+    },
+    KeyExport {
+        request_id: String,
+        repo_id: RepoId,
+    },
+    KeyImport {
+        request_id: String,
+        repo_id: RepoId,
+        key_data: String,
+    },
+    ChangePassphrase {
+        request_id: String,
+        repo_id: RepoId,
+        new_passphrase: String,
     },
     RestartAgent,
     Ping,
@@ -85,6 +135,52 @@ pub enum AgentToServer {
     },
     RestartFailed {
         error_message: String,
+    },
+    SearchResult {
+        request_id: String,
+        entries: Vec<SearchEntry>,
+        done: bool,
+    },
+    RestoreCompleted {
+        request_id: String,
+        success: bool,
+        files_restored: u64,
+        error_message: Option<String>,
+    },
+    DryRunResult {
+        request_id: String,
+        files: Vec<DryRunFile>,
+        total_size: i64,
+        error_message: Option<String>,
+    },
+    ExportReady {
+        request_id: String,
+        success: bool,
+        error_message: Option<String>,
+    },
+    KeyExportResult {
+        request_id: String,
+        key_data: String,
+        error_message: Option<String>,
+    },
+    KeyImportResult {
+        request_id: String,
+        success: bool,
+        error_message: Option<String>,
+    },
+    PassphraseChanged {
+        request_id: String,
+        success: bool,
+        error_message: Option<String>,
+    },
+    OperationProgress {
+        request_id: String,
+        percent: u8,
+        message: String,
+    },
+    OperationFailed {
+        request_id: String,
+        error: String,
     },
     Pong,
 }
@@ -147,17 +243,16 @@ pub enum ServerToUi {
 
 #[cfg(test)]
 mod tests {
-    use super::TunnelStatus;
+    use chrono::Utc;
+
+    use super::*;
+    use crate::types::{DryRunFile, SearchEntry};
 
     #[test]
     fn tunnel_status_connected_round_trips_json() {
         let status = TunnelStatus::Connected;
-        let json = serde_json::to_string(&status);
-        assert!(json.is_ok());
-        let json = json.unwrap_or_default();
-        let status2 = serde_json::from_str::<TunnelStatus>(&json);
-        assert!(status2.is_ok());
-        let status2 = status2.unwrap_or(TunnelStatus::Disconnected);
+        let json = serde_json::to_string(&status).unwrap();
+        let status2: TunnelStatus = serde_json::from_str(&json).unwrap();
         assert_eq!(status, status2);
     }
 
@@ -166,12 +261,251 @@ mod tests {
         let status = TunnelStatus::Error {
             message: String::from("AllowTcpForwarding disabled"),
         };
-        let json = serde_json::to_string(&status);
-        assert!(json.is_ok());
-        let json = json.unwrap_or_default();
-        let status2 = serde_json::from_str::<TunnelStatus>(&json);
-        assert!(status2.is_ok());
-        let status2 = status2.unwrap_or(TunnelStatus::Disconnected);
+        let json = serde_json::to_string(&status).unwrap();
+        let status2: TunnelStatus = serde_json::from_str(&json).unwrap();
         assert_eq!(status, status2);
+    }
+
+    #[test]
+    fn server_to_agent_search_archive_round_trips() {
+        let msg = ServerToAgent::SearchArchive {
+            request_id: "req-1".into(),
+            repo_id: RepoId(1),
+            archive_name: Some("archive-2024".into()),
+            pattern: "*.log".into(),
+            max_archives: Some(5),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn server_to_agent_restore_files_round_trips() {
+        let msg = ServerToAgent::RestoreFiles {
+            request_id: "req-2".into(),
+            repo_id: RepoId(3),
+            archive_name: "backup-2024-01-01".into(),
+            paths: vec!["/etc/hosts".into(), "/var/log".into()],
+            target_path: "/tmp/restore".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn server_to_agent_dry_run_round_trips() {
+        let msg = ServerToAgent::DryRun {
+            request_id: "req-3".into(),
+            repo_id: RepoId(2),
+            schedule_id: 42,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn server_to_agent_export_archive_round_trips() {
+        let msg = ServerToAgent::ExportArchive {
+            request_id: "req-4".into(),
+            repo_id: RepoId(1),
+            archive_name: "daily-2024-01-01".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn server_to_agent_key_export_round_trips() {
+        let msg = ServerToAgent::KeyExport {
+            request_id: "req-5".into(),
+            repo_id: RepoId(7),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn server_to_agent_key_import_round_trips() {
+        let msg = ServerToAgent::KeyImport {
+            request_id: "req-6".into(),
+            repo_id: RepoId(7),
+            key_data: "BORG_KEY abc123".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn server_to_agent_change_passphrase_round_trips() {
+        let msg = ServerToAgent::ChangePassphrase {
+            request_id: "req-7".into(),
+            repo_id: RepoId(2),
+            new_passphrase: "new-secret".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn server_to_agent_run_backup_now_with_request_id_round_trips() {
+        let msg = ServerToAgent::RunBackupNow {
+            repo_id: RepoId(1),
+            request_id: Some("req-8".into()),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn server_to_agent_run_backup_now_without_request_id_backward_compat() {
+        let json = r#"{"type":"RunBackupNow","payload":{"repo_id":1}}"#;
+        let msg: ServerToAgent = serde_json::from_str(json).unwrap();
+        let json2 = serde_json::to_string(&msg).unwrap();
+        let msg2: ServerToAgent = serde_json::from_str(&json2).unwrap();
+        let json3 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json2, json3);
+    }
+
+    #[test]
+    fn agent_to_server_search_result_round_trips() {
+        let msg = AgentToServer::SearchResult {
+            request_id: "req-1".into(),
+            entries: vec![SearchEntry {
+                path: "/etc/hosts".into(),
+                size: 1024,
+                mtime: Utc::now(),
+                entry_type: "file".into(),
+                archive_name: Some("archive-1".into()),
+            }],
+            done: true,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn agent_to_server_restore_completed_round_trips() {
+        let msg = AgentToServer::RestoreCompleted {
+            request_id: "req-2".into(),
+            success: true,
+            files_restored: 42,
+            error_message: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn agent_to_server_dry_run_result_round_trips() {
+        let msg = AgentToServer::DryRunResult {
+            request_id: "req-3".into(),
+            files: vec![DryRunFile {
+                path: "/var/log/syslog".into(),
+                size: 2048,
+            }],
+            total_size: 2048,
+            error_message: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn agent_to_server_export_ready_round_trips() {
+        let msg = AgentToServer::ExportReady {
+            request_id: "req-4".into(),
+            success: true,
+            error_message: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn agent_to_server_key_export_result_round_trips() {
+        let msg = AgentToServer::KeyExportResult {
+            request_id: "req-5".into(),
+            key_data: "BORG_KEY abc".into(),
+            error_message: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn agent_to_server_key_import_result_round_trips() {
+        let msg = AgentToServer::KeyImportResult {
+            request_id: "req-6".into(),
+            success: true,
+            error_message: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn agent_to_server_passphrase_changed_round_trips() {
+        let msg = AgentToServer::PassphraseChanged {
+            request_id: "req-7".into(),
+            success: true,
+            error_message: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn agent_to_server_operation_progress_round_trips() {
+        let msg = AgentToServer::OperationProgress {
+            request_id: "req-8".into(),
+            percent: 50,
+            message: "Extracting files...".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn agent_to_server_operation_failed_round_trips() {
+        let msg = AgentToServer::OperationFailed {
+            request_id: "req-9".into(),
+            error: "Repository locked".into(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
     }
 }

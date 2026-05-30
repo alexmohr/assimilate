@@ -1344,6 +1344,7 @@ pub struct ReportRow {
     pub error_message: Option<String>,
     pub warnings: Vec<String>,
     pub borg_version: Option<String>,
+    pub archive_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
@@ -1394,6 +1395,7 @@ pub struct InsertReportParams {
     pub warnings: Vec<String>,
     pub borg_version: Option<String>,
     pub matched: bool,
+    pub archive_name: Option<String>,
 }
 
 pub async fn insert_backup_report(
@@ -1403,8 +1405,9 @@ pub async fn insert_backup_report(
     sqlx::query(
         "INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, \
          original_size, compressed_size, deduplicated_size, files_processed, duration_secs, \
-         error_message, warnings, borg_version, matched) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, \
-         $9, $10, $11, $12, $13, $14) ON CONFLICT (repo_id, client_id, started_at) DO NOTHING",
+         error_message, warnings, borg_version, matched, archive_name) VALUES ($1, $2, $3, $4, \
+         $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) ON CONFLICT (repo_id, client_id, \
+         started_at) DO NOTHING",
     )
     .bind(params.client_id)
     .bind(params.repo_id)
@@ -1420,6 +1423,7 @@ pub async fn insert_backup_report(
     .bind(&params.warnings)
     .bind(&params.borg_version)
     .bind(params.matched)
+    .bind(&params.archive_name)
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
@@ -1436,9 +1440,9 @@ pub async fn list_reports_for_client(
         sqlx::query_as::<_, ReportRow>(
             "SELECT br.id, br.client_id, br.repo_id, br.started_at, br.finished_at, br.status, \
              br.original_size, br.compressed_size, br.deduplicated_size, br.files_processed, \
-             br.duration_secs, br.error_message, br.warnings, br.borg_version FROM backup_reports \
-             br JOIN repos r ON r.id = br.repo_id WHERE br.client_id = $1 AND r.name = $2 ORDER \
-             by br.started_at DESC LIMIT $3",
+             br.duration_secs, br.error_message, br.warnings, br.borg_version, br.archive_name \
+             FROM backup_reports br JOIN repos r ON r.id = br.repo_id WHERE br.client_id = $1 \
+             AND r.name = $2 ORDER by br.started_at DESC LIMIT $3",
         )
         .bind(client_id)
         .bind(target_name)
@@ -1450,8 +1454,8 @@ pub async fn list_reports_for_client(
         sqlx::query_as::<_, ReportRow>(
             "SELECT id, client_id, repo_id, started_at, finished_at, status, original_size, \
              compressed_size, deduplicated_size, files_processed, duration_secs, error_message, \
-             warnings, borg_version FROM backup_reports WHERE client_id = $1 ORDER BY started_at \
-             DESC LIMIT $2",
+             warnings, borg_version, archive_name FROM backup_reports WHERE client_id = $1 ORDER \
+             BY started_at DESC LIMIT $2",
         )
         .bind(client_id)
         .bind(limit)

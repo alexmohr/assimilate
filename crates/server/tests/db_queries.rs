@@ -814,6 +814,7 @@ async fn insert_test_report(pool: &PgPool, client_id: i64, repo_id: i64) {
             warnings: vec![],
             borg_version: Some("1.4.0".to_string()),
             matched: true,
+            archive_name: None,
         },
     )
     .await
@@ -887,6 +888,7 @@ async fn backup_report_with_warnings(pool: PgPool) {
             warnings: vec!["file skipped".to_string(), "permission denied".to_string()],
             borg_version: None,
             matched: true,
+            archive_name: Some("test-archive".to_string()),
         },
     )
     .await

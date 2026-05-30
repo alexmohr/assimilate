@@ -1014,6 +1014,7 @@ pub async fn sync_existing_archives(
             warnings: vec![],
             borg_version: None,
             matched,
+            archive_name: Some(name.to_string()),
         };
 
         if let Err(e) = db::insert_backup_report(pool, &params).await {

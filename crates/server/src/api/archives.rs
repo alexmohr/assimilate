@@ -25,7 +25,7 @@ pub fn borg_binary() -> String {
     std::env::var("BORG_BINARY").unwrap_or_else(|_| "borg".to_string())
 }
 
-fn validate_path(path: &str) -> Result<(), ApiError> {
+pub fn validate_path(path: &str) -> Result<(), ApiError> {
     if path.is_empty() {
         return Err(ApiError::BadRequest("path must not be empty".to_string()));
     }

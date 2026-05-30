@@ -98,6 +98,9 @@ async fn main() -> Result<(), StartupError> {
         pending_dryruns: std::sync::Arc::new(tokio::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),
+        pending_restores: std::sync::Arc::new(tokio::sync::Mutex::new(
+            std::collections::HashMap::new(),
+        )),
     };
 
     tokio::spawn(server::scheduler::run(
@@ -266,6 +269,8 @@ async fn main() -> Result<(), StartupError> {
         .route("/api/stats/activity", get(api::stats::activity))
         .route("/api/stats/system-events", get(api::stats::system_events))
         .route("/api/stats/health", get(api::stats::health))
+        .route("/api/stats/trends", get(api::stats::trends))
+        .route("/api/stats/calendar", get(api::stats::calendar))
         .route("/api/logs", get(api::logs::get_logs))
         .route(
             "/api/repos/{repo_id}/archives/diff",
@@ -290,6 +295,14 @@ async fn main() -> Result<(), StartupError> {
         .route(
             "/api/repos/{repo_id}/archives/{archive_name}/export",
             get(api::export::export_archive),
+        )
+        .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/download",
+            post(api::restore::download_files),
+        )
+        .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/restore",
+            post(api::restore::restore_files),
         )
         .route(
             "/api/repos/{repo_id}/search",

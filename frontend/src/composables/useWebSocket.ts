@@ -16,6 +16,7 @@ interface WsMessage<T = unknown> {
 interface UseWebSocketReturn {
   status: ReturnType<typeof ref<WsConnectionStatus>>
   onMessage: <T>(type: string, callback: MessageCallback<T>) => void
+  forceReconnect: () => void
 }
 
 const MAX_BACKOFF_MS = 30_000
@@ -73,6 +74,14 @@ function scheduleReconnect(): void {
   }, backoffMs)
 }
 
+function forceReconnect(): void {
+  if (socket) {
+    socket.close()
+  } else {
+    connect()
+  }
+}
+
 connect()
 
 export function useWebSocket(): UseWebSocketReturn {
@@ -93,5 +102,5 @@ export function useWebSocket(): UseWebSocketReturn {
     }
   })
 
-  return { status, onMessage }
+  return { status, onMessage, forceReconnect }
 }

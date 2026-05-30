@@ -59,7 +59,8 @@ async fn connect_and_run(
 
     let (mut sink, mut stream) = ws_stream.split();
 
-    let hostname = gethostname::gethostname().to_string_lossy().into_owned();
+    let hostname = std::env::var("BORG_HOSTNAME")
+        .unwrap_or_else(|_| gethostname::gethostname().to_string_lossy().into_owned());
 
     let version = env!("CARGO_PKG_VERSION");
     let git_sha = env!("GIT_SHA");

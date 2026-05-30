@@ -14,6 +14,7 @@ use sqlx::PgPool;
 use crate::{
     api::repos::sync_existing_archives,
     db,
+    tunnel::TunnelManager,
     ws::{registry::AgentRegistry, ui_broadcast::UiBroadcast},
 };
 
@@ -28,6 +29,7 @@ pub async fn run(
     registry: AgentRegistry,
     encryption_key: [u8; 32],
     ui_broadcast: UiBroadcast,
+    tunnel_manager: TunnelManager,
 ) {
     let schedule_pool = pool.clone();
     let retention_pool = pool.clone();
@@ -37,7 +39,7 @@ pub async fn run(
         let mut interval = tokio::time::interval(TICK_INTERVAL);
         loop {
             interval.tick().await;
-            if let Err(e) = tick(&schedule_pool, &registry).await {
+            if let Err(e) = tick(&schedule_pool, &registry, &tunnel_manager).await {
                 tracing::error!(error = %e, "scheduler tick failed");
             }
         }
@@ -115,6 +117,14 @@ async fn run_repo_sync(pool: &PgPool, encryption_key: &[u8; 32], ui_broadcast: &
                     }
                 }
             }
+            Err(crate::error::ApiError::NotFound(ref reason)) => {
+                tracing::warn!(
+                    repo_id = repo.id,
+                    repo_name = %repo.name,
+                    reason = %reason,
+                    "skipping sync for repo that no longer exists"
+                );
+            }
             Err(e) => {
                 let elapsed = start.elapsed();
                 let msg = format!(
@@ -162,7 +172,11 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
     Ok(())
 }
 
-async fn tick(pool: &PgPool, registry: &AgentRegistry) -> Result<(), crate::error::ApiError> {
+async fn tick(
+    pool: &PgPool,
+    registry: &AgentRegistry,
+    tunnel_manager: &TunnelManager,
+) -> Result<(), crate::error::ApiError> {
     let now = Utc::now();
     let due = db::list_due_schedules(pool, now).await?;
 
@@ -204,6 +218,10 @@ async fn tick(pool: &PgPool, registry: &AgentRegistry) -> Result<(), crate::erro
             ScheduleType::Verify => "verify",
             ScheduleType::Backup => "backup",
         };
+
+        tunnel_manager
+            .ensure_client_tunnel_connected(schedule.client_id)
+            .await;
 
         match registry.send_to(&schedule.hostname, msg).await {
             Ok(()) => {

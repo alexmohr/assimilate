@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiClient } from '../api/client'
-import { formatDateShort } from '../utils/format'
+import { formatDateShort, formatBytes, relativeTime } from '../utils/format'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
 import { parseLines } from '../utils/validation'
@@ -72,11 +72,11 @@ const selectedClientId = ref<number | null>(null)
 const selectedRepoId = ref<number | null>(null)
 const selectedType = ref<ScheduleType>('backup')
 
-type TabId = 'settings' | 'advanced'
+type TabId = 'settings' | 'advanced' | 'results'
 const activeTab = computed<TabId>({
   get() {
     const t = route.query.tab as string | undefined
-    if (t === 'advanced') return t
+    if (t === 'advanced' || t === 'results') return t
     return 'settings'
   },
   set(val: TabId) {
@@ -120,6 +120,55 @@ function populateForm(s: ScheduleRow): void {
     pre_backup_commands: (JSON.parse(s.pre_backup_commands || '[]') as string[]).join('\n'),
     post_backup_commands: (JSON.parse(s.post_backup_commands || '[]') as string[]).join('\n'),
     backup_sources: '',
+  }
+}
+
+interface ReportRow {
+  id: number
+  client_id: number
+  repo_id: number
+  started_at: string
+  finished_at: string
+  status: string
+  original_size: number
+  compressed_size: number
+  deduplicated_size: number
+  files_processed: number
+  duration_secs: number
+  error_message: string | null
+  warnings: string[]
+  borg_version: string | null
+  archive_name: string | null
+}
+
+const reports = ref<ReportRow[]>([])
+const reportsLoading = ref(false)
+const reportsError = ref<string | null>(null)
+const expandedReportId = ref<number | null>(null)
+
+function handleResultClick(r: ReportRow): void {
+  if (r.status === 'success') {
+    const query: Record<string, string> = { tab: 'archives' }
+    if (r.archive_name) {
+      query.archive = r.archive_name
+    }
+    router.push({ path: `/repos/${r.repo_id}`, query })
+  } else {
+    expandedReportId.value = expandedReportId.value === r.id ? null : r.id
+  }
+}
+
+async function fetchReports(): Promise<void> {
+  if (isCreate.value) return
+  reportsLoading.value = true
+  reportsError.value = null
+  try {
+    const res = await apiClient.get<ReportRow[]>(`/schedules/${props.id}/reports?limit=20`)
+    reports.value = res.data
+  } catch (e: unknown) {
+    reportsError.value = extractError(e, 'Failed to load reports')
+  } finally {
+    reportsLoading.value = false
   }
 }
 
@@ -225,6 +274,11 @@ async function save(): Promise<void> {
 
 onMounted(loadData)
 watch(() => props.id, loadData)
+watch(activeTab, (tab) => {
+  if (tab === 'results' && reports.value.length === 0 && !reportsLoading.value) {
+    fetchReports()
+  }
+})
 </script>
 
 <template>
@@ -282,6 +336,14 @@ watch(() => props.id, loadData)
           @click="activeTab = 'advanced'"
         >
           Advanced
+        </button>
+        <button
+          v-if="!isCreate"
+          class="tab-btn"
+          :class="{ active: activeTab === 'results' }"
+          @click="activeTab = 'results'"
+        >
+          Results
         </button>
       </div>
 
@@ -572,8 +634,83 @@ watch(() => props.id, loadData)
         </div>
       </div>
 
+      <!-- Results Tab -->
+      <div
+        v-if="activeTab === 'results'"
+        class="tab-content"
+      >
+        <BaseSpinner
+          v-if="reportsLoading"
+          size="md"
+        />
+        <div
+          v-else-if="reportsError"
+          class="error-banner"
+        >
+          {{ reportsError }}
+        </div>
+        <div
+          v-else-if="reports.length === 0"
+          class="empty-state"
+        >
+          No backup reports yet.
+        </div>
+        <div
+          v-else
+          class="results-list"
+        >
+          <div
+            v-for="r in reports"
+            :key="r.id"
+            class="result-card"
+            :class="[`result-${r.status}`, { 'result-card-link': r.status === 'success' }]"
+            @click="handleResultClick(r)"
+          >
+            <div class="result-header">
+              <span class="result-status-badge">{{ r.status }}</span>
+              <span class="result-date">{{ relativeTime(r.finished_at) }}</span>
+              <span class="result-duration">{{ r.duration_secs }}s</span>
+            </div>
+            <div class="result-stats">
+              <span>{{ formatBytes(r.original_size) }} original</span>
+              <span>{{ formatBytes(r.deduplicated_size) }} dedup</span>
+              <span>{{ r.files_processed }} files</span>
+            </div>
+            <template v-if="expandedReportId === r.id">
+              <div
+                v-if="r.warnings.length > 0"
+                class="result-warnings"
+              >
+                <strong class="result-section-label">Warnings</strong>
+                <pre class="result-output">{{ r.warnings.join('\n') }}</pre>
+              </div>
+              <div
+                v-if="r.error_message"
+                class="result-error"
+              >
+                <strong class="result-section-label">Error</strong>
+                <pre class="result-output">{{ r.error_message }}</pre>
+              </div>
+            </template>
+            <span
+              v-if="r.status === 'success'"
+              class="result-link-hint"
+              >View archives →</span
+            >
+            <span
+              v-else-if="r.error_message || r.warnings.length > 0"
+              class="result-expand-hint"
+              >{{ expandedReportId === r.id ? 'Click to collapse' : 'Click to expand' }}</span
+            >
+          </div>
+        </div>
+      </div>
+
       <!-- Save bar -->
-      <div class="save-bar">
+      <div
+        v-if="activeTab !== 'results'"
+        class="save-bar"
+      >
         <div
           v-if="saveError"
           class="error-inline"
@@ -919,5 +1056,158 @@ watch(() => props.id, loadData)
   font-size: 0.8rem;
   color: var(--success);
   font-weight: 600;
+}
+
+.empty-state {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  padding: 1rem 0;
+}
+
+.results-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.result-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  background: var(--bg-card);
+}
+
+.result-card.result-failed {
+  border-left: 3px solid var(--danger);
+}
+
+.result-card.result-warning {
+  border-left: 3px solid var(--warning);
+}
+
+.result-card.result-success {
+  border-left: 3px solid var(--success);
+}
+
+.result-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.result-status-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.15rem 0.4rem;
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+}
+
+.result-failed .result-status-badge {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.result-warning .result-status-badge {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+}
+
+.result-success .result-status-badge {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+
+.result-date {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.result-duration {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.result-stats {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.result-warnings,
+.result-error {
+  margin-top: 0.5rem;
+}
+
+.result-warnings summary {
+  font-size: 0.75rem;
+  color: var(--warning);
+  cursor: pointer;
+}
+
+.result-output {
+  font-size: 0.7rem;
+  background: var(--bg-code, var(--bg-hover));
+  border-radius: var(--radius-sm);
+  padding: 0.5rem;
+  margin-top: 0.25rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 12rem;
+}
+
+.result-error .result-output {
+  color: var(--danger);
+}
+
+.result-card-link {
+  cursor: pointer;
+}
+
+.result-card-link:hover {
+  background: var(--bg-hover);
+}
+
+.result-card:not(.result-card-link) {
+  cursor: pointer;
+}
+
+.result-card:not(.result-card-link):hover {
+  background: var(--bg-hover);
+}
+
+.result-link-hint {
+  font-size: 0.7rem;
+  color: var(--accent);
+  margin-top: 0.4rem;
+  display: block;
+}
+
+.result-expand-hint {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 0.4rem;
+  display: block;
+}
+
+.result-section-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.result-warnings .result-section-label {
+  color: var(--warning);
+}
+
+.result-error .result-section-label {
+  color: var(--danger);
 }
 </style>

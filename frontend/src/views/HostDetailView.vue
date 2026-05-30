@@ -181,6 +181,19 @@ const excludesText = ref('')
 const excludesSaving = ref(false)
 const excludesError = ref<string | null>(null)
 
+// Hostname Aliases (patterns)
+interface HostnamePattern {
+  id: number
+  client_id: number
+  pattern: string
+  created_at: string
+}
+
+const hostnamePatterns = ref<HostnamePattern[]>([])
+const newPattern = ref('')
+const patternAddLoading = ref(false)
+const patternError = ref<string | null>(null)
+
 function startEditExcludes(): void {
   excludesText.value = (client.value?.default_exclude_patterns ?? []).join('\n')
   excludesError.value = null
@@ -213,6 +226,46 @@ async function saveExcludes(): Promise<void> {
 useEscapeKey(showTokenDialog, () => {
   showTokenDialog.value = false
 })
+
+async function loadHostnamePatterns(): Promise<void> {
+  if (!client.value) return
+  try {
+    const res = await apiClient.get<HostnamePattern[]>(
+      `/clients/${client.value.hostname}/hostname-patterns`,
+    )
+    hostnamePatterns.value = res.data
+  } catch (e: unknown) {
+    logger.error('loadHostnamePatterns failed', e)
+  }
+}
+
+async function addHostnamePattern(): Promise<void> {
+  if (!client.value || !newPattern.value.trim()) return
+  patternAddLoading.value = true
+  patternError.value = null
+  try {
+    const res = await apiClient.post<HostnamePattern>(
+      `/clients/${client.value.hostname}/hostname-patterns`,
+      { pattern: newPattern.value.trim() },
+    )
+    hostnamePatterns.value = [...hostnamePatterns.value, res.data]
+    newPattern.value = ''
+  } catch (e: unknown) {
+    patternError.value = extractError(e)
+  } finally {
+    patternAddLoading.value = false
+  }
+}
+
+async function deleteHostnamePattern(id: number): Promise<void> {
+  if (!client.value) return
+  try {
+    await apiClient.delete(`/clients/${client.value.hostname}/hostname-patterns/${id}`)
+    hostnamePatterns.value = hostnamePatterns.value.filter((p) => p.id !== id)
+  } catch (e: unknown) {
+    patternError.value = extractError(e)
+  }
+}
 
 async function deleteSchedule(id: number): Promise<void> {
   try {
@@ -258,7 +311,7 @@ async function loadClient(): Promise<void> {
       error.value = `Client "${props.hostname}" not found`
       return
     }
-    await Promise.all([loadTabData(), loadTags()])
+    await Promise.all([loadTabData(), loadTags(), loadHostnamePatterns()])
   } catch (e: unknown) {
     error.value = extractError(e)
   } finally {
@@ -744,6 +797,62 @@ watch(wsStatus, (newStatus, oldStatus) => {
               </button>
             </div>
           </template>
+        </div>
+
+        <!-- Hostname Aliases -->
+        <div class="info-card">
+          <h3 class="info-title">Hostname Aliases</h3>
+          <p class="field-hint">
+            Glob patterns that match archive hostnames to this client during repository import.
+          </p>
+          <div
+            v-if="hostnamePatterns.length > 0"
+            class="paths-list"
+          >
+            <div
+              v-for="p in hostnamePatterns"
+              :key="p.id"
+              class="pattern-row"
+            >
+              <code class="path-item mono">{{ p.pattern }}</code>
+              <button
+                class="tag-remove pattern-delete"
+                title="Delete pattern"
+                @click="deleteHostnamePattern(p.id)"
+              >
+                &times;
+              </button>
+            </div>
+          </div>
+          <span
+            v-else
+            class="muted"
+            >No alias patterns configured.</span
+          >
+          <p class="field-hint">
+            <code>*</code> matches any characters, <code>?</code> matches a single character.
+          </p>
+          <div
+            v-if="patternError"
+            class="form-error"
+          >
+            {{ patternError }}
+          </div>
+          <div class="pattern-add-row">
+            <input
+              v-model="newPattern"
+              class="input input-sm"
+              placeholder="e.g. myhost* or host-??"
+              @keyup.enter="addHostnamePattern"
+            />
+            <button
+              class="btn btn-sm btn-primary"
+              :disabled="patternAddLoading || !newPattern.trim()"
+              @click="addHostnamePattern"
+            >
+              {{ patternAddLoading ? 'Adding...' : 'Add Pattern' }}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1646,5 +1755,24 @@ watch(wsStatus, (newStatus, oldStatus) => {
   font-family: var(--mono);
   font-size: 0.82rem;
   line-height: 1.5;
+}
+
+.pattern-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.pattern-delete {
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+.pattern-add-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
 }
 </style>

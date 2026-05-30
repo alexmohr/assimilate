@@ -35,6 +35,8 @@ pub type PendingDryRuns =
 pub type PendingRestores =
     Arc<Mutex<HashMap<String, oneshot::Sender<(bool, u64, Option<String>)>>>>;
 
+pub type PendingMigrations = Arc<Mutex<HashMap<String, oneshot::Sender<(bool, Option<String>)>>>>;
+
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
@@ -46,4 +48,5 @@ pub struct AppState {
     pub notification_service: NotificationService,
     pub pending_dryruns: PendingDryRuns,
     pub pending_restores: PendingRestores,
+    pub pending_migrations: PendingMigrations,
 }

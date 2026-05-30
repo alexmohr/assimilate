@@ -10,6 +10,8 @@ export interface ArchiveEntry {
   start: string
   hostname: string
   comment: string
+  matched: boolean | null
+  client_hostname: string | null
 }
 
 export interface ContentEntry {

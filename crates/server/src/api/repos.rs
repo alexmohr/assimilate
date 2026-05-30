@@ -542,6 +542,177 @@ pub async fn break_lock(
     }))
 }
 
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct MigrateEncryptionRequest {
+    #[schema(value_type = String)]
+    pub target_encryption: BorgEncryption,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MigrateEncryptionResponse {
+    pub success: bool,
+    pub message: String,
+    pub migrated_path: Option<String>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/repos/{repo_id}/migrate-encryption",
+    tag = "Repositories",
+    operation_id = "migrateRepoEncryption",
+    summary = "Migrate repository to a different encryption mode",
+    description = "Renames the existing repository and creates a new one at the original path \
+                   with the target encryption. Old repo preserved at .migrated-<date> path.",
+    params(
+        ("repo_id" = i64, Path, description = "Repository ID"),
+    ),
+    request_body = MigrateEncryptionRequest,
+    responses(
+        (status = 200, description = "Migration completed", body = MigrateEncryptionResponse),
+        (status = 400, description = "Invalid request"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin only"),
+        (status = 404, description = "Not found"),
+        (status = 502, description = "Migration failed"),
+    )
+)]
+pub async fn migrate_encryption(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(repo_id): Path<i64>,
+    ApiJson(req): ApiJson<MigrateEncryptionRequest>,
+) -> Result<Json<MigrateEncryptionResponse>, ApiError> {
+    let repo = db::get_repo_with_passphrase(&state.pool, repo_id).await?;
+    let passphrase =
+        shared::crypto::decrypt_passphrase(&repo.passphrase_encrypted, &state.encryption_key)?;
+
+    let current_encryption: BorgEncryption = repo
+        .encryption
+        .parse()
+        .map_err(|_| ApiError::Internal("invalid current encryption in database".to_owned()))?;
+
+    if current_encryption == req.target_encryption {
+        return Err(ApiError::BadRequest(
+            "repository already uses the target encryption mode".to_owned(),
+        ));
+    }
+
+    let repo_url = format!(
+        "ssh://{}@{}:{}/{}",
+        repo.ssh_user, repo.ssh_host, repo.ssh_port, repo.repo_path
+    );
+
+    let date_suffix = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let migrated_path = format!("{}.migrated-{date_suffix}", repo.repo_path);
+
+    let ssh_rename_result = run_ssh_command(
+        &repo.ssh_user,
+        &repo.ssh_host,
+        repo.ssh_port,
+        &format!("mv {} {migrated_path}", repo.repo_path),
+    )
+    .await;
+
+    if let Err(e) = ssh_rename_result {
+        return Err(ApiError::BadGateway(format!(
+            "failed to rename old repository: {e}"
+        )));
+    }
+
+    info!(repo_id, %migrated_path, "renamed old repo for migration");
+
+    let init_result = run_borg_init(&repo_url, &passphrase, req.target_encryption).await;
+    if let Err(e) = init_result {
+        warn!(repo_id, %e, "borg init failed during migration, rolling back");
+        let _ = run_ssh_command(
+            &repo.ssh_user,
+            &repo.ssh_host,
+            repo.ssh_port,
+            &format!("mv {migrated_path} {}", repo.repo_path),
+        )
+        .await;
+        return Err(ApiError::BadGateway(format!(
+            "borg init failed during migration (rolled back): {e}"
+        )));
+    }
+
+    db::update_repo_encryption(&state.pool, repo_id, req.target_encryption.as_borg_arg()).await?;
+
+    if let Err(e) = db::audit::insert_audit_entry(
+        &state.pool,
+        &db::audit::NewAuditEntry {
+            user_id: Some(_admin.user_id),
+            username: &_admin.username,
+            action: "migrate_encryption",
+            target_type: Some("repo"),
+            target_id: Some(repo_id),
+            details: Some(serde_json::json!({
+                "from": repo.encryption,
+                "to": req.target_encryption.as_borg_arg(),
+                "migrated_path": migrated_path,
+            })),
+            ip_address: None,
+        },
+    )
+    .await
+    {
+        tracing::warn!("failed to write audit log: {e}");
+    }
+
+    info!(
+        repo_id,
+        encryption = req.target_encryption.as_borg_arg(),
+        "encryption migration completed"
+    );
+
+    Ok(Json(MigrateEncryptionResponse {
+        success: true,
+        message: format!(
+            "migrated to {}; old repo preserved at {migrated_path}",
+            req.target_encryption.as_borg_arg()
+        ),
+        migrated_path: Some(migrated_path),
+    }))
+}
+
+async fn run_ssh_command(
+    ssh_user: &str,
+    ssh_host: &str,
+    ssh_port: i32,
+    command: &str,
+) -> Result<(), String> {
+    let ssh_auth_sock = std::env::var("SSH_AUTH_SOCK").ok();
+    let port_str = ssh_port.to_string();
+
+    let mut cmd = Command::new("ssh");
+    cmd.args([
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "-p",
+        &port_str,
+        &format!("{ssh_user}@{ssh_host}"),
+        command,
+    ]);
+
+    if let Some(sock) = &ssh_auth_sock {
+        cmd.env("SSH_AUTH_SOCK", sock);
+    }
+
+    let output = tokio::time::timeout(std::time::Duration::from_secs(30), cmd.output())
+        .await
+        .map_err(|_| "SSH command timed out after 30 seconds".to_owned())?
+        .map_err(|e| format!("failed to execute SSH: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(stderr.into_owned());
+    }
+
+    Ok(())
+}
+
 struct BorgInfoResult {
     encryption: BorgEncryption,
 }
@@ -757,7 +928,14 @@ pub async fn sync_existing_archives(
             continue;
         }
 
-        let client = db::get_or_create_client_by_hostname(pool, hostname).await?;
+        let (client, matched) = match db::resolve_client_for_hostname(pool, hostname).await? {
+            db::ResolveResult::ExactMatch(c) => (c, true),
+            db::ResolveResult::PatternMatch(c) => (c, true),
+            db::ResolveResult::Unmatched => {
+                let c = db::get_or_create_client_by_hostname(pool, hostname).await?;
+                (c, false)
+            }
+        };
 
         let repo_archive = format!("{borg_repo}::{name}");
         let info_output = Command::new(borg_binary())
@@ -836,6 +1014,7 @@ pub async fn sync_existing_archives(
             error_message: None,
             warnings: vec![],
             borg_version: None,
+            matched,
         };
 
         if let Err(e) = db::insert_backup_report(pool, &params).await {
@@ -853,4 +1032,86 @@ pub async fn sync_existing_archives(
         "synced existing archives"
     );
     Ok(imported)
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RescanResponse {
+    pub matched: u64,
+    pub remaining_unmatched: u64,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/repos/{repo_id}/rescan",
+    tag = "Repositories",
+    operation_id = "rescanRepo",
+    summary = "Re-scan unmatched archives against hostname patterns",
+    params(
+        ("repo_id" = i64, Path, description = "Repository ID"),
+    ),
+    responses(
+        (status = 200, description = "Rescan results", body = RescanResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Not found"),
+    )
+)]
+pub async fn rescan_repo(
+    State(state): State<AppState>,
+    _admin: RequireAdmin,
+    Path(repo_id): Path<i64>,
+) -> Result<Json<RescanResponse>, ApiError> {
+    db::get_repo_with_stats(&state.pool, repo_id).await?;
+
+    #[derive(sqlx::FromRow)]
+    struct UnmatchedRow {
+        report_id: i64,
+        hostname: String,
+    }
+
+    let unmatched_rows = sqlx::query_as::<_, UnmatchedRow>(
+        "SELECT br.id AS report_id, c.hostname FROM backup_reports br JOIN clients c ON c.id = \
+         br.client_id WHERE br.repo_id = $1 AND br.matched = false",
+    )
+    .bind(repo_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    let mut matched_count = 0u64;
+
+    for row in &unmatched_rows {
+        let result = db::resolve_client_for_hostname(&state.pool, &row.hostname).await?;
+        let new_client_id = match result {
+            db::ResolveResult::ExactMatch(c) => Some(c.id),
+            db::ResolveResult::PatternMatch(c) => Some(c.id),
+            db::ResolveResult::Unmatched => None,
+        };
+
+        if let Some(client_id) = new_client_id {
+            sqlx::query("UPDATE backup_reports SET client_id = $1, matched = true WHERE id = $2")
+                .bind(client_id)
+                .bind(row.report_id)
+                .execute(&state.pool)
+                .await
+                .map_err(ApiError::Database)?;
+            matched_count += 1;
+        }
+    }
+
+    sqlx::query(
+        "DELETE FROM clients WHERE agent_token_hash = 'imported:no-auth' AND NOT EXISTS (SELECT 1 \
+         FROM backup_reports WHERE client_id = clients.id)",
+    )
+    .execute(&state.pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    let remaining_unmatched = u64::try_from(unmatched_rows.len())
+        .unwrap_or(0)
+        .saturating_sub(matched_count);
+
+    Ok(Json(RescanResponse {
+        matched: matched_count,
+        remaining_unmatched,
+    }))
 }

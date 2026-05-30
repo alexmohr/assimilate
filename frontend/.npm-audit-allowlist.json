@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Allowlisted npm audit advisories and deprecated packages. Only humans may add entries here.",
+  "audit": [],
+  "deprecated": []
+}

@@ -53,6 +53,9 @@ async fn build_test_app(pool: PgPool) -> Router {
         pending_restores: std::sync::Arc::new(tokio::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),
+        pending_migrations: std::sync::Arc::new(tokio::sync::Mutex::new(
+            std::collections::HashMap::new(),
+        )),
     };
 
     Router::new()

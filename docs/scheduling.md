@@ -82,13 +82,15 @@ Manual runs follow the same retention policy and exclude patterns as scheduled r
 
 ## Backup Notifications
 
-Assimilate does not send email or push notifications directly. Monitor backup outcomes through:
+Assimilate sends notifications when backups succeed, fail, or produce warnings. Supported channels include **Email** (SMTP), **Webhooks**, and **Browser Push** (Web Push / VAPID).
+
+Configure channels and rules under **Notifications** in the sidebar. See the [Notifications](notifications.md) page for full setup instructions.
+
+You can also monitor outcomes passively:
 
 - **Dashboard** — the activity feed shows recent backup results across all hosts.
 - **Activity log** — per-host and per-repository views list every run with its result, duration, and archive size.
 - **Schedule status** — the **Last result** column on the Schedules page turns red on failure.
-
-For alerting, poll the REST API (see [API Reference](api-reference.md)) and integrate with your monitoring stack.
 
 ## Pruning
 

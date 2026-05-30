@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, onMounted, watch, computed, onBeforeUnmount } from 'vue'
 import { Line } from 'vue-chartjs'
 import {
   Chart as ChartJS,
@@ -51,6 +51,27 @@ interface RepoOption {
 const props = defineProps<{
   repos: RepoOption[]
 }>()
+
+function cssVar(name: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+}
+
+const themeGeneration = ref(0)
+let themeObserver: MutationObserver | null = null
+
+onMounted(() => {
+  themeObserver = new MutationObserver(() => {
+    themeGeneration.value++
+  })
+  themeObserver.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['class'],
+  })
+})
+
+onBeforeUnmount(() => {
+  themeObserver?.disconnect()
+})
 
 const selectedRepoId = ref<number | undefined>(undefined)
 const selectedDays = ref<number>(30)
@@ -115,44 +136,51 @@ const chartData = computed(
   },
 )
 
-const chartOptions = computed(() => ({
-  responsive: true,
-  maintainAspectRatio: false,
-  interaction: {
-    intersect: false,
-    mode: 'index' as const,
-  },
-  plugins: {
-    legend: {
-      position: 'bottom' as const,
-      labels: {
-        color: 'var(--text-secondary)',
-        usePointStyle: true,
-        pointStyle: 'circle' as const,
-      },
+const chartOptions = computed(() => {
+  void themeGeneration.value
+  const textSecondary = cssVar('--text-secondary')
+  const textMuted = cssVar('--text-muted')
+  const border = cssVar('--border')
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {
+      intersect: false,
+      mode: 'index' as const,
     },
-    tooltip: {
-      callbacks: {
-        label: (context: TooltipItem<'line'>): string => {
-          return `${context.dataset.label ?? ''}: ${formatBytes(context.parsed.y ?? 0)}`
+    plugins: {
+      legend: {
+        position: 'bottom' as const,
+        labels: {
+          color: textSecondary,
+          usePointStyle: true,
+          pointStyle: 'circle' as const,
+        },
+      },
+      tooltip: {
+        callbacks: {
+          label: (context: TooltipItem<'line'>): string => {
+            return `${context.dataset.label ?? ''}: ${formatBytes(context.parsed.y ?? 0)}`
+          },
         },
       },
     },
-  },
-  scales: {
-    x: {
-      grid: { display: false },
-      ticks: { color: 'var(--text-muted)' },
-    },
-    y: {
-      grid: { color: 'var(--border)' },
-      ticks: {
-        color: 'var(--text-muted)',
-        callback: (value: string | number): string => formatBytes(Number(value)),
+    scales: {
+      x: {
+        grid: { display: false },
+        ticks: { color: textMuted, font: { size: 10 } },
+      },
+      y: {
+        grid: { color: border },
+        ticks: {
+          color: textMuted,
+          font: { size: 10 },
+          callback: (value: string | number): string => formatBytes(Number(value)),
+        },
       },
     },
-  },
-}))
+  }
+})
 
 const dedupRatioData = computed(
   (): {
@@ -182,36 +210,49 @@ const dedupRatioData = computed(
   },
 )
 
-const dedupOptions = computed(() => ({
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: { display: false },
-    tooltip: {
-      callbacks: {
-        label: (context: TooltipItem<'line'>): string => `${(context.parsed.y ?? 0).toFixed(1)}%`,
+const dedupOptions = computed(() => {
+  void themeGeneration.value
+  const textMuted = cssVar('--text-muted')
+  const border = cssVar('--border')
+  const values = trends.value.map((t) => t.dedup_ratio)
+  const dataMin = values.length > 0 ? Math.min(...values) : 0
+  const dataMax = values.length > 0 ? Math.max(...values) : 100
+  const padding = Math.max((dataMax - dataMin) * 0.1, 1)
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          label: (context: TooltipItem<'line'>): string => `${(context.parsed.y ?? 0).toFixed(1)}%`,
+        },
       },
     },
-  },
-  scales: {
-    x: {
-      grid: { display: false },
-      ticks: { color: 'var(--text-muted)' },
+    scales: {
+      x: {
+        grid: { display: false },
+        ticks: { color: textMuted, font: { size: 10 } },
+      },
+      y: {
+        grid: { color: border },
+        ticks: {
+          color: textMuted,
+          font: { size: 10 },
+          callback: (value: string | number): string => `${Number(value).toFixed(0)}%`,
+        },
+        min: Math.max(0, Math.floor(dataMin - padding)),
+        max: Math.min(100, Math.ceil(dataMax + padding)),
+      },
     },
-    y: {
-      grid: { color: 'var(--border)' },
-      ticks: { color: 'var(--text-muted)' },
-      min: 0,
-      max: 100,
-    },
-  },
-}))
+  }
+})
 </script>
 
 <template>
   <section class="panel">
     <div class="panel-header">
-      <h2 class="panel-title">Backup Size Trends</h2>
+      <h2 class="panel-title">Backup Size Trends (Deduplicated)</h2>
       <div class="trends-controls">
         <select
           v-model="selectedRepoId"
@@ -227,6 +268,13 @@ const dedupOptions = computed(() => ({
           </option>
         </select>
         <div class="view-toggle">
+          <button
+            class="toggle-btn"
+            :class="{ active: selectedDays === 14 }"
+            @click="selectedDays = 14"
+          >
+            14d
+          </button>
           <button
             class="toggle-btn"
             :class="{ active: selectedDays === 30 }"

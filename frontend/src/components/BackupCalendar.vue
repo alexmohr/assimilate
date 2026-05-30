@@ -5,6 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { apiClient } from '../api/client'
 import { logger } from '../utils/logger'
 
@@ -13,6 +14,11 @@ interface CalendarEvent {
   status: string
   repo_name: string
   time: string
+  report_id?: number
+  repo_id?: number
+  schedule_id?: number
+  archive_name?: string
+  error_message?: string
 }
 
 interface CalendarDay {
@@ -135,6 +141,31 @@ function eventColor(status: string): string {
   if (status === 'failed') return 'var(--danger)'
   return 'var(--info)'
 }
+
+const router = useRouter()
+const errorPopup = ref<{ repo_name: string; time: string; message: string } | null>(null)
+
+function onEventClick(evt: CalendarEvent): void {
+  if (evt.status === 'success' && evt.repo_id) {
+    const query: Record<string, string> = { tab: 'archives' }
+    if (evt.archive_name) {
+      query.archive = evt.archive_name
+    }
+    router.push({ name: 'repo-detail', params: { id: String(evt.repo_id) }, query })
+  } else if (evt.status === 'failed') {
+    errorPopup.value = {
+      repo_name: evt.repo_name,
+      time: evt.time,
+      message: evt.error_message ?? 'No error details available.',
+    }
+  } else if (evt.status === 'scheduled' && evt.schedule_id) {
+    router.push(`/schedules/${evt.schedule_id}`)
+  }
+}
+
+function closeErrorPopup(): void {
+  errorPopup.value = null
+}
 </script>
 
 <template>
@@ -235,6 +266,13 @@ function eventColor(status: string): string {
           v-for="(evt, i) in selectedDay.events"
           :key="i"
           class="cal-event"
+          :class="{
+            'cal-event-clickable':
+              evt.status === 'success' ||
+              (evt.status === 'failed' && evt.error_message) ||
+              evt.status === 'scheduled',
+          }"
+          @click="onEventClick(evt)"
         >
           <span
             class="cal-event-dot"
@@ -251,6 +289,28 @@ function eventColor(status: string): string {
         </div>
       </div>
     </template>
+    <div
+      v-if="errorPopup"
+      class="cal-error-overlay"
+      @click="closeErrorPopup"
+    >
+      <div
+        class="cal-error-popup"
+        @click.stop
+      >
+        <div class="cal-error-header">
+          <span class="cal-error-title">Backup Failed</span>
+          <button
+            class="cal-error-close"
+            @click="closeErrorPopup"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="cal-error-meta">{{ errorPopup.repo_name }} at {{ errorPopup.time }}</div>
+        <pre class="cal-error-msg">{{ errorPopup.message }}</pre>
+      </div>
+    </div>
   </section>
 </template>
 
@@ -432,17 +492,17 @@ function eventColor(status: string): string {
 }
 
 .cal-badge-success {
-  background: oklch(0.9 0.1 145);
+  background: var(--success-subtle);
   color: var(--success);
 }
 
 .cal-badge-failed {
-  background: oklch(0.9 0.1 25);
+  background: var(--danger-subtle);
   color: var(--danger);
 }
 
 .cal-badge-scheduled {
-  background: oklch(0.9 0.1 240);
+  background: var(--info-subtle);
   color: var(--info);
 }
 
@@ -450,5 +510,78 @@ function eventColor(status: string): string {
   color: var(--text-muted);
   font-size: 0.875rem;
   padding: 1rem 0;
+}
+
+.cal-event-clickable {
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  padding-left: 0.3rem;
+  padding-right: 0.3rem;
+}
+
+.cal-event-clickable:hover {
+  background: var(--bg-hover);
+}
+
+.cal-error-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.cal-error-popup {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  max-width: 32rem;
+  width: 90%;
+  max-height: 60vh;
+  overflow: auto;
+}
+
+.cal-error-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.cal-error-title {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--danger);
+}
+
+.cal-error-close {
+  background: transparent;
+  border: none;
+  font-size: 1.25rem;
+  cursor: pointer;
+  color: var(--text-muted);
+  line-height: 1;
+}
+
+.cal-error-meta {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+}
+
+.cal-error-msg {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--text-primary);
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

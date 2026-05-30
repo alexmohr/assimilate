@@ -50,18 +50,18 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
     <!-- Hero -->
     <section class="hero">
       <div class="container hero-inner">
-        <div class="hero-badge">Open Source · Self-hosted · Apache 2.0</div>
-        <h1 class="hero-title">
+        <div class="hero-badge hero-animate">Open Source · Self-hosted · Apache 2.0</div>
+        <h1 class="hero-title hero-animate">
           Borg backup,<br>
           <span class="accent">centrally managed</span>
         </h1>
-        <p class="hero-sub">
+        <p class="hero-sub hero-animate">
           Assimilate is a self-hosted orchestration layer for
           <a href="https://borgbackup.readthedocs.io" target="_blank" rel="noopener">BorgBackup</a>.
           Run the lightweight agent on each machine, manage everything from one dashboard —
           schedules, repositories, real-time status, and per-agent token auth.
         </p>
-        <div class="hero-actions">
+        <div class="hero-actions hero-animate">
           <a href="#quickstart" class="btn btn-primary">Get started</a>
           <a href="https://github.com/alexmohr/assimilate" target="_blank" rel="noopener" class="btn btn-outline">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -70,7 +70,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
             View on GitHub
           </a>
         </div>
-        <div class="hero-screenshot">
+        <div class="hero-screenshot hero-animate">
           <img src="dashboard.png" alt="Assimilate dashboard showing host status, backup health, and repository overview" class="hero-img" width="1280" height="800" loading="eager">
         </div>
       </div>
@@ -81,8 +81,8 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
       <div class="container">
         <div class="section-label">Features</div>
         <h2 class="section-title">Everything you need, nothing you don't</h2>
-        <div class="features-grid">
-          <div class="feature-card">
+        <div class="features-grid reveal-stagger">
+          <div class="feature-card reveal">
             <div class="feature-icon">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
                 <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>
@@ -91,7 +91,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
             <h3>Per-agent token auth</h3>
             <p>Each backup agent authenticates with its own cryptographically random token. Revoke or regenerate at any time from the dashboard without touching the server.</p>
           </div>
-          <div class="feature-card">
+          <div class="feature-card reveal">
             <div class="feature-icon">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
                 <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>
@@ -100,7 +100,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
             <h3>Central dashboard</h3>
             <p>One place to see every machine, every repository, and every backup — with health indicators, storage stats, and a live activity feed.</p>
           </div>
-          <div class="feature-card">
+          <div class="feature-card reveal">
             <div class="feature-icon">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
                 <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
@@ -109,7 +109,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
             <h3>Flexible schedules</h3>
             <p>Configure hourly, daily, or weekly backup windows per repository. The agent picks up schedule changes live over WebSocket — no restart required.</p>
           </div>
-          <div class="feature-card">
+          <div class="feature-card reveal">
             <div class="feature-icon">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
                 <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
@@ -118,7 +118,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
             <h3>Real-time status</h3>
             <p>Agents stream backup start/completion events over WebSocket. The dashboard updates live — no polling, no page refresh.</p>
           </div>
-          <div class="feature-card">
+          <div class="feature-card reveal">
             <div class="feature-icon">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
                 <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
@@ -127,7 +127,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
             <h3>Encrypted at rest</h3>
             <p>Repository passphrases are stored AES-256-GCM encrypted. The server derives the key from your secret and never logs or transmits passphrases in plaintext.</p>
           </div>
-          <div class="feature-card">
+          <div class="feature-card reveal">
             <div class="feature-icon">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
                 <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.13 9.81a19.79 19.79 0 01-3.07-8.67A2 2 0 012.17 1h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L6.04 8.9a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0122 16.92z"/>
@@ -136,7 +136,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
             <h3>SSH agent forwarding</h3>
             <p>Tunnel the server's SSH agent socket to borg over WebSocket. Agents authenticate to borg repositories using keys held on the server — no key distribution needed.</p>
           </div>
-          <div class="feature-card">
+          <div class="feature-card reveal">
             <div class="feature-icon">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
                 <path d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2v-4M9 21H5a2 2 0 01-2-2v-4m0 0h18"/>
@@ -145,7 +145,16 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
             <h3>SSH Reverse Tunnels</h3>
             <p>Manage persistent SSH reverse tunnels to NAT-blocked agents. The server connects out via SSH and forwards a local port — agents behind firewalls connect back through <code>localhost</code>.</p>
           </div>
-          <div class="feature-card">
+          <div class="feature-card reveal">
+            <div class="feature-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+              </svg>
+            </div>
+            <h3>Notifications</h3>
+            <p>Get alerted on backup success, failure, or warnings via Email (SMTP with STARTTLS/SSL), Webhooks (Slack, Discord, ntfy, Gotify), or browser Web Push notifications — no third-party services required.</p>
+          </div>
+          <div class="feature-card reveal">
             <div class="feature-icon">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
                 <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>
@@ -163,7 +172,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
       <div class="container">
         <div class="section-label">Architecture</div>
         <h2 class="section-title">Two binaries, one system</h2>
-        <div class="arch-diagram">
+        <div class="arch-diagram reveal">
           <div class="arch-box server">
             <div class="arch-box-label">Server</div>
             <div class="arch-box-inner">
@@ -201,29 +210,29 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
             </div>
           </div>
         </div>
-        <div class="steps">
-          <div class="step">
+        <div class="steps reveal-stagger">
+          <div class="step reveal">
             <div class="step-num">1</div>
             <div class="step-content">
               <h4>Register a host</h4>
               <p>Create a machine record in the dashboard. A one-time agent token is generated and shown — store it in the agent's environment.</p>
             </div>
           </div>
-          <div class="step">
+          <div class="step reveal">
             <div class="step-num">2</div>
             <div class="step-content">
               <h4>Run the agent</h4>
               <p>Start <code>assimilate-agent</code> with <code>BORG_SERVER_URL</code> and <code>BORG_AGENT_TOKEN</code>. It connects, authenticates, and pulls its config.</p>
             </div>
           </div>
-          <div class="step">
+          <div class="step reveal">
             <div class="step-num">3</div>
             <div class="step-content">
               <h4>Configure from the dashboard</h4>
               <p>Add repositories, set schedules, manage exclusion rules. All changes are pushed to the agent in real time over the persistent WebSocket connection.</p>
             </div>
           </div>
-          <div class="step">
+          <div class="step reveal">
             <div class="step-num">4</div>
             <div class="step-content">
               <h4>Monitor and browse archives</h4>
@@ -240,21 +249,21 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
         <div class="section-label">Comparison</div>
         <h2 class="section-title">Why Assimilate?</h2>
         <p class="section-sub">There are other tools in the borg ecosystem. Here is how they differ.</p>
-        <div class="vs-grid">
-          <div class="vs-card">
+        <div class="vs-grid reveal-stagger">
+          <div class="vs-card reveal">
             <h3 class="vs-title">vs. BorgUI</h3>
             <p>BorgUI is a self-hosted web UI for running borg backups with scheduling, archive browsing, and remote machine support. It relies on SSHFS/FUSE mounts for remote operations. Assimilate takes a different approach — a lightweight agent runs directly on each machine and orchestrates borg locally against the remote repository over SSH, with no filesystem mounts needed. Real-time WebSocket push and SSH agent forwarding complete the picture.</p>
           </div>
-          <div class="vs-card">
+          <div class="vs-card reveal">
             <h3 class="vs-title">vs. Borgmatic</h3>
             <p>Borgmatic is a powerful CLI wrapper with deep integrations (databases, filesystem snapshots, 11+ monitoring services). It runs per-host with no central coordination. Assimilate adds a management plane — one dashboard to orchestrate agents, push config changes, and monitor all machines in real time.</p>
           </div>
-          <div class="vs-card">
+          <div class="vs-card reveal">
             <h3 class="vs-title">vs. Borg Backup Server</h3>
             <p>BBS is a PHP-based agent system with file-level restore catalog search and S3 offsite sync. Assimilate is a Rust/Vue.js stack with WebSocket push (no polling), built-in SSH agent forwarding, and a lighter agent footprint — no Python runtime required on endpoints.</p>
           </div>
         </div>
-        <div class="vs-table-wrap">
+        <div class="vs-table-wrap reveal">
           <table class="vs-table">
             <thead>
               <tr>
@@ -278,7 +287,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
               <tr><td>Pre/post backup hooks</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
               <tr><td>Database dump integration</td><td class="yes">✓ <small>(via hooks)</small></td><td class="yes">✓ <small>(via hooks)</small></td><td class="yes">✓</td><td class="yes">✓</td></tr>
               <tr><td>Encrypted passphrase storage</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">✗</td><td class="no">✗</td></tr>
-              <tr><td>Notifications</td><td class="no">✗</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+              <tr><td>Notifications</td><td class="yes">✓ <small>(Email, Webhook, Web Push)</small></td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
               <tr><td>Static binary agent (no interpreter)</td><td class="yes">✓</td><td class="na">—</td><td class="no">✗</td><td class="na">—</td></tr>
               <tr><td>No FUSE/SSHFS mounts required</td><td class="yes">✓</td><td class="no">✗</td><td class="yes">✓</td><td class="yes">✓</td></tr>
               <tr><td>Self-hosted, no cloud</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
@@ -385,7 +394,7 @@ export ASSIMILATE_SECRET_KEY=your-secret-key
 
     <!-- CTA -->
     <section class="cta-section">
-      <div class="container cta-inner">
+      <div class="container cta-inner reveal">
         <h2>Own your backups</h2>
         <p>Assimilate is free, open-source, and runs entirely on your infrastructure. No cloud dependency, no telemetry.</p>
         <div class="cta-actions">

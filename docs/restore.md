@@ -47,7 +47,7 @@ Agent-side restore extracts files directly on the agent machine — no data pass
 | **Sub-path** | Optional path prefix inside the archive to limit what is extracted (e.g. `/home/user/documents`) |
 | **Strip components** | Number of leading path components to strip from extracted paths |
 
-5. Click **Start Restore**. The server sends a `RestoreArchive` message to the connected agent.
+1. Click **Start Restore**. The server sends a `RestoreArchive` message to the connected agent.
 
 <!-- screenshot: restore-agent-side -->
 

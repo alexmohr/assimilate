@@ -17,6 +17,7 @@ import {
   Legend,
   Filler,
 } from 'chart.js'
+import type { TooltipItem } from 'chart.js'
 import { apiClient } from '../api/client'
 import { formatBytes } from '../utils/format'
 import { logger } from '../utils/logger'
@@ -132,8 +133,8 @@ const chartOptions = computed(() => ({
     },
     tooltip: {
       callbacks: {
-        label: (context: { dataset: { label: string }; parsed: { y: number } }): string => {
-          return `${context.dataset.label}: ${formatBytes(context.parsed.y)}`
+        label: (context: TooltipItem<'line'>): string => {
+          return `${context.dataset.label ?? ''}: ${formatBytes(context.parsed.y ?? 0)}`
         },
       },
     },
@@ -188,7 +189,7 @@ const dedupOptions = computed(() => ({
     legend: { display: false },
     tooltip: {
       callbacks: {
-        label: (context: { parsed: { y: number } }): string => `${context.parsed.y.toFixed(1)}%`,
+        label: (context: TooltipItem<'line'>): string => `${(context.parsed.y ?? 0).toFixed(1)}%`,
       },
     },
   },

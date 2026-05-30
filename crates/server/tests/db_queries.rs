@@ -1861,11 +1861,26 @@ async fn test_quota_evaluate_warning(pool: PgPool) {
         .await
         .unwrap();
 
-    assert_eq!(db::quota::evaluate_quota(&quota, 50), db::quota::QuotaStatus::Ok);
-    assert_eq!(db::quota::evaluate_quota(&quota, 100), db::quota::QuotaStatus::Warning);
-    assert_eq!(db::quota::evaluate_quota(&quota, 300), db::quota::QuotaStatus::Warning);
-    assert_eq!(db::quota::evaluate_quota(&quota, 500), db::quota::QuotaStatus::Critical);
-    assert_eq!(db::quota::evaluate_quota(&quota, 999), db::quota::QuotaStatus::Critical);
+    assert_eq!(
+        db::quota::evaluate_quota(&quota, 50),
+        db::quota::QuotaStatus::Ok
+    );
+    assert_eq!(
+        db::quota::evaluate_quota(&quota, 100),
+        db::quota::QuotaStatus::Warning
+    );
+    assert_eq!(
+        db::quota::evaluate_quota(&quota, 300),
+        db::quota::QuotaStatus::Warning
+    );
+    assert_eq!(
+        db::quota::evaluate_quota(&quota, 500),
+        db::quota::QuotaStatus::Critical
+    );
+    assert_eq!(
+        db::quota::evaluate_quota(&quota, 999),
+        db::quota::QuotaStatus::Critical
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]

@@ -21,8 +21,7 @@ jobs:
           components: rustfmt, clippy
       - name: Check formatting
         run: >
-          cargo +nightly fmt -- --config error_on_unformatted=true,error_on_line_overflow=true,format_strings=true,group_imports=StdExternalCrate,imports_granularity=Crate
-
+          cargo +nightly fmt -- --config error_on_unformatted=true,error_on_line_overflow=true,format_strings=true,group_imports=StdExternalCrate,imports_granularity=Crate #magic___^_^___line
       - name: Clippy
         run: cargo +nightly clippy --workspace -- -D warnings
       - name: Tests
@@ -204,7 +203,7 @@ jobs:
     name: Nightly Docker Publish
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [rust, frontend, docker]
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
@@ -213,8 +212,20 @@ jobs:
         include:
           - image: assimilate
             dockerfile: Dockerfile.server
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - image: assimilate
+            dockerfile: Dockerfile.server
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
           - image: assimilate-agent
             dockerfile: Dockerfile.agent
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - image: assimilate-agent
+            dockerfile: Dockerfile.agent
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
     steps:
       - uses: actions/checkout@v4
       - name: Set up Docker Buildx
@@ -231,8 +242,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           tags: |
-            type=raw,value=nightly
-            type=sha
+            type=raw,value=nightly,suffix=-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+            type=sha,suffix=-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -241,6 +252,38 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.platform }}
+          platforms: ${{ matrix.platform }}
+
+  docker-manifest:
+    name: Docker Multi-Arch Manifest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        image: [assimilate, assimilate-agent]
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create and push manifest (nightly)
+        run: |
+          docker manifest create ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:nightly \
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:nightly-amd64 \
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:nightly-arm64
+          docker manifest push ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:nightly
+      - name: Create and push manifest (sha)
+        run: |
+          SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          docker manifest create ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:sha-${SHA} \
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:sha-${SHA}-amd64 \
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:sha-${SHA}-arm64
+          docker manifest push ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:sha-${SHA}

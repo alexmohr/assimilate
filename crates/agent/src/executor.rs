@@ -886,9 +886,7 @@ async fn run_dry_run_task(
         exclude_file.path().to_string_lossy().into_owned(),
         archive_spec,
     ];
-    for source in &backup_sources {
-        args.push(source.clone());
-    }
+    args.extend(backup_sources.iter().cloned());
 
     info!(repo_id = ?repo_id, "running borg create --dry-run");
 

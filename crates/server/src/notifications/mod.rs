@@ -1,0 +1,275 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+pub mod email;
+pub mod web_push;
+pub mod webhook;
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use sqlx::{FromRow, PgPool};
+
+#[derive(Debug, thiserror::Error)]
+pub enum NotificationError {
+    #[error("smtp error: {0}")]
+    Smtp(#[from] lettre::transport::smtp::Error),
+    #[error("http error: {0}")]
+    Http(#[from] reqwest::Error),
+    #[error("web push error: {0}")]
+    WebPush(#[from] ::web_push::WebPushError),
+    #[error("database error: {0}")]
+    Database(#[from] sqlx::Error),
+    #[error("configuration error: {0}")]
+    Config(String),
+    #[error("serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EventType {
+    BackupSuccess,
+    BackupWarning,
+    BackupFailed,
+    CheckSuccess,
+    CheckFailed,
+    AgentConnected,
+    AgentDisconnected,
+}
+
+impl EventType {
+    fn as_db_str(self) -> &'static str {
+        match self {
+            Self::BackupSuccess => "backup_success",
+            Self::BackupWarning => "backup_warning",
+            Self::BackupFailed => "backup_failed",
+            Self::CheckSuccess => "check_success",
+            Self::CheckFailed => "check_failed",
+            Self::AgentConnected => "agent_connected",
+            Self::AgentDisconnected => "agent_disconnected",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationEvent {
+    pub event_type: EventType,
+    pub hostname: String,
+    pub repo_name: String,
+    pub status: String,
+    pub error_message: Option<String>,
+    pub timestamp: DateTime<Utc>,
+    pub repo_id: Option<i64>,
+    pub client_id: Option<i64>,
+    pub schedule_id: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NotificationService {
+    pool: PgPool,
+    http_client: reqwest::Client,
+}
+
+impl NotificationService {
+    #[must_use]
+    pub fn new(pool: PgPool, http_client: reqwest::Client) -> Self {
+        Self { pool, http_client }
+    }
+
+    pub async fn ensure_vapid_keys(&self) -> Result<(), NotificationError> {
+        let existing = crate::db::get_setting(&self.pool, "vapid_private_key")
+            .await
+            .map_err(|e| NotificationError::Config(format!("DB error: {e}")))?;
+
+        if existing.is_some() {
+            return Ok(());
+        }
+
+        if std::env::var("VAPID_PRIVATE_KEY").is_ok() {
+            return Ok(());
+        }
+
+        tracing::info!("generating VAPID key pair for web push notifications");
+
+        use base64::Engine;
+        use p256::ecdsa::SigningKey;
+
+        let signing_key = SigningKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
+        let verifying_key = signing_key.verifying_key();
+
+        let private_bytes = signing_key.to_bytes();
+        let public_bytes = verifying_key.to_encoded_point(false);
+
+        let encoder = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let private_b64 = encoder.encode(private_bytes);
+        let public_b64 = encoder.encode(public_bytes.as_bytes());
+
+        crate::db::set_setting(&self.pool, "vapid_private_key", &private_b64)
+            .await
+            .map_err(|e| NotificationError::Config(format!("DB error saving private key: {e}")))?;
+        crate::db::set_setting(&self.pool, "vapid_public_key", &public_b64)
+            .await
+            .map_err(|e| NotificationError::Config(format!("DB error saving public key: {e}")))?;
+
+        tracing::info!("VAPID keys generated and stored in database");
+        Ok(())
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct MatchedChannel {
+    id: i64,
+    channel_type: String,
+    config: serde_json::Value,
+}
+
+#[derive(Debug, FromRow)]
+struct PushSubscriptionRow {
+    endpoint: String,
+    p256dh: String,
+    auth: String,
+}
+
+pub async fn dispatch(
+    service: &NotificationService,
+    event: NotificationEvent,
+) -> Result<(), NotificationError> {
+    let channels: Vec<MatchedChannel> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT nc.id, nc.channel_type, nc.config
+        FROM notification_channels nc
+        INNER JOIN notification_rules nr ON nr.channel_id = nc.id
+        WHERE nr.event_type = $1
+          AND nr.enabled = true
+          AND nc.enabled = true
+           AND (nc.scope = '{}' OR nc.scope IS NULL
+               OR (($2::bigint IS NULL
+                    OR NOT nc.scope ? 'repo_ids'
+                    OR nc.scope->'repo_ids' = '[]'::jsonb
+                    OR nc.scope->'repo_ids' @> to_jsonb($2::bigint))
+               AND ($3::bigint IS NULL
+                    OR NOT nc.scope ? 'client_ids'
+                    OR nc.scope->'client_ids' = '[]'::jsonb
+                    OR nc.scope->'client_ids' @> to_jsonb($3::bigint))
+               AND ($4::bigint IS NULL
+                    OR NOT nc.scope ? 'schedule_ids'
+                    OR nc.scope->'schedule_ids' = '[]'::jsonb
+                    OR nc.scope->'schedule_ids' @> to_jsonb($4::bigint))))
+        "#,
+    )
+    .bind(event.event_type.as_db_str())
+    .bind(event.repo_id)
+    .bind(event.client_id)
+    .bind(event.schedule_id)
+    .fetch_all(&service.pool)
+    .await?;
+
+    let payload = serde_json::to_value(&event)?;
+
+    for channel in channels {
+        let pool = service.pool.clone();
+        let http_client = service.http_client.clone();
+        let payload = payload.clone();
+        let channel_config = channel.config.clone();
+        let channel_id = channel.id;
+        let event_type_str = event.event_type.as_db_str().to_owned();
+
+        tokio::spawn(async move {
+            let result = deliver(
+                &channel.channel_type,
+                &channel_config,
+                &payload,
+                &http_client,
+                &pool,
+            )
+            .await;
+
+            let (status, error_message) = match &result {
+                Ok(()) => ("delivered".to_owned(), None),
+                Err(e) => {
+                    tracing::error!(channel_id, error = %e, "notification delivery failed");
+                    ("failed".to_owned(), Some(e.to_string()))
+                }
+            };
+
+            if let Err(e) = sqlx::query(
+                r#"
+                INSERT INTO notification_deliveries
+                    (channel_id, event_type, payload, status,
+                     error_message, attempted_at)
+                VALUES ($1, $2, $3, $4, $5, NOW())
+                "#,
+            )
+            .bind(channel_id)
+            .bind(&event_type_str)
+            .bind(&payload)
+            .bind(&status)
+            .bind(&error_message)
+            .execute(&pool)
+            .await
+            {
+                tracing::error!(channel_id, error = %e, "failed to record delivery attempt");
+            }
+        });
+    }
+
+    Ok(())
+}
+
+async fn deliver(
+    channel_type: &str,
+    config: &serde_json::Value,
+    payload: &serde_json::Value,
+    http_client: &reqwest::Client,
+    pool: &PgPool,
+) -> Result<(), NotificationError> {
+    match channel_type {
+        "email" => {
+            let cfg: email::EmailConfig = serde_json::from_value(config.clone())?;
+            email::send(&cfg, payload).await
+        }
+        "webhook" => {
+            let cfg: webhook::WebhookConfig = serde_json::from_value(config.clone())?;
+            webhook::send(http_client, &cfg, payload).await
+        }
+        "web_push" => {
+            #[derive(Deserialize)]
+            struct WebPushChannelConfig {
+                user_id: i64,
+            }
+            let cfg: WebPushChannelConfig = serde_json::from_value(config.clone())?;
+            let vapid_private_key = crate::db::get_setting(pool, "vapid_private_key")
+                .await
+                .map_err(|e| NotificationError::Config(format!("DB error reading VAPID key: {e}")))?
+                .or_else(|| std::env::var("VAPID_PRIVATE_KEY").ok())
+                .ok_or_else(|| {
+                    NotificationError::Config("VAPID private key not configured".to_owned())
+                })?;
+
+            let subscriptions: Vec<PushSubscriptionRow> = sqlx::query_as(
+                "SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1",
+            )
+            .bind(cfg.user_id)
+            .fetch_all(pool)
+            .await?;
+
+            for sub in &subscriptions {
+                if let Err(e) = web_push::send(
+                    &vapid_private_key,
+                    sub.endpoint.clone(),
+                    sub.p256dh.clone(),
+                    sub.auth.clone(),
+                    payload,
+                )
+                .await
+                {
+                    tracing::error!(endpoint = %sub.endpoint, error = %e, "web push delivery failed");
+                }
+            }
+            Ok(())
+        }
+        other => Err(NotificationError::Config(format!(
+            "unknown channel type: {other}"
+        ))),
+    }
+}

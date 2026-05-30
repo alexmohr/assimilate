@@ -14,6 +14,7 @@ use server::{
     AppState, api,
     log_buffer::{LogBuffer, LogBufferLayer},
     middleware::csp_headers,
+    notifications::NotificationService,
     openapi::ApiDoc,
     rate_limit::{RateLimiter, rate_limit_middleware},
     tunnel::TunnelManager,
@@ -81,6 +82,11 @@ async fn main() -> Result<(), StartupError> {
     let ui_broadcast = server::ws::ui_broadcast::UiBroadcast::new();
     let tunnel_manager = TunnelManager::new(pool.clone(), ui_broadcast.clone(), server_addr);
 
+    let notification_service = NotificationService::new(pool.clone(), reqwest::Client::new());
+    if let Err(e) = notification_service.ensure_vapid_keys().await {
+        tracing::warn!("failed to ensure VAPID keys: {e}");
+    }
+
     let state = AppState {
         pool,
         encryption_key,
@@ -88,6 +94,7 @@ async fn main() -> Result<(), StartupError> {
         ui_broadcast,
         tunnel_manager: tunnel_manager.clone(),
         log_buffer,
+        notification_service,
     };
 
     tokio::spawn(server::scheduler::run(
@@ -326,6 +333,46 @@ async fn main() -> Result<(), StartupError> {
         .route(
             "/api/tunnels/{id}/disable",
             post(api::tunnels::disable_tunnel),
+        )
+        .route(
+            "/api/notifications/channels",
+            get(api::notifications::list_channels).post(api::notifications::create_channel),
+        )
+        .route(
+            "/api/notifications/channels/{id}",
+            put(api::notifications::update_channel).delete(api::notifications::delete_channel),
+        )
+        .route(
+            "/api/notifications/channels/{id}/test",
+            post(api::notifications::test_channel),
+        )
+        .route(
+            "/api/notifications/rules",
+            get(api::notifications::list_rules).post(api::notifications::create_rule),
+        )
+        .route(
+            "/api/notifications/rules/{id}",
+            delete(api::notifications::delete_rule),
+        )
+        .route(
+            "/api/notifications/push/vapid-key",
+            get(api::notifications::get_vapid_key).put(api::notifications::set_vapid_keys),
+        )
+        .route(
+            "/api/notifications/push/subscribe",
+            post(api::notifications::subscribe_push),
+        )
+        .route(
+            "/api/notifications/push/unsubscribe",
+            post(api::notifications::unsubscribe_push),
+        )
+        .route(
+            "/api/notifications/push/subscriptions",
+            get(api::notifications::list_push_subscriptions),
+        )
+        .route(
+            "/api/notifications/deliveries",
+            get(api::notifications::list_deliveries),
         )
         .route(
             "/api/openapi.json",

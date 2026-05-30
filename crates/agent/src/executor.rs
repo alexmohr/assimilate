@@ -596,6 +596,7 @@ async fn run_backup_task(
                 error_message: result.error_message,
                 warnings: result.warnings,
                 borg_version: None,
+                archive_name: None,
             };
             let msg = AgentToServer::BackupCompleted { report };
             if let Err(e) = outbound_tx.send(msg).await {
@@ -635,6 +636,7 @@ async fn run_backup_task(
                 error_message: Some(e.to_string()),
                 warnings: Vec::new(),
                 borg_version: None,
+                archive_name: None,
             };
             let msg = AgentToServer::BackupCompleted { report };
             if let Err(e) = outbound_tx.send(msg).await {

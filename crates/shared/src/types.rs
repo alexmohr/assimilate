@@ -251,6 +251,8 @@ pub struct BackupReport {
     #[serde(default)]
     pub warnings: Vec<String>,
     pub borg_version: Option<String>,
+    #[serde(default)]
+    pub archive_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -267,6 +267,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 warnings: report.warnings,
                 borg_version: report.borg_version,
                 matched: true,
+                archive_name: report.archive_name,
             };
             if let Err(e) = db::insert_backup_report(&state.pool, &params).await {
                 tracing::error!(hostname = %hostname, error = %e, "failed to persist backup report");

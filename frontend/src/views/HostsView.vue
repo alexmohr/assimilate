@@ -813,7 +813,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
               </button>
               <button
                 class="btn btn-primary"
-                :disabled="addLoading"
+                :disabled="addLoading || !addForm.hostname.trim()"
                 @click="submitAdd"
               >
                 {{ addLoading ? 'Creating...' : 'Create' }}

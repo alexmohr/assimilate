@@ -3,6 +3,7 @@
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
+use base64::Engine;
 use russh::{
     client,
     keys::{PrivateKey, PublicKey, key::PrivateKeyWithHashAlg},
@@ -10,7 +11,6 @@ use russh::{
 use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
-use base64::Engine;
 use tracing::{info, warn};
 
 #[derive(Debug, thiserror::Error)]
@@ -881,7 +881,9 @@ mod tests {
 
     #[test]
     fn build_write_unit_cmd_handles_custom_content_with_special_chars() {
-        let custom = "[Unit]\nDescription=Test's \"special\" $VARS & more\n\n[Service]\nExecStart=/bin/true\n\n[Install]\nWantedBy=multi-user.target\n";
+        let custom = "[Unit]\nDescription=Test's \"special\" $VARS & \
+                      more\n\n[Service]\nExecStart=/bin/true\n\n[Install]\nWantedBy=multi-user.\
+                      target\n";
         let tmp = std::env::temp_dir().join("assimilate-test-unit-special.service");
         let cmd = build_write_unit_cmd(custom, tmp.to_str().unwrap());
 

@@ -561,7 +561,7 @@ The borg repository server (typically accessed via `ssh://user@host/path`) must 
 
 ## Documentation
 
-Every user-facing feature or behavioral change must be accompanied by documentation. If the feature maps to an existing page, update that page. If it introduces a new concept, create a new page and add it to `nav:` in `mkdocs.yml`.
+Every user-facing feature or behavioral change must be accompanied by documentation **and** a corresponding update to the demo environment (`.devcontainer/demo/seed-demo.sh`) so the new scenario is included and screenshots can be captured. If the feature maps to an existing page, update that page. If it introduces a new concept or changes the visual appearance of a page, create a new page and add it to `nav:` in `mkdocs.yml`.
 
 ### MkDocs Setup
 
@@ -624,11 +624,7 @@ docker compose -f .devcontainer/demo/docker-compose.demo.yml up --build
 
 Open `http://localhost:8080` — login: `admin` / `admin`.
 
-To tear down and reset all demo data (volumes), pass `--clear`:
-
-```bash
-.devcontainer/start.sh --demo --clear
-```
+The demo always tears down existing containers and volumes before starting, ensuring a clean state.
 
 ### What it sets up
 

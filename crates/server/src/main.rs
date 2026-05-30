@@ -58,11 +58,7 @@ async fn main() -> Result<(), StartupError> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(20);
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(max_connections)
-        .acquire_timeout(Duration::from_secs(10))
-        .connect(&database_url)
-        .await?;
+    let pool = connect_with_retry(&database_url, max_connections).await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
 
     bootstrap_admin(&pool).await?;
@@ -476,6 +472,37 @@ async fn main() -> Result<(), StartupError> {
 
     tunnel_manager.shutdown().await;
     Ok(())
+}
+
+async fn connect_with_retry(url: &str, max_connections: u32) -> Result<PgPool, StartupError> {
+    let max_retries = 30;
+    let retry_interval = Duration::from_secs(2);
+
+    for attempt in 1..=max_retries {
+        match sqlx::postgres::PgPoolOptions::new()
+            .max_connections(max_connections)
+            .acquire_timeout(Duration::from_secs(10))
+            .connect(url)
+            .await
+        {
+            Ok(pool) => {
+                if attempt > 1 {
+                    tracing::info!("database connection established after {attempt} attempts");
+                }
+                return Ok(pool);
+            }
+            Err(e) if attempt < max_retries => {
+                tracing::warn!(
+                    "database connection attempt {attempt}/{max_retries} failed: {e}, retrying in \
+                     {}s",
+                    retry_interval.as_secs()
+                );
+                tokio::time::sleep(retry_interval).await;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    unreachable!()
 }
 
 async fn shutdown_signal() {

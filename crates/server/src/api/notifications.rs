@@ -14,14 +14,14 @@ use super::auth::{AuthUser, RequireAdmin};
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
-    notifications::{EventType, NotificationEvent, dispatch},
+    notifications::{ChannelType, EventType, NotificationEvent, dispatch},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct NotificationChannel {
     pub id: i64,
     pub name: String,
-    pub channel_type: String,
+    pub channel_type: ChannelType,
     pub config: serde_json::Value,
     pub enabled: bool,
     pub scope: serde_json::Value,
@@ -32,7 +32,7 @@ pub struct NotificationChannel {
 #[derive(Debug, Deserialize)]
 pub struct CreateChannelRequest {
     pub name: String,
-    pub channel_type: String,
+    pub channel_type: ChannelType,
     pub config: serde_json::Value,
     pub enabled: Option<bool>,
     pub scope: Option<serde_json::Value>,
@@ -41,7 +41,7 @@ pub struct CreateChannelRequest {
 #[derive(Debug, Deserialize)]
 pub struct UpdateChannelRequest {
     pub name: Option<String>,
-    pub channel_type: Option<String>,
+    pub channel_type: Option<ChannelType>,
     pub config: Option<serde_json::Value>,
     pub enabled: Option<bool>,
     pub scope: Option<serde_json::Value>,
@@ -122,41 +122,22 @@ pub struct DeliveryQuery {
     pub limit: Option<i64>,
 }
 
-const VALID_CHANNEL_TYPES: &[&str] = &["email", "webhook", "web_push"];
-
-const VALID_EVENT_TYPES: &[&str] = &[
-    "backup_success",
-    "backup_warning",
-    "backup_failed",
-    "check_success",
-    "check_failed",
-    "agent_connected",
-    "agent_disconnected",
-];
-
-fn validate_channel_type(t: &str) -> Result<(), ApiError> {
-    if VALID_CHANNEL_TYPES.contains(&t) {
-        Ok(())
-    } else {
-        Err(ApiError::BadRequest(format!(
-            "channel_type must be one of: {VALID_CHANNEL_TYPES:?}"
-        )))
-    }
-}
-
-fn validate_channel_config(channel_type: &str, config: &serde_json::Value) -> Result<(), ApiError> {
+fn validate_channel_config(
+    channel_type: ChannelType,
+    config: &serde_json::Value,
+) -> Result<(), ApiError> {
     match channel_type {
-        "email" => {
+        ChannelType::Email => {
             serde_json::from_value::<crate::notifications::email::EmailConfig>(config.clone())
                 .map_err(|e| ApiError::BadRequest(format!("invalid email channel config: {e}")))?;
         }
-        "webhook" => {
+        ChannelType::Webhook => {
             serde_json::from_value::<crate::notifications::webhook::WebhookConfig>(config.clone())
                 .map_err(|e| {
                     ApiError::BadRequest(format!("invalid webhook channel config: {e}"))
                 })?;
         }
-        "web_push" => {
+        ChannelType::WebPush => {
             let obj = config.as_object().ok_or_else(|| {
                 ApiError::BadRequest("web_push config must be an object".to_owned())
             })?;
@@ -166,19 +147,20 @@ fn validate_channel_config(channel_type: &str, config: &serde_json::Value) -> Re
                     ApiError::BadRequest("web_push config requires user_id".to_owned())
                 })?;
         }
-        _ => {}
     }
     Ok(())
 }
 
 fn validate_event_type(t: &str) -> Result<(), ApiError> {
-    if VALID_EVENT_TYPES.contains(&t) {
-        Ok(())
-    } else {
-        Err(ApiError::BadRequest(format!(
-            "event_type must be one of: {VALID_EVENT_TYPES:?}"
-        )))
-    }
+    EventType::from_db_str(t).map_or_else(
+        || {
+            Err(ApiError::BadRequest(format!(
+                "event_type must be one of: {:?}",
+                EventType::ALL_DB_STRS
+            )))
+        },
+        |_| Ok(()),
+    )
 }
 
 pub async fn list_channels(
@@ -199,12 +181,11 @@ pub async fn create_channel(
     admin: RequireAdmin,
     ApiJson(req): ApiJson<CreateChannelRequest>,
 ) -> Result<(StatusCode, Json<NotificationChannel>), ApiError> {
-    validate_channel_type(&req.channel_type)?;
     if req.name.trim().is_empty() {
         return Err(ApiError::BadRequest("name must not be empty".to_owned()));
     }
 
-    let config = if req.channel_type == "web_push" {
+    let config = if req.channel_type == ChannelType::WebPush {
         let mut cfg = req.config.clone();
         cfg.as_object_mut()
             .map(|o| o.insert("user_id".to_owned(), serde_json::json!(admin.0.user_id)));
@@ -212,7 +193,7 @@ pub async fn create_channel(
     } else {
         req.config.clone()
     };
-    validate_channel_config(&req.channel_type, &config)?;
+    validate_channel_config(req.channel_type, &config)?;
 
     let enabled = req.enabled.unwrap_or(true);
     let scope = req.scope.unwrap_or(serde_json::json!({}));
@@ -226,7 +207,7 @@ pub async fn create_channel(
         "#,
     )
     .bind(&req.name)
-    .bind(&req.channel_type)
+    .bind(req.channel_type)
     .bind(&config)
     .bind(enabled)
     .bind(&scope)
@@ -242,9 +223,6 @@ pub async fn update_channel(
     Path(id): Path<i64>,
     ApiJson(req): ApiJson<UpdateChannelRequest>,
 ) -> Result<Json<NotificationChannel>, ApiError> {
-    if let Some(ref ct) = req.channel_type {
-        validate_channel_type(ct)?;
-    }
     if let Some(ref name) = req.name
         && name.trim().is_empty()
     {
@@ -253,7 +231,7 @@ pub async fn update_channel(
 
     if req.channel_type.is_some() || req.config.is_some() {
         let (effective_type, effective_config) = match (&req.channel_type, &req.config) {
-            (Some(ct), Some(cfg)) => (ct.clone(), cfg.clone()),
+            (Some(ct), Some(cfg)) => (*ct, cfg.clone()),
             _ => {
                 let existing: NotificationChannel = sqlx::query_as(
                     "SELECT id, name, channel_type, config, enabled, scope, created_at, \
@@ -264,12 +242,12 @@ pub async fn update_channel(
                 .await?
                 .ok_or_else(|| ApiError::NotFound(format!("channel {id} not found")))?;
                 (
-                    req.channel_type.clone().unwrap_or(existing.channel_type),
+                    req.channel_type.unwrap_or(existing.channel_type),
                     req.config.clone().unwrap_or(existing.config),
                 )
             }
         };
-        validate_channel_config(&effective_type, &effective_config)?;
+        validate_channel_config(effective_type, &effective_config)?;
     }
 
     let channel: NotificationChannel = sqlx::query_as(
@@ -286,7 +264,7 @@ pub async fn update_channel(
         "#,
     )
     .bind(&req.name)
-    .bind(&req.channel_type)
+    .bind(req.channel_type)
     .bind(&req.config)
     .bind(req.enabled)
     .bind(&req.scope)

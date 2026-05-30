@@ -143,11 +143,12 @@ pub async fn create_schedule(
             )));
         }
     }
-    let schedule_type = schedule_type_to_str(req.schedule_type.unwrap_or_default());
+    let schedule_type_enum = req.schedule_type.unwrap_or_default();
+    let schedule_type = schedule_type_to_str(schedule_type_enum);
 
     let has_backup_sources = req.backup_sources.as_ref().is_some_and(|v| !v.is_empty());
 
-    if !has_backup_sources && schedule_type == "backup" {
+    if !has_backup_sources && schedule_type_enum == ScheduleType::Backup {
         let client = db::get_client_by_id(&state.pool, req.client_id).await?;
         if client.default_backup_paths.is_empty() {
             return Err(ApiError::BadRequest(
@@ -497,17 +498,21 @@ pub async fn run_schedule_now(
 
     let hostname = db::get_client_hostname_for_schedule(&state.pool, id).await?;
     let repo_id = RepoId(schedule.repo_id);
+    let schedule_type = schedule
+        .schedule_type
+        .parse::<ScheduleType>()
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
-    let msg = match schedule.schedule_type.as_str() {
-        "check" => ServerToAgent::RunCheckNow {
+    let msg = match schedule_type {
+        ScheduleType::Check => ServerToAgent::RunCheckNow {
             repo_id,
             request_id: None,
         },
-        "verify" => ServerToAgent::RunVerifyNow {
+        ScheduleType::Verify => ServerToAgent::RunVerifyNow {
             repo_id,
             request_id: None,
         },
-        _ => ServerToAgent::RunBackupNow {
+        ScheduleType::Backup => ServerToAgent::RunBackupNow {
             repo_id,
             request_id: None,
         },

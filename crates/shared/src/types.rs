@@ -57,6 +57,19 @@ impl From<i64> for ReportId {
     }
 }
 
+impl FromStr for ScheduleType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "backup" => Ok(ScheduleType::Backup),
+            "check" => Ok(ScheduleType::Check),
+            "verify" => Ok(ScheduleType::Verify),
+            other => Err(format!("unknown schedule type: {other}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value")]
 pub enum Compression {

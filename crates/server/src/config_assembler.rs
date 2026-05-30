@@ -99,7 +99,7 @@ pub async fn assemble_config(
 
         let schedule_config = ScheduleConfig {
             id: schedule.id,
-            schedule_type: schedule_type_from_str(&schedule.schedule_type),
+            schedule_type: schedule_type_from_str(&schedule.schedule_type)?,
             cron_expression: schedule.cron_expression,
             enabled: schedule.enabled,
             backup_sources,
@@ -192,10 +192,7 @@ pub async fn push_config_to_agent(state: &AppState, hostname: &str) {
     }
 }
 
-fn schedule_type_from_str(s: &str) -> ScheduleType {
-    match s {
-        "check" => ScheduleType::Check,
-        "verify" => ScheduleType::Verify,
-        _ => ScheduleType::Backup,
-    }
+fn schedule_type_from_str(s: &str) -> Result<ScheduleType, ApiError> {
+    s.parse()
+        .map_err(|e| ApiError::Internal(format!("invalid schedule type in database: {e}")))
 }

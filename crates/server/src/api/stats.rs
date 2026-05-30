@@ -136,9 +136,18 @@ pub async fn storage(
     Ok(Json(rows))
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum StorageGroupBy {
+    #[default]
+    Repo,
+    Host,
+    Server,
+}
+
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct StorageBreakdownQuery {
-    pub group_by: Option<String>,
+    pub group_by: Option<StorageGroupBy>,
 }
 
 #[utoipa::path(
@@ -159,11 +168,11 @@ pub async fn storage_breakdown(
     _auth: AuthUser,
     Query(query): Query<StorageBreakdownQuery>,
 ) -> Result<Json<Vec<StorageRepoEntry>>, ApiError> {
-    let group_by = query.group_by.as_deref().unwrap_or("repo");
+    let group_by = query.group_by.unwrap_or_default();
     let breakdown = match group_by {
-        "host" => db::get_storage_breakdown_by_host(&state.pool).await?,
-        "server" => db::get_storage_breakdown_by_server(&state.pool).await?,
-        _ => db::get_storage_breakdown(&state.pool).await?,
+        StorageGroupBy::Host => db::get_storage_breakdown_by_host(&state.pool).await?,
+        StorageGroupBy::Server => db::get_storage_breakdown_by_server(&state.pool).await?,
+        StorageGroupBy::Repo => db::get_storage_breakdown(&state.pool).await?,
     };
 
     let total: i64 = breakdown.iter().map(|b| b.deduplicated_size).sum();
@@ -360,11 +369,53 @@ pub struct CalendarQuery {
     pub repo_id: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum CalendarEventType {
+    Backup,
+    Check,
+    Verify,
+}
+
+impl TryFrom<&str> for CalendarEventType {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "backup" => Ok(Self::Backup),
+            "check" => Ok(Self::Check),
+            "verify" => Ok(Self::Verify),
+            other => Err(format!("unknown calendar event type: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum CalendarEventStatus {
+    Success,
+    Failed,
+    Scheduled,
+}
+
+impl TryFrom<&str> for CalendarEventStatus {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "success" => Ok(Self::Success),
+            "failed" => Ok(Self::Failed),
+            "scheduled" => Ok(Self::Scheduled),
+            other => Err(format!("unknown calendar event status: {other}")),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CalendarEvent {
     #[serde(rename = "type")]
-    pub event_type: String,
-    pub status: String,
+    pub event_type: CalendarEventType,
+    pub status: CalendarEventStatus,
     pub repo_name: String,
     pub time: String,
 }
@@ -427,12 +478,18 @@ pub async fn calendar(
         std::collections::BTreeMap::new();
 
     for row in rows {
+        let Ok(event_type) = CalendarEventType::try_from(row.event_type.as_str()) else {
+            continue;
+        };
+        let Ok(status) = CalendarEventStatus::try_from(row.status.as_str()) else {
+            continue;
+        };
         day_map
             .entry(row.date.to_string())
             .or_default()
             .push(CalendarEvent {
-                event_type: row.event_type,
-                status: row.status,
+                event_type,
+                status,
                 repo_name: row.repo_name,
                 time: row.time,
             });
@@ -467,8 +524,8 @@ pub async fn calendar(
                     .entry(next_date.to_string())
                     .or_default()
                     .push(CalendarEvent {
-                        event_type: "backup".to_string(),
-                        status: "scheduled".to_string(),
+                        event_type: CalendarEventType::Backup,
+                        status: CalendarEventStatus::Scheduled,
                         repo_name: repo_name.clone(),
                         time: time_str,
                     });

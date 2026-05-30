@@ -4,7 +4,11 @@
 use std::time::Duration;
 
 use chrono::Utc;
-use shared::{protocol::ServerToAgent, schedule::calculate_next_run, types::RepoId};
+use shared::{
+    protocol::ServerToAgent,
+    schedule::calculate_next_run,
+    types::{RepoId, ScheduleType},
+};
 use sqlx::PgPool;
 
 use crate::{db, ws::registry::AgentRegistry};
@@ -84,25 +88,34 @@ async fn tick(pool: &PgPool, registry: &AgentRegistry) -> Result<(), crate::erro
     for schedule in due {
         let repo_id = RepoId(schedule.repo_id);
 
-        let msg = match schedule.schedule_type.as_str() {
-            "check" => ServerToAgent::RunCheckNow {
+        let Ok(schedule_type) = schedule.schedule_type.parse::<ScheduleType>() else {
+            tracing::error!(
+                schedule_id = schedule.schedule_id,
+                schedule_type = %schedule.schedule_type,
+                "invalid schedule type in database, skipping"
+            );
+            continue;
+        };
+
+        let msg = match schedule_type {
+            ScheduleType::Check => ServerToAgent::RunCheckNow {
                 repo_id,
                 request_id: None,
             },
-            "verify" => ServerToAgent::RunVerifyNow {
+            ScheduleType::Verify => ServerToAgent::RunVerifyNow {
                 repo_id,
                 request_id: None,
             },
-            _ => ServerToAgent::RunBackupNow {
+            ScheduleType::Backup => ServerToAgent::RunBackupNow {
                 repo_id,
                 request_id: None,
             },
         };
 
-        let action = match schedule.schedule_type.as_str() {
-            "check" => "check",
-            "verify" => "verify",
-            _ => "backup",
+        let action = match schedule_type {
+            ScheduleType::Check => "check",
+            ScheduleType::Verify => "verify",
+            ScheduleType::Backup => "backup",
         };
 
         match registry.send_to(&schedule.hostname, msg).await {

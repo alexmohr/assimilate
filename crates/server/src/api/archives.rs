@@ -141,6 +141,8 @@ pub struct ArchiveEntry {
     pub start: String,
     pub hostname: String,
     pub comment: String,
+    pub original_size: i64,
+    pub deduplicated_size: i64,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -201,8 +203,10 @@ pub async fn list_archives(
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
 
     let output = Command::new(borg_binary())
-        .arg("list")
+        .arg("info")
         .arg("--json")
+        .arg("--glob-archives")
+        .arg("*")
         .arg("--lock-wait")
         .arg(LOCK_WAIT_SECS)
         .arg(&borg_repo)
@@ -226,11 +230,16 @@ pub async fn list_archives(
         .as_array()
         .map_or_else(Vec::new, |arr| {
             arr.iter()
-                .map(|a| ArchiveEntry {
-                    name: a["name"].as_str().unwrap_or("").to_string(),
-                    start: a["start"].as_str().unwrap_or("").to_string(),
-                    hostname: a["hostname"].as_str().unwrap_or("").to_string(),
-                    comment: a["comment"].as_str().unwrap_or("").to_string(),
+                .map(|a| {
+                    let stats = &a["stats"];
+                    ArchiveEntry {
+                        name: a["name"].as_str().unwrap_or("").to_string(),
+                        start: a["start"].as_str().unwrap_or("").to_string(),
+                        hostname: a["hostname"].as_str().unwrap_or("").to_string(),
+                        comment: a["comment"].as_str().unwrap_or("").to_string(),
+                        original_size: stats["original_size"].as_i64().unwrap_or(0),
+                        deduplicated_size: stats["deduplicated_size"].as_i64().unwrap_or(0),
+                    }
                 })
                 .collect()
         });

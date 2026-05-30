@@ -7,12 +7,16 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 ## Interactive API Explorer
 
-The server ships with a built-in interactive API explorer powered by [Scalar](https://scalar.com/).
+The server ships with two built-in interactive API explorers and a downloadable OpenAPI specification:
 
-- **UI**: `http://<server>/api/docs`
-- **OpenAPI spec**: `http://<server>/api/openapi.json` (download for use with Postman, Insomnia, etc.)
+- **Scalar UI**: `http://<server>/api/docs` — modern, clean API explorer powered by [Scalar](https://scalar.com/)
+- **Swagger UI**: `http://<server>/api/swagger-ui/` — classic [Swagger UI](https://swagger.io/tools/swagger-ui/) with "Try it out" functionality
+- **OpenAPI spec**: `http://<server>/api/openapi.json` — download for use with Postman, Insomnia, code generators, etc.
 
-The explorer lets you authenticate, browse all endpoints, inspect request/response schemas, and execute requests directly from the browser.
+Both UIs let you authenticate, browse all endpoints, inspect request/response schemas, and execute requests directly from the browser. Use whichever you prefer:
+
+- **Scalar** offers a polished, modern interface with excellent search and navigation.
+- **Swagger UI** provides the industry-standard "Try it out" experience and is familiar to most API developers.
 
 ## Authentication
 

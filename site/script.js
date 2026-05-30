@@ -21,25 +21,45 @@
   applyTheme(initial)
 
   document.addEventListener('DOMContentLoaded', function () {
-    const btn = document.getElementById('themeToggle')
-    if (!btn) return
+    var btn = document.getElementById('themeToggle')
+    if (btn) {
+      btn.addEventListener('click', function () {
+        var isDark = root.classList.toggle('dark')
+        localStorage.setItem(STORAGE_KEY, isDark ? 'dark' : 'light')
+      })
+    }
 
-    btn.addEventListener('click', function () {
-      const isDark = root.classList.toggle('dark')
-      localStorage.setItem(STORAGE_KEY, isDark ? 'dark' : 'light')
-    })
-
-    const tabs = document.querySelectorAll('.qs-tab')
-    const panels = document.querySelectorAll('.qs-panel')
+    var tabs = document.querySelectorAll('.qs-tab')
+    var panels = document.querySelectorAll('.qs-panel')
 
     tabs.forEach(function (tab) {
       tab.addEventListener('click', function () {
-        const target = tab.getAttribute('data-tab')
+        var target = tab.getAttribute('data-tab')
         tabs.forEach(function (t) { t.classList.remove('active') })
         panels.forEach(function (p) { p.classList.remove('active') })
         tab.classList.add('active')
         document.querySelector('[data-panel="' + target + '"]').classList.add('active')
       })
     })
+
+    var prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (!prefersReduced) {
+      var observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('revealed')
+            observer.unobserve(entry.target)
+          }
+        })
+      }, { threshold: 0.15 })
+
+      document.querySelectorAll('.reveal').forEach(function (el) {
+        observer.observe(el)
+      })
+    } else {
+      document.querySelectorAll('.reveal').forEach(function (el) {
+        el.classList.add('revealed')
+      })
+    }
   })
 })()

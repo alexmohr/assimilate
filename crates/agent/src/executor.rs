@@ -40,6 +40,13 @@ pub enum ExecutorCommand {
         schedule_id: i64,
         request_id: String,
     },
+    RestoreFiles {
+        repo_id: RepoId,
+        archive_name: String,
+        paths: Vec<String>,
+        target_path: String,
+        request_id: String,
+    },
 }
 
 pub struct Executor {
@@ -111,6 +118,23 @@ impl Executor {
                 } => {
                     self.handle_dry_run(repo_id, schedule_id, request_id, &outbound_tx)
                         .await;
+                }
+                ExecutorCommand::RestoreFiles {
+                    repo_id,
+                    archive_name,
+                    paths,
+                    target_path,
+                    request_id,
+                } => {
+                    self.handle_restore_files(
+                        repo_id,
+                        archive_name,
+                        paths,
+                        target_path,
+                        request_id,
+                        &outbound_tx,
+                    )
+                    .await;
                 }
             }
         }
@@ -367,8 +391,10 @@ impl Executor {
         let outbound = outbound_tx.clone();
         let server_url = self.server_url.clone();
         let token = self.token.clone();
-        let borg_binary = std::env::var("BORG_BINARY")
-            .map_or_else(|_| std::path::PathBuf::from("borg"), std::path::PathBuf::from);
+        let borg_binary = std::env::var("BORG_BINARY").map_or_else(
+            |_| std::path::PathBuf::from("borg"),
+            std::path::PathBuf::from,
+        );
 
         tokio::spawn(async move {
             run_dry_run_task(
@@ -376,6 +402,71 @@ impl Executor {
                 target,
                 backup_sources,
                 exclude_patterns,
+                &hostname,
+                &server_url,
+                &token,
+                request_id,
+                &borg_binary,
+                &outbound,
+            )
+            .await;
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_restore_files(
+        &self,
+        repo_id: RepoId,
+        archive_name: String,
+        paths: Vec<String>,
+        target_path: String,
+        request_id: String,
+        outbound_tx: &mpsc::Sender<AgentToServer>,
+    ) {
+        let config_guard = self.current_config.lock().await;
+        let Some(config) = config_guard.as_ref() else {
+            warn!(repo_id = ?repo_id, "no config available for restore");
+            let msg = AgentToServer::OperationFailed {
+                request_id,
+                error: "agent has no config yet".to_owned(),
+            };
+            if let Err(e) = outbound_tx.send(msg).await {
+                tracing::debug!(error = %e, "outbound send failed");
+            }
+            return;
+        };
+
+        let Some(repo) = config.repos.iter().find(|r| r.repo_id == repo_id) else {
+            warn!(repo_id = ?repo_id, "repo not found in config for restore");
+            let msg = AgentToServer::OperationFailed {
+                request_id,
+                error: "repo not found in agent config".to_owned(),
+            };
+            if let Err(e) = outbound_tx.send(msg).await {
+                tracing::debug!(error = %e, "outbound send failed");
+            }
+            return;
+        };
+
+        let target = backup_target_from_repo(repo, &config.client_hostname);
+        let hostname = config.client_hostname.clone();
+        drop(config_guard);
+
+        let outbound = outbound_tx.clone();
+        let server_url = self.server_url.clone();
+        let token = self.token.clone();
+        let borg_binary = std::env::var("BORG_BINARY").map_or_else(
+            |_| std::path::PathBuf::from("borg"),
+            std::path::PathBuf::from,
+        );
+
+        tokio::spawn(async move {
+            run_restore_task(
+                repo_id,
+                target,
+                archive_name,
+                paths,
+                target_path,
                 &hostname,
                 &server_url,
                 &token,
@@ -863,6 +954,99 @@ async fn run_dry_run_task(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn run_restore_task(
+    repo_id: RepoId,
+    mut target: BackupTarget,
+    archive_name: String,
+    paths: Vec<String>,
+    target_path: String,
+    hostname: &str,
+    server_url: &str,
+    token: &str,
+    request_id: String,
+    borg_binary: &std::path::Path,
+    outbound_tx: &mpsc::Sender<AgentToServer>,
+) {
+    let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
+
+    let env_vars = build_borg_env(&target);
+
+    let mut args = vec![
+        "extract".to_owned(),
+        format!("::{archive_name}"),
+        "--destination".to_owned(),
+        target_path,
+    ];
+    for path in &paths {
+        args.push(path.clone());
+    }
+
+    info!(repo_id = ?repo_id, archive = %archive_name, "running borg extract");
+
+    let output = match tokio::time::timeout(
+        Duration::from_mins(30),
+        tokio::process::Command::new(borg_binary)
+            .args(&args)
+            .envs(env_vars.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .output(),
+    )
+    .await
+    {
+        Ok(Ok(out)) => out,
+        Ok(Err(e)) => {
+            let msg = AgentToServer::OperationFailed {
+                request_id,
+                error: format!("failed to execute borg: {e}"),
+            };
+            if let Err(send_err) = outbound_tx.send(msg).await {
+                tracing::debug!(error = %send_err, "outbound send failed");
+            }
+            return;
+        }
+        Err(_) => {
+            let msg = AgentToServer::OperationFailed {
+                request_id,
+                error: "borg extract timed out".to_owned(),
+            };
+            if let Err(send_err) = outbound_tx.send(msg).await {
+                tracing::debug!(error = %send_err, "outbound send failed");
+            }
+            return;
+        }
+    };
+
+    let exit_code = output.status.code().unwrap_or(-1);
+    if exit_code != 0 && exit_code != 1 {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        error!(repo_id = ?repo_id, exit_code, stderr = %stderr, "borg extract failed");
+        let msg = AgentToServer::RestoreCompleted {
+            request_id,
+            success: false,
+            files_restored: 0,
+            error_message: Some(format!("borg extract failed (exit {exit_code}): {stderr}")),
+        };
+        if let Err(send_err) = outbound_tx.send(msg).await {
+            tracing::debug!(error = %send_err, "outbound send failed");
+        }
+        return;
+    }
+
+    let files_restored = u64::try_from(paths.len()).unwrap_or(0);
+
+    info!(repo_id = ?repo_id, files_restored, "borg extract completed");
+
+    let msg = AgentToServer::RestoreCompleted {
+        request_id,
+        success: true,
+        files_restored,
+        error_message: None,
+    };
+    if let Err(e) = outbound_tx.send(msg).await {
+        tracing::debug!(error = %e, "outbound send failed");
+    }
+}
+
 fn parse_dry_run_output(stderr: &str) -> (Vec<DryRunFile>, i64) {
     let mut files = Vec::new();
     let mut total_size: i64 = 0;
@@ -874,7 +1058,10 @@ fn parse_dry_run_output(stderr: &str) -> (Vec<DryRunFile>, i64) {
         let Some(path) = value.get("path").and_then(|v| v.as_str()) else {
             continue;
         };
-        let size = value.get("size").and_then(serde_json::Value::as_i64).unwrap_or(0);
+        let size = value
+            .get("size")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0);
         total_size = total_size.saturating_add(size);
         files.push(DryRunFile {
             path: path.to_owned(),

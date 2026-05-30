@@ -17,6 +17,7 @@ import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
+import QuotaPanel from '../components/QuotaPanel.vue'
 
 type TabId = 'overview' | 'archives'
 type CompressionType = 'lz4' | 'zstd' | 'none'
@@ -571,6 +572,12 @@ onMounted(async () => {
             </div>
           </template>
         </div>
+
+        <!-- Tags -->
+        <QuotaPanel
+          :repo-id="repoId"
+          :is-admin="isAdmin"
+        />
 
         <!-- Tags -->
         <div

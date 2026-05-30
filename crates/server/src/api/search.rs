@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
 use super::{
-    archives::{borg_binary, classify_borg_error, get_repo_env, LOCK_WAIT_SECS},
+    archives::{LOCK_WAIT_SECS, borg_binary, classify_borg_error, get_repo_env},
     auth::AuthUser,
     permissions::check_repo_permission,
 };
@@ -255,8 +255,7 @@ pub async fn cross_archive_search(
             break;
         }
 
-        let entries =
-            search_in_archive(&borg_repo, &archive.name, &borg_pattern, &env).await?;
+        let entries = search_in_archive(&borg_repo, &archive.name, &borg_pattern, &env).await?;
 
         for entry in entries {
             seen.entry(entry.path.clone()).or_insert(entry);
@@ -308,16 +307,17 @@ async fn list_archives_sorted(
     let json_output: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|e| ApiError::Internal(format!("failed to parse borg output: {e}")))?;
 
-    let mut archives: Vec<ArchiveEntryBrief> = json_output["archives"]
-        .as_array()
-        .map_or_else(Vec::new, |arr| {
-            arr.iter()
-                .map(|a| ArchiveEntryBrief {
-                    name: a["name"].as_str().unwrap_or("").to_string(),
-                    start: a["start"].as_str().unwrap_or("").to_string(),
-                })
-                .collect()
-        });
+    let mut archives: Vec<ArchiveEntryBrief> =
+        json_output["archives"]
+            .as_array()
+            .map_or_else(Vec::new, |arr| {
+                arr.iter()
+                    .map(|a| ArchiveEntryBrief {
+                        name: a["name"].as_str().unwrap_or("").to_string(),
+                        start: a["start"].as_str().unwrap_or("").to_string(),
+                    })
+                    .collect()
+            });
 
     // Sort by start time descending (most recent first)
     archives.sort_by(|a, b| b.start.cmp(&a.start));

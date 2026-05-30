@@ -64,6 +64,8 @@ const mainNav = [
   { to: '/activity', label: 'Activity', icon: 'activity' },
 ]
 
+const adminNav = [{ to: '/audit-log', label: 'Audit Log', icon: 'activity' }]
+
 interface NavItem {
   to: string
   label: string
@@ -173,6 +175,23 @@ onMounted(loadTimezone)
           />
           <span class="nav-label">{{ item.label }}</span>
         </RouterLink>
+
+        <template v-if="isAdmin">
+          <RouterLink
+            v-for="item in adminNav"
+            :key="item.to"
+            :to="item.to"
+            class="nav-link"
+            :title="uiStore.sidebarCollapsed ? item.label : undefined"
+          >
+            <component
+              :is="iconMap[item.icon]"
+              class="nav-icon"
+              :size="16"
+            />
+            <span class="nav-label">{{ item.label }}</span>
+          </RouterLink>
+        </template>
 
         <div class="nav-group">
           <button

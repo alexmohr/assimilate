@@ -11,6 +11,8 @@ import { useWebSocket } from '../composables/useWebSocket'
 import { formatBytes, relativeTime } from '../utils/format'
 import { logger } from '../utils/logger'
 import BaseSkeleton from '../components/BaseSkeleton.vue'
+import TrendsChart from '../components/TrendsChart.vue'
+import BackupCalendar from '../components/BackupCalendar.vue'
 
 interface StorageRepoEntry {
   name: string
@@ -65,9 +67,15 @@ interface AgentPayload {
   hostname: string
 }
 
+interface RepoOption {
+  id: number
+  name: string
+}
+
 const summary = ref<DashboardSummary | null>(null)
 const health = ref<HealthEntry[]>([])
 const activity = ref<ActivityEntry[]>([])
+const repoOptions = ref<RepoOption[]>([])
 const loading = ref(true)
 
 const router = useRouter()
@@ -102,14 +110,16 @@ async function fetchStorageBreakdown(): Promise<void> {
 
 async function fetchAll(): Promise<void> {
   try {
-    const [s, h, a] = await Promise.all([
+    const [s, h, a, r] = await Promise.all([
       apiClient.get<DashboardSummary>('/stats/summary'),
       apiClient.get<HealthEntry[]>('/stats/health'),
       apiClient.get<ActivityEntry[]>('/stats/activity?days=14'),
+      apiClient.get<RepoOption[]>('/repos'),
     ])
     summary.value = s.data
     health.value = h.data
     activity.value = a.data
+    repoOptions.value = r.data.map((repo) => ({ id: repo.id, name: repo.name }))
     storageBreakdown.value = s.data.storage_by_repo
   } finally {
     loading.value = false
@@ -664,6 +674,12 @@ function healthStatusColor(entry: HealthEntry): string {
           </svg>
         </div>
       </section>
+
+      <!-- Section 6: Trends Chart -->
+      <TrendsChart :repos="repoOptions" />
+
+      <!-- Section 7: Backup Calendar -->
+      <BackupCalendar :repos="repoOptions" />
     </template>
   </div>
 </template>

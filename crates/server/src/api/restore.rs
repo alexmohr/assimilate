@@ -4,11 +4,11 @@
 use std::{process::Stdio, time::Duration};
 
 use axum::{
+    Json,
     body::Body,
     extract::{Path as AxumPath, State},
     http::header,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde::{Deserialize, Serialize};
 use shared::{protocol::ServerToAgent, types::RepoId};
@@ -133,10 +133,7 @@ pub async fn download_files(
         });
 
         let stream = ReaderStream::new(lz4_stdout);
-        (
-            Body::from_stream(stream),
-            format!("{archive_name}.tar.lz4"),
-        )
+        (Body::from_stream(stream), format!("{archive_name}.tar.lz4"))
     } else {
         tokio::spawn(async move {
             let _r = borg.wait().await;
@@ -170,10 +167,7 @@ pub async fn download_files(
 
     Ok((
         [
-            (
-                header::CONTENT_TYPE,
-                "application/octet-stream".to_string(),
-            ),
+            (header::CONTENT_TYPE, "application/octet-stream".to_string()),
             (header::CONTENT_DISPOSITION, disposition),
         ],
         body_stream,
@@ -235,9 +229,7 @@ pub async fn restore_files(
     }
 
     if !state.registry.is_connected(&body.hostname).await {
-        return Err(ApiError::ServiceUnavailable(
-            "agent is offline".to_owned(),
-        ));
+        return Err(ApiError::ServiceUnavailable("agent is offline".to_owned()));
     }
 
     let request_id = Uuid::new_v4().to_string();
@@ -259,9 +251,7 @@ pub async fn restore_files(
 
     if state.registry.send_to(&body.hostname, msg).await.is_err() {
         state.pending_restores.lock().await.remove(&request_id);
-        return Err(ApiError::ServiceUnavailable(
-            "agent is offline".to_owned(),
-        ));
+        return Err(ApiError::ServiceUnavailable("agent is offline".to_owned()));
     }
 
     if let Err(e) = db::audit::insert_audit_entry(
@@ -287,13 +277,11 @@ pub async fn restore_files(
     }
 
     match tokio::time::timeout(Duration::from_secs(30), rx).await {
-        Ok(Ok((success, files_restored, error_message))) => {
-            Ok(Json(RestoreFilesResponse {
-                success,
-                files_restored,
-                error_message,
-            }))
-        }
+        Ok(Ok((success, files_restored, error_message))) => Ok(Json(RestoreFilesResponse {
+            success,
+            files_restored,
+            error_message,
+        })),
         Ok(Err(_)) => Err(ApiError::Internal(
             "restore response channel closed unexpectedly".to_owned(),
         )),

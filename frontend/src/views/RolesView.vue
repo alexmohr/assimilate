@@ -412,7 +412,7 @@ onMounted(fetchRoles)
             <button
               type="submit"
               class="btn btn-primary"
-              :disabled="createSubmitting"
+              :disabled="createSubmitting || !createForm.name.trim()"
             >
               {{ createSubmitting ? 'Creating...' : 'Create' }}
             </button>

@@ -15,6 +15,30 @@ pub struct RepoId(pub i64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ReportId(pub i64);
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct OperationId(pub String);
+
+impl From<String> for OperationId {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchEntry {
+    pub path: String,
+    pub size: i64,
+    pub mtime: DateTime<Utc>,
+    pub entry_type: String,
+    pub archive_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DryRunFile {
+    pub path: String,
+    pub size: i64,
+}
+
 impl From<i64> for ClientId {
     fn from(value: i64) -> Self {
         Self(value)

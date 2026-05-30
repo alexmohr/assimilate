@@ -253,6 +253,8 @@ pub struct ScheduleConfig {
     #[serde(default)]
     pub backup_sources: Vec<String>,
     #[serde(default)]
+    pub rate_limit_kbps: Option<u32>,
+    #[serde(default)]
     pub canary_enabled: bool,
     #[serde(default)]
     pub exclude_patterns: Vec<String>,

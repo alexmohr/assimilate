@@ -210,6 +210,10 @@ async fn main() -> Result<(), StartupError> {
                 .delete(api::schedules::delete_schedule),
         )
         .route(
+            "/api/schedules/{id}/clone",
+            post(api::schedules::clone_schedule),
+        )
+        .route(
             "/api/schedules/{id}/run",
             post(api::schedules::run_schedule_now),
         )
@@ -217,6 +221,7 @@ async fn main() -> Result<(), StartupError> {
             "/api/clients/{hostname}/reports",
             get(api::reports::list_reports),
         )
+        .route("/api/audit-log", get(api::audit::list_audit_log))
         .route(
             "/api/system/ssh-public-key",
             get(api::system::ssh_public_key),
@@ -260,6 +265,14 @@ async fn main() -> Result<(), StartupError> {
             get(api::archives::extract_file),
         )
         .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/tags",
+            get(api::tags::list_archive_tags).post(api::tags::add_archive_tag),
+        )
+        .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/tags/{tag}",
+            delete(api::tags::remove_archive_tag),
+        )
+        .route(
             "/api/tokens",
             get(api::tokens::list_tokens).post(api::tokens::create_token),
         )
@@ -271,6 +284,10 @@ async fn main() -> Result<(), StartupError> {
         .route(
             "/api/repos/{repo_id}/permissions/{user_id}",
             put(api::permissions::upsert),
+        )
+        .route(
+            "/api/repos/{id}/quota",
+            get(api::quota::get_quota).put(api::quota::upsert_quota),
         )
         .route(
             "/api/users/{id}/permissions",

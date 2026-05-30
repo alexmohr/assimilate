@@ -271,6 +271,52 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 tracing::error!(hostname = %hostname, error = %e, "failed to persist backup report");
             }
 
+            if let Ok(Some(quota)) = db::quota::get_quota(&state.pool, report.repo_id.0).await {
+                let quota_status = db::quota::evaluate_quota(&quota, report.deduplicated_size);
+                if !matches!(quota_status, db::quota::QuotaStatus::Ok) {
+                    let quota_label = match quota_status {
+                        db::quota::QuotaStatus::Ok => "ok",
+                        db::quota::QuotaStatus::Warning => "warning",
+                        db::quota::QuotaStatus::Critical => "critical",
+                    };
+                    tracing::warn!(
+                        hostname = %hostname,
+                        repo_id = ?report.repo_id,
+                        deduplicated_size = report.deduplicated_size,
+                        quota_status = quota_label,
+                        "repository quota exceeded"
+                    );
+
+                    let event_type = match quota_status {
+                        db::quota::QuotaStatus::Ok => EventType::BackupSuccess,
+                        db::quota::QuotaStatus::Warning => EventType::BackupWarning,
+                        db::quota::QuotaStatus::Critical => EventType::BackupFailed,
+                    };
+                    let message = format!(
+                        "Repository quota {quota_label} for repo {}: deduplicated size {} bytes \
+                         exceeds configured limits",
+                        report.repo_id.0, report.deduplicated_size,
+                    );
+                    let quota_event = NotificationEvent {
+                        event_type,
+                        hostname: hostname.to_owned(),
+                        repo_name: report.repo_id.0.to_string(),
+                        status: quota_label.to_owned(),
+                        error_message: Some(message),
+                        timestamp: chrono::Utc::now(),
+                        repo_id: Some(report.repo_id.0),
+                        client_id: Some(client_id),
+                        schedule_id: None,
+                    };
+                    let service = state.notification_service.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = notifications::dispatch(&service, quota_event).await {
+                            tracing::error!(error = %e, "notification dispatch failed");
+                        }
+                    });
+                }
+            }
+
             let event_type = match report.status {
                 shared::types::BackupStatus::Success => EventType::BackupSuccess,
                 shared::types::BackupStatus::Warning => EventType::BackupWarning,
@@ -468,6 +514,17 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 error_message = ?error_message,
                 "init repo completed"
             );
+        }
+        AgentToServer::SearchResult { .. }
+        | AgentToServer::RestoreCompleted { .. }
+        | AgentToServer::DryRunResult { .. }
+        | AgentToServer::ExportReady { .. }
+        | AgentToServer::KeyExportResult { .. }
+        | AgentToServer::KeyImportResult { .. }
+        | AgentToServer::PassphraseChanged { .. }
+        | AgentToServer::OperationProgress { .. }
+        | AgentToServer::OperationFailed { .. } => {
+            tracing::warn!(hostname = %hostname, "unexpected agent response");
         }
     }
 }

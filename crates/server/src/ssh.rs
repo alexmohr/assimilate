@@ -9,6 +9,7 @@ use russh::{
 };
 use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
 use tracing::{info, warn};
 
 #[derive(Debug, thiserror::Error)]
@@ -369,7 +370,10 @@ async fn deploy_key_sftp(
         format!("{}\n{public_key}\n", existing.trim_end())
     };
 
-    sftp.write(".ssh/authorized_keys", new_content.as_bytes())
+    sftp.create(".ssh/authorized_keys")
+        .await
+        .map_err(|e| SshError::Sftp(format!("failed to write authorized_keys: {e}")))?
+        .write_all(new_content.as_bytes())
         .await
         .map_err(|e| SshError::Sftp(format!("failed to write authorized_keys: {e}")))?;
 
@@ -670,7 +674,10 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
         params.remote_path.to_string()
     };
 
-    sftp.write(upload_path.clone(), &binary_data)
+    sftp.create(upload_path.clone())
+        .await
+        .map_err(|e| SshError::Sftp(format!("failed to upload agent binary: {e}")))?
+        .write_all(&binary_data)
         .await
         .map_err(|e| SshError::Sftp(format!("failed to upload agent binary: {e}")))?;
 
@@ -740,4 +747,74 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
 
     info!(host = %params.host, "agent deployed and service started");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_escape_plain_string() {
+        assert_eq!(shell_escape("hello"), "'hello'");
+    }
+
+    #[test]
+    fn shell_escape_string_with_spaces() {
+        assert_eq!(shell_escape("hello world"), "'hello world'");
+    }
+
+    #[test]
+    fn shell_escape_string_with_single_quote() {
+        assert_eq!(shell_escape("it's"), "'it'\\''s'");
+    }
+
+    #[test]
+    fn shell_escape_empty_string() {
+        assert_eq!(shell_escape(""), "''");
+    }
+
+    #[test]
+    fn inject_env_vars_replaces_placeholders() {
+        let content = concat!(
+            "[Service]\n",
+            "BORG_SERVER_URL=<will be set automatically>\n",
+            "BORG_AGENT_TOKEN=<will be set automatically>\n",
+        );
+        let result = inject_env_vars(content, "https://example.com", "mytoken");
+        assert!(result.contains("BORG_SERVER_URL=https://example.com"));
+        assert!(result.contains("BORG_AGENT_TOKEN=mytoken"));
+    }
+
+    #[test]
+    fn inject_env_vars_injects_missing_vars() {
+        let content = "[Service]\nExecStart=/usr/local/bin/agent\n";
+        let result = inject_env_vars(content, "https://example.com", "mytoken");
+        assert!(result.contains("Environment=BORG_SERVER_URL=https://example.com"));
+        assert!(result.contains("Environment=BORG_AGENT_TOKEN=mytoken"));
+    }
+
+    #[test]
+    fn inject_env_vars_leaves_existing_vars_intact() {
+        let content = concat!(
+            "[Service]\n",
+            "Environment=BORG_SERVER_URL=https://other.com\n",
+            "Environment=BORG_AGENT_TOKEN=othertoken\n",
+        );
+        let result = inject_env_vars(content, "https://example.com", "mytoken");
+        assert!(result.contains("BORG_SERVER_URL=https://other.com"));
+        assert!(result.contains("BORG_AGENT_TOKEN=othertoken"));
+        assert!(!result.contains("https://example.com"));
+        assert!(!result.contains("mytoken"));
+    }
+
+    #[test]
+    fn default_unit_content_contains_exec_and_env() {
+        let content = default_unit_content("/usr/local/bin/agent", "https://example.com", "tok");
+        assert!(content.contains("ExecStart=/usr/local/bin/agent"));
+        assert!(content.contains("BORG_SERVER_URL=https://example.com"));
+        assert!(content.contains("BORG_AGENT_TOKEN=tok"));
+        assert!(content.contains("[Unit]"));
+        assert!(content.contains("[Service]"));
+        assert!(content.contains("[Install]"));
+    }
 }

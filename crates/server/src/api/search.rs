@@ -139,8 +139,10 @@ pub async fn search_archive(
 
             let path = v["path"].as_str().unwrap_or("").to_string();
 
-            if let Some(ref prefix) = query.path_prefix {
-                if !path.starts_with(prefix.as_str()) { return None; }
+            if let Some(ref prefix) = query.path_prefix
+                && !path.starts_with(prefix.as_str())
+            {
+                return None;
             }
 
             let mtime_str = v["mtime"].as_str().unwrap_or("");

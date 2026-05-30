@@ -95,6 +95,9 @@ async fn main() -> Result<(), StartupError> {
         tunnel_manager: tunnel_manager.clone(),
         log_buffer,
         notification_service,
+        pending_dryruns: std::sync::Arc::new(tokio::sync::Mutex::new(
+            std::collections::HashMap::new(),
+        )),
     };
 
     tokio::spawn(server::scheduler::run(
@@ -198,6 +201,10 @@ async fn main() -> Result<(), StartupError> {
         .route(
             "/api/repos/{repo_id}/break-lock",
             post(api::repos::break_lock),
+        )
+        .route(
+            "/api/repos/{repo_id}/dry-run",
+            post(api::dryrun::dry_run),
         )
         .route(
             "/api/repos/{repo_id}/tags",

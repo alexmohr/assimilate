@@ -6,6 +6,8 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { Search, SlidersHorizontal, Activity } from '@lucide/vue'
+import DataTable from 'primevue/datatable'
+import Column from 'primevue/column'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import { apiClient } from '../api/client'
@@ -319,6 +321,10 @@ function eventTypeClass(_eventType: string): string {
   return 'badge-failed'
 }
 
+function logRowClass(entry: LogEntry): string {
+  return `log-entry-row log-level-${entry.level.toLowerCase()}`
+}
+
 function clearFilters(): void {
   activeCategory.value = 'all'
   filterMachine.value = ''
@@ -524,41 +530,40 @@ function clearFilters(): void {
         v-else
         class="log-panel"
       >
-        <table class="log-table log-table-mono">
-          <thead>
-            <tr>
-              <th class="col-ts">Timestamp</th>
-              <th class="col-lvl">Level</th>
-              <th class="col-target">Target</th>
-              <th class="col-msg">Message</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="(entry, idx) in logEntries"
-              :key="idx"
-              class="log-entry-row"
-              :class="`log-level-${entry.level.toLowerCase()}`"
-            >
-              <td class="cell-ts cell-mono">
-                {{ formatDateShort(entry.timestamp) }}
-              </td>
-              <td>
-                <span
-                  class="badge badge-level"
-                  :class="`badge-${entry.level.toLowerCase()}`"
-                  >{{ entry.level }}</span
-                >
-              </td>
-              <td class="cell-target-log cell-mono">
-                {{ entry.target }}
-              </td>
-              <td class="cell-msg-log">
-                {{ entry.message }}
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <DataTable
+          :value="logEntries"
+          :row-class="logRowClass"
+          table-class="log-table log-table-mono"
+        >
+          <Column header="Timestamp">
+            <template #body="{ data }">
+              <span class="cell-ts cell-mono">{{ formatDateShort(data.timestamp) }}</span>
+            </template>
+          </Column>
+          <Column header="Level">
+            <template #body="{ data }">
+              <span
+                class="badge badge-level"
+                :class="`badge-${data.level.toLowerCase()}`"
+              >
+                {{ data.level }}
+              </span>
+            </template>
+          </Column>
+          <Column header="Target">
+            <template #body="{ data }">
+              <span class="cell-target-log cell-mono">{{ data.target }}</span>
+            </template>
+          </Column>
+          <Column header="Message">
+            <template #body="{ data }">
+              <span class="cell-msg-log">{{ data.message }}</span>
+            </template>
+          </Column>
+          <template #empty>
+            <div class="state-msg">No log entries match the current filters.</div>
+          </template>
+        </DataTable>
       </div>
     </template>
 
@@ -1134,8 +1139,6 @@ function clearFilters(): void {
 
 .log-panel {
   overflow-x: auto;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
 }
 
 .log-table-mono {

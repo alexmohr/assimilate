@@ -1,0 +1,148 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
+import { renderWithPlugins } from '../test-utils'
+import SystemView from './SystemView.vue'
+
+vi.mock('../api/client', () => ({
+  apiClient: {
+    get: vi.fn(),
+    put: vi.fn(),
+    post: vi.fn(),
+  },
+}))
+
+vi.mock('../composables/useClipboard', () => ({
+  useClipboard: () => ({
+    copied: false,
+    copy: vi.fn(),
+  }),
+}))
+
+vi.mock('../composables/useTimezone', () => ({
+  useTimezone: () => ({
+    setTimezone: vi.fn(),
+  }),
+}))
+
+vi.mock('../utils/error', () => ({
+  extractError: (_e: unknown, fallback: string) => fallback,
+}))
+
+import { apiClient } from '../api/client'
+
+const mockGet = vi.mocked(apiClient.get)
+
+const SSH_KEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA test-key'
+
+function setupSuccessMocks(): void {
+  mockGet.mockImplementation((url: string) => {
+    if (url === '/system/ssh-public-key') {
+      return Promise.resolve({ data: { public_key: SSH_KEY } })
+    }
+    if (url === '/system/settings') {
+      return Promise.resolve({ data: { timezone: 'Europe/Berlin', retention_days: 30 } })
+    }
+    return Promise.reject(new Error(`Unexpected GET ${url}`))
+  })
+}
+
+describe('SystemView', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('renders page title', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    expect(wrapper.text()).toContain('System')
+  })
+
+  it('renders SSH Public Key section heading', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    expect(wrapper.text()).toContain('SSH Public Key')
+  })
+
+  it('displays the SSH public key after loading', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    expect(wrapper.text()).toContain(SSH_KEY)
+  })
+
+  it('renders Copy button for the key', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    expect(wrapper.text()).toContain('Copy')
+  })
+
+  it('renders Regenerate button', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    expect(wrapper.text()).toContain('Regenerate')
+  })
+
+  it('renders Settings section heading', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    expect(wrapper.text()).toContain('Settings')
+  })
+
+  it('renders Retention Days input', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    expect(wrapper.find('#settings-retention').exists()).toBe(true)
+  })
+
+  it('populates retention days from API response', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    const input = wrapper.find<HTMLInputElement>('#settings-retention')
+    expect(input.element.value).toBe('30')
+  })
+
+  it('renders Save button for settings', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    const buttons = wrapper.findAll('button')
+    const saveBtn = buttons.find((b) => b.text() === 'Save')
+    expect(saveBtn).toBeDefined()
+  })
+
+  it('shows error message when SSH key API fails', async () => {
+    mockGet.mockImplementation((url: string) => {
+      if (url === '/system/ssh-public-key') {
+        return Promise.reject(new Error('Network error'))
+      }
+      if (url === '/system/settings') {
+        return Promise.resolve({ data: { timezone: 'UTC', retention_days: 7 } })
+      }
+      return Promise.reject(new Error(`Unexpected GET ${url}`))
+    })
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    expect(wrapper.text()).toContain('Failed to load SSH public key')
+  })
+
+  it('opens regenerate confirmation dialog on button click', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    const regenBtn = wrapper.findAll('button').find((b) => b.text() === 'Regenerate')
+    expect(regenBtn).toBeDefined()
+    await regenBtn!.trigger('click')
+    await flushPromises()
+    expect(document.body.textContent).toContain('Regenerate SSH Key')
+  })
+})

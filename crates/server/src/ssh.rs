@@ -667,12 +667,9 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
         ))
     })?;
 
-    // SFTP runs as unprivileged user; upload to /tmp then sudo-move to target
-    let upload_path = if params.use_sudo {
-        format!("/tmp/assimilate-agent-{}", std::process::id())
-    } else {
-        params.remote_path.to_string()
-    };
+    // Always upload to /tmp first - SFTP write to the final path often fails due to
+    // missing directories or permission issues (SFTP reports these as "No such file").
+    let upload_path = format!("/tmp/assimilate-agent-{}", std::process::id());
 
     sftp.create(upload_path.clone())
         .await
@@ -681,11 +678,12 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
         .await
         .map_err(|e| SshError::Sftp(format!("failed to upload agent binary: {e}")))?;
 
+    let move_cmd = format!(
+        "mv {upload_path} {} && chmod +x {}",
+        params.remote_path, params.remote_path
+    );
+
     if params.use_sudo {
-        let move_cmd = format!(
-            "mv {} {} && chmod +x {}",
-            upload_path, params.remote_path, params.remote_path
-        );
         let (exit_code, _, stderr) =
             exec_sudo_command(&session, &move_cmd, params.sudo_password).await?;
         if exit_code != 0 {
@@ -694,11 +692,10 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
             )));
         }
     } else {
-        let chmod_cmd = format!("chmod +x {}", params.remote_path);
-        let (exit_code, _, stderr) = exec_command(&session, &chmod_cmd).await?;
+        let (exit_code, _, stderr) = exec_command(&session, &move_cmd).await?;
         if exit_code != 0 {
             return Err(SshError::Exec(format!(
-                "chmod failed (exit {exit_code}): {stderr}"
+                "mv/chmod failed (exit {exit_code}): {stderr}"
             )));
         }
     }

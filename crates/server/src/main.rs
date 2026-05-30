@@ -97,6 +97,9 @@ async fn main() -> Result<(), StartupError> {
         pending_restores: std::sync::Arc::new(tokio::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),
+        pending_migrations: std::sync::Arc::new(tokio::sync::Mutex::new(
+            std::collections::HashMap::new(),
+        )),
     };
 
     tokio::spawn(server::scheduler::run(
@@ -162,6 +165,18 @@ async fn main() -> Result<(), StartupError> {
             post(api::clients::restart_agent),
         )
         .route(
+            "/api/clients/{hostname}/hostname-patterns",
+            get(api::clients::list_hostname_patterns).post(api::clients::add_hostname_pattern),
+        )
+        .route(
+            "/api/clients/{hostname}/hostname-patterns/{pattern_id}",
+            delete(api::clients::delete_hostname_pattern),
+        )
+        .route(
+            "/api/clients/{hostname}/merge-from/{source_id}",
+            post(api::clients::merge_client),
+        )
+        .route(
             "/api/clients/{hostname}/deploy",
             post(api::deploy::deploy_agent),
         )
@@ -201,6 +216,7 @@ async fn main() -> Result<(), StartupError> {
             "/api/repos/{repo_id}/break-lock",
             post(api::repos::break_lock),
         )
+        .route("/api/repos/{repo_id}/rescan", post(api::repos::rescan_repo))
         .route("/api/repos/{repo_id}/dry-run", post(api::dryrun::dry_run))
         .route(
             "/api/repos/{repo_id}/tags",
@@ -249,6 +265,7 @@ async fn main() -> Result<(), StartupError> {
             "/api/system/settings",
             get(api::system::get_settings).put(api::system::update_settings),
         )
+        .route("/api/system/version", get(api::system::get_version))
         .route("/api/ssh/test-connection", post(api::ssh::test_connection))
         .route("/api/ssh/deploy-key", post(api::ssh::deploy_key))
         .route("/api/ssh/list-dir", post(api::ssh::list_dir))

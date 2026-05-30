@@ -49,6 +49,40 @@ jobs:
       - name: Unit tests
         run: npm run test
         working-directory: frontend
+      - name: Check for security vulnerabilities
+        run: |
+          ALLOWLIST=$(node -e "const a=require('./.npm-audit-allowlist.json').audit;console.log(a.join(','))")
+          if [ -n "$ALLOWLIST" ]; then
+            npm audit --audit-level=moderate --omit=dev || {
+              FOUND=$(npm audit --json --omit=dev | node -e "
+                const allowed='${ALLOWLIST}'.split(',').filter(Boolean);
+                const data=require('fs').readFileSync('/dev/stdin','utf8');
+                const json=JSON.parse(data);
+                const vulns=Object.keys(json.vulnerabilities||{}).filter(v=>!allowed.includes(v));
+                if(vulns.length){console.error('Unallowed vulnerabilities: '+vulns.join(', '));process.exit(1);}
+              ")
+            }
+          else
+            npm audit --audit-level=moderate --omit=dev
+          fi
+        working-directory: frontend
+      - name: Check for deprecated packages
+        run: |
+          node -e "
+            const lock = require('./package-lock.json');
+            const allowlist = require('./.npm-audit-allowlist.json').deprecated;
+            const deps = Object.entries(lock.packages || {})
+              .filter(([k, v]) => v.deprecated && k !== '')
+              .map(([k]) => k.replace('node_modules/', ''))
+              .filter(k => !allowlist.includes(k));
+            if (deps.length) {
+              console.error('Deprecated packages found (not in allowlist):');
+              deps.forEach(d => console.error('  - ' + d));
+              process.exit(1);
+            }
+            console.log('No unallowed deprecated packages found.');
+          "
+        working-directory: frontend
       - name: Build
         run: npm run build
         working-directory: frontend

@@ -17,6 +17,13 @@ interface SettingsResponse {
   timezone: string
 }
 
+interface VersionInfo {
+  server_version: string
+  server_git_sha: string
+  build_timestamp: string
+  agent_version: string | null
+}
+
 const publicKey = ref('')
 const loading = ref(true)
 const error = ref('')
@@ -31,6 +38,10 @@ const settingsError = ref('')
 const settingsSaving = ref(false)
 const settingsSaved = ref(false)
 const settingsForm = reactive({ timezone: '', retention_days: 7 })
+
+const versionInfo = ref<VersionInfo | null>(null)
+const versionLoading = ref(true)
+const versionError = ref('')
 
 onMounted(async () => {
   try {
@@ -50,6 +61,15 @@ onMounted(async () => {
     settingsError.value = extractError(e, 'Failed to load settings')
   } finally {
     settingsLoading.value = false
+  }
+
+  try {
+    const res = await apiClient.get<VersionInfo>('/system/version')
+    versionInfo.value = res.data
+  } catch (e: unknown) {
+    versionError.value = extractError(e, 'Failed to load version info')
+  } finally {
+    versionLoading.value = false
   }
 })
 
@@ -95,6 +115,43 @@ async function saveSettings(): Promise<void> {
   <div class="page">
     <div class="page-header">
       <h1 class="page-title">System</h1>
+    </div>
+
+    <div class="info-card">
+      <div class="card-header">
+        <h3 class="info-title">Version</h3>
+      </div>
+
+      <BaseSpinner
+        v-if="versionLoading"
+        size="lg"
+      />
+      <div
+        v-else-if="versionError"
+        class="state-msg error"
+      >
+        {{ versionError }}
+      </div>
+      <div
+        v-else-if="versionInfo"
+        class="version-grid"
+      >
+        <div class="version-row">
+          <span class="version-label">Server</span>
+          <span class="version-value mono">{{ versionInfo.server_version }}</span>
+        </div>
+        <div class="version-row">
+          <span class="version-label">Built</span>
+          <span class="version-value mono">{{ versionInfo.build_timestamp }}</span>
+        </div>
+        <div
+          v-if="versionInfo.agent_version"
+          class="version-row"
+        >
+          <span class="version-label">Agent</span>
+          <span class="version-value mono">{{ versionInfo.agent_version }}</span>
+        </div>
+      </div>
     </div>
 
     <div class="info-card">
@@ -405,5 +462,30 @@ async function saveSettings(): Promise<void> {
   font-size: 0.875rem;
   color: var(--success);
   font-weight: 500;
+}
+
+.version-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.version-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.version-label {
+  flex-shrink: 0;
+  width: 80px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.version-value {
+  font-size: 0.875rem;
+  color: var(--text-primary);
 }
 </style>

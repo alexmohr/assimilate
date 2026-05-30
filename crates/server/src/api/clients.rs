@@ -16,7 +16,7 @@ use super::{
 };
 use crate::{
     AppState, config_assembler,
-    db::{self, ClientRow},
+    db::{self, ClientRow, patterns::HostnamePatternRow},
     error::{ApiError, ApiJson},
 };
 
@@ -307,4 +307,135 @@ pub async fn restart_agent(
         .map_err(|e| ApiError::Internal(format!("agent not connected: {e}")))?;
 
     Ok(StatusCode::ACCEPTED)
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/clients/{hostname}/hostname-patterns",
+    tag = "Hosts",
+    operation_id = "listHostnamePatterns",
+    summary = "List hostname patterns for a client",
+    params(
+        ("hostname" = String, Path, description = "Client hostname"),
+    ),
+    responses(
+        (status = 200, description = "List of patterns", body = Vec<HostnamePatternRow>),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Not found"),
+    )
+)]
+pub async fn list_hostname_patterns(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Path(hostname): Path<String>,
+) -> Result<Json<Vec<HostnamePatternRow>>, ApiError> {
+    let client = db::get_client_by_hostname(&state.pool, &hostname).await?;
+    let patterns = db::patterns::list_patterns_for_client(&state.pool, client.id).await?;
+    Ok(Json(patterns))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct AddPatternRequest {
+    pub pattern: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/clients/{hostname}/hostname-patterns",
+    tag = "Hosts",
+    operation_id = "addHostnamePattern",
+    summary = "Add a hostname pattern to a client",
+    params(
+        ("hostname" = String, Path, description = "Client hostname"),
+    ),
+    request_body = AddPatternRequest,
+    responses(
+        (status = 201, description = "Pattern created", body = HostnamePatternRow),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Not found"),
+        (status = 409, description = "Duplicate pattern"),
+    )
+)]
+pub async fn add_hostname_pattern(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Path(hostname): Path<String>,
+    ApiJson(req): ApiJson<AddPatternRequest>,
+) -> Result<(StatusCode, Json<HostnamePatternRow>), ApiError> {
+    helpers::validate_non_empty(&req.pattern, "pattern")?;
+    let client = db::get_client_by_hostname(&state.pool, &hostname).await?;
+    let row = db::patterns::add_hostname_pattern(&state.pool, client.id, &req.pattern).await?;
+    Ok((StatusCode::CREATED, Json(row)))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/clients/{hostname}/hostname-patterns/{pattern_id}",
+    tag = "Hosts",
+    operation_id = "deleteHostnamePattern",
+    summary = "Delete a hostname pattern",
+    params(
+        ("hostname" = String, Path, description = "Client hostname"),
+        ("pattern_id" = i64, Path, description = "Pattern ID"),
+    ),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Not found"),
+    )
+)]
+pub async fn delete_hostname_pattern(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Path((hostname, pattern_id)): Path<(String, i64)>,
+) -> Result<StatusCode, ApiError> {
+    db::get_client_by_hostname(&state.pool, &hostname).await?;
+    db::patterns::delete_hostname_pattern(&state.pool, pattern_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct MergeClientRequest {
+    pub create_pattern: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MergeClientResponse {
+    pub merged: bool,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/clients/{hostname}/merge-from/{source_id}",
+    tag = "Hosts",
+    operation_id = "mergeClient",
+    summary = "Merge a placeholder client into this client",
+    params(
+        ("hostname" = String, Path, description = "Target client hostname"),
+        ("source_id" = i64, Path, description = "Source placeholder client ID"),
+    ),
+    request_body(content = Option<MergeClientRequest>, content_type = "application/json"),
+    responses(
+        (status = 200, description = "Merge completed", body = MergeClientResponse),
+        (status = 400, description = "Source is not a placeholder"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Not found"),
+    )
+)]
+pub async fn merge_client(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Path((hostname, source_id)): Path<(String, i64)>,
+    ApiJson(req): ApiJson<MergeClientRequest>,
+) -> Result<Json<MergeClientResponse>, ApiError> {
+    let target = db::get_client_by_hostname(&state.pool, &hostname).await?;
+    db::merge_client(&state.pool, source_id, target.id).await?;
+
+    if let Some(pattern) = &req.create_pattern
+        && !pattern.is_empty()
+    {
+        db::patterns::add_hostname_pattern(&state.pool, target.id, pattern).await?;
+    }
+
+    Ok(Json(MergeClientResponse { merged: true }))
 }

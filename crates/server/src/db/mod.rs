@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 pub mod audit;
+pub mod patterns;
 pub mod quota;
 pub mod tags;
 
@@ -11,6 +12,109 @@ use shared::types::Compression;
 use sqlx::PgPool;
 
 use crate::error::ApiError;
+
+#[derive(Debug, Clone, Serialize)]
+pub enum ResolveResult {
+    ExactMatch(ClientRow),
+    PatternMatch(ClientRow),
+    Unmatched,
+}
+
+pub async fn resolve_client_for_hostname(
+    pool: &PgPool,
+    hostname: &str,
+) -> Result<ResolveResult, ApiError> {
+    let exact = sqlx::query_as::<_, ClientRow>(
+        "SELECT id, hostname, display_name, agent_version, created_at, last_seen_at, owner_id, \
+         visibility, default_backup_paths, default_exclude_patterns FROM clients WHERE hostname = \
+         $1",
+    )
+    .bind(hostname)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    if let Some(client) = exact {
+        return Ok(ResolveResult::ExactMatch(client));
+    }
+
+    if let Some(client) = patterns::find_client_by_pattern(pool, hostname).await? {
+        return Ok(ResolveResult::PatternMatch(client));
+    }
+
+    Ok(ResolveResult::Unmatched)
+}
+
+pub async fn merge_client(pool: &PgPool, source_id: i64, target_id: i64) -> Result<(), ApiError> {
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+
+    let source = sqlx::query_as::<_, ClientRow>(
+        "SELECT id, hostname, display_name, agent_version, created_at, last_seen_at, owner_id, \
+         visibility, default_backup_paths, default_exclude_patterns FROM clients WHERE id = $1",
+    )
+    .bind(source_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+
+    let Some(source) = source else {
+        return Err(ApiError::NotFound(format!(
+            "source client {source_id} not found"
+        )));
+    };
+
+    let has_imported_token =
+        sqlx::query_scalar::<_, String>("SELECT agent_token_hash FROM clients WHERE id = $1")
+            .bind(source.id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(ApiError::Database)?;
+
+    if has_imported_token != "imported:no-auth" {
+        return Err(ApiError::BadRequest(
+            "source client does not have imported:no-auth token".to_string(),
+        ));
+    }
+
+    sqlx::query("UPDATE backup_reports SET client_id = $1, matched = true WHERE client_id = $2")
+        .bind(target_id)
+        .bind(source_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
+
+    sqlx::query("UPDATE schedules SET client_id = $1 WHERE client_id = $2")
+        .bind(target_id)
+        .bind(source_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
+
+    sqlx::query(
+        "INSERT INTO host_tags (client_id, tag_id) SELECT $1, tag_id FROM host_tags WHERE \
+         client_id = $2 ON CONFLICT DO NOTHING",
+    )
+    .bind(target_id)
+    .bind(source_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+
+    sqlx::query("DELETE FROM host_tags WHERE client_id = $1")
+        .bind(source_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
+
+    sqlx::query("DELETE FROM clients WHERE id = $1")
+        .bind(source_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
+
+    tx.commit().await.map_err(ApiError::Database)?;
+    Ok(())
+}
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ClientRow {
@@ -1261,6 +1365,7 @@ pub struct InsertReportParams {
     pub error_message: Option<String>,
     pub warnings: Vec<String>,
     pub borg_version: Option<String>,
+    pub matched: bool,
 }
 
 pub async fn insert_backup_report(
@@ -1270,8 +1375,8 @@ pub async fn insert_backup_report(
     sqlx::query(
         "INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, \
          original_size, compressed_size, deduplicated_size, files_processed, duration_secs, \
-         error_message, warnings, borg_version) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, \
-         $11, $12, $13)",
+         error_message, warnings, borg_version, matched) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, \
+         $9, $10, $11, $12, $13, $14)",
     )
     .bind(params.client_id)
     .bind(params.repo_id)
@@ -1286,6 +1391,7 @@ pub async fn insert_backup_report(
     .bind(&params.error_message)
     .bind(&params.warnings)
     .bind(&params.borg_version)
+    .bind(params.matched)
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;

@@ -182,6 +182,11 @@ pub enum AgentToServer {
         request_id: String,
         error: String,
     },
+    MigrateEncryptionCompleted {
+        request_id: String,
+        success: bool,
+        error_message: Option<String>,
+    },
     Pong,
 }
 

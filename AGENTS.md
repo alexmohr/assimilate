@@ -62,6 +62,12 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) has a `db-integration` 
 * Do not rely on specific auto-increment IDs; migrations seed roles (`admin`, `operator`, `viewer`), so use unique names for test data to avoid conflicts.
 * The pool argument (`PgPool`) is provided automatically by the macro.
 
+## Frontend Dependency Health
+
+* CI checks for npm security vulnerabilities (`npm audit --audit-level=moderate`) and deprecated packages.
+* Allowlists are maintained in `frontend/.npm-audit-allowlist.json`.
+* **NEVER add entries to `.npm-audit-allowlist.json`.** Only a human may allowlist a vulnerability or deprecated package. If CI fails due to a new advisory or deprecation, report it to the user and suggest the fix (upgrade or replacement) — do not suppress it.
+
 ## Frontend Lint & Format
 
 * Run `npm run format:check` (in `frontend/`) to verify formatting. Run `npm run format` to auto-fix.
@@ -82,7 +88,7 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) has a `db-integration` 
 * `crates/agent` is the client binary that runs on each backup machine, connects to the server, and executes borg commands.
 * `frontend/` contains the Vue.js 3 + Vite SPA (TypeScript).
 * Modules should mirror the logical architecture. Group related functionality into sub-modules. If a file exceeds ~300 lines or contains multiple logical units, split it.
-* Never modify dependencies in `Cargo.toml` without approval. If you think a new dependency is needed, ask first.
+* Adding a dependency is preferred over shelling out to external commands. Shell out is a last resort and only to be used when there is no library alternative. Still, clarify new dependencies with the user before adding them.
 
 ## Security
 

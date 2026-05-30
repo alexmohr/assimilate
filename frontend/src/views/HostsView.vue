@@ -18,6 +18,7 @@ import { Plus, SlidersHorizontal, Server, Trash2, AlertCircle } from '@lucide/vu
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
+import MergeClientDialog from '../components/MergeClientDialog.vue'
 
 interface ClientRow {
   id: number
@@ -178,6 +179,14 @@ const editError = ref<string | null>(null)
 
 const showDeployDialog = ref(false)
 const deployTarget = ref<ClientRow | null>(null)
+
+// Merge imported client
+const showMergeDialog = ref(false)
+const mergeSource = ref<ClientRow | null>(null)
+
+useEscapeKey(showMergeDialog, () => {
+  showMergeDialog.value = false
+})
 const deployLoading = ref(false)
 const deployError = ref<string | null>(null)
 const deployResult = ref<{
@@ -215,6 +224,10 @@ useEscapeKey(showDeployDialog, () => {
 
 function isOnline(client: ClientRow): boolean {
   return client.is_connected
+}
+
+function isImported(client: ClientRow): boolean {
+  return client.display_name?.endsWith('(imported)') ?? false
 }
 
 function formatLastSeen(iso: string | null): string {
@@ -433,6 +446,16 @@ function openDeployDialog(client: ClientRow): void {
   showDeployDialog.value = true
 }
 
+function openMergeDialog(client: ClientRow): void {
+  mergeSource.value = client
+  showMergeDialog.value = true
+}
+
+function onMerged(): void {
+  showMergeDialog.value = false
+  loadClients().catch(logger.error)
+}
+
 async function submitDeploy(): Promise<void> {
   if (!deployTarget.value) return
   deployLoading.value = true
@@ -465,7 +488,15 @@ async function submitDeploy(): Promise<void> {
   }
 }
 
-onMounted(loadClients)
+onMounted(() => {
+  loadClients().catch(logger.error)
+  apiClient
+    .get<{ agent_version: string | null }>('/system/version')
+    .then((res) => {
+      availableAgentVersion.value = res.data.agent_version
+    })
+    .catch(logger.error)
+})
 
 const { onMessage, status: wsStatus } = useWebSocket()
 onMessage('AgentConnected', () => loadClients().catch(logger.error))
@@ -479,6 +510,7 @@ interface BackupPayload {
 
 const activeBackupsByHost = ref<Record<string, string[]>>({})
 
+const availableAgentVersion = ref<string | null>(null)
 onMessage<BackupPayload>('BackupStarted', (payload) => {
   const list = activeBackupsByHost.value[payload.hostname] ?? []
   if (!list.includes(payload.target_name)) {
@@ -506,6 +538,13 @@ onMessage<BackupPayload>('BackupCompleted', (payload) => {
 
 function hostActiveBackups(client: ClientRow): string[] {
   return activeBackupsByHost.value[client.hostname] ?? []
+}
+
+function deployButtonLabel(client: ClientRow): string | null {
+  if (!client.agent_version) return 'Deploy'
+  if (availableAgentVersion.value && client.agent_version === availableAgentVersion.value)
+    return null
+  return 'Upgrade'
 }
 
 watch(wsStatus, (newStatus, oldStatus) => {
@@ -670,12 +709,20 @@ watch(wsStatus, (newStatus, oldStatus) => {
               >{{ client.display_name }}</span
             >
           </div>
-          <span
-            class="status-badge"
-            :class="isOnline(client) ? 'status-online' : 'status-offline'"
-          >
-            {{ isOnline(client) ? 'Online' : 'Offline' }}
-          </span>
+          <div class="card-top-badges">
+            <span
+              v-if="isImported(client)"
+              class="badge-imported"
+            >
+              Imported
+            </span>
+            <span
+              class="status-badge"
+              :class="isOnline(client) ? 'status-online' : 'status-offline'"
+            >
+              {{ isOnline(client) ? 'Online' : 'Offline' }}
+            </span>
+          </div>
         </div>
         <div class="card-stats">
           <div class="stat">
@@ -738,16 +785,24 @@ watch(wsStatus, (newStatus, oldStatus) => {
           @click.stop
         >
           <button
+            v-if="isImported(client)"
+            class="btn btn-sm btn-ghost"
+            @click="openMergeDialog(client)"
+          >
+            Merge into...
+          </button>
+          <button
             class="btn btn-sm btn-ghost"
             @click="openEditDialog(client)"
           >
             Edit
           </button>
           <button
+            v-if="deployButtonLabel(client)"
             class="btn btn-sm btn-ghost"
             @click="openDeployDialog(client)"
           >
-            Deploy
+            {{ deployButtonLabel(client) }}
           </button>
           <button
             class="btn btn-sm btn-ghost btn-danger-text"
@@ -976,7 +1031,10 @@ watch(wsStatus, (newStatus, oldStatus) => {
       >
         <div class="dialog">
           <div class="dialog-header">
-            <h2 class="dialog-title">Deploy Agent &mdash; {{ deployTarget?.hostname }}</h2>
+            <h2 class="dialog-title">
+              {{ deployTarget?.agent_version ? 'Upgrade' : 'Deploy' }} Agent &mdash;
+              {{ deployTarget?.hostname }}
+            </h2>
             <button
               class="close-btn"
               @click="showDeployDialog = false"
@@ -1111,7 +1169,13 @@ watch(wsStatus, (newStatus, oldStatus) => {
                 :disabled="deployLoading || !deployForm.ssh_host || !deployForm.server_url"
                 @click="submitDeploy"
               >
-                {{ deployLoading ? 'Deploying...' : 'Deploy Agent' }}
+                {{
+                  deployLoading
+                    ? 'Deploying...'
+                    : deployTarget?.agent_version
+                      ? 'Upgrade Agent'
+                      : 'Deploy Agent'
+                }}
               </button>
             </div>
           </template>
@@ -1151,6 +1215,17 @@ watch(wsStatus, (newStatus, oldStatus) => {
           </template>
         </div>
       </div>
+    </Teleport>
+
+    <!-- Merge Client Dialog -->
+    <Teleport to="body">
+      <MergeClientDialog
+        v-if="showMergeDialog && mergeSource"
+        :source="mergeSource"
+        :all-clients="clients"
+        @merged="onMerged"
+        @cancel="showMergeDialog = false"
+      />
     </Teleport>
   </div>
 </template>
@@ -1582,5 +1657,25 @@ watch(wsStatus, (newStatus, oldStatus) => {
   font-family: var(--mono);
   font-size: 0.82rem;
   line-height: 1.5;
+}
+
+.card-top-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.badge-imported {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border: 1px solid var(--accent);
 }
 </style>

@@ -10,6 +10,7 @@ use axum::{
     http::header,
     response::{IntoResponse, Response},
 };
+use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use tokio::process::Command;
@@ -143,6 +144,59 @@ pub struct ArchiveEntry {
     pub comment: String,
     pub original_size: i64,
     pub deduplicated_size: i64,
+    pub matched: Option<bool>,
+    pub client_hostname: Option<String>,
+}
+
+struct ReportRow {
+    started_at: DateTime<Utc>,
+    matched: bool,
+    client_hostname: String,
+}
+
+async fn fetch_report_rows(pool: &PgPool, repo_id: i64) -> Result<Vec<ReportRow>, ApiError> {
+    let rows = sqlx::query_as::<_, (DateTime<Utc>, bool, String)>(
+        r"
+        SELECT br.started_at, br.matched, c.hostname AS client_hostname
+        FROM backup_reports br
+        JOIN clients c ON c.id = br.client_id
+        WHERE br.repo_id = $1
+        ",
+    )
+    .bind(repo_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(started_at, matched, client_hostname)| ReportRow {
+            started_at,
+            matched,
+            client_hostname,
+        })
+        .collect())
+}
+
+fn parse_borg_timestamp(s: &str) -> Option<DateTime<Utc>> {
+    NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f")
+        .ok()
+        .or_else(|| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok())
+        .map(|dt| dt.and_utc())
+}
+
+fn find_matching_report<'a>(
+    archive_start: &str,
+    reports: &'a [ReportRow],
+) -> Option<&'a ReportRow> {
+    let archive_ts = parse_borg_timestamp(archive_start)?;
+    reports
+        .iter()
+        .filter(|r| {
+            let diff = (archive_ts - r.started_at).num_seconds().abs();
+            diff <= 5
+        })
+        .min_by_key(|r| (archive_ts - r.started_at).num_seconds().abs())
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -239,10 +293,25 @@ pub async fn list_archives(
                         comment: a["comment"].as_str().unwrap_or("").to_string(),
                         original_size: stats["original_size"].as_i64().unwrap_or(0),
                         deduplicated_size: stats["deduplicated_size"].as_i64().unwrap_or(0),
+                        matched: None,
+                        client_hostname: None,
                     }
                 })
                 .collect()
         });
+
+    let reports = fetch_report_rows(&state.pool, repo_id).await?;
+
+    let archives = archives
+        .into_iter()
+        .map(|mut entry| {
+            if let Some(report) = find_matching_report(&entry.start, &reports) {
+                entry.matched = Some(report.matched);
+                entry.client_hostname = Some(report.client_hostname.clone());
+            }
+            entry
+        })
+        .collect();
 
     Ok(Json(archives))
 }

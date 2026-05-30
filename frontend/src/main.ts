@@ -14,3 +14,7 @@ createApp(App)
   .use(router)
   .use(PrimeVue, { unstyled: true, pt: globalPrimeVuePT })
   .mount('#app')
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => undefined)
+}

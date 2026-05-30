@@ -325,6 +325,11 @@
     animation: pulse-importing 1.5s ease-in-out infinite;
   }
 
+  .status-error {
+    background: var(--danger-subtle, #fee2e2);
+    color: var(--danger, #dc2626);
+  }
+
   @keyframes pulse-importing {
     0%,
     100% {

@@ -41,6 +41,7 @@ interface RepoWithStats {
   encryption: string
   enabled: boolean
   importing: boolean
+  import_error: string | null
   archive_count: number
   last_backup_at: string | null
   total_original_size: number
@@ -195,7 +196,9 @@ const availableTags = computed<TagRow[]>(() =>
 
 function formatLastBackup(iso: string | null): string {
   if (!iso) return 'Never'
-  const diff = Date.now() - new Date(iso).getTime()
+  const ts = new Date(iso).getTime()
+  if (isNaN(ts) || ts === 0) return 'Never'
+  const diff = Date.now() - ts
   const mins = Math.floor(diff / 60000)
   if (mins < 1) return 'Just now'
   if (mins < 60) return `${mins}m ago`
@@ -477,15 +480,24 @@ onMounted(async () => {
                 <span
                   class="status-badge"
                   :class="
-                    repo.importing
-                      ? 'status-importing'
-                      : repo.enabled
-                        ? 'status-online'
-                        : 'status-offline'
+                    repo.import_error
+                      ? 'status-error'
+                      : repo.importing
+                        ? 'status-importing'
+                        : repo.enabled
+                          ? 'status-online'
+                          : 'status-offline'
                   "
+                  :title="repo.import_error ?? undefined"
                 >
                   {{
-                    repo.importing ? 'Importing\u2026' : repo.enabled ? 'Enabled' : 'Disabled'
+                    repo.import_error
+                      ? 'Import Failed'
+                      : repo.importing
+                        ? 'Importing\u2026'
+                        : repo.enabled
+                          ? 'Enabled'
+                          : 'Disabled'
                   }}
                 </span>
               </dd>

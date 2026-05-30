@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::process::Stdio;
+use std::{process::Stdio, time::Duration};
 
 use axum::{
     Json,
@@ -172,12 +172,19 @@ pub async fn create_repo(
         port = ssh_port,
         path = req.repo_path,
     );
-    let info = run_borg_info(&repo_url, &req.passphrase).await?;
+
+    let info_timeout = Duration::from_secs(30);
+    let info_result = tokio::time::timeout(info_timeout, run_borg_info(&repo_url, &req.passphrase))
+        .await
+        .ok()
+        .transpose()?;
+
+    let encryption = info_result
+        .as_ref()
+        .map_or("unknown".to_string(), |info| info.encryption.to_string());
 
     let passphrase_encrypted = encrypt_passphrase(&req.passphrase, &state.encryption_key)?;
-
     let compression = helpers::validate_compression(req.compression.as_deref())?;
-    let encryption = info.encryption.to_string();
 
     let repo = db::insert_repo(
         &state.pool,
@@ -199,11 +206,38 @@ pub async fn create_repo(
     let pool = state.pool.clone();
     let encryption_key = state.encryption_key;
     let ui_broadcast = state.ui_broadcast.clone();
+    let need_borg_info = info_result.is_none();
+    let bg_repo_url = repo_url.clone();
+    let bg_passphrase = req.passphrase.clone();
+
     db::set_repo_importing(&state.pool, repo_id, true).await?;
     ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
+
     tokio::spawn(async move {
+        if need_borg_info {
+            match run_borg_info(&bg_repo_url, &bg_passphrase).await {
+                Ok(info) => {
+                    if let Err(e) =
+                        db::update_repo_encryption(&pool, repo_id, &info.encryption.to_string())
+                            .await
+                    {
+                        warn!(repo_id, error = %e, "failed to update encryption after deferred borg info");
+                    }
+                }
+                Err(e) => {
+                    let msg = format!("{e}");
+                    warn!(repo_id, error = %msg, "deferred borg info failed");
+                    let _ = db::set_repo_import_error(&pool, repo_id, Some(&msg)).await;
+                    let _ = db::set_repo_importing(&pool, repo_id, false).await;
+                    ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
+                    return;
+                }
+            }
+        }
+
         if let Err(e) = sync_existing_archives(&pool, &encryption_key, repo_id).await {
             warn!(repo_id, error = %e, "failed to sync existing archives on import");
+            let _ = db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await;
         }
         if let Err(e) = db::set_repo_importing(&pool, repo_id, false).await {
             warn!(repo_id, error = %e, "failed to clear importing flag");
@@ -685,6 +719,8 @@ pub async fn sync_existing_archives(
     let output = Command::new(borg_binary())
         .arg("list")
         .arg("--json")
+        .arg("--format")
+        .arg("{hostname}")
         .arg("--lock-wait")
         .arg(LOCK_WAIT_SECS)
         .arg(&borg_repo)
@@ -757,11 +793,33 @@ pub async fn sync_existing_archives(
         let started_at = DateTime::parse_from_rfc3339(start_str)
             .or_else(|_| DateTime::parse_from_str(start_str, "%Y-%m-%dT%H:%M:%S%.f"))
             .map(|dt| dt.to_utc())
-            .unwrap_or_default();
+            .or_else(|_| {
+                chrono::NaiveDateTime::parse_from_str(start_str, "%Y-%m-%dT%H:%M:%S%.f")
+                    .or_else(|_| {
+                        chrono::NaiveDateTime::parse_from_str(start_str, "%Y-%m-%dT%H:%M:%S")
+                    })
+                    .map(|naive| naive.and_utc())
+            });
         let finished_at = DateTime::parse_from_rfc3339(end_str)
             .or_else(|_| DateTime::parse_from_str(end_str, "%Y-%m-%dT%H:%M:%S%.f"))
             .map(|dt| dt.to_utc())
-            .unwrap_or_default();
+            .or_else(|_| {
+                chrono::NaiveDateTime::parse_from_str(end_str, "%Y-%m-%dT%H:%M:%S%.f")
+                    .or_else(|_| {
+                        chrono::NaiveDateTime::parse_from_str(end_str, "%Y-%m-%dT%H:%M:%S")
+                    })
+                    .map(|naive| naive.and_utc())
+            });
+
+        let (Some(started_at), Some(finished_at)) = (started_at.ok(), finished_at.ok()) else {
+            warn!(
+                archive = name,
+                start = start_str,
+                end = end_str,
+                "failed to parse archive timestamps, skipping"
+            );
+            continue;
+        };
 
         #[allow(clippy::cast_possible_truncation)]
         let params = db::InsertReportParams {

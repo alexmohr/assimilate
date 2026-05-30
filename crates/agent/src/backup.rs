@@ -146,7 +146,7 @@ impl BackupEngine {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let exit_code = output.status.code().map_or(-1, |code| code);
+            let exit_code = output.status.code().unwrap_or(-1);
             warn!("{label} command failed with exit code {exit_code}: {stderr}");
             return Err(BackupError::Skipped(format!(
                 "{label} command exited with code {exit_code}"

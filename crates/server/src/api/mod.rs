@@ -9,6 +9,7 @@ pub mod excludes;
 pub mod health;
 pub mod helpers;
 pub mod logs;
+pub mod notifications;
 pub mod permissions;
 pub mod rbac;
 pub mod reports;

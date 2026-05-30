@@ -37,12 +37,16 @@ async fn build_test_app(pool: PgPool) -> Router {
     let tunnel_manager =
         server::tunnel::TunnelManager::new(pool.clone(), ui_broadcast.clone(), server_addr);
     let state = server::AppState {
-        pool,
+        pool: pool.clone(),
         encryption_key,
         registry: server::ws::registry::AgentRegistry::new(),
         ui_broadcast,
         tunnel_manager,
         log_buffer: server::log_buffer::LogBuffer::default(),
+        notification_service: server::notifications::NotificationService::new(
+            pool,
+            reqwest::Client::new(),
+        ),
     };
 
     Router::new()
@@ -92,8 +96,8 @@ async fn setup_pool() -> PgPool {
 async fn create_test_user_and_session(pool: &PgPool) {
     let user_id: i64 = sqlx::query_scalar(
         "INSERT INTO users (username, password_hash, role) VALUES ('integration-admin', \
-         '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'admin') \
-         ON CONFLICT (username) DO UPDATE SET username = EXCLUDED.username RETURNING id",
+         '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'admin') ON CONFLICT \
+         (username) DO UPDATE SET username = EXCLUDED.username RETURNING id",
     )
     .fetch_one(pool)
     .await
@@ -101,8 +105,8 @@ async fn create_test_user_and_session(pool: &PgPool) {
 
     let expires = chrono::Utc::now() + chrono::Duration::hours(24);
     sqlx::query(
-        "INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3) \
-         ON CONFLICT (id) DO UPDATE SET expires_at = EXCLUDED.expires_at",
+        "INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3) ON CONFLICT (id) DO \
+         UPDATE SET expires_at = EXCLUDED.expires_at",
     )
     .bind(TEST_SESSION_ID)
     .bind(user_id)

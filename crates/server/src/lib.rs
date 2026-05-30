@@ -7,6 +7,7 @@ pub mod db;
 pub mod error;
 pub mod log_buffer;
 pub mod middleware;
+pub mod notifications;
 pub mod openapi;
 pub mod rate_limit;
 pub mod scheduler;
@@ -18,6 +19,7 @@ use sqlx::PgPool;
 
 use crate::{
     log_buffer::LogBuffer,
+    notifications::NotificationService,
     tunnel::TunnelManager,
     ws::{registry::AgentRegistry, ui_broadcast::UiBroadcast},
 };
@@ -30,4 +32,5 @@ pub struct AppState {
     pub ui_broadcast: UiBroadcast,
     pub tunnel_manager: TunnelManager,
     pub log_buffer: LogBuffer,
+    pub notification_service: NotificationService,
 }

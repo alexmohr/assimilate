@@ -40,3 +40,8 @@ export async function enableTunnel(id: number): Promise<void> {
 export async function disableTunnel(id: number): Promise<void> {
   await apiClient.post(`/tunnels/${id}/disable`)
 }
+
+export async function reconnectTunnel(id: number): Promise<TunnelWithStatus> {
+  const response = await apiClient.post<TunnelWithStatus>(`/tunnels/${id}/reconnect`)
+  return response.data
+}

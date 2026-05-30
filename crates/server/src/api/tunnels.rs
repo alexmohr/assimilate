@@ -190,6 +190,27 @@ pub async fn enable_tunnel(
     Ok(Json(tunnel))
 }
 
+pub async fn reconnect_tunnel(
+    State(state): State<AppState>,
+    _admin: RequireAdmin,
+    Path(id): Path<i64>,
+) -> Result<Json<TunnelResponse>, ApiError> {
+    let tunnel = db::get_tunnel_by_id(&state.pool, id).await?;
+    if !tunnel.enabled {
+        return Err(ApiError::BadRequest(
+            "cannot reconnect a disabled tunnel".to_string(),
+        ));
+    }
+    state.tunnel_manager.stop_tunnel(id).await;
+    state.tunnel_manager.start_tunnel(id).await;
+    let status = state
+        .tunnel_manager
+        .tunnel_status(id)
+        .await
+        .unwrap_or(TunnelStatus::Disconnected);
+    Ok(Json(TunnelResponse { tunnel, status }))
+}
+
 pub async fn disable_tunnel(
     State(state): State<AppState>,
     _admin: RequireAdmin,

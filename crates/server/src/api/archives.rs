@@ -90,10 +90,13 @@ pub async fn get_repo_env(
         "BORG_RSH".to_string(),
         "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new".to_string(),
     );
-    env.insert(
-        "BORG_RELOCATED_REPO_ACCESS_IS_OK".to_string(),
-        "yes".to_string(),
-    );
+
+    if repo.relocation_pending {
+        env.insert(
+            "BORG_RELOCATED_REPO_ACCESS_IS_OK".to_string(),
+            "yes".to_string(),
+        );
+    }
 
     Ok((borg_repo, env))
 }

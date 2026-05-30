@@ -272,6 +272,18 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 tracing::error!(hostname = %hostname, error = %e, "failed to persist backup report");
             }
 
+            if matches!(
+                report.status,
+                shared::types::BackupStatus::Success | shared::types::BackupStatus::Warning
+            ) && let Err(e) = db::clear_relocation_pending(&state.pool, report.repo_id.0).await
+            {
+                tracing::error!(
+                    hostname = %hostname,
+                    error = %e,
+                    "failed to clear relocation_pending"
+                );
+            }
+
             if let Ok(Some(quota)) = db::quota::get_quota(&state.pool, report.repo_id.0).await {
                 let quota_status = db::quota::evaluate_quota(&quota, report.deduplicated_size);
                 if !matches!(quota_status, db::quota::QuotaStatus::Ok) {

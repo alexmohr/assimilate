@@ -85,7 +85,7 @@ type SortField = 'client' | 'next_run' | 'last_run' | 'type'
 type SortDir = 'asc' | 'desc'
 type FilterStatus = 'all' | 'enabled' | 'disabled'
 type FilterType = 'all' | 'backup' | 'check' | 'verify'
-type FilterHealth = 'all' | 'overdue'
+type FilterHealth = 'all' | 'overdue' | 'success' | 'failed'
 
 const sortField = ref<SortField>('client')
 const sortDir = ref<SortDir>('asc')
@@ -93,7 +93,11 @@ const filterStatus = ref<FilterStatus>('all')
 const filterType = ref<FilterType>('all')
 const filterText = ref('')
 const filterHealth = ref<FilterHealth>(
-  (useRoute().query.filter as string) === 'overdue' ? 'overdue' : 'all',
+  (() => {
+    const q = useRoute().query.filter as string | undefined
+    if (q === 'overdue' || q === 'success' || q === 'failed') return q
+    return 'all'
+  })(),
 )
 
 const { isMobile } = useMobile()
@@ -155,6 +159,10 @@ const filteredSchedules = computed(() => {
 
   if (filterHealth.value === 'overdue') {
     list = list.filter((s) => s.health?.is_overdue)
+  } else if (filterHealth.value === 'success') {
+    list = list.filter((s) => s.health?.last_status === 'success')
+  } else if (filterHealth.value === 'failed') {
+    list = list.filter((s) => s.health?.last_status === 'failed')
   }
 
   if (filterText.value.trim()) {
@@ -349,6 +357,8 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
           class="input select-input"
         >
           <option value="all">All health</option>
+          <option value="success">Passed only</option>
+          <option value="failed">Failed only</option>
           <option value="overdue">Overdue only</option>
         </select>
         <div class="sort-controls">

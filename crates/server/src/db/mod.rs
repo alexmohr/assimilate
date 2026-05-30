@@ -1468,6 +1468,26 @@ pub async fn list_reports_for_client(
     }
 }
 
+pub async fn list_reports_for_schedule(
+    pool: &PgPool,
+    client_id: i64,
+    repo_id: i64,
+    limit: i64,
+) -> Result<Vec<ReportRow>, ApiError> {
+    sqlx::query_as::<_, ReportRow>(
+        "SELECT id, client_id, repo_id, started_at, finished_at, status, original_size, \
+         compressed_size, deduplicated_size, files_processed, duration_secs, error_message, \
+         warnings, borg_version, archive_name FROM backup_reports WHERE client_id = $1 AND \
+         repo_id = $2 ORDER BY started_at DESC LIMIT $3",
+    )
+    .bind(client_id)
+    .bind(repo_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
 pub async fn get_storage_stats(pool: &PgPool) -> Result<Vec<StorageStatRow>, ApiError> {
     sqlx::query_as::<_, StorageStatRow>(
         "SELECT c.hostname, r.name AS target_name, COALESCE(SUM(br.original_size), 0)::INT8 AS \

@@ -3,7 +3,7 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
 use serde::Deserialize;
@@ -525,4 +525,41 @@ pub async fn run_schedule_now(
         .map_err(|e| ApiError::Internal(format!("agent not connected: {e}")))?;
 
     Ok(StatusCode::ACCEPTED)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListScheduleReportsQuery {
+    pub limit: Option<i64>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/schedules/{id}/reports",
+    tag = "Schedules",
+    operation_id = "listScheduleReports",
+    summary = "List backup reports for a schedule",
+    params(
+        ("id" = i64, Path, description = "Schedule ID"),
+        ("limit" = Option<i64>, Query, description = "Max entries to return"),
+    ),
+    responses(
+        (status = 200, description = "List of backup reports", body = Vec<crate::db::ReportRow>),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Not found"),
+    )
+)]
+pub async fn list_schedule_reports(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Path(id): Path<i64>,
+    Query(query): Query<ListScheduleReportsQuery>,
+) -> Result<Json<Vec<db::ReportRow>>, ApiError> {
+    let schedule = db::get_schedule_by_id(&state.pool, id).await?;
+    let Some(client_id) = schedule.client_id else {
+        return Ok(Json(Vec::new()));
+    };
+    let limit = query.limit.unwrap_or(20);
+    let reports =
+        db::list_reports_for_schedule(&state.pool, client_id, schedule.repo_id, limit).await?;
+    Ok(Json(reports))
 }

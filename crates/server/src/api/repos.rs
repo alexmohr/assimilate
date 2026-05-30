@@ -176,7 +176,7 @@ pub async fn create_repo(
     let compression = helpers::validate_compression(req.compression.as_deref())?;
     let encryption = req
         .encryption
-        .map_or_else(|| "repokey".to_string(), |e| e.to_string());
+        .map_or_else(|| "repokey-blake2".to_string(), |e| e.to_string());
 
     let repo = db::insert_repo(
         &state.pool,
@@ -226,7 +226,7 @@ pub async fn update_repo(
 
     let encryption = req
         .encryption
-        .map_or_else(|| "repokey".to_string(), |e| e.to_string());
+        .map_or_else(|| "repokey-blake2".to_string(), |e| e.to_string());
 
     let repo = db::update_repo(
         &state.pool,

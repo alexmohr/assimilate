@@ -191,6 +191,7 @@ const deployForm = reactive({
   ssh_host: '',
   ssh_user: 'root',
   ssh_port: 22,
+  ssh_password: '',
   server_url: '',
   install_path: '/usr/local/bin/assimilate-agent',
   use_sudo: false,
@@ -446,6 +447,7 @@ async function submitDeploy(): Promise<void> {
       ssh_host: deployForm.ssh_host.trim(),
       ssh_user: deployForm.ssh_user.trim(),
       ssh_port: deployForm.ssh_port,
+      ssh_password: deployForm.ssh_password || undefined,
       server_url: deployForm.server_url.trim(),
       install_path: deployForm.install_path.trim() || undefined,
       use_sudo: deployForm.use_sudo,
@@ -1018,6 +1020,18 @@ watch(wsStatus, (newStatus, oldStatus) => {
                     max="65535"
                   />
                 </div>
+              </div>
+              <div class="field">
+                <label class="field-label">SSH Password</label>
+                <input
+                  v-model="deployForm.ssh_password"
+                  class="input mono"
+                  type="password"
+                  placeholder="Leave empty to use SSH key"
+                />
+                <span class="field-hint"
+                  >Optional — authenticate with password instead of the server's SSH key</span
+                >
               </div>
               <div class="field">
                 <label class="field-label">Server URL <span class="required">*</span></label>

@@ -28,6 +28,7 @@ pub struct DeployAgentRequest {
     #[serde(default)]
     pub use_sudo: bool,
     pub sudo_password: Option<String>,
+    pub ssh_password: Option<String>,
     pub systemd_service_content: Option<String>,
 }
 
@@ -164,6 +165,7 @@ pub async fn deploy_agent(
         token: &token_hex,
         use_sudo: req.use_sudo,
         sudo_password: req.sudo_password.as_deref(),
+        password: req.ssh_password.as_deref(),
         systemd_service_content: req.systemd_service_content.as_deref(),
     })
     .await;

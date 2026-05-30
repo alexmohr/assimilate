@@ -5,6 +5,9 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { FilterMatchMode } from '@primevue/core/api'
+import DataTable from 'primevue/datatable'
+import Column from 'primevue/column'
 import { apiClient } from '../api/client'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useClipboard } from '../composables/useClipboard'
@@ -75,13 +78,30 @@ const breadcrumbs = computed<BreadcrumbSegment[]>(() => {
   return segments
 })
 
-const dirs = computed(() =>
-  contents.value.filter((e) => e.type === 'd').sort((a, b) => a.path.localeCompare(b.path)),
-)
+interface DisplayEntry extends ContentEntry {
+  displayName: string
+  isDir: boolean
+}
 
-const files = computed(() =>
-  contents.value.filter((e) => e.type !== 'd').sort((a, b) => a.path.localeCompare(b.path)),
-)
+const browserEntries = computed<DisplayEntry[]>(() => {
+  const dirList = contents.value
+    .filter((e) => e.type === 'd')
+    .sort((a, b) => a.path.localeCompare(b.path))
+  const fileList = contents.value
+    .filter((e) => e.type !== 'd')
+    .sort((a, b) => a.path.localeCompare(b.path))
+  return [...dirList, ...fileList].map((e) => ({
+    ...e,
+    displayName: e.path.split('/').pop() ?? e.path,
+    isDir: e.type === 'd',
+  }))
+})
+
+const browserFilters = ref({
+  displayName: { value: '', matchMode: FilterMatchMode.CONTAINS },
+  size: { value: '', matchMode: FilterMatchMode.CONTAINS },
+  mtime: { value: '', matchMode: FilterMatchMode.CONTAINS },
+})
 
 async function loadRepos(): Promise<void> {
   reposLoading.value = true
@@ -135,9 +155,10 @@ async function loadContents(path: string): Promise<void> {
   contentsError.value = null
   currentPath.value = path
   try {
+    const apiPath = path === '/' ? undefined : path.replace(/^\//, '')
     const res = await apiClient.get<ContentEntry[]>(
       `/repos/${selectedRepoId.value}/archives/${encodeURIComponent(selectedArchive.value.name)}/contents`,
-      { params: { path } },
+      { params: apiPath ? { path: apiPath } : {} },
     )
     contents.value = res.data
   } catch (e: unknown) {
@@ -377,60 +398,89 @@ onMounted(loadRepos)
           >
             Empty directory.
           </div>
-          <table
+          <DataTable
             v-else
-            class="data-table"
+            v-model:filters="browserFilters"
+            :value="browserEntries"
+            :row-class="(data: DisplayEntry) => (data.isDir ? 'clickable' : '')"
+            filter-display="row"
+            table-class="data-table"
+            @row-click="(e: { data: DisplayEntry }) => e.data.isDir && navigateTo(e.data.path)"
           >
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Size</th>
-                <th>Modified</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="entry in dirs"
-                :key="entry.path"
-                class="clickable"
-                @click="navigateTo(entry.path)"
-              >
-                <td class="td-name">
-                  <span class="icon-dir">&#128193;</span>
-                  {{ entryName(entry) }}
-                </td>
-                <td class="td-size muted">—</td>
-                <td class="td-date">
-                  {{ formatDate(entry.mtime) }}
-                </td>
-                <td />
-              </tr>
-              <tr
-                v-for="entry in files"
-                :key="entry.path"
-              >
-                <td class="td-name">
-                  <span class="icon-file">&#128196;</span>
-                  {{ entryName(entry) }}
-                </td>
-                <td class="td-size">
-                  {{ formatBytes(entry.size) }}
-                </td>
-                <td class="td-date">
-                  {{ formatDate(entry.mtime) }}
-                </td>
-                <td class="td-action">
+            <Column
+              field="displayName"
+              header="Name"
+              :sortable="true"
+              :show-filter-menu="false"
+            >
+              <template #filter="{ filterModel, filterCallback }">
+                <input
+                  v-model="filterModel.value"
+                  class="filter-input"
+                  type="text"
+                  placeholder="Filter name..."
+                  @input="filterCallback()"
+                />
+              </template>
+              <template #body="{ data }">
+                <span class="td-name">
+                  <span :class="data.isDir ? 'icon-dir' : 'icon-file'">{{ data.isDir ? '&#128193;' : '&#128196;' }}</span>
+                  {{ data.displayName }}
+                </span>
+              </template>
+            </Column>
+            <Column
+              field="size"
+              header="Size"
+              :sortable="true"
+              :show-filter-menu="false"
+            >
+              <template #filter="{ filterModel, filterCallback }">
+                <input
+                  v-model="filterModel.value"
+                  class="filter-input"
+                  type="text"
+                  placeholder="Filter size..."
+                  @input="filterCallback()"
+                />
+              </template>
+              <template #body="{ data }">
+                <span class="td-size">{{ data.isDir ? '—' : formatBytes(data.size) }}</span>
+              </template>
+            </Column>
+            <Column
+              field="mtime"
+              header="Modified"
+              :sortable="true"
+              :show-filter-menu="false"
+            >
+              <template #filter="{ filterModel, filterCallback }">
+                <input
+                  v-model="filterModel.value"
+                  class="filter-input"
+                  type="text"
+                  placeholder="Filter date..."
+                  @input="filterCallback()"
+                />
+              </template>
+              <template #body="{ data }">
+                <span class="td-date">{{ formatDate(data.mtime) }}</span>
+              </template>
+            </Column>
+            <Column header="">
+              <template #body="{ data }">
+                <span class="td-action">
                   <button
+                    v-if="!data.isDir"
                     class="btn btn-sm btn-ghost"
-                    @click="downloadFile(entry)"
+                    @click.stop="downloadFile(data)"
                   >
                     Download
                   </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                </span>
+              </template>
+            </Column>
+          </DataTable>
         </div>
 
         <div
@@ -687,6 +737,21 @@ onMounted(loadRepos)
 
 .td-action {
   text-align: right;
+}
+
+.filter-input {
+  width: 100%;
+  background: var(--bg-input, var(--bg-card));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  padding: 0.35rem 0.5rem;
+  font-size: 0.78rem;
+}
+
+.filter-input:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 .icon-dir,

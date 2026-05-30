@@ -366,6 +366,38 @@ impl TunnelManager {
         }
     }
 
+    /// Ensures the tunnel for the given client is started and not in a disconnected/error state.
+    /// If it's not running or disconnected, restarts it. Returns `true` if the tunnel is
+    /// connected or was just restarted (best-effort).
+    pub async fn ensure_client_tunnel_connected(&self, client_id: i64) -> bool {
+        let tunnel = match db::get_tunnel_by_client_id(&self.pool, client_id).await {
+            Ok(t) => t,
+            Err(_) => return true,
+        };
+
+        if !tunnel.enabled {
+            return true;
+        }
+
+        let needs_restart = {
+            let map = self.tunnels.read().await;
+            match map.get(&tunnel.id) {
+                None => true,
+                Some(state) => matches!(
+                    state.status,
+                    TunnelStatus::Disconnected | TunnelStatus::Error { .. }
+                ),
+            }
+        };
+
+        if needs_restart {
+            self.stop_tunnel(tunnel.id).await;
+            self.start_tunnel(tunnel.id).await;
+        }
+
+        true
+    }
+
     async fn set_status(&self, tunnel_id: i64, hostname: &str, status: TunnelStatus) {
         let client_id = {
             let mut map = self.tunnels.write().await;

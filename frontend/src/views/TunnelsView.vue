@@ -9,9 +9,15 @@ import { useWebSocket } from '../composables/useWebSocket'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
-import { listTunnels, createTunnel, updateTunnel, deleteTunnel } from '../api/tunnels'
+import {
+  listTunnels,
+  createTunnel,
+  updateTunnel,
+  deleteTunnel,
+  reconnectTunnel,
+} from '../api/tunnels'
 import { apiClient } from '../api/client'
-import { Plus, Trash2, Cable } from '@lucide/vue'
+import { Plus, Trash2, Cable, RefreshCw } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import type {
@@ -142,6 +148,23 @@ async function submitAdd(): Promise<void> {
     addError.value = extractError(e)
   } finally {
     addLoading.value = false
+  }
+}
+
+const reconnectingId = ref<number | null>(null)
+
+async function reconnect(tunnel: TunnelWithStatus): Promise<void> {
+  reconnectingId.value = tunnel.id
+  try {
+    const updated = await reconnectTunnel(tunnel.id)
+    const idx = tunnels.value.findIndex((t) => t.id === tunnel.id)
+    if (idx !== -1) {
+      tunnels.value[idx] = { ...tunnels.value[idx], ...updated }
+    }
+  } catch (e: unknown) {
+    error.value = extractError(e)
+  } finally {
+    reconnectingId.value = null
   }
 }
 
@@ -321,6 +344,18 @@ onMounted(() => {
             </td>
             <td>
               <div class="row-actions">
+                <button
+                  v-if="tunnel.enabled && tunnel.status !== 'connected'"
+                  class="btn btn-sm btn-ghost"
+                  :disabled="reconnectingId === tunnel.id"
+                  :title="'Reconnect tunnel'"
+                  @click="reconnect(tunnel)"
+                >
+                  <RefreshCw
+                    :size="14"
+                    :class="{ spinning: reconnectingId === tunnel.id }"
+                  />
+                </button>
                 <button
                   class="btn btn-sm btn-ghost"
                   @click="openEdit(tunnel)"
@@ -753,6 +788,19 @@ onMounted(() => {
 .row-actions {
   display: flex;
   gap: 0.25rem;
+}
+
+.spinning {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .field-row {

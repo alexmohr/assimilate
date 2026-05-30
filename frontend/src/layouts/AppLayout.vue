@@ -12,6 +12,7 @@ import { useUiStore } from '../stores/ui'
 import { useTimezone } from '../composables/useTimezone'
 import {
   Activity,
+  Bell,
   BookOpen,
   Cable,
   ChevronLeft,
@@ -32,6 +33,7 @@ import {
 
 const iconMap: Record<string, Component> = {
   activity: Activity,
+  notifications: Bell,
   dashboard: LayoutGrid,
   excludes: SlidersHorizontal,
   groups: Users,
@@ -58,6 +60,7 @@ const mainNav = [
   { to: '/repos', label: 'Repos', icon: 'repos' },
   { to: '/schedules', label: 'Schedules', icon: 'schedules' },
   { to: '/tunnels', label: 'Tunnels', icon: 'tunnels' },
+  { to: '/notifications', label: 'Notifications', icon: 'notifications' },
   { to: '/activity', label: 'Activity', icon: 'activity' },
 ]
 

@@ -259,7 +259,7 @@ jobs:
   docker-manifest:
     name: Docker Multi-Arch Manifest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [publish]
+    needs: [nightly]
     runs-on: ubuntu-latest
     permissions:
       contents: read

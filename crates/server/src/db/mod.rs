@@ -1366,6 +1366,9 @@ pub struct ActivityRow {
     pub finished_at: DateTime<Utc>,
     pub status: String,
     pub duration_secs: i64,
+    pub repo_id: Option<i64>,
+    pub archive_name: Option<String>,
+    pub error_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -1479,16 +1482,38 @@ pub async fn get_storage_stats(pool: &PgPool) -> Result<Vec<StorageStatRow>, Api
     .map_err(ApiError::Database)
 }
 
-pub async fn get_activity_feed(pool: &PgPool, limit: i64) -> Result<Vec<ActivityRow>, ApiError> {
-    sqlx::query_as::<_, ActivityRow>(
+pub async fn get_activity_feed(
+    pool: &PgPool,
+    limit: i64,
+    repo_id: Option<i64>,
+    hostname: Option<&str>,
+) -> Result<Vec<ActivityRow>, ApiError> {
+    let mut sql = String::from(
         "SELECT br.id, c.hostname, r.name AS target_name, br.started_at, br.finished_at, \
-         br.status, br.duration_secs FROM backup_reports br JOIN clients c ON c.id = br.client_id \
-         JOIN repos r ON r.id = br.repo_id ORDER BY br.started_at DESC LIMIT $1",
-    )
-    .bind(limit)
-    .fetch_all(pool)
-    .await
-    .map_err(ApiError::Database)
+         br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message FROM \
+         backup_reports br JOIN clients c ON c.id = br.client_id JOIN repos r ON r.id = \
+         br.repo_id WHERE 1=1",
+    );
+    let mut param_idx = 1u32;
+    if repo_id.is_some() {
+        sql.push_str(&format!(" AND br.repo_id = ${param_idx}"));
+        param_idx += 1;
+    }
+    if hostname.is_some() {
+        sql.push_str(&format!(" AND c.hostname = ${param_idx}"));
+        param_idx += 1;
+    }
+    sql.push_str(&format!(" ORDER BY br.started_at DESC LIMIT ${param_idx}"));
+
+    let mut query = sqlx::query_as::<_, ActivityRow>(&sql);
+    if let Some(rid) = repo_id {
+        query = query.bind(rid);
+    }
+    if let Some(host) = hostname {
+        query = query.bind(host.to_owned());
+    }
+    query = query.bind(limit);
+    query.fetch_all(pool).await.map_err(ApiError::Database)
 }
 
 pub async fn get_health_summary(pool: &PgPool) -> Result<Vec<HealthRow>, ApiError> {
@@ -2322,10 +2347,16 @@ pub struct DashboardSummaryRow {
     pub last_backup_at: Option<DateTime<Utc>>,
     pub next_backup_at: Option<DateTime<Utc>>,
     pub last_backup_schedule_id: Option<i64>,
+    pub last_backup_repo_id: Option<i64>,
+    pub last_backup_archive_name: Option<String>,
     pub next_backup_schedule_id: Option<i64>,
     pub success_30d: i64,
     pub failed_30d: i64,
     pub total_30d: i64,
+    pub last_failure_at: Option<DateTime<Utc>>,
+    pub last_warning_at: Option<DateTime<Utc>>,
+    pub last_failure_schedule_id: Option<i64>,
+    pub last_warning_schedule_id: Option<i64>,
 }
 
 pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow, ApiError> {
@@ -2341,14 +2372,26 @@ pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow,
          s.repo_id WHERE s.enabled = true AND r.enabled = true AND s.next_run_at IS NOT NULL AND \
          s.next_run_at > NOW()) AS next_backup_at, (SELECT s.id FROM schedules s JOIN \
          backup_reports br ON br.repo_id = s.repo_id AND br.client_id = s.client_id ORDER BY \
-         br.finished_at DESC LIMIT 1) AS last_backup_schedule_id, (SELECT s.id FROM schedules s \
+         br.finished_at DESC LIMIT 1) AS last_backup_schedule_id, (SELECT br.repo_id FROM \
+         backup_reports br WHERE br.status = 'success' ORDER BY br.finished_at DESC LIMIT 1) AS \
+         last_backup_repo_id, (SELECT br.archive_name FROM backup_reports br WHERE br.status = \
+         'success' ORDER BY br.finished_at DESC LIMIT 1) AS last_backup_archive_name, (SELECT s.id FROM schedules s \
          JOIN repos r ON r.id = s.repo_id WHERE s.enabled = true AND r.enabled = true AND \
          s.next_run_at IS NOT NULL AND s.next_run_at > NOW() ORDER BY s.next_run_at LIMIT 1) AS \
          next_backup_schedule_id, (SELECT COUNT(*) FROM backup_reports WHERE status = 'success' \
          AND started_at > NOW() - INTERVAL '30 days') AS success_30d, (SELECT COUNT(*) FROM \
          backup_reports WHERE status != 'success' AND started_at > NOW() - INTERVAL '30 days') AS \
          failed_30d, (SELECT COUNT(*) FROM backup_reports WHERE started_at > NOW() - INTERVAL '30 \
-         days') AS total_30d",
+         days') AS total_30d, (SELECT MAX(finished_at) FROM backup_reports WHERE status = \
+         'failed' AND finished_at > '1970-01-01T00:00:00Z') AS last_failure_at, (SELECT \
+         MAX(finished_at) FROM backup_reports WHERE status = 'warning' AND finished_at > \
+         '1970-01-01T00:00:00Z') AS last_warning_at, (SELECT s.id FROM backup_reports br JOIN \
+         schedules s ON s.client_id = br.client_id AND s.repo_id = br.repo_id WHERE br.status = \
+         'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT \
+         1) AS last_failure_schedule_id, (SELECT s.id FROM backup_reports br JOIN schedules s ON \
+         s.client_id = br.client_id AND s.repo_id = br.repo_id WHERE br.status = 'warning' AND \
+         br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS \
+         last_warning_schedule_id",
     )
     .fetch_one(pool)
     .await
@@ -2409,17 +2452,34 @@ pub async fn get_storage_breakdown_by_server(
 pub async fn get_activity_feed_days(
     pool: &PgPool,
     days: i64,
+    repo_id: Option<i64>,
+    hostname: Option<&str>,
 ) -> Result<Vec<ActivityRow>, ApiError> {
-    sqlx::query_as::<_, ActivityRow>(
+    let mut sql = String::from(
         "SELECT br.id, c.hostname, r.name AS target_name, br.started_at, br.finished_at, \
-         br.status, br.duration_secs FROM backup_reports br JOIN clients c ON c.id = br.client_id \
-         JOIN repos r ON r.id = br.repo_id WHERE br.started_at > NOW() - make_interval(days => \
-         $1::int) ORDER BY br.started_at DESC",
-    )
-    .bind(i32::try_from(days).unwrap_or(14))
-    .fetch_all(pool)
-    .await
-    .map_err(ApiError::Database)
+         br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message FROM \
+         backup_reports br JOIN clients c ON c.id = br.client_id JOIN repos r ON r.id = \
+         br.repo_id WHERE br.started_at > NOW() - make_interval(days => $1::int)",
+    );
+    let mut param_idx = 2u32;
+    if repo_id.is_some() {
+        sql.push_str(&format!(" AND br.repo_id = ${param_idx}"));
+        param_idx += 1;
+    }
+    if hostname.is_some() {
+        sql.push_str(&format!(" AND c.hostname = ${param_idx}"));
+    }
+    sql.push_str(" ORDER BY br.started_at DESC");
+
+    let mut query = sqlx::query_as::<_, ActivityRow>(&sql);
+    query = query.bind(i32::try_from(days).unwrap_or(14));
+    if let Some(rid) = repo_id {
+        query = query.bind(rid);
+    }
+    if let Some(host) = hostname {
+        query = query.bind(host.to_owned());
+    }
+    query.fetch_all(pool).await.map_err(ApiError::Database)
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -2864,7 +2924,12 @@ pub struct CalendarEventRow {
     pub event_type: String,
     pub status: String,
     pub repo_name: String,
+    pub hostname: String,
     pub time: String,
+    pub report_id: Option<i64>,
+    pub repo_id: Option<i64>,
+    pub error_message: Option<String>,
+    pub archive_name: Option<String>,
 }
 
 pub async fn get_calendar_events(
@@ -2886,9 +2951,10 @@ pub async fn get_calendar_events(
         sqlx::query_as::<_, CalendarEventRow>(
             "SELECT br.started_at::date AS date, 'backup' AS event_type, CASE WHEN br.status = \
              'success' THEN 'success' ELSE 'failed' END AS status, r.name AS repo_name, \
-             to_char(br.started_at, 'HH24:MI') AS time FROM backup_reports br JOIN repos r ON \
-             r.id = br.repo_id WHERE br.started_at::date >= $1 AND br.started_at::date < $2 AND \
-             br.repo_id = $3 ORDER BY br.started_at",
+             c.hostname, to_char(br.started_at, 'HH24:MI') AS time, br.id AS report_id, \
+             br.repo_id, br.error_message, br.archive_name FROM backup_reports br JOIN repos r ON \
+             r.id = br.repo_id JOIN clients c ON c.id = br.client_id WHERE br.started_at::date \
+             >= $1 AND br.started_at::date < $2 AND br.repo_id = $3 ORDER BY br.started_at",
         )
         .bind(start)
         .bind(end)
@@ -2900,9 +2966,10 @@ pub async fn get_calendar_events(
         sqlx::query_as::<_, CalendarEventRow>(
             "SELECT br.started_at::date AS date, 'backup' AS event_type, CASE WHEN br.status = \
              'success' THEN 'success' ELSE 'failed' END AS status, r.name AS repo_name, \
-             to_char(br.started_at, 'HH24:MI') AS time FROM backup_reports br JOIN repos r ON \
-             r.id = br.repo_id WHERE br.started_at::date >= $1 AND br.started_at::date < $2 ORDER \
-             BY br.started_at",
+             c.hostname, to_char(br.started_at, 'HH24:MI') AS time, br.id AS report_id, \
+             br.repo_id, br.error_message, br.archive_name FROM backup_reports br JOIN repos r ON \
+             r.id = br.repo_id JOIN clients c ON c.id = br.client_id WHERE br.started_at::date \
+             >= $1 AND br.started_at::date < $2 ORDER BY br.started_at",
         )
         .bind(start)
         .bind(end)

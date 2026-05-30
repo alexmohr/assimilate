@@ -23,6 +23,8 @@ pub struct ActivityQuery {
     pub limit: Option<i64>,
     pub days: Option<i64>,
     pub category: Option<String>,
+    pub repo_id: Option<i64>,
+    pub hostname: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -46,6 +48,8 @@ pub struct DashboardSummaryResponse {
     pub last_backup_at: Option<chrono::DateTime<Utc>>,
     pub next_backup_at: Option<chrono::DateTime<Utc>>,
     pub last_backup_schedule_id: Option<i64>,
+    pub last_backup_repo_id: Option<i64>,
+    pub last_backup_archive_name: Option<String>,
     pub next_backup_schedule_id: Option<i64>,
     pub active_schedules: i64,
     pub total_schedules: i64,
@@ -54,6 +58,10 @@ pub struct DashboardSummaryResponse {
     pub failed_30d: i64,
     pub total_30d: i64,
     pub storage_by_repo: Vec<StorageRepoEntry>,
+    pub last_failure_at: Option<chrono::DateTime<Utc>>,
+    pub last_warning_at: Option<chrono::DateTime<Utc>>,
+    pub last_failure_schedule_id: Option<i64>,
+    pub last_warning_schedule_id: Option<i64>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -108,6 +116,8 @@ pub async fn summary(
         last_backup_at: row.last_backup_at,
         next_backup_at: row.next_backup_at,
         last_backup_schedule_id: row.last_backup_schedule_id,
+        last_backup_repo_id: row.last_backup_repo_id,
+        last_backup_archive_name: row.last_backup_archive_name,
         next_backup_schedule_id: row.next_backup_schedule_id,
         active_schedules: row.active_schedules,
         total_schedules: row.total_schedules,
@@ -116,6 +126,10 @@ pub async fn summary(
         failed_30d: row.failed_30d,
         total_30d: row.total_30d,
         storage_by_repo,
+        last_failure_at: row.last_failure_at,
+        last_warning_at: row.last_warning_at,
+        last_failure_schedule_id: row.last_failure_schedule_id,
+        last_warning_schedule_id: row.last_warning_schedule_id,
     }))
 }
 
@@ -207,6 +221,8 @@ pub async fn storage_breakdown(
     params(
         ("limit" = Option<i64>, Query, description = "Max entries to return"),
         ("days" = Option<i64>, Query, description = "Return entries from last N days"),
+        ("repo_id" = Option<i64>, Query, description = "Filter by repository ID"),
+        ("hostname" = Option<String>, Query, description = "Filter by client hostname"),
     ),
     responses(
         (status = 200, description = "Activity feed", body = Vec<crate::db::ActivityRow>),
@@ -219,10 +235,11 @@ pub async fn activity(
     Query(query): Query<ActivityQuery>,
 ) -> Result<Json<Vec<db::ActivityRow>>, ApiError> {
     let rows = if let Some(days) = query.days {
-        db::get_activity_feed_days(&state.pool, days).await?
+        db::get_activity_feed_days(&state.pool, days, query.repo_id, query.hostname.as_deref())
+            .await?
     } else {
         let limit = query.limit.unwrap_or(20);
-        db::get_activity_feed(&state.pool, limit).await?
+        db::get_activity_feed(&state.pool, limit, query.repo_id, query.hostname.as_deref()).await?
     };
     Ok(Json(rows))
 }
@@ -420,7 +437,13 @@ pub struct CalendarEvent {
     pub event_type: CalendarEventType,
     pub status: CalendarEventStatus,
     pub repo_name: String,
+    pub hostname: String,
     pub time: String,
+    pub report_id: Option<i64>,
+    pub repo_id: Option<i64>,
+    pub schedule_id: Option<i64>,
+    pub archive_name: Option<String>,
+    pub error_message: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -494,11 +517,18 @@ pub async fn calendar(
                 event_type,
                 status,
                 repo_name: row.repo_name,
+                hostname: row.hostname,
                 time: row.time,
+                report_id: row.report_id,
+                repo_id: row.repo_id,
+                schedule_id: None,
+                archive_name: row.archive_name,
+                error_message: row.error_message,
             });
     }
 
     let repos = db::list_all_repos(&state.pool).await?;
+    let clients = db::list_clients(&state.pool).await?;
 
     for schedule in &schedules {
         if query.repo_id.is_some_and(|rid| schedule.repo_id != rid) {
@@ -508,6 +538,11 @@ pub async fn calendar(
             .iter()
             .find(|r| r.id == schedule.repo_id)
             .map(|r| r.name.clone())
+            .unwrap_or_default();
+        let hostname = clients
+            .iter()
+            .find(|c| schedule.client_id.is_some_and(|cid| c.id == cid))
+            .map(|c| c.hostname.clone())
             .unwrap_or_default();
 
         let mut cursor = now;
@@ -530,7 +565,13 @@ pub async fn calendar(
                         event_type: CalendarEventType::Backup,
                         status: CalendarEventStatus::Scheduled,
                         repo_name: repo_name.clone(),
+                        hostname: hostname.clone(),
                         time: time_str,
+                        report_id: None,
+                        repo_id: Some(schedule.repo_id),
+                        schedule_id: Some(schedule.id),
+                        archive_name: None,
+                        error_message: None,
                     });
             }
             cursor = next;

@@ -48,6 +48,7 @@ nav:
   - Security & Auth:
       - Overview: security.md
       - Access Control: access-control.md
+      - Audit Log: audit-log.md
   - SSH Agent Forwarding: ssh-agent-forwarding.md
   - Host & Agent Management: hosts.md
   - Repository Management: repositories.md
@@ -56,7 +57,6 @@ nav:
   - Restoring Files: restore.md
   - Storage Quotas: quotas.md
   - Key Management: key-management.md
-  - Audit Log: audit-log.md
   - Global Excludes: excludes.md
   - Activity Log: activity.md
   - SSH Tunnels: ssh-tunnels.md

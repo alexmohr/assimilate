@@ -180,6 +180,18 @@ async fn main() -> Result<(), StartupError> {
                 .delete(api::repos::delete_repo),
         )
         .route(
+            "/api/repos/{repo_id}/key/export",
+            post(api::keys::export_key),
+        )
+        .route(
+            "/api/repos/{repo_id}/key/import",
+            post(api::keys::import_key),
+        )
+        .route(
+            "/api/repos/{repo_id}/key/change-passphrase",
+            post(api::keys::change_passphrase),
+        )
+        .route(
             "/api/repos/{repo_id}/passphrase",
             get(api::repos::get_passphrase),
         )
@@ -249,6 +261,10 @@ async fn main() -> Result<(), StartupError> {
         .route("/api/stats/health", get(api::stats::health))
         .route("/api/logs", get(api::logs::get_logs))
         .route(
+            "/api/repos/{repo_id}/archives/diff",
+            get(api::diff::diff_archives),
+        )
+        .route(
             "/api/repos/{repo_id}/archives",
             get(api::archives::list_archives),
         )
@@ -263,6 +279,18 @@ async fn main() -> Result<(), StartupError> {
         .route(
             "/api/repos/{repo_id}/archives/{archive_name}/extract",
             get(api::archives::extract_file),
+        )
+        .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/export",
+            get(api::export::export_archive),
+        )
+        .route(
+            "/api/repos/{repo_id}/search",
+            get(api::search::cross_archive_search),
+        )
+        .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/search",
+            get(api::search::search_archive),
         )
         .route(
             "/api/repos/{repo_id}/archives/{archive_name}/tags",

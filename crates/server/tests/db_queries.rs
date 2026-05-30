@@ -260,6 +260,171 @@ async fn repo_with_passphrase(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn test_quota_upsert_and_get(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    let quota = db::quota::upsert_quota(&pool, repo.id, Some(100), Some(200), true)
+        .await
+        .unwrap();
+    assert_eq!(quota.repo_id, repo.id);
+    assert_eq!(quota.warn_bytes, Some(100));
+    assert_eq!(quota.critical_bytes, Some(200));
+    assert!(quota.enabled);
+
+    let fetched = db::quota::get_quota(&pool, repo.id).await.unwrap();
+    let fetched = fetched.expect("quota should exist");
+    assert_eq!(fetched.repo_id, repo.id);
+    assert_eq!(fetched.warn_bytes, Some(100));
+    assert_eq!(fetched.critical_bytes, Some(200));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_quota_disabled(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    let quota = db::quota::upsert_quota(&pool, repo.id, Some(100), Some(200), false)
+        .await
+        .unwrap();
+
+    assert!(!quota.enabled);
+    assert_eq!(
+        db::quota::evaluate_quota(&quota, 500),
+        db::quota::QuotaStatus::Ok
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_audit_insert_and_list(pool: PgPool) {
+    db::audit::insert_audit_entry(
+        &pool,
+        &db::audit::NewAuditEntry {
+            user_id: Some(1),
+            username: "admin",
+            action: "created_repo",
+            target_type: Some("repo"),
+            target_id: Some(42),
+            details: Some(serde_json::json!({"name": "repo-1"})),
+            ip_address: Some("127.0.0.1"),
+        },
+    )
+    .await
+    .unwrap();
+
+    let (items, total) = db::audit::list_audit_entries(
+        &pool,
+        &db::audit::AuditEntryFilters {
+            page: 1,
+            per_page: 50,
+            filter_user_id: None,
+            filter_action: None,
+            filter_target_type: None,
+            filter_from: None,
+            filter_to: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(total, 1);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].username, "admin");
+    assert_eq!(items[0].action, "created_repo");
+    assert_eq!(items[0].target_type.as_deref(), Some("repo"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_audit_list_pagination(pool: PgPool) {
+    for i in 0..5 {
+        let action = format!("action-{i}");
+        db::audit::insert_audit_entry(
+            &pool,
+            &db::audit::NewAuditEntry {
+                user_id: Some(1),
+                username: "admin",
+                action: &action,
+                target_type: Some("repo"),
+                target_id: Some(i),
+                details: None,
+                ip_address: None,
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    let (items, total) = db::audit::list_audit_entries(
+        &pool,
+        &db::audit::AuditEntryFilters {
+            page: 2,
+            per_page: 2,
+            filter_user_id: None,
+            filter_action: None,
+            filter_target_type: None,
+            filter_from: None,
+            filter_to: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(total, 5);
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0].action, "action-2");
+    assert_eq!(items[1].action, "action-1");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_audit_list_filter_by_action(pool: PgPool) {
+    db::audit::insert_audit_entry(
+        &pool,
+        &db::audit::NewAuditEntry {
+            user_id: Some(1),
+            username: "admin",
+            action: "repo_created",
+            target_type: None,
+            target_id: None,
+            details: None,
+            ip_address: None,
+        },
+    )
+    .await
+    .unwrap();
+    db::audit::insert_audit_entry(
+        &pool,
+        &db::audit::NewAuditEntry {
+            user_id: Some(1),
+            username: "admin",
+            action: "repo_deleted",
+            target_type: None,
+            target_id: None,
+            details: None,
+            ip_address: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let (items, total) = db::audit::list_audit_entries(
+        &pool,
+        &db::audit::AuditEntryFilters {
+            page: 1,
+            per_page: 50,
+            filter_user_id: None,
+            filter_action: Some("repo_created"),
+            filter_target_type: None,
+            filter_from: None,
+            filter_to: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(total, 1);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].action, "repo_created");
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn repo_name(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
 
@@ -408,6 +573,7 @@ async fn create_test_schedule(pool: &PgPool) -> (ClientRow, RepoRow, ScheduleRow
             keep_monthly: 6,
             keep_yearly: 1,
             compact_enabled: true,
+            rate_limit_kbps: Some(5000),
             pre_backup_commands: "",
             post_backup_commands: "",
         },
@@ -426,6 +592,7 @@ async fn schedule_insert_and_list(pool: PgPool) {
     assert_eq!(schedule.cron_expression, "0 3 * * *");
     assert!(schedule.enabled);
     assert_eq!(schedule.keep_daily, 7);
+    assert_eq!(schedule.rate_limit_kbps, Some(5000));
 
     let all = db::list_schedules(&pool).await.unwrap();
     assert_eq!(all.len(), 1);
@@ -450,6 +617,7 @@ async fn schedule_update(pool: PgPool) {
             keep_monthly: 12,
             keep_yearly: 2,
             compact_enabled: false,
+            rate_limit_kbps: None,
             pre_backup_commands: "echo pre",
             post_backup_commands: "echo post",
         },
@@ -464,6 +632,7 @@ async fn schedule_update(pool: PgPool) {
     assert!(updated.ignore_global_excludes);
     assert_eq!(updated.keep_daily, 14);
     assert!(!updated.compact_enabled);
+    assert_eq!(updated.rate_limit_kbps, None);
     assert_eq!(updated.pre_backup_commands, "echo pre");
     assert_eq!(updated.post_backup_commands, "echo post");
 }
@@ -1243,6 +1412,83 @@ async fn tags_crud(pool: PgPool) {
     db::delete_tag(&pool, tag.id).await.unwrap();
     let tags = db::list_tags(&pool, "repo").await.unwrap();
     assert!(tags.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_tag_add_and_list(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    let created = db::tags::add_tag(&pool, repo.id, "archive-1", "nightly", None)
+        .await
+        .unwrap();
+
+    assert_eq!(created.repo_id, repo.id);
+    assert_eq!(created.archive_name, "archive-1");
+    assert_eq!(created.tag, "nightly");
+    assert!(created.created_by.is_none());
+
+    let tags = db::tags::list_tags_for_archive(&pool, repo.id, "archive-1")
+        .await
+        .unwrap();
+    assert_eq!(tags.len(), 1);
+    assert_eq!(tags[0].tag, "nightly");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_tag_remove(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    db::tags::add_tag(&pool, repo.id, "archive-2", "weekly", None)
+        .await
+        .unwrap();
+
+    let removed = db::tags::remove_tag(&pool, repo.id, "archive-2", "weekly")
+        .await
+        .unwrap();
+    assert!(removed);
+
+    let tags = db::tags::list_tags_for_archive(&pool, repo.id, "archive-2")
+        .await
+        .unwrap();
+    assert!(tags.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_tag_duplicate_returns_conflict(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    db::tags::add_tag(&pool, repo.id, "archive-dup", "important", None)
+        .await
+        .unwrap();
+
+    let duplicate = db::tags::add_tag(&pool, repo.id, "archive-dup", "important", None).await;
+    assert!(matches!(
+        duplicate,
+        Err(sqlx::Error::Database(ref err)) if err.code().as_deref() == Some("23505")
+    ));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_tag_list_archives_by_tag(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    db::tags::add_tag(&pool, repo.id, "archive-a", "daily", None)
+        .await
+        .unwrap();
+    db::tags::add_tag(&pool, repo.id, "archive-b", "daily", None)
+        .await
+        .unwrap();
+    db::tags::add_tag(&pool, repo.id, "archive-c", "weekly", None)
+        .await
+        .unwrap();
+
+    let archives = db::tags::list_archives_by_tag(&pool, repo.id, "daily")
+        .await
+        .unwrap();
+    assert_eq!(
+        archives,
+        vec!["archive-a".to_string(), "archive-b".to_string()]
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]

@@ -40,6 +40,7 @@ pub struct CreateScheduleRequest {
     pub keep_monthly: Option<i32>,
     pub keep_yearly: Option<i32>,
     pub compact_enabled: Option<bool>,
+    pub rate_limit_kbps: Option<u32>,
     pub pre_backup_commands: Option<Vec<String>>,
     pub post_backup_commands: Option<Vec<String>>,
     pub backup_sources: Option<Vec<String>>,
@@ -57,6 +58,7 @@ pub struct UpdateScheduleRequest {
     pub keep_monthly: Option<i32>,
     pub keep_yearly: Option<i32>,
     pub compact_enabled: Option<bool>,
+    pub rate_limit_kbps: Option<u32>,
     pub pre_backup_commands: Option<Vec<String>>,
     pub post_backup_commands: Option<Vec<String>>,
     pub backup_sources: Option<Vec<String>>,
@@ -167,6 +169,13 @@ pub async fn create_schedule(
         keep_monthly: req.keep_monthly.unwrap_or(6),
         keep_yearly: req.keep_yearly.unwrap_or(0),
         compact_enabled: req.compact_enabled.unwrap_or(true),
+        rate_limit_kbps: match req.rate_limit_kbps {
+            Some(rate_limit_kbps) => Some(
+                i32::try_from(rate_limit_kbps)
+                    .map_err(|_| ApiError::BadRequest("rate_limit_kbps is too large".into()))?,
+            ),
+            None => None,
+        },
         pre_backup_commands: &serde_json::to_string(&req.pre_backup_commands.unwrap_or_default())
             .unwrap_or_else(|_| "[]".to_owned()),
         post_backup_commands: &serde_json::to_string(&req.post_backup_commands.unwrap_or_default())
@@ -301,6 +310,13 @@ pub async fn update_schedule(
         keep_monthly: req.keep_monthly.unwrap_or(existing.keep_monthly),
         keep_yearly: req.keep_yearly.unwrap_or(existing.keep_yearly),
         compact_enabled: req.compact_enabled.unwrap_or(existing.compact_enabled),
+        rate_limit_kbps: match req.rate_limit_kbps {
+            Some(rate_limit_kbps) => Some(
+                i32::try_from(rate_limit_kbps)
+                    .map_err(|_| ApiError::BadRequest("rate_limit_kbps is too large".into()))?,
+            ),
+            None => existing.rate_limit_kbps,
+        },
         pre_backup_commands: &pre_cmds_json,
         post_backup_commands: &post_cmds_json,
     };
@@ -375,6 +391,77 @@ pub async fn delete_schedule(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/schedules/{id}/clone",
+    tag = "Schedules",
+    operation_id = "cloneSchedule",
+    summary = "Clone an existing schedule",
+    params(("id" = i64, Path, description = "Schedule ID")),
+    responses(
+        (status = 201, description = "Cloned schedule", body = crate::db::ScheduleRow),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Not found"),
+    )
+)]
+pub async fn clone_schedule(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<i64>,
+) -> Result<(StatusCode, Json<ScheduleRow>), ApiError> {
+    let existing = db::get_schedule_by_id(&state.pool, id).await?;
+    check_repo_permission(&state.pool, &auth, existing.repo_id, |p| {
+        p.can_modify_schedules
+    })
+    .await?;
+
+    let Some(client_id) = existing.client_id else {
+        return Err(ApiError::BadRequest(
+            "cannot clone schedule without a client".into(),
+        ));
+    };
+
+    let params = ScheduleParams {
+        schedule_type: &existing.schedule_type,
+        cron_expression: &existing.cron_expression,
+        enabled: false,
+        canary_enabled: existing.canary_enabled,
+        exclude_patterns: &existing.exclude_patterns,
+        ignore_global_excludes: existing.ignore_global_excludes,
+        keep_daily: existing.keep_daily,
+        keep_weekly: existing.keep_weekly,
+        keep_monthly: existing.keep_monthly,
+        keep_yearly: existing.keep_yearly,
+        compact_enabled: existing.compact_enabled,
+        rate_limit_kbps: existing.rate_limit_kbps,
+        pre_backup_commands: &existing.pre_backup_commands,
+        post_backup_commands: &existing.post_backup_commands,
+    };
+
+    let schedule = db::insert_schedule(
+        &state.pool,
+        client_id,
+        existing.repo_id,
+        &params,
+        existing.owner_id,
+    )
+    .await?;
+
+    let backup_sources = db::list_backup_sources_for_schedule(&state.pool, existing.id).await?;
+    for (i, path) in backup_sources.iter().enumerate() {
+        let sort_order =
+            i32::try_from(i).map_err(|_| ApiError::BadRequest("too many backup sources".into()))?;
+        db::insert_backup_source_for_schedule(&state.pool, schedule.id, path, sort_order).await?;
+    }
+
+    if let Ok(hostname) = db::get_client_hostname_for_schedule(&state.pool, schedule.id).await {
+        config_assembler::push_config_to_agent(&state, &hostname).await;
+    }
+
+    Ok((StatusCode::CREATED, Json(schedule)))
+}
+
 fn schedule_type_to_str(st: ScheduleType) -> &'static str {
     match st {
         ScheduleType::Backup => "backup",
@@ -412,9 +499,18 @@ pub async fn run_schedule_now(
     let repo_id = RepoId(schedule.repo_id);
 
     let msg = match schedule.schedule_type.as_str() {
-        "check" => ServerToAgent::RunCheckNow { repo_id },
-        "verify" => ServerToAgent::RunVerifyNow { repo_id },
-        _ => ServerToAgent::RunBackupNow { repo_id },
+        "check" => ServerToAgent::RunCheckNow {
+            repo_id,
+            request_id: None,
+        },
+        "verify" => ServerToAgent::RunVerifyNow {
+            repo_id,
+            request_id: None,
+        },
+        _ => ServerToAgent::RunBackupNow {
+            repo_id,
+            request_id: None,
+        },
     };
 
     state

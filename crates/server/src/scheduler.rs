@@ -85,9 +85,18 @@ async fn tick(pool: &PgPool, registry: &AgentRegistry) -> Result<(), crate::erro
         let repo_id = RepoId(schedule.repo_id);
 
         let msg = match schedule.schedule_type.as_str() {
-            "check" => ServerToAgent::RunCheckNow { repo_id },
-            "verify" => ServerToAgent::RunVerifyNow { repo_id },
-            _ => ServerToAgent::RunBackupNow { repo_id },
+            "check" => ServerToAgent::RunCheckNow {
+                repo_id,
+                request_id: None,
+            },
+            "verify" => ServerToAgent::RunVerifyNow {
+                repo_id,
+                request_id: None,
+            },
+            _ => ServerToAgent::RunBackupNow {
+                repo_id,
+                request_id: None,
+            },
         };
 
         let action = match schedule.schedule_type.as_str() {

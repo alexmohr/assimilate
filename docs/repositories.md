@@ -180,6 +180,19 @@ The passphrase is never logged or transmitted in plaintext. See [Security](secur
 
 Changing the SSH host or path does not move or modify the remote repository. It only updates the connection details Assimilate uses to reach it.
 
+### Repository Relocation Safety
+
+When you change a repository's path, SSH host, or SSH port, borg needs to accept that the repository has moved. Assimilate handles this securely:
+
+1. **On edit**: The server marks the repository as "relocation pending."
+2. **Next backup**: The agent sets `BORG_RELOCATED_REPO_ACCESS_IS_OK=yes` for that single backup run, allowing borg to accept the new location.
+3. **After success**: The relocation flag is cleared automatically. Subsequent backups no longer accept relocations.
+
+This means borg will only accept a repository relocation **once**, immediately after an admin changes the connection details. If an attacker swaps the remote repository at any other time, borg will refuse to operate on it.
+
+!!! note
+    No manual action is required. The relocation acceptance is automatic and one-shot. If the first backup after a path change fails for an unrelated reason, the flag remains set until a backup succeeds.
+
 **Deleting** a repository removes it from Assimilate — the database record, stored passphrase, and associated schedules are deleted. The remote borg repository and its archives are **not** deleted. You must remove the remote data manually if desired.
 
 Deletion requires admin privileges.

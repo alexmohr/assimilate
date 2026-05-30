@@ -130,6 +130,18 @@ See [Configuration](configuration.md) for how to set this environment variable.
 - Passwords are hashed with bcrypt before storage. The plaintext is never persisted.
 - The API rejects change-password requests that do not meet the minimum length.
 
+## Repository Relocation Protection
+
+Borg verifies that a repository has not been moved or swapped since the last access. If a malicious actor replaces the remote repository with a different one, borg refuses to operate on it unless explicitly told to accept the relocation.
+
+Assimilate enforces a **one-shot** relocation acceptance model:
+
+- The `BORG_RELOCATED_REPO_ACCESS_IS_OK` environment variable is **only** set when an admin has explicitly changed the repository's path, SSH host, or SSH port.
+- The acceptance applies to a single backup run. Once that backup succeeds, the flag is cleared.
+- At all other times, borg will reject unexpected repository relocations, protecting against silent data-store substitution.
+
+See [Repositories — Relocation Safety](repositories.md#repository-relocation-safety) for operational details.
+
 ## Sensitive Data Handling
 
 - Repository passphrases are never logged or transmitted in plaintext. They are decrypted in memory only when passed to the borg subprocess.

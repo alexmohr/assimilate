@@ -67,12 +67,13 @@ CREATE TABLE repos (
 
 CREATE TABLE schedules (
     id BIGSERIAL PRIMARY KEY,
-    client_id BIGINT REFERENCES clients(id) ON DELETE CASCADE,
     repo_id BIGINT NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
     schedule_type TEXT NOT NULL DEFAULT 'backup',
     cron_expression TEXT NOT NULL DEFAULT '0 2 * * *',
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     canary_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    execution_mode TEXT NOT NULL DEFAULT 'parallel' CHECK (execution_mode IN ('parallel', 'sequential')),
+    on_failure TEXT NOT NULL DEFAULT 'stop' CHECK (on_failure IN ('stop', 'continue')),
     last_run_at TIMESTAMPTZ,
     next_run_at TIMESTAMPTZ,
     exclude_patterns TEXT[] NOT NULL DEFAULT '{}',
@@ -82,11 +83,18 @@ CREATE TABLE schedules (
     keep_monthly INTEGER NOT NULL DEFAULT 6,
     keep_yearly INTEGER NOT NULL DEFAULT 0,
     compact_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    rate_limit_kbps INTEGER,
     pre_backup_commands TEXT NOT NULL DEFAULT '[]',
     post_backup_commands TEXT NOT NULL DEFAULT '[]',
     owner_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
-    visibility TEXT NOT NULL DEFAULT 'shared' CHECK (visibility IN ('private', 'shared')),
-    UNIQUE (client_id, repo_id, cron_expression)
+    visibility TEXT NOT NULL DEFAULT 'shared' CHECK (visibility IN ('private', 'shared'))
+);
+
+CREATE TABLE schedule_targets (
+    schedule_id BIGINT NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+    client_id BIGINT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    execution_order INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (schedule_id, client_id)
 );
 
 CREATE TABLE backup_sources (
@@ -234,6 +242,7 @@ CREATE INDEX idx_backup_reports_client_id ON backup_reports(client_id);
 CREATE INDEX idx_backup_reports_repo_id ON backup_reports(repo_id);
 CREATE INDEX idx_backup_reports_started_at ON backup_reports(started_at DESC);
 CREATE INDEX idx_schedules_next_run_at ON schedules(next_run_at);
+CREATE INDEX idx_schedule_targets_client_id ON schedule_targets(client_id);
 CREATE INDEX idx_system_events_created_at ON system_events(created_at DESC);
 CREATE INDEX idx_system_events_event_type ON system_events(event_type);
 CREATE INDEX idx_canary_results_repo_id ON canary_results(repo_id);

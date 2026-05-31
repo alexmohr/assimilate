@@ -20,6 +20,7 @@ type ScheduleType = 'backup' | 'check' | 'verify'
 interface ScheduleRow {
   id: number
   repo_id: number
+  name: string
   schedule_type: string
   cron_expression: string
   enabled: boolean
@@ -49,9 +50,15 @@ interface PerHostBackupSources {
   paths: string[]
 }
 
+interface PerHostExcludePatterns {
+  client_id: number
+  patterns: string[]
+}
+
 interface ScheduleBackupSourcesResponse {
   backup_sources: string[]
   backup_sources_per_host: PerHostBackupSources[]
+  exclude_patterns_per_host: PerHostExcludePatterns[]
 }
 
 interface ClientRow {
@@ -93,6 +100,8 @@ const executionMode = ref<'parallel' | 'sequential'>('parallel')
 const onFailure = ref<'stop' | 'continue'>('stop')
 const usePerHostPaths = ref(false)
 const perHostSources = ref<Record<number, string>>({})
+const usePerHostExcludes = ref(false)
+const perHostExcludes = ref<Record<number, string>>({})
 
 const showClientDropdown = ref(false)
 const clientDropdownRef = ref<HTMLElement | null>(null)
@@ -115,9 +124,10 @@ const scheduleType = computed(() =>
 const isBackup = computed(() => scheduleType.value === 'backup')
 
 const form = ref({
+  name: '',
   cron_expression: '0 2 * * *',
   enabled: true,
-  canary_enabled: false,
+  canary_enabled: true,
   exclude_patterns: '',
   ignore_global_excludes: false,
   keep_daily: 7,
@@ -184,6 +194,7 @@ onBeforeUnmount(() => {
 
 function populateForm(s: ScheduleRow): void {
   form.value = {
+    name: s.name,
     cron_expression: s.cron_expression,
     enabled: s.enabled,
     canary_enabled: s.canary_enabled,
@@ -311,6 +322,14 @@ async function loadData(): Promise<void> {
         }
         perHostSources.value = map
       }
+      if (sources.exclude_patterns_per_host.length > 0) {
+        usePerHostExcludes.value = true
+        const map: Record<number, string> = {}
+        for (const entry of sources.exclude_patterns_per_host) {
+          map[entry.client_id] = entry.patterns.join('\n')
+        }
+        perHostExcludes.value = map
+      }
     }
   } catch (e: unknown) {
     error.value = extractError(e, 'Failed to load schedule')
@@ -325,6 +344,7 @@ async function save(): Promise<void> {
   saveSuccess.value = false
   try {
     const payload: Record<string, unknown> = {
+      name: form.value.name,
       cron_expression: form.value.cron_expression,
       enabled: form.value.enabled,
       canary_enabled: form.value.canary_enabled,
@@ -350,6 +370,19 @@ async function save(): Promise<void> {
         }
       }
       payload.backup_sources_per_host = perHost
+    }
+
+    if (usePerHostExcludes.value) {
+      payload.exclude_patterns = []
+      const perHost: { client_id: number; patterns: string[] }[] = []
+      for (const id of selectedClientIds.value) {
+        const text = perHostExcludes.value[id] ?? ''
+        const patterns = parseLines(text)
+        if (patterns.length > 0) {
+          perHost.push({ client_id: id, patterns })
+        }
+      }
+      payload.exclude_patterns_per_host = perHost
     }
 
     if (isCreate.value) {
@@ -480,6 +513,21 @@ watch(activeTab, (tab) => {
         class="tab-content"
       >
         <div class="form-grid">
+          <!-- Schedule Name -->
+          <div class="form-card">
+            <h3 class="info-title">General</h3>
+            <div class="form-group">
+              <label class="form-label">Name</label>
+              <input
+                v-model="form.name"
+                type="text"
+                class="form-input"
+                placeholder="e.g. Daily web server backup"
+              />
+              <span class="field-hint">Optional display name for this schedule</span>
+            </div>
+          </div>
+
           <!-- Create-only: target selection -->
           <div
             v-if="isCreate"
@@ -948,6 +996,13 @@ watch(activeTab, (tab) => {
 
           <div class="form-card">
             <h3 class="info-title">Exclude Patterns</h3>
+            <div
+              v-if="selectedClientIds.length > 1"
+              class="form-group form-group-inline"
+            >
+              <label class="form-label">Configure per host</label>
+              <ToggleSwitch v-model="usePerHostExcludes" />
+            </div>
             <div class="form-group">
               <div class="form-label-row">
                 <label class="form-label">Patterns</label>
@@ -960,12 +1015,41 @@ watch(activeTab, (tab) => {
                 </button>
               </div>
               <textarea
+                v-if="!usePerHostExcludes"
                 v-model="form.exclude_patterns"
                 class="form-input area-input"
                 placeholder="One pattern per line&#10;# Lines starting with # are comments&#10;e.g. *.cache&#10;pp:__pycache__"
                 spellcheck="false"
               />
-              <span class="field-hint">
+              <div
+                v-else
+                class="per-host-paths"
+              >
+                <div
+                  v-for="clientId in selectedClientIds"
+                  :key="clientId"
+                  class="per-host-entry"
+                >
+                  <label class="form-label">{{ clientLabel(clientId) }}</label>
+                  <textarea
+                    :value="perHostExcludes[clientId] ?? ''"
+                    class="form-input area-input area-input-sm"
+                    placeholder="Exclude patterns, one per line"
+                    spellcheck="false"
+                    @input="
+                      ($event) =>
+                        (perHostExcludes[clientId] = ($event.target as HTMLTextAreaElement).value)
+                    "
+                  />
+                </div>
+                <span class="field-hint">
+                  Leave a host empty to use only global and host-level default excludes.
+                </span>
+              </div>
+              <span
+                v-if="!usePerHostExcludes"
+                class="field-hint"
+              >
                 Leave empty to use only global and host-level default excludes. Lines starting with
                 <code>#</code> are treated as comments.
               </span>

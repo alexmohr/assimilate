@@ -48,6 +48,7 @@ interface RepoRow {
 interface ScheduleRow {
   id: number
   repo_id: number
+  name: string
   schedule_type: string
   cron_expression: string
   enabled: boolean
@@ -1243,7 +1244,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
           >
             <div class="card-top">
               <div class="card-info">
-                <span class="card-hostname">{{ repoNameForSchedule(s) }}</span>
+                <span class="card-hostname">{{ s.name || repoNameForSchedule(s) }}</span>
                 <span class="card-repo">
                   {{ s.execution_mode === 'sequential' ? 'Sequential' : 'Parallel' }}
                 </span>

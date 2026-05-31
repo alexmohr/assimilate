@@ -9,15 +9,8 @@ type ErrorHandler = (error: {
   config?: { url?: string }
 }) => Promise<never>
 
-const routerPush = vi.hoisted(() => vi.fn().mockResolvedValue(undefined))
+const locationAssign = vi.fn()
 const responseUse = vi.hoisted(() => vi.fn())
-
-vi.mock('../router', () => ({
-  router: {
-    push: routerPush,
-    currentRoute: { value: { fullPath: '/' } },
-  },
-}))
 
 vi.mock('axios', () => ({
   default: {
@@ -31,6 +24,10 @@ vi.mock('axios', () => ({
   },
 }))
 
+vi.stubGlobal('window', {
+  location: { assign: locationAssign },
+})
+
 import { apiClient } from './client'
 
 describe('apiClient response interceptor', () => {
@@ -40,17 +37,18 @@ describe('apiClient response interceptor', () => {
   ]
 
   beforeEach(() => {
-    routerPush.mockClear()
+    locationAssign.mockClear()
   })
 
   it('redirects 401 responses to login', async () => {
-    const err = { response: { status: 401 }, config: { url: '/clients' } }
-    const rejected = errorHandler(err).catch((e: unknown) => e)
-    // flush the dynamic import('../router') microtask before asserting
-    await vi.dynamicImportSettled()
-    await rejected
+    await expect(
+      errorHandler({ response: { status: 401 }, config: { url: '/clients' } }),
+    ).rejects.toEqual({
+      response: { status: 401 },
+      config: { url: '/clients' },
+    })
 
-    expect(routerPush).toHaveBeenCalledWith({ name: 'login', query: { next: '/' } })
+    expect(locationAssign).toHaveBeenCalledWith('/login')
   })
 
   it('does not redirect non-401 responses', async () => {
@@ -61,7 +59,7 @@ describe('apiClient response interceptor', () => {
       config: { url: '/clients' },
     })
 
-    expect(routerPush).not.toHaveBeenCalled()
+    expect(locationAssign).not.toHaveBeenCalled()
   })
 
   it('does not redirect 401 for auth endpoints', async () => {
@@ -72,7 +70,7 @@ describe('apiClient response interceptor', () => {
       config: { url: '/auth/login' },
     })
 
-    expect(routerPush).not.toHaveBeenCalled()
+    expect(locationAssign).not.toHaveBeenCalled()
   })
 
   it('keeps the success handler wired', () => {

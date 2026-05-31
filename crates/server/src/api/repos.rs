@@ -311,12 +311,14 @@ pub async fn update_repo(
     path = "/api/repos/{repo_id}",
     tag = "Repositories",
     operation_id = "deleteRepo",
-    summary = "Delete a repository (admin only)",
+    summary = "Remove a repository from the database (admin only)",
+    description = "Removes the repository record and associated schedules/reports from the \
+                   database. Does NOT delete any data on disk.",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),
     responses(
-        (status = 204, description = "Deleted"),
+        (status = 204, description = "Removed"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden"),
         (status = 404, description = "Not found"),
@@ -328,6 +330,56 @@ pub async fn delete_repo(
     Path(repo_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     db::delete_repo(&state.pool, repo_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/repos/{repo_id}/destroy",
+    tag = "Repositories",
+    operation_id = "destroyRepo",
+    summary = "Destroy a repository from disk and remove from database (admin only)",
+    description = "DANGEROUS: Permanently deletes the repository data from the remote filesystem \
+                   via SSH (rm -rf) and then removes the database record. This action is \
+                   irreversible.",
+    params(
+        ("repo_id" = i64, Path, description = "Repository ID"),
+    ),
+    responses(
+        (status = 204, description = "Destroyed"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Not found"),
+        (status = 500, description = "Failed to delete from disk"),
+    )
+)]
+pub async fn destroy_repo(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(repo_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let conn = db::get_repo_connection(&state.pool, repo_id).await?;
+    let repo = db::get_repo_with_stats(&state.pool, repo_id).await?;
+
+    let command = format!("rm -rf '{}'", repo.repo_path.replace('\'', "'\\''"));
+    info!(
+        repo_id,
+        repo_name = %repo.name,
+        ssh_host = %conn.ssh_host,
+        path = %repo.repo_path,
+        "destroying repository from disk"
+    );
+
+    run_ssh_command(&conn.ssh_user, &conn.ssh_host, conn.ssh_port, &command)
+        .await
+        .map_err(|e| {
+            error!(repo_id, error = %e, "failed to destroy repository on disk");
+            ApiError::Internal(format!("failed to delete repository from disk: {e}"))
+        })?;
+
+    db::delete_repo(&state.pool, repo_id).await?;
+
+    info!(repo_id, "repository destroyed successfully");
     Ok(StatusCode::NO_CONTENT)
 }
 

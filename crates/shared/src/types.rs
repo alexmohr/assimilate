@@ -364,3 +364,159 @@ pub struct ScheduleConfig {
     #[serde(default)]
     pub post_backup_commands: Vec<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn execution_mode_display_roundtrip() {
+        assert_eq!(ExecutionMode::Parallel.to_string(), "parallel");
+        assert_eq!(ExecutionMode::Sequential.to_string(), "sequential");
+        assert_eq!("parallel".parse::<ExecutionMode>().unwrap(), ExecutionMode::Parallel);
+        assert_eq!("sequential".parse::<ExecutionMode>().unwrap(), ExecutionMode::Sequential);
+        assert!("invalid".parse::<ExecutionMode>().is_err());
+    }
+
+    #[test]
+    fn execution_mode_default_is_parallel() {
+        assert_eq!(ExecutionMode::default(), ExecutionMode::Parallel);
+    }
+
+    #[test]
+    fn on_failure_display_roundtrip() {
+        assert_eq!(OnFailure::Stop.to_string(), "stop");
+        assert_eq!(OnFailure::Continue.to_string(), "continue");
+        assert_eq!("stop".parse::<OnFailure>().unwrap(), OnFailure::Stop);
+        assert_eq!("continue".parse::<OnFailure>().unwrap(), OnFailure::Continue);
+        assert!("invalid".parse::<OnFailure>().is_err());
+    }
+
+    #[test]
+    fn on_failure_default_is_stop() {
+        assert_eq!(OnFailure::default(), OnFailure::Stop);
+    }
+
+    #[test]
+    fn borg_encryption_display_roundtrip() {
+        let variants = [
+            (BorgEncryption::Repokey, "repokey"),
+            (BorgEncryption::RepokeyBlake2, "repokey-blake2"),
+            (BorgEncryption::Keyfile, "keyfile"),
+            (BorgEncryption::KeyfileBlake2, "keyfile-blake2"),
+            (BorgEncryption::Authenticated, "authenticated"),
+            (BorgEncryption::AuthenticatedBlake2, "authenticated-blake2"),
+            (BorgEncryption::None, "none"),
+        ];
+        for (variant, expected) in variants {
+            assert_eq!(variant.to_string(), expected);
+            assert_eq!(expected.parse::<BorgEncryption>().unwrap(), variant);
+        }
+        assert!("unknown".parse::<BorgEncryption>().is_err());
+    }
+
+    #[test]
+    fn compression_display_roundtrip() {
+        assert_eq!(Compression::None.to_string(), "none");
+        assert_eq!(Compression::Lz4.to_string(), "lz4");
+        assert_eq!("none".parse::<Compression>().unwrap(), Compression::None);
+        assert_eq!("lz4".parse::<Compression>().unwrap(), Compression::Lz4);
+        assert_eq!(
+            "zstd,3".parse::<Compression>().unwrap(),
+            Compression::Zstd { level: 3 }
+        );
+        assert_eq!(
+            "zlib,6".parse::<Compression>().unwrap(),
+            Compression::Zlib { level: 6 }
+        );
+        assert!("bad".parse::<Compression>().is_err());
+    }
+
+    #[test]
+    fn schedule_type_serde_roundtrip() {
+        let json = serde_json::to_string(&ScheduleType::Backup).unwrap();
+        assert_eq!(json, "\"backup\"");
+        let parsed: ScheduleType = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, ScheduleType::Backup);
+
+        let json = serde_json::to_string(&ScheduleType::Check).unwrap();
+        assert_eq!(json, "\"check\"");
+
+        let json = serde_json::to_string(&ScheduleType::Verify).unwrap();
+        assert_eq!(json, "\"verify\"");
+    }
+
+    #[test]
+    fn execution_mode_serde_roundtrip() {
+        let json = serde_json::to_string(&ExecutionMode::Parallel).unwrap();
+        assert_eq!(json, "\"parallel\"");
+        let parsed: ExecutionMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, ExecutionMode::Parallel);
+
+        let json = serde_json::to_string(&ExecutionMode::Sequential).unwrap();
+        assert_eq!(json, "\"sequential\"");
+    }
+
+    #[test]
+    fn on_failure_serde_roundtrip() {
+        let json = serde_json::to_string(&OnFailure::Stop).unwrap();
+        assert_eq!(json, "\"stop\"");
+        let parsed: OnFailure = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, OnFailure::Stop);
+
+        let json = serde_json::to_string(&OnFailure::Continue).unwrap();
+        assert_eq!(json, "\"continue\"");
+    }
+
+    #[test]
+    fn backup_report_deserializes_with_archive_name() {
+        let json = r#"{
+            "repo_id": 1,
+            "schedule_id": 2,
+            "status": "Success",
+            "duration_seconds": 120,
+            "files_new": 10,
+            "files_changed": 5,
+            "original_size": 1000,
+            "compressed_size": 800,
+            "deduplicated_size": 600,
+            "archive_name": "test-archive-2026"
+        }"#;
+        let report: BackupReport = serde_json::from_str(json).unwrap();
+        assert_eq!(report.archive_name.as_deref(), Some("test-archive-2026"));
+    }
+
+    #[test]
+    fn backup_report_deserializes_without_archive_name() {
+        let json = r#"{
+            "repo_id": 1,
+            "schedule_id": 2,
+            "status": "Success",
+            "duration_seconds": 120,
+            "files_new": 10,
+            "files_changed": 5,
+            "original_size": 1000,
+            "compressed_size": 800,
+            "deduplicated_size": 600
+        }"#;
+        let report: BackupReport = serde_json::from_str(json).unwrap();
+        assert_eq!(report.archive_name, None);
+    }
+
+    #[test]
+    fn repo_config_accept_relocation_defaults_to_false() {
+        let json = r#"{
+            "repo_id": 1,
+            "name": "test",
+            "path": "/repo",
+            "ssh_host": "host",
+            "ssh_port": 22,
+            "passphrase": "secret",
+            "compression": {"type": "Lz4"},
+            "enabled": true,
+            "schedules": []
+        }"#;
+        let config: RepoConfig = serde_json::from_str(json).unwrap();
+        assert!(!config.accept_relocation);
+    }
+}

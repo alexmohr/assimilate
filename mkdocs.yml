@@ -56,7 +56,6 @@ nav:
   - Archive Browsing: archives.md
   - Restoring Files: restore.md
   - Storage Quotas: quotas.md
-  - Key Management: key-management.md
   - Global Excludes: excludes.md
   - Activity Log: activity.md
   - SSH Tunnels: ssh-tunnels.md

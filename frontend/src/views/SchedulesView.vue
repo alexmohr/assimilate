@@ -16,7 +16,6 @@ import { logger } from '../utils/logger'
 import {
   Plus,
   Clock,
-  Trash2,
   AlertTriangle,
   CheckCircle,
   AlertCircle,
@@ -285,16 +284,6 @@ async function runNow(s: ScheduleRow): Promise<void> {
   }
 }
 
-async function deleteSchedule(s: ScheduleRow): Promise<void> {
-  if (!confirm(`Delete this schedule? This cannot be undone.`)) return
-  try {
-    await apiClient.delete(`/schedules/${s.id}`)
-    schedules.value = schedules.value.filter((x) => x.id !== s.id)
-  } catch (e: unknown) {
-    error.value = extractError(e, 'Failed to delete schedule')
-  }
-}
-
 onMounted(fetchAll)
 
 const { onMessage } = useWebSocket()
@@ -520,20 +509,6 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
             @click="runNow(s)"
           >
             {{ runNowLoading === s.id ? '...' : 'Run' }}
-          </button>
-          <button
-            class="btn btn-sm btn-ghost"
-            title="Edit schedule"
-            @click="navigateToSchedule(s)"
-          >
-            Edit
-          </button>
-          <button
-            class="btn btn-sm btn-ghost btn-danger-text"
-            title="Delete schedule"
-            @click="deleteSchedule(s)"
-          >
-            <Trash2 :size="14" />
           </button>
         </div>
       </div>

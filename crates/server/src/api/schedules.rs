@@ -387,9 +387,7 @@ pub async fn update_schedule(
         .on_failure
         .map_or_else(|| existing.on_failure.clone(), |f| f.to_string());
 
-    let name = req
-        .name
-        .unwrap_or_else(|| existing.name.clone());
+    let name = req.name.unwrap_or_else(|| existing.name.clone());
 
     let params = ScheduleParams {
         name: &name,

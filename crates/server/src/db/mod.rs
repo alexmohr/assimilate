@@ -27,8 +27,8 @@ pub async fn resolve_client_for_hostname(
     let exact = sqlx::query_as::<_, ClientRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, agent_token_hash FROM clients WHERE hostname = $1 AND agent_token_hash != \
-         'imported:no-auth'",
+         default_exclude_patterns, agent_token_hash, is_hidden FROM clients WHERE hostname = $1 \
+         AND agent_token_hash != 'imported:no-auth'",
     )
     .bind(hostname)
     .fetch_optional(pool)
@@ -52,7 +52,7 @@ pub async fn merge_client(pool: &PgPool, source_id: i64, target_id: i64) -> Resu
     let source = sqlx::query_as::<_, ClientRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, agent_token_hash FROM clients WHERE id = $1",
+         default_exclude_patterns, agent_token_hash, is_hidden FROM clients WHERE id = $1",
     )
     .bind(source_id)
     .fetch_optional(&mut *tx)
@@ -136,6 +136,8 @@ pub struct ClientRow {
     pub default_exclude_patterns: Vec<String>,
     #[serde(skip)]
     pub agent_token_hash: String,
+    #[serde(default)]
+    pub is_hidden: bool,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
@@ -234,7 +236,7 @@ pub async fn get_client_by_hostname(pool: &PgPool, hostname: &str) -> Result<Cli
     sqlx::query_as::<_, ClientRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, agent_token_hash FROM clients WHERE hostname = $1",
+         default_exclude_patterns, agent_token_hash, is_hidden FROM clients WHERE hostname = $1",
     )
     .bind(hostname)
     .fetch_one(pool)
@@ -249,7 +251,7 @@ pub async fn get_client_by_id(pool: &PgPool, client_id: i64) -> Result<ClientRow
     sqlx::query_as::<_, ClientRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, agent_token_hash FROM clients WHERE id = $1",
+         default_exclude_patterns, agent_token_hash, is_hidden FROM clients WHERE id = $1",
     )
     .bind(client_id)
     .fetch_one(pool)
@@ -326,15 +328,40 @@ pub async fn update_last_seen_by_hostname(pool: &PgPool, hostname: &str) -> Resu
     Ok(())
 }
 
-pub async fn list_clients(pool: &PgPool) -> Result<Vec<ClientRow>, ApiError> {
-    sqlx::query_as::<_, ClientRow>(
+pub async fn list_clients(pool: &PgPool, include_hidden: bool) -> Result<Vec<ClientRow>, ApiError> {
+    let sql = if include_hidden {
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, agent_token_hash FROM clients ORDER BY hostname",
+         default_exclude_patterns, agent_token_hash, is_hidden FROM clients ORDER BY hostname"
+    } else {
+        "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
+         created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
+         default_exclude_patterns, agent_token_hash, is_hidden FROM clients WHERE is_hidden = \
+         false ORDER BY hostname"
+    };
+    sqlx::query_as::<_, ClientRow>(sql)
+        .fetch_all(pool)
+        .await
+        .map_err(ApiError::Database)
+}
+
+pub async fn set_client_hidden(
+    pool: &PgPool,
+    hostname: &str,
+    hidden: bool,
+) -> Result<ClientRow, ApiError> {
+    sqlx::query_as::<_, ClientRow>(
+        "UPDATE clients SET is_hidden = $2 WHERE hostname = $1 RETURNING id, hostname, \
+         display_name, agent_version, agent_git_sha, agent_build_time, created_at, last_seen_at, \
+         owner_id, visibility, default_backup_paths, default_exclude_patterns, agent_token_hash, \
+         is_hidden",
     )
-    .fetch_all(pool)
+    .bind(hostname)
+    .bind(hidden)
+    .fetch_optional(pool)
     .await
-    .map_err(ApiError::Database)
+    .map_err(ApiError::Database)?
+    .ok_or_else(|| ApiError::NotFound(format!("Client {hostname} not found")))
 }
 
 /// Finds a client by hostname, or creates a placeholder client for archive imports.
@@ -348,7 +375,7 @@ pub async fn get_or_create_client_by_hostname(
     let existing = sqlx::query_as::<_, ClientRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, agent_token_hash FROM clients WHERE hostname = $1",
+         default_exclude_patterns, agent_token_hash, is_hidden FROM clients WHERE hostname = $1",
     )
     .bind(hostname)
     .fetch_optional(pool)
@@ -363,7 +390,7 @@ pub async fn get_or_create_client_by_hostname(
         "INSERT INTO clients (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, \
          $3, NULL) RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
          agent_build_time, created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, agent_token_hash",
+         default_exclude_patterns, agent_token_hash, is_hidden",
     )
     .bind(hostname)
     .bind(Some(format!("{hostname} (imported)")))
@@ -384,7 +411,7 @@ pub async fn insert_client(
         "INSERT INTO clients (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, \
          $3, $4) RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
          agent_build_time, created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, agent_token_hash",
+         default_exclude_patterns, agent_token_hash, is_hidden",
     )
     .bind(hostname)
     .bind(display_name)
@@ -407,7 +434,7 @@ pub async fn update_client(
         "UPDATE clients SET hostname = $2, display_name = $3, default_backup_paths = $4, \
          default_exclude_patterns = $5 WHERE hostname = $1 RETURNING id, hostname, display_name, \
          agent_version, agent_git_sha, agent_build_time, created_at, last_seen_at, owner_id, \
-         visibility, default_backup_paths, default_exclude_patterns, agent_token_hash",
+         visibility, default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden",
     )
     .bind(hostname)
     .bind(new_hostname)
@@ -428,9 +455,10 @@ pub async fn regenerate_client_token(
     token_hash: &str,
 ) -> Result<ClientRow, ApiError> {
     sqlx::query_as::<_, ClientRow>(
-         "UPDATE clients SET agent_token_hash = $2 WHERE hostname = $1 RETURNING id, hostname, \
+        "UPDATE clients SET agent_token_hash = $2 WHERE hostname = $1 RETURNING id, hostname, \
          display_name, agent_version, agent_git_sha, agent_build_time, created_at, last_seen_at, \
-         owner_id, visibility, default_backup_paths, default_exclude_patterns, agent_token_hash",
+         owner_id, visibility, default_backup_paths, default_exclude_patterns, agent_token_hash, \
+         is_hidden",
     )
     .bind(hostname)
     .bind(token_hash)
@@ -453,6 +481,59 @@ pub async fn delete_client(pool: &PgPool, hostname: &str) -> Result<(), ApiError
         return Err(ApiError::NotFound(format!("client '{hostname}' not found")));
     }
     Ok(())
+}
+
+pub async fn get_archives_for_client(
+    pool: &PgPool,
+    client_id: i64,
+) -> Result<Vec<(shared::types::RepoId, Vec<String>)>, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        repo_id: i64,
+        archive_name: Option<String>,
+    }
+
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT repo_id, archive_name FROM backup_reports WHERE client_id = $1 AND archive_name \
+         IS NOT NULL",
+    )
+    .bind(client_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    let mut map: std::collections::HashMap<i64, Vec<String>> = std::collections::HashMap::new();
+    for row in rows {
+        if let Some(name) = row.archive_name {
+            map.entry(row.repo_id).or_default().push(name);
+        }
+    }
+
+    Ok(map
+        .into_iter()
+        .map(|(repo_id, names)| (shared::types::RepoId(repo_id), names))
+        .collect())
+}
+
+pub async fn get_schedule_target_hostnames_for_repo(
+    pool: &PgPool,
+    repo_id: i64,
+) -> Result<Vec<String>, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        hostname: String,
+    }
+
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT DISTINCT c.hostname FROM clients c JOIN schedule_targets st ON st.client_id = \
+         c.id JOIN schedules s ON s.id = st.schedule_id WHERE s.repo_id = $1",
+    )
+    .bind(repo_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    Ok(rows.into_iter().map(|r| r.hostname).collect())
 }
 
 pub struct InsertRepoParams<'a> {
@@ -1301,7 +1382,8 @@ pub async fn list_due_schedules(
          s.cron_expression, s.execution_mode, s.on_failure, st.execution_order FROM schedules s \
          JOIN repos r ON r.id = s.repo_id JOIN schedule_targets st ON st.schedule_id = s.id JOIN \
          clients c ON c.id = st.client_id WHERE s.enabled = true AND r.enabled = true AND \
-         s.next_run_at IS NOT NULL AND s.next_run_at <= $1 ORDER BY s.id, st.execution_order",
+         c.is_hidden = false AND s.next_run_at IS NOT NULL AND s.next_run_at <= $1 ORDER BY s.id, \
+         st.execution_order",
     )
     .bind(now)
     .fetch_all(pool)
@@ -1367,7 +1449,7 @@ pub async fn get_schedule_target_hostnames(
 
     let rows = sqlx::query_as::<_, Row>(
         "SELECT c.hostname FROM clients c JOIN schedule_targets st ON st.client_id = c.id WHERE \
-         st.schedule_id = $1 ORDER BY st.execution_order",
+         st.schedule_id = $1 AND c.is_hidden = false ORDER BY st.execution_order",
     )
     .bind(schedule_id)
     .fetch_all(pool)
@@ -1667,8 +1749,8 @@ pub async fn get_storage_stats(pool: &PgPool) -> Result<Vec<StorageStatRow>, Api
          total_original_size, COALESCE(SUM(br.compressed_size), 0)::INT8 AS \
          total_compressed_size, COALESCE(SUM(br.deduplicated_size), 0)::INT8 AS \
          total_deduplicated_size, COUNT(br.id) AS report_count FROM backup_reports br JOIN \
-         clients c ON c.id = br.client_id JOIN repos r ON r.id = br.repo_id GROUP BY c.hostname, \
-         r.name ORDER BY c.hostname, r.name",
+         clients c ON c.id = br.client_id JOIN repos r ON r.id = br.repo_id WHERE c.is_hidden = \
+         false GROUP BY c.hostname, r.name ORDER BY c.hostname, r.name",
     )
     .fetch_all(pool)
     .await
@@ -1685,7 +1767,7 @@ pub async fn get_activity_feed(
         "SELECT br.id, c.hostname, r.name AS target_name, br.started_at, br.finished_at, \
          br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message FROM \
          backup_reports br JOIN clients c ON c.id = br.client_id JOIN repos r ON r.id = \
-         br.repo_id WHERE 1=1",
+         br.repo_id WHERE c.is_hidden = false",
     );
     let mut param_idx = 1u32;
     if repo_id.is_some() {
@@ -1719,7 +1801,7 @@ pub async fn get_health_summary(pool: &PgPool) -> Result<Vec<HealthRow>, ApiErro
          AND br.client_id = c.id ORDER BY br.started_at DESC LIMIT 1) AS last_error_message, \
          s.cron_expression, s.enabled AS schedule_enabled FROM schedules s JOIN schedule_targets \
          st ON st.schedule_id = s.id JOIN clients c ON c.id = st.client_id JOIN repos r ON r.id = \
-         s.repo_id ORDER BY c.hostname, r.name",
+         s.repo_id WHERE c.is_hidden = false ORDER BY c.hostname, r.name",
     )
     .fetch_all(pool)
     .await
@@ -2357,8 +2439,8 @@ pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow
          AND br.status = 'success' ORDER BY br.started_at DESC LIMIT 1) latest ON true LEFT JOIN \
          LATERAL (SELECT COUNT(br.id) AS archive_count, MAX(CASE WHEN br.finished_at > \
          '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT \
-         br.client_id) AS client_count, COUNT(DISTINCT br.client_id) FILTER (WHERE br.matched = false) AS \
-         unmatched_count FROM backup_reports br WHERE br.repo_id = r.id AND br.status = \
+         br.client_id) AS client_count, COUNT(DISTINCT br.client_id) FILTER (WHERE br.matched = \
+         false) AS unmatched_count FROM backup_reports br WHERE br.repo_id = r.id AND br.status = \
          'success') agg ON true ORDER BY r.name",
     )
     .fetch_all(pool)
@@ -2383,8 +2465,8 @@ pub async fn get_repo_with_stats(
          AND br.status = 'success' ORDER BY br.started_at DESC LIMIT 1) latest ON true LEFT JOIN \
          LATERAL (SELECT COUNT(br.id) AS archive_count, MAX(CASE WHEN br.finished_at > \
          '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT \
-         br.client_id) AS client_count, COUNT(DISTINCT br.client_id) FILTER (WHERE br.matched = false) AS \
-         unmatched_count FROM backup_reports br WHERE br.repo_id = r.id AND br.status = \
+         br.client_id) AS client_count, COUNT(DISTINCT br.client_id) FILTER (WHERE br.matched = \
+         false) AS unmatched_count FROM backup_reports br WHERE br.repo_id = r.id AND br.status = \
          'success') agg ON true WHERE r.id = $1",
     )
     .bind(repo_id)
@@ -2568,31 +2650,31 @@ pub struct DashboardSummaryRow {
 
 pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow, ApiError> {
     sqlx::query_as::<_, DashboardSummaryRow>(
-        "SELECT (SELECT COUNT(*) FROM clients) AS total_clients, (SELECT COUNT(*) FROM repos) AS \
-         total_repos, (SELECT COUNT(*) FROM schedules WHERE enabled = true) AS active_schedules, \
-         (SELECT COUNT(*) FROM schedules) AS total_schedules, COALESCE((SELECT \
-         SUM(sub.dedup)::INT8 FROM (SELECT DISTINCT ON (br.repo_id) br.deduplicated_size AS dedup \
-         FROM backup_reports br WHERE br.status = 'success' ORDER BY br.repo_id, br.started_at \
-         DESC) sub), 0)::INT8 AS total_storage_bytes, (SELECT MAX(finished_at) FROM \
-         backup_reports WHERE status = 'success' AND finished_at > '1970-01-01T00:00:00Z') AS \
-         last_backup_at, (SELECT MIN(s.next_run_at) FROM schedules s JOIN repos r ON r.id = \
-         s.repo_id WHERE s.enabled = true AND r.enabled = true AND s.next_run_at IS NOT NULL AND \
-         s.next_run_at > NOW()) AS next_backup_at, (SELECT s.id FROM schedules s JOIN \
-         schedule_targets st ON st.schedule_id = s.id JOIN backup_reports br ON br.repo_id = \
-         s.repo_id AND br.client_id = st.client_id ORDER BY br.finished_at DESC LIMIT 1) AS \
-         last_backup_schedule_id, (SELECT br.repo_id FROM backup_reports br WHERE br.status = \
-         'success' ORDER BY br.finished_at DESC LIMIT 1) AS last_backup_repo_id, (SELECT \
-         br.archive_name FROM backup_reports br WHERE br.status = 'success' ORDER BY \
-         br.finished_at DESC LIMIT 1) AS last_backup_archive_name, (SELECT s.id FROM schedules s \
+        "SELECT (SELECT COUNT(*) FROM clients WHERE is_hidden = false) AS total_clients, (SELECT \
+         COUNT(*) FROM repos) AS total_repos, (SELECT COUNT(*) FROM schedules WHERE enabled = \
+         true) AS active_schedules, (SELECT COUNT(*) FROM schedules) AS total_schedules, \
+         COALESCE((SELECT SUM(sub.dedup)::INT8 FROM (SELECT DISTINCT ON (br.repo_id) \
+         br.deduplicated_size AS dedup FROM backup_reports br WHERE br.status = 'success' ORDER \
+         BY br.repo_id, br.started_at DESC) sub), 0)::INT8 AS total_storage_bytes, (SELECT \
+         MAX(finished_at) FROM backup_reports WHERE status = 'success' AND finished_at > \
+         '1970-01-01T00:00:00Z') AS last_backup_at, (SELECT MIN(s.next_run_at) FROM schedules s \
          JOIN repos r ON r.id = s.repo_id WHERE s.enabled = true AND r.enabled = true AND \
-         s.next_run_at IS NOT NULL AND s.next_run_at > NOW() ORDER BY s.next_run_at LIMIT 1) AS \
-         next_backup_schedule_id, (SELECT COUNT(*) FROM backup_reports WHERE status = 'success' \
-         AND started_at > NOW() - INTERVAL '30 days') AS success_30d, (SELECT COUNT(*) FROM \
-         backup_reports WHERE status != 'success' AND started_at > NOW() - INTERVAL '30 days') AS \
-         failed_30d, (SELECT COUNT(*) FROM backup_reports WHERE started_at > NOW() - INTERVAL '30 \
-         days') AS total_30d, (SELECT MAX(finished_at) FROM backup_reports WHERE status = \
-         'failed' AND finished_at > '1970-01-01T00:00:00Z') AS last_failure_at, (SELECT \
-         MAX(finished_at) FROM backup_reports WHERE status = 'warning' AND finished_at > \
+         s.next_run_at IS NOT NULL AND s.next_run_at > NOW()) AS next_backup_at, (SELECT s.id \
+         FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN backup_reports \
+         br ON br.repo_id = s.repo_id AND br.client_id = st.client_id ORDER BY br.finished_at \
+         DESC LIMIT 1) AS last_backup_schedule_id, (SELECT br.repo_id FROM backup_reports br \
+         WHERE br.status = 'success' ORDER BY br.finished_at DESC LIMIT 1) AS \
+         last_backup_repo_id, (SELECT br.archive_name FROM backup_reports br WHERE br.status = \
+         'success' ORDER BY br.finished_at DESC LIMIT 1) AS last_backup_archive_name, (SELECT \
+         s.id FROM schedules s JOIN repos r ON r.id = s.repo_id WHERE s.enabled = true AND \
+         r.enabled = true AND s.next_run_at IS NOT NULL AND s.next_run_at > NOW() ORDER BY \
+         s.next_run_at LIMIT 1) AS next_backup_schedule_id, (SELECT COUNT(*) FROM backup_reports \
+         WHERE status = 'success' AND started_at > NOW() - INTERVAL '30 days') AS success_30d, \
+         (SELECT COUNT(*) FROM backup_reports WHERE status != 'success' AND started_at > NOW() - \
+         INTERVAL '30 days') AS failed_30d, (SELECT COUNT(*) FROM backup_reports WHERE started_at \
+         > NOW() - INTERVAL '30 days') AS total_30d, (SELECT MAX(finished_at) FROM backup_reports \
+         WHERE status = 'failed' AND finished_at > '1970-01-01T00:00:00Z') AS last_failure_at, \
+         (SELECT MAX(finished_at) FROM backup_reports WHERE status = 'warning' AND finished_at > \
          '1970-01-01T00:00:00Z') AS last_warning_at, (SELECT s.id FROM backup_reports br JOIN \
          schedules s ON s.repo_id = br.repo_id JOIN schedule_targets st ON st.schedule_id = s.id \
          AND st.client_id = br.client_id WHERE br.status = 'failed' AND br.finished_at > \
@@ -2657,8 +2739,8 @@ pub async fn get_storage_breakdown_by_host(
          COALESCE(SUM(latest.dedup), 0)::INT8 AS deduplicated_size FROM clients c LEFT JOIN \
          LATERAL ( SELECT DISTINCT ON (br.repo_id) br.compressed_size AS comp, \
          br.deduplicated_size AS dedup FROM backup_reports br WHERE br.client_id = c.id AND \
-         br.status = 'success' ORDER BY br.repo_id, br.started_at DESC ) latest ON true GROUP BY \
-         c.hostname ORDER BY deduplicated_size DESC",
+         br.status = 'success' ORDER BY br.repo_id, br.started_at DESC ) latest ON true WHERE \
+         c.is_hidden = false GROUP BY c.hostname ORDER BY deduplicated_size DESC",
     )
     .fetch_all(pool)
     .await
@@ -2690,7 +2772,8 @@ pub async fn get_activity_feed_days(
         "SELECT br.id, c.hostname, r.name AS target_name, br.started_at, br.finished_at, \
          br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message FROM \
          backup_reports br JOIN clients c ON c.id = br.client_id JOIN repos r ON r.id = \
-         br.repo_id WHERE br.started_at > NOW() - make_interval(days => $1::int)",
+         br.repo_id WHERE c.is_hidden = false AND br.started_at > NOW() - make_interval(days => \
+         $1::int)",
     );
     let mut param_idx = 2u32;
     if repo_id.is_some() {
@@ -3188,8 +3271,9 @@ pub async fn get_calendar_events(
              repo_name, c.hostname, to_char(br.started_at AT TIME ZONE $4, 'HH24:MI') AS time, \
              br.id AS report_id, br.repo_id, br.error_message, br.archive_name FROM \
              backup_reports br JOIN repos r ON r.id = br.repo_id JOIN clients c ON c.id = \
-             br.client_id WHERE (br.started_at AT TIME ZONE $4)::date >= $1 AND (br.started_at AT \
-             TIME ZONE $4)::date < $2 AND br.repo_id = $3 ORDER BY br.started_at",
+             br.client_id WHERE c.is_hidden = false AND (br.started_at AT TIME ZONE $4)::date >= \
+             $1 AND (br.started_at AT TIME ZONE $4)::date < $2 AND br.repo_id = $3 ORDER BY \
+             br.started_at",
         )
         .bind(start)
         .bind(end)
@@ -3205,8 +3289,8 @@ pub async fn get_calendar_events(
              repo_name, c.hostname, to_char(br.started_at AT TIME ZONE $3, 'HH24:MI') AS time, \
              br.id AS report_id, br.repo_id, br.error_message, br.archive_name FROM \
              backup_reports br JOIN repos r ON r.id = br.repo_id JOIN clients c ON c.id = \
-             br.client_id WHERE (br.started_at AT TIME ZONE $3)::date >= $1 AND (br.started_at AT \
-             TIME ZONE $3)::date < $2 ORDER BY br.started_at",
+             br.client_id WHERE c.is_hidden = false AND (br.started_at AT TIME ZONE $3)::date >= \
+             $1 AND (br.started_at AT TIME ZONE $3)::date < $2 ORDER BY br.started_at",
         )
         .bind(start)
         .bind(end)

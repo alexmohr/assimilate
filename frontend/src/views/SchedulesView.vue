@@ -29,6 +29,7 @@ type ScheduleType = 'backup' | 'check' | 'verify'
 interface ScheduleRow {
   id: number
   repo_id: number
+  name: string
   schedule_type: ScheduleType
   cron_expression: string
   enabled: boolean
@@ -422,7 +423,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
       >
         <div class="card-top">
           <div class="card-info">
-            <span class="card-hostname">{{ s.repo?.name ?? `repo #${s.repo_id}` }}</span>
+            <span class="card-hostname">{{ s.name || s.repo?.name || `repo #${s.repo_id}` }}</span>
             <span class="card-repo">
               {{ s.execution_mode === 'sequential' ? 'Sequential' : 'Parallel' }}
             </span>

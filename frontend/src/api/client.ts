@@ -2,7 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import axios from 'axios'
-import { router } from '../router'
+
+let redirectingToLogin = false
 
 export const apiClient = axios.create({
   baseURL: '/api',
@@ -11,9 +12,18 @@ export const apiClient = axios.create({
 
 apiClient.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response?.status === 401 && !error.config?.url?.includes('/auth/')) {
-      router.push('/login')
+  async (error) => {
+    const url = error.config?.url ?? ''
+    const skipUrls = ['/auth/login', '/auth/me']
+    const shouldSkip = skipUrls.some((s) => url.endsWith(s))
+
+    if (error.response?.status === 401 && !shouldSkip) {
+      if (!redirectingToLogin) {
+        redirectingToLogin = true
+        const { router } = await import('../router')
+        await router.push({ name: 'login' })
+        redirectingToLogin = false
+      }
     }
     return Promise.reject(error)
   },

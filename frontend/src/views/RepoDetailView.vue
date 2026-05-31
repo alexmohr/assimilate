@@ -209,9 +209,7 @@ const {
   downloadEntry,
 } = useArchiveBrowser(repoIdRef)
 
-const unmatchedCount = computed(
-  () => sortedArchives.value.filter((a) => a.matched !== true).length,
-)
+const unmatchedCount = computed(() => sortedArchives.value.filter((a) => a.matched !== true).length)
 
 const unmatchedHostnames = computed(() => [
   ...new Set(sortedArchives.value.filter((a) => a.matched !== true).map((a) => a.hostname)),

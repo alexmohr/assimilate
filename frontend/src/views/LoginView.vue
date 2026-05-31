@@ -22,9 +22,10 @@ async function handleSubmit(): Promise<void> {
   submitting.value = true
   try {
     await authStore.login(username.value, password.value)
-    const next = typeof route.query.next === 'string' && route.query.next.startsWith('/')
-      ? route.query.next
-      : '/'
+    const next =
+      typeof route.query.next === 'string' && route.query.next.startsWith('/')
+        ? route.query.next
+        : '/'
     if (authStore.user?.must_change_password) {
       router.push({ path: '/change-password', query: { next } })
     } else {

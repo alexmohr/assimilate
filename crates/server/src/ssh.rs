@@ -654,11 +654,6 @@ fn inject_env_vars(content: &str, server_url: &str, token: &str) -> String {
     result
 }
 
-fn build_write_unit_cmd(content: &str, path: &str) -> String {
-    let encoded = base64::engine::general_purpose::STANDARD.encode(content.as_bytes());
-    format!("echo {encoded} | base64 -d > {path}")
-}
-
 async fn detect_remote_arch(
     session: &client::Handle<SshClientHandler>,
 ) -> Result<String, SshError> {

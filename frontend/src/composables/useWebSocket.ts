@@ -26,6 +26,7 @@ const listeners = new Map<string, Set<MessageCallback<unknown>>>()
 
 let socket: WebSocket | null = null
 let backoffMs = 1_000
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
 function buildUrl(): string {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
@@ -66,9 +67,18 @@ function connect(): void {
   })
 }
 
+function cancelScheduledReconnect(): void {
+  if (reconnectTimer !== null) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+}
+
 function scheduleReconnect(): void {
   status.value = 'reconnecting'
-  setTimeout(() => {
+  cancelScheduledReconnect()
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null
     connect()
     backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS)
   }, backoffMs)
@@ -83,6 +93,21 @@ function forceReconnect(): void {
 }
 
 connect()
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && status.value !== 'connected') {
+    cancelScheduledReconnect()
+    backoffMs = 1_000
+    if (socket) {
+      socket.onclose = null
+      socket.onerror = null
+      socket.close()
+      socket = null
+    }
+    status.value = 'reconnecting'
+    connect()
+  }
+})
 
 export function useWebSocket(): UseWebSocketReturn {
   const localHandlers: Array<{ type: string; cb: MessageCallback<unknown> }> = []

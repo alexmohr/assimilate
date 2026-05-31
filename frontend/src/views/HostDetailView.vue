@@ -18,6 +18,7 @@ import { cronToHuman } from '../utils/cron'
 import { parseLines } from '../utils/validation'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import MergeClientDialog from '../components/MergeClientDialog.vue'
+import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 
 type TabId = 'overview' | 'schedules' | 'backups'
 
@@ -156,6 +157,18 @@ const { copied: tokenCopied, copy: copyToClipboard } = useClipboard()
 // Restart agent
 const restartLoading = ref(false)
 const restartError = ref<string | null>(null)
+
+// Deploy/Upgrade agent
+const availableAgentVersion = ref<string | null>(null)
+const showDeployDialog = ref(false)
+
+function deployButtonLabel(): string | null {
+  if (!client.value) return null
+  if (!client.value.agent_version) return 'Deploy'
+  if (availableAgentVersion.value && client.value.agent_version === availableAgentVersion.value)
+    return null
+  return 'Upgrade'
+}
 
 // Default backup paths
 const editingPaths = ref(false)
@@ -622,7 +635,15 @@ watch(
     loadClient()
   },
 )
-onMounted(loadClient)
+onMounted(() => {
+  loadClient()
+  apiClient
+    .get<{ agent_version: string | null }>('/system/version')
+    .then((res) => {
+      availableAgentVersion.value = res.data.agent_version
+    })
+    .catch(logger.error)
+})
 
 const { onMessage, status: wsStatus } = useWebSocket()
 onMessage('DataChanged', () => loadClient().catch(logger.error))
@@ -789,6 +810,13 @@ watch(wsStatus, (newStatus, oldStatus) => {
             >
               {{ client.restart_unavailable_reason }}
             </span>
+            <button
+              v-if="deployButtonLabel() && !isImported"
+              class="btn btn-sm btn-ghost"
+              @click="showDeployDialog = true"
+            >
+              {{ deployButtonLabel() }}
+            </button>
             <div
               v-if="restartError"
               class="form-error"
@@ -1519,6 +1547,20 @@ watch(wsStatus, (newStatus, oldStatus) => {
         @cancel="showMergeDialog = false"
       />
     </Teleport>
+
+    <!-- Deploy Agent Dialog -->
+    <AgentDeployDialog
+      v-if="showDeployDialog && client"
+      :hostname="client.hostname"
+      :agent-version="client.agent_version"
+      @close="showDeployDialog = false"
+      @deployed="
+        () => {
+          showDeployDialog = false
+          loadClient()
+        }
+      "
+    />
   </div>
 </template>
 

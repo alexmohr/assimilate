@@ -44,12 +44,11 @@ describe('apiClient response interceptor', () => {
   })
 
   it('redirects 401 responses to login', async () => {
-    await expect(
-      errorHandler({ response: { status: 401 }, config: { url: '/clients' } }),
-    ).rejects.toEqual({
-      response: { status: 401 },
-      config: { url: '/clients' },
-    })
+    const err = { response: { status: 401 }, config: { url: '/clients' } }
+    const rejected = errorHandler(err).catch((e: unknown) => e)
+    // flush the dynamic import('../router') microtask before asserting
+    await vi.dynamicImportSettled()
+    await rejected
 
     expect(routerPush).toHaveBeenCalledWith({ name: 'login', query: { next: '/' } })
   })

@@ -99,6 +99,13 @@ apiClient.interceptors.response.use(
   },
 )
 
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    consecutiveFailures.value = 0
+    stopCountdown()
+  }
+})
+
 export interface UseBackendStatusReturn {
   backendUnreachable: ComputedRef<boolean>
   retryCountdown: Ref<number>

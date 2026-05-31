@@ -543,7 +543,17 @@ async function submitRepo(): Promise<void> {
   try {
     if (repoMode.value === 'create') {
       if (addTab.value === 'import') {
-        await apiClient.post('/repos', {
+        const res = await apiClient.post<{
+          id: number
+          name: string
+          repo_path: string
+          ssh_user: string
+          ssh_host: string
+          ssh_port: number
+          compression: string
+          encryption: string
+          enabled: boolean
+        }>('/repos', {
           name: repoForm.name.trim(),
           repo_path: repoForm.repo_path.trim(),
           ssh_user: repoForm.ssh_user.trim(),
@@ -552,6 +562,31 @@ async function submitRepo(): Promise<void> {
           passphrase: repoForm.passphrase,
           compression: repoForm.compression,
         })
+        showRepoDialog.value = false
+        repos.value = [
+          ...repos.value,
+          {
+            id: res.data.id,
+            name: res.data.name,
+            repo_path: res.data.repo_path,
+            ssh_user: res.data.ssh_user,
+            ssh_host: res.data.ssh_host,
+            ssh_port: res.data.ssh_port,
+            compression: res.data.compression,
+            encryption: res.data.encryption,
+            enabled: res.data.enabled,
+            importing: true,
+            import_error: null,
+            archive_count: 0,
+            last_backup_at: null,
+            total_original_size: 0,
+            total_compressed_size: 0,
+            total_deduplicated_size: 0,
+            client_count: 0,
+            unmatched_count: 0,
+          },
+        ]
+        return
       } else {
         await apiClient.post('/repos/init', {
           name: repoForm.name.trim(),
@@ -779,7 +814,8 @@ onMounted(loadRepos)
         v-for="repo in filteredRepos"
         :key="repo.id"
         class="repo-card"
-        @click="navigateToRepo(repo)"
+        :class="{ 'repo-card-importing': repo.importing }"
+        @click="!repo.importing && navigateToRepo(repo)"
       >
         <div class="card-top">
           <div class="card-info">
@@ -788,29 +824,37 @@ onMounted(loadRepos)
               >{{ repo.ssh_user }}@{{ repo.ssh_host }}:{{ repo.ssh_port }}</span
             >
           </div>
-          <span
-            class="status-badge"
-            :class="
-              repo.import_error
-                ? 'status-error'
-                : repo.importing
-                  ? 'status-importing'
-                  : repo.enabled
-                    ? 'status-online'
-                    : 'status-offline'
-            "
-            :title="repo.import_error ?? undefined"
-          >
-            {{
-              repo.import_error
-                ? 'Import Failed'
-                : repo.importing
-                  ? 'Importing\u2026'
-                  : repo.enabled
-                    ? 'Enabled'
-                    : 'Disabled'
-            }}
-          </span>
+          <div class="card-badges">
+            <span
+              v-if="repo.importing"
+              class="status-badge status-readonly"
+            >
+              Read Only
+            </span>
+            <span
+              class="status-badge"
+              :class="
+                repo.import_error
+                  ? 'status-error'
+                  : repo.importing
+                    ? 'status-importing'
+                    : repo.enabled
+                      ? 'status-online'
+                      : 'status-offline'
+              "
+              :title="repo.import_error ?? undefined"
+            >
+              {{
+                repo.import_error
+                  ? 'Import Failed'
+                  : repo.importing
+                    ? 'Importing\u2026'
+                    : repo.enabled
+                      ? 'Enabled'
+                      : 'Disabled'
+              }}
+            </span>
+          </div>
         </div>
         <div class="card-meta">
           <span class="meta-pill">{{ repo.encryption }}</span>
@@ -876,7 +920,8 @@ onMounted(loadRepos)
             v-for="repo in group.repos"
             :key="`${group.label}-${repo.id}`"
             class="repo-card"
-            @click="navigateToRepo(repo)"
+            :class="{ 'repo-card-importing': repo.importing }"
+            @click="!repo.importing && navigateToRepo(repo)"
           >
             <div class="card-top">
               <div class="card-info">
@@ -885,29 +930,37 @@ onMounted(loadRepos)
                   >{{ repo.ssh_user }}@{{ repo.ssh_host }}:{{ repo.ssh_port }}</span
                 >
               </div>
-              <span
-                class="status-badge"
-                :class="
-                  repo.import_error
-                    ? 'status-error'
-                    : repo.importing
-                      ? 'status-importing'
-                      : repo.enabled
-                        ? 'status-online'
-                        : 'status-offline'
-                "
-                :title="repo.import_error ?? undefined"
-              >
-                {{
-                  repo.import_error
-                    ? 'Import Failed'
-                    : repo.importing
-                      ? 'Importing\u2026'
-                      : repo.enabled
-                        ? 'Enabled'
-                        : 'Disabled'
-                }}
-              </span>
+              <div class="card-badges">
+                <span
+                  v-if="repo.importing"
+                  class="status-badge status-readonly"
+                >
+                  Read Only
+                </span>
+                <span
+                  class="status-badge"
+                  :class="
+                    repo.import_error
+                      ? 'status-error'
+                      : repo.importing
+                        ? 'status-importing'
+                        : repo.enabled
+                          ? 'status-online'
+                          : 'status-offline'
+                  "
+                  :title="repo.import_error ?? undefined"
+                >
+                  {{
+                    repo.import_error
+                      ? 'Import Failed'
+                      : repo.importing
+                        ? 'Importing\u2026'
+                        : repo.enabled
+                          ? 'Enabled'
+                          : 'Disabled'
+                  }}
+                </span>
+              </div>
             </div>
             <div class="card-meta">
               <span class="meta-pill">{{ repo.encryption }}</span>
@@ -1438,6 +1491,29 @@ onMounted(loadRepos)
 .repo-card:hover {
   border-color: var(--accent);
   box-shadow: var(--shadow);
+}
+
+.repo-card-importing {
+  cursor: default;
+  opacity: 0.75;
+  border-style: dashed;
+}
+
+.repo-card-importing:hover {
+  border-color: var(--border);
+  box-shadow: none;
+}
+
+.card-badges {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.status-readonly {
+  background: color-mix(in srgb, var(--info, #3b82f6) 12%, transparent);
+  color: var(--info, #3b82f6);
 }
 
 .card-top {

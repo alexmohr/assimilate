@@ -215,7 +215,7 @@ pub async fn create_repo(
 
     tokio::spawn(async move {
         if need_borg_info {
-            match run_borg_info(&bg_repo_url, &bg_passphrase).await {
+            match run_borg_info_with_retry(&bg_repo_url, &bg_passphrase).await {
                 Ok(info) => {
                     if let Err(e) =
                         db::update_repo_encryption(&pool, repo_id, &info.encryption.to_string())
@@ -768,7 +768,46 @@ struct BorgInfoResult {
     encryption: BorgEncryption,
 }
 
+fn is_lock_error(stderr: &str) -> bool {
+    let lower = stderr.to_lowercase();
+    lower.contains("failed to create/acquire the lock")
+        || lower.contains("lock.exclusive")
+        || lower.contains("lockroster")
+}
+
 async fn run_borg_info(repo_url: &str, passphrase: &str) -> Result<BorgInfoResult, ApiError> {
+    run_borg_info_once(repo_url, passphrase).await
+}
+
+const LOCK_RETRY_INTERVAL: Duration = Duration::from_secs(30);
+const LOCK_RETRY_MAX_ATTEMPTS: u32 = 60;
+
+async fn run_borg_info_with_retry(
+    repo_url: &str,
+    passphrase: &str,
+) -> Result<BorgInfoResult, ApiError> {
+    for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
+        match run_borg_info_once(repo_url, passphrase).await {
+            Ok(result) => return Ok(result),
+            Err(e) => {
+                let is_lock = matches!(&e, ApiError::BadGateway(msg) if is_lock_error(msg));
+                if !is_lock || attempt == LOCK_RETRY_MAX_ATTEMPTS {
+                    return Err(e);
+                }
+                warn!(
+                    attempt,
+                    max = LOCK_RETRY_MAX_ATTEMPTS,
+                    "borg info lock contention, retrying in {}s",
+                    LOCK_RETRY_INTERVAL.as_secs()
+                );
+                tokio::time::sleep(LOCK_RETRY_INTERVAL).await;
+            }
+        }
+    }
+    unreachable!()
+}
+
+async fn run_borg_info_once(repo_url: &str, passphrase: &str) -> Result<BorgInfoResult, ApiError> {
     let borg_binary = std::env::var("BORG_BINARY").unwrap_or_else(|_| "borg".to_string());
     let ssh_auth_sock = std::env::var("SSH_AUTH_SOCK").ok();
 
@@ -931,6 +970,86 @@ async fn run_borg_init(
     Ok(combined.trim().to_string())
 }
 
+async fn run_borg_list_with_retry(
+    borg_repo: &str,
+    env: &std::collections::HashMap<String, String>,
+) -> Result<std::process::Output, ApiError> {
+    for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
+        let output = Command::new(borg_binary())
+            .arg("list")
+            .arg("--json")
+            .arg("--format")
+            .arg("{hostname}")
+            .arg("--lock-wait")
+            .arg(LOCK_WAIT_SECS)
+            .arg(borg_repo)
+            .envs(env)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| ApiError::Internal(format!("failed to execute borg list: {e}")))?;
+
+        if output.status.success() {
+            return Ok(output);
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !is_lock_error(&stderr) || attempt == LOCK_RETRY_MAX_ATTEMPTS {
+            return Err(ApiError::Internal(format!("borg list failed: {stderr}")));
+        }
+        warn!(
+            attempt,
+            max = LOCK_RETRY_MAX_ATTEMPTS,
+            "borg list lock contention, retrying in {}s",
+            LOCK_RETRY_INTERVAL.as_secs()
+        );
+        tokio::time::sleep(LOCK_RETRY_INTERVAL).await;
+    }
+    unreachable!()
+}
+
+async fn run_borg_archive_info_with_retry(
+    repo_archive: &str,
+    env: &std::collections::HashMap<String, String>,
+) -> Result<Option<std::process::Output>, ApiError> {
+    for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
+        let output = Command::new(borg_binary())
+            .arg("info")
+            .arg("--json")
+            .arg("--lock-wait")
+            .arg(LOCK_WAIT_SECS)
+            .arg(repo_archive)
+            .envs(env)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| ApiError::Internal(format!("failed to execute borg info: {e}")))?;
+
+        if output.status.success() {
+            return Ok(Some(output));
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !is_lock_error(&stderr) {
+            return Ok(None);
+        }
+        if attempt == LOCK_RETRY_MAX_ATTEMPTS {
+            return Ok(None);
+        }
+        warn!(
+            attempt,
+            max = LOCK_RETRY_MAX_ATTEMPTS,
+            repo_archive,
+            "borg info lock contention, retrying in {}s",
+            LOCK_RETRY_INTERVAL.as_secs()
+        );
+        tokio::time::sleep(LOCK_RETRY_INTERVAL).await;
+    }
+    unreachable!()
+}
+
 pub async fn sync_existing_archives(
     pool: &PgPool,
     encryption_key: &[u8; 32],
@@ -938,25 +1057,7 @@ pub async fn sync_existing_archives(
 ) -> Result<u64, ApiError> {
     let (borg_repo, env) = super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
 
-    let output = Command::new(borg_binary())
-        .arg("list")
-        .arg("--json")
-        .arg("--format")
-        .arg("{hostname}")
-        .arg("--lock-wait")
-        .arg(LOCK_WAIT_SECS)
-        .arg(&borg_repo)
-        .envs(&env)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .map_err(|e| ApiError::Internal(format!("failed to execute borg list: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(ApiError::Internal(format!("borg list failed: {stderr}")));
-    }
+    let output = run_borg_list_with_retry(&borg_repo, &env).await?;
 
     let json_output: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|e| ApiError::Internal(format!("failed to parse borg list output: {e}")))?;
@@ -989,23 +1090,10 @@ pub async fn sync_existing_archives(
         };
 
         let repo_archive = format!("{borg_repo}::{name}");
-        let info_output = Command::new(borg_binary())
-            .arg("info")
-            .arg("--json")
-            .arg("--lock-wait")
-            .arg(LOCK_WAIT_SECS)
-            .arg(&repo_archive)
-            .envs(&env)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .await
-            .map_err(|e| ApiError::Internal(format!("failed to execute borg info: {e}")))?;
-
-        if !info_output.status.success() {
+        let Some(info_output) = run_borg_archive_info_with_retry(&repo_archive, &env).await? else {
             warn!(archive = name, "borg info failed for archive, skipping");
             continue;
-        }
+        };
 
         let info_json: serde_json::Value = serde_json::from_slice(&info_output.stdout)
             .map_err(|e| ApiError::Internal(format!("failed to parse borg info output: {e}")))?;

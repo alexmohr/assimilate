@@ -79,7 +79,12 @@ pub async fn assemble_config(
             None => None,
         };
 
-        let mut backup_sources = db::list_backup_sources_for_schedule(pool, schedule.id).await?;
+        let mut backup_sources =
+            db::list_backup_sources_for_schedule_client(pool, schedule.id, client.id).await?;
+
+        if backup_sources.is_empty() {
+            backup_sources = db::list_backup_sources_for_schedule(pool, schedule.id).await?;
+        }
 
         if backup_sources.is_empty() {
             backup_sources.extend(client.default_backup_paths.iter().cloned());

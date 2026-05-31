@@ -90,6 +90,7 @@ use crate::{
         crate::api::schedules::run_schedule_now,
         crate::api::schedules::list_schedule_reports,
         crate::api::schedules::list_schedule_targets,
+        crate::api::schedules::list_schedule_backup_sources,
         crate::api::excludes::list_excludes,
         crate::api::excludes::create_exclude,
         crate::api::excludes::update_exclude,

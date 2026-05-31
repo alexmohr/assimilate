@@ -4,7 +4,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 type ResponseHandler = (response: unknown) => unknown
-type ErrorHandler = (error: { response?: { status?: number }; config?: { url?: string } }) => Promise<never>
+type ErrorHandler = (error: {
+  response?: { status?: number }
+  config?: { url?: string }
+}) => Promise<never>
 
 const routerPush = vi.hoisted(() => vi.fn().mockResolvedValue(undefined))
 const responseUse = vi.hoisted(() => vi.fn())
@@ -31,14 +34,19 @@ vi.mock('axios', () => ({
 import { apiClient } from './client'
 
 describe('apiClient response interceptor', () => {
-  const [successHandler, errorHandler] = responseUse.mock.calls[0] as [ResponseHandler, ErrorHandler]
+  const [successHandler, errorHandler] = responseUse.mock.calls[0] as [
+    ResponseHandler,
+    ErrorHandler,
+  ]
 
   beforeEach(() => {
     routerPush.mockClear()
   })
 
   it('redirects 401 responses to login', async () => {
-    await expect(errorHandler({ response: { status: 401 }, config: { url: '/clients' } })).rejects.toEqual({
+    await expect(
+      errorHandler({ response: { status: 401 }, config: { url: '/clients' } }),
+    ).rejects.toEqual({
       response: { status: 401 },
       config: { url: '/clients' },
     })
@@ -47,7 +55,9 @@ describe('apiClient response interceptor', () => {
   })
 
   it('does not redirect non-401 responses', async () => {
-    await expect(errorHandler({ response: { status: 500 }, config: { url: '/clients' } })).rejects.toEqual({
+    await expect(
+      errorHandler({ response: { status: 500 }, config: { url: '/clients' } }),
+    ).rejects.toEqual({
       response: { status: 500 },
       config: { url: '/clients' },
     })
@@ -56,7 +66,9 @@ describe('apiClient response interceptor', () => {
   })
 
   it('does not redirect 401 for auth endpoints', async () => {
-    await expect(errorHandler({ response: { status: 401 }, config: { url: '/auth/login' } })).rejects.toEqual({
+    await expect(
+      errorHandler({ response: { status: 401 }, config: { url: '/auth/login' } }),
+    ).rejects.toEqual({
       response: { status: 401 },
       config: { url: '/auth/login' },
     })

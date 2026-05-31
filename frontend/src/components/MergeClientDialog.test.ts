@@ -22,7 +22,12 @@ interface ClientRow {
   is_imported: boolean
 }
 
-const SOURCE: ClientRow = { id: 10, hostname: 'old-webserver', display_name: null, is_imported: true }
+const SOURCE: ClientRow = {
+  id: 10,
+  hostname: 'old-webserver',
+  display_name: null,
+  is_imported: true,
+}
 
 const ALL_CLIENTS: ClientRow[] = [
   SOURCE,

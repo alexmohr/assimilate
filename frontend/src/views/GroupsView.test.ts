@@ -33,7 +33,12 @@ interface GroupMember {
 }
 
 const mockGroups: Group[] = [
-  { id: 1, name: 'backend-team', description: 'Backend engineers', created_at: '2026-01-01T00:00:00Z' },
+  {
+    id: 1,
+    name: 'backend-team',
+    description: 'Backend engineers',
+    created_at: '2026-01-01T00:00:00Z',
+  },
   { id: 2, name: 'data-team', description: 'Data scientists', created_at: '2026-01-02T00:00:00Z' },
 ]
 

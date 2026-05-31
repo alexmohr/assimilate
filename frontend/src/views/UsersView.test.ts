@@ -30,9 +30,27 @@ interface User {
 }
 
 const mockUsers: User[] = [
-  { id: 1, username: 'admin', role: 'admin', created_at: '2026-01-01T00:00:00Z', last_login_at: null },
-  { id: 2, username: 'operator1', role: 'user', created_at: '2026-01-02T00:00:00Z', last_login_at: null },
-  { id: 3, username: 'viewer1', role: 'user', created_at: '2026-01-03T00:00:00Z', last_login_at: null },
+  {
+    id: 1,
+    username: 'admin',
+    role: 'admin',
+    created_at: '2026-01-01T00:00:00Z',
+    last_login_at: null,
+  },
+  {
+    id: 2,
+    username: 'operator1',
+    role: 'user',
+    created_at: '2026-01-02T00:00:00Z',
+    last_login_at: null,
+  },
+  {
+    id: 3,
+    username: 'viewer1',
+    role: 'user',
+    created_at: '2026-01-03T00:00:00Z',
+    last_login_at: null,
+  },
 ]
 
 const mockApiGet = apiClient.get as ReturnType<typeof vi.fn>

@@ -78,7 +78,7 @@ A scatter plot showing backup activity over a configurable time window. Each dot
 
 This visualization helps identify patterns: regular schedules appear as horizontal bands, failures cluster visibly, and gaps indicate missed runs.
 
-## Repository Health (List)
+## Detailed Status
 
 A detailed list view showing every repository-host combination with:
 

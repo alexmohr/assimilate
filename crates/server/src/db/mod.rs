@@ -515,6 +515,78 @@ pub async fn get_archives_for_client(
         .collect())
 }
 
+pub async fn get_archives_for_client_with_patterns(
+    pool: &PgPool,
+    client_id: i64,
+) -> Result<Vec<(shared::types::RepoId, Vec<String>)>, ApiError> {
+    let patterns = patterns::list_patterns_for_client(pool, client_id).await?;
+
+    let mut client_ids = vec![client_id];
+
+    if !patterns.is_empty() {
+        #[derive(sqlx::FromRow)]
+        struct IdHostname {
+            id: i64,
+            hostname: String,
+        }
+
+        let all_clients = sqlx::query_as::<_, IdHostname>(
+            "SELECT id, hostname FROM clients WHERE id != $1",
+        )
+        .bind(client_id)
+        .fetch_all(pool)
+        .await
+        .map_err(ApiError::Database)?;
+
+        for c in &all_clients {
+            let hostname_base = c.hostname.strip_suffix(" (imported)").unwrap_or(&c.hostname);
+            if patterns
+                .iter()
+                .any(|p| glob_match::glob_match(&p.pattern, hostname_base))
+            {
+                client_ids.push(c.id);
+            }
+        }
+    }
+
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        repo_id: i64,
+        archive_name: Option<String>,
+    }
+
+    let placeholders: String = client_ids
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("${}", i + 1))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let query_str = format!(
+        "SELECT repo_id, archive_name FROM backup_reports WHERE client_id IN ({placeholders}) AND \
+         archive_name IS NOT NULL"
+    );
+
+    let mut query = sqlx::query_as::<_, Row>(&query_str);
+    for id in &client_ids {
+        query = query.bind(id);
+    }
+
+    let rows = query.fetch_all(pool).await.map_err(ApiError::Database)?;
+
+    let mut map: std::collections::HashMap<i64, Vec<String>> = std::collections::HashMap::new();
+    for row in rows {
+        if let Some(name) = row.archive_name {
+            map.entry(row.repo_id).or_default().push(name);
+        }
+    }
+
+    Ok(map
+        .into_iter()
+        .map(|(repo_id, names)| (shared::types::RepoId(repo_id), names))
+        .collect())
+}
+
 pub async fn get_schedule_target_hostnames_for_repo(
     pool: &PgPool,
     repo_id: i64,

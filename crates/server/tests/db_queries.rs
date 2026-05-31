@@ -2347,3 +2347,493 @@ async fn test_merge_client_refuses_non_placeholder(pool: PgPool) {
     let result = db::merge_client(&pool, source.id, target.id).await;
     assert!(result.is_err());
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn get_archives_for_client_across_multiple_repos(pool: PgPool) {
+    let client = db::insert_client(&pool, "primary-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo1 = db::insert_repo(
+        &pool,
+        &InsertRepoParams {
+            name: "repo-alpha",
+            repo_path: "/backups/alpha",
+            ssh_user: "backup",
+            ssh_host: "storage.local",
+            ssh_port: 22,
+            passphrase_encrypted: b"enc",
+            compression: "lz4",
+            encryption: "repokey",
+            owner_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    let repo2 = db::insert_repo(
+        &pool,
+        &InsertRepoParams {
+            name: "repo-beta",
+            repo_path: "/backups/beta",
+            ssh_user: "backup",
+            ssh_host: "storage.local",
+            ssh_port: 22,
+            passphrase_encrypted: b"enc",
+            compression: "zstd",
+            encryption: "repokey",
+            owner_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let now = Utc::now();
+
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            client_id: client.id,
+            repo_id: repo1.id,
+            started_at: now - Duration::minutes(10),
+            finished_at: now - Duration::minutes(5),
+            status: "success".to_string(),
+            original_size: 1_000_000,
+            compressed_size: 500_000,
+            deduplicated_size: 250_000,
+            files_processed: 100,
+            duration_secs: 300,
+            error_message: None,
+            warnings: vec![],
+            borg_version: Some("1.4.0".to_string()),
+            matched: true,
+            archive_name: Some("primary-host-2026-01-01T10:00:00".to_string()),
+        },
+    )
+    .await
+    .unwrap();
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            client_id: client.id,
+            repo_id: repo1.id,
+            started_at: now - Duration::minutes(20),
+            finished_at: now - Duration::minutes(15),
+            status: "success".to_string(),
+            original_size: 2_000_000,
+            compressed_size: 1_000_000,
+            deduplicated_size: 500_000,
+            files_processed: 200,
+            duration_secs: 300,
+            error_message: None,
+            warnings: vec![],
+            borg_version: Some("1.4.0".to_string()),
+            matched: true,
+            archive_name: Some("primary-host-2026-01-02T10:00:00".to_string()),
+        },
+    )
+    .await
+    .unwrap();
+
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            client_id: client.id,
+            repo_id: repo2.id,
+            started_at: now - Duration::minutes(30),
+            finished_at: now - Duration::minutes(25),
+            status: "success".to_string(),
+            original_size: 3_000_000,
+            compressed_size: 1_500_000,
+            deduplicated_size: 750_000,
+            files_processed: 300,
+            duration_secs: 300,
+            error_message: None,
+            warnings: vec![],
+            borg_version: Some("1.4.0".to_string()),
+            matched: true,
+            archive_name: Some("primary-host-2026-01-03T10:00:00".to_string()),
+        },
+    )
+    .await
+    .unwrap();
+
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            client_id: client.id,
+            repo_id: repo1.id,
+            started_at: now - Duration::minutes(40),
+            finished_at: now - Duration::minutes(35),
+            status: "success".to_string(),
+            original_size: 100_000,
+            compressed_size: 50_000,
+            deduplicated_size: 25_000,
+            files_processed: 10,
+            duration_secs: 300,
+            error_message: None,
+            warnings: vec![],
+            borg_version: Some("1.4.0".to_string()),
+            matched: true,
+            archive_name: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let archives = db::get_archives_for_client(&pool, client.id)
+        .await
+        .unwrap();
+
+    assert_eq!(archives.len(), 2);
+
+    let repo1_archives: Vec<_> = archives
+        .iter()
+        .filter(|(rid, _)| rid.0 == repo1.id)
+        .flat_map(|(_, names)| names.clone())
+        .collect();
+    let repo2_archives: Vec<_> = archives
+        .iter()
+        .filter(|(rid, _)| rid.0 == repo2.id)
+        .flat_map(|(_, names)| names.clone())
+        .collect();
+
+    assert_eq!(repo1_archives.len(), 2);
+    assert!(repo1_archives.contains(&"primary-host-2026-01-01T10:00:00".to_string()));
+    assert!(repo1_archives.contains(&"primary-host-2026-01-02T10:00:00".to_string()));
+    assert_eq!(repo2_archives.len(), 1);
+    assert!(repo2_archives.contains(&"primary-host-2026-01-03T10:00:00".to_string()));
+}
+
+/// Verifies that `get_archives_for_client_with_patterns` finds archives from imported clients
+/// whose hostnames match the configured glob patterns, even when those archives haven't been
+/// merged/reassigned yet (client_id still points to the imported client).
+#[sqlx::test(migrations = "./migrations")]
+async fn get_archives_for_client_includes_pattern_matched_archives(pool: PgPool) {
+    let client = db::insert_client(&pool, "web-server-01", None, "hash", None)
+        .await
+        .unwrap();
+    patterns::add_hostname_pattern(&pool, client.id, "web-server-*")
+        .await
+        .unwrap();
+
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            client_id: client.id,
+            repo_id: repo.id,
+            started_at: now - Duration::minutes(10),
+            finished_at: now - Duration::minutes(5),
+            status: "success".to_string(),
+            original_size: 1_000_000,
+            compressed_size: 500_000,
+            deduplicated_size: 250_000,
+            files_processed: 100,
+            duration_secs: 300,
+            error_message: None,
+            warnings: vec![],
+            borg_version: Some("1.4.0".to_string()),
+            matched: true,
+            archive_name: Some("web-server-01-2026-01-01T10:00:00".to_string()),
+        },
+    )
+    .await
+    .unwrap();
+
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            client_id: client.id,
+            repo_id: repo.id,
+            started_at: now - Duration::minutes(20),
+            finished_at: now - Duration::minutes(15),
+            status: "success".to_string(),
+            original_size: 2_000_000,
+            compressed_size: 1_000_000,
+            deduplicated_size: 500_000,
+            files_processed: 200,
+            duration_secs: 300,
+            error_message: None,
+            warnings: vec![],
+            borg_version: Some("1.4.0".to_string()),
+            matched: true,
+            archive_name: Some("web-server-02-2026-01-01T10:00:00".to_string()),
+        },
+    )
+    .await
+    .unwrap();
+
+    let imported = db::insert_client(
+        &pool,
+        "web-server-legacy (imported)",
+        None,
+        "imported:no-auth",
+        None,
+    )
+    .await
+    .unwrap();
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            client_id: imported.id,
+            repo_id: repo.id,
+            started_at: now - Duration::minutes(30),
+            finished_at: now - Duration::minutes(25),
+            status: "success".to_string(),
+            original_size: 3_000_000,
+            compressed_size: 1_500_000,
+            deduplicated_size: 750_000,
+            files_processed: 300,
+            duration_secs: 300,
+            error_message: None,
+            warnings: vec![],
+            borg_version: Some("1.4.0".to_string()),
+            matched: false,
+            archive_name: Some("web-server-legacy-2026-01-01T10:00:00".to_string()),
+        },
+    )
+    .await
+    .unwrap();
+
+    let archives = db::get_archives_for_client(&pool, client.id)
+        .await
+        .unwrap();
+    assert_eq!(archives.len(), 1);
+    let names: Vec<_> = archives
+        .iter()
+        .flat_map(|(_, names)| names.clone())
+        .collect();
+    assert_eq!(names.len(), 2);
+    assert!(names.contains(&"web-server-01-2026-01-01T10:00:00".to_string()));
+    assert!(names.contains(&"web-server-02-2026-01-01T10:00:00".to_string()));
+
+    let all_archives = db::get_archives_for_client_with_patterns(&pool, client.id)
+        .await
+        .unwrap();
+    let all_names: Vec<_> = all_archives
+        .iter()
+        .flat_map(|(_, names)| names.clone())
+        .collect();
+
+    assert_eq!(all_names.len(), 3);
+    assert!(all_names.contains(&"web-server-01-2026-01-01T10:00:00".to_string()));
+    assert!(all_names.contains(&"web-server-02-2026-01-01T10:00:00".to_string()));
+    assert!(all_names.contains(&"web-server-legacy-2026-01-01T10:00:00".to_string()));
+}
+
+/// Verifies pattern matching across multiple repos with unrelated clients excluded.
+#[sqlx::test(migrations = "./migrations")]
+async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
+    let client = db::insert_client(&pool, "db-server-01", None, "hash", None)
+        .await
+        .unwrap();
+    patterns::add_hostname_pattern(&pool, client.id, "db-server-*")
+        .await
+        .unwrap();
+
+    let repo1 = db::insert_repo(
+        &pool,
+        &InsertRepoParams {
+            name: "daily-repo",
+            repo_path: "/backups/daily",
+            ssh_user: "backup",
+            ssh_host: "storage.local",
+            ssh_port: 22,
+            passphrase_encrypted: b"enc",
+            compression: "lz4",
+            encryption: "repokey",
+            owner_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    let repo2 = db::insert_repo(
+        &pool,
+        &InsertRepoParams {
+            name: "weekly-repo",
+            repo_path: "/backups/weekly",
+            ssh_user: "backup",
+            ssh_host: "storage.local",
+            ssh_port: 22,
+            passphrase_encrypted: b"enc",
+            compression: "zstd",
+            encryption: "repokey",
+            owner_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let now = Utc::now();
+
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            client_id: client.id,
+            repo_id: repo1.id,
+            started_at: now - Duration::minutes(10),
+            finished_at: now - Duration::minutes(5),
+            status: "success".to_string(),
+            original_size: 1_000_000,
+            compressed_size: 500_000,
+            deduplicated_size: 250_000,
+            files_processed: 100,
+            duration_secs: 300,
+            error_message: None,
+            warnings: vec![],
+            borg_version: Some("1.4.0".to_string()),
+            matched: true,
+            archive_name: Some("db-server-01-daily-2026-01-01".to_string()),
+        },
+    )
+    .await
+    .unwrap();
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            client_id: client.id,
+            repo_id: repo2.id,
+            started_at: now - Duration::minutes(20),
+            finished_at: now - Duration::minutes(15),
+            status: "success".to_string(),
+            original_size: 5_000_000,
+            compressed_size: 2_500_000,
+            deduplicated_size: 1_250_000,
+            files_processed: 500,
+            duration_secs: 600,
+            error_message: None,
+            warnings: vec![],
+            borg_version: Some("1.4.0".to_string()),
+            matched: true,
+            archive_name: Some("db-server-01-weekly-2026-01-01".to_string()),
+        },
+    )
+    .await
+    .unwrap();
+
+    let imported = db::insert_client(
+        &pool,
+        "db-server-02 (imported)",
+        None,
+        "imported:no-auth",
+        None,
+    )
+    .await
+    .unwrap();
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            client_id: imported.id,
+            repo_id: repo1.id,
+            started_at: now - Duration::minutes(30),
+            finished_at: now - Duration::minutes(25),
+            status: "success".to_string(),
+            original_size: 1_500_000,
+            compressed_size: 750_000,
+            deduplicated_size: 375_000,
+            files_processed: 150,
+            duration_secs: 300,
+            error_message: None,
+            warnings: vec![],
+            borg_version: Some("1.4.0".to_string()),
+            matched: false,
+            archive_name: Some("db-server-02-daily-2026-01-01".to_string()),
+        },
+    )
+    .await
+    .unwrap();
+
+    let imported2 = db::insert_client(
+        &pool,
+        "db-server-staging (imported)",
+        None,
+        "imported:no-auth",
+        None,
+    )
+    .await
+    .unwrap();
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            client_id: imported2.id,
+            repo_id: repo2.id,
+            started_at: now - Duration::minutes(40),
+            finished_at: now - Duration::minutes(35),
+            status: "success".to_string(),
+            original_size: 4_000_000,
+            compressed_size: 2_000_000,
+            deduplicated_size: 1_000_000,
+            files_processed: 400,
+            duration_secs: 500,
+            error_message: None,
+            warnings: vec![],
+            borg_version: Some("1.4.0".to_string()),
+            matched: false,
+            archive_name: Some("db-server-staging-weekly-2026-01-01".to_string()),
+        },
+    )
+    .await
+    .unwrap();
+
+    let unrelated = db::insert_client(
+        &pool,
+        "app-server-01 (imported)",
+        None,
+        "imported:no-auth",
+        None,
+    )
+    .await
+    .unwrap();
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            client_id: unrelated.id,
+            repo_id: repo1.id,
+            started_at: now - Duration::minutes(50),
+            finished_at: now - Duration::minutes(45),
+            status: "success".to_string(),
+            original_size: 1_000_000,
+            compressed_size: 500_000,
+            deduplicated_size: 250_000,
+            files_processed: 100,
+            duration_secs: 300,
+            error_message: None,
+            warnings: vec![],
+            borg_version: Some("1.4.0".to_string()),
+            matched: false,
+            archive_name: Some("app-server-01-daily-2026-01-01".to_string()),
+        },
+    )
+    .await
+    .unwrap();
+
+    let archives = db::get_archives_for_client_with_patterns(&pool, client.id)
+        .await
+        .unwrap();
+
+    let repo1_names: Vec<_> = archives
+        .iter()
+        .filter(|(rid, _)| rid.0 == repo1.id)
+        .flat_map(|(_, names)| names.clone())
+        .collect();
+    let repo2_names: Vec<_> = archives
+        .iter()
+        .filter(|(rid, _)| rid.0 == repo2.id)
+        .flat_map(|(_, names)| names.clone())
+        .collect();
+
+    assert_eq!(repo1_names.len(), 2);
+    assert!(repo1_names.contains(&"db-server-01-daily-2026-01-01".to_string()));
+    assert!(repo1_names.contains(&"db-server-02-daily-2026-01-01".to_string()));
+
+    assert_eq!(repo2_names.len(), 2);
+    assert!(repo2_names.contains(&"db-server-01-weekly-2026-01-01".to_string()));
+    assert!(repo2_names.contains(&"db-server-staging-weekly-2026-01-01".to_string()));
+
+    let all_names: Vec<_> = archives
+        .iter()
+        .flat_map(|(_, names)| names.clone())
+        .collect();
+    assert!(!all_names.contains(&"app-server-01-daily-2026-01-01".to_string()));
+}

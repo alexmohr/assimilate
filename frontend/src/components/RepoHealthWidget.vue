@@ -33,7 +33,7 @@ function statusColor(entry: HealthEntry): string {
 
 <template>
   <section class="panel">
-    <h2 class="panel-title">Repository Health</h2>
+    <h2 class="panel-title">Detailed Status</h2>
     <div
       v-if="props.health.length === 0"
       class="state-msg"

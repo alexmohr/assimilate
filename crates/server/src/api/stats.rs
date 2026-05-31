@@ -168,6 +168,29 @@ pub async fn storage(
     Ok(Json(rows))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/stats/schedule-counts",
+    tag = "Statistics",
+    operation_id = "getScheduleCountsByClient",
+    summary = "Get schedule counts per client",
+    responses(
+        (
+            status = 200,
+            description = "Schedule counts by client",
+            body = Vec<crate::db::ScheduleCountByClient>,
+        ),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
+pub async fn schedule_counts(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+) -> Result<Json<Vec<db::ScheduleCountByClient>>, ApiError> {
+    let counts = db::get_schedule_counts_by_client(&state.pool).await?;
+    Ok(Json(counts))
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum StorageGroupBy {
@@ -325,7 +348,7 @@ fn is_overdue(
     tz: chrono_tz::Tz,
 ) -> bool {
     let Some(last) = last_backup_at else {
-        return true;
+        return false;
     };
     let Some(cron_expr) = cron_expression else {
         return false;

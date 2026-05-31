@@ -388,9 +388,9 @@ SQL
 echo "==> Adding system events..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
 INSERT INTO system_events (created_at, event_type, hostname, message) VALUES
-    (NOW() - interval '5 minutes', 'agent_connected', 'web-server-01', 'Agent connected (version 0.5.2)'),
-    (NOW() - interval '4 minutes', 'agent_connected', 'db-server-01', 'Agent connected (version 0.5.2)'),
-    (NOW() - interval '3 minutes', 'agent_connected', 'media-store-01', 'Agent connected (version 0.5.1)'),
+    (NOW() - interval '5 minutes', 'agent_connected', 'web-server-01', 'Agent connected (version 0.1.0)'),
+    (NOW() - interval '4 minutes', 'agent_connected', 'db-server-01', 'Agent connected (version 0.1.0)'),
+    (NOW() - interval '3 minutes', 'agent_connected', 'media-store-01', 'Agent connected (version 0.1.0)'),
     (NOW() - interval '2 days', 'agent_disconnected', 'media-store-01', 'Agent disconnected: connection timeout'),
     (NOW() - interval '7 days', 'backup_failed', 'web-server-01', 'Backup failed: Repository lock could not be acquired'),
     (NOW() - interval '1 day', 'backup_warning', 'web-server-01', 'Backup completed with warnings');

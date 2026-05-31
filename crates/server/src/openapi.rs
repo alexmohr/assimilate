@@ -27,8 +27,8 @@ use crate::{
     },
     db::{
         ActivityRow, ApiTokenRow, ClientRow, ExcludeGlobalRow, HostTagRow, RepoPermissionRow,
-        RepoRow, RepoTagRow, RepoWithStatsRow, ReportRow, ScheduleRow, ScheduleTargetRow,
-        StorageStatRow, SystemEventRow, TagRow, UserRow,
+        RepoRow, RepoTagRow, RepoWithStatsRow, ReportRow, ScheduleCountByClient, ScheduleRow,
+        ScheduleTargetRow, StorageStatRow, SystemEventRow, TagRow, UserRow,
     },
     ssh::{
         DeployKeyRequest, DeployKeyResponse, DirEntryInfo, ListDirRequest, ListDirResponse,
@@ -115,6 +115,7 @@ use crate::{
         crate::api::stats::health,
         crate::api::stats::trends,
         crate::api::stats::calendar,
+        crate::api::stats::schedule_counts,
         crate::api::system::ssh_public_key,
         crate::api::system::ssh_regenerate_key,
         crate::api::system::get_settings,
@@ -190,6 +191,7 @@ use crate::{
         crate::api::stats::CalendarEvent,
         crate::api::stats::CalendarDay,
         StorageStatRow,
+        ScheduleCountByClient,
         ActivityRow,
         SystemEventRow,
         SshPublicKeyResponse,

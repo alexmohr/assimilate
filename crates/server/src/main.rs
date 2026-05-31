@@ -318,6 +318,10 @@ async fn main() -> Result<(), StartupError> {
             get(api::stats::storage_trends_by_repo),
         )
         .route("/api/stats/calendar", get(api::stats::calendar))
+        .route(
+            "/api/stats/schedule-counts",
+            get(api::stats::schedule_counts),
+        )
         .route("/api/logs", get(api::logs::get_logs))
         .route(
             "/api/repos/{repo_id}/archives/diff",

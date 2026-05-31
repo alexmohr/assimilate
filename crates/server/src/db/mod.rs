@@ -232,6 +232,24 @@ pub struct ScheduleTargetRow {
     pub execution_order: i32,
 }
 
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+pub struct ScheduleCountByClient {
+    pub client_id: i64,
+    pub count: i64,
+}
+
+pub async fn get_schedule_counts_by_client(
+    pool: &PgPool,
+) -> Result<Vec<ScheduleCountByClient>, ApiError> {
+    sqlx::query_as::<_, ScheduleCountByClient>(
+        "SELECT client_id, COUNT(DISTINCT schedule_id)::bigint AS count FROM schedule_targets \
+         GROUP BY client_id",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
 pub async fn get_client_by_hostname(pool: &PgPool, hostname: &str) -> Result<ClientRow, ApiError> {
     sqlx::query_as::<_, ClientRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
@@ -1841,7 +1859,8 @@ pub async fn get_activity_feed(
         "SELECT br.id, c.hostname, r.name AS target_name, br.started_at, br.finished_at, \
          br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message FROM \
          backup_reports br JOIN clients c ON c.id = br.client_id JOIN repos r ON r.id = \
-         br.repo_id WHERE c.is_hidden = false",
+         br.repo_id WHERE c.is_hidden = false AND c.visibility <> 'hidden' AND \
+         COALESCE(c.display_name, '') NOT ILIKE '%(imported)%'",
     );
     let mut param_idx = 1u32;
     if repo_id.is_some() {
@@ -2846,8 +2865,9 @@ pub async fn get_activity_feed_days(
         "SELECT br.id, c.hostname, r.name AS target_name, br.started_at, br.finished_at, \
          br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message FROM \
          backup_reports br JOIN clients c ON c.id = br.client_id JOIN repos r ON r.id = \
-         br.repo_id WHERE c.is_hidden = false AND br.started_at > NOW() - make_interval(days => \
-         $1::int)",
+         br.repo_id WHERE c.is_hidden = false AND c.visibility <> 'hidden' AND \
+         COALESCE(c.display_name, '') NOT ILIKE '%(imported)%' AND br.started_at > NOW() - \
+         make_interval(days => $1::int)",
     );
     let mut param_idx = 2u32;
     if repo_id.is_some() {

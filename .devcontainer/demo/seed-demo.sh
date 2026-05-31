@@ -99,6 +99,25 @@ api POST "/api/repos" "{
     \"compression\": \"lz4\"
 }" > /dev/null
 
+echo "==> Configuring per-repo sync schedules..."
+api PUT "/api/repos/2" "{
+    \"repo_path\": \"/backup/repos/database-hourly\",
+    \"ssh_user\": \"borg\",
+    \"ssh_host\": \"localhost\",
+    \"ssh_port\": 22,
+    \"compression\": \"zstd,3\",
+    \"sync_schedule\": \"0 */4 * * *\"
+}" > /dev/null
+
+api PUT "/api/repos/3" "{
+    \"repo_path\": \"/backup/repos/media-weekly\",
+    \"ssh_user\": \"borg\",
+    \"ssh_host\": \"localhost\",
+    \"ssh_port\": 22,
+    \"compression\": \"lz4\",
+    \"sync_schedule\": null
+}" > /dev/null
+
 echo "==> Creating sample borg archives for browsing/diff..."
 
 # Helper: create borg archive with spoofed hostname metadata.

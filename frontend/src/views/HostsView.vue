@@ -25,6 +25,8 @@ interface ClientRow {
   hostname: string
   display_name: string | null
   agent_version: string | null
+  agent_git_sha: string | null
+  agent_build_time: string | null
   created_at: string
   last_seen_at: string | null
   is_connected: boolean

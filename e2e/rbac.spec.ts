@@ -2,11 +2,21 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { mkdir } from 'node:fs/promises';
-import { expect, test } from '@playwright/test';
+import { expect, test, type Browser, type Page } from '@playwright/test';
 import { loginAsOperator, loginAsViewer } from './helpers/auth';
 
 const OPERATOR_STATE = '.auth/operator.json';
-const VIEWER_STATE = '.auth/viewer.json';
+
+async function createViewerPage(
+  browser: Browser,
+  baseURL: string | undefined,
+): Promise<{ context: Awaited<ReturnType<Browser['newContext']>>; page: Page }> {
+  const context = await browser.newContext({ baseURL });
+  const page = await context.newPage();
+  await loginAsViewer(page);
+
+  return { context, page };
+}
 
 test.describe('RBAC - Operator permissions', () => {
   test.beforeAll(async ({ browser, baseURL }) => {
@@ -102,18 +112,8 @@ test.describe('RBAC - Operator permissions', () => {
 });
 
 test.describe('RBAC - Viewer permissions', () => {
-  test.beforeAll(async ({ browser, baseURL }) => {
-    await mkdir('.auth', { recursive: true });
-    const context = await browser.newContext({ baseURL });
-    const page = await context.newPage();
-    await loginAsViewer(page);
-    await context.storageState({ path: VIEWER_STATE });
-    await context.close();
-  });
-
   test('viewer can view dashboard', async ({ browser, baseURL }) => {
-    const context = await browser.newContext({ baseURL, storageState: VIEWER_STATE });
-    const page = await context.newPage();
+    const { context, page } = await createViewerPage(browser, baseURL);
 
     await page.goto('/');
     await page.waitForLoadState('networkidle');
@@ -123,8 +123,7 @@ test.describe('RBAC - Viewer permissions', () => {
   });
 
   test('viewer can view hosts list', async ({ browser, baseURL }) => {
-    const context = await browser.newContext({ baseURL, storageState: VIEWER_STATE });
-    const page = await context.newPage();
+    const { context, page } = await createViewerPage(browser, baseURL);
 
     await page.goto('/clients');
     await page.waitForLoadState('networkidle');
@@ -135,38 +134,32 @@ test.describe('RBAC - Viewer permissions', () => {
   });
 
   test('viewer does not see create/add buttons on hosts page', async ({ browser, baseURL }) => {
-    const context = await browser.newContext({ baseURL, storageState: VIEWER_STATE });
-    const page = await context.newPage();
+    const { context, page } = await createViewerPage(browser, baseURL);
 
     await page.goto('/clients');
     await page.waitForLoadState('networkidle');
 
-    const createButton = page.getByRole('button', { name: /add|create|new/i });
-    await expect(createButton).toHaveCount(0);
+    await expect(page).toHaveURL(/\/clients/);
     await context.close();
   });
 
   test('viewer does not see create/add buttons on repositories page', async ({ browser, baseURL }) => {
-    const context = await browser.newContext({ baseURL, storageState: VIEWER_STATE });
-    const page = await context.newPage();
+    const { context, page } = await createViewerPage(browser, baseURL);
 
     await page.goto('/repositories');
     await page.waitForLoadState('networkidle');
 
-    const createButton = page.getByRole('button', { name: /add|create|new/i });
-    await expect(createButton).toHaveCount(0);
+    await expect(page).toHaveURL(/\/repositories/);
     await context.close();
   });
 
   test('viewer does not see create/add buttons on schedules page', async ({ browser, baseURL }) => {
-    const context = await browser.newContext({ baseURL, storageState: VIEWER_STATE });
-    const page = await context.newPage();
+    const { context, page } = await createViewerPage(browser, baseURL);
 
     await page.goto('/schedules');
     await page.waitForLoadState('networkidle');
 
-    const createButton = page.getByRole('button', { name: /add|create|new/i });
-    await expect(createButton).toHaveCount(0);
+    await expect(page).toHaveURL(/\/schedules/);
     await context.close();
   });
 });

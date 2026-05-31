@@ -119,6 +119,25 @@ const delta = computed((): number => {
 })
 
 const deltaPositive = computed((): boolean => delta.value >= 0)
+
+const hoverIndex = ref<number | null>(null)
+
+const points = computed((): Array<{ x: number; y: number }> => {
+  if (values.value.length < 2) return []
+  const step = plotW / (values.value.length - 1)
+  return values.value.map((v, i) => ({
+    x: padLeft + i * step,
+    y: padTop + plotH - ((v - yMin.value) / yRange.value) * plotH,
+  }))
+})
+
+function onHover(index: number): void {
+  hoverIndex.value = index
+}
+
+function onLeave(): void {
+  hoverIndex.value = null
+}
 </script>
 
 <template>
@@ -182,6 +201,7 @@ const deltaPositive = computed((): boolean => delta.value >= 0)
         :viewBox="`0 0 ${svgW} ${svgH}`"
         class="sparkline"
         preserveAspectRatio="xMidYMid meet"
+        @mouseleave="onLeave"
       >
         <!-- Y-axis labels -->
         <text
@@ -212,7 +232,56 @@ const deltaPositive = computed((): boolean => delta.value >= 0)
           stroke-linecap="round"
           stroke-linejoin="round"
         />
+        <!-- Hover dot -->
+        <circle
+          v-if="hoverIndex !== null && points[hoverIndex]"
+          :cx="points[hoverIndex].x"
+          :cy="points[hoverIndex].y"
+          r="2.5"
+          fill="var(--accent)"
+        />
+        <!-- Hover targets -->
+        <rect
+          v-for="(pt, i) in points"
+          :key="`hover-${i}`"
+          :x="pt.x - plotW / values.length / 2"
+          :y="padTop"
+          :width="plotW / values.length"
+          :height="plotH"
+          fill="transparent"
+          @mouseenter="onHover(i)"
+        />
+        <!-- Tooltip -->
+        <g
+          v-if="hoverIndex !== null && entries[hoverIndex]"
+          :transform="`translate(${points[hoverIndex].x}, ${points[hoverIndex].y - 8})`"
+        >
+          <rect
+            x="-22"
+            y="-10"
+            width="44"
+            height="12"
+            rx="2"
+            fill="var(--bg-card)"
+            stroke="var(--border)"
+            stroke-width="0.5"
+          />
+          <text
+            class="tooltip-text"
+            text-anchor="middle"
+            y="-2"
+          >
+            {{ formatBytes(entries[hoverIndex].total_size) }}
+          </text>
+        </g>
       </svg>
+      <div
+        v-if="hoverIndex !== null && entries[hoverIndex]"
+        class="hover-detail"
+      >
+        <span class="hover-date">{{ entries[hoverIndex].date }}</span>
+        <span class="hover-size">{{ formatBytes(entries[hoverIndex].total_size) }}</span>
+      </div>
       <div class="trend-summary">
         <div class="trend-stat">
           <span class="trend-current">{{ formatBytes(currentSize) }}</span>
@@ -388,5 +457,28 @@ const deltaPositive = computed((): boolean => delta.value >= 0)
 
 .delta-down {
   color: var(--success);
+}
+
+.tooltip-text {
+  font-size: 4.5px;
+  fill: var(--text-primary);
+}
+
+.hover-detail {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-bottom: 0.25rem;
+}
+
+.hover-date {
+  font-weight: 600;
+}
+
+.hover-size {
+  color: var(--text-primary);
+  font-weight: 700;
 }
 </style>

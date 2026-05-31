@@ -79,6 +79,9 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) has a `db-integration` 
 * No `console.log` in production code (use sparingly, warned by linter).
 * No `debugger` statements.
 * Vue templates must use single attribute per line for elements with multiple attributes.
+* **Build verification is MANDATORY.** After ANY change to frontend code (`.vue`, `.ts`, `.tsx`, `.js`, `.css` files in `frontend/`), run `npm run build` in `frontend/` and confirm it exits successfully. A broken production build is never acceptable — fix all errors before considering the task complete.
+* **Never submit template expressions that contain syntax errors.** Common mistakes: unbalanced quotes in attribute bindings, invalid JavaScript in `v-if`/`v-for`/`:prop` expressions, missing commas in object literals inside templates. If unsure, run `npm run build` to verify.
+* Write or update unit/component tests for any non-trivial frontend logic change. Run `npm run test` (if available) or at minimum `npm run build` to validate.
 
 ## Project Structure
 

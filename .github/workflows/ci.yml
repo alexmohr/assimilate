@@ -199,6 +199,22 @@ jobs:
       - name: Build frontend
         run: npm run build
         working-directory: frontend
+      - name: Download agent-x86_64
+        uses: actions/download-artifact@v4
+        with:
+          name: agent-x86_64
+          path: agents/x86_64/
+      - name: Download agent-aarch64
+        uses: actions/download-artifact@v4
+        with:
+          name: agent-aarch64
+          path: agents/aarch64/
+      - name: Prepare agent binaries
+        run: |
+          mv agents/x86_64/agent agents/agent-x86_64
+          mv agents/aarch64/agent agents/agent-aarch64
+          rm -rf agents/x86_64 agents/aarch64
+          chmod +x agents/agent-*
       - name: Start Docker services
         run: |
           docker compose up -d postgres server

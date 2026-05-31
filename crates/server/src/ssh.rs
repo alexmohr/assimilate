@@ -659,6 +659,15 @@ fn inject_env_vars(content: &str, server_url: &str, token: &str) -> String {
     result
 }
 
+fn canonical_arch(raw: &str) -> String {
+    match raw.trim() {
+        "x86_64" => "x86_64".to_owned(),
+        "aarch64" | "arm64" => "aarch64".to_owned(),
+        "armv7l" | "armhf" => "armv7".to_owned(),
+        other => other.to_owned(),
+    }
+}
+
 async fn detect_remote_arch(
     session: &client::Handle<SshClientHandler>,
 ) -> Result<String, SshError> {
@@ -668,14 +677,7 @@ async fn detect_remote_arch(
             "uname -m failed (exit {exit_code}): {stderr}"
         )));
     }
-    let raw = stdout.trim().to_owned();
-    let canonical = match raw.as_str() {
-        "x86_64" => "x86_64".to_owned(),
-        "aarch64" | "arm64" => "aarch64".to_owned(),
-        "armv7l" | "armhf" => "armv7".to_owned(),
-        other => other.to_owned(),
-    };
-    Ok(canonical)
+    Ok(canonical_arch(&stdout))
 }
 
 pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError> {
@@ -805,6 +807,26 @@ mod tests {
     #[test]
     fn shell_escape_string_with_spaces() {
         assert_eq!(shell_escape("hello world"), "'hello world'");
+    }
+
+    #[test]
+    fn canonical_arch_maps_known_values() {
+        assert_eq!(canonical_arch("x86_64"), "x86_64");
+        assert_eq!(canonical_arch("aarch64"), "aarch64");
+        assert_eq!(canonical_arch("arm64"), "aarch64");
+        assert_eq!(canonical_arch("armv7l"), "armv7");
+        assert_eq!(canonical_arch("armhf"), "armv7");
+    }
+
+    #[test]
+    fn canonical_arch_passes_through_unknown() {
+        assert_eq!(canonical_arch("riscv64"), "riscv64");
+    }
+
+    #[test]
+    fn canonical_arch_trims_whitespace() {
+        assert_eq!(canonical_arch("x86_64\n"), "x86_64");
+        assert_eq!(canonical_arch("  aarch64  "), "aarch64");
     }
 
     #[test]

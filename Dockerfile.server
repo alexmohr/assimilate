@@ -23,7 +23,7 @@ RUN rustup default nightly
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
-RUN cargo build --release -p server -p agent
+RUN cargo build --release -p server
 
 # Stage 4: Runtime
 FROM debian:trixie-slim
@@ -40,13 +40,13 @@ RUN groupadd -r assimilate && useradd -r -g assimilate -d /app -s /sbin/nologin 
 
 WORKDIR /app
 COPY --from=rust-builder /app/target/release/server /app/server
-COPY --from=rust-builder /app/target/release/agent /app/agent
+COPY agents/ /app/
 COPY --from=frontend-builder /app/frontend/dist /app/static
 COPY --from=docs-builder /app/docs_html /app/docs_html
 COPY crates/server/migrations /app/migrations
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 
-RUN mkdir -p /app/ssh && chown -R assimilate:assimilate /app
+RUN mkdir -p /app/ssh && chmod +x /app/agent-* 2>/dev/null; chown -R assimilate:assimilate /app
 
 ENV ASSIMILATE_STATIC_DIR=/app/static
 ENV ASSIMILATE_DOCS_DIR=/app/docs_html

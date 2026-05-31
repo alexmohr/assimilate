@@ -119,10 +119,7 @@ router.beforeEach(async (to) => {
   }
 
   const authStore = useAuthStore()
-
-  if (!authStore.user) {
-    await authStore.fetchMe()
-  }
+  await authStore.fetchMe()
 
   if (!authStore.user) {
     return { name: 'login' }

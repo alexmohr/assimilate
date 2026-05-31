@@ -4,14 +4,45 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, onBeforeUnmount } from 'vue'
+import { Line } from 'vue-chartjs'
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler,
+} from 'chart.js'
+import type { TooltipItem } from 'chart.js'
 import { apiClient } from '../api/client'
 import { formatBytes } from '../utils/format'
 import { logger } from '../utils/logger'
 
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler,
+)
+
 interface TrendEntry {
   date: string
   total_size: number
+}
+
+interface ByRepoEntry {
+  date: string
+  repo_id: number
+  repo_name: string
+  size: number
 }
 
 interface RepoOption {
@@ -21,20 +52,54 @@ interface RepoOption {
 
 const props = defineProps<{ repos: RepoOption[] }>()
 
-const entries = ref<TrendEntry[]>([])
-const loading = ref(true)
+function cssVar(name: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+}
+
+const themeGeneration = ref(0)
+let themeObserver: MutationObserver | null = null
+
+onMounted(() => {
+  themeObserver = new MutationObserver(() => {
+    themeGeneration.value++
+  })
+  themeObserver.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['class'],
+  })
+})
+
+onBeforeUnmount(() => {
+  themeObserver?.disconnect()
+})
+
 const selectedDays = ref<number>(30)
 const selectedRepoId = ref<number | undefined>(undefined)
+const viewMode = ref<'total' | 'stacked'>('total')
+const entries = ref<TrendEntry[]>([])
+const byRepoEntries = ref<ByRepoEntry[]>([])
+const loading = ref(true)
 
 async function fetchTrends(): Promise<void> {
   loading.value = true
   try {
-    const params = new URLSearchParams({ days: String(selectedDays.value) })
-    if (selectedRepoId.value !== undefined) {
-      params.set('repo_id', String(selectedRepoId.value))
+    if (viewMode.value === 'stacked' && selectedRepoId.value === undefined) {
+      const response = await apiClient.get<ByRepoEntry[]>(
+        `/stats/storage-trends/by-repo?days=${selectedDays.value}`,
+      )
+      byRepoEntries.value = response.data
+      entries.value = []
+    } else {
+      const params = new URLSearchParams({ days: String(selectedDays.value) })
+      if (selectedRepoId.value !== undefined) {
+        params.set('repo_id', String(selectedRepoId.value))
+      }
+      const response = await apiClient.get<TrendEntry[]>(
+        `/stats/storage-trends?${params.toString()}`,
+      )
+      entries.value = response.data
+      byRepoEntries.value = []
     }
-    const response = await apiClient.get<TrendEntry[]>(`/stats/storage-trends?${params.toString()}`)
-    entries.value = response.data
   } finally {
     loading.value = false
   }
@@ -44,69 +109,122 @@ onMounted(() => {
   fetchTrends().catch(logger.error)
 })
 
-watch([selectedDays, selectedRepoId], () => {
+watch([selectedDays, selectedRepoId, viewMode], () => {
   fetchTrends().catch(logger.error)
 })
 
-const padLeft = 50
-const padRight = 10
-const padTop = 5
-const padBottom = 20
-const svgW = 240
-const svgH = 80
-const plotW = svgW - padLeft - padRight
-const plotH = svgH - padTop - padBottom
+const COLORS = [
+  'oklch(0.62 0.19 255)',
+  'oklch(0.72 0.17 162)',
+  'oklch(0.75 0.16 75)',
+  'oklch(0.65 0.20 330)',
+  'oklch(0.70 0.15 200)',
+  'oklch(0.68 0.18 30)',
+  'oklch(0.60 0.14 280)',
+  'oklch(0.73 0.12 120)',
+]
 
-const values = computed((): number[] => entries.value.map((e) => e.total_size))
-
-const yMin = computed((): number => {
-  if (values.value.length === 0) return 0
-  return Math.min(...values.value)
+const stackedRepoNames = computed((): string[] => {
+  const names = new Set<string>()
+  byRepoEntries.value.forEach((e) => names.add(e.repo_name))
+  return [...names]
 })
 
-const yMax = computed((): number => {
-  if (values.value.length === 0) return 1
-  return Math.max(...values.value)
+const stackedDates = computed((): string[] => {
+  const dates = new Set<string>()
+  byRepoEntries.value.forEach((e) => dates.add(e.date))
+  return [...dates].sort()
 })
 
-const yRange = computed((): number => yMax.value - yMin.value || 1)
-
-const sparklinePath = computed((): string => {
-  if (values.value.length < 2) return ''
-  const step = plotW / (values.value.length - 1)
-  return values.value
-    .map((v, i) => {
-      const x = padLeft + i * step
-      const y = padTop + plotH - ((v - yMin.value) / yRange.value) * plotH
-      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`
+const chartData = computed(() => {
+  if (viewMode.value === 'stacked' && selectedRepoId.value === undefined) {
+    const dates = stackedDates.value
+    const repos = stackedRepoNames.value
+    const dataByRepo = new Map<string, Map<string, number>>()
+    byRepoEntries.value.forEach((e) => {
+      if (!dataByRepo.has(e.repo_name)) {
+        dataByRepo.set(e.repo_name, new Map())
+      }
+      dataByRepo.get(e.repo_name)!.set(e.date, e.size)
     })
-    .join(' ')
+    return {
+      labels: dates.map((d) => d.slice(5)),
+      datasets: repos.map((repo, i) => ({
+        label: repo,
+        data: dates.map((d) => dataByRepo.get(repo)?.get(d) ?? 0),
+        borderColor: COLORS[i % COLORS.length],
+        backgroundColor: COLORS[i % COLORS.length].replace(')', ' / 0.3)'),
+        fill: true,
+        tension: 0.3,
+      })),
+    }
+  }
+  return {
+    labels: entries.value.map((t) => t.date.slice(5)),
+    datasets: [
+      {
+        label: 'Total Storage',
+        data: entries.value.map((t) => t.total_size),
+        borderColor: 'oklch(0.62 0.19 255)',
+        backgroundColor: 'oklch(0.62 0.19 255 / 0.1)',
+        fill: true,
+        tension: 0.3,
+      },
+    ],
+  }
 })
 
-const yTicks = computed((): Array<{ label: string; y: number }> => {
-  const ticks: Array<{ label: string; y: number }> = []
-  const count = 3
-  for (let i = 0; i <= count; i++) {
-    const val = yMin.value + (yRange.value * i) / count
-    const y = padTop + plotH - (i / count) * plotH
-    ticks.push({ label: formatBytes(val), y })
+const chartOptions = computed(() => {
+  void themeGeneration.value
+  const textMuted = cssVar('--text-muted')
+  const border = cssVar('--border')
+  const isStacked = viewMode.value === 'stacked' && selectedRepoId.value === undefined
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {
+      intersect: false,
+      mode: 'index' as const,
+    },
+    plugins: {
+      legend: {
+        display: isStacked,
+        position: 'bottom' as const,
+        labels: {
+          color: textMuted,
+          usePointStyle: true,
+          pointStyle: 'circle' as const,
+        },
+      },
+      tooltip: {
+        callbacks: {
+          label: (context: TooltipItem<'line'>): string => {
+            return `${context.dataset.label ?? ''}: ${formatBytes(context.parsed.y ?? 0)}`
+          },
+        },
+      },
+    },
+    scales: {
+      x: {
+        grid: { display: false },
+        ticks: { color: textMuted, font: { size: 10 } },
+      },
+      y: {
+        stacked: isStacked,
+        grid: { color: border },
+        ticks: {
+          color: textMuted,
+          font: { size: 10 },
+          callback: (value: string | number): string => formatBytes(Number(value)),
+        },
+      },
+    },
   }
-  return ticks
 })
 
-const xLabels = computed((): Array<{ label: string; x: number }> => {
-  if (entries.value.length < 2) return []
-  const labels: Array<{ label: string; x: number }> = []
-  const step = plotW / (entries.value.length - 1)
-  const interval = Math.max(1, Math.floor(entries.value.length / 4))
-  for (let i = 0; i < entries.value.length; i += interval) {
-    labels.push({
-      label: entries.value[i].date.slice(5),
-      x: padLeft + i * step,
-    })
-  }
-  return labels
-})
+const hasData = computed(
+  (): boolean => entries.value.length >= 2 || byRepoEntries.value.length >= 2,
+)
 
 const currentSize = computed((): number => {
   if (entries.value.length === 0) return 0
@@ -119,25 +237,6 @@ const delta = computed((): number => {
 })
 
 const deltaPositive = computed((): boolean => delta.value >= 0)
-
-const hoverIndex = ref<number | null>(null)
-
-const points = computed((): Array<{ x: number; y: number }> => {
-  if (values.value.length < 2) return []
-  const step = plotW / (values.value.length - 1)
-  return values.value.map((v, i) => ({
-    x: padLeft + i * step,
-    y: padTop + plotH - ((v - yMin.value) / yRange.value) * plotH,
-  }))
-})
-
-function onHover(index: number): void {
-  hoverIndex.value = index
-}
-
-function onLeave(): void {
-  hoverIndex.value = null
-}
 </script>
 
 <template>
@@ -146,6 +245,7 @@ function onLeave(): void {
       <h2 class="panel-title">Storage Trend</h2>
       <div class="controls">
         <select
+          v-if="viewMode === 'total'"
           v-model="selectedRepoId"
           class="stats-select"
         >
@@ -158,6 +258,22 @@ function onLeave(): void {
             {{ repo.name }}
           </option>
         </select>
+        <div class="view-toggle">
+          <button
+            class="toggle-btn"
+            :class="{ active: viewMode === 'total' }"
+            @click="viewMode = 'total'"
+          >
+            Total
+          </button>
+          <button
+            class="toggle-btn"
+            :class="{ active: viewMode === 'stacked' }"
+            @click="viewMode = 'stacked'"
+          >
+            Stacked
+          </button>
+        </div>
         <div class="view-toggle">
           <button
             class="toggle-btn"
@@ -196,93 +312,23 @@ function onLeave(): void {
     >
       Loading…
     </div>
-    <template v-else-if="entries.length >= 2">
-      <svg
-        :viewBox="`0 0 ${svgW} ${svgH}`"
-        class="sparkline"
-        preserveAspectRatio="xMidYMid meet"
-        @mouseleave="onLeave"
-      >
-        <!-- Y-axis labels -->
-        <text
-          v-for="(tick, i) in yTicks"
-          :key="`y-${i}`"
-          :x="padLeft - 4"
-          :y="tick.y + 3"
-          class="axis-text axis-text-y"
-        >
-          {{ tick.label }}
-        </text>
-        <!-- X-axis labels -->
-        <text
-          v-for="(lbl, i) in xLabels"
-          :key="`x-${i}`"
-          :x="lbl.x"
-          :y="svgH - 2"
-          class="axis-text axis-text-x"
-        >
-          {{ lbl.label }}
-        </text>
-        <!-- Line -->
-        <path
-          :d="sparklinePath"
-          fill="none"
-          stroke="var(--accent)"
-          stroke-width="1.5"
-          stroke-linecap="round"
-          stroke-linejoin="round"
+    <div
+      v-else-if="!hasData"
+      class="state-msg"
+    >
+      Not enough data.
+    </div>
+    <template v-else>
+      <div class="chart-container">
+        <Line
+          :data="chartData"
+          :options="chartOptions"
         />
-        <!-- Hover dot -->
-        <circle
-          v-if="hoverIndex !== null && points[hoverIndex]"
-          :cx="points[hoverIndex].x"
-          :cy="points[hoverIndex].y"
-          r="2.5"
-          fill="var(--accent)"
-        />
-        <!-- Hover targets -->
-        <rect
-          v-for="(pt, i) in points"
-          :key="`hover-${i}`"
-          :x="pt.x - plotW / values.length / 2"
-          :y="padTop"
-          :width="plotW / values.length"
-          :height="plotH"
-          fill="transparent"
-          @mouseenter="onHover(i)"
-        />
-        <!-- Tooltip -->
-        <g
-          v-if="hoverIndex !== null && entries[hoverIndex]"
-          :transform="`translate(${points[hoverIndex].x}, ${points[hoverIndex].y - 8})`"
-        >
-          <rect
-            x="-22"
-            y="-10"
-            width="44"
-            height="12"
-            rx="2"
-            fill="var(--bg-card)"
-            stroke="var(--border)"
-            stroke-width="0.5"
-          />
-          <text
-            class="tooltip-text"
-            text-anchor="middle"
-            y="-2"
-          >
-            {{ formatBytes(entries[hoverIndex].total_size) }}
-          </text>
-        </g>
-      </svg>
-      <div
-        v-if="hoverIndex !== null && entries[hoverIndex]"
-        class="hover-detail"
-      >
-        <span class="hover-date">{{ entries[hoverIndex].date }}</span>
-        <span class="hover-size">{{ formatBytes(entries[hoverIndex].total_size) }}</span>
       </div>
-      <div class="trend-summary">
+      <div
+        v-if="viewMode === 'total' && entries.length >= 2"
+        class="trend-summary"
+      >
         <div class="trend-stat">
           <span class="trend-current">{{ formatBytes(currentSize) }}</span>
           <span class="trend-label">Current Size</span>
@@ -298,12 +344,6 @@ function onLeave(): void {
         </div>
       </div>
     </template>
-    <div
-      v-else
-      class="state-msg"
-    >
-      Not enough data.
-    </div>
   </section>
 </template>
 
@@ -321,7 +361,7 @@ function onLeave(): void {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 0.5rem;
-  margin-bottom: 0.75rem;
+  margin-bottom: 1rem;
 }
 
 .panel-title {
@@ -331,6 +371,7 @@ function onLeave(): void {
   letter-spacing: 0.06em;
   color: var(--text-muted);
   margin: 0;
+  white-space: nowrap;
 }
 
 .controls {
@@ -386,45 +427,19 @@ function onLeave(): void {
 .state-msg {
   color: var(--text-muted);
   font-size: 0.875rem;
-  padding: 0.5rem 0;
+  padding: 1rem 0;
 }
 
-.sparkline {
-  width: 100%;
-  height: 10rem;
-  display: block;
-  margin-bottom: 0.5rem;
-}
-
-@media (max-width: 768px) {
-  .sparkline {
-    height: 12rem;
-  }
-}
-
-@media (max-width: 768px) {
-  .sparkline {
-    height: 8rem;
-  }
-}
-
-.axis-text {
-  font-size: 5px;
-  fill: var(--text-muted);
-}
-
-.axis-text-y {
-  text-anchor: end;
-}
-
-.axis-text-x {
-  text-anchor: middle;
+.chart-container {
+  height: 220px;
+  position: relative;
 }
 
 .trend-summary {
   display: flex;
   align-items: flex-start;
   gap: 1.5rem;
+  margin-top: 0.75rem;
 }
 
 .trend-stat {
@@ -457,28 +472,5 @@ function onLeave(): void {
 
 .delta-down {
   color: var(--success);
-}
-
-.tooltip-text {
-  font-size: 4.5px;
-  fill: var(--text-primary);
-}
-
-.hover-detail {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  margin-bottom: 0.25rem;
-}
-
-.hover-date {
-  font-weight: 600;
-}
-
-.hover-size {
-  color: var(--text-primary);
-  font-weight: 700;
 }
 </style>

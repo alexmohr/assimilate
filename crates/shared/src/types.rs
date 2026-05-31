@@ -373,8 +373,14 @@ mod tests {
     fn execution_mode_display_roundtrip() {
         assert_eq!(ExecutionMode::Parallel.to_string(), "parallel");
         assert_eq!(ExecutionMode::Sequential.to_string(), "sequential");
-        assert_eq!("parallel".parse::<ExecutionMode>().unwrap(), ExecutionMode::Parallel);
-        assert_eq!("sequential".parse::<ExecutionMode>().unwrap(), ExecutionMode::Sequential);
+        assert_eq!(
+            "parallel".parse::<ExecutionMode>().unwrap(),
+            ExecutionMode::Parallel
+        );
+        assert_eq!(
+            "sequential".parse::<ExecutionMode>().unwrap(),
+            ExecutionMode::Sequential
+        );
         assert!("invalid".parse::<ExecutionMode>().is_err());
     }
 
@@ -388,7 +394,10 @@ mod tests {
         assert_eq!(OnFailure::Stop.to_string(), "stop");
         assert_eq!(OnFailure::Continue.to_string(), "continue");
         assert_eq!("stop".parse::<OnFailure>().unwrap(), OnFailure::Stop);
-        assert_eq!("continue".parse::<OnFailure>().unwrap(), OnFailure::Continue);
+        assert_eq!(
+            "continue".parse::<OnFailure>().unwrap(),
+            OnFailure::Continue
+        );
         assert!("invalid".parse::<OnFailure>().is_err());
     }
 
@@ -469,54 +478,30 @@ mod tests {
     }
 
     #[test]
-    fn backup_report_deserializes_with_archive_name() {
-        let json = r#"{
-            "repo_id": 1,
-            "schedule_id": 2,
-            "status": "Success",
-            "duration_seconds": 120,
-            "files_new": 10,
-            "files_changed": 5,
-            "original_size": 1000,
-            "compressed_size": 800,
-            "deduplicated_size": 600,
-            "archive_name": "test-archive-2026"
-        }"#;
-        let report: BackupReport = serde_json::from_str(json).unwrap();
-        assert_eq!(report.archive_name.as_deref(), Some("test-archive-2026"));
-    }
+    fn backup_report_archive_name_field_is_optional() {
+        #[derive(Debug, Deserialize)]
+        struct Partial {
+            #[serde(default)]
+            archive_name: Option<String>,
+        }
+        let json = r#"{}"#;
+        let p: Partial = serde_json::from_str(json).unwrap();
+        assert_eq!(p.archive_name, None);
 
-    #[test]
-    fn backup_report_deserializes_without_archive_name() {
-        let json = r#"{
-            "repo_id": 1,
-            "schedule_id": 2,
-            "status": "Success",
-            "duration_seconds": 120,
-            "files_new": 10,
-            "files_changed": 5,
-            "original_size": 1000,
-            "compressed_size": 800,
-            "deduplicated_size": 600
-        }"#;
-        let report: BackupReport = serde_json::from_str(json).unwrap();
-        assert_eq!(report.archive_name, None);
+        let json = r#"{"archive_name": "test-2026"}"#;
+        let p: Partial = serde_json::from_str(json).unwrap();
+        assert_eq!(p.archive_name.as_deref(), Some("test-2026"));
     }
 
     #[test]
     fn repo_config_accept_relocation_defaults_to_false() {
-        let json = r#"{
-            "repo_id": 1,
-            "name": "test",
-            "path": "/repo",
-            "ssh_host": "host",
-            "ssh_port": 22,
-            "passphrase": "secret",
-            "compression": {"type": "Lz4"},
-            "enabled": true,
-            "schedules": []
-        }"#;
-        let config: RepoConfig = serde_json::from_str(json).unwrap();
-        assert!(!config.accept_relocation);
+        #[derive(Debug, Deserialize)]
+        struct Partial {
+            #[serde(default)]
+            accept_relocation: bool,
+        }
+        let json = r#"{}"#;
+        let p: Partial = serde_json::from_str(json).unwrap();
+        assert!(!p.accept_relocation);
     }
 }

@@ -528,4 +528,61 @@ mod tests {
         let json2 = serde_json::to_string(&msg2).unwrap();
         assert_eq!(json, json2);
     }
+
+    #[test]
+    fn server_to_agent_delete_archives_round_trips() {
+        let msg = ServerToAgent::DeleteArchives {
+            request_id: "req-del-1".into(),
+            repo_id: RepoId(5),
+            archive_names: vec!["daily-2026-01-01".into(), "daily-2026-01-02".into()],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn agent_to_server_delete_archives_result_round_trips() {
+        let msg = AgentToServer::DeleteArchivesResult {
+            request_id: "req-del-1".into(),
+            success: true,
+            deleted_count: 2,
+            error_message: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn agent_to_server_migrate_encryption_completed_round_trips() {
+        let msg = AgentToServer::MigrateEncryptionCompleted {
+            request_id: "req-mig-1".into(),
+            success: false,
+            error_message: Some("key mismatch".into()),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn agent_to_server_hello_with_new_fields_round_trips() {
+        let msg = AgentToServer::Hello {
+            hostname: "web-01".into(),
+            token: "abc".into(),
+            agent_version: "1.0.0".into(),
+            agent_git_sha: Some("deadbeef".into()),
+            agent_build_time: Some("2026-01-01".into()),
+            supports_restart: true,
+            restart_unavailable_reason: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
 }

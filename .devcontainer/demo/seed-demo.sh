@@ -33,7 +33,7 @@ done
 echo "==> Cleaning up existing demo data (idempotent re-run)..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<'SQL' > /dev/null 2>&1
 DELETE FROM backup_reports WHERE client_id IN (SELECT id FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver (imported)','legacy-db-prod (imported)'));
-DELETE FROM schedules WHERE client_id IN (SELECT id FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
+DELETE FROM schedules WHERE id IN (SELECT st.schedule_id FROM schedule_targets st JOIN clients c ON c.id = st.client_id WHERE c.hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM ssh_tunnels WHERE client_id IN (SELECT id FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM client_hostname_patterns WHERE client_id IN (SELECT id FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver (imported)','legacy-db-prod (imported)');
@@ -160,7 +160,7 @@ REPO_WEEKLY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SEL
 
 echo "==> Creating schedules..."
 api POST "/api/schedules" "{
-    \"client_id\": $WEB01_ID,
+    \"client_ids\": [$WEB01_ID],
     \"repo_id\": $REPO_DAILY_ID,
     \"cron_expression\": \"0 2 * * *\",
     \"enabled\": true,
@@ -171,7 +171,7 @@ api POST "/api/schedules" "{
 }" > /dev/null
 
 api POST "/api/schedules" "{
-    \"client_id\": $DB01_ID,
+    \"client_ids\": [$DB01_ID],
     \"repo_id\": $REPO_HOURLY_ID,
     \"cron_expression\": \"0 * * * *\",
     \"enabled\": true,
@@ -184,7 +184,7 @@ api POST "/api/schedules" "{
 }" > /dev/null
 
 api POST "/api/schedules" "{
-    \"client_id\": $MEDIA_ID,
+    \"client_ids\": [$MEDIA_ID],
     \"repo_id\": $REPO_WEEKLY_ID,
     \"cron_expression\": \"0 3 * * 0\",
     \"enabled\": true,
@@ -193,6 +193,19 @@ api POST "/api/schedules" "{
     \"keep_monthly\": 12,
     \"keep_yearly\": 2,
     \"backup_sources\": [\"/mnt/media/photos\", \"/mnt/media/videos\"]
+}" > /dev/null
+
+api POST "/api/schedules" "{
+    \"client_ids\": [$WEB01_ID, $DB01_ID, $MEDIA_ID],
+    \"repo_id\": $REPO_DAILY_ID,
+    \"cron_expression\": \"0 4 * * *\",
+    \"enabled\": true,
+    \"execution_mode\": \"sequential\",
+    \"on_failure\": \"stop\",
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6,
+    \"backup_sources\": [\"/etc\"]
 }" > /dev/null
 
 echo "==> Adding global excludes..."

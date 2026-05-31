@@ -10,7 +10,7 @@ use axum::{
     http::header,
     response::{IntoResponse, Response},
 };
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use tokio::process::Command;
@@ -162,71 +162,6 @@ pub struct ArchiveEntry {
     pub client_hostname: Option<String>,
 }
 
-struct ReportRow {
-    archive_name: Option<String>,
-    started_at: DateTime<Utc>,
-    matched: bool,
-    client_hostname: String,
-}
-
-async fn fetch_report_rows(pool: &PgPool, repo_id: i64) -> Result<Vec<ReportRow>, ApiError> {
-    let rows = sqlx::query_as::<_, (Option<String>, DateTime<Utc>, bool, String)>(
-        r"
-        SELECT br.archive_name, br.started_at, br.matched, c.hostname AS client_hostname
-        FROM backup_reports br
-        JOIN clients c ON c.id = br.client_id
-        WHERE br.repo_id = $1
-        ",
-    )
-    .bind(repo_id)
-    .fetch_all(pool)
-    .await
-    .map_err(ApiError::Database)?;
-
-    Ok(rows
-        .into_iter()
-        .map(
-            |(archive_name, started_at, matched, client_hostname)| ReportRow {
-                archive_name,
-                started_at,
-                matched,
-                client_hostname,
-            },
-        )
-        .collect())
-}
-
-fn parse_borg_timestamp(s: &str) -> Option<DateTime<Utc>> {
-    let s = s.trim_end_matches('Z');
-    NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f")
-        .ok()
-        .or_else(|| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok())
-        .map(|dt| dt.and_utc())
-}
-
-fn find_matching_report<'a>(
-    archive_name: &str,
-    archive_start: &str,
-    reports: &'a [ReportRow],
-) -> Option<&'a ReportRow> {
-    // Prefer exact match by archive name
-    if let Some(report) = reports
-        .iter()
-        .find(|r| r.archive_name.as_deref() == Some(archive_name))
-    {
-        return Some(report);
-    }
-    // Fall back to timestamp matching
-    let archive_ts = parse_borg_timestamp(archive_start)?;
-    reports
-        .iter()
-        .filter(|r| {
-            let diff = (archive_ts - r.started_at).num_seconds().abs();
-            diff <= 5
-        })
-        .min_by_key(|r| (archive_ts - r.started_at).num_seconds().abs())
-}
-
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ArchiveInfo {
     pub original_size: i64,
@@ -282,62 +217,42 @@ pub async fn list_archives(
     AxumPath(repo_id): AxumPath<i64>,
 ) -> Result<Json<Vec<ArchiveEntry>>, ApiError> {
     check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_view).await?;
-    let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
 
-    let output = Command::new(borg_binary())
-        .arg("info")
-        .arg("--json")
-        .arg("--glob-archives")
-        .arg("*")
-        .arg("--lock-wait")
-        .arg(LOCK_WAIT_SECS)
-        .arg(&borg_repo)
-        .envs(&env)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let code = output.status.code().unwrap_or(1);
-        return Err(classify_borg_error(code, &stderr));
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        archive_name: Option<String>,
+        started_at: DateTime<Utc>,
+        original_size: i64,
+        deduplicated_size: i64,
+        matched: bool,
+        client_hostname: String,
     }
 
-    let json_output: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|e| ApiError::Internal(format!("failed to parse borg output: {e}")))?;
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT br.archive_name, br.started_at, br.original_size, br.deduplicated_size, \
+         br.matched, c.hostname AS client_hostname FROM backup_reports br JOIN clients c ON c.id \
+         = br.client_id WHERE br.repo_id = $1 ORDER BY br.started_at DESC",
+    )
+    .bind(repo_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(ApiError::Database)?;
 
-    let archives = json_output["archives"]
-        .as_array()
-        .map_or_else(Vec::new, |arr| {
-            arr.iter()
-                .map(|a| {
-                    let stats = &a["stats"];
-                    ArchiveEntry {
-                        name: a["name"].as_str().unwrap_or("").to_string(),
-                        start: ensure_utc_suffix(a["start"].as_str().unwrap_or("")),
-                        hostname: a["hostname"].as_str().unwrap_or("").to_string(),
-                        comment: a["comment"].as_str().unwrap_or("").to_string(),
-                        original_size: stats["original_size"].as_i64().unwrap_or(0),
-                        deduplicated_size: stats["deduplicated_size"].as_i64().unwrap_or(0),
-                        matched: None,
-                        client_hostname: None,
-                    }
-                })
-                .collect()
-        });
-
-    let reports = fetch_report_rows(&state.pool, repo_id).await?;
-
-    let archives = archives
+    let archives = rows
         .into_iter()
-        .map(|mut entry| {
-            if let Some(report) = find_matching_report(&entry.name, &entry.start, &reports) {
-                entry.matched = Some(report.matched);
-                entry.client_hostname = Some(report.client_hostname.clone());
+        .map(|row| {
+            let name = row.archive_name.unwrap_or_default();
+            let start = row.started_at.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string();
+            ArchiveEntry {
+                name,
+                start,
+                hostname: row.client_hostname.clone(),
+                comment: String::new(),
+                original_size: row.original_size,
+                deduplicated_size: row.deduplicated_size,
+                matched: Some(row.matched),
+                client_hostname: Some(row.client_hostname),
             }
-            entry
         })
         .collect();
 
@@ -620,104 +535,5 @@ mod tests {
     #[test]
     fn validate_path_accepts_nested_relative() {
         assert!(validate_path("a/b/c/d.txt").is_ok());
-    }
-
-    fn make_report(
-        archive_name: Option<&str>,
-        started_at: &str,
-        matched: bool,
-        client_hostname: &str,
-    ) -> ReportRow {
-        ReportRow {
-            archive_name: archive_name.map(ToString::to_string),
-            started_at: parse_borg_timestamp(started_at).unwrap(),
-            matched,
-            client_hostname: client_hostname.to_string(),
-        }
-    }
-
-    #[test]
-    fn find_matching_report_prefers_archive_name() {
-        let reports = vec![
-            make_report(
-                Some("db-backup-2025-01-01"),
-                "2025-01-01T02:00:00",
-                true,
-                "db-server-01",
-            ),
-            make_report(
-                Some("unknown-host-backup-2025-01-01"),
-                "2025-01-01T02:00:01",
-                false,
-                "unknown-legacy-host",
-            ),
-        ];
-
-        let result = find_matching_report(
-            "unknown-host-backup-2025-01-01",
-            "2025-01-01T02:00:01",
-            &reports,
-        );
-        assert_eq!(result.unwrap().client_hostname, "unknown-legacy-host");
-    }
-
-    #[test]
-    fn find_matching_report_exact_name_wins_over_closer_timestamp() {
-        let reports = vec![
-            make_report(
-                Some("other-archive"),
-                "2025-01-01T02:00:02",
-                true,
-                "db-server-01",
-            ),
-            make_report(
-                Some("target-archive"),
-                "2025-01-01T01:00:00",
-                false,
-                "correct-host",
-            ),
-        ];
-
-        let result = find_matching_report("target-archive", "2025-01-01T02:00:00", &reports);
-        assert_eq!(result.unwrap().client_hostname, "correct-host");
-    }
-
-    #[test]
-    fn find_matching_report_falls_back_to_timestamp() {
-        let reports = vec![
-            make_report(None, "2025-01-01T02:00:00", true, "host-a"),
-            make_report(None, "2025-01-01T03:00:00", true, "host-b"),
-        ];
-
-        let result = find_matching_report("no-match-name", "2025-01-01T02:00:02", &reports);
-        assert_eq!(result.unwrap().client_hostname, "host-a");
-    }
-
-    #[test]
-    fn find_matching_report_timestamp_outside_window_returns_none() {
-        let reports = vec![make_report(None, "2025-01-01T02:00:00", true, "host-a")];
-
-        let result = find_matching_report("no-match", "2025-01-01T02:01:00", &reports);
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn find_matching_report_no_reports_returns_none() {
-        let result = find_matching_report("archive", "2025-01-01T02:00:00", &[]);
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn parse_borg_timestamp_with_fractional_seconds() {
-        let ts = parse_borg_timestamp("2025-01-01T02:00:00.123456Z");
-        assert!(ts.is_some());
-        assert_eq!(ts.unwrap().timestamp(), 1_735_696_800);
-    }
-
-    #[test]
-    fn parse_borg_timestamp_without_fractional() {
-        let ts = parse_borg_timestamp("2025-01-01T02:00:00");
-        assert!(ts.is_some());
-        assert_eq!(ts.unwrap().timestamp(), 1_735_696_800);
     }
 }

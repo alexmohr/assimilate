@@ -11,7 +11,7 @@ use axum::{
     routing::{delete, get, post, put},
 };
 use server::{
-    AppState, api,
+    AppState, api, db,
     log_buffer::{LogBuffer, LogBufferLayer},
     middleware::csp_headers,
     notifications::NotificationService,
@@ -116,6 +116,38 @@ async fn main() -> Result<(), StartupError> {
 
     let tm = tunnel_manager.clone();
     tokio::spawn(async move { tm.run().await });
+
+    {
+        let recovery_pool = state.pool.clone();
+        let recovery_key = state.encryption_key;
+        let recovery_broadcast = state.ui_broadcast.clone();
+        tokio::spawn(async move {
+            let repo_ids = match db::list_importing_repo_ids(&recovery_pool).await {
+                Ok(ids) => ids,
+                Err(e) => {
+                    tracing::warn!("failed to query importing repos: {e}");
+                    return;
+                }
+            };
+            for repo_id in repo_ids {
+                tracing::info!(repo_id, "resuming interrupted import");
+                let pool = recovery_pool.clone();
+                let key = recovery_key;
+                let broadcast = recovery_broadcast.clone();
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        server::api::repos::sync_existing_archives(&pool, &key, repo_id).await
+                    {
+                        tracing::warn!(repo_id, error = %e, "failed to resume import");
+                        let _ =
+                            db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await;
+                    }
+                    let _ = db::set_repo_importing(&pool, repo_id, false).await;
+                    broadcast.send(shared::protocol::ServerToUi::DataChanged);
+                });
+            }
+        });
+    }
 
     let login_rate_limiter = RateLimiter::new(10, Duration::from_secs(60));
 

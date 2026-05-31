@@ -11,13 +11,12 @@ import { useAuthStore } from '../stores/auth'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useClipboard } from '../composables/useClipboard'
-import { formatDate, formatBytes, formatDuration } from '../utils/format'
+import { formatDate, formatDateShort, formatBytes, relativeTime } from '../utils/format'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import { cronToHuman } from '../utils/cron'
 import { parseLines } from '../utils/validation'
 import BaseSpinner from '../components/BaseSpinner.vue'
-import { Trash2 } from '@lucide/vue'
 
 type TabId = 'overview' | 'schedules' | 'backups'
 
@@ -45,6 +44,7 @@ interface RepoRow {
 interface ScheduleRow {
   id: number
   repo_id: number
+  schedule_type: string
   cron_expression: string
   enabled: boolean
   last_run_at: string | null
@@ -58,6 +58,7 @@ interface ScheduleRow {
   compact_enabled: boolean
   pre_backup_commands: string
   post_backup_commands: string
+  execution_mode: string
 }
 
 interface ReportRow {
@@ -75,6 +76,7 @@ interface ReportRow {
   error_message: string | null
   warnings: string[]
   borg_version: string | null
+  archive_name: string | null
 }
 
 interface TagRow {
@@ -112,7 +114,7 @@ const schedules = ref<ScheduleRow[]>([])
 const reports = ref<ReportRow[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
-const expandedReportIds = ref<Set<number>>(new Set())
+const expandedReportId = ref<number | null>(null)
 
 // Tags
 const allHostTags = ref<TagRow[]>([])
@@ -269,38 +271,20 @@ async function deleteHostnamePattern(id: number): Promise<void> {
   }
 }
 
-async function deleteSchedule(id: number): Promise<void> {
-  try {
-    await apiClient.delete(`/schedules/${id}`)
-    schedules.value = schedules.value.filter((s) => s.id !== id)
-  } catch (e: unknown) {
-    error.value = extractError(e)
-  }
-}
-
 function isOnline(client: ClientRow): boolean {
   return client.is_connected
 }
 
-function statusClass(status: string): string {
-  const s = status.toLowerCase()
-  if (s === 'success') return 'badge-success'
-  if (s === 'warning') return 'badge-warning'
-  return 'badge-failed'
-}
-
-function hasDetails(r: ReportRow): boolean {
-  return r.warnings.length > 0 || r.error_message !== null
-}
-
-function toggleReportExpand(id: number): void {
-  const next = new Set(expandedReportIds.value)
-  if (next.has(id)) {
-    next.delete(id)
+function handleResultClick(r: ReportRow): void {
+  if (r.status === 'success') {
+    const query: Record<string, string> = { tab: 'archives' }
+    if (r.archive_name) {
+      query.archive = r.archive_name
+    }
+    router.push({ path: `/repos/${r.repo_id}`, query })
   } else {
-    next.add(id)
+    expandedReportId.value = expandedReportId.value === r.id ? null : r.id
   }
-  expandedReportIds.value = next
 }
 
 async function loadClient(): Promise<void> {
@@ -345,6 +329,23 @@ const clientSchedules = computed(() => {
 
 function repoNameForSchedule(s: ScheduleRow): string {
   return repos.value.find((r) => r.id === s.repo_id)?.target_name ?? `repo #${s.repo_id}`
+}
+
+function scheduleTypeLabel(t: string): string {
+  switch (t) {
+    case 'backup':
+      return 'Backup'
+    case 'check':
+      return 'Integrity Check'
+    case 'verify':
+      return 'Verify (extract dry-run)'
+    default:
+      return t
+  }
+}
+
+function navigateToSchedule(s: ScheduleRow): void {
+  router.push(`/schedules/${s.id}`)
 }
 
 // Token regeneration
@@ -781,7 +782,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
             <textarea
               v-model="excludesText"
               class="input exclude-area"
-              placeholder="Exclude patterns, one per line&#10;e.g. *.cache&#10;pp:__pycache__"
+              placeholder="Exclude patterns, one per line&#10;# Lines starting with # are comments&#10;e.g. *.cache&#10;pp:__pycache__"
               spellcheck="false"
             />
             <div
@@ -894,44 +895,48 @@ watch(wsStatus, (newStatus, oldStatus) => {
             v-for="s in clientSchedules"
             :key="s.id"
             class="schedule-card"
+            :class="{ disabled: !s.enabled }"
+            @click="navigateToSchedule(s)"
           >
-            <div class="schedule-card-header">
-              <span class="schedule-repo">{{ repoNameForSchedule(s) }}</span>
+            <div class="card-top">
+              <div class="card-info">
+                <span class="card-hostname">{{ repoNameForSchedule(s) }}</span>
+                <span class="card-repo">
+                  {{ s.execution_mode === 'sequential' ? 'Sequential' : 'Parallel' }}
+                </span>
+              </div>
+              <div class="card-badges">
+                <span
+                  class="status-badge"
+                  :class="s.enabled ? 'status-online' : 'status-offline'"
+                >
+                  {{ s.enabled ? 'Enabled' : 'Disabled' }}
+                </span>
+              </div>
+            </div>
+            <div class="card-meta">
               <span
-                class="status-badge"
-                :class="s.enabled ? 'status-online' : 'status-offline'"
+                class="type-badge"
+                :class="`type-${s.schedule_type ?? 'backup'}`"
               >
-                {{ s.enabled ? 'Active' : 'Paused' }}
+                {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
               </span>
             </div>
-            <div class="schedule-info">
-              <div class="repo-detail">
-                <span class="detail-label">Schedule</span>
-                <span
-                  v-if="cronToHuman(s.cron_expression)"
-                  class="detail-value schedule-human"
-                >
-                  {{ cronToHuman(s.cron_expression) }}
-                </span>
-                <code class="detail-value cron-badge">{{ s.cron_expression }}</code>
+            <div class="card-stats">
+              <div class="stat">
+                <span class="stat-value">{{
+                  cronToHuman(s.cron_expression) ?? s.cron_expression
+                }}</span>
+                <span class="stat-label">Schedule</span>
               </div>
-              <div class="repo-detail">
-                <span class="detail-label">Next run</span>
-                <span class="detail-value">{{ formatDate(s.next_run_at, 'Never') }}</span>
+              <div class="stat">
+                <span class="stat-value">{{ formatDateShort(s.next_run_at) }}</span>
+                <span class="stat-label">Next run</span>
               </div>
-              <div class="repo-detail">
-                <span class="detail-label">Last run</span>
-                <span class="detail-value">{{ formatDate(s.last_run_at, 'Never') }}</span>
+              <div class="stat">
+                <span class="stat-value">{{ formatDateShort(s.last_run_at) }}</span>
+                <span class="stat-label">Last run</span>
               </div>
-            </div>
-            <div class="schedule-card-footer">
-              <button
-                class="btn btn-sm btn-ghost btn-danger-text"
-                title="Delete"
-                @click="deleteSchedule(s.id)"
-              >
-                <Trash2 :size="14" />
-              </button>
             </div>
           </div>
         </div>
@@ -953,91 +958,52 @@ watch(wsStatus, (newStatus, oldStatus) => {
         </div>
         <div
           v-else
-          class="table-wrap"
+          class="results-list"
         >
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th class="col-expand" />
-                <th>Date</th>
-                <th>Status</th>
-                <th>Duration</th>
-                <th>Original</th>
-                <th>Compressed</th>
-                <th>Dedup</th>
-                <th>Files</th>
-              </tr>
-            </thead>
-            <tbody>
-              <template
-                v-for="r in reports"
-                :key="r.id"
+          <div
+            v-for="r in reports"
+            :key="r.id"
+            class="result-card"
+            :class="[`result-${r.status}`, { 'result-card-link': r.status === 'success' }]"
+            @click="handleResultClick(r)"
+          >
+            <div class="result-header">
+              <span class="result-status-badge">{{ r.status }}</span>
+              <span class="result-date">{{ relativeTime(r.finished_at) }}</span>
+              <span class="result-duration">{{ r.duration_secs }}s</span>
+            </div>
+            <div class="result-stats">
+              <span>{{ formatBytes(r.original_size) }} original</span>
+              <span>{{ formatBytes(r.deduplicated_size) }} dedup</span>
+              <span>{{ r.files_processed }} files</span>
+            </div>
+            <template v-if="expandedReportId === r.id">
+              <div
+                v-if="r.warnings.length > 0"
+                class="result-warnings"
               >
-                <tr
-                  :class="{
-                    'row-expandable': hasDetails(r),
-                    'row-expanded': expandedReportIds.has(r.id),
-                  }"
-                  @click="hasDetails(r) && toggleReportExpand(r.id)"
-                >
-                  <td class="cell-expand">
-                    <span
-                      v-if="hasDetails(r)"
-                      class="expand-icon"
-                      :class="{ open: expandedReportIds.has(r.id) }"
-                      >&#9654;</span
-                    >
-                  </td>
-                  <td class="cell-ts">
-                    {{ formatDate(r.started_at, 'Never') }}
-                  </td>
-                  <td>
-                    <span
-                      class="status-badge-sm"
-                      :class="statusClass(r.status)"
-                      >{{ r.status }}</span
-                    >
-                  </td>
-                  <td>{{ formatDuration(r.duration_secs) }}</td>
-                  <td>{{ formatBytes(r.original_size) }}</td>
-                  <td>{{ formatBytes(r.compressed_size) }}</td>
-                  <td>{{ formatBytes(r.deduplicated_size) }}</td>
-                  <td>{{ r.files_processed.toLocaleString() }}</td>
-                </tr>
-                <tr
-                  v-if="expandedReportIds.has(r.id)"
-                  class="detail-row"
-                >
-                  <td :colspan="8">
-                    <div class="report-detail">
-                      <div
-                        v-if="r.warnings.length > 0"
-                        class="detail-section"
-                      >
-                        <span class="detail-heading">Warnings ({{ r.warnings.length }})</span>
-                        <ul class="warning-list">
-                          <li
-                            v-for="(w, i) in r.warnings"
-                            :key="i"
-                            class="warning-item"
-                          >
-                            {{ w }}
-                          </li>
-                        </ul>
-                      </div>
-                      <div
-                        v-if="r.error_message"
-                        class="detail-section"
-                      >
-                        <span class="detail-heading">Error Output</span>
-                        <pre class="error-pre">{{ r.error_message }}</pre>
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-              </template>
-            </tbody>
-          </table>
+                <strong class="result-section-label">Warnings</strong>
+                <pre class="result-output">{{ r.warnings.join('\n') }}</pre>
+              </div>
+              <div
+                v-if="r.error_message"
+                class="result-error"
+              >
+                <strong class="result-section-label">Error</strong>
+                <pre class="result-output">{{ r.error_message }}</pre>
+              </div>
+            </template>
+            <span
+              v-if="r.status === 'success'"
+              class="result-link-hint"
+              >View archives →</span
+            >
+            <span
+              v-else-if="r.error_message || r.warnings.length > 0"
+              class="result-expand-hint"
+              >{{ expandedReportId === r.id ? 'Click to collapse' : 'Click to expand' }}</span
+            >
+          </div>
         </div>
       </div>
     </template>
@@ -1368,32 +1334,6 @@ watch(wsStatus, (newStatus, oldStatus) => {
   min-width: 140px;
 }
 
-/* Status badges */
-
-.status-badge-sm {
-  display: inline-block;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  font-size: 0.7rem;
-  font-weight: 600;
-  text-transform: capitalize;
-}
-
-.badge-success {
-  background: var(--success-subtle);
-  color: var(--success);
-}
-
-.badge-warning {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.badge-failed {
-  background: var(--danger-subtle);
-  color: var(--danger);
-}
-
 /* Repos grid */
 .repo-grid {
   display: grid;
@@ -1460,12 +1400,6 @@ watch(wsStatus, (newStatus, oldStatus) => {
   border-radius: var(--radius-sm);
 }
 
-.schedule-human {
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
 .repo-card-footer {
   display: flex;
   justify-content: flex-end;
@@ -1475,7 +1409,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
 /* Schedule cards */
 .schedule-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
   gap: 1rem;
 }
 
@@ -1484,170 +1418,257 @@ watch(wsStatus, (newStatus, oldStatus) => {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 1.25rem;
+  cursor: pointer;
+  transition:
+    box-shadow 0.15s,
+    border-color 0.15s;
   display: flex;
   flex-direction: column;
-  gap: 0.875rem;
+  gap: 0.75rem;
 }
 
-.schedule-card-header {
+.schedule-card:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow);
+}
+
+.schedule-card.disabled {
+  opacity: 0.5;
+}
+
+.card-top {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  gap: 0.75rem;
 }
 
-.schedule-repo {
+.card-badges {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.card-hostname {
   font-weight: 600;
   font-family: var(--mono);
   font-size: 0.9rem;
   color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.schedule-info {
+.card-repo {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-meta {
   display: flex;
-  flex-direction: column;
   gap: 0.4rem;
 }
 
-.schedule-card-footer {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: auto;
-}
-
-/* Table */
-.table-wrap {
-  overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.85rem;
-}
-
-.data-table th {
-  text-align: left;
-  padding: 0.7rem 1rem;
-  font-size: 0.75rem;
+.type-badge {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.65rem;
   font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.type-backup {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.type-check {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.type-verify {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.card-stats {
+  display: flex;
+  gap: 1.25rem;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.stat-value {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.stat-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--text-muted);
+}
+
+/* Results list */
+.results-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.result-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
   background: var(--bg-card);
-  border-bottom: 1px solid var(--border);
 }
 
-.data-table td {
-  padding: 0.65rem 1rem;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border-subtle);
+.result-card.result-failed {
+  border-left: 3px solid var(--danger);
 }
 
-.data-table tr:last-child td {
-  border-bottom: none;
+.result-card.result-warning {
+  border-left: 3px solid var(--warning);
 }
 
-.data-table tr:hover td {
+.result-card.result-success {
+  border-left: 3px solid var(--success);
+}
+
+.result-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.result-status-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.15rem 0.4rem;
+  border-radius: var(--radius-sm);
   background: var(--bg-hover);
 }
 
-.cell-ts {
-  white-space: nowrap;
-  color: var(--text-muted);
+.result-failed .result-status-badge {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.result-warning .result-status-badge {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+}
+
+.result-success .result-status-badge {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+
+.result-date {
   font-size: 0.8rem;
-}
-
-.col-expand {
-  width: 2rem;
-}
-
-.cell-expand {
-  width: 2rem;
-  text-align: center;
-  padding-left: 0.5rem;
-  padding-right: 0;
-}
-
-.expand-icon {
-  display: inline-block;
-  font-size: 0.6rem;
   color: var(--text-muted);
-  transition: transform 0.15s;
 }
 
-.expand-icon.open {
-  transform: rotate(90deg);
+.result-duration {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-left: auto;
 }
 
-.row-expandable {
+.result-stats {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.result-warnings,
+.result-error {
+  margin-top: 0.5rem;
+}
+
+.result-output {
+  font-size: 0.7rem;
+  background: var(--bg-code, var(--bg-hover));
+  border-radius: var(--radius-sm);
+  padding: 0.5rem;
+  margin-top: 0.25rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 12rem;
+}
+
+.result-error .result-output {
+  color: var(--danger);
+}
+
+.result-card-link {
   cursor: pointer;
 }
 
-.row-expanded td {
-  border-bottom-color: transparent;
+.result-card-link:hover {
+  background: var(--bg-hover);
 }
 
-.detail-row td {
-  padding: 0 1rem 0.75rem;
-  background: var(--bg-card);
+.result-card:not(.result-card-link) {
+  cursor: pointer;
 }
 
-.report-detail {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  padding: 0.5rem 0 0.25rem 2rem;
+.result-card:not(.result-card-link):hover {
+  background: var(--bg-hover);
 }
 
-.detail-section {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
+.result-link-hint {
+  font-size: 0.7rem;
+  color: var(--accent);
+  margin-top: 0.4rem;
+  display: block;
 }
 
-.detail-heading {
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+.result-expand-hint {
+  font-size: 0.7rem;
   color: var(--text-muted);
+  margin-top: 0.4rem;
+  display: block;
 }
 
-.warning-list {
-  margin: 0;
-  padding: 0 0 0 1.25rem;
-  list-style: none;
+.result-section-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  display: block;
+  margin-bottom: 0.25rem;
 }
 
-.warning-item {
-  font-size: 0.8rem;
-  font-family: var(--mono);
+.result-warnings .result-section-label {
   color: var(--warning);
-  padding: 0.15rem 0;
 }
 
-.warning-item::before {
-  content: '\25CF ';
-  font-size: 0.5rem;
-  vertical-align: middle;
-  margin-right: 0.35rem;
-}
-
-.error-pre {
-  margin: 0;
-  padding: 0.5rem 0.75rem;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-family: var(--mono);
-  font-size: 0.78rem;
-  color: var(--text-secondary);
-  white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 200px;
-  overflow-y: auto;
+.result-error .result-section-label {
+  color: var(--danger);
 }
 
 /* Overlay & Dialog */

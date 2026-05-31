@@ -230,6 +230,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build images
         run: docker compose build
+      - name: Build agent image
+        run: docker buildx build -f Dockerfile.agent .
       - name: Start services
         run: docker compose up -d postgres server
       - name: Wait for healthy

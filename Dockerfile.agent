@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 # Stage 1: Build Rust agent binary
-FROM rust:1.87-trixie AS rust-builder
+FROM rust:trixie AS rust-builder
 WORKDIR /app
 RUN rustup default nightly
 

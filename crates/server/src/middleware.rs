@@ -7,7 +7,8 @@ const CSP_VALUE: &str = "default-src 'self'; script-src 'self'; style-src 'self'
                          img-src 'self' data:; connect-src 'self' ws: wss:; font-src 'self'; \
                          frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
 
-const CSP_VALUE_APIDOCS: &str = "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; \
+const CSP_VALUE_APIDOCS: &str = "default-src 'self'; \
+     script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; \
      style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; \
      img-src 'self' data: blob:; connect-src 'self' ws: wss:; \
      font-src 'self' https://cdn.jsdelivr.net; \

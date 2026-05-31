@@ -347,8 +347,8 @@ async fn test_tunnel_create() {
     let mut app = build_test_app(pool.clone()).await;
 
     let client_id: i64 = sqlx::query_scalar(
-        "INSERT INTO clients (hostname, display_name, agent_token_hash) VALUES \
-         ('tunnel-host', 'Tunnel Host', 'fakehash') RETURNING id",
+        "INSERT INTO clients (hostname, display_name, agent_token_hash) VALUES ('tunnel-host', \
+         'Tunnel Host', 'fakehash') RETURNING id",
     )
     .fetch_one(&pool)
     .await

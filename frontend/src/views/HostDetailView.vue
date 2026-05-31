@@ -17,6 +17,7 @@ import { logger } from '../utils/logger'
 import { cronToHuman } from '../utils/cron'
 import { parseLines } from '../utils/validation'
 import BaseSpinner from '../components/BaseSpinner.vue'
+import MergeClientDialog from '../components/MergeClientDialog.vue'
 
 type TabId = 'overview' | 'schedules' | 'backups'
 
@@ -30,6 +31,7 @@ interface ClientRow {
   created_at: string
   last_seen_at: string | null
   is_connected: boolean
+  is_imported: boolean
   supports_restart: boolean
   restart_unavailable_reason: string | null
   default_backup_paths: string[]
@@ -125,6 +127,7 @@ const newTagColor = ref('#6b7280')
 const createTagLoading = ref(false)
 
 const isAdmin = computed(() => authStore.user?.role === 'admin')
+const isImported = computed(() => client.value?.is_imported ?? false)
 
 const hostTags = computed<TagRow[]>(() =>
   allHostTags.value.filter((t) => hostTagIds.value.includes(t.id)),
@@ -133,6 +136,14 @@ const hostTags = computed<TagRow[]>(() =>
 const availableTags = computed<TagRow[]>(() =>
   allHostTags.value.filter((t) => !hostTagIds.value.includes(t.id)),
 )
+
+// Merge dialog
+const allClients = ref<ClientRow[]>([])
+const showMergeDialog = ref(false)
+
+useEscapeKey(showMergeDialog, () => {
+  showMergeDialog.value = false
+})
 
 // Token regen
 const showTokenDialog = ref(false)
@@ -198,6 +209,133 @@ const newPattern = ref('')
 const patternAddLoading = ref(false)
 const patternError = ref<string | null>(null)
 
+// Hostname & display name editing
+const editingIdentity = ref(false)
+const identityHostname = ref('')
+const identityDisplayName = ref('')
+const identitySaving = ref(false)
+const identityError = ref<string | null>(null)
+
+function startEditIdentity(): void {
+  if (!client.value) return
+  identityHostname.value = client.value.hostname
+  identityDisplayName.value = client.value.display_name ?? ''
+  identityError.value = null
+  editingIdentity.value = true
+}
+
+function cancelEditIdentity(): void {
+  editingIdentity.value = false
+}
+
+async function saveIdentity(): Promise<void> {
+  if (!client.value) return
+  identitySaving.value = true
+  identityError.value = null
+  try {
+    const oldHostname = client.value.hostname
+    const newHostname = identityHostname.value.trim()
+    const hostnameChanged = newHostname !== oldHostname && newHostname.length > 0
+    const res = await apiClient.put<ClientRow>(`/clients/${oldHostname}`, {
+      hostname: hostnameChanged ? newHostname : undefined,
+      display_name: identityDisplayName.value.trim() || null,
+      default_backup_paths: client.value.default_backup_paths,
+      default_exclude_patterns: client.value.default_exclude_patterns,
+    })
+    if (hostnameChanged) {
+      pendingAliasOldHostname.value = oldHostname
+      pendingAliasNewHostname.value = newHostname
+      showAliasConfirm.value = true
+      router.replace(`/clients/${newHostname}`)
+    }
+    client.value = { ...client.value, ...res.data }
+    editingIdentity.value = false
+  } catch (e: unknown) {
+    identityError.value = extractError(e)
+  } finally {
+    identitySaving.value = false
+  }
+}
+
+// Hostname alias confirmation
+const showAliasConfirm = ref(false)
+const pendingAliasOldHostname = ref('')
+const pendingAliasNewHostname = ref('')
+
+useEscapeKey(showAliasConfirm, () => {
+  showAliasConfirm.value = false
+})
+
+async function confirmAddAlias(): Promise<void> {
+  await apiClient.post(`/clients/${pendingAliasNewHostname.value}/hostname-patterns`, {
+    pattern: pendingAliasOldHostname.value,
+  })
+  await loadHostnamePatterns(pendingAliasNewHostname.value)
+  showAliasConfirm.value = false
+}
+
+function declineAlias(): void {
+  showAliasConfirm.value = false
+}
+const deleteLoading = ref(false)
+const showDeleteDialog = ref(false)
+
+useEscapeKey(showDeleteDialog, () => {
+  showDeleteDialog.value = false
+})
+
+async function confirmDeleteHost(): Promise<void> {
+  if (!client.value) return
+  deleteLoading.value = true
+  try {
+    await apiClient.delete(`/clients/${client.value.hostname}`)
+    router.push('/clients')
+  } catch (e: unknown) {
+    logger.error('Failed to delete host', e)
+  } finally {
+    deleteLoading.value = false
+  }
+}
+
+interface CreateClientResponse {
+  client: ClientRow
+  token: string
+}
+
+async function adoptHost(): Promise<void> {
+  if (!client.value) return
+  try {
+    const cleanDisplayName =
+      client.value.display_name?.replace(/\s*\(imported\)$/, '').trim() || null
+    await apiClient.put(`/clients/${client.value.hostname}`, {
+      display_name: cleanDisplayName,
+    })
+    const res = await apiClient.post<CreateClientResponse>(
+      `/clients/${client.value.hostname}/regenerate-token`,
+    )
+    client.value = {
+      ...client.value,
+      ...res.data.client,
+      is_imported: false,
+      display_name: cleanDisplayName,
+    }
+    regenToken.value = res.data.token
+    tokenCopied.value = false
+    showTokenDialog.value = true
+  } catch (e: unknown) {
+    logger.error('Failed to adopt host', e)
+  }
+}
+
+function openMergeDialog(): void {
+  showMergeDialog.value = true
+}
+
+function onMerged(): void {
+  showMergeDialog.value = false
+  router.push('/clients')
+}
+
 function startEditExcludes(): void {
   excludesText.value = (client.value?.default_exclude_patterns ?? []).join('\n')
   excludesError.value = null
@@ -231,11 +369,12 @@ useEscapeKey(showTokenDialog, () => {
   showTokenDialog.value = false
 })
 
-async function loadHostnamePatterns(): Promise<void> {
-  if (!client.value) return
+async function loadHostnamePatterns(hostname?: string): Promise<void> {
+  const h = hostname ?? client.value?.hostname
+  if (!h) return
   try {
     const res = await apiClient.get<HostnamePattern[]>(
-      `/clients/${client.value.hostname}/hostname-patterns`,
+      `/clients/${h}/hostname-patterns`,
     )
     hostnamePatterns.value = res.data
   } catch (e: unknown) {
@@ -292,6 +431,7 @@ async function loadClient(): Promise<void> {
   error.value = null
   try {
     const res = await apiClient.get<ClientRow[]>('/clients')
+    allClients.value = res.data
     client.value = res.data.find((m) => m.hostname === props.hostname) ?? null
     if (!client.value) {
       error.value = `Client "${props.hostname}" not found`
@@ -571,6 +711,28 @@ watch(wsStatus, (newStatus, oldStatus) => {
           </div>
           <div class="info-actions">
             <button
+              v-if="isImported"
+              class="btn btn-sm btn-primary"
+              @click="openMergeDialog"
+            >
+              Merge into...
+            </button>
+            <button
+              v-if="isImported"
+              class="btn btn-sm btn-primary"
+              @click="adoptHost"
+            >
+              Adopt
+            </button>
+            <button
+              v-if="!isImported"
+              class="btn btn-sm btn-ghost"
+              @click="startEditIdentity"
+            >
+              Edit
+            </button>
+            <button
+              v-if="!isImported"
               class="btn btn-sm btn-ghost"
               :disabled="regenLoading"
               @click="regenerateToken"
@@ -578,7 +740,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
               {{ regenLoading ? 'Regenerating...' : 'Regenerate Token' }}
             </button>
             <button
-              v-if="client.supports_restart"
+              v-if="client.supports_restart && !isImported"
               class="btn btn-sm btn-ghost btn-danger-text"
               :disabled="restartLoading || !isOnline(client)"
               @click="restartAgent"
@@ -597,6 +759,53 @@ watch(wsStatus, (newStatus, oldStatus) => {
             >
               {{ restartError }}
             </div>
+          </div>
+        </div>
+
+        <!-- Edit Identity -->
+        <div
+          v-if="editingIdentity"
+          class="info-card"
+        >
+          <h3 class="info-title">Edit Host Identity</h3>
+          <div class="field">
+            <label class="field-label">Hostname</label>
+            <input
+              v-model="identityHostname"
+              class="input"
+              placeholder="hostname"
+              @keyup.enter="saveIdentity"
+            />
+          </div>
+          <div class="field">
+            <label class="field-label">Display Name</label>
+            <input
+              v-model="identityDisplayName"
+              class="input"
+              placeholder="Optional friendly name"
+              @keyup.enter="saveIdentity"
+            />
+          </div>
+          <div
+            v-if="identityError"
+            class="form-error"
+          >
+            {{ identityError }}
+          </div>
+          <div class="info-actions">
+            <button
+              class="btn btn-ghost"
+              @click="cancelEditIdentity"
+            >
+              Cancel
+            </button>
+            <button
+              class="btn btn-primary"
+              :disabled="identitySaving"
+              @click="saveIdentity"
+            >
+              {{ identitySaving ? 'Saving...' : 'Save' }}
+            </button>
           </div>
         </div>
 
@@ -623,6 +832,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
               >
                 {{ tag.name }}
                 <button
+                  v-if="!isImported"
                   class="tag-remove"
                   @click="removeTag(tag.id)"
                 >
@@ -636,7 +846,10 @@ watch(wsStatus, (newStatus, oldStatus) => {
               >No tags assigned.</span
             >
 
-            <div class="tag-add-row">
+            <div
+              v-if="!isImported"
+              class="tag-add-row"
+            >
               <select
                 v-if="availableTags.length > 0"
                 class="input input-sm"
@@ -706,6 +919,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
             >
             <div class="info-actions">
               <button
+                v-if="!isImported"
                 class="btn btn-sm btn-ghost"
                 @click="startEditPaths"
               >
@@ -771,6 +985,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
             >
             <div class="info-actions">
               <button
+                v-if="!isImported"
                 class="btn btn-sm btn-ghost"
                 @click="startEditExcludes"
               >
@@ -827,6 +1042,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
             >
               <code class="path-item mono">{{ p.pattern }}</code>
               <button
+                v-if="!isImported"
                 class="tag-remove pattern-delete"
                 title="Delete pattern"
                 @click="deleteHostnamePattern(p.id)"
@@ -849,7 +1065,10 @@ watch(wsStatus, (newStatus, oldStatus) => {
           >
             {{ patternError }}
           </div>
-          <div class="pattern-add-row">
+          <div
+            v-if="!isImported"
+            class="pattern-add-row"
+          >
             <input
               v-model="newPattern"
               class="input input-sm"
@@ -862,6 +1081,29 @@ watch(wsStatus, (newStatus, oldStatus) => {
               @click="addHostnamePattern"
             >
               {{ patternAddLoading ? 'Adding...' : 'Add Pattern' }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Danger Zone -->
+        <div
+          v-if="isAdmin && !isImported"
+          class="info-card danger-zone"
+        >
+          <h3 class="info-title">Danger Zone</h3>
+          <div class="danger-body">
+            <div class="danger-info">
+              <span class="danger-heading">Delete Host</span>
+              <span class="danger-desc">
+                Permanently remove this host and all associated data. This action cannot be undone.
+              </span>
+            </div>
+            <button
+              class="btn btn-sm btn-danger"
+              :disabled="deleteLoading"
+              @click="showDeleteDialog = true"
+            >
+              {{ deleteLoading ? 'Deleting...' : 'Delete Host' }}
             </button>
           </div>
         </div>
@@ -1057,6 +1299,104 @@ watch(wsStatus, (newStatus, oldStatus) => {
           </div>
         </div>
       </div>
+    </Teleport>
+
+    <!-- Delete Host Confirmation Dialog -->
+    <Teleport to="body">
+      <div
+        v-if="showDeleteDialog"
+        class="overlay"
+        @click.self="showDeleteDialog = false"
+      >
+        <div class="dialog">
+          <div class="dialog-header">
+            <h2 class="dialog-title">Delete Host</h2>
+            <button
+              class="close-btn"
+              @click="showDeleteDialog = false"
+            >
+              &times;
+            </button>
+          </div>
+          <div class="dialog-body">
+            <p>
+              Permanently delete <strong>{{ client?.hostname }}</strong>? All associated schedules
+              and backup reports will be removed. This action cannot be undone.
+            </p>
+          </div>
+          <div class="dialog-footer">
+            <button
+              class="btn btn-ghost"
+              @click="showDeleteDialog = false"
+            >
+              Cancel
+            </button>
+            <button
+              class="btn btn-danger"
+              :disabled="deleteLoading"
+              @click="confirmDeleteHost"
+            >
+              {{ deleteLoading ? 'Deleting...' : 'Delete Host' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Hostname Alias Confirmation Dialog -->
+    <Teleport to="body">
+      <div
+        v-if="showAliasConfirm"
+        class="overlay"
+        @click.self="declineAlias"
+      >
+        <div class="dialog">
+          <div class="dialog-header">
+            <h2 class="dialog-title">Add Hostname Pattern?</h2>
+            <button
+              class="close-btn"
+              @click="declineAlias"
+            >
+              &times;
+            </button>
+          </div>
+          <div class="dialog-body">
+            <p>
+              Hostname changed from <strong>{{ pendingAliasOldHostname }}</strong> to
+              <strong>{{ pendingAliasNewHostname }}</strong>.
+            </p>
+            <p>
+              Add <code>{{ pendingAliasOldHostname }}</code> as an alternative hostname pattern so
+              existing archives still match?
+            </p>
+          </div>
+          <div class="dialog-footer">
+            <button
+              class="btn btn-ghost"
+              @click="declineAlias"
+            >
+              No
+            </button>
+            <button
+              class="btn btn-primary"
+              @click="confirmAddAlias"
+            >
+              Add Pattern
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Merge Client Dialog -->
+    <Teleport to="body">
+      <MergeClientDialog
+        v-if="showMergeDialog && client"
+        :source="client"
+        :all-clients="allClients"
+        @merged="onMerged"
+        @cancel="showMergeDialog = false"
+      />
     </Teleport>
   </div>
 </template>
@@ -1805,5 +2145,38 @@ watch(wsStatus, (newStatus, oldStatus) => {
   align-items: center;
   margin-top: 0.75rem;
   flex-wrap: wrap;
+}
+
+/* Danger zone */
+.danger-zone {
+  border-color: var(--danger);
+}
+
+.danger-zone .info-title {
+  color: var(--danger);
+}
+
+.danger-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+
+.danger-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.danger-heading {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.danger-desc {
+  font-size: 0.8rem;
+  color: var(--text-muted);
 }
 </style>

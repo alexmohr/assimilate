@@ -16,6 +16,14 @@ RUN npm ci
 COPY frontend/ .
 RUN npm run build
 
+FROM python:3.12-slim AS docs
+
+WORKDIR /docs-build
+COPY docs/ docs/
+COPY mkdocs.yml .
+COPY docs/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt && mkdocs build
+
 FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -35,11 +43,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /src/target/release/server /app/server
 COPY --from=builder /src/target/release/agent /app/agent
 COPY --from=frontend /app/dist /app/static
+COPY --from=docs /docs-build/docs_html /app/docs_html
 COPY .devcontainer/demo/start-demo.sh /app/start-demo.sh
 COPY .devcontainer/demo/seed-demo.sh /app/seed-demo.sh
 RUN chmod +x /app/start-demo.sh /app/seed-demo.sh
 
 ENV ASSIMILATE_STATIC_DIR=/app/static
+ENV ASSIMILATE_DOCS_DIR=/app/docs_html
 
 EXPOSE 8080
 

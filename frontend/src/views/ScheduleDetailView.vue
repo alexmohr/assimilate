@@ -44,6 +44,16 @@ interface ScheduleTarget {
   execution_order: number
 }
 
+interface PerHostBackupSources {
+  client_id: number
+  paths: string[]
+}
+
+interface ScheduleBackupSourcesResponse {
+  backup_sources: string[]
+  backup_sources_per_host: PerHostBackupSources[]
+}
+
 interface ClientRow {
   id: number
   hostname: string
@@ -72,6 +82,8 @@ const error = ref<string | null>(null)
 const saving = ref(false)
 const saveError = ref<string | null>(null)
 const saveSuccess = ref(false)
+const showDeleteDialog = ref(false)
+const deleteLoading = ref(false)
 const refOpen = ref(false)
 
 const selectedClientIds = ref<number[]>([])
@@ -79,6 +91,8 @@ const selectedRepoId = ref<number | null>(null)
 const selectedType = ref<ScheduleType>('backup')
 const executionMode = ref<'parallel' | 'sequential'>('parallel')
 const onFailure = ref<'stop' | 'continue'>('stop')
+const usePerHostPaths = ref(false)
+const perHostSources = ref<Record<number, string>>({})
 
 const showClientDropdown = ref(false)
 const clientDropdownRef = ref<HTMLElement | null>(null)
@@ -271,11 +285,12 @@ async function loadData(): Promise<void> {
       }
       selectedRepoId.value = repos.value.length > 0 ? repos.value[0].id : null
     } else {
-      const [schedRes, clientsRes, reposRes, targetsRes] = await Promise.all([
+      const [schedRes, clientsRes, reposRes, targetsRes, sourcesRes] = await Promise.all([
         apiClient.get<ScheduleRow>(`/schedules/${props.id}`),
         apiClient.get<ClientRow[]>('/clients'),
         apiClient.get<RepoRow[]>('/repos'),
         apiClient.get<ScheduleTarget[]>(`/schedules/${props.id}/targets`),
+        apiClient.get<ScheduleBackupSourcesResponse>(`/schedules/${props.id}/sources`),
       ])
       schedule.value = schedRes.data
       clients.value = clientsRes.data
@@ -285,6 +300,17 @@ async function loadData(): Promise<void> {
       const sorted = [...targetsRes.data].sort((a, b) => a.execution_order - b.execution_order)
       selectedClientIds.value = sorted.map((t) => t.client_id)
       populateForm(schedRes.data)
+
+      const sources = sourcesRes.data
+      form.value.backup_sources = sources.backup_sources.join('\n')
+      if (sources.backup_sources_per_host.length > 0) {
+        usePerHostPaths.value = true
+        const map: Record<number, string> = {}
+        for (const entry of sources.backup_sources_per_host) {
+          map[entry.client_id] = entry.paths.join('\n')
+        }
+        perHostSources.value = map
+      }
     }
   } catch (e: unknown) {
     error.value = extractError(e, 'Failed to load schedule')
@@ -298,7 +324,7 @@ async function save(): Promise<void> {
   saveError.value = null
   saveSuccess.value = false
   try {
-    const payload = {
+    const payload: Record<string, unknown> = {
       cron_expression: form.value.cron_expression,
       enabled: form.value.enabled,
       canary_enabled: form.value.canary_enabled,
@@ -311,7 +337,19 @@ async function save(): Promise<void> {
       compact_enabled: form.value.compact_enabled,
       pre_backup_commands: parseLines(form.value.pre_backup_commands),
       post_backup_commands: parseLines(form.value.post_backup_commands),
-      backup_sources: parseLines(form.value.backup_sources),
+      backup_sources: usePerHostPaths.value ? [] : parseLines(form.value.backup_sources),
+    }
+
+    if (usePerHostPaths.value) {
+      const perHost: { client_id: number; paths: string[] }[] = []
+      for (const id of selectedClientIds.value) {
+        const text = perHostSources.value[id] ?? ''
+        const paths = parseLines(text)
+        if (paths.length > 0) {
+          perHost.push({ client_id: id, paths })
+        }
+      }
+      payload.backup_sources_per_host = perHost
     }
 
     if (isCreate.value) {
@@ -346,6 +384,19 @@ async function save(): Promise<void> {
     saveError.value = extractError(e, 'Failed to save schedule')
   } finally {
     saving.value = false
+  }
+}
+
+async function confirmDeleteSchedule(): Promise<void> {
+  deleteLoading.value = true
+  try {
+    await apiClient.delete(`/schedules/${props.id}`)
+    router.push('/schedules')
+  } catch (e: unknown) {
+    error.value = extractError(e, 'Failed to delete schedule')
+  } finally {
+    deleteLoading.value = false
+    showDeleteDialog.value = false
   }
 }
 
@@ -778,7 +829,18 @@ watch(activeTab, (tab) => {
           <template v-if="isBackup">
             <div class="form-card">
               <h3 class="info-title">Backup Paths</h3>
-              <div class="form-group">
+              <div
+                v-if="selectedClientIds.length > 1"
+                class="form-group form-group-inline"
+              >
+                <label class="form-label">Configure per host</label>
+                <ToggleSwitch v-model="usePerHostPaths" />
+              </div>
+
+              <div
+                v-if="!usePerHostPaths"
+                class="form-group"
+              >
                 <textarea
                   v-model="form.backup_sources"
                   class="form-input area-input"
@@ -787,6 +849,32 @@ watch(activeTab, (tab) => {
                 />
                 <span class="field-hint">
                   Leave empty to use the default paths configured for this host.
+                </span>
+              </div>
+
+              <div
+                v-else
+                class="per-host-paths"
+              >
+                <div
+                  v-for="clientId in selectedClientIds"
+                  :key="clientId"
+                  class="per-host-entry"
+                >
+                  <label class="form-label">{{ clientLabel(clientId) }}</label>
+                  <textarea
+                    :value="perHostSources[clientId] ?? ''"
+                    class="form-input area-input area-input-sm"
+                    placeholder="Directories to back up, one per line"
+                    spellcheck="false"
+                    @input="
+                      ($event) =>
+                        (perHostSources[clientId] = ($event.target as HTMLTextAreaElement).value)
+                    "
+                  />
+                </div>
+                <span class="field-hint">
+                  Leave a host empty to use its default backup paths.
                 </span>
               </div>
             </div>
@@ -874,11 +962,12 @@ watch(activeTab, (tab) => {
               <textarea
                 v-model="form.exclude_patterns"
                 class="form-input area-input"
-                placeholder="One pattern per line&#10;e.g. *.cache&#10;pp:__pycache__"
+                placeholder="One pattern per line&#10;# Lines starting with # are comments&#10;e.g. *.cache&#10;pp:__pycache__"
                 spellcheck="false"
               />
               <span class="field-hint">
-                Leave empty to use only global and host-level default excludes.
+                Leave empty to use only global and host-level default excludes. Lines starting with
+                <code>#</code> are treated as comments.
               </span>
               <div
                 v-if="refOpen"
@@ -1037,7 +1126,74 @@ watch(activeTab, (tab) => {
           {{ saving ? 'Saving...' : isCreate ? 'Create Schedule' : 'Save Changes' }}
         </button>
       </div>
+
+      <!-- Danger Zone -->
+      <div
+        v-if="!isCreate && activeTab === 'settings'"
+        class="info-card danger-zone"
+      >
+        <h3 class="info-title">Danger Zone</h3>
+        <div class="danger-body">
+          <div class="danger-info">
+            <span class="danger-heading">Delete Schedule</span>
+            <span class="danger-desc">
+              Permanently delete this schedule and all associated backup reports. This cannot be
+              undone.
+            </span>
+          </div>
+          <button
+            class="btn btn-sm btn-danger"
+            @click="showDeleteDialog = true"
+          >
+            Delete Schedule
+          </button>
+        </div>
+      </div>
     </template>
+
+    <!-- Delete Confirmation Dialog -->
+    <Teleport to="body">
+      <div
+        v-if="showDeleteDialog"
+        class="overlay"
+        @click.self="showDeleteDialog = false"
+      >
+        <div class="dialog">
+          <div class="dialog-header">
+            <h2 class="dialog-title">Delete Schedule</h2>
+            <button
+              class="close-btn"
+              @click="showDeleteDialog = false"
+            >
+              &times;
+            </button>
+          </div>
+          <div class="dialog-body">
+            <p>
+              Are you sure you want to delete this
+              <strong>{{ schedule ? scheduleTypeLabel(schedule.schedule_type) : '' }}</strong>
+              schedule? All associated backup reports will also be removed.
+            </p>
+            <p>This action cannot be undone.</p>
+          </div>
+          <div class="dialog-footer">
+            <button
+              class="btn btn-ghost"
+              @click="showDeleteDialog = false"
+            >
+              Cancel
+            </button>
+            <button
+              class="btn btn-danger"
+              :disabled="deleteLoading"
+              @click="confirmDeleteSchedule"
+            >
+              {{ deleteLoading ? 'Deleting...' : 'Delete Schedule' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -1234,6 +1390,22 @@ watch(activeTab, (tab) => {
   font-family: var(--mono);
   font-size: 0.82rem;
   line-height: 1.5;
+}
+
+.area-input-sm {
+  min-height: 56px;
+}
+
+.per-host-paths {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.per-host-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
 .cmd-area {
@@ -1706,5 +1878,108 @@ watch(activeTab, (tab) => {
 .order-btn:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+/* Danger zone */
+.danger-zone {
+  border-color: var(--danger);
+  margin-top: 2rem;
+}
+
+.danger-zone .info-title {
+  color: var(--danger);
+}
+
+.danger-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+
+.danger-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.danger-heading {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.danger-desc {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+/* Dialog */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.dialog {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  width: min(480px, 90vw);
+  box-shadow: var(--shadow-lg, var(--shadow));
+}
+
+.dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.dialog-title {
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.close-btn:hover {
+  color: var(--text-primary);
+}
+
+.dialog-body {
+  padding: 1.25rem;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.dialog-body p {
+  margin: 0 0 0.75rem;
+}
+
+.dialog-body p:last-child {
+  margin-bottom: 0;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  border-top: 1px solid var(--border);
 }
 </style>

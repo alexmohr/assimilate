@@ -34,8 +34,20 @@ interface ApiToken {
 }
 
 const mockTokens: ApiToken[] = [
-  { id: 1, user_id: 1, name: 'CI pipeline', created_at: '2026-01-01T00:00:00Z', last_used_at: null },
-  { id: 2, user_id: 1, name: 'deploy-bot', created_at: '2026-01-02T00:00:00Z', last_used_at: '2026-05-01T00:00:00Z' },
+  {
+    id: 1,
+    user_id: 1,
+    name: 'CI pipeline',
+    created_at: '2026-01-01T00:00:00Z',
+    last_used_at: null,
+  },
+  {
+    id: 2,
+    user_id: 1,
+    name: 'deploy-bot',
+    created_at: '2026-01-02T00:00:00Z',
+    last_used_at: '2026-05-01T00:00:00Z',
+  },
 ]
 
 const mockApiGet = apiClient.get as ReturnType<typeof vi.fn>

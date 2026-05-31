@@ -10,7 +10,7 @@ import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useClipboard } from '../composables/useClipboard'
-import { useArchiveBrowser } from '../composables/useArchiveBrowser'
+import { useArchiveBrowser, type ArchiveEntry } from '../composables/useArchiveBrowser'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useToast } from '../composables/useToast'
 import { formatBytes, formatDate } from '../utils/format'
@@ -130,12 +130,20 @@ const newTagName = ref('')
 const newTagColor = ref('#6b7280')
 const createTagLoading = ref(false)
 
-// Delete
+// Delete (destroy from disk)
 const showDeleteDialog = ref(false)
 const deleteLoading = ref(false)
 
+// Remove (DB only)
+const showRemoveDialog = ref(false)
+const removeLoading = ref(false)
+
 useEscapeKey(showDeleteDialog, () => {
   showDeleteDialog.value = false
+})
+
+useEscapeKey(showRemoveDialog, () => {
+  showRemoveDialog.value = false
 })
 
 // Break Lock
@@ -204,6 +212,56 @@ const {
 const unmatchedCount = computed(
   () => sortedArchives.value.filter((a) => a.matched === false).length,
 )
+
+const unmatchedHostnames = computed(() => [
+  ...new Set(sortedArchives.value.filter((a) => a.matched === false).map((a) => a.hostname)),
+])
+
+const archiveFilter = ref('')
+const collapsedGroups = ref<Set<string>>(new Set())
+
+interface ArchiveGroup {
+  hostname: string
+  matched: boolean
+  clientHostname: string | null
+  archives: ArchiveEntry[]
+}
+
+const groupedArchives = computed<ArchiveGroup[]>(() => {
+  const filter = archiveFilter.value.toLowerCase()
+  const filtered = filter
+    ? sortedArchives.value.filter(
+        (a) => a.name.toLowerCase().includes(filter) || a.hostname.toLowerCase().includes(filter),
+      )
+    : sortedArchives.value
+
+  const groups = new Map<string, ArchiveGroup>()
+  for (const archive of filtered) {
+    const key = archive.client_hostname ?? archive.hostname
+    if (!groups.has(key)) {
+      groups.set(key, {
+        hostname: key,
+        matched: archive.matched === true,
+        clientHostname: archive.matched === true ? archive.client_hostname : null,
+        archives: [],
+      })
+    }
+    groups.get(key)!.archives.push(archive)
+  }
+  return [...groups.values()].sort((a, b) => a.hostname.localeCompare(b.hostname))
+})
+
+function toggleGroup(hostname: string): void {
+  if (collapsedGroups.value.has(hostname)) {
+    collapsedGroups.value.delete(hostname)
+  } else {
+    collapsedGroups.value.add(hostname)
+  }
+}
+
+function isGroupCollapsed(hostname: string): boolean {
+  return collapsedGroups.value.has(hostname)
+}
 
 const isAdmin = computed(() => authStore.user?.role === 'admin')
 
@@ -361,13 +419,26 @@ async function createAndAddTag(): Promise<void> {
 async function confirmDelete(): Promise<void> {
   deleteLoading.value = true
   try {
-    await apiClient.delete(`/repos/${repoId.value}`)
+    await apiClient.post(`/repos/${repoId.value}/destroy`)
     showDeleteDialog.value = false
     router.push('/repos')
   } catch (e: unknown) {
     error.value = extractError(e)
   } finally {
     deleteLoading.value = false
+  }
+}
+
+async function confirmRemove(): Promise<void> {
+  removeLoading.value = true
+  try {
+    await apiClient.delete(`/repos/${repoId.value}`)
+    showRemoveDialog.value = false
+    router.push('/repos')
+  } catch (e: unknown) {
+    error.value = extractError(e)
+  } finally {
+    removeLoading.value = false
   }
 }
 
@@ -785,9 +856,25 @@ async function syncRepo(): Promise<void> {
           </div>
           <div class="danger-body">
             <div class="danger-info">
+              <span class="danger-heading">Remove Repository</span>
+              <span class="danger-desc"
+                >Remove this repository from the UI and database. All associated schedules and
+                reports will be deleted. The repository data on disk is NOT touched.</span
+              >
+            </div>
+            <button
+              class="btn btn-sm btn-danger"
+              @click="showRemoveDialog = true"
+            >
+              Remove Repository
+            </button>
+          </div>
+          <div class="danger-body">
+            <div class="danger-info">
               <span class="danger-heading">Delete Repository</span>
               <span class="danger-desc"
-                >Permanently remove this repository and all associated schedules and reports.</span
+                >PERMANENTLY DESTROY this repository from disk (rm -rf via SSH). This is
+                irreversible and all backup data will be lost forever.</span
               >
             </div>
             <button
@@ -810,10 +897,24 @@ async function syncRepo(): Promise<void> {
           v-if="!archivesLoading && unmatchedCount > 0"
           class="unmatched-banner"
         >
-          <span class="unmatched-banner-text">
-            {{ unmatchedCount }} archive{{ unmatchedCount === 1 ? '' : 's' }} unmatched. Configure
-            hostname patterns on your hosts, then re-scan.
-          </span>
+          <div class="unmatched-banner-text">
+            <span>
+              {{ unmatchedCount }} archive{{ unmatchedCount === 1 ? '' : 's' }} from
+              {{ unmatchedHostnames.length }} unresolved hostname{{
+                unmatchedHostnames.length === 1 ? '' : 's'
+              }}:
+              <code
+                v-for="h in unmatchedHostnames"
+                :key="h"
+                class="unmatched-hostname"
+                >{{ h }}</code
+              >
+            </span>
+            <span class="unmatched-hint">
+              Hostnames are read from borg archive metadata, not derived from the archive name.
+              Configure hostname patterns on your hosts to match, then re-scan.
+            </span>
+          </div>
           <button
             class="btn btn-sm btn-primary"
             :disabled="rescanLoading"
@@ -856,61 +957,68 @@ async function syncRepo(): Promise<void> {
             >
               No archives found.
             </div>
-            <table
-              v-else
-              class="data-table"
-            >
-              <colgroup>
-                <col style="width: 40%" />
-                <col style="width: 30%" />
-                <col style="width: 22%" />
-                <col style="width: 8%" />
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Date</th>
-                  <th>Host</th>
-                  <th class="th-match">&nbsp;</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="archive in sortedArchives"
-                  :key="archive.name"
-                  :class="['clickable', { selected: selectedArchive?.name === archive.name }]"
-                  @click="selectArchive(archive)"
+            <template v-else>
+              <div class="archive-filter">
+                <input
+                  v-model="archiveFilter"
+                  class="filter-input"
+                  type="text"
+                  placeholder="Filter archives..."
+                />
+              </div>
+              <div class="archive-groups">
+                <div
+                  v-for="group in groupedArchives"
+                  :key="group.hostname"
+                  class="archive-group"
                 >
-                  <td class="td-mono">{{ archive.name }}</td>
-                  <td class="td-date">{{ formatDate(archive.start) }}</td>
-                  <td class="td-host">
+                  <button
+                    class="group-header"
+                    :class="{ collapsed: isGroupCollapsed(group.hostname) }"
+                    @click="toggleGroup(group.hostname)"
+                  >
+                    <span class="group-chevron">&#9656;</span>
                     <RouterLink
-                      v-if="archive.matched === false"
-                      :to="`/clients`"
-                      class="unmatched-host-link"
+                      v-if="group.matched && group.clientHostname"
+                      :to="{ name: 'client-detail', params: { hostname: group.clientHostname } }"
+                      class="host-link"
                       @click.stop
                     >
-                      {{ archive.hostname }}
+                      {{ group.hostname }}
                     </RouterLink>
-                    <span v-else>{{ archive.hostname }}</span>
-                  </td>
-                  <td class="td-match">
                     <span
-                      v-if="archive.matched === true"
-                      class="match-icon match-ok"
-                      title="Matched"
-                      >&#10003;</span
+                      v-else
+                      class="group-hostname"
+                      :class="{ 'group-unmatched': !group.matched }"
                     >
+                      {{ group.hostname }}
+                    </span>
                     <span
-                      v-else-if="archive.matched === false"
+                      v-if="!group.matched"
                       class="match-icon match-warn"
                       title="Unmatched"
                       >&#9888;</span
                     >
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+                    <span class="group-count">{{ group.archives.length }}</span>
+                  </button>
+                  <div
+                    v-show="!isGroupCollapsed(group.hostname)"
+                    class="group-archives"
+                  >
+                    <button
+                      v-for="archive in group.archives"
+                      :key="archive.name"
+                      class="archive-row"
+                      :class="{ selected: selectedArchive?.name === archive.name }"
+                      @click="selectArchive(archive)"
+                    >
+                      <span class="archive-date">{{ formatDate(archive.start) }}</span>
+                      <span class="archive-name">{{ archive.name }}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </template>
           </div>
 
           <!-- File browser -->
@@ -965,7 +1073,7 @@ async function syncRepo(): Promise<void> {
               <tbody>
                 <tr
                   v-for="entry in dirs"
-                  :key="entry.path"
+                  :key="entry.displayName + entry.path"
                   class="clickable"
                   @click="archiveNavigateTo(entry.path)"
                 >
@@ -974,7 +1082,7 @@ async function syncRepo(): Promise<void> {
                       :size="16"
                       class="entry-icon"
                     />
-                    {{ entryName(entry) }}
+                    {{ entry.displayName }}
                   </td>
                   <td class="td-size muted">&mdash;</td>
                   <td class="td-date">{{ formatDate(entry.mtime) }}</td>
@@ -1085,7 +1193,7 @@ async function syncRepo(): Promise<void> {
       >
         <div class="dialog">
           <div class="dialog-header">
-            <h2 class="dialog-title">Delete Repository</h2>
+            <h2 class="dialog-title">⚠️ DESTROY Repository From Disk</h2>
             <button
               class="close-btn"
               @click="showDeleteDialog = false"
@@ -1094,9 +1202,14 @@ async function syncRepo(): Promise<void> {
             </button>
           </div>
           <div class="dialog-body">
+            <p style="color: var(--danger); font-weight: 600">
+              This will PERMANENTLY DELETE all data for
+              <strong>{{ repo?.name }}</strong> from the remote filesystem. This action is
+              irreversible. All backup archives will be lost forever.
+            </p>
             <p>
-              Are you sure you want to delete <strong>{{ repo?.name }}</strong
-              >? This will also remove all associated schedules and reports.
+              The repository at <code>{{ repo?.repo_path }}</code> on
+              <code>{{ repo?.ssh_host }}</code> will be removed using <code>rm -rf</code>.
             </p>
           </div>
           <div class="dialog-footer">
@@ -1111,7 +1224,50 @@ async function syncRepo(): Promise<void> {
               :disabled="deleteLoading"
               @click="confirmDelete"
             >
-              {{ deleteLoading ? 'Deleting...' : 'Delete' }}
+              {{ deleteLoading ? 'Destroying...' : 'Destroy Forever' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Remove (DB only) Confirmation Dialog -->
+    <Teleport to="body">
+      <div
+        v-if="showRemoveDialog"
+        class="overlay"
+        @click.self="showRemoveDialog = false"
+      >
+        <div class="dialog">
+          <div class="dialog-header">
+            <h2 class="dialog-title">Remove Repository</h2>
+            <button
+              class="close-btn"
+              @click="showRemoveDialog = false"
+            >
+              &times;
+            </button>
+          </div>
+          <div class="dialog-body">
+            <p>
+              Are you sure you want to remove <strong>{{ repo?.name }}</strong> from the database?
+              This will also remove all associated schedules and reports.
+            </p>
+            <p>The repository data on disk will NOT be touched.</p>
+          </div>
+          <div class="dialog-footer">
+            <button
+              class="btn btn-ghost"
+              @click="showRemoveDialog = false"
+            >
+              Cancel
+            </button>
+            <button
+              class="btn btn-danger"
+              :disabled="removeLoading"
+              @click="confirmRemove"
+            >
+              {{ removeLoading ? 'Removing...' : 'Remove' }}
             </button>
           </div>
         </div>
@@ -1540,9 +1696,124 @@ async function syncRepo(): Promise<void> {
   color: var(--text-muted);
 }
 
-.archives-panel .data-table {
-  table-layout: fixed;
+.archive-filter {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.archive-filter .filter-input {
   width: 100%;
+}
+
+.archive-groups {
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.archive-group {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.archive-group:last-child {
+  border-bottom: none;
+}
+
+.group-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-subtle);
+  border: none;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.group-header:hover {
+  background: var(--bg-hover);
+}
+
+.group-chevron {
+  display: inline-block;
+  font-size: 1rem;
+  transition: transform 0.15s;
+  transform: rotate(90deg);
+}
+
+.group-header.collapsed .group-chevron {
+  transform: rotate(0deg);
+}
+
+.group-hostname {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-unmatched {
+  color: var(--warning);
+}
+
+.group-count {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  background: var(--bg-card);
+  border-radius: 9999px;
+  padding: 0.1rem 0.5rem;
+  min-width: 1.4rem;
+  text-align: center;
+}
+
+.group-archives {
+  display: flex;
+  flex-direction: column;
+}
+
+.archive-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem 0.4rem 1.5rem;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.archive-row:last-child {
+  border-bottom: none;
+}
+
+.archive-row:hover {
+  background: var(--bg-hover);
+}
+
+.archive-row.selected {
+  background: var(--accent-subtle);
+}
+
+.archive-date {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.archive-name {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .data-table {
@@ -1748,7 +2019,7 @@ async function syncRepo(): Promise<void> {
 /* Unmatched banner */
 .unmatched-banner {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
   margin-bottom: 1rem;
@@ -1760,7 +2031,31 @@ async function syncRepo(): Promise<void> {
 }
 
 .unmatched-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
   color: var(--text-primary);
+}
+
+.unmatched-hostnames {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.unmatched-hostname {
+  display: inline-block;
+  margin: 0 0.25rem;
+  padding: 0.1rem 0.4rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+}
+
+.unmatched-hint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
 }
 
 .td-match {
@@ -1780,6 +2075,15 @@ async function syncRepo(): Promise<void> {
 
 .match-warn {
   color: var(--warning);
+}
+
+.host-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.host-link:hover {
+  text-decoration: underline;
 }
 
 .unmatched-host-link {

@@ -13,15 +13,7 @@ import { useMobile } from '../composables/useMobile'
 import { formatBytes } from '../utils/format'
 import { extractError } from '../utils/error'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
-import {
-  Plus,
-  Download,
-  SlidersHorizontal,
-  Database,
-  Folder,
-  FolderPlus,
-  Trash2,
-} from '@lucide/vue'
+import { Plus, Download, SlidersHorizontal, Database, Folder, FolderPlus } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 
@@ -75,6 +67,7 @@ interface RepoWithStats {
   total_compressed_size: number
   total_deduplicated_size: number
   client_count: number
+  unmatched_count: number
 }
 
 interface RepoForm {
@@ -126,7 +119,6 @@ const authStore = useAuthStore()
 const repos = ref<RepoWithStats[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
-const deleteConfirmId = ref<number | null>(null)
 
 const sortField = ref<SortField>('name')
 const sortDir = ref<SortDir>('asc')
@@ -167,12 +159,6 @@ const browser = reactive<BrowserState>({
   loading: false,
   error: null,
   showBrowser: false,
-})
-
-const deleteConfirmOpen = computed(() => deleteConfirmId.value !== null)
-
-useEscapeKey(deleteConfirmOpen, () => {
-  deleteConfirmId.value = null
 })
 
 useEscapeKey(showRepoDialog, () => {
@@ -494,24 +480,6 @@ function openImportRepo(): void {
   showRepoDialog.value = true
 }
 
-function openEditRepo(repo: RepoWithStats): void {
-  repoMode.value = 'edit'
-  editingRepo.value = repo
-  repoError.value = null
-  Object.assign(repoForm, {
-    name: repo.name,
-    repo_path: repo.repo_path,
-    ssh_user: repo.ssh_user,
-    ssh_host: repo.ssh_host,
-    ssh_port: repo.ssh_port,
-    passphrase: '',
-    compression: repo.compression as CompressionType,
-    encryption: repo.encryption as EncryptionType,
-    enabled: repo.enabled,
-  })
-  showRepoDialog.value = true
-}
-
 function applySshTarget(event: Event): void {
   const value = (event.target as HTMLSelectElement).value
   if (!value) return
@@ -658,22 +626,6 @@ async function deploySshKey(): Promise<void> {
     deployKey.result = { success: false, already_deployed: false, error: extractError(e) }
   } finally {
     deployKey.loading = false
-  }
-}
-
-function confirmDelete(id: number): void {
-  deleteConfirmId.value = id
-}
-
-async function executeDelete(): Promise<void> {
-  const id = deleteConfirmId.value
-  if (id === null) return
-  deleteConfirmId.value = null
-  try {
-    await apiClient.delete(`/repos/${id}`)
-    repos.value = repos.value.filter((r) => r.id !== id)
-  } catch (e: unknown) {
-    error.value = extractError(e)
   }
 }
 
@@ -864,6 +816,14 @@ onMounted(loadRepos)
           <span class="meta-pill">{{ repo.encryption }}</span>
           <span class="meta-pill">{{ repo.compression }}</span>
           <span
+            v-if="repo.unmatched_count > 0"
+            class="meta-pill unmatched-pill"
+          >
+            &#9888; {{ repo.unmatched_count }} unmatched host{{
+              repo.unmatched_count === 1 ? '' : 's'
+            }}
+          </span>
+          <span
             v-for="tag in repoTags(repo)"
             :key="tag.name"
             class="tag-pill"
@@ -889,25 +849,6 @@ onMounted(loadRepos)
             <span class="stat-value">{{ formatLastBackup(repo.last_backup_at) }}</span>
             <span class="stat-label">Last backup</span>
           </div>
-        </div>
-        <div
-          v-if="authStore.user?.role === 'admin'"
-          class="card-actions"
-          @click.stop
-        >
-          <button
-            class="btn btn-sm btn-ghost"
-            @click="openEditRepo(repo)"
-          >
-            Edit
-          </button>
-          <button
-            class="btn btn-sm btn-ghost btn-danger-text"
-            title="Delete"
-            @click="confirmDelete(repo.id)"
-          >
-            <Trash2 :size="14" />
-          </button>
         </div>
       </div>
     </div>
@@ -972,6 +913,14 @@ onMounted(loadRepos)
               <span class="meta-pill">{{ repo.encryption }}</span>
               <span class="meta-pill">{{ repo.compression }}</span>
               <span
+                v-if="repo.unmatched_count > 0"
+                class="meta-pill unmatched-pill"
+              >
+                &#9888; {{ repo.unmatched_count }} unmatched archive{{
+                  repo.unmatched_count === 1 ? '' : 's'
+                }}
+              </span>
+              <span
                 v-for="tag in repoTags(repo)"
                 :key="tag.name"
                 class="tag-pill"
@@ -998,70 +947,10 @@ onMounted(loadRepos)
                 <span class="stat-label">Last backup</span>
               </div>
             </div>
-            <div
-              v-if="authStore.user?.role === 'admin'"
-              class="card-actions"
-              @click.stop
-            >
-              <button
-                class="btn btn-sm btn-ghost"
-                @click="openEditRepo(repo)"
-              >
-                Edit
-              </button>
-              <button
-                class="btn btn-sm btn-ghost btn-danger-text"
-                title="Delete"
-                @click="confirmDelete(repo.id)"
-              >
-                <Trash2 :size="14" />
-              </button>
-            </div>
           </div>
         </div>
       </div>
     </div>
-
-    <!-- Delete Confirmation -->
-    <Teleport to="body">
-      <div
-        v-if="deleteConfirmId !== null"
-        class="overlay"
-        @click.self="deleteConfirmId = null"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Confirm Delete</h2>
-            <button
-              class="close-btn"
-              @click="deleteConfirmId = null"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p>
-              Are you sure you want to delete this repository? This will also remove all associated
-              schedules and reports.
-            </p>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="deleteConfirmId = null"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              @click="executeDelete"
-            >
-              Delete
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
 
     <!-- Repo Dialog -->
     <Teleport to="body">
@@ -1598,6 +1487,11 @@ onMounted(loadRepos)
   background: var(--bg-hover);
   color: var(--text-muted);
   text-transform: lowercase;
+}
+
+.unmatched-pill {
+  background: color-mix(in srgb, var(--warning) 15%, transparent);
+  color: var(--warning);
 }
 
 .card-stats {

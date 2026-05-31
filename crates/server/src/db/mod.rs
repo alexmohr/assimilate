@@ -27,7 +27,8 @@ pub async fn resolve_client_for_hostname(
     let exact = sqlx::query_as::<_, ClientRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns FROM clients WHERE hostname = $1",
+         default_exclude_patterns FROM clients WHERE hostname = $1 AND agent_token_hash != \
+         'imported:no-auth'",
     )
     .bind(hostname)
     .fetch_optional(pool)
@@ -1057,7 +1058,8 @@ pub async fn list_backup_sources_for_schedule(
     }
 
     let rows = sqlx::query_as::<_, PathRow>(
-        "SELECT path FROM backup_sources WHERE schedule_id = $1 ORDER BY sort_order, id",
+        "SELECT path FROM backup_sources WHERE schedule_id = $1 AND client_id IS NULL ORDER BY \
+         sort_order, id",
     )
     .bind(schedule_id)
     .fetch_all(pool)
@@ -1065,6 +1067,65 @@ pub async fn list_backup_sources_for_schedule(
     .map_err(ApiError::Database)?;
 
     Ok(rows.into_iter().map(|r| r.path).collect())
+}
+
+pub async fn list_backup_sources_for_schedule_client(
+    pool: &PgPool,
+    schedule_id: i64,
+    client_id: i64,
+) -> Result<Vec<String>, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct PathRow {
+        path: String,
+    }
+
+    let rows = sqlx::query_as::<_, PathRow>(
+        "SELECT path FROM backup_sources WHERE schedule_id = $1 AND client_id = $2 ORDER BY \
+         sort_order, id",
+    )
+    .bind(schedule_id)
+    .bind(client_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    Ok(rows.into_iter().map(|r| r.path).collect())
+}
+
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct PerHostBackupSources {
+    pub client_id: i64,
+    pub paths: Vec<String>,
+}
+
+pub async fn list_all_per_host_backup_sources_for_schedule(
+    pool: &PgPool,
+    schedule_id: i64,
+) -> Result<Vec<PerHostBackupSources>, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        client_id: i64,
+        path: String,
+    }
+
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT client_id, path FROM backup_sources WHERE schedule_id = $1 AND client_id IS NOT \
+         NULL ORDER BY client_id, sort_order, id",
+    )
+    .bind(schedule_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    let mut map: std::collections::BTreeMap<i64, Vec<String>> = std::collections::BTreeMap::new();
+    for row in rows {
+        map.entry(row.client_id).or_default().push(row.path);
+    }
+
+    Ok(map
+        .into_iter()
+        .map(|(client_id, paths)| PerHostBackupSources { client_id, paths })
+        .collect())
 }
 
 pub async fn insert_backup_source_for_schedule(
@@ -1083,11 +1144,44 @@ pub async fn insert_backup_source_for_schedule(
     Ok(())
 }
 
+pub async fn insert_backup_source_for_schedule_client(
+    pool: &PgPool,
+    schedule_id: i64,
+    client_id: i64,
+    path: &str,
+    sort_order: i32,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "INSERT INTO backup_sources (schedule_id, client_id, path, sort_order) VALUES ($1, $2, \
+         $3, $4)",
+    )
+    .bind(schedule_id)
+    .bind(client_id)
+    .bind(path)
+    .bind(sort_order)
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
 pub async fn delete_backup_sources_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
 ) -> Result<(), ApiError> {
-    sqlx::query("DELETE FROM backup_sources WHERE schedule_id = $1")
+    sqlx::query("DELETE FROM backup_sources WHERE schedule_id = $1 AND client_id IS NULL")
+        .bind(schedule_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+pub async fn delete_per_host_backup_sources_for_schedule(
+    pool: &PgPool,
+    schedule_id: i64,
+) -> Result<(), ApiError> {
+    sqlx::query("DELETE FROM backup_sources WHERE schedule_id = $1 AND client_id IS NOT NULL")
         .bind(schedule_id)
         .execute(pool)
         .await
@@ -2242,6 +2336,7 @@ pub struct RepoWithStatsRow {
     pub total_compressed_size: i64,
     pub total_deduplicated_size: i64,
     pub client_count: i64,
+    pub unmatched_count: i64,
 }
 
 pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow>, ApiError> {
@@ -2252,13 +2347,15 @@ pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow
          COALESCE(latest.original_size, 0)::INT8 AS total_original_size, \
          COALESCE(latest.compressed_size, 0)::INT8 AS total_compressed_size, \
          COALESCE(latest.deduplicated_size, 0)::INT8 AS total_deduplicated_size, \
-         COALESCE(agg.client_count, 0) AS client_count FROM repos r LEFT JOIN LATERAL (SELECT \
-         br.original_size, br.compressed_size, br.deduplicated_size FROM backup_reports br WHERE \
-         br.repo_id = r.id AND br.status = 'success' ORDER BY br.started_at DESC LIMIT 1) latest \
-         ON true LEFT JOIN LATERAL (SELECT COUNT(br.id) AS archive_count, MAX(CASE WHEN \
-         br.finished_at > '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, \
-         COUNT(DISTINCT br.client_id) AS client_count FROM backup_reports br WHERE br.repo_id = \
-         r.id AND br.status = 'success') agg ON true ORDER BY r.name",
+         COALESCE(agg.client_count, 0) AS client_count, COALESCE(agg.unmatched_count, 0) AS \
+         unmatched_count FROM repos r LEFT JOIN LATERAL (SELECT br.original_size, \
+         br.compressed_size, br.deduplicated_size FROM backup_reports br WHERE br.repo_id = r.id \
+         AND br.status = 'success' ORDER BY br.started_at DESC LIMIT 1) latest ON true LEFT JOIN \
+         LATERAL (SELECT COUNT(br.id) AS archive_count, MAX(CASE WHEN br.finished_at > \
+         '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT \
+         br.client_id) AS client_count, COUNT(DISTINCT br.client_id) FILTER (WHERE br.matched = false) AS \
+         unmatched_count FROM backup_reports br WHERE br.repo_id = r.id AND br.status = \
+         'success') agg ON true ORDER BY r.name",
     )
     .fetch_all(pool)
     .await
@@ -2276,13 +2373,15 @@ pub async fn get_repo_with_stats(
          COALESCE(latest.original_size, 0)::INT8 AS total_original_size, \
          COALESCE(latest.compressed_size, 0)::INT8 AS total_compressed_size, \
          COALESCE(latest.deduplicated_size, 0)::INT8 AS total_deduplicated_size, \
-         COALESCE(agg.client_count, 0) AS client_count FROM repos r LEFT JOIN LATERAL (SELECT \
-         br.original_size, br.compressed_size, br.deduplicated_size FROM backup_reports br WHERE \
-         br.repo_id = r.id AND br.status = 'success' ORDER BY br.started_at DESC LIMIT 1) latest \
-         ON true LEFT JOIN LATERAL (SELECT COUNT(br.id) AS archive_count, MAX(CASE WHEN \
-         br.finished_at > '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, \
-         COUNT(DISTINCT br.client_id) AS client_count FROM backup_reports br WHERE br.repo_id = \
-         r.id AND br.status = 'success') agg ON true WHERE r.id = $1",
+         COALESCE(agg.client_count, 0) AS client_count, COALESCE(agg.unmatched_count, 0) AS \
+         unmatched_count FROM repos r LEFT JOIN LATERAL (SELECT br.original_size, \
+         br.compressed_size, br.deduplicated_size FROM backup_reports br WHERE br.repo_id = r.id \
+         AND br.status = 'success' ORDER BY br.started_at DESC LIMIT 1) latest ON true LEFT JOIN \
+         LATERAL (SELECT COUNT(br.id) AS archive_count, MAX(CASE WHEN br.finished_at > \
+         '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT \
+         br.client_id) AS client_count, COUNT(DISTINCT br.client_id) FILTER (WHERE br.matched = false) AS \
+         unmatched_count FROM backup_reports br WHERE br.repo_id = r.id AND br.status = \
+         'success') agg ON true WHERE r.id = $1",
     )
     .bind(repo_id)
     .fetch_one(pool)
@@ -3120,6 +3219,14 @@ pub struct StorageTrendRow {
     pub total_size: i64,
 }
 
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct StorageTrendByRepoRow {
+    pub date: chrono::NaiveDate,
+    pub repo_id: i64,
+    pub repo_name: String,
+    pub size: i64,
+}
+
 pub async fn get_storage_trends(
     pool: &PgPool,
     repo_id: Option<i64>,
@@ -3155,6 +3262,26 @@ pub async fn get_storage_trends(
         .await
         .map_err(ApiError::Database)
     }
+}
+
+pub async fn get_storage_trends_by_repo(
+    pool: &PgPool,
+    days: i64,
+) -> Result<Vec<StorageTrendByRepoRow>, ApiError> {
+    let days_i32 = i32::try_from(days).unwrap_or(30);
+    sqlx::query_as::<_, StorageTrendByRepoRow>(
+        "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => $1))::date, \
+         CURRENT_DATE, '1 day'::interval )::date AS date ), repos_list AS ( SELECT DISTINCT r.id \
+         AS repo_id, r.name AS repo_name FROM repos r JOIN backup_reports br ON br.repo_id = r.id \
+         ) SELECT d.date, rl.repo_id, rl.repo_name, COALESCE(( SELECT br.deduplicated_size FROM \
+         backup_reports br WHERE br.repo_id = rl.repo_id AND br.started_at::date <= d.date AND \
+         br.status = 'success' ORDER BY br.started_at DESC LIMIT 1 ), 0)::INT8 AS size FROM days \
+         d CROSS JOIN repos_list rl ORDER BY d.date, rl.repo_name",
+    )
+    .bind(days_i32)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
 }
 
 pub async fn get_enabled_schedules_for_calendar(

@@ -25,6 +25,12 @@ use crate::{
 };
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct HostBackupSources {
+    pub client_id: i64,
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateScheduleRequest {
     pub client_ids: Vec<i64>,
     pub repo_id: i64,
@@ -44,6 +50,7 @@ pub struct CreateScheduleRequest {
     pub pre_backup_commands: Option<Vec<String>>,
     pub post_backup_commands: Option<Vec<String>>,
     pub backup_sources: Option<Vec<String>>,
+    pub backup_sources_per_host: Option<Vec<HostBackupSources>>,
     #[schema(value_type = Option<String>)]
     pub execution_mode: Option<ExecutionMode>,
     #[schema(value_type = Option<String>)]
@@ -66,6 +73,7 @@ pub struct UpdateScheduleRequest {
     pub pre_backup_commands: Option<Vec<String>>,
     pub post_backup_commands: Option<Vec<String>>,
     pub backup_sources: Option<Vec<String>>,
+    pub backup_sources_per_host: Option<Vec<HostBackupSources>>,
     pub client_ids: Option<Vec<i64>>,
     #[schema(value_type = Option<String>)]
     pub execution_mode: Option<ExecutionMode>,
@@ -161,8 +169,12 @@ pub async fn create_schedule(
     let schedule_type = schedule_type_to_str(schedule_type_enum);
 
     let has_backup_sources = req.backup_sources.as_ref().is_some_and(|v| !v.is_empty());
+    let has_per_host_sources = req
+        .backup_sources_per_host
+        .as_ref()
+        .is_some_and(|v| !v.is_empty());
 
-    if !has_backup_sources && schedule_type_enum == ScheduleType::Backup {
+    if !has_backup_sources && !has_per_host_sources && schedule_type_enum == ScheduleType::Backup {
         let client = db::get_client_by_id(&state.pool, req.client_ids[0]).await?;
         if client.default_backup_paths.is_empty() {
             return Err(ApiError::BadRequest(
@@ -224,6 +236,23 @@ pub async fn create_schedule(
                 i32::try_from(i).map_err(|_| ApiError::BadRequest("too many sources".into()))?;
             db::insert_backup_source_for_schedule(&state.pool, schedule.id, path, sort_order)
                 .await?;
+        }
+    }
+
+    if let Some(per_host) = &req.backup_sources_per_host {
+        for entry in per_host {
+            for (i, path) in entry.paths.iter().enumerate() {
+                let sort_order = i32::try_from(i)
+                    .map_err(|_| ApiError::BadRequest("too many sources".into()))?;
+                db::insert_backup_source_for_schedule_client(
+                    &state.pool,
+                    schedule.id,
+                    entry.client_id,
+                    path,
+                    sort_order,
+                )
+                .await?;
+            }
         }
     }
 
@@ -382,6 +411,24 @@ pub async fn update_schedule(
                 i32::try_from(i).map_err(|_| ApiError::BadRequest("too many sources".into()))?;
             db::insert_backup_source_for_schedule(&state.pool, schedule.id, path, sort_order)
                 .await?;
+        }
+    }
+
+    if let Some(per_host) = &req.backup_sources_per_host {
+        db::delete_per_host_backup_sources_for_schedule(&state.pool, schedule.id).await?;
+        for entry in per_host {
+            for (i, path) in entry.paths.iter().enumerate() {
+                let sort_order = i32::try_from(i)
+                    .map_err(|_| ApiError::BadRequest("too many sources".into()))?;
+                db::insert_backup_source_for_schedule_client(
+                    &state.pool,
+                    schedule.id,
+                    entry.client_id,
+                    path,
+                    sort_order,
+                )
+                .await?;
+            }
         }
     }
 
@@ -562,4 +609,38 @@ pub async fn list_schedule_targets(
     let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
     let targets = db::list_schedule_targets(&state.pool, id).await?;
     Ok(Json(targets))
+}
+
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct ScheduleBackupSourcesResponse {
+    pub backup_sources: Vec<String>,
+    pub backup_sources_per_host: Vec<db::PerHostBackupSources>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/schedules/{id}/sources",
+    tag = "Schedules",
+    operation_id = "listScheduleBackupSources",
+    summary = "List backup sources for a schedule (schedule-level and per-host)",
+    params(("id" = i64, Path, description = "Schedule ID")),
+    responses(
+        (status = 200, description = "Backup sources", body = ScheduleBackupSourcesResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Not found"),
+    )
+)]
+pub async fn list_schedule_backup_sources(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Path(id): Path<i64>,
+) -> Result<Json<ScheduleBackupSourcesResponse>, ApiError> {
+    let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
+    let backup_sources = db::list_backup_sources_for_schedule(&state.pool, id).await?;
+    let backup_sources_per_host =
+        db::list_all_per_host_backup_sources_for_schedule(&state.pool, id).await?;
+    Ok(Json(ScheduleBackupSourcesResponse {
+        backup_sources,
+        backup_sources_per_host,
+    }))
 }

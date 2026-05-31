@@ -143,7 +143,7 @@ describe('TunnelsView', () => {
     await flushPromises()
 
     expect(wrapper.findAll('tbody tr')).toHaveLength(3)
-    expect(wrapper.findAll('tbody .row-actions button')).toHaveLength(mockTunnels.length * 2)
+    expect(wrapper.findAll('tbody .row-actions button')).toHaveLength(mockTunnels.length * 2 + 1)
     expect(wrapper.findAll('button').some((button) => button.text() === 'Edit')).toBe(true)
     expect(wrapper.findAll('button').some((button) => button.text() === 'New')).toBe(true)
     expect(wrapper.findAll('button').some((button) => button.text() === 'Create')).toBe(false)

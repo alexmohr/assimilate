@@ -2,8 +2,16 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
 import NextScheduledWidget from './NextScheduledWidget.vue'
+import { apiClient } from '../api/client'
+
+vi.mock('../api/client', () => ({
+  apiClient: {
+    get: vi.fn(),
+  },
+}))
 
 vi.mock('../utils/format', () => ({
   formatBytes: (n: number): string => `${n}B`,
@@ -11,45 +19,45 @@ vi.mock('../utils/format', () => ({
   formatDuration: (n: number): string => `${n}s`,
 }))
 
+vi.mock('../utils/logger', () => ({
+  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
+}))
+
+const mockGet = vi.mocked(apiClient.get)
+
 describe('NextScheduledWidget', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-31T00:00:00Z'))
   })
 
   it('renders without throwing', () => {
-    const wrapper = renderWithPlugins(NextScheduledWidget, {
-      props: {
-        nextBackupAt: null,
-        lastBackupAt: null,
-        nextScheduleId: null,
-        lastScheduleId: null,
-      },
-    })
+    mockGet.mockResolvedValue({ data: [] })
+    const wrapper = renderWithPlugins(NextScheduledWidget)
     expect(wrapper.exists()).toBe(true)
   })
 
-  it('displays em-dash when no backup times are set', () => {
-    const wrapper = renderWithPlugins(NextScheduledWidget, {
-      props: {
-        nextBackupAt: null,
-        lastBackupAt: null,
-        nextScheduleId: null,
-        lastScheduleId: null,
-      },
-    })
-    expect(wrapper.text()).toContain('—')
+  it('shows no upcoming message when calendar is empty', async () => {
+    mockGet.mockResolvedValue({ data: [] })
+    const wrapper = renderWithPlugins(NextScheduledWidget)
+    await flushPromises()
+    expect(wrapper.text()).toContain('No upcoming backups.')
   })
 
-  it('displays relative times when backup times are provided', () => {
-    const wrapper = renderWithPlugins(NextScheduledWidget, {
-      props: {
-        nextBackupAt: '2026-06-01T10:00:00Z',
-        lastBackupAt: '2026-05-31T10:00:00Z',
-        nextScheduleId: 42,
-        lastScheduleId: 41,
-      },
+  it('displays scheduled items when calendar has future events', async () => {
+    mockGet.mockResolvedValue({
+      data: [
+        {
+          date: '2026-06-01',
+          events: [
+            { type: 'backup', status: 'scheduled', repo_name: 'daily-repo', time: '03:00', schedule_id: 1 },
+          ],
+        },
+      ],
     })
-    expect(wrapper.text()).toContain('rel:2026-06-01T10:00:00Z')
-    expect(wrapper.text()).toContain('rel:2026-05-31T10:00:00Z')
+    const wrapper = renderWithPlugins(NextScheduledWidget)
+    await flushPromises()
+    expect(wrapper.text()).toContain('daily-repo')
   })
 })

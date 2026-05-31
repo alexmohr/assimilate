@@ -2,38 +2,37 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import MergeClientDialog from './MergeClientDialog.vue'
 
-vi.mock('./BaseModal.vue', () => ({
-  default: {
-    name: 'BaseModal',
-    props: ['open', 'title', 'size'],
-    emits: ['close'],
-    template: `
-      <div v-if="open" data-testid="modal">
-        <slot />
-        <slot name="footer" />
-      </div>
-    `,
+vi.mock('../api/client', () => ({
+  apiClient: {
+    post: vi.fn().mockResolvedValue({ data: { merged: true } }),
   },
 }))
 
-interface ClientOption {
+vi.mock('../utils/error', () => ({
+  extractError: (_e: unknown): string => 'API error',
+}))
+
+interface ClientRow {
   id: number
   hostname: string
   display_name: string | null
+  is_imported: boolean
 }
 
-const CLIENTS: ClientOption[] = [
-  { id: 1, hostname: 'web-server-01', display_name: 'Web Server' },
-  { id: 2, hostname: 'db-server-01', display_name: null },
-  { id: 3, hostname: 'media-store-01', display_name: 'Media Store' },
+const SOURCE: ClientRow = { id: 10, hostname: 'old-webserver', display_name: null, is_imported: true }
+
+const ALL_CLIENTS: ClientRow[] = [
+  SOURCE,
+  { id: 1, hostname: 'web-server-01', display_name: 'Web Server', is_imported: false },
+  { id: 2, hostname: 'db-server-01', display_name: null, is_imported: false },
 ]
 
-function mountDialog(open: boolean = true): ReturnType<typeof mount> {
+function mountDialog(): ReturnType<typeof mount> {
   return mount(MergeClientDialog, {
-    props: { open, clients: CLIENTS },
+    props: { source: SOURCE, allClients: ALL_CLIENTS },
     attachTo: document.body,
   })
 }
@@ -43,78 +42,55 @@ describe('MergeClientDialog', () => {
     vi.clearAllMocks()
   })
 
-  it('renders nothing when open is false', () => {
-    const wrapper = mountDialog(false)
-    expect(wrapper.find('[data-testid="modal"]').exists()).toBe(false)
+  it('renders dialog with source hostname', () => {
+    const wrapper = mountDialog()
+    const sourceInput = wrapper.find('input[disabled]')
+    expect((sourceInput.element as HTMLInputElement).value).toBe('old-webserver')
   })
 
-  it('renders dialog when open is true', () => {
+  it('renders Merge into select with non-imported clients only', () => {
     const wrapper = mountDialog()
-    expect(wrapper.find('[data-testid="modal"]').exists()).toBe(true)
+    const select = wrapper.find('select')
+    const options = select.findAll('option')
+    expect(options.length).toBe(3)
+    expect(options[1].text()).toContain('web-server-01')
+    expect(options[2].text()).toContain('db-server-01')
   })
 
-  it('renders source and target select elements', () => {
+  it('Merge button is disabled when no target selected', () => {
     const wrapper = mountDialog()
-    expect(wrapper.find('#merge-source').exists()).toBe(true)
-    expect(wrapper.find('#merge-target').exists()).toBe(true)
-  })
-
-  it('lists all clients in source select', () => {
-    const wrapper = mountDialog()
-    const options = wrapper.find('#merge-source').findAll('option')
-    expect(options.length).toBe(CLIENTS.length + 1)
-  })
-
-  it('renders Submit (Merge) button', () => {
-    const wrapper = mountDialog()
-    const buttons = wrapper.findAll('button')
-    const mergeBtn = buttons.find((b) => b.text() === 'Merge')
-    expect(mergeBtn).toBeTruthy()
-  })
-
-  it('Merge button is disabled when no source/target selected', () => {
-    const wrapper = mountDialog()
-    const mergeBtn = wrapper.findAll('button').find((b) => b.text() === 'Merge')
+    const mergeBtn = wrapper.findAll('button').find((b) => b.text().includes('Merge'))
     expect(mergeBtn?.attributes('disabled')).toBeDefined()
   })
 
-  it('emits merge event with sourceId and targetId when submitted', async () => {
+  it('emits merged event on successful submit', async () => {
     const wrapper = mountDialog()
-    const sourceSelect = wrapper.find('#merge-source')
-    const targetSelect = wrapper.find('#merge-target')
-
-    await sourceSelect.setValue('1')
-    await targetSelect.setValue('2')
-
-    const mergeBtn = wrapper.findAll('button').find((b) => b.text() === 'Merge')
+    const select = wrapper.find('select')
+    await select.setValue('web-server-01')
+    const mergeBtn = wrapper.findAll('button').find((b) => b.text().includes('Merge'))
     await mergeBtn?.trigger('click')
-
-    const emitted = wrapper.emitted('merge')
-    expect(emitted).toBeTruthy()
-    expect((emitted as Array<[{ sourceId: number; targetId: number }]>)[0][0]).toEqual({
-      sourceId: 1,
-      targetId: 2,
-    })
+    await flushPromises()
+    expect(wrapper.emitted('merged')).toBeTruthy()
   })
 
-  it('emits close when Cancel is clicked', async () => {
+  it('emits cancel when Cancel is clicked', async () => {
     const wrapper = mountDialog()
     const cancelBtn = wrapper.findAll('button').find((b) => b.text() === 'Cancel')
     await cancelBtn?.trigger('click')
-    expect(wrapper.emitted('close')).toBeTruthy()
+    expect(wrapper.emitted('cancel')).toBeTruthy()
   })
 
-  it('displays client hostname when display_name is null', () => {
+  it('displays client hostname in target options', () => {
     const wrapper = mountDialog()
-    const options = wrapper.find('#merge-source').findAll('option')
-    const texts = options.map((o) => o.text())
-    expect(texts.some((t) => t.includes('db-server-01'))).toBe(true)
+    const select = wrapper.find('select')
+    const texts = select.findAll('option').map((o) => o.text())
+    expect(texts.some((t) => t.includes('web-server-01'))).toBe(true)
   })
 
-  it('displays display_name with hostname when display_name is set', () => {
+  it('displays display_name with hostname when set', () => {
     const wrapper = mountDialog()
-    const options = wrapper.find('#merge-source').findAll('option')
-    const texts = options.map((o) => o.text())
-    expect(texts.some((t) => t.includes('Web Server') && t.includes('web-server-01'))).toBe(true)
+    const select = wrapper.find('select')
+    const texts = select.findAll('option').map((o) => o.text())
+    expect(texts.some((t) => t.includes('Web Server'))).toBe(true)
   })
 })

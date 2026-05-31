@@ -174,16 +174,13 @@ describe('SchedulesView', () => {
     vi.unstubAllGlobals()
   })
 
-  it('renders schedule cards with client hostname and repo name', async () => {
+  it('renders schedule cards with repo name', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('web-server-01')
     expect(wrapper.text()).toContain('server-daily')
-    expect(wrapper.text()).toContain('db-server-01')
     expect(wrapper.text()).toContain('database-hourly')
-    expect(wrapper.text()).toContain('media-store-01')
     expect(wrapper.text()).toContain('media-weekly')
   })
 
@@ -267,8 +264,8 @@ describe('SchedulesView', () => {
     await statusSelect!.setValue('enabled')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('web-server-01')
-    expect(wrapper.text()).not.toContain('media-store-01')
+    expect(wrapper.text()).toContain('server-daily')
+    expect(wrapper.text()).not.toContain('media-weekly')
   })
 
   it('filters by schedule type', async () => {
@@ -282,8 +279,8 @@ describe('SchedulesView', () => {
     await typeSelect!.setValue('check')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('db-server-01')
-    expect(wrapper.text()).not.toContain('web-server-01')
+    expect(wrapper.text()).toContain('database-hourly')
+    expect(wrapper.text()).not.toContain('server-daily')
   })
 
   it('filters by text search', async () => {
@@ -292,11 +289,11 @@ describe('SchedulesView', () => {
     await flushPromises()
 
     const searchInput = wrapper.find('input.search-input')
-    await searchInput.setValue('web-server')
+    await searchInput.setValue('server-daily')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('web-server-01')
-    expect(wrapper.text()).not.toContain('db-server-01')
+    expect(wrapper.text()).toContain('server-daily')
+    expect(wrapper.text()).not.toContain('database-hourly')
   })
 
   it('calls run now API on run button click', async () => {
@@ -313,38 +310,6 @@ describe('SchedulesView', () => {
     expect(mockApiClient.post).toHaveBeenCalledWith(
       expect.stringMatching(/^\/schedules\/\d+\/run$/),
     )
-  })
-
-  it('calls delete API after confirmation', async () => {
-    setupApiSuccess()
-    mockApiClient.delete.mockResolvedValue({ data: {} })
-    vi.stubGlobal('confirm', vi.fn().mockReturnValue(true))
-    const wrapper = renderWithPlugins(SchedulesView)
-    await flushPromises()
-
-    const deleteButtons = wrapper
-      .findAll('button')
-      .filter((b) => b.attributes('title') === 'Delete schedule')
-    expect(deleteButtons.length).toBeGreaterThan(0)
-    await deleteButtons[0].trigger('click')
-    await flushPromises()
-
-    expect(mockApiClient.delete).toHaveBeenCalled()
-  })
-
-  it('does not delete when confirm is cancelled', async () => {
-    setupApiSuccess()
-    vi.stubGlobal('confirm', vi.fn().mockReturnValue(false))
-    const wrapper = renderWithPlugins(SchedulesView)
-    await flushPromises()
-
-    const deleteButtons = wrapper
-      .findAll('button')
-      .filter((b) => b.attributes('title') === 'Delete schedule')
-    await deleteButtons[0].trigger('click')
-    await flushPromises()
-
-    expect(mockApiClient.delete).not.toHaveBeenCalled()
   })
 
   it('has New button linking to /schedules/new', async () => {

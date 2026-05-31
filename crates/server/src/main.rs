@@ -201,6 +201,10 @@ async fn main() -> Result<(), StartupError> {
                 .delete(api::repos::delete_repo),
         )
         .route(
+            "/api/repos/{repo_id}/destroy",
+            post(api::repos::destroy_repo),
+        )
+        .route(
             "/api/repos/{repo_id}/key/export",
             post(api::keys::export_key),
         )
@@ -258,6 +262,10 @@ async fn main() -> Result<(), StartupError> {
             get(api::schedules::list_schedule_targets),
         )
         .route(
+            "/api/schedules/{id}/sources",
+            get(api::schedules::list_schedule_backup_sources),
+        )
+        .route(
             "/api/clients/{hostname}/reports",
             get(api::reports::list_reports),
         )
@@ -290,6 +298,10 @@ async fn main() -> Result<(), StartupError> {
         .route("/api/stats/health", get(api::stats::health))
         .route("/api/stats/trends", get(api::stats::trends))
         .route("/api/stats/storage-trends", get(api::stats::storage_trends))
+        .route(
+            "/api/stats/storage-trends/by-repo",
+            get(api::stats::storage_trends_by_repo),
+        )
         .route("/api/stats/calendar", get(api::stats::calendar))
         .route("/api/logs", get(api::logs::get_logs))
         .route(

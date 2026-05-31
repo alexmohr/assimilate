@@ -21,6 +21,16 @@ When set, the bandwidth cap is passed to Borg as `--remote-ratelimit` in kB/s.
 
 ![Schedules](assets/screenshots/schedules.png)
 
+The Schedules list page shows all configured backup schedules with:
+
+- **Text filter** — search by client or repository name
+- **Status filter** — show All, Enabled only, or Disabled only
+- **Type filter** — filter by Backup, Check, or Verify
+- **Health filter** — filter by Passed only, Failed only, or Overdue only
+- **Sort buttons** — sort by Client, Next Run, Last Run, or Type
+
+Each schedule card shows the repository name, execution mode (Parallel/Sequential), health status, enabled state, schedule type, cron description, next run time, last run time, and a **Run** button for manual triggering.
+
 ![Schedule Detail](assets/screenshots/schedule-detail.png)
 
 ## Cron Expression Builder
@@ -174,8 +184,6 @@ The dry-run result shows:
 | **Data volume** | Estimated uncompressed data volume |
 | **New data** | Estimated new (non-deduplicated) data that would be written |
 | **Output** | Full borg stdout/stderr for inspection |
-
-<!-- screenshot: schedule-dry-run -->
 
 !!! note
     Dry-run uses the same exclude patterns, backup sources, and pre-commands as the real backup. Post-commands are not executed during a dry run. No archive is created and no data is written to the repository.

@@ -21,6 +21,16 @@ BORG_SERVER_URL=https://your-server BORG_AGENT_TOKEN=<token> assimilate-agent
 
 ![Hosts](assets/screenshots/hosts.png)
 
+The Clients list page provides:
+
+- **Text filter** — search by hostname or tag
+- **Status filter** — show All, Online only, or Offline only
+- **Show hidden toggle** — reveal hidden imported clients (admin-only)
+- **Tag filter** — filter by one or more tags
+- **Sort buttons** — sort by Name, Status, Last Seen, or Agent Version
+
+Each client card shows the hostname, display name, online/offline status, schedule count, last seen time, agent version, and overdue indicators. Imported clients show **Merge into...** and **Adopt** buttons for managing unmatched archive hosts.
+
 ## Agent Deployment
 
 ### Manual

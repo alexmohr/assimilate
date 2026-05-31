@@ -93,8 +93,8 @@ jobs:
         run: pip install -r docs/requirements.txt
       - name: Build docs (strict)
         run: mkdocs build --strict
-  coverage-rust:
-    name: Rust Code Coverage
+  coverage:
+    name: Code Coverage
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -116,54 +116,30 @@ jobs:
           components: llvm-tools-preview
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Generate coverage
-        env:
-          DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
-        run: cargo +nightly llvm-cov --workspace --lcov --output-path lcov.info -- --include-ignored --test-threads=1
-      - name: Upload Rust coverage to Coveralls
-        uses: coverallsapp/github-action@v2
-        with:
-          flag-name: rust-backend
-          parallel: true
-          file: lcov.info
-          format: lcov
-
-  coverage-frontend:
-    name: Frontend Code Coverage
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Install dependencies
+      - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
-      - name: Generate coverage
+      - name: Generate Rust coverage
+        env:
+          DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
+        run: cargo +nightly llvm-cov --workspace --lcov --output-path lcov.info -- --include-ignored --test-threads=1
+      - name: Generate frontend coverage
         working-directory: frontend
         run: npm run test:coverage
-      - name: Upload frontend coverage to Coveralls
+      - name: Merge coverage files
+        run: cat lcov.info frontend/coverage/lcov.info > merged.info
+      - name: Upload coverage to Coveralls
         uses: coverallsapp/github-action@v2
         with:
-          flag-name: vue-frontend
-          parallel: true
-          file: frontend/coverage/lcov.info
+          file: merged.info
           format: lcov
 
-  coverage-finish:
-    name: Finalize Coverage
-    needs: [coverage-rust, coverage-frontend]
-    if: ${{ always() }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Close parallel Coveralls build
-        uses: coverallsapp/github-action@v2
-        with:
-          parallel-finished: true
-          carryforward: "rust-backend,vue-frontend"
   e2e:
     name: Playwright E2E
     runs-on: ubuntu-latest

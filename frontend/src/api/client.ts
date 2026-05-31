@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import axios from 'axios'
-import { router } from '../router'
 
 export const apiClient = axios.create({
   baseURL: '/api',
@@ -13,7 +12,7 @@ apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401 && !error.config?.url?.includes('/auth/')) {
-      router.push('/login')
+      window.location.assign('/login')
     }
     return Promise.reject(error)
   },

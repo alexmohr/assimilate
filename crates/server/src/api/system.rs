@@ -244,17 +244,18 @@ pub async fn get_version(_admin: RequireAdmin) -> Result<Json<VersionResponse>, 
     let binary_dir = agent_binary_dir();
     let agent_version = query_available_agent_version(&binary_dir).await;
 
-    let git_sha = env!("GIT_SHA");
+    let git_sha = option_env!("GIT_SHA").unwrap_or_default();
     let server_version = if git_sha.is_empty() {
         env!("CARGO_PKG_VERSION").to_owned()
     } else {
         format!("{}+{}", env!("CARGO_PKG_VERSION"), git_sha)
     };
+    let build_timestamp = option_env!("BUILD_TIMESTAMP").unwrap_or("unknown");
 
     Ok(Json(VersionResponse {
         server_version,
         server_git_sha: git_sha.to_owned(),
-        build_timestamp: env!("BUILD_TIMESTAMP").to_owned(),
+        build_timestamp: build_timestamp.to_owned(),
         agent_version,
     }))
 }

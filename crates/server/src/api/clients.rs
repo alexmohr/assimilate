@@ -555,7 +555,8 @@ pub async fn delete_client_archives(
 ) -> Result<Json<DeleteArchivesResponse>, ApiError> {
     let client = db::get_client_by_hostname(&state.pool, &hostname).await?;
 
-    let archives_by_repo = db::get_archives_for_client_with_patterns(&state.pool, client.id).await?;
+    let archives_by_repo =
+        db::get_archives_for_client_with_patterns(&state.pool, client.id).await?;
 
     let mut total_deleted: u32 = 0;
     let mut errors: Vec<String> = Vec::new();
@@ -573,7 +574,7 @@ pub async fn delete_client_archives(
 
         let Some(agent_hostname) = connected_host else {
             errors.push(format!(
-                "no connected agent for repo {} — skipped {} archives",
+                "no connected agent for repo {} -- skipped {} archives",
                 repo_id.0,
                 archive_names.len()
             ));

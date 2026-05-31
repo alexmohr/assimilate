@@ -63,6 +63,29 @@ Each schedule can carry its own list of exclude patterns. These are passed direc
 
 Patterns are configured per schedule in the **Exclude Patterns** field. If **Ignore global excludes** is unchecked, any repository-level exclude patterns (see [Repositories](repositories.md)) are merged with the schedule's own patterns. Check **Ignore global excludes** to use only the schedule's patterns.
 
+## Backup Paths
+
+Backup paths determine which directories borg includes when creating an archive. There are three levels of configuration, resolved in priority order:
+
+| Priority | Source | Description |
+|----------|--------|-------------|
+| 1 (highest) | Per-host paths | Paths configured for a specific host within this schedule |
+| 2 | Schedule-level paths | Paths configured on the schedule (shared across all target hosts) |
+| 3 (lowest) | Host default paths | Default backup paths configured on the host itself |
+
+### Schedule-Level Paths
+
+When all hosts in a schedule back up the same directories, enter the paths in the **Backup Paths** textarea. These apply to every target host unless overridden by per-host paths.
+
+### Per-Host Paths
+
+When a schedule targets multiple hosts and each host needs different directories, enable **Configure per host** in the Backup Paths section. This reveals a textarea for each selected host where you can specify host-specific paths.
+
+Per-host paths completely override schedule-level paths for that host. If a host's per-host paths field is left empty, the system falls back to schedule-level paths, then to the host's default paths.
+
+!!! tip
+    Use per-host paths when a single schedule targets hosts with different roles (e.g., a web server backing up `/var/www` and a database server backing up `/var/lib/postgresql`). This avoids creating separate schedules for each host while still customizing what gets backed up.
+
 ## Schedule Status
 
 Each schedule row in the UI shows:

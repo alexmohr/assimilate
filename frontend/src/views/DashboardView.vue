@@ -1006,7 +1006,10 @@ function closeStatusPopup(): void {
             <a
               v-if="statusPopup.repo_id"
               class="status-popup-link"
-              @click="router.push(`/repos/${statusPopup.repo_id}`); closeStatusPopup()"
+              @click="
+                router.push(`/repos/${statusPopup.repo_id}`);
+                closeStatusPopup();
+              "
             >
               {{ statusPopup.repo_name }}
             </a>
@@ -1017,7 +1020,10 @@ function closeStatusPopup(): void {
             <a
               v-if="statusPopup.schedule_id"
               class="status-popup-link"
-              @click="router.push(`/schedules/${statusPopup.schedule_id}`); closeStatusPopup()"
+              @click="
+                router.push(`/schedules/${statusPopup.schedule_id}`);
+                closeStatusPopup();
+              "
             >
               {{ cronToHuman(statusPopup.schedule_name) || statusPopup.schedule_name }}
             </a>
@@ -1139,6 +1145,7 @@ function closeStatusPopup(): void {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  min-width: 0;
 }
 
 /* Panel */
@@ -1536,6 +1543,32 @@ function closeStatusPopup(): void {
 
 @media (max-width: 900px) {
   .activity-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 500px) {
+  .panel-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .trends-controls {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .trends-select {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .panel-timeline {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .health-grid {
     grid-template-columns: 1fr;
   }
 }

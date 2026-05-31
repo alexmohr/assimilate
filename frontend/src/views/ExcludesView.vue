@@ -136,7 +136,7 @@ onMounted(loadData)
           <textarea
             v-model="text"
             class="pattern-area"
-            placeholder="One pattern per line&#10;e.g. *.cache&#10;pp:__pycache__"
+            placeholder="One pattern per line&#10;# Lines starting with # are comments&#10;e.g. *.cache&#10;pp:__pycache__"
             spellcheck="false"
           />
           <div class="panel-footer">

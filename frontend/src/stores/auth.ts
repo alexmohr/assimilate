@@ -4,7 +4,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { apiClient } from '../api/client'
-import { router } from '../router'
 import { logger } from '../utils/logger'
 
 export interface AuthUser {
@@ -47,7 +46,7 @@ export const useAuthStore = defineStore('auth', () => {
       await apiClient.post('/auth/logout')
     } finally {
       user.value = null
-      router.push('/login')
+      window.location.assign('/login')
     }
   }
 

@@ -3,8 +3,6 @@
 
 import axios from 'axios'
 
-let redirectingToLogin = false
-
 export const apiClient = axios.create({
   baseURL: '/api',
   headers: { 'Content-Type': 'application/json' },
@@ -12,19 +10,9 @@ export const apiClient = axios.create({
 
 apiClient.interceptors.response.use(
   (response) => response,
-  async (error) => {
-    const url = error.config?.url ?? ''
-    const skipUrls = ['/auth/login', '/auth/me']
-    const shouldSkip = skipUrls.some((s) => url.endsWith(s))
-
-    if (error.response?.status === 401 && !shouldSkip) {
-      if (!redirectingToLogin) {
-        redirectingToLogin = true
-        const { router } = await import('../router')
-        const next = router.currentRoute.value.fullPath
-        await router.push({ name: 'login', query: { next } })
-        redirectingToLogin = false
-      }
+  (error) => {
+    if (error.response?.status === 401 && !error.config?.url?.includes('/auth/')) {
+      window.location.assign('/login')
     }
     return Promise.reject(error)
   },

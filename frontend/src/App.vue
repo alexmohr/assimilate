@@ -9,13 +9,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { onErrorCaptured } from 'vue'
 import AppLayout from './layouts/AppLayout.vue'
 import ToastContainer from './components/ToastContainer.vue'
-import { router as appRouter } from './router'
+
 
 const route = useRoute()
 const router = useRouter()
 
 const routerReady = ref(false)
-appRouter.isReady().then(() => {
+router.isReady().then(() => {
   routerReady.value = true
 })
 

@@ -181,6 +181,64 @@ pub enum ScheduleType {
     Verify,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecutionMode {
+    #[default]
+    Parallel,
+    Sequential,
+}
+
+impl fmt::Display for ExecutionMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Parallel => write!(f, "parallel"),
+            Self::Sequential => write!(f, "sequential"),
+        }
+    }
+}
+
+impl FromStr for ExecutionMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "parallel" => Ok(Self::Parallel),
+            "sequential" => Ok(Self::Sequential),
+            other => Err(format!("unknown execution mode: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum OnFailure {
+    #[default]
+    Stop,
+    Continue,
+}
+
+impl fmt::Display for OnFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Stop => write!(f, "stop"),
+            Self::Continue => write!(f, "continue"),
+        }
+    }
+}
+
+impl FromStr for OnFailure {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "stop" => Ok(Self::Stop),
+            "continue" => Ok(Self::Continue),
+            other => Err(format!("unknown on_failure value: {other}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BackupStatus {
     Success,

@@ -14,7 +14,7 @@
 | `BORG_BINARY` | `borg` | No | Path to the `borg` executable used by the server for repository operations (init, archive listing, extraction). |
 | `ASSIMILATE_DB_MAX_CONN` | `10` | No | Maximum number of connections in the PostgreSQL connection pool. |
 | `ASSIMILATE_SECURE_COOKIES` | `false` | No | When `true`, session cookies are set with the `Secure` flag (requires HTTPS). Enable this in production behind TLS. |
-| `AGENT_BINARY_PATH` | — | No | Path to the agent binary served at `/api/agent/download`. If unset, agent binary download is disabled. |
+| `AGENT_BINARY_DIR` | — | No | Directory containing arch-specific agent binaries (`agent-x86_64`, `agent-aarch64`, etc.) used by the SSH deploy feature. If unset, the server looks in `/app/` (Docker) or alongside its own executable. |
 
 !!! warning "Security"
     `ASSIMILATE_SECRET_KEY` is used to derive the encryption key that protects all repository passphrases stored in the database. If you lose or rotate this value, every encrypted passphrase becomes **permanently unrecoverable**. Store it in a secrets manager and never change it after initial setup.

@@ -2,8 +2,32 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
 import StorageTrendWidget from './StorageTrendWidget.vue'
+import { apiClient } from '../api/client'
+
+vi.mock('../api/client', () => ({
+  apiClient: {
+    get: vi.fn(),
+  },
+}))
+
+vi.mock('vue-chartjs', () => ({
+  Line: { template: '<canvas />' },
+}))
+
+vi.mock('chart.js', () => ({
+  Chart: { register: vi.fn() },
+  CategoryScale: {},
+  LinearScale: {},
+  PointElement: {},
+  LineElement: {},
+  Title: {},
+  Tooltip: {},
+  Legend: {},
+  Filler: {},
+}))
 
 vi.mock('../utils/format', () => ({
   formatBytes: (n: number): string => `${n}B`,
@@ -11,11 +35,11 @@ vi.mock('../utils/format', () => ({
   formatDuration: (n: number): string => `${n}s`,
 }))
 
-interface StorageEntry {
-  name: string
-  deduplicated_size: number
-  percentage: number
-}
+vi.mock('../utils/logger', () => ({
+  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
+}))
+
+const mockGet = vi.mocked(apiClient.get)
 
 describe('StorageTrendWidget', () => {
   beforeEach(() => {
@@ -23,40 +47,33 @@ describe('StorageTrendWidget', () => {
   })
 
   it('renders without throwing', () => {
+    mockGet.mockResolvedValue({ data: [] })
     const wrapper = renderWithPlugins(StorageTrendWidget, {
-      props: { storageBreakdown: [], totalStorageBytes: 0 },
+      props: { repos: [] },
     })
     expect(wrapper.exists()).toBe(true)
   })
 
-  it('shows empty state when no storage data', () => {
+  it('shows empty state when no storage data', async () => {
+    mockGet.mockResolvedValue({ data: [] })
     const wrapper = renderWithPlugins(StorageTrendWidget, {
-      props: { storageBreakdown: [], totalStorageBytes: 0 },
+      props: { repos: [] },
     })
-    expect(wrapper.text()).toContain('No storage data available.')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Not enough data.')
   })
 
-  it('displays storage entries with name and size', () => {
-    const breakdown: StorageEntry[] = [
-      { name: 'repo-alpha', deduplicated_size: 1_073_741_824, percentage: 60 },
-      { name: 'repo-beta', deduplicated_size: 536_870_912, percentage: 40 },
-    ]
-    const wrapper = renderWithPlugins(StorageTrendWidget, {
-      props: { storageBreakdown: breakdown, totalStorageBytes: 1_610_612_736 },
+  it('displays chart when data is available', async () => {
+    mockGet.mockResolvedValue({
+      data: [
+        { date: '2026-05-01', total_size: 1_073_741_824 },
+        { date: '2026-05-02', total_size: 2_147_483_648 },
+      ],
     })
-    expect(wrapper.text()).toContain('repo-alpha')
-    expect(wrapper.text()).toContain('repo-beta')
-    expect(wrapper.text()).toContain('60%')
-    expect(wrapper.text()).toContain('40%')
-  })
-
-  it('displays total storage via formatBytes', () => {
-    const breakdown: StorageEntry[] = [
-      { name: 'only-repo', deduplicated_size: 1024, percentage: 100 },
-    ]
     const wrapper = renderWithPlugins(StorageTrendWidget, {
-      props: { storageBreakdown: breakdown, totalStorageBytes: 1024 },
+      props: { repos: [{ id: 1, name: 'repo-alpha' }] },
     })
-    expect(wrapper.text()).toContain('1024B')
+    await flushPromises()
+    expect(wrapper.find('canvas').exists()).toBe(true)
   })
 })

@@ -99,6 +99,10 @@ const mockRepos = [
 function setupEditMode(schedule = mockSchedule): void {
   mockApiClient.get.mockImplementation((url: string) => {
     if (url === `/schedules/${schedule.id}`) return Promise.resolve({ data: schedule })
+    if (url === `/schedules/${schedule.id}/targets`)
+      return Promise.resolve({ data: [{ client_id: schedule.client_id, execution_order: 0 }] })
+    if (url === `/schedules/${schedule.id}/sources`)
+      return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_host: [] } })
     if (url === '/clients') return Promise.resolve({ data: mockClients })
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
     return Promise.resolve({ data: [] })
@@ -325,7 +329,7 @@ describe('ScheduleDetailView - create mode', () => {
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Web Server')
+    expect(wrapper.text()).toContain('Select hosts...')
     expect(wrapper.text()).toContain('server-daily')
   })
 

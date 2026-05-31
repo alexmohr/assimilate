@@ -6,12 +6,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 type ResponseHandler = (response: unknown) => unknown
 type ErrorHandler = (error: { response?: { status?: number }; config?: { url?: string } }) => Promise<never>
 
-const routerPush = vi.hoisted(() => vi.fn())
+const routerPush = vi.hoisted(() => vi.fn().mockResolvedValue(undefined))
 const responseUse = vi.hoisted(() => vi.fn())
 
 vi.mock('../router', () => ({
   router: {
     push: routerPush,
+    currentRoute: { value: { fullPath: '/' } },
   },
 }))
 
@@ -36,19 +37,28 @@ describe('apiClient response interceptor', () => {
     routerPush.mockClear()
   })
 
-  it('redirects 401 responses to /login', async () => {
+  it('redirects 401 responses to login', async () => {
     await expect(errorHandler({ response: { status: 401 }, config: { url: '/clients' } })).rejects.toEqual({
       response: { status: 401 },
       config: { url: '/clients' },
     })
 
-    expect(routerPush).toHaveBeenCalledWith('/login')
+    expect(routerPush).toHaveBeenCalledWith({ name: 'login', query: { next: '/' } })
   })
 
   it('does not redirect non-401 responses', async () => {
     await expect(errorHandler({ response: { status: 500 }, config: { url: '/clients' } })).rejects.toEqual({
       response: { status: 500 },
       config: { url: '/clients' },
+    })
+
+    expect(routerPush).not.toHaveBeenCalled()
+  })
+
+  it('does not redirect 401 for auth endpoints', async () => {
+    await expect(errorHandler({ response: { status: 401 }, config: { url: '/auth/login' } })).rejects.toEqual({
+      response: { status: 401 },
+      config: { url: '/auth/login' },
     })
 
     expect(routerPush).not.toHaveBeenCalled()

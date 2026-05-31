@@ -38,7 +38,7 @@ describe('RepoHealthWidget', () => {
     const wrapper = renderWithPlugins(RepoHealthWidget, {
       props: { health: [] },
     })
-    expect(wrapper.text()).toContain('No repositories configured yet.')
+    expect(wrapper.text()).toContain('No repositories configured.')
   })
 
   it('displays hostname and target name for each entry', () => {

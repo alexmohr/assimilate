@@ -40,7 +40,7 @@ function createTestingPinia(storeState: RenderWithPluginsOptions['storeState']):
 
     const state = storeState?.[store.$id]
     if (state) {
-      store.$patch(state)
+      store.$patch(state as Record<string, unknown> & Record<never, never>)
     }
   })
 
@@ -58,14 +58,15 @@ function createRoutes(): RouteRecordRaw[] {
 }
 
 export function createMockRouter(): ReturnType<typeof createRouter> {
-  const routes = appRouter.getRoutes().map((route) => ({
-    path: route.path,
-    name: route.name,
-    component: routeStub,
-    meta: route.meta,
-    props: route.props,
-    redirect: route.redirect,
-  })) satisfies RouteRecordRaw[]
+  const routes = appRouter.getRoutes().map(
+    (route) =>
+      ({
+        path: route.path,
+        name: route.name,
+        component: routeStub,
+        meta: route.meta,
+      }) as RouteRecordRaw,
+  )
 
   return createRouter({
     history: createMemoryHistory(),

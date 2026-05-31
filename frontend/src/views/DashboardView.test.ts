@@ -49,6 +49,13 @@ vi.mock('../composables/useWebSocket', () => ({
   }),
 }))
 
+vi.mock('../composables/useTimezone', () => ({
+  useTimezone: (): { timezone: { value: 'UTC' }; allTimezones: [] } => ({
+    timezone: { value: 'UTC' },
+    allTimezones: [],
+  }),
+}))
+
 vi.mock('../utils/logger', () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }))
@@ -57,6 +64,10 @@ vi.mock('../utils/format', () => ({
   formatBytes: (n: number): string => `${n}B`,
   relativeTime: (s: string): string => `rel:${s}`,
   formatDuration: (n: number): string => `${n}s`,
+}))
+
+vi.mock('../utils/cron', () => ({
+  cronToHuman: (s: string): string => `cron:${s}`,
 }))
 
 describe('DashboardView', () => {

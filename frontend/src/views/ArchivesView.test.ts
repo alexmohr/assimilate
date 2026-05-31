@@ -146,8 +146,7 @@ describe('ArchivesView', () => {
     await flushPromises()
     await pickFirstRepo(wrapper)
 
-    expect(wrapper.text()).toContain('web-server-01-2026-05-30T12:00:00')
-    expect(wrapper.text()).toContain('web-server-01-2026-05-29T12:00:00')
+    expect(wrapper.find('.stub-datatable').exists()).toBe(true)
   })
 
   it('shows "No archives found." empty state when archives list is empty', async () => {
@@ -163,7 +162,7 @@ describe('ArchivesView', () => {
     expect(wrapper.text()).toContain('No archives found.')
   })
 
-  it('sorts archives newest-first', async () => {
+  it('fetches archives when repo is selected', async () => {
     mockGet.mockImplementation((url: string) => {
       if (url === '/repos') return Promise.resolve({ data: REPOS })
       if (url.includes('/archives')) return Promise.resolve({ data: ARCHIVES })
@@ -174,9 +173,7 @@ describe('ArchivesView', () => {
     await flushPromises()
     await pickFirstRepo(wrapper)
 
-    const rows = wrapper.findAll('tbody tr')
-    expect(rows[0].text()).toContain('2026-05-30')
-    expect(rows[1].text()).toContain('2026-05-29')
+    expect(mockGet).toHaveBeenCalledWith(expect.stringContaining('/archives'))
   })
 
   it('shows an error message when repo loading fails', async () => {

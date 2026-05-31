@@ -270,15 +270,15 @@ async function loadClients(): Promise<void> {
   try {
     const [clientsRes, hostTagAssocRes, hostTagsRes, healthRes, scheduleCountsRes] =
       await Promise.all([
-      apiClient.get<ClientRow[]>('/clients', {
-        params: showHidden.value ? { include_hidden: true } : undefined,
-      }),
-      apiClient.get<HostTagRow[]>('/host-tags').catch(() => ({ data: [] as HostTagRow[] })),
-      apiClient
-        .get<TagRow[]>('/tags', { params: { scope: 'host' } })
-        .catch(() => ({ data: [] as TagRow[] })),
-      apiClient.get<HealthEntry[]>('/stats/health'),
-      apiClient.get<{ client_id: number; count: number }[]>('/stats/schedule-counts'),
+        apiClient.get<ClientRow[]>('/clients', {
+          params: showHidden.value ? { include_hidden: true } : undefined,
+        }),
+        apiClient.get<HostTagRow[]>('/host-tags').catch(() => ({ data: [] as HostTagRow[] })),
+        apiClient
+          .get<TagRow[]>('/tags', { params: { scope: 'host' } })
+          .catch(() => ({ data: [] as TagRow[] })),
+        apiClient.get<HealthEntry[]>('/stats/health'),
+        apiClient.get<{ client_id: number; count: number }[]>('/stats/schedule-counts'),
       ])
     clients.value = clientsRes.data
     machineScheduleCount.value = {}

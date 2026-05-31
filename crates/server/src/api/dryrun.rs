@@ -66,9 +66,16 @@ pub async fn dry_run(
         )));
     }
 
-    let hostname = db::get_client_hostname_for_schedule(&state.pool, req.schedule_id).await?;
+    let hostnames = db::get_schedule_target_hostnames(&state.pool, req.schedule_id).await?;
 
-    if !state.registry.is_connected(&hostname).await {
+    let Some(hostname) = hostnames.first() else {
+        return Err(ApiError::NotFound(format!(
+            "no targets for schedule {}",
+            req.schedule_id
+        )));
+    };
+
+    if !state.registry.is_connected(hostname).await {
         return Err(ApiError::ServiceUnavailable("agent is offline".to_owned()));
     }
 
@@ -87,7 +94,7 @@ pub async fn dry_run(
         schedule_id: req.schedule_id,
     };
 
-    if state.registry.send_to(&hostname, msg).await.is_err() {
+    if state.registry.send_to(hostname, msg).await.is_err() {
         state.pending_dryruns.lock().await.remove(&request_id);
         return Err(ApiError::ServiceUnavailable("agent is offline".to_owned()));
     }

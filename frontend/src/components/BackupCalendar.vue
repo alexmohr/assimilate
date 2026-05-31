@@ -342,7 +342,10 @@ function closeErrorPopup(): void {
           <a
             v-if="errorPopup.repo_id"
             class="cal-error-link"
-            @click="router.push(`/repos/${errorPopup.repo_id}`); closeErrorPopup()"
+            @click="
+              router.push(`/repos/${errorPopup.repo_id}`);
+              closeErrorPopup();
+            "
           >
             {{ errorPopup.repo_name }}
           </a>
@@ -352,7 +355,10 @@ function closeErrorPopup(): void {
             &middot;
             <a
               class="cal-error-link"
-              @click="router.push(`/schedules/${errorPopup.schedule_id}`); closeErrorPopup()"
+              @click="
+                router.push(`/schedules/${errorPopup.schedule_id}`);
+                closeErrorPopup();
+              "
             >
               Schedule
             </a>

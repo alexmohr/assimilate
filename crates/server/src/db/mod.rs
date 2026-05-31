@@ -1543,7 +1543,7 @@ pub async fn get_schedule_for_repo(
     repo_id: i64,
 ) -> Result<Option<ScheduleRow>, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
-        "SELECT id, repo_id, schedule_type, cron_expression, enabled, canary_enabled, \
+        "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns, ignore_global_excludes, keep_daily, \
          keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
          pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, \
@@ -3643,7 +3643,7 @@ pub async fn get_enabled_schedules_for_calendar(
     pool: &PgPool,
 ) -> Result<Vec<ScheduleRow>, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
-        "SELECT id, repo_id, schedule_type, cron_expression, enabled, canary_enabled, \
+        "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns, ignore_global_excludes, keep_daily, \
          keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
          pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, \

@@ -1356,3 +1356,46 @@ pub async fn sync_repo(
         duration_secs,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_lock_error_detects_lock_create_message() {
+        assert!(is_lock_error(
+            "Failed to create/acquire the lock /repo/lock.exclusive"
+        ));
+    }
+
+    #[test]
+    fn is_lock_error_detects_lock_exclusive() {
+        assert!(is_lock_error("waiting for lock.exclusive to be released"));
+    }
+
+    #[test]
+    fn is_lock_error_detects_lockroster() {
+        assert!(is_lock_error("LockRoster: another process holds the lock"));
+    }
+
+    #[test]
+    fn is_lock_error_is_case_insensitive() {
+        assert!(is_lock_error("FAILED TO CREATE/ACQUIRE THE LOCK"));
+        assert!(is_lock_error("LOCK.EXCLUSIVE"));
+        assert!(is_lock_error("LOCKROSTER"));
+    }
+
+    #[test]
+    fn is_lock_error_returns_false_for_unrelated_errors() {
+        assert!(!is_lock_error("Repository does not exist"));
+        assert!(!is_lock_error("passphrase is incorrect"));
+        assert!(!is_lock_error("Connection refused"));
+        assert!(!is_lock_error(""));
+    }
+
+    #[test]
+    fn is_lock_error_returns_false_for_partial_matches() {
+        assert!(!is_lock_error("lock timeout after 60 seconds"));
+        assert!(!is_lock_error("unlock successful"));
+    }
+}

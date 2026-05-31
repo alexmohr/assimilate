@@ -193,6 +193,7 @@ async fn fetch_report_rows(pool: &PgPool, repo_id: i64) -> Result<Vec<ReportRow>
 }
 
 fn parse_borg_timestamp(s: &str) -> Option<DateTime<Utc>> {
+    let s = s.trim_end_matches('Z');
     NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f")
         .ok()
         .or_else(|| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok())

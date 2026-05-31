@@ -7,6 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiClient } from '../api/client'
+import { useAuthStore } from '../stores/auth'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useClipboard } from '../composables/useClipboard'
@@ -30,6 +31,7 @@ interface ClientRow {
   last_seen_at: string | null
   is_connected: boolean
   is_imported: boolean
+  is_hidden: boolean
   default_backup_paths: string[]
 }
 
@@ -73,7 +75,10 @@ type FilterStatus = 'all' | 'online' | 'offline'
 
 const router = useRouter()
 const route = useRoute()
+const authStore = useAuthStore()
+const isAdmin = computed(() => authStore.user?.role === 'admin')
 const clients = ref<ClientRow[]>([])
+const showHidden = ref(false)
 const machineScheduleCount = ref<Record<number, number>>({})
 const healthByHost = ref<Record<string, HostHealth>>({})
 const loading = ref(false)
@@ -264,7 +269,9 @@ async function loadClients(): Promise<void> {
   error.value = null
   try {
     const [clientsRes, hostTagAssocRes, hostTagsRes, healthRes] = await Promise.all([
-      apiClient.get<ClientRow[]>('/clients'),
+      apiClient.get<ClientRow[]>('/clients', {
+        params: showHidden.value ? { include_hidden: true } : undefined,
+      }),
       apiClient.get<HostTagRow[]>('/host-tags').catch(() => ({ data: [] as HostTagRow[] })),
       apiClient
         .get<TagRow[]>('/tags', { params: { scope: 'host' } })
@@ -342,8 +349,7 @@ function navigateToHost(client: ClientRow): void {
 
 async function adoptClient(client: ClientRow): Promise<void> {
   try {
-    const cleanDisplayName =
-      client.display_name?.replace(/\s*\(imported\)$/, '').trim() || null
+    const cleanDisplayName = client.display_name?.replace(/\s*\(imported\)$/, '').trim() || null
     await apiClient.put(`/clients/${client.hostname}`, {
       display_name: cleanDisplayName,
     })
@@ -405,6 +411,15 @@ function openDeployDialog(client: ClientRow): void {
 function openMergeDialog(client: ClientRow): void {
   mergeSource.value = client
   showMergeDialog.value = true
+}
+
+async function unhideClient(client: ClientRow): Promise<void> {
+  try {
+    await apiClient.put(`/clients/${client.hostname}/unhide`)
+    await loadClients()
+  } catch (e: unknown) {
+    logger.error('Failed to unhide client', e)
+  }
 }
 
 function onMerged(): void {
@@ -508,6 +523,10 @@ watch(wsStatus, (newStatus, oldStatus) => {
     loadClients().catch(logger.error)
   }
 })
+
+watch(showHidden, () => {
+  loadClients().catch(logger.error)
+})
 </script>
 
 <template>
@@ -552,6 +571,13 @@ watch(wsStatus, (newStatus, oldStatus) => {
           <option value="online">Online</option>
           <option value="offline">Offline</option>
         </select>
+        <div
+          v-if="isAdmin"
+          class="hidden-toggle"
+        >
+          <ToggleSwitch v-model="showHidden" />
+          <span class="hidden-toggle-label">Show hidden</span>
+        </div>
         <div
           v-if="allHostTags.length > 0"
           class="tag-filter-wrapper"
@@ -654,6 +680,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
         v-for="client in filteredClients"
         :key="client.id"
         class="host-card"
+        :class="{ 'host-card-hidden': client.is_hidden }"
         @click="navigateToHost(client)"
       >
         <div class="card-top">
@@ -666,6 +693,12 @@ watch(wsStatus, (newStatus, oldStatus) => {
             >
           </div>
           <div class="card-top-badges">
+            <span
+              v-if="client.is_hidden"
+              class="badge-hidden"
+            >
+              Hidden
+            </span>
             <span
               v-if="isImported(client)"
               class="badge-imported"
@@ -740,27 +773,37 @@ watch(wsStatus, (newStatus, oldStatus) => {
           class="card-actions"
           @click.stop
         >
-          <button
-            v-if="isImported(client)"
-            class="btn btn-sm btn-ghost"
-            @click="openMergeDialog(client)"
-          >
-            Merge into...
-          </button>
-          <button
-            v-if="isImported(client)"
-            class="btn btn-sm btn-ghost"
-            @click="adoptClient(client)"
-          >
-            Adopt
-          </button>
-          <button
-            v-if="deployButtonLabel(client) && !isImported(client)"
-            class="btn btn-sm btn-ghost"
-            @click="openDeployDialog(client)"
-          >
-            {{ deployButtonLabel(client) }}
-          </button>
+          <template v-if="client.is_hidden">
+            <button
+              class="btn btn-sm btn-ghost"
+              @click="unhideClient(client)"
+            >
+              Unhide
+            </button>
+          </template>
+          <template v-else>
+            <button
+              v-if="isImported(client)"
+              class="btn btn-sm btn-ghost"
+              @click="openMergeDialog(client)"
+            >
+              Merge into...
+            </button>
+            <button
+              v-if="isImported(client)"
+              class="btn btn-sm btn-ghost"
+              @click="adoptClient(client)"
+            >
+              Adopt
+            </button>
+            <button
+              v-if="deployButtonLabel(client) && !isImported(client)"
+              class="btn btn-sm btn-ghost"
+              @click="openDeployDialog(client)"
+            >
+              {{ deployButtonLabel(client) }}
+            </button>
+          </template>
         </div>
       </div>
     </div>
@@ -1557,5 +1600,43 @@ watch(wsStatus, (newStatus, oldStatus) => {
   background: var(--accent-subtle);
   color: var(--accent);
   border: 1px solid var(--accent);
+}
+
+.badge-hidden {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.host-card-hidden {
+  opacity: 0.6;
+}
+
+.hidden-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.hidden-toggle input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.hidden-toggle-label {
+  white-space: nowrap;
 }
 </style>

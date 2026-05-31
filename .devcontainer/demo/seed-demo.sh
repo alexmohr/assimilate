@@ -100,6 +100,7 @@ api POST "/api/repos" "{
 }" > /dev/null
 
 echo "==> Creating sample borg archives for browsing/diff..."
+
 for i in 1 2 3; do
     ARCHIVE_DATE=$(date -u -d "$i days ago" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -v-"${i}"d +%Y-%m-%dT%H:%M:%S)
     ARCHIVE_DIR=$(mktemp -d)
@@ -108,7 +109,7 @@ for i in 1 2 3; do
     echo "<html><body>Version $i</body></html>" > "$ARCHIVE_DIR/var/www/html/index.html"
     echo "server { listen 80; }" > "$ARCHIVE_DIR/etc/nginx/conf.d/default.conf"
     dd if=/dev/urandom of="$ARCHIVE_DIR/var/www/html/app.js" bs=1024 count=$((50 + i * 10)) 2>/dev/null
-    su -c "cd $ARCHIVE_DIR && BORG_PASSPHRASE=demo-passphrase-123 borg create /backup/repos/server-daily::web-server-01-backup-$ARCHIVE_DATE ." borg
+    su -c "cd $ARCHIVE_DIR && BORG_PASSPHRASE=demo-passphrase-123 BORG_HOST_ID=web-server-01 borg create /backup/repos/server-daily::web-server-01-backup-$ARCHIVE_DATE ." borg
     rm -rf "$ARCHIVE_DIR"
 done
 
@@ -119,7 +120,7 @@ for i in 1 2; do
     mkdir -p "$ARCHIVE_DIR/tmp" "$ARCHIVE_DIR/var/lib/postgresql"
     echo "-- pg_dump output v$i" > "$ARCHIVE_DIR/tmp/mydb.sql"
     dd if=/dev/urandom of="$ARCHIVE_DIR/var/lib/postgresql/data.bin" bs=1024 count=$((100 + i * 20)) 2>/dev/null
-    su -c "cd $ARCHIVE_DIR && BORG_PASSPHRASE=demo-passphrase-123 borg create /backup/repos/database-hourly::db-server-01-backup-$ARCHIVE_DATE ." borg
+    su -c "cd $ARCHIVE_DIR && BORG_PASSPHRASE=demo-passphrase-123 BORG_HOST_ID=db-server-01 borg create /backup/repos/database-hourly::db-server-01-backup-$ARCHIVE_DATE ." borg
     rm -rf "$ARCHIVE_DIR"
 done
 
@@ -130,7 +131,7 @@ for repo in server-daily database-hourly; do
     chmod 755 "$ARCHIVE_DIR"
     mkdir -p "$ARCHIVE_DIR/tmp"
     echo "old backup data" > "$ARCHIVE_DIR/tmp/data.txt"
-    su -c "cd $ARCHIVE_DIR && BORG_PASSPHRASE=demo-passphrase-123 borg create /backup/repos/$repo::unknown-host-backup-$UNMATCHED_DATE ." borg
+    su -c "cd $ARCHIVE_DIR && BORG_PASSPHRASE=demo-passphrase-123 BORG_HOST_ID=unknown-legacy-host borg create /backup/repos/$repo::unknown-host-backup-$UNMATCHED_DATE ." borg
     rm -rf "$ARCHIVE_DIR"
 done
 
@@ -141,14 +142,6 @@ echo "==> Syncing repos to import borg archives..."
 api POST /api/repos/1/sync > /dev/null
 api POST /api/repos/2/sync > /dev/null
 api POST /api/repos/3/sync > /dev/null
-
-echo "==> Marking known archives as matched..."
-PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
-UPDATE backup_reports SET matched = true
-WHERE archive_name LIKE 'web-server-01-backup-%'
-   OR archive_name LIKE 'db-server-01-backup-%'
-   OR archive_name LIKE 'media-store-01-backup-%';
-SQL
 
 echo "==> Fetching IDs..."
 WEB01_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM clients WHERE hostname='web-server-01'")
@@ -205,7 +198,12 @@ api POST "/api/schedules" "{
     \"keep_daily\": 7,
     \"keep_weekly\": 4,
     \"keep_monthly\": 6,
-    \"backup_sources\": [\"/etc\"]
+    \"backup_sources\": [\"/etc\"],
+    \"backup_sources_per_host\": [
+        {\"client_id\": $WEB01_ID, \"paths\": [\"/var/www\", \"/etc/nginx\", \"/var/log/nginx\"]},
+        {\"client_id\": $DB01_ID, \"paths\": [\"/var/lib/postgresql\", \"/etc/postgresql\"]},
+        {\"client_id\": $MEDIA_ID, \"paths\": [\"/mnt/media/photos\", \"/mnt/media/videos\"]}
+    ]
 }" > /dev/null
 
 echo "==> Adding global excludes..."
@@ -248,7 +246,7 @@ SQL
 
 echo "==> Inserting backup report history..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
-INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, original_size, compressed_size, deduplicated_size, files_processed, duration_secs, error_message, warnings, borg_version)
+INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, original_size, compressed_size, deduplicated_size, files_processed, duration_secs, error_message, warnings, borg_version, matched)
 SELECT
     $WEB01_ID, $REPO_DAILY_ID,
     NOW() - (n || ' days')::interval - interval '2 hours',
@@ -265,10 +263,11 @@ SELECT
     (120 + (random() * 180)::int),
     CASE WHEN n = 7 THEN 'Repository lock could not be acquired after 600s' ELSE NULL END,
     CASE WHEN n = 3 THEN ARRAY['file changed while reading: /var/www/app/cache/sess_abc123'] ELSE ARRAY[]::text[] END,
-    '1.4.0'
+    '1.4.0',
+    true
 FROM generate_series(0, 29) AS n;
 
-INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, original_size, compressed_size, deduplicated_size, files_processed, duration_secs, borg_version)
+INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, original_size, compressed_size, deduplicated_size, files_processed, duration_secs, borg_version, matched)
 SELECT
     $DB01_ID, $REPO_HOURLY_ID,
     NOW() - (n || ' hours')::interval,
@@ -279,10 +278,11 @@ SELECT
     (1024*1024*32 * (0.5 + random() * 0.3))::bigint,
     (200 + (random() * 100)::int),
     (30 + (random() * 60)::int),
-    '1.4.0'
+    '1.4.0',
+    true
 FROM generate_series(0, 71) AS n;
 
-INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, original_size, compressed_size, deduplicated_size, files_processed, duration_secs, borg_version)
+INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, original_size, compressed_size, deduplicated_size, files_processed, duration_secs, borg_version, matched)
 SELECT
     $MEDIA_ID, $REPO_WEEKLY_ID,
     NOW() - (n * 7 || ' days')::interval - interval '3 hours',
@@ -293,10 +293,11 @@ SELECT
     (1024*1024*1024 * (5.0 + random() * 2.0))::bigint,
     (150000 + (random() * 50000)::int),
     (1800 + (random() * 1200)::int),
-    '1.4.0'
+    '1.4.0',
+    true
 FROM generate_series(0, 11) AS n;
 
-INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, original_size, compressed_size, deduplicated_size, files_processed, duration_secs, borg_version)
+INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, original_size, compressed_size, deduplicated_size, files_processed, duration_secs, borg_version, matched)
 SELECT
     c.id, $REPO_DAILY_ID,
     NOW() - (n || ' days')::interval - interval '2 hours',
@@ -305,7 +306,8 @@ SELECT
     (1024*1024*512)::bigint,
     (1024*1024*400)::bigint,
     (1024*1024*100)::bigint,
-    5000, 90, '1.4.0'
+    5000, 90, '1.4.0',
+    false
 FROM clients c, generate_series(0, 14) AS n
 WHERE c.hostname = 'old-webserver (imported)';
 SQL

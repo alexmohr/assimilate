@@ -2479,9 +2479,7 @@ async fn get_archives_for_client_across_multiple_repos(pool: PgPool) {
     .await
     .unwrap();
 
-    let archives = db::get_archives_for_client(&pool, client.id)
-        .await
-        .unwrap();
+    let archives = db::get_archives_for_client(&pool, client.id).await.unwrap();
 
     assert_eq!(archives.len(), 2);
 
@@ -2596,9 +2594,7 @@ async fn get_archives_for_client_includes_pattern_matched_archives(pool: PgPool)
     .await
     .unwrap();
 
-    let archives = db::get_archives_for_client(&pool, client.id)
-        .await
-        .unwrap();
+    let archives = db::get_archives_for_client(&pool, client.id).await.unwrap();
     assert_eq!(archives.len(), 1);
     let names: Vec<_> = archives
         .iter()

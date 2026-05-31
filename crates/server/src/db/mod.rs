@@ -530,16 +530,18 @@ pub async fn get_archives_for_client_with_patterns(
             hostname: String,
         }
 
-        let all_clients = sqlx::query_as::<_, IdHostname>(
-            "SELECT id, hostname FROM clients WHERE id != $1",
-        )
-        .bind(client_id)
-        .fetch_all(pool)
-        .await
-        .map_err(ApiError::Database)?;
+        let all_clients =
+            sqlx::query_as::<_, IdHostname>("SELECT id, hostname FROM clients WHERE id != $1")
+                .bind(client_id)
+                .fetch_all(pool)
+                .await
+                .map_err(ApiError::Database)?;
 
         for c in &all_clients {
-            let hostname_base = c.hostname.strip_suffix(" (imported)").unwrap_or(&c.hostname);
+            let hostname_base = c
+                .hostname
+                .strip_suffix(" (imported)")
+                .unwrap_or(&c.hostname);
             if patterns
                 .iter()
                 .any(|p| glob_match::glob_match(&p.pattern, hostname_base))

@@ -29,7 +29,6 @@ type ScheduleType = 'backup' | 'check' | 'verify'
 
 interface ScheduleRow {
   id: number
-  client_id: number
   repo_id: number
   schedule_type: ScheduleType
   cron_expression: string
@@ -46,6 +45,8 @@ interface ScheduleRow {
   compact_enabled: boolean
   pre_backup_commands: string
   post_backup_commands: string
+  execution_mode: string
+  on_failure: string
 }
 
 interface ClientRow {
@@ -116,30 +117,38 @@ function scheduleTypeLabel(t: ScheduleType): string {
   }
 }
 
-const machineMap = computed(() => {
-  const m = new Map<number, ClientRow>()
-  clients.value.forEach((mach) => m.set(mach.id, mach))
-  return m
-})
-
 const repoMap = computed(() => {
   const m = new Map<number, RepoRow>()
   repos.value.forEach((r) => m.set(r.id, r))
   return m
 })
 
-const healthMap = computed(() => {
-  const m = new Map<string, HealthEntry>()
-  health.value.forEach((h) => m.set(`${h.hostname}:${h.target_name}`, h))
+interface EnrichedSchedule extends ScheduleRow {
+  machine: ClientRow | null
+  repo: RepoRow | null
+  health: HealthEntry | null
+}
+
+const healthByRepo = computed(() => {
+  const m = new Map<string, HealthEntry[]>()
+  health.value.forEach((h) => {
+    const entries = m.get(h.target_name) ?? []
+    entries.push(h)
+    m.set(h.target_name, entries)
+  })
   return m
 })
 
-const enrichedSchedules = computed(() =>
+const enrichedSchedules = computed<EnrichedSchedule[]>(() =>
   schedules.value.map((s) => {
-    const machine = machineMap.value.get(s.client_id) ?? null
-    const repo = repoMap.value.get(s.repo_id) ?? null
-    const key = machine && repo ? `${machine.hostname}:${repo.name}` : ''
-    const healthEntry = key ? (healthMap.value.get(key) ?? null) : null
+    const machine: ClientRow | null = null
+    const repo: RepoRow | null = repoMap.value.get(s.repo_id) ?? null
+    const entries = repo ? (healthByRepo.value.get(repo.name) ?? []) : []
+    const healthEntry: HealthEntry | null =
+      entries.find((h) => h.is_overdue) ??
+      entries.find((h) => h.last_status === 'failed') ??
+      entries[0] ??
+      null
     return { ...s, machine, repo, health: healthEntry }
   }),
 )
@@ -424,8 +433,10 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
       >
         <div class="card-top">
           <div class="card-info">
-            <span class="card-hostname">{{ s.machine?.hostname ?? `client #${s.client_id}` }}</span>
-            <span class="card-repo">{{ s.repo?.name ?? `repo #${s.repo_id}` }}</span>
+            <span class="card-hostname">{{ s.repo?.name ?? `repo #${s.repo_id}` }}</span>
+            <span class="card-repo">
+              {{ s.execution_mode === 'sequential' ? 'Sequential' : 'Parallel' }}
+            </span>
           </div>
           <div class="card-badges">
             <span

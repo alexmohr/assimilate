@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiClient } from '../api/client'
 import { formatDateShort, formatBytes, relativeTime } from '../utils/format'
@@ -19,7 +19,6 @@ type ScheduleType = 'backup' | 'check' | 'verify'
 
 interface ScheduleRow {
   id: number
-  client_id: number
   repo_id: number
   schedule_type: string
   cron_expression: string
@@ -36,6 +35,13 @@ interface ScheduleRow {
   compact_enabled: boolean
   pre_backup_commands: string
   post_backup_commands: string
+  execution_mode: string
+  on_failure: string
+}
+
+interface ScheduleTarget {
+  client_id: number
+  execution_order: number
 }
 
 interface ClientRow {
@@ -59,8 +65,8 @@ const isCreate = computed(() => props.id === 'new')
 const schedule = ref<ScheduleRow | null>(null)
 const clients = ref<ClientRow[]>([])
 const repos = ref<RepoRow[]>([])
-const client = ref<ClientRow | null>(null)
 const repo = ref<RepoRow | null>(null)
+const scheduleTargets = ref<ScheduleTarget[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
 const saving = ref(false)
@@ -68,9 +74,14 @@ const saveError = ref<string | null>(null)
 const saveSuccess = ref(false)
 const refOpen = ref(false)
 
-const selectedClientId = ref<number | null>(null)
+const selectedClientIds = ref<number[]>([])
 const selectedRepoId = ref<number | null>(null)
 const selectedType = ref<ScheduleType>('backup')
+const executionMode = ref<'parallel' | 'sequential'>('parallel')
+const onFailure = ref<'stop' | 'continue'>('stop')
+
+const showClientDropdown = ref(false)
+const clientDropdownRef = ref<HTMLElement | null>(null)
 
 type TabId = 'settings' | 'advanced' | 'results'
 const activeTab = computed<TabId>({
@@ -105,6 +116,58 @@ const form = ref({
   backup_sources: '',
 })
 
+function clientLabel(id: number): string {
+  const c = clients.value.find((x) => x.id === id)
+  return c ? (c.display_name ?? c.hostname) : `#${id}`
+}
+
+function multiSelectLabel(): string {
+  if (selectedClientIds.value.length === 0) return 'Select hosts...'
+  if (selectedClientIds.value.length === 1) return clientLabel(selectedClientIds.value[0])
+  return `${selectedClientIds.value.length} hosts selected`
+}
+
+function toggleClientSelection(id: number): void {
+  if (selectedClientIds.value.includes(id)) {
+    selectedClientIds.value = selectedClientIds.value.filter((x) => x !== id)
+  } else {
+    selectedClientIds.value = [...selectedClientIds.value, id]
+  }
+}
+
+function moveClientUp(index: number): void {
+  if (index === 0) return
+  const ids = [...selectedClientIds.value]
+  ;[ids[index - 1], ids[index]] = [ids[index], ids[index - 1]]
+  selectedClientIds.value = ids
+}
+
+function moveClientDown(index: number): void {
+  if (index >= selectedClientIds.value.length - 1) return
+  const ids = [...selectedClientIds.value]
+  ;[ids[index], ids[index + 1]] = [ids[index + 1], ids[index]]
+  selectedClientIds.value = ids
+}
+
+function handleClickOutside(event: MouseEvent): void {
+  if (
+    showClientDropdown.value &&
+    clientDropdownRef.value &&
+    !clientDropdownRef.value.contains(event.target as Node)
+  ) {
+    showClientDropdown.value = false
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', handleClickOutside)
+  loadData()
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleClickOutside)
+})
+
 function populateForm(s: ScheduleRow): void {
   form.value = {
     cron_expression: s.cron_expression,
@@ -121,6 +184,8 @@ function populateForm(s: ScheduleRow): void {
     post_backup_commands: (JSON.parse(s.post_backup_commands || '[]') as string[]).join('\n'),
     backup_sources: '',
   }
+  executionMode.value = (s.execution_mode as 'parallel' | 'sequential') ?? 'parallel'
+  onFailure.value = (s.on_failure as 'stop' | 'continue') ?? 'stop'
 }
 
 interface ReportRow {
@@ -185,6 +250,10 @@ function scheduleTypeLabel(t: string): string {
   }
 }
 
+function targetHostnames(): string {
+  return selectedClientIds.value.map(clientLabel).join(', ')
+}
+
 async function loadData(): Promise<void> {
   loading.value = true
   error.value = null
@@ -198,22 +267,23 @@ async function loadData(): Promise<void> {
       repos.value = reposRes.data
       const queryClientId = Number(route.query.client_id)
       if (queryClientId && clients.value.some((c) => c.id === queryClientId)) {
-        selectedClientId.value = queryClientId
-      } else {
-        selectedClientId.value = clients.value.length > 0 ? clients.value[0].id : null
+        selectedClientIds.value = [queryClientId]
       }
       selectedRepoId.value = repos.value.length > 0 ? repos.value[0].id : null
     } else {
-      const [schedRes, clientsRes, reposRes] = await Promise.all([
+      const [schedRes, clientsRes, reposRes, targetsRes] = await Promise.all([
         apiClient.get<ScheduleRow>(`/schedules/${props.id}`),
         apiClient.get<ClientRow[]>('/clients'),
         apiClient.get<RepoRow[]>('/repos'),
+        apiClient.get<ScheduleTarget[]>(`/schedules/${props.id}/targets`),
       ])
       schedule.value = schedRes.data
       clients.value = clientsRes.data
       repos.value = reposRes.data
-      client.value = clientsRes.data.find((c) => c.id === schedRes.data.client_id) ?? null
+      scheduleTargets.value = targetsRes.data
       repo.value = reposRes.data.find((r) => r.id === schedRes.data.repo_id) ?? null
+      const sorted = [...targetsRes.data].sort((a, b) => a.execution_order - b.execution_order)
+      selectedClientIds.value = sorted.map((t) => t.client_id)
       populateForm(schedRes.data)
     }
   } catch (e: unknown) {
@@ -245,19 +315,26 @@ async function save(): Promise<void> {
     }
 
     if (isCreate.value) {
-      if (!selectedClientId.value || !selectedRepoId.value) {
-        saveError.value = 'Please select a client and repository.'
+      if (selectedClientIds.value.length === 0 || !selectedRepoId.value) {
+        saveError.value = 'Please select at least one host and a repository.'
         return
       }
       const res = await apiClient.post<ScheduleRow>('/schedules', {
         ...payload,
-        client_id: selectedClientId.value,
+        client_ids: selectedClientIds.value,
         repo_id: selectedRepoId.value,
         schedule_type: selectedType.value,
+        execution_mode: executionMode.value,
+        on_failure: onFailure.value,
       })
       router.push(`/schedules/${res.data.id}`)
     } else {
-      const res = await apiClient.put<ScheduleRow>(`/schedules/${schedule.value!.id}`, payload)
+      const res = await apiClient.put<ScheduleRow>(`/schedules/${schedule.value!.id}`, {
+        ...payload,
+        client_ids: selectedClientIds.value,
+        execution_mode: executionMode.value,
+        on_failure: onFailure.value,
+      })
       schedule.value = res.data
       populateForm(res.data)
       saveSuccess.value = true
@@ -272,7 +349,6 @@ async function save(): Promise<void> {
   }
 }
 
-onMounted(loadData)
 watch(() => props.id, loadData)
 watch(activeTab, (tab) => {
   if (tab === 'results' && reports.value.length === 0 && !reportsLoading.value) {
@@ -359,28 +435,126 @@ watch(activeTab, (tab) => {
             class="form-card"
           >
             <h3 class="info-title">Target</h3>
+
+            <!-- Multi-select for hosts -->
             <div class="form-group">
-              <label class="form-label">Client <span class="required">*</span></label>
+              <label class="form-label">Hosts <span class="required">*</span></label>
+              <div
+                ref="clientDropdownRef"
+                class="multi-select-wrapper"
+              >
+                <button
+                  type="button"
+                  class="multi-select-trigger"
+                  :class="{ open: showClientDropdown }"
+                  @click.stop="showClientDropdown = !showClientDropdown"
+                >
+                  <span class="multi-select-label">{{ multiSelectLabel() }}</span>
+                  <span class="multi-select-arrow">{{ showClientDropdown ? '▲' : '▼' }}</span>
+                </button>
+                <div
+                  v-if="showClientDropdown"
+                  class="multi-select-dropdown"
+                >
+                  <label
+                    v-for="c in clients"
+                    :key="c.id"
+                    class="multi-select-item"
+                  >
+                    <input
+                      type="checkbox"
+                      :checked="selectedClientIds.includes(c.id)"
+                      @change="toggleClientSelection(c.id)"
+                    />
+                    <span class="multi-select-name">{{ c.display_name ?? c.hostname }}</span>
+                  </label>
+                </div>
+              </div>
+              <span class="field-hint">The agent clients that will execute this schedule</span>
+            </div>
+
+            <!-- Execution Mode -->
+            <div class="form-group">
+              <label class="form-label">Execution Mode</label>
+              <div class="segmented-control">
+                <button
+                  type="button"
+                  class="seg-btn"
+                  :class="{ active: executionMode === 'parallel' }"
+                  @click="executionMode = 'parallel'"
+                >
+                  Parallel
+                </button>
+                <button
+                  type="button"
+                  class="seg-btn"
+                  :class="{ active: executionMode === 'sequential' }"
+                  @click="executionMode = 'sequential'"
+                >
+                  Sequential
+                </button>
+              </div>
+              <span class="field-hint">
+                Parallel runs all hosts simultaneously; Sequential runs them one by one.
+              </span>
+            </div>
+
+            <!-- On Failure (sequential only) -->
+            <div
+              v-if="executionMode === 'sequential'"
+              class="form-group"
+            >
+              <label class="form-label">On Failure</label>
               <select
-                v-model.number="selectedClientId"
+                v-model="onFailure"
                 class="form-select"
               >
-                <option
-                  :value="null"
-                  disabled
-                >
-                  Select a client...
-                </option>
-                <option
-                  v-for="m in clients"
-                  :key="m.id"
-                  :value="m.id"
-                >
-                  {{ m.display_name ?? m.hostname }}
-                </option>
+                <option value="stop">Stop</option>
+                <option value="continue">Continue</option>
               </select>
-              <span class="field-hint">The agent client that will execute this schedule</span>
+              <span class="field-hint">
+                Whether to stop or continue to the next host when one fails.
+              </span>
             </div>
+
+            <!-- Ordering (sequential, 2+ hosts) -->
+            <div
+              v-if="executionMode === 'sequential' && selectedClientIds.length > 1"
+              class="form-group"
+            >
+              <label class="form-label">Execution Order</label>
+              <div class="order-list">
+                <div
+                  v-for="(clientId, idx) in selectedClientIds"
+                  :key="clientId"
+                  class="order-item"
+                >
+                  <span class="order-index">{{ idx + 1 }}</span>
+                  <span class="order-name">{{ clientLabel(clientId) }}</span>
+                  <div class="order-actions">
+                    <button
+                      type="button"
+                      class="order-btn"
+                      :disabled="idx === 0"
+                      title="Move up"
+                      @click="moveClientUp(idx)"
+                    >
+                      ▲
+                    </button>
+                    <button
+                      type="button"
+                      class="order-btn"
+                      :disabled="idx === selectedClientIds.length - 1"
+                      title="Move down"
+                      @click="moveClientDown(idx)"
+                    >
+                      ▼
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div class="form-group">
               <label class="form-label">Repository <span class="required">*</span></label>
               <select
@@ -413,10 +587,10 @@ watch(activeTab, (tab) => {
                 <option value="check">Integrity Check</option>
                 <option value="verify">Verify (extract dry-run)</option>
               </select>
-              <span class="field-hint"
-                >Backup creates archives; Check validates repo integrity; Verify tests
-                extractability.</span
-              >
+              <span class="field-hint">
+                Backup creates archives; Check validates repo integrity; Verify tests
+                extractability.
+              </span>
             </div>
           </div>
 
@@ -427,10 +601,23 @@ watch(activeTab, (tab) => {
           >
             <h3 class="info-title">Schedule Info</h3>
             <div class="info-row">
-              <span class="info-label">Client</span>
-              <span class="info-value">{{
-                client?.display_name ?? client?.hostname ?? `#${schedule.client_id}`
-              }}</span>
+              <span class="info-label">Targets</span>
+              <span class="info-value">{{ targetHostnames() || '—' }}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Execution Mode</span>
+              <span class="info-value">
+                {{ schedule.execution_mode === 'sequential' ? 'Sequential' : 'Parallel' }}
+              </span>
+            </div>
+            <div
+              v-if="schedule.execution_mode === 'sequential'"
+              class="info-row"
+            >
+              <span class="info-label">On Failure</span>
+              <span class="info-value">
+                {{ schedule.on_failure === 'continue' ? 'Continue' : 'Stop' }}
+              </span>
             </div>
             <div class="info-row">
               <span class="info-label">Repository</span>
@@ -456,6 +643,126 @@ watch(activeTab, (tab) => {
             </div>
           </div>
 
+          <!-- Edit-only: target settings card -->
+          <div
+            v-if="!isCreate"
+            class="form-card"
+          >
+            <h3 class="info-title">Target Settings</h3>
+
+            <!-- Multi-select for hosts -->
+            <div class="form-group">
+              <label class="form-label">Hosts</label>
+              <div
+                ref="clientDropdownRef"
+                class="multi-select-wrapper"
+              >
+                <button
+                  type="button"
+                  class="multi-select-trigger"
+                  :class="{ open: showClientDropdown }"
+                  @click.stop="showClientDropdown = !showClientDropdown"
+                >
+                  <span class="multi-select-label">{{ multiSelectLabel() }}</span>
+                  <span class="multi-select-arrow">{{ showClientDropdown ? '▲' : '▼' }}</span>
+                </button>
+                <div
+                  v-if="showClientDropdown"
+                  class="multi-select-dropdown"
+                >
+                  <label
+                    v-for="c in clients"
+                    :key="c.id"
+                    class="multi-select-item"
+                  >
+                    <input
+                      type="checkbox"
+                      :checked="selectedClientIds.includes(c.id)"
+                      @change="toggleClientSelection(c.id)"
+                    />
+                    <span class="multi-select-name">{{ c.display_name ?? c.hostname }}</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <!-- Execution Mode -->
+            <div class="form-group">
+              <label class="form-label">Execution Mode</label>
+              <div class="segmented-control">
+                <button
+                  type="button"
+                  class="seg-btn"
+                  :class="{ active: executionMode === 'parallel' }"
+                  @click="executionMode = 'parallel'"
+                >
+                  Parallel
+                </button>
+                <button
+                  type="button"
+                  class="seg-btn"
+                  :class="{ active: executionMode === 'sequential' }"
+                  @click="executionMode = 'sequential'"
+                >
+                  Sequential
+                </button>
+              </div>
+            </div>
+
+            <!-- On Failure (sequential only) -->
+            <div
+              v-if="executionMode === 'sequential'"
+              class="form-group"
+            >
+              <label class="form-label">On Failure</label>
+              <select
+                v-model="onFailure"
+                class="form-select"
+              >
+                <option value="stop">Stop</option>
+                <option value="continue">Continue</option>
+              </select>
+            </div>
+
+            <!-- Ordering (sequential, 2+ hosts) -->
+            <div
+              v-if="executionMode === 'sequential' && selectedClientIds.length > 1"
+              class="form-group"
+            >
+              <label class="form-label">Execution Order</label>
+              <div class="order-list">
+                <div
+                  v-for="(clientId, idx) in selectedClientIds"
+                  :key="clientId"
+                  class="order-item"
+                >
+                  <span class="order-index">{{ idx + 1 }}</span>
+                  <span class="order-name">{{ clientLabel(clientId) }}</span>
+                  <div class="order-actions">
+                    <button
+                      type="button"
+                      class="order-btn"
+                      :disabled="idx === 0"
+                      title="Move up"
+                      @click="moveClientUp(idx)"
+                    >
+                      ▲
+                    </button>
+                    <button
+                      type="button"
+                      class="order-btn"
+                      :disabled="idx === selectedClientIds.length - 1"
+                      title="Move down"
+                      @click="moveClientDown(idx)"
+                    >
+                      ▼
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="form-card">
             <h3 class="info-title">Timing</h3>
             <div class="form-group">
@@ -478,9 +785,9 @@ watch(activeTab, (tab) => {
                   placeholder="Directories to back up, one per line"
                   spellcheck="false"
                 />
-                <span class="field-hint"
-                  >Leave empty to use the default paths configured for this host.</span
-                >
+                <span class="field-hint">
+                  Leave empty to use the default paths configured for this host.
+                </span>
               </div>
             </div>
 
@@ -570,9 +877,9 @@ watch(activeTab, (tab) => {
                 placeholder="One pattern per line&#10;e.g. *.cache&#10;pp:__pycache__"
                 spellcheck="false"
               />
-              <span class="field-hint"
-                >Leave empty to use only global and host-level default excludes.</span
-              >
+              <span class="field-hint">
+                Leave empty to use only global and host-level default excludes.
+              </span>
               <div
                 v-if="refOpen"
                 class="ref-panel"
@@ -1209,5 +1516,195 @@ watch(activeTab, (tab) => {
 
 .result-error .result-section-label {
   color: var(--danger);
+}
+
+/* Multi-select */
+.multi-select-wrapper {
+  position: relative;
+}
+
+.multi-select-trigger {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  outline: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+  text-align: left;
+}
+
+.multi-select-trigger:hover,
+.multi-select-trigger.open {
+  border-color: var(--accent);
+}
+
+.multi-select-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.multi-select-arrow {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.multi-select-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--bg-elevated, var(--bg-card));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg, var(--shadow));
+  padding: 0.4rem;
+  z-index: 100;
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.multi-select-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  transition: background 0.1s;
+}
+
+.multi-select-item:hover {
+  background: var(--bg-hover);
+}
+
+.multi-select-item input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.multi-select-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Segmented control */
+.segmented-control {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.seg-btn {
+  padding: 0.4rem 1rem;
+  border: none;
+  background: var(--bg-input);
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.seg-btn + .seg-btn {
+  border-left: 1px solid var(--border);
+}
+
+.seg-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.seg-btn.active {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* Ordering list */
+.order-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.order-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.order-index {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  min-width: 1.2rem;
+  text-align: center;
+}
+
+.order-name {
+  flex: 1;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.order-actions {
+  display: flex;
+  gap: 0.2rem;
+  flex-shrink: 0;
+}
+
+.order-btn {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  cursor: pointer;
+  transition:
+    background 0.1s,
+    color 0.1s;
+  line-height: 1;
+}
+
+.order-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.order-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
 }
 </style>

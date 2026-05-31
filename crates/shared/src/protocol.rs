@@ -89,6 +89,10 @@ pub enum AgentToServer {
         token: String,
         agent_version: String,
         #[serde(default)]
+        agent_git_sha: Option<String>,
+        #[serde(default)]
+        agent_build_time: Option<String>,
+        #[serde(default)]
         supports_restart: bool,
         #[serde(default)]
         restart_unavailable_reason: Option<String>,

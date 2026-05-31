@@ -64,6 +64,7 @@ async fn connect_and_run(
 
     let version = env!("CARGO_PKG_VERSION");
     let git_sha = env!("GIT_SHA");
+    let build_timestamp = env!("BUILD_TIMESTAMP");
     let agent_version = if git_sha.is_empty() {
         version.to_owned()
     } else {
@@ -74,6 +75,16 @@ async fn connect_and_run(
         hostname,
         token: args.token.clone(),
         agent_version,
+        agent_git_sha: if git_sha.is_empty() {
+            None
+        } else {
+            Some(git_sha.to_owned())
+        },
+        agent_build_time: if build_timestamp.is_empty() {
+            None
+        } else {
+            Some(build_timestamp.to_owned())
+        },
         supports_restart: restart_capability.supported,
         restart_unavailable_reason: restart_capability.unavailable_reason.clone(),
     };

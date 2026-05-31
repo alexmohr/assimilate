@@ -101,6 +101,22 @@ api POST "/api/repos" "{
 
 echo "==> Creating sample borg archives for browsing/diff..."
 
+# Helper: create borg archive with spoofed hostname metadata.
+# Borg 1.x stores socket.gethostname() in archive metadata with no env override,
+# so we monkey-patch it via Python before invoking borg's main().
+# Usage: borg_create_as <hostname> <repo::archive> <source_path>
+borg_create_as() {
+    local fake_host="$1" repo_archive="$2" source_path="$3"
+    su -c "cd $source_path && BORG_PASSPHRASE=demo-passphrase-123 python3 -c \"
+import socket, platform, sys
+socket.gethostname = lambda: '$fake_host'
+platform.node = lambda: '$fake_host'
+from borg.archiver import main
+sys.argv = ['borg', 'create', '$repo_archive', '.']
+sys.exit(main())
+\"" borg
+}
+
 for i in 1 2 3; do
     ARCHIVE_DATE=$(date -u -d "$i days ago" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -v-"${i}"d +%Y-%m-%dT%H:%M:%S)
     ARCHIVE_DIR=$(mktemp -d)
@@ -109,7 +125,7 @@ for i in 1 2 3; do
     echo "<html><body>Version $i</body></html>" > "$ARCHIVE_DIR/var/www/html/index.html"
     echo "server { listen 80; }" > "$ARCHIVE_DIR/etc/nginx/conf.d/default.conf"
     dd if=/dev/urandom of="$ARCHIVE_DIR/var/www/html/app.js" bs=1024 count=$((50 + i * 10)) 2>/dev/null
-    su -c "cd $ARCHIVE_DIR && BORG_PASSPHRASE=demo-passphrase-123 BORG_HOST_ID=web-server-01 borg create /backup/repos/server-daily::web-server-01-backup-$ARCHIVE_DATE ." borg
+    borg_create_as "web-server-01" "/backup/repos/server-daily::web-server-01-backup-$ARCHIVE_DATE" "$ARCHIVE_DIR"
     rm -rf "$ARCHIVE_DIR"
 done
 
@@ -120,7 +136,18 @@ for i in 1 2; do
     mkdir -p "$ARCHIVE_DIR/tmp" "$ARCHIVE_DIR/var/lib/postgresql"
     echo "-- pg_dump output v$i" > "$ARCHIVE_DIR/tmp/mydb.sql"
     dd if=/dev/urandom of="$ARCHIVE_DIR/var/lib/postgresql/data.bin" bs=1024 count=$((100 + i * 20)) 2>/dev/null
-    su -c "cd $ARCHIVE_DIR && BORG_PASSPHRASE=demo-passphrase-123 BORG_HOST_ID=db-server-01 borg create /backup/repos/database-hourly::db-server-01-backup-$ARCHIVE_DATE ." borg
+    borg_create_as "db-server-01" "/backup/repos/database-hourly::db-server-01-backup-$ARCHIVE_DATE" "$ARCHIVE_DIR"
+    rm -rf "$ARCHIVE_DIR"
+done
+
+for i in 1 2; do
+    ARCHIVE_DATE=$(date -u -d "$((i + 3)) days ago" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -v-"$((i + 3))"d +%Y-%m-%dT%H:%M:%S)
+    ARCHIVE_DIR=$(mktemp -d)
+    chmod 755 "$ARCHIVE_DIR"
+    mkdir -p "$ARCHIVE_DIR/mnt/media/photos" "$ARCHIVE_DIR/mnt/media/videos"
+    dd if=/dev/urandom of="$ARCHIVE_DIR/mnt/media/photos/img_$i.jpg" bs=1024 count=$((200 + i * 50)) 2>/dev/null
+    dd if=/dev/urandom of="$ARCHIVE_DIR/mnt/media/videos/clip_$i.mp4" bs=1024 count=$((500 + i * 100)) 2>/dev/null
+    borg_create_as "media-store-01" "/backup/repos/media-weekly::media-store-01-backup-$ARCHIVE_DATE" "$ARCHIVE_DIR"
     rm -rf "$ARCHIVE_DIR"
 done
 
@@ -131,7 +158,7 @@ for repo in server-daily database-hourly; do
     chmod 755 "$ARCHIVE_DIR"
     mkdir -p "$ARCHIVE_DIR/tmp"
     echo "old backup data" > "$ARCHIVE_DIR/tmp/data.txt"
-    su -c "cd $ARCHIVE_DIR && BORG_PASSPHRASE=demo-passphrase-123 BORG_HOST_ID=unknown-legacy-host borg create /backup/repos/$repo::unknown-host-backup-$UNMATCHED_DATE ." borg
+    borg_create_as "unknown-legacy-host" "/backup/repos/$repo::unknown-host-backup-$UNMATCHED_DATE" "$ARCHIVE_DIR"
     rm -rf "$ARCHIVE_DIR"
 done
 

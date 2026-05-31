@@ -193,6 +193,23 @@ pub async fn push_config_to_agent(state: &AppState, hostname: &str) {
     }
 }
 
+pub async fn push_config_to_all_schedule_targets(state: &AppState, schedule_id: i64) {
+    let hostnames = match db::get_schedule_target_hostnames(&state.pool, schedule_id).await {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::warn!(
+                schedule_id,
+                error = %e,
+                "failed to get schedule target hostnames for config push"
+            );
+            return;
+        }
+    };
+    for hostname in &hostnames {
+        push_config_to_agent(state, hostname).await;
+    }
+}
+
 fn schedule_type_from_str(s: &str) -> Result<ScheduleType, ApiError> {
     s.parse()
         .map_err(|e| ApiError::Internal(format!("invalid schedule type in database: {e}")))

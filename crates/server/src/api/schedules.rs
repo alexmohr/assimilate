@@ -10,7 +10,7 @@ use serde::Deserialize;
 use shared::{
     protocol::ServerToAgent,
     schedule::{calculate_next_run, validate_cron},
-    types::{RepoId, ScheduleType},
+    types::{ExecutionMode, OnFailure, RepoId, ScheduleType},
 };
 
 use super::{
@@ -26,7 +26,7 @@ use crate::{
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateScheduleRequest {
-    pub client_id: i64,
+    pub client_ids: Vec<i64>,
     pub repo_id: i64,
     #[schema(value_type = Option<String>)]
     pub schedule_type: Option<ScheduleType>,
@@ -44,6 +44,10 @@ pub struct CreateScheduleRequest {
     pub pre_backup_commands: Option<Vec<String>>,
     pub post_backup_commands: Option<Vec<String>>,
     pub backup_sources: Option<Vec<String>>,
+    #[schema(value_type = Option<String>)]
+    pub execution_mode: Option<ExecutionMode>,
+    #[schema(value_type = Option<String>)]
+    pub on_failure: Option<OnFailure>,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -62,6 +66,11 @@ pub struct UpdateScheduleRequest {
     pub pre_backup_commands: Option<Vec<String>>,
     pub post_backup_commands: Option<Vec<String>>,
     pub backup_sources: Option<Vec<String>>,
+    pub client_ids: Option<Vec<i64>>,
+    #[schema(value_type = Option<String>)]
+    pub execution_mode: Option<ExecutionMode>,
+    #[schema(value_type = Option<String>)]
+    pub on_failure: Option<OnFailure>,
 }
 
 #[utoipa::path(
@@ -118,6 +127,11 @@ pub async fn create_schedule(
     auth: AuthUser,
     ApiJson(req): ApiJson<CreateScheduleRequest>,
 ) -> Result<(StatusCode, Json<ScheduleRow>), ApiError> {
+    if req.client_ids.is_empty() {
+        return Err(ApiError::BadRequest(
+            "client_ids must contain at least one entry".into(),
+        ));
+    }
     check_repo_permission(&state.pool, &auth, req.repo_id, |p| p.can_modify_schedules).await?;
     validate_cron(&req.cron_expression)
         .map_err(|e| ApiError::BadRequest(format!("invalid cron expression: {e}")))?;
@@ -149,7 +163,7 @@ pub async fn create_schedule(
     let has_backup_sources = req.backup_sources.as_ref().is_some_and(|v| !v.is_empty());
 
     if !has_backup_sources && schedule_type_enum == ScheduleType::Backup {
-        let client = db::get_client_by_id(&state.pool, req.client_id).await?;
+        let client = db::get_client_by_id(&state.pool, req.client_ids[0]).await?;
         if client.default_backup_paths.is_empty() {
             return Err(ApiError::BadRequest(
                 "no backup sources provided and client has no default backup paths configured"
@@ -157,6 +171,11 @@ pub async fn create_schedule(
             ));
         }
     }
+
+    let execution_mode = req.execution_mode.unwrap_or_default();
+    let on_failure = req.on_failure.unwrap_or_default();
+    let execution_mode_str = execution_mode.to_string();
+    let on_failure_str = on_failure.to_string();
 
     let params = ScheduleParams {
         schedule_type,
@@ -181,16 +200,23 @@ pub async fn create_schedule(
             .unwrap_or_else(|_| "[]".to_owned()),
         post_backup_commands: &serde_json::to_string(&req.post_backup_commands.unwrap_or_default())
             .unwrap_or_else(|_| "[]".to_owned()),
+        execution_mode: &execution_mode_str,
+        on_failure: &on_failure_str,
     };
 
-    let schedule = db::insert_schedule(
-        &state.pool,
-        req.client_id,
-        req.repo_id,
-        &params,
-        Some(auth.user_id),
-    )
-    .await?;
+    let schedule =
+        db::insert_schedule(&state.pool, req.repo_id, &params, Some(auth.user_id)).await?;
+
+    let targets: Vec<(i64, i32)> = req
+        .client_ids
+        .iter()
+        .enumerate()
+        .map(|(i, &cid)| {
+            let order = i32::try_from(i).unwrap_or(0);
+            (cid, order)
+        })
+        .collect();
+    db::insert_schedule_targets(&state.pool, schedule.id, &targets).await?;
 
     if let Some(sources) = &req.backup_sources {
         for (i, path) in sources.iter().enumerate() {
@@ -209,9 +235,7 @@ pub async fn create_schedule(
         db::set_next_run_at(&state.pool, schedule.id, next).await?;
     }
 
-    if let Ok(hostname) = db::get_client_hostname_for_schedule(&state.pool, schedule.id).await {
-        config_assembler::push_config_to_agent(&state, &hostname).await;
-    }
+    config_assembler::push_config_to_all_schedule_targets(&state, schedule.id).await;
 
     Ok((StatusCode::CREATED, Json(schedule)))
 }
@@ -299,6 +323,13 @@ pub async fn update_schedule(
         |cmds| serde_json::to_string(&cmds).unwrap_or_else(|_| "[]".to_owned()),
     );
 
+    let execution_mode = req
+        .execution_mode
+        .map_or_else(|| existing.execution_mode.clone(), |m| m.to_string());
+    let on_failure = req
+        .on_failure
+        .map_or_else(|| existing.on_failure.clone(), |f| f.to_string());
+
     let params = ScheduleParams {
         schedule_type: &existing.schedule_type,
         cron_expression: &req.cron_expression,
@@ -320,9 +351,29 @@ pub async fn update_schedule(
         },
         pre_backup_commands: &pre_cmds_json,
         post_backup_commands: &post_cmds_json,
+        execution_mode: &execution_mode,
+        on_failure: &on_failure,
     };
 
     let schedule = db::update_schedule(&state.pool, id, &params).await?;
+
+    if let Some(client_ids) = &req.client_ids {
+        if client_ids.is_empty() {
+            return Err(ApiError::BadRequest(
+                "client_ids must contain at least one entry".into(),
+            ));
+        }
+        db::delete_schedule_targets(&state.pool, schedule.id).await?;
+        let targets: Vec<(i64, i32)> = client_ids
+            .iter()
+            .enumerate()
+            .map(|(i, &cid)| {
+                let order = i32::try_from(i).unwrap_or(0);
+                (cid, order)
+            })
+            .collect();
+        db::insert_schedule_targets(&state.pool, schedule.id, &targets).await?;
+    }
 
     if let Some(sources) = &req.backup_sources {
         db::delete_backup_sources_for_schedule(&state.pool, schedule.id).await?;
@@ -344,9 +395,7 @@ pub async fn update_schedule(
         db::set_next_run_at(&state.pool, schedule.id, chrono::Utc::now()).await?;
     }
 
-    if let Ok(hostname) = db::get_client_hostname_for_schedule(&state.pool, schedule.id).await {
-        config_assembler::push_config_to_agent(&state, &hostname).await;
-    }
+    config_assembler::push_config_to_all_schedule_targets(&state, schedule.id).await;
 
     Ok(Json(schedule))
 }
@@ -376,91 +425,19 @@ pub async fn delete_schedule(
     })
     .await?;
 
-    let hostname = db::get_client_hostname_for_schedule(&state.pool, id)
+    let hostnames = db::get_schedule_target_hostnames(&state.pool, id)
         .await
-        .inspect_err(|e| {
-            tracing::warn!(schedule_id = id, error = %e, "failed to look up hostname for schedule");
-        })
         .ok();
 
     db::delete_schedule(&state.pool, id).await?;
 
-    if let Some(hostname) = hostname {
-        config_assembler::push_config_to_agent(&state, &hostname).await;
+    if let Some(hostnames) = hostnames {
+        for hostname in &hostnames {
+            config_assembler::push_config_to_agent(&state, hostname).await;
+        }
     }
 
     Ok(StatusCode::NO_CONTENT)
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/schedules/{id}/clone",
-    tag = "Schedules",
-    operation_id = "cloneSchedule",
-    summary = "Clone an existing schedule",
-    params(("id" = i64, Path, description = "Schedule ID")),
-    responses(
-        (status = 201, description = "Cloned schedule", body = crate::db::ScheduleRow),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden"),
-        (status = 404, description = "Not found"),
-    )
-)]
-pub async fn clone_schedule(
-    State(state): State<AppState>,
-    auth: AuthUser,
-    Path(id): Path<i64>,
-) -> Result<(StatusCode, Json<ScheduleRow>), ApiError> {
-    let existing = db::get_schedule_by_id(&state.pool, id).await?;
-    check_repo_permission(&state.pool, &auth, existing.repo_id, |p| {
-        p.can_modify_schedules
-    })
-    .await?;
-
-    let Some(client_id) = existing.client_id else {
-        return Err(ApiError::BadRequest(
-            "cannot clone schedule without a client".into(),
-        ));
-    };
-
-    let params = ScheduleParams {
-        schedule_type: &existing.schedule_type,
-        cron_expression: &existing.cron_expression,
-        enabled: false,
-        canary_enabled: existing.canary_enabled,
-        exclude_patterns: &existing.exclude_patterns,
-        ignore_global_excludes: existing.ignore_global_excludes,
-        keep_daily: existing.keep_daily,
-        keep_weekly: existing.keep_weekly,
-        keep_monthly: existing.keep_monthly,
-        keep_yearly: existing.keep_yearly,
-        compact_enabled: existing.compact_enabled,
-        rate_limit_kbps: existing.rate_limit_kbps,
-        pre_backup_commands: &existing.pre_backup_commands,
-        post_backup_commands: &existing.post_backup_commands,
-    };
-
-    let schedule = db::insert_schedule(
-        &state.pool,
-        client_id,
-        existing.repo_id,
-        &params,
-        existing.owner_id,
-    )
-    .await?;
-
-    let backup_sources = db::list_backup_sources_for_schedule(&state.pool, existing.id).await?;
-    for (i, path) in backup_sources.iter().enumerate() {
-        let sort_order =
-            i32::try_from(i).map_err(|_| ApiError::BadRequest("too many backup sources".into()))?;
-        db::insert_backup_source_for_schedule(&state.pool, schedule.id, path, sort_order).await?;
-    }
-
-    if let Ok(hostname) = db::get_client_hostname_for_schedule(&state.pool, schedule.id).await {
-        config_assembler::push_config_to_agent(&state, &hostname).await;
-    }
-
-    Ok((StatusCode::CREATED, Json(schedule)))
 }
 
 fn schedule_type_to_str(st: ScheduleType) -> &'static str {
@@ -496,33 +473,37 @@ pub async fn run_schedule_now(
     })
     .await?;
 
-    let hostname = db::get_client_hostname_for_schedule(&state.pool, id).await?;
+    let hostnames = db::get_schedule_target_hostnames(&state.pool, id).await?;
     let repo_id = RepoId(schedule.repo_id);
     let schedule_type = schedule
         .schedule_type
         .parse::<ScheduleType>()
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
-    let msg = match schedule_type {
-        ScheduleType::Check => ServerToAgent::RunCheckNow {
-            repo_id,
-            request_id: None,
-        },
-        ScheduleType::Verify => ServerToAgent::RunVerifyNow {
-            repo_id,
-            request_id: None,
-        },
-        ScheduleType::Backup => ServerToAgent::RunBackupNow {
-            repo_id,
-            request_id: None,
-        },
-    };
+    for hostname in &hostnames {
+        let msg = match schedule_type {
+            ScheduleType::Check => ServerToAgent::RunCheckNow {
+                repo_id,
+                request_id: None,
+            },
+            ScheduleType::Verify => ServerToAgent::RunVerifyNow {
+                repo_id,
+                request_id: None,
+            },
+            ScheduleType::Backup => ServerToAgent::RunBackupNow {
+                repo_id,
+                request_id: None,
+            },
+        };
 
-    state
-        .registry
-        .send_to(&hostname, msg)
-        .await
-        .map_err(|e| ApiError::Internal(format!("agent not connected: {e}")))?;
+        if let Err(e) = state.registry.send_to(hostname, msg).await {
+            tracing::warn!(
+                hostname = %hostname,
+                error = %e,
+                "agent not connected for run_schedule_now"
+            );
+        }
+    }
 
     Ok(StatusCode::ACCEPTED)
 }
@@ -554,12 +535,31 @@ pub async fn list_schedule_reports(
     Path(id): Path<i64>,
     Query(query): Query<ListScheduleReportsQuery>,
 ) -> Result<Json<Vec<db::ReportRow>>, ApiError> {
-    let schedule = db::get_schedule_by_id(&state.pool, id).await?;
-    let Some(client_id) = schedule.client_id else {
-        return Ok(Json(Vec::new()));
-    };
+    let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
     let limit = query.limit.unwrap_or(20);
-    let reports =
-        db::list_reports_for_schedule(&state.pool, client_id, schedule.repo_id, limit).await?;
+    let reports = db::list_reports_for_schedule(&state.pool, id, limit).await?;
     Ok(Json(reports))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/schedules/{id}/targets",
+    tag = "Schedules",
+    operation_id = "listScheduleTargets",
+    summary = "List target hosts for a schedule",
+    params(("id" = i64, Path, description = "Schedule ID")),
+    responses(
+        (status = 200, description = "List of targets", body = Vec<crate::db::ScheduleTargetRow>),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Not found"),
+    )
+)]
+pub async fn list_schedule_targets(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Path(id): Path<i64>,
+) -> Result<Json<Vec<db::ScheduleTargetRow>>, ApiError> {
+    let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
+    let targets = db::list_schedule_targets(&state.pool, id).await?;
+    Ok(Json(targets))
 }

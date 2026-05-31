@@ -5,10 +5,11 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { extractError } from '../utils/error'
 const authStore = useAuthStore()
+const route = useRoute()
 const router = useRouter()
 
 const username = ref('')
@@ -21,10 +22,13 @@ async function handleSubmit(): Promise<void> {
   submitting.value = true
   try {
     await authStore.login(username.value, password.value)
+    const next = typeof route.query.next === 'string' && route.query.next.startsWith('/')
+      ? route.query.next
+      : '/'
     if (authStore.user?.must_change_password) {
-      router.push('/change-password')
+      router.push({ path: '/change-password', query: { next } })
     } else {
-      router.push('/')
+      router.push(next)
     }
   } catch (e: unknown) {
     error.value = extractError(e, 'Login failed')

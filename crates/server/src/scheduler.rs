@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use shared::{
     protocol::{ServerToAgent, ServerToUi},
     schedule::calculate_next_run,
@@ -20,7 +20,7 @@ use crate::{
 
 const TICK_INTERVAL: Duration = Duration::from_secs(30);
 const RETENTION_INTERVAL: Duration = Duration::from_secs(3600);
-const SYNC_INTERVAL: Duration = Duration::from_secs(900);
+const SYNC_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 const SYNC_WARN_DURATION: Duration = Duration::from_secs(300);
 const DEFAULT_RETENTION_DAYS: i64 = 7;
 
@@ -56,7 +56,7 @@ pub async fn run(
     };
 
     let sync_task = async {
-        let mut interval = tokio::time::interval(SYNC_INTERVAL);
+        let mut interval = tokio::time::interval(SYNC_CHECK_INTERVAL);
         loop {
             interval.tick().await;
             run_repo_sync(&sync_pool, &encryption_key, &ui_broadcast).await;
@@ -75,8 +75,35 @@ async fn run_repo_sync(pool: &PgPool, encryption_key: &[u8; 32], ui_broadcast: &
         }
     };
 
+    let tz = db::get_schedule_timezone(pool)
+        .await
+        .unwrap_or(chrono_tz::Tz::UTC);
+    let now = Utc::now();
+
     for repo in repos {
         if !repo.enabled {
+            continue;
+        }
+
+        let Some(ref cron_expr) = repo.sync_schedule else {
+            continue;
+        };
+
+        let from = repo.last_synced_at.unwrap_or(DateTime::UNIX_EPOCH);
+        let next_run = match calculate_next_run(cron_expr, from, tz) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!(
+                    repo_id = repo.id,
+                    cron = %cron_expr,
+                    error = %e,
+                    "invalid sync_schedule cron, skipping"
+                );
+                continue;
+            }
+        };
+
+        if next_run > now {
             continue;
         }
 
@@ -88,6 +115,13 @@ async fn run_repo_sync(pool: &PgPool, encryption_key: &[u8; 32], ui_broadcast: &
 
                 if let Err(e) = db::update_repo_last_synced(pool, repo.id).await {
                     tracing::error!(repo_id = repo.id, error = %e, "failed to update last_synced_at");
+                }
+
+                if let Err(e) = db::set_repo_importing(pool, repo.id, false).await {
+                    tracing::error!(repo_id = repo.id, error = %e, "failed to clear importing flag after sync");
+                }
+                if let Err(e) = db::set_repo_import_error(pool, repo.id, None).await {
+                    tracing::error!(repo_id = repo.id, error = %e, "failed to clear import_error after sync");
                 }
 
                 if imported > 0 {
@@ -261,4 +295,44 @@ async fn tick(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::TimeZone;
+
+    use super::*;
+
+    #[test]
+    fn sync_due_when_next_run_in_past() {
+        let cron_expr = "0 0,12 * * *";
+        let last_synced = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 1, 1, 13, 0, 0).unwrap();
+        let tz = chrono_tz::Tz::UTC;
+
+        let next = calculate_next_run(cron_expr, last_synced, tz).unwrap();
+        assert!(next <= now);
+    }
+
+    #[test]
+    fn sync_not_due_when_next_run_in_future() {
+        let cron_expr = "0 0,12 * * *";
+        let last_synced = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 0).unwrap();
+        let tz = chrono_tz::Tz::UTC;
+
+        let next = calculate_next_run(cron_expr, last_synced, tz).unwrap();
+        assert!(next > now);
+    }
+
+    #[test]
+    fn sync_due_when_never_synced() {
+        let cron_expr = "0 0,12 * * *";
+        let last_synced = DateTime::UNIX_EPOCH;
+        let now = Utc::now();
+        let tz = chrono_tz::Tz::UTC;
+
+        let next = calculate_next_run(cron_expr, last_synced, tz).unwrap();
+        assert!(next <= now);
+    }
 }

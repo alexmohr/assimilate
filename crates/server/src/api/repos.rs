@@ -133,6 +133,7 @@ pub struct UpdateRepoRequest {
     #[schema(value_type = Option<String>)]
     pub encryption: Option<BorgEncryption>,
     pub enabled: Option<bool>,
+    pub sync_schedule: Option<Option<String>>,
 }
 
 #[utoipa::path(
@@ -285,6 +286,8 @@ pub async fn update_repo(
         .encryption
         .map_or_else(|| "repokey-blake2".to_string(), |e| e.to_string());
 
+    let sync_schedule = req.sync_schedule.unwrap_or(existing.sync_schedule);
+
     let repo = db::update_repo(
         &state.pool,
         &UpdateRepoParams {
@@ -296,6 +299,7 @@ pub async fn update_repo(
             compression: &compression,
             encryption: &encryption,
             enabled: req.enabled.unwrap_or(true),
+            sync_schedule: sync_schedule.as_deref(),
         },
     )
     .await?;
@@ -1396,6 +1400,35 @@ pub async fn sync_repo(
         imported,
         duration_secs,
     }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/repos/{repo_id}/reset-import",
+    tag = "Repositories",
+    operation_id = "resetImport",
+    summary = "Reset a stuck importing state (admin only)",
+    params(
+        ("repo_id" = i64, Path, description = "Repository ID"),
+    ),
+    responses(
+        (status = 204, description = "Import state reset"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Not found"),
+    )
+)]
+pub async fn reset_import(
+    State(state): State<AppState>,
+    _admin: RequireAdmin,
+    Path(repo_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    db::get_repo_with_stats(&state.pool, repo_id).await?;
+    db::set_repo_importing(&state.pool, repo_id, false).await?;
+    db::set_repo_import_error(&state.pool, repo_id, None).await?;
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::DataChanged);
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[cfg(test)]

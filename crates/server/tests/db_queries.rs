@@ -222,6 +222,7 @@ async fn repo_update(pool: PgPool) {
             compression: "zstd,3",
             encryption: "repokey-blake2",
             enabled: false,
+            sync_schedule: None,
         },
     )
     .await
@@ -823,6 +824,67 @@ async fn backup_sources_per_host_crud(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(schedule_level, vec!["/shared"]);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn excludes_per_host_crud(pool: PgPool) {
+    let (client, _, schedule) = create_test_schedule(&pool).await;
+
+    let client2 = db::insert_client(&pool, "host-two-exc", None, "hash2exc", None)
+        .await
+        .unwrap();
+
+    db::insert_exclude_for_schedule(&pool, schedule.id, "*.log", 0)
+        .await
+        .unwrap();
+
+    db::insert_exclude_for_schedule_client(&pool, schedule.id, client.id, "*.tmp", 0)
+        .await
+        .unwrap();
+    db::insert_exclude_for_schedule_client(&pool, schedule.id, client.id, "*.cache", 1)
+        .await
+        .unwrap();
+    db::insert_exclude_for_schedule_client(&pool, schedule.id, client2.id, "*.bak", 0)
+        .await
+        .unwrap();
+
+    let schedule_level = db::list_excludes_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(schedule_level, vec!["*.log"]);
+
+    let client1_excludes = db::list_excludes_for_schedule_client(&pool, schedule.id, client.id)
+        .await
+        .unwrap();
+    assert_eq!(client1_excludes, vec!["*.tmp", "*.cache"]);
+
+    let client2_excludes = db::list_excludes_for_schedule_client(&pool, schedule.id, client2.id)
+        .await
+        .unwrap();
+    assert_eq!(client2_excludes, vec!["*.bak"]);
+
+    let all_per_host = db::list_all_per_host_excludes_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(all_per_host.len(), 2);
+    assert_eq!(all_per_host[0].client_id, client.id);
+    assert_eq!(all_per_host[0].patterns, vec!["*.tmp", "*.cache"]);
+    assert_eq!(all_per_host[1].client_id, client2.id);
+    assert_eq!(all_per_host[1].patterns, vec!["*.bak"]);
+
+    db::delete_per_host_excludes_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+
+    let all_per_host = db::list_all_per_host_excludes_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert!(all_per_host.is_empty());
+
+    let schedule_level = db::list_excludes_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(schedule_level, vec!["*.log"]);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2890,4 +2952,95 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
         .flat_map(|(_, names)| names.clone())
         .collect();
     assert!(!all_names.contains(&"app-server-01-daily-2026-01-01".to_string()));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_sync_schedule_default(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    assert_eq!(repo.sync_schedule.as_deref(), Some("0 0,12 * * *"));
+    assert!(repo.last_synced_at.is_none());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_sync_schedule_update(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    let updated = db::update_repo(
+        &pool,
+        &UpdateRepoParams {
+            repo_id: repo.id,
+            repo_path: "/backups/test",
+            ssh_user: "backup",
+            ssh_host: "storage.local",
+            ssh_port: 22,
+            compression: "lz4",
+            encryption: "repokey",
+            enabled: true,
+            sync_schedule: Some("0 */6 * * *"),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(updated.sync_schedule.as_deref(), Some("0 */6 * * *"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_sync_schedule_disable(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    let updated = db::update_repo(
+        &pool,
+        &UpdateRepoParams {
+            repo_id: repo.id,
+            repo_path: "/backups/test",
+            ssh_user: "backup",
+            ssh_host: "storage.local",
+            ssh_port: 22,
+            compression: "lz4",
+            encryption: "repokey",
+            enabled: true,
+            sync_schedule: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(updated.sync_schedule.is_none());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_reset_import_clears_state(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    db::set_repo_importing(&pool, repo.id, true).await.unwrap();
+    db::set_repo_import_error(&pool, repo.id, Some("stuck"))
+        .await
+        .unwrap();
+
+    let stats = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
+    assert!(stats.importing);
+    assert_eq!(stats.import_error.as_deref(), Some("stuck"));
+
+    db::set_repo_importing(&pool, repo.id, false).await.unwrap();
+    db::set_repo_import_error(&pool, repo.id, None)
+        .await
+        .unwrap();
+
+    let stats = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
+    assert!(!stats.importing);
+    assert!(stats.import_error.is_none());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_last_synced_at_updates(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    assert!(repo.last_synced_at.is_none());
+
+    db::update_repo_last_synced(&pool, repo.id).await.unwrap();
+
+    let all = db::list_all_repos(&pool).await.unwrap();
+    let updated = all.iter().find(|r| r.id == repo.id).unwrap();
+    assert!(updated.last_synced_at.is_some());
 }

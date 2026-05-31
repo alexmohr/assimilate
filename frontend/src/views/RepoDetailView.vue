@@ -44,6 +44,7 @@ interface RepoWithStats {
   enabled: boolean
   importing: boolean
   import_error: string | null
+  sync_schedule: string | null
   archive_count: number
   last_backup_at: string | null
   total_original_size: number
@@ -67,6 +68,7 @@ interface EditForm {
   compression: CompressionType
   encryption: EncryptionType
   enabled: boolean
+  sync_schedule: string | null
 }
 
 const props = defineProps<{ id: string }>()
@@ -109,6 +111,7 @@ const editForm = reactive<EditForm>({
   compression: 'lz4',
   encryption: 'repokey-blake2',
   enabled: true,
+  sync_schedule: '0 0,12 * * *',
 })
 
 // Passphrase
@@ -156,6 +159,7 @@ const activeBackupClient = ref<string | null>(null)
 // Re-scan
 const rescanLoading = ref(false)
 const syncLoading = ref(false)
+const resetImportLoading = ref(false)
 const { success: toastSuccess, error: toastError } = useToast()
 
 interface RescanResult {
@@ -327,6 +331,7 @@ function startEdit(): void {
   editForm.compression = repo.value.compression as CompressionType
   editForm.encryption = repo.value.encryption as EncryptionType
   editForm.enabled = repo.value.enabled
+  editForm.sync_schedule = repo.value.sync_schedule
   editError.value = null
   isEditing.value = true
 }
@@ -348,6 +353,7 @@ async function saveEdit(): Promise<void> {
       compression: editForm.compression,
       encryption: editForm.encryption,
       enabled: editForm.enabled,
+      sync_schedule: editForm.sync_schedule,
     })
     isEditing.value = false
     await loadRepo()
@@ -514,6 +520,19 @@ async function syncRepo(): Promise<void> {
     syncLoading.value = false
   }
 }
+
+async function resetImport(): Promise<void> {
+  resetImportLoading.value = true
+  try {
+    await apiClient.post(`/repos/${repoId.value}/reset-import`)
+    toastSuccess('Import state reset.')
+    await loadRepo()
+  } catch (e: unknown) {
+    toastError(extractError(e))
+  } finally {
+    resetImportLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -570,6 +589,14 @@ async function syncRepo(): Promise<void> {
                   @click="syncRepo"
                 >
                   {{ syncLoading ? 'Syncing...' : 'Sync' }}
+                </button>
+                <button
+                  v-if="repo.importing || repo.import_error"
+                  class="btn btn-sm btn-ghost btn-danger-text"
+                  :disabled="resetImportLoading"
+                  @click="resetImport"
+                >
+                  {{ resetImportLoading ? 'Resetting...' : 'Cancel Import' }}
                 </button>
                 <button
                   class="btn btn-sm btn-ghost"
@@ -704,6 +731,25 @@ async function syncRepo(): Promise<void> {
                 <div class="field field-full toggle-row">
                   <span class="toggle-row-label">Enabled</span>
                   <ToggleSwitch v-model="editForm.enabled" />
+                </div>
+                <div class="field field-full toggle-row">
+                  <span class="toggle-row-label">Disk Sync</span>
+                  <ToggleSwitch
+                    :model-value="editForm.sync_schedule !== null"
+                    @update:model-value="editForm.sync_schedule = $event ? '0 0,12 * * *' : null"
+                  />
+                </div>
+                <div
+                  v-if="editForm.sync_schedule !== null"
+                  class="field field-full"
+                >
+                  <label class="field-label">Sync Schedule (cron)</label>
+                  <input
+                    v-model="editForm.sync_schedule"
+                    class="input mono"
+                    placeholder="0 0,12 * * *"
+                  />
+                  <span class="field-hint">Cron expression for automatic disk sync</span>
                 </div>
               </div>
               <div

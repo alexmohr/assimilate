@@ -13,8 +13,7 @@ import { useClipboard } from '../composables/useClipboard'
 import { useMobile } from '../composables/useMobile'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
-import { parseLines } from '../utils/validation'
-import { Plus, SlidersHorizontal, Server, Trash2, AlertCircle } from '@lucide/vue'
+import { Plus, SlidersHorizontal, Server, AlertCircle } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
@@ -30,6 +29,7 @@ interface ClientRow {
   created_at: string
   last_seen_at: string | null
   is_connected: boolean
+  is_imported: boolean
   default_backup_paths: string[]
 }
 
@@ -163,16 +163,10 @@ const addError = ref<string | null>(null)
 const newToken = ref<string | null>(null)
 const { copied: tokenCopied, copy: copyToClipboard } = useClipboard()
 
-const showDeleteDialog = ref(false)
-const deleteTarget = ref<ClientRow | null>(null)
-const deleteLoading = ref(false)
-const deleteError = ref<string | null>(null)
-
-const showEditDialog = ref(false)
-const editTarget = ref<ClientRow | null>(null)
-const editForm = reactive({ display_name: '', default_backup_paths: '' })
-const editLoading = ref(false)
-const editError = ref<string | null>(null)
+// Adopt imported client
+const showAdoptDialog = ref(false)
+const adoptToken = ref<string | null>(null)
+const adoptHostname = ref('')
 
 const showDeployDialog = ref(false)
 const deployTarget = ref<ClientRow | null>(null)
@@ -207,14 +201,6 @@ const deployForm = reactive({
 
 useEscapeKey(showAddDialog, closeAddDialog)
 
-useEscapeKey(showEditDialog, () => {
-  showEditDialog.value = false
-})
-
-useEscapeKey(showDeleteDialog, () => {
-  showDeleteDialog.value = false
-})
-
 useEscapeKey(showDeployDialog, () => {
   showDeployDialog.value = false
 })
@@ -224,7 +210,7 @@ function isOnline(client: ClientRow): boolean {
 }
 
 function isImported(client: ClientRow): boolean {
-  return client.display_name?.endsWith('(imported)') ?? false
+  return client.is_imported
 }
 
 function formatLastSeen(iso: string | null): string {
@@ -354,51 +340,31 @@ function navigateToHost(client: ClientRow): void {
   router.push(`/clients/${client.hostname}`)
 }
 
-function openEditDialog(client: ClientRow): void {
-  editTarget.value = client
-  editForm.display_name = client.display_name ?? ''
-  editForm.default_backup_paths = (client.default_backup_paths ?? []).join('\n')
-  editError.value = null
-  showEditDialog.value = true
-}
-
-async function submitEdit(): Promise<void> {
-  if (!editTarget.value) return
-  editLoading.value = true
-  editError.value = null
+async function adoptClient(client: ClientRow): Promise<void> {
   try {
-    const res = await apiClient.put<ClientRow>(`/clients/${editTarget.value.hostname}`, {
-      display_name: editForm.display_name.trim() || null,
-      default_backup_paths: parseLines(editForm.default_backup_paths),
+    const cleanDisplayName =
+      client.display_name?.replace(/\s*\(imported\)$/, '').trim() || null
+    await apiClient.put(`/clients/${client.hostname}`, {
+      display_name: cleanDisplayName,
     })
-    const idx = clients.value.findIndex((m) => m.id === editTarget.value!.id)
-    if (idx !== -1) clients.value[idx] = { ...clients.value[idx], ...res.data }
-    showEditDialog.value = false
+    const res = await apiClient.post<CreateClientResponse>(
+      `/clients/${client.hostname}/regenerate-token`,
+    )
+    const idx = clients.value.findIndex((m) => m.id === client.id)
+    if (idx !== -1) {
+      clients.value[idx] = {
+        ...clients.value[idx],
+        ...res.data.client,
+        is_imported: false,
+        display_name: cleanDisplayName,
+      }
+    }
+    adoptHostname.value = client.hostname
+    adoptToken.value = res.data.token
+    tokenCopied.value = false
+    showAdoptDialog.value = true
   } catch (e: unknown) {
-    editError.value = extractError(e)
-  } finally {
-    editLoading.value = false
-  }
-}
-
-function openDeleteDialog(client: ClientRow): void {
-  deleteTarget.value = client
-  deleteError.value = null
-  showDeleteDialog.value = true
-}
-
-async function confirmDelete(): Promise<void> {
-  if (!deleteTarget.value) return
-  deleteLoading.value = true
-  deleteError.value = null
-  try {
-    await apiClient.delete(`/clients/${deleteTarget.value.hostname}`)
-    clients.value = clients.value.filter((m) => m.id !== deleteTarget.value!.id)
-    showDeleteDialog.value = false
-  } catch (e: unknown) {
-    deleteError.value = extractError(e)
-  } finally {
-    deleteLoading.value = false
+    logger.error('Failed to adopt client', e)
   }
 }
 
@@ -782,10 +748,11 @@ watch(wsStatus, (newStatus, oldStatus) => {
             Merge into...
           </button>
           <button
+            v-if="isImported(client)"
             class="btn btn-sm btn-ghost"
-            @click="openEditDialog(client)"
+            @click="adoptClient(client)"
           >
-            Edit
+            Adopt
           </button>
           <button
             v-if="deployButtonLabel(client) && !isImported(client)"
@@ -793,12 +760,6 @@ watch(wsStatus, (newStatus, oldStatus) => {
             @click="openDeployDialog(client)"
           >
             {{ deployButtonLabel(client) }}
-          </button>
-          <button
-            class="btn btn-sm btn-ghost btn-danger-text"
-            @click="openDeleteDialog(client)"
-          >
-            <Trash2 :size="14" />
           </button>
         </div>
       </div>
@@ -898,114 +859,43 @@ watch(wsStatus, (newStatus, oldStatus) => {
       </div>
     </Teleport>
 
-    <!-- Edit Client Dialog -->
+    <!-- Adopt Host Dialog -->
     <Teleport to="body">
       <div
-        v-if="showEditDialog"
+        v-if="showAdoptDialog"
         class="overlay"
-        @click.self="showEditDialog = false"
+        @click.self="showAdoptDialog = false"
       >
         <div class="dialog dialog-sm">
           <div class="dialog-header">
-            <h2 class="dialog-title">Edit Client &mdash; {{ editTarget?.hostname }}</h2>
+            <h2 class="dialog-title">Host Adopted &mdash; {{ adoptHostname }}</h2>
             <button
               class="close-btn"
-              @click="showEditDialog = false"
+              @click="showAdoptDialog = false"
             >
               &times;
             </button>
           </div>
           <div class="dialog-body">
-            <div class="field">
-              <label class="field-label">Display Name</label>
-              <input
-                v-model="editForm.display_name"
-                class="input"
-                placeholder="Optional friendly name"
-                @keyup.enter="submitEdit"
-              />
-            </div>
-            <div class="field">
-              <label class="field-label">Default Backup Paths</label>
-              <textarea
-                v-model="editForm.default_backup_paths"
-                class="input exclude-area"
-                placeholder="Directories to back up, one per line"
-                spellcheck="false"
-              />
-              <span class="field-hint"
-                >Schedules with empty backup paths will use these defaults.</span
-              >
-            </div>
-            <div
-              v-if="editError"
-              class="form-error"
-            >
-              {{ editError }}
+            <div class="token-notice">
+              <p class="token-warning">Copy this agent token now. It will not be shown again.</p>
+              <div class="token-box">
+                <code class="token-text">{{ adoptToken }}</code>
+                <button
+                  class="btn btn-sm btn-ghost"
+                  @click="copyToClipboard(adoptToken ?? '')"
+                >
+                  {{ tokenCopied ? 'Copied!' : 'Copy' }}
+                </button>
+              </div>
             </div>
           </div>
           <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showEditDialog = false"
-            >
-              Cancel
-            </button>
             <button
               class="btn btn-primary"
-              :disabled="editLoading"
-              @click="submitEdit"
+              @click="showAdoptDialog = false"
             >
-              {{ editLoading ? 'Saving...' : 'Save' }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
-    <!-- Delete Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showDeleteDialog"
-        class="overlay"
-        @click.self="showDeleteDialog = false"
-      >
-        <div class="dialog dialog-sm">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Delete Client</h2>
-            <button
-              class="close-btn"
-              @click="showDeleteDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p class="confirm-text">
-              Delete <strong>{{ deleteTarget?.hostname }}</strong
-              >? This removes the client's schedules and configuration from the UI. No backup data
-              on disk will be affected.
-            </p>
-            <div
-              v-if="deleteError"
-              class="form-error"
-            >
-              {{ deleteError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showDeleteDialog = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="deleteLoading"
-              @click="confirmDelete"
-            >
-              {{ deleteLoading ? 'Deleting...' : 'Delete' }}
+              Done
             </button>
           </div>
         </div>

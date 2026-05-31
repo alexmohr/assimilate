@@ -12,6 +12,7 @@ interface ClientRow {
   id: number
   hostname: string
   display_name: string | null
+  is_imported: boolean
 }
 
 interface MergeResult {
@@ -36,7 +37,7 @@ const mergeError = ref<string | null>(null)
 
 const realClients = computed<ClientRow[]>(() =>
   props.allClients.filter(
-    (c) => c.id !== props.source.id && !(c.display_name?.endsWith('(imported)') ?? false),
+    (c) => c.id !== props.source.id && !c.is_imported,
   ),
 )
 

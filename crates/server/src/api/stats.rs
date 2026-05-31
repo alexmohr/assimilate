@@ -62,6 +62,14 @@ pub struct DashboardSummaryResponse {
     pub last_warning_at: Option<chrono::DateTime<Utc>>,
     pub last_failure_schedule_id: Option<i64>,
     pub last_warning_schedule_id: Option<i64>,
+    pub last_failure_message: Option<String>,
+    pub last_warning_message: Option<String>,
+    pub last_failure_repo_id: Option<i64>,
+    pub last_warning_repo_id: Option<i64>,
+    pub last_failure_repo_name: Option<String>,
+    pub last_warning_repo_name: Option<String>,
+    pub last_failure_schedule_name: Option<String>,
+    pub last_warning_schedule_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -130,6 +138,14 @@ pub async fn summary(
         last_warning_at: row.last_warning_at,
         last_failure_schedule_id: row.last_failure_schedule_id,
         last_warning_schedule_id: row.last_warning_schedule_id,
+        last_failure_message: row.last_failure_message,
+        last_warning_message: row.last_warning_message,
+        last_failure_repo_id: row.last_failure_repo_id,
+        last_warning_repo_id: row.last_warning_repo_id,
+        last_failure_repo_name: row.last_failure_repo_name,
+        last_warning_repo_name: row.last_warning_repo_name,
+        last_failure_schedule_name: row.last_failure_schedule_name,
+        last_warning_schedule_name: row.last_warning_schedule_name,
     }))
 }
 
@@ -383,6 +399,44 @@ pub async fn trends(
     Ok(Json(entries))
 }
 
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct StorageTrendEntry {
+    pub date: String,
+    pub total_size: i64,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/stats/storage-trends",
+    tag = "Statistics",
+    operation_id = "getStorageTrends",
+    summary = "Get total repository disk usage over time",
+    params(
+        ("repo_id" = Option<i64>, Query, description = "Filter by repository ID"),
+        ("days" = Option<i64>, Query, description = "Number of days (14, 30, 90, 365)"),
+    ),
+    responses(
+        (status = 200, description = "Storage trends", body = Vec<StorageTrendEntry>),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
+pub async fn storage_trends(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Query(query): Query<TrendsQuery>,
+) -> Result<Json<Vec<StorageTrendEntry>>, ApiError> {
+    let days = query.days.unwrap_or(30);
+    let rows = db::get_storage_trends(&state.pool, query.repo_id, days).await?;
+    let entries = rows
+        .into_iter()
+        .map(|row| StorageTrendEntry {
+            date: row.date.to_string(),
+            total_size: row.total_size,
+        })
+        .collect();
+    Ok(Json(entries))
+}
+
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CalendarQuery {
     pub month: String,
@@ -485,9 +539,9 @@ pub async fn calendar(
         .parse()
         .map_err(|_| ApiError::BadRequest("invalid month".to_string()))?;
 
-    let rows = db::get_calendar_events(&state.pool, year, month, query.repo_id).await?;
-
     let tz = db::get_schedule_timezone(&state.pool).await?;
+    let rows = db::get_calendar_events(&state.pool, year, month, query.repo_id, tz).await?;
+
     let schedules = db::get_enabled_schedules_for_calendar(&state.pool).await?;
     let now = Utc::now();
 
@@ -528,7 +582,6 @@ pub async fn calendar(
     }
 
     let repos = db::list_all_repos(&state.pool).await?;
-    let clients = db::list_clients(&state.pool).await?;
 
     for schedule in &schedules {
         if query.repo_id.is_some_and(|rid| schedule.repo_id != rid) {
@@ -539,10 +592,10 @@ pub async fn calendar(
             .find(|r| r.id == schedule.repo_id)
             .map(|r| r.name.clone())
             .unwrap_or_default();
-        let hostname = clients
-            .iter()
-            .find(|c| schedule.client_id.is_some_and(|cid| c.id == cid))
-            .map(|c| c.hostname.clone())
+        let hostname = db::get_schedule_target_hostnames(&state.pool, schedule.id)
+            .await
+            .ok()
+            .and_then(|h| h.into_iter().next())
             .unwrap_or_default();
 
         let mut cursor = now;

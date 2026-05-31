@@ -453,6 +453,20 @@ function showWarningPopup(): void {
 function closeStatusPopup(): void {
   statusPopup.value = null
 }
+
+function navigateToRepo(repoId: number | null): void {
+  if (repoId) {
+    router.push(`/repos/${repoId}`)
+  }
+  closeStatusPopup()
+}
+
+function navigateToSchedule(scheduleId: number | null): void {
+  if (scheduleId) {
+    router.push(`/schedules/${scheduleId}`)
+  }
+  closeStatusPopup()
+}
 </script>
 
 <template>
@@ -533,8 +547,7 @@ function closeStatusPopup(): void {
           class="stat-card"
           :class="{ 'stat-card-link': summary?.next_backup_schedule_id }"
           @click="
-            summary?.next_backup_schedule_id &&
-            router.push(`/schedules/${summary.next_backup_schedule_id}`)
+            summary?.next_backup_schedule_id && navigateToSchedule(summary.next_backup_schedule_id)
           "
         >
           <span class="stat-label">Next Backup</span>
@@ -1006,10 +1019,7 @@ function closeStatusPopup(): void {
             <a
               v-if="statusPopup.repo_id"
               class="status-popup-link"
-              @click="
-                router.push(`/repos/${statusPopup.repo_id}`);
-                closeStatusPopup();
-              "
+              @click="navigateToRepo(statusPopup!.repo_id)"
             >
               {{ statusPopup.repo_name }}
             </a>
@@ -1020,10 +1030,7 @@ function closeStatusPopup(): void {
             <a
               v-if="statusPopup.schedule_id"
               class="status-popup-link"
-              @click="
-                router.push(`/schedules/${statusPopup.schedule_id}`);
-                closeStatusPopup();
-              "
+              @click="navigateToSchedule(statusPopup!.schedule_id)"
             >
               {{ cronToHuman(statusPopup.schedule_name) || statusPopup.schedule_name }}
             </a>

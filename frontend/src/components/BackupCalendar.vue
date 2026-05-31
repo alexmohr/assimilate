@@ -184,6 +184,16 @@ function onEventClick(evt: CalendarEvent): void {
 function closeErrorPopup(): void {
   errorPopup.value = null
 }
+
+function navigateToRepoAndClose(repoId: number): void {
+  router.push(`/repos/${repoId}`)
+  closeErrorPopup()
+}
+
+function navigateToScheduleAndClose(scheduleId: number): void {
+  router.push(`/schedules/${scheduleId}`)
+  closeErrorPopup()
+}
 </script>
 
 <template>
@@ -342,10 +352,7 @@ function closeErrorPopup(): void {
           <a
             v-if="errorPopup.repo_id"
             class="cal-error-link"
-            @click="
-              router.push(`/repos/${errorPopup.repo_id}`);
-              closeErrorPopup();
-            "
+            @click="navigateToRepoAndClose(errorPopup.repo_id!)"
           >
             {{ errorPopup.repo_name }}
           </a>
@@ -355,10 +362,7 @@ function closeErrorPopup(): void {
             &middot;
             <a
               class="cal-error-link"
-              @click="
-                router.push(`/schedules/${errorPopup.schedule_id}`);
-                closeErrorPopup();
-              "
+              @click="navigateToScheduleAndClose(errorPopup.schedule_id!)"
             >
               Schedule
             </a>

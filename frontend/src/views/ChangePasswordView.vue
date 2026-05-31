@@ -30,9 +30,10 @@ async function handleSubmit(): Promise<void> {
   submitting.value = true
   try {
     await authStore.changePassword(newPassword.value)
-    const next = typeof route.query.next === 'string' && route.query.next.startsWith('/')
-      ? route.query.next
-      : '/'
+    const next =
+      typeof route.query.next === 'string' && route.query.next.startsWith('/')
+        ? route.query.next
+        : '/'
     router.push(next)
   } catch (e: unknown) {
     error.value = extractError(e, 'Failed to change password')

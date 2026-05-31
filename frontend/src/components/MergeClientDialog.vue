@@ -36,9 +36,7 @@ const mergeLoading = ref(false)
 const mergeError = ref<string | null>(null)
 
 const realClients = computed<ClientRow[]>(() =>
-  props.allClients.filter(
-    (c) => c.id !== props.source.id && !c.is_imported,
-  ),
+  props.allClients.filter((c) => c.id !== props.source.id && !c.is_imported),
 )
 
 async function confirmMerge(): Promise<void> {

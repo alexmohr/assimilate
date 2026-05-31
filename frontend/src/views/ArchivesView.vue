@@ -213,9 +213,7 @@ async function loadContents(path: string): Promise<void> {
       `/repos/${selectedRepoId.value}/archives/${encodeURIComponent(selectedArchive.value.name)}/contents`,
       { params: apiPath ? { path: apiPath } : {} },
     )
-    contents.value = res.data.filter(
-        (e) => e.path !== '.' && e.path !== '..',
-      )
+    contents.value = res.data.filter((e) => e.path !== '.' && e.path !== '..')
   } catch (e: unknown) {
     contentsError.value = extractError(e)
   } finally {
@@ -564,7 +562,10 @@ onMounted(loadRepos)
             :row-class="(data: DisplayEntry) => (data.isDir ? 'clickable' : '')"
             filter-display="row"
             table-class="data-table"
-            @row-click="(e: { data: DisplayEntry }) => e.data.isDir && e.data.displayName !== '.' && navigateTo(e.data.path)"
+            @row-click="
+              (e: { data: DisplayEntry }) =>
+                e.data.isDir && e.data.displayName !== '.' && navigateTo(e.data.path)
+            "
           >
             <Column
               field="displayName"

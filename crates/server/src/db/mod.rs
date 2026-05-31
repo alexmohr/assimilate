@@ -83,7 +83,7 @@ pub async fn merge_client(pool: &PgPool, source_id: i64, target_id: i64) -> Resu
         .await
         .map_err(ApiError::Database)?;
 
-    sqlx::query("UPDATE schedules SET client_id = $1 WHERE client_id = $2")
+    sqlx::query("UPDATE schedule_targets SET client_id = $1 WHERE client_id = $2")
         .bind(target_id)
         .bind(source_id)
         .execute(&mut *tx)
@@ -195,7 +195,6 @@ pub struct ExcludeGlobalRow {
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ScheduleRow {
     pub id: i64,
-    pub client_id: Option<i64>,
     pub repo_id: i64,
     pub schedule_type: String,
     pub cron_expression: String,
@@ -213,8 +212,16 @@ pub struct ScheduleRow {
     pub rate_limit_kbps: Option<i32>,
     pub pre_backup_commands: String,
     pub post_backup_commands: String,
+    pub execution_mode: String,
+    pub on_failure: String,
     pub owner_id: Option<i64>,
     pub visibility: String,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+pub struct ScheduleTargetRow {
+    pub client_id: i64,
+    pub execution_order: i32,
 }
 
 pub async fn get_client_by_hostname(pool: &PgPool, hostname: &str) -> Result<ClientRow, ApiError> {
@@ -813,11 +820,11 @@ pub async fn delete_global_exclude(pool: &PgPool, id: i64) -> Result<(), ApiErro
 
 pub async fn list_schedules(pool: &PgPool) -> Result<Vec<ScheduleRow>, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
-        "SELECT id, client_id, repo_id, schedule_type, cron_expression, enabled, canary_enabled, \
+        "SELECT id, repo_id, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns, ignore_global_excludes, keep_daily, \
          keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
-         pre_backup_commands, post_backup_commands, owner_id, visibility FROM schedules ORDER BY \
-         id",
+         pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, \
+         visibility FROM schedules ORDER BY id",
     )
     .fetch_all(pool)
     .await
@@ -839,27 +846,27 @@ pub struct ScheduleParams<'a> {
     pub rate_limit_kbps: Option<i32>,
     pub pre_backup_commands: &'a str,
     pub post_backup_commands: &'a str,
+    pub execution_mode: &'a str,
+    pub on_failure: &'a str,
 }
 
 pub async fn insert_schedule(
     pool: &PgPool,
-    client_id: i64,
     repo_id: i64,
     params: &ScheduleParams<'_>,
     owner_id: Option<i64>,
 ) -> Result<ScheduleRow, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
-        "INSERT INTO schedules (client_id, repo_id, schedule_type, cron_expression, enabled, \
-         canary_enabled, exclude_patterns, ignore_global_excludes, keep_daily, keep_weekly, \
-         keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands, \
-         post_backup_commands, owner_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, \
-         $12, $13, $14, $15, $16, $17) RETURNING id, client_id, repo_id, schedule_type, \
-         cron_expression, enabled, canary_enabled, last_run_at, next_run_at, exclude_patterns, \
-         ignore_global_excludes, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
-         compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, owner_id, \
-         visibility",
+        "INSERT INTO schedules (repo_id, schedule_type, cron_expression, enabled, canary_enabled, \
+         exclude_patterns, ignore_global_excludes, keep_daily, keep_weekly, keep_monthly, \
+         keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands, \
+         post_backup_commands, execution_mode, on_failure, owner_id) VALUES ($1, $2, $3, $4, $5, \
+         $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id, repo_id, \
+         schedule_type, cron_expression, enabled, canary_enabled, last_run_at, next_run_at, \
+         exclude_patterns, ignore_global_excludes, keep_daily, keep_weekly, keep_monthly, \
+         keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands, \
+         post_backup_commands, execution_mode, on_failure, owner_id, visibility",
     )
-    .bind(client_id)
     .bind(repo_id)
     .bind(params.schedule_type)
     .bind(params.cron_expression)
@@ -875,6 +882,8 @@ pub async fn insert_schedule(
     .bind(params.rate_limit_kbps)
     .bind(params.pre_backup_commands)
     .bind(params.post_backup_commands)
+    .bind(params.execution_mode)
+    .bind(params.on_failure)
     .bind(owner_id)
     .fetch_one(pool)
     .await
@@ -890,11 +899,12 @@ pub async fn update_schedule(
         "UPDATE schedules SET cron_expression = $2, enabled = $3, canary_enabled = $4, \
          exclude_patterns = $5, ignore_global_excludes = $6, keep_daily = $7, keep_weekly = $8, \
          keep_monthly = $9, keep_yearly = $10, compact_enabled = $11, rate_limit_kbps = $12, \
-         pre_backup_commands = $13, post_backup_commands = $14 WHERE id = $1 RETURNING id, \
-         client_id, repo_id, schedule_type, cron_expression, enabled, canary_enabled, \
-         last_run_at, next_run_at, exclude_patterns, ignore_global_excludes, keep_daily, \
-         keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
-         pre_backup_commands, post_backup_commands, owner_id, visibility",
+         pre_backup_commands = $13, post_backup_commands = $14, execution_mode = $15, on_failure \
+         = $16 WHERE id = $1 RETURNING id, repo_id, schedule_type, cron_expression, enabled, \
+         canary_enabled, last_run_at, next_run_at, exclude_patterns, ignore_global_excludes, \
+         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
+         pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, \
+         visibility",
     )
     .bind(id)
     .bind(params.cron_expression)
@@ -910,6 +920,8 @@ pub async fn update_schedule(
     .bind(params.rate_limit_kbps)
     .bind(params.pre_backup_commands)
     .bind(params.post_backup_commands)
+    .bind(params.execution_mode)
+    .bind(params.on_failure)
     .fetch_one(pool)
     .await
     .map_err(|e| match e {
@@ -976,7 +988,8 @@ pub async fn list_repos_for_client(
     sqlx::query_as::<_, RepoWithPassphraseRow>(
         "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, \
          r.passphrase_encrypted, r.compression, r.encryption, r.enabled, r.relocation_pending \
-         FROM repos r JOIN schedules s ON s.repo_id = r.id WHERE s.client_id = $1 ORDER BY r.id",
+         FROM repos r JOIN schedules s ON s.repo_id = r.id JOIN schedule_targets st ON \
+         st.schedule_id = s.id WHERE st.client_id = $1 ORDER BY r.id",
     )
     .bind(client_id)
     .fetch_all(pool)
@@ -991,7 +1004,8 @@ pub async fn list_repos_for_client_public(
     sqlx::query_as::<_, RepoRow>(
         "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, \
          r.compression, r.encryption, r.enabled, r.owner_id, r.visibility FROM repos r JOIN \
-         schedules s ON s.repo_id = r.id WHERE s.client_id = $1 ORDER BY r.id",
+         schedules s ON s.repo_id = r.id JOIN schedule_targets st ON st.schedule_id = s.id WHERE \
+         st.client_id = $1 ORDER BY r.id",
     )
     .bind(client_id)
     .fetch_all(pool)
@@ -1072,11 +1086,11 @@ pub async fn get_schedule_for_repo(
     repo_id: i64,
 ) -> Result<Option<ScheduleRow>, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
-        "SELECT id, client_id, repo_id, schedule_type, cron_expression, enabled, canary_enabled, \
+        "SELECT id, repo_id, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns, ignore_global_excludes, keep_daily, \
          keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
-         pre_backup_commands, post_backup_commands, owner_id, visibility FROM schedules WHERE \
-         repo_id = $1",
+         pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, \
+         visibility FROM schedules WHERE repo_id = $1",
     )
     .bind(repo_id)
     .fetch_optional(pool)
@@ -1090,12 +1104,13 @@ pub async fn get_backup_schedule_for_hostname_repo(
     repo_id: i64,
 ) -> Result<Option<ScheduleRow>, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
-        "SELECT s.id, s.client_id, s.repo_id, s.schedule_type, s.cron_expression, s.enabled, \
-         s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns, \
-         s.ignore_global_excludes, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, \
-         s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands, s.post_backup_commands, \
-         s.owner_id, s.visibility FROM schedules s JOIN clients m ON s.client_id = m.id WHERE \
-         m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = 'backup' LIMIT 1",
+        "SELECT s.id, s.repo_id, s.schedule_type, s.cron_expression, s.enabled, s.canary_enabled, \
+         s.last_run_at, s.next_run_at, s.exclude_patterns, s.ignore_global_excludes, \
+         s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, \
+         s.rate_limit_kbps, s.pre_backup_commands, s.post_backup_commands, s.execution_mode, \
+         s.on_failure, s.owner_id, s.visibility FROM schedules s JOIN schedule_targets st ON \
+         st.schedule_id = s.id JOIN clients m ON st.client_id = m.id WHERE m.hostname = $1 AND \
+         s.repo_id = $2 AND s.schedule_type = 'backup' LIMIT 1",
     )
     .bind(hostname)
     .bind(repo_id)
@@ -1109,11 +1124,11 @@ pub async fn list_schedules_for_repo(
     repo_id: i64,
 ) -> Result<Vec<ScheduleRow>, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
-        "SELECT id, client_id, repo_id, schedule_type, cron_expression, enabled, canary_enabled, \
+        "SELECT id, repo_id, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns, ignore_global_excludes, keep_daily, \
          keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
-         pre_backup_commands, post_backup_commands, owner_id, visibility FROM schedules WHERE \
-         repo_id = $1 ORDER BY id",
+         pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, \
+         visibility FROM schedules WHERE repo_id = $1 ORDER BY id",
     )
     .bind(repo_id)
     .fetch_all(pool)
@@ -1139,11 +1154,12 @@ pub async fn list_schedules_for_client(
     client_id: i64,
 ) -> Result<Vec<ScheduleRow>, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
-        "SELECT id, client_id, repo_id, schedule_type, cron_expression, enabled, canary_enabled, \
-         last_run_at, next_run_at, exclude_patterns, ignore_global_excludes, keep_daily, \
-         keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
-         pre_backup_commands, post_backup_commands, owner_id, visibility FROM schedules WHERE \
-         client_id = $1 ORDER by id",
+        "SELECT s.id, s.repo_id, s.schedule_type, s.cron_expression, s.enabled, s.canary_enabled, \
+         s.last_run_at, s.next_run_at, s.exclude_patterns, s.ignore_global_excludes, \
+         s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, \
+         s.rate_limit_kbps, s.pre_backup_commands, s.post_backup_commands, s.execution_mode, \
+         s.on_failure, s.owner_id, s.visibility FROM schedules s JOIN schedule_targets st ON \
+         st.schedule_id = s.id WHERE st.client_id = $1 ORDER by s.id",
     )
     .bind(client_id)
     .fetch_all(pool)
@@ -1159,6 +1175,9 @@ pub struct DueScheduleRow {
     pub hostname: String,
     pub schedule_type: String,
     pub cron_expression: String,
+    pub execution_mode: String,
+    pub on_failure: String,
+    pub execution_order: i32,
 }
 
 pub async fn list_due_schedules(
@@ -1166,10 +1185,11 @@ pub async fn list_due_schedules(
     now: DateTime<Utc>,
 ) -> Result<Vec<DueScheduleRow>, ApiError> {
     sqlx::query_as::<_, DueScheduleRow>(
-        "SELECT s.id AS schedule_id, s.repo_id, s.client_id, c.hostname, s.schedule_type, \
-         s.cron_expression FROM schedules s JOIN repos r ON r.id = s.repo_id JOIN clients c ON \
-         c.id = s.client_id WHERE s.enabled = true AND r.enabled = true AND s.next_run_at IS NOT \
-         NULL AND s.next_run_at <= $1",
+        "SELECT s.id AS schedule_id, s.repo_id, st.client_id, c.hostname, s.schedule_type, \
+         s.cron_expression, s.execution_mode, s.on_failure, st.execution_order FROM schedules s \
+         JOIN repos r ON r.id = s.repo_id JOIN schedule_targets st ON st.schedule_id = s.id JOIN \
+         clients c ON c.id = st.client_id WHERE s.enabled = true AND r.enabled = true AND \
+         s.next_run_at IS NOT NULL AND s.next_run_at <= $1 ORDER BY s.id, st.execution_order",
     )
     .bind(now)
     .fetch_all(pool)
@@ -1209,11 +1229,11 @@ pub async fn set_next_run_at(
 
 pub async fn get_schedule_by_id(pool: &PgPool, id: i64) -> Result<ScheduleRow, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
-        "SELECT id, client_id, repo_id, schedule_type, cron_expression, enabled, canary_enabled, \
+        "SELECT id, repo_id, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns, ignore_global_excludes, keep_daily, \
          keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
-         pre_backup_commands, post_backup_commands, owner_id, visibility FROM schedules WHERE id \
-         = $1",
+         pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, \
+         visibility FROM schedules WHERE id = $1",
     )
     .bind(id)
     .fetch_one(pool)
@@ -1224,27 +1244,68 @@ pub async fn get_schedule_by_id(pool: &PgPool, id: i64) -> Result<ScheduleRow, A
     })
 }
 
-pub async fn get_client_hostname_for_schedule(
+pub async fn get_schedule_target_hostnames(
     pool: &PgPool,
     schedule_id: i64,
-) -> Result<String, ApiError> {
+) -> Result<Vec<String>, ApiError> {
     #[derive(sqlx::FromRow)]
     struct Row {
         hostname: String,
     }
 
-    let row = sqlx::query_as::<_, Row>(
-        "SELECT c.hostname FROM clients c JOIN schedules s ON s.client_id = c.id WHERE s.id = $1",
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT c.hostname FROM clients c JOIN schedule_targets st ON st.client_id = c.id WHERE \
+         st.schedule_id = $1 ORDER BY st.execution_order",
     )
     .bind(schedule_id)
-    .fetch_one(pool)
+    .fetch_all(pool)
     .await
-    .map_err(|e| match e {
-        sqlx::Error::RowNotFound => ApiError::NotFound(format!("schedule {schedule_id} not found")),
-        other => ApiError::Database(other),
-    })?;
+    .map_err(ApiError::Database)?;
 
-    Ok(row.hostname)
+    Ok(rows.into_iter().map(|r| r.hostname).collect())
+}
+
+pub async fn insert_schedule_targets(
+    pool: &PgPool,
+    schedule_id: i64,
+    targets: &[(i64, i32)],
+) -> Result<(), ApiError> {
+    for (client_id, execution_order) in targets {
+        sqlx::query(
+            "INSERT INTO schedule_targets (schedule_id, client_id, execution_order) VALUES ($1, \
+             $2, $3)",
+        )
+        .bind(schedule_id)
+        .bind(*client_id)
+        .bind(*execution_order)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    }
+    Ok(())
+}
+
+pub async fn delete_schedule_targets(pool: &PgPool, schedule_id: i64) -> Result<(), ApiError> {
+    sqlx::query("DELETE FROM schedule_targets WHERE schedule_id = $1")
+        .bind(schedule_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+pub async fn list_schedule_targets(
+    pool: &PgPool,
+    schedule_id: i64,
+) -> Result<Vec<ScheduleTargetRow>, ApiError> {
+    sqlx::query_as::<_, ScheduleTargetRow>(
+        "SELECT client_id, execution_order FROM schedule_targets WHERE schedule_id = $1 ORDER BY \
+         execution_order",
+    )
+    .bind(schedule_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
 }
 
 pub async fn get_repo_name(pool: &PgPool, repo_id: i64) -> Result<String, ApiError> {
@@ -1445,8 +1506,8 @@ pub async fn list_reports_for_client(
             "SELECT br.id, br.client_id, br.repo_id, br.started_at, br.finished_at, br.status, \
              br.original_size, br.compressed_size, br.deduplicated_size, br.files_processed, \
              br.duration_secs, br.error_message, br.warnings, br.borg_version, br.archive_name \
-             FROM backup_reports br JOIN repos r ON r.id = br.repo_id WHERE br.client_id = $1 \
-             AND r.name = $2 ORDER by br.started_at DESC LIMIT $3",
+             FROM backup_reports br JOIN repos r ON r.id = br.repo_id WHERE br.client_id = $1 AND \
+             r.name = $2 ORDER by br.started_at DESC LIMIT $3",
         )
         .bind(client_id)
         .bind(target_name)
@@ -1471,18 +1532,17 @@ pub async fn list_reports_for_client(
 
 pub async fn list_reports_for_schedule(
     pool: &PgPool,
-    client_id: i64,
-    repo_id: i64,
+    schedule_id: i64,
     limit: i64,
 ) -> Result<Vec<ReportRow>, ApiError> {
     sqlx::query_as::<_, ReportRow>(
         "SELECT id, client_id, repo_id, started_at, finished_at, status, original_size, \
          compressed_size, deduplicated_size, files_processed, duration_secs, error_message, \
-         warnings, borg_version, archive_name FROM backup_reports WHERE client_id = $1 AND \
-         repo_id = $2 ORDER BY started_at DESC LIMIT $3",
+         warnings, borg_version, archive_name FROM backup_reports WHERE repo_id = (SELECT repo_id \
+         FROM schedules WHERE id = $1) AND client_id IN (SELECT client_id FROM schedule_targets \
+         WHERE schedule_id = $1) ORDER BY started_at DESC LIMIT $2",
     )
-    .bind(client_id)
-    .bind(repo_id)
+    .bind(schedule_id)
     .bind(limit)
     .fetch_all(pool)
     .await
@@ -1545,8 +1605,9 @@ pub async fn get_health_summary(pool: &PgPool) -> Result<Vec<HealthRow>, ApiErro
          br.repo_id = r.id AND br.client_id = c.id ORDER BY br.started_at DESC LIMIT 1) AS \
          last_backup_at, (SELECT br.error_message FROM backup_reports br WHERE br.repo_id = r.id \
          AND br.client_id = c.id ORDER BY br.started_at DESC LIMIT 1) AS last_error_message, \
-         s.cron_expression, s.enabled AS schedule_enabled FROM schedules s JOIN clients c ON c.id \
-         = s.client_id JOIN repos r ON r.id = s.repo_id ORDER BY c.hostname, r.name",
+         s.cron_expression, s.enabled AS schedule_enabled FROM schedules s JOIN schedule_targets \
+         st ON st.schedule_id = s.id JOIN clients c ON c.id = st.client_id JOIN repos r ON r.id = \
+         s.repo_id ORDER BY c.hostname, r.name",
     )
     .fetch_all(pool)
     .await
@@ -2378,6 +2439,14 @@ pub struct DashboardSummaryRow {
     pub last_warning_at: Option<DateTime<Utc>>,
     pub last_failure_schedule_id: Option<i64>,
     pub last_warning_schedule_id: Option<i64>,
+    pub last_failure_message: Option<String>,
+    pub last_warning_message: Option<String>,
+    pub last_failure_repo_id: Option<i64>,
+    pub last_warning_repo_id: Option<i64>,
+    pub last_failure_repo_name: Option<String>,
+    pub last_warning_repo_name: Option<String>,
+    pub last_failure_schedule_name: Option<String>,
+    pub last_warning_schedule_name: Option<String>,
 }
 
 pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow, ApiError> {
@@ -2392,11 +2461,12 @@ pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow,
          last_backup_at, (SELECT MIN(s.next_run_at) FROM schedules s JOIN repos r ON r.id = \
          s.repo_id WHERE s.enabled = true AND r.enabled = true AND s.next_run_at IS NOT NULL AND \
          s.next_run_at > NOW()) AS next_backup_at, (SELECT s.id FROM schedules s JOIN \
-         backup_reports br ON br.repo_id = s.repo_id AND br.client_id = s.client_id ORDER BY \
-         br.finished_at DESC LIMIT 1) AS last_backup_schedule_id, (SELECT br.repo_id FROM \
-         backup_reports br WHERE br.status = 'success' ORDER BY br.finished_at DESC LIMIT 1) AS \
-         last_backup_repo_id, (SELECT br.archive_name FROM backup_reports br WHERE br.status = \
-         'success' ORDER BY br.finished_at DESC LIMIT 1) AS last_backup_archive_name, (SELECT s.id FROM schedules s \
+         schedule_targets st ON st.schedule_id = s.id JOIN backup_reports br ON br.repo_id = \
+         s.repo_id AND br.client_id = st.client_id ORDER BY br.finished_at DESC LIMIT 1) AS \
+         last_backup_schedule_id, (SELECT br.repo_id FROM backup_reports br WHERE br.status = \
+         'success' ORDER BY br.finished_at DESC LIMIT 1) AS last_backup_repo_id, (SELECT \
+         br.archive_name FROM backup_reports br WHERE br.status = 'success' ORDER BY \
+         br.finished_at DESC LIMIT 1) AS last_backup_archive_name, (SELECT s.id FROM schedules s \
          JOIN repos r ON r.id = s.repo_id WHERE s.enabled = true AND r.enabled = true AND \
          s.next_run_at IS NOT NULL AND s.next_run_at > NOW() ORDER BY s.next_run_at LIMIT 1) AS \
          next_backup_schedule_id, (SELECT COUNT(*) FROM backup_reports WHERE status = 'success' \
@@ -2407,12 +2477,35 @@ pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow,
          'failed' AND finished_at > '1970-01-01T00:00:00Z') AS last_failure_at, (SELECT \
          MAX(finished_at) FROM backup_reports WHERE status = 'warning' AND finished_at > \
          '1970-01-01T00:00:00Z') AS last_warning_at, (SELECT s.id FROM backup_reports br JOIN \
-         schedules s ON s.client_id = br.client_id AND s.repo_id = br.repo_id WHERE br.status = \
-         'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT \
-         1) AS last_failure_schedule_id, (SELECT s.id FROM backup_reports br JOIN schedules s ON \
-         s.client_id = br.client_id AND s.repo_id = br.repo_id WHERE br.status = 'warning' AND \
-         br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS \
-         last_warning_schedule_id",
+         schedules s ON s.repo_id = br.repo_id JOIN schedule_targets st ON st.schedule_id = s.id \
+         AND st.client_id = br.client_id WHERE br.status = 'failed' AND br.finished_at > \
+         '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS \
+         last_failure_schedule_id, (SELECT s.id FROM backup_reports br JOIN schedules s ON \
+         s.repo_id = br.repo_id JOIN schedule_targets st ON st.schedule_id = s.id AND \
+         st.client_id = br.client_id WHERE br.status = 'warning' AND br.finished_at > \
+         '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS \
+         last_warning_schedule_id, (SELECT br.error_message FROM backup_reports br WHERE \
+         br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at \
+         DESC LIMIT 1) AS last_failure_message, (SELECT br.warnings[1] FROM backup_reports br \
+         WHERE br.status = 'warning' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY \
+         br.finished_at DESC LIMIT 1) AS last_warning_message, (SELECT br.repo_id FROM \
+         backup_reports br WHERE br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' \
+         ORDER BY br.finished_at DESC LIMIT 1) AS last_failure_repo_id, (SELECT br.repo_id FROM \
+         backup_reports br WHERE br.status = 'warning' AND br.finished_at > \
+         '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS last_warning_repo_id, \
+         (SELECT r.name FROM backup_reports br JOIN repos r ON r.id = br.repo_id WHERE br.status \
+         = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC \
+         LIMIT 1) AS last_failure_repo_name, (SELECT r.name FROM backup_reports br JOIN repos r \
+         ON r.id = br.repo_id WHERE br.status = 'warning' AND br.finished_at > \
+         '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS last_warning_repo_name, \
+         (SELECT s.cron_expression FROM backup_reports br JOIN schedules s ON s.repo_id = \
+         br.repo_id JOIN schedule_targets st ON st.schedule_id = s.id AND st.client_id = \
+         br.client_id WHERE br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' \
+         ORDER BY br.finished_at DESC LIMIT 1) AS last_failure_schedule_name, (SELECT \
+         s.cron_expression FROM backup_reports br JOIN schedules s ON s.repo_id = br.repo_id JOIN \
+         schedule_targets st ON st.schedule_id = s.id AND st.client_id = br.client_id WHERE \
+         br.status = 'warning' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY \
+         br.finished_at DESC LIMIT 1) AS last_warning_schedule_name",
     )
     .fetch_one(pool)
     .await
@@ -2958,6 +3051,7 @@ pub async fn get_calendar_events(
     year: i32,
     month: u32,
     repo_id: Option<i64>,
+    tz: chrono_tz::Tz,
 ) -> Result<Vec<CalendarEventRow>, ApiError> {
     let start = chrono::NaiveDate::from_ymd_opt(year, month, 1)
         .ok_or_else(|| ApiError::BadRequest("invalid month".to_string()))?;
@@ -2968,32 +3062,81 @@ pub async fn get_calendar_events(
     }
     .ok_or_else(|| ApiError::BadRequest("invalid month".to_string()))?;
 
+    let tz_name = tz.name();
+
     if let Some(rid) = repo_id {
         sqlx::query_as::<_, CalendarEventRow>(
-            "SELECT br.started_at::date AS date, 'backup' AS event_type, CASE WHEN br.status = \
-             'success' THEN 'success' ELSE 'failed' END AS status, r.name AS repo_name, \
-             c.hostname, to_char(br.started_at, 'HH24:MI') AS time, br.id AS report_id, \
-             br.repo_id, br.error_message, br.archive_name FROM backup_reports br JOIN repos r ON \
-             r.id = br.repo_id JOIN clients c ON c.id = br.client_id WHERE br.started_at::date \
-             >= $1 AND br.started_at::date < $2 AND br.repo_id = $3 ORDER BY br.started_at",
+            "SELECT (br.started_at AT TIME ZONE $4)::date AS date, 'backup' AS event_type, CASE \
+             WHEN br.status = 'success' THEN 'success' ELSE 'failed' END AS status, r.name AS \
+             repo_name, c.hostname, to_char(br.started_at AT TIME ZONE $4, 'HH24:MI') AS time, \
+             br.id AS report_id, br.repo_id, br.error_message, br.archive_name FROM \
+             backup_reports br JOIN repos r ON r.id = br.repo_id JOIN clients c ON c.id = \
+             br.client_id WHERE (br.started_at AT TIME ZONE $4)::date >= $1 AND (br.started_at AT \
+             TIME ZONE $4)::date < $2 AND br.repo_id = $3 ORDER BY br.started_at",
         )
         .bind(start)
         .bind(end)
         .bind(rid)
+        .bind(tz_name)
         .fetch_all(pool)
         .await
         .map_err(ApiError::Database)
     } else {
         sqlx::query_as::<_, CalendarEventRow>(
-            "SELECT br.started_at::date AS date, 'backup' AS event_type, CASE WHEN br.status = \
-             'success' THEN 'success' ELSE 'failed' END AS status, r.name AS repo_name, \
-             c.hostname, to_char(br.started_at, 'HH24:MI') AS time, br.id AS report_id, \
-             br.repo_id, br.error_message, br.archive_name FROM backup_reports br JOIN repos r ON \
-             r.id = br.repo_id JOIN clients c ON c.id = br.client_id WHERE br.started_at::date \
-             >= $1 AND br.started_at::date < $2 ORDER BY br.started_at",
+            "SELECT (br.started_at AT TIME ZONE $3)::date AS date, 'backup' AS event_type, CASE \
+             WHEN br.status = 'success' THEN 'success' ELSE 'failed' END AS status, r.name AS \
+             repo_name, c.hostname, to_char(br.started_at AT TIME ZONE $3, 'HH24:MI') AS time, \
+             br.id AS report_id, br.repo_id, br.error_message, br.archive_name FROM \
+             backup_reports br JOIN repos r ON r.id = br.repo_id JOIN clients c ON c.id = \
+             br.client_id WHERE (br.started_at AT TIME ZONE $3)::date >= $1 AND (br.started_at AT \
+             TIME ZONE $3)::date < $2 ORDER BY br.started_at",
         )
         .bind(start)
         .bind(end)
+        .bind(tz_name)
+        .fetch_all(pool)
+        .await
+        .map_err(ApiError::Database)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct StorageTrendRow {
+    pub date: chrono::NaiveDate,
+    pub total_size: i64,
+}
+
+pub async fn get_storage_trends(
+    pool: &PgPool,
+    repo_id: Option<i64>,
+    days: i64,
+) -> Result<Vec<StorageTrendRow>, ApiError> {
+    // For each day in the range, take the last backup report per repo up to that day
+    // and sum their deduplicated_size. This gives the total repo footprint per day.
+    let days_i32 = i32::try_from(days).unwrap_or(30);
+    if let Some(rid) = repo_id {
+        sqlx::query_as::<_, StorageTrendRow>(
+            "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => \
+             $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ) SELECT d.date, \
+             COALESCE(( SELECT br.deduplicated_size FROM backup_reports br WHERE br.repo_id = $2 \
+             AND br.started_at::date <= d.date AND br.status = 'success' ORDER BY br.started_at \
+             DESC LIMIT 1 ), 0)::INT8 AS total_size FROM days d ORDER BY d.date",
+        )
+        .bind(days_i32)
+        .bind(rid)
+        .fetch_all(pool)
+        .await
+        .map_err(ApiError::Database)
+    } else {
+        sqlx::query_as::<_, StorageTrendRow>(
+            "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => \
+             $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ) SELECT d.date, \
+             COALESCE(( SELECT SUM(latest.deduplicated_size) FROM ( SELECT DISTINCT ON \
+             (br.repo_id) br.deduplicated_size FROM backup_reports br WHERE br.started_at::date \
+             <= d.date AND br.status = 'success' ORDER BY br.repo_id, br.started_at DESC ) latest \
+             ), 0)::INT8 AS total_size FROM days d ORDER BY d.date",
+        )
+        .bind(days_i32)
         .fetch_all(pool)
         .await
         .map_err(ApiError::Database)
@@ -3004,11 +3147,11 @@ pub async fn get_enabled_schedules_for_calendar(
     pool: &PgPool,
 ) -> Result<Vec<ScheduleRow>, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
-        "SELECT id, client_id, repo_id, schedule_type, cron_expression, enabled, canary_enabled, \
+        "SELECT id, repo_id, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns, ignore_global_excludes, keep_daily, \
          keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
-         pre_backup_commands, post_backup_commands, owner_id, visibility FROM schedules WHERE \
-         enabled = true",
+         pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, \
+         visibility FROM schedules WHERE enabled = true",
     )
     .fetch_all(pool)
     .await

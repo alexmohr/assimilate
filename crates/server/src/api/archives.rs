@@ -163,15 +163,16 @@ pub struct ArchiveEntry {
 }
 
 struct ReportRow {
+    archive_name: Option<String>,
     started_at: DateTime<Utc>,
     matched: bool,
     client_hostname: String,
 }
 
 async fn fetch_report_rows(pool: &PgPool, repo_id: i64) -> Result<Vec<ReportRow>, ApiError> {
-    let rows = sqlx::query_as::<_, (DateTime<Utc>, bool, String)>(
+    let rows = sqlx::query_as::<_, (Option<String>, DateTime<Utc>, bool, String)>(
         r"
-        SELECT br.started_at, br.matched, c.hostname AS client_hostname
+        SELECT br.archive_name, br.started_at, br.matched, c.hostname AS client_hostname
         FROM backup_reports br
         JOIN clients c ON c.id = br.client_id
         WHERE br.repo_id = $1
@@ -184,11 +185,14 @@ async fn fetch_report_rows(pool: &PgPool, repo_id: i64) -> Result<Vec<ReportRow>
 
     Ok(rows
         .into_iter()
-        .map(|(started_at, matched, client_hostname)| ReportRow {
-            started_at,
-            matched,
-            client_hostname,
-        })
+        .map(
+            |(archive_name, started_at, matched, client_hostname)| ReportRow {
+                archive_name,
+                started_at,
+                matched,
+                client_hostname,
+            },
+        )
         .collect())
 }
 
@@ -201,9 +205,18 @@ fn parse_borg_timestamp(s: &str) -> Option<DateTime<Utc>> {
 }
 
 fn find_matching_report<'a>(
+    archive_name: &str,
     archive_start: &str,
     reports: &'a [ReportRow],
 ) -> Option<&'a ReportRow> {
+    // Prefer exact match by archive name
+    if let Some(report) = reports
+        .iter()
+        .find(|r| r.archive_name.as_deref() == Some(archive_name))
+    {
+        return Some(report);
+    }
+    // Fall back to timestamp matching
     let archive_ts = parse_borg_timestamp(archive_start)?;
     reports
         .iter()
@@ -320,7 +333,7 @@ pub async fn list_archives(
     let archives = archives
         .into_iter()
         .map(|mut entry| {
-            if let Some(report) = find_matching_report(&entry.start, &reports) {
+            if let Some(report) = find_matching_report(&entry.name, &entry.start, &reports) {
                 entry.matched = Some(report.matched);
                 entry.client_hostname = Some(report.client_hostname.clone());
             }
@@ -607,5 +620,104 @@ mod tests {
     #[test]
     fn validate_path_accepts_nested_relative() {
         assert!(validate_path("a/b/c/d.txt").is_ok());
+    }
+
+    fn make_report(
+        archive_name: Option<&str>,
+        started_at: &str,
+        matched: bool,
+        client_hostname: &str,
+    ) -> ReportRow {
+        ReportRow {
+            archive_name: archive_name.map(ToString::to_string),
+            started_at: parse_borg_timestamp(started_at).unwrap(),
+            matched,
+            client_hostname: client_hostname.to_string(),
+        }
+    }
+
+    #[test]
+    fn find_matching_report_prefers_archive_name() {
+        let reports = vec![
+            make_report(
+                Some("db-backup-2025-01-01"),
+                "2025-01-01T02:00:00",
+                true,
+                "db-server-01",
+            ),
+            make_report(
+                Some("unknown-host-backup-2025-01-01"),
+                "2025-01-01T02:00:01",
+                false,
+                "unknown-legacy-host",
+            ),
+        ];
+
+        let result =
+            find_matching_report("unknown-host-backup-2025-01-01", "2025-01-01T02:00:01", &reports);
+        assert_eq!(
+            result.unwrap().client_hostname,
+            "unknown-legacy-host"
+        );
+    }
+
+    #[test]
+    fn find_matching_report_exact_name_wins_over_closer_timestamp() {
+        let reports = vec![
+            make_report(
+                Some("other-archive"),
+                "2025-01-01T02:00:02",
+                true,
+                "db-server-01",
+            ),
+            make_report(
+                Some("target-archive"),
+                "2025-01-01T01:00:00",
+                false,
+                "correct-host",
+            ),
+        ];
+
+        let result = find_matching_report("target-archive", "2025-01-01T02:00:00", &reports);
+        assert_eq!(result.unwrap().client_hostname, "correct-host");
+    }
+
+    #[test]
+    fn find_matching_report_falls_back_to_timestamp() {
+        let reports = vec![
+            make_report(None, "2025-01-01T02:00:00", true, "host-a"),
+            make_report(None, "2025-01-01T03:00:00", true, "host-b"),
+        ];
+
+        let result = find_matching_report("no-match-name", "2025-01-01T02:00:02", &reports);
+        assert_eq!(result.unwrap().client_hostname, "host-a");
+    }
+
+    #[test]
+    fn find_matching_report_timestamp_outside_window_returns_none() {
+        let reports = vec![make_report(None, "2025-01-01T02:00:00", true, "host-a")];
+
+        let result = find_matching_report("no-match", "2025-01-01T02:01:00", &reports);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn find_matching_report_no_reports_returns_none() {
+        let result = find_matching_report("archive", "2025-01-01T02:00:00", &[]);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_borg_timestamp_with_fractional_seconds() {
+        let ts = parse_borg_timestamp("2025-01-01T02:00:00.123456Z");
+        assert!(ts.is_some());
+        assert_eq!(ts.unwrap().timestamp(), 1_735_696_800);
+    }
+
+    #[test]
+    fn parse_borg_timestamp_without_fractional() {
+        let ts = parse_borg_timestamp("2025-01-01T02:00:00");
+        assert!(ts.is_some());
+        assert_eq!(ts.unwrap().timestamp(), 1_735_696_800);
     }
 }

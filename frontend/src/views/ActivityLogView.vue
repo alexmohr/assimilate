@@ -5,6 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { Search, SlidersHorizontal, Activity } from '@lucide/vue'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
@@ -93,6 +94,7 @@ let logSearchTimer: ReturnType<typeof setTimeout> | null = null
 
 const { isMobile } = useMobile()
 const showMobileFilters = ref(false)
+const route = useRoute()
 
 const availableTargets = computed(() => {
   const targets = new Set(rows.value.map((r) => r.target_name))
@@ -113,6 +115,20 @@ const hasActiveFilters = computed((): boolean => {
 })
 
 onMounted(async () => {
+  const statusParam = route.query.status as string | undefined
+  if (statusParam === 'success' || statusParam === 'warning' || statusParam === 'failed') {
+    filterStatus.value = statusParam
+    activeCategory.value = 'backup'
+  }
+  const daysParam = route.query.days as string | undefined
+  if (daysParam) {
+    const days = Number(daysParam)
+    if (days > 0) {
+      const from = new Date()
+      from.setDate(from.getDate() - days)
+      filterFrom.value = from.toISOString().slice(0, 10)
+    }
+  }
   await Promise.all([fetchMachines(), fetchData(true)])
 })
 

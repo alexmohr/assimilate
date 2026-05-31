@@ -5,6 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { apiClient } from '../api/client'
 import { formatDuration } from '../utils/format'
 import { logger } from '../utils/logger'
@@ -25,6 +26,7 @@ interface RepoOption {
 }
 
 const props = defineProps<{ repos: RepoOption[] }>()
+const router = useRouter()
 
 const selectedDays = ref<number>(30)
 const selectedRepoId = ref<number | undefined>(undefined)
@@ -69,6 +71,14 @@ const avgDurationSecs = computed((): number => {
   const total = entries.value.reduce((sum, e) => sum + e.duration_secs, 0)
   return Math.round(total / entries.value.length)
 })
+
+function navigateToActivity(status?: string): void {
+  const query: Record<string, string> = { days: String(selectedDays.value) }
+  if (status) {
+    query.status = status
+  }
+  router.push({ name: 'activity', query })
+}
 </script>
 
 <template>
@@ -131,11 +141,17 @@ const avgDurationSecs = computed((): number => {
       v-else
       class="stats-grid"
     >
-      <div class="mini-stat">
+      <div
+        class="mini-stat mini-stat-link"
+        @click="navigateToActivity()"
+      >
         <span class="mini-stat-value">{{ totalCount }}</span>
         <span class="mini-stat-label">Total</span>
       </div>
-      <div class="mini-stat">
+      <div
+        class="mini-stat mini-stat-link"
+        @click="navigateToActivity('success')"
+      >
         <span
           class="mini-stat-value"
           :class="{
@@ -148,7 +164,10 @@ const avgDurationSecs = computed((): number => {
         </span>
         <span class="mini-stat-label">Success</span>
       </div>
-      <div class="mini-stat">
+      <div
+        class="mini-stat mini-stat-link"
+        @click="navigateToActivity('failed')"
+      >
         <span
           class="mini-stat-value"
           :class="{ 'color-danger': failedCount > 0 }"
@@ -263,6 +282,17 @@ const avgDurationSecs = computed((): number => {
   padding: 0.5rem;
   background: var(--bg-base);
   border-radius: var(--radius-sm);
+}
+
+.mini-stat-link {
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+
+.mini-stat-link:hover {
+  background: var(--bg-hover);
 }
 
 .mini-stat-value {

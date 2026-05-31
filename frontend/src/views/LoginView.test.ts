@@ -7,7 +7,7 @@ import LoginView from './LoginView.vue'
 import { useAuthStore } from '../stores/auth'
 
 vi.mock('vue-router', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('vue-router')>()
+  const actual: Record<string, unknown> = await importOriginal()
   return {
     ...actual,
     useRouter: vi.fn(() => ({ push: vi.fn() })),

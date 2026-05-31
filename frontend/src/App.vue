@@ -10,7 +10,6 @@ import { onErrorCaptured } from 'vue'
 import AppLayout from './layouts/AppLayout.vue'
 import ToastContainer from './components/ToastContainer.vue'
 
-
 const route = useRoute()
 const router = useRouter()
 

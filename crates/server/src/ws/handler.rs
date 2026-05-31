@@ -36,12 +36,16 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 hostname,
                 token,
                 agent_version,
+                agent_git_sha,
+                agent_build_time,
                 supports_restart,
                 restart_unavailable_reason,
             }) => Some((
                 hostname,
                 token,
                 agent_version,
+                agent_git_sha,
+                agent_build_time,
                 supports_restart,
                 restart_unavailable_reason,
             )),
@@ -51,8 +55,15 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         Some(Ok(Message::Binary(_) | Message::Ping(_) | Message::Pong(_))) => None,
     };
 
-    let Some((hostname, token, agent_version, supports_restart, restart_unavailable_reason)) =
-        hello
+    let Some((
+        hostname,
+        token,
+        agent_version,
+        agent_git_sha,
+        agent_build_time,
+        supports_restart,
+        restart_unavailable_reason,
+    )) = hello
     else {
         let close = Message::Close(Some(CloseFrame {
             code: 4001,
@@ -132,7 +143,15 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         return;
     }
 
-    if let Err(e) = db::update_last_seen_and_version(&state.pool, client_id, &agent_version).await {
+    if let Err(e) = db::update_last_seen_and_version(
+        &state.pool,
+        client_id,
+        &agent_version,
+        agent_git_sha.as_deref(),
+        agent_build_time.as_deref(),
+    )
+    .await
+    {
         tracing::error!(hostname = %hostname, error = %e, "failed to update last_seen_at");
     }
 

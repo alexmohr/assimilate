@@ -263,6 +263,9 @@ VALUES
     ('old-webserver (imported)', NULL, 'imported:no-auth'),
     ('legacy-db-prod (imported)', NULL, 'imported:no-auth')
 ON CONFLICT (hostname) DO NOTHING;
+
+-- Mark one imported client as hidden to demonstrate the hide feature
+UPDATE clients SET is_hidden = true WHERE hostname = 'legacy-db-prod (imported)';
 SQL
 
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL

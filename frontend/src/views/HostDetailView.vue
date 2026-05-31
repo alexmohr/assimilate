@@ -26,6 +26,8 @@ interface ClientRow {
   hostname: string
   display_name: string | null
   agent_version: string | null
+  agent_git_sha: string | null
+  agent_build_time: string | null
   created_at: string
   last_seen_at: string | null
   is_connected: boolean
@@ -542,6 +544,14 @@ watch(wsStatus, (newStatus, oldStatus) => {
             <dt>Agent Version</dt>
             <dd class="mono">
               {{ client.agent_version ?? '—' }}
+            </dd>
+            <dt>Revision</dt>
+            <dd class="mono">
+              {{ client.agent_git_sha ?? '—' }}
+            </dd>
+            <dt>Built</dt>
+            <dd class="mono">
+              {{ client.agent_build_time ?? '—' }}
             </dd>
             <dt>Created</dt>
             <dd>{{ formatDate(client.created_at, 'Never') }}</dd>

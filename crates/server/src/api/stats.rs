@@ -405,6 +405,14 @@ pub struct StorageTrendEntry {
     pub total_size: i64,
 }
 
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct StorageTrendByRepoEntry {
+    pub date: String,
+    pub repo_id: i64,
+    pub repo_name: String,
+    pub size: i64,
+}
+
 #[utoipa::path(
     get,
     path = "/api/stats/storage-trends",
@@ -432,6 +440,40 @@ pub async fn storage_trends(
         .map(|row| StorageTrendEntry {
             date: row.date.to_string(),
             total_size: row.total_size,
+        })
+        .collect();
+    Ok(Json(entries))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/stats/storage-trends/by-repo",
+    tag = "Statistics",
+    operation_id = "getStorageTrendsByRepo",
+    summary = "Get per-repo storage usage over time for stacked view",
+    params(
+        ("days" = Option<i64>, Query, description = "Number of days (14, 30, 90, 365)"),
+    ),
+    responses(
+        (status = 200, description = "Per-repo storage trends",
+            body = Vec<StorageTrendByRepoEntry>),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
+pub async fn storage_trends_by_repo(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Query(query): Query<TrendsQuery>,
+) -> Result<Json<Vec<StorageTrendByRepoEntry>>, ApiError> {
+    let days = query.days.unwrap_or(30);
+    let rows = db::get_storage_trends_by_repo(&state.pool, days).await?;
+    let entries = rows
+        .into_iter()
+        .map(|row| StorageTrendByRepoEntry {
+            date: row.date.to_string(),
+            repo_id: row.repo_id,
+            repo_name: row.repo_name,
+            size: row.size,
         })
         .collect();
     Ok(Json(entries))

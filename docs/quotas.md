@@ -7,7 +7,9 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 Storage quotas let you set a maximum deduplicated storage limit per repository. When a repository exceeds its quota, Assimilate can block new backups, send a notification, or both.
 
-<!-- screenshot: quotas -->
+Storage quota configuration is available on the repository detail page under the **Storage Quota** section.
+
+![Repository Detail with Quota](assets/screenshots/repo-detail.png)
 
 ## Configuring a Quota
 

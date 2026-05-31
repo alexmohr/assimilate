@@ -45,7 +45,7 @@ describe('service worker (sw.js)', () => {
   })
 
   it('cleans up old caches on activate', () => {
-    expect(swContent).toContain('caches.keys')
+    expect(swContent).toContain('.keys()')
     expect(swContent).toContain('caches.delete')
   })
 })

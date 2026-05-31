@@ -41,7 +41,18 @@ Both paths are available from **Repositories → New Repository** in the UI.
 
 ![Repositories](assets/screenshots/repositories.png)
 
+The Repositories list page shows all registered repositories with:
+
+- **Text filter** — search by repository name
+- **Tag filter** — filter by one or more tags
+- **Group by tag** — organize repositories into tag groups
+- **Sort buttons** — sort by Name, Size, or Last Backup
+
+Each repository card shows the name, SSH target, enabled state, encryption type, compression algorithm, unmatched host warnings, archive count, deduplicated size, and last backup time.
+
 ![Repository Detail](assets/screenshots/repo-detail.png)
+
+The repository detail page shows full connection information, storage statistics (original, compressed, deduplicated sizes), storage quota status with a progress bar, tags, and danger zone actions (Break Lock, Remove Repository, Delete Repository).
 
 ## Init New Repository
 

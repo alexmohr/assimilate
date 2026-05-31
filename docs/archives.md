@@ -38,7 +38,9 @@ The deduplicated size is typically much smaller than the original size because b
 
 ## Browsing Archive Contents
 
-From the archive detail view, click **Browse** to open the file tree browser.
+From the archive list, click an archive to open the file tree browser in the right panel.
+
+![Archive Browser](assets/screenshots/archive-browse.png)
 
 The browser starts at the repository root (`/`). Each entry shows:
 
@@ -87,8 +89,6 @@ Assimilate can search for files by name within a single archive or across all ar
 
 From the archive detail view, click **Search** and enter a file name or glob pattern (e.g. `*.log`, `config.yaml`). The results list matching paths with their size and modification time.
 
-<!-- screenshot: archive-search -->
-
 ### Cross-Archive Search
 
 From the repository's **Archives** tab, click **Search All Archives**. Enter a file name or glob pattern. The results show every archive that contains a matching path, allowing you to locate which backup snapshot holds a particular file version.
@@ -113,8 +113,6 @@ Each row in the diff shows:
 | **Old size** | File size in the older archive (blank for added files) |
 | **New size** | File size in the newer archive (blank for removed files) |
 
-<!-- screenshot: archive-diff -->
-
 !!! note
     The diff compares path-level metadata. It does not show line-level content differences for text files.
 
@@ -126,8 +124,6 @@ To download an entire archive or a subtree as a compressed tar archive:
 2. Click **Export**.
 3. Optionally specify a sub-path to export only part of the archive tree.
 4. Click **Download tar.lz4**. The server pipes `borg export-tar` output through lz4 compression and streams it to your browser.
-
-<!-- screenshot: archive-export -->
 
 !!! warning "Large exports"
     Exporting a full archive streams all data live from the borg repository. Exports of large archives (multi-GB) may take several minutes. The server enforces a 10-minute streaming timeout. For very large restores, run `borg export-tar` directly on the agent machine.
@@ -156,8 +152,6 @@ On the repository's **Archives** tab, use the **Tag** filter dropdown to show on
 ### Removing Tags
 
 Open the archive detail view, click **Edit Tags**, remove the desired tag, and save. Once all tags are removed the archive is subject to normal retention-policy pruning on the next backup run.
-
-<!-- screenshot: archive-tags -->
 
 ## Pruning Archives
 

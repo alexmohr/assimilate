@@ -12,9 +12,9 @@ Assimilate encrypts repository passphrases at rest using AES-256-GCM. The key ma
 
 ## Accessing Key Management
 
-Navigate to **Settings → Key Management**. This page is available to users with the **admin** role only.
+Navigate to **Settings → Key Management**. This page is available to users with the **admin** role only. Key management actions (export, import) are accessible from the **System** settings page.
 
-<!-- screenshot: key-management -->
+![System Settings](assets/screenshots/system.png)
 
 ## Exporting the Server Key
 

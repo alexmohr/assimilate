@@ -268,7 +268,8 @@ async function loadClients(): Promise<void> {
   loading.value = true
   error.value = null
   try {
-    const [clientsRes, hostTagAssocRes, hostTagsRes, healthRes] = await Promise.all([
+    const [clientsRes, hostTagAssocRes, hostTagsRes, healthRes, scheduleCountsRes] =
+      await Promise.all([
       apiClient.get<ClientRow[]>('/clients', {
         params: showHidden.value ? { include_hidden: true } : undefined,
       }),
@@ -277,9 +278,13 @@ async function loadClients(): Promise<void> {
         .get<TagRow[]>('/tags', { params: { scope: 'host' } })
         .catch(() => ({ data: [] as TagRow[] })),
       apiClient.get<HealthEntry[]>('/stats/health'),
-    ])
+      apiClient.get<{ client_id: number; count: number }[]>('/stats/schedule-counts'),
+      ])
     clients.value = clientsRes.data
     machineScheduleCount.value = {}
+    scheduleCountsRes.data.forEach((entry) => {
+      machineScheduleCount.value[entry.client_id] = entry.count
+    })
 
     allHostTags.value = hostTagsRes.data
     const tagMap: Record<number, { name: string; color: string }[]> = {}

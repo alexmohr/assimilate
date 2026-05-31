@@ -35,6 +35,7 @@ import {
 
 const iconMap: Record<string, Component> = {
   activity: Activity,
+  keys: KeyRound,
   notifications: Bell,
   dashboard: LayoutGrid,
   excludes: SlidersHorizontal,
@@ -91,6 +92,7 @@ const settingsNav = computed((): NavGroup[] => {
   ]
   if (isAdmin.value) {
     groups[0].items.push({ to: '/system', label: 'System', icon: 'system' })
+    groups[0].items.push({ to: '/keys', label: 'Key Management', icon: 'keys' })
     groups.push({
       label: 'Access Control',
       items: [

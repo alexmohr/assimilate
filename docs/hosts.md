@@ -208,7 +208,7 @@ Tags let you organize hosts for filtering on the Hosts list page.
 ## Deleting a Host
 
 1. Open the host detail page.
-2. Click **Delete Host** and confirm.
+2. In the **Danger Zone** section, click **Delete Host** and confirm in the dialog.
 
 **What is removed:**
 
@@ -221,6 +221,52 @@ Tags let you organize hosts for filtering on the Hosts list page.
 
 !!! warning
     Deleting a host does not remove borg archives from the repository server. Use `borg delete` or the [Archives](archives.md) page to remove archive data.
+
+## Hiding Imported Clients
+
+When repositories are scanned, placeholder "imported" client entries are created for hostnames found in existing archives. If you don't need to see these clients in the UI, you can hide them.
+
+Hidden clients are excluded from:
+
+- The hosts list (default view)
+- Dashboard statistics and storage aggregations
+- Activity feed and health summary
+- Scheduled backup targets
+- Calendar events
+
+### Hiding a Client
+
+1. Open the imported client's detail page.
+2. In the **Danger Zone** section, click **Hide**.
+3. The client disappears from all views immediately.
+
+### Viewing and Unhiding Hidden Clients
+
+1. Navigate to **Clients** in the sidebar.
+2. Enable the **Show hidden** toggle (admin-only).
+3. Hidden clients appear with reduced opacity and a "Hidden" badge.
+4. Click **Unhide** on a hidden client to restore it to normal visibility.
+
+!!! note
+    Hiding is non-destructive — all archive data remains intact on disk. The client will not reappear on the next repository scan because the database record is preserved with the hidden flag.
+
+## Deleting Archives & Removing Imported Clients
+
+For imported clients whose archive data is no longer needed, you can permanently delete all borg archives and remove the client record.
+
+1. Open the imported client's detail page.
+2. In the **Danger Zone** section, click **Delete Archives & Remove**.
+3. Confirm in the dialog — this action is irreversible.
+
+The server sends `borg delete` commands to connected agents for each repository containing archives from this client. Once all archives are deleted, the client record is removed from the database.
+
+!!! danger
+    This permanently destroys backup data. All borg archives belonging to this client are deleted from disk across all repositories. This cannot be undone.
+
+**Requirements:**
+
+- At least one agent with access to each relevant repository must be connected.
+- If no agent is available for a repository, those archives are skipped and reported as errors.
 
 <!--
 SPDX-License-Identifier: Apache-2.0

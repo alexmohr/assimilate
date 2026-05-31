@@ -153,6 +153,8 @@ pub struct RepoRow {
     pub enabled: bool,
     pub owner_id: Option<i64>,
     pub visibility: String,
+    pub sync_schedule: Option<String>,
+    pub last_synced_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -490,11 +492,13 @@ pub async fn regenerate_client_token(
 }
 
 pub async fn mark_client_reports_matched(pool: &PgPool, client_id: i64) -> Result<(), ApiError> {
-    sqlx::query("UPDATE backup_reports SET matched = true WHERE client_id = $1 AND matched = false")
-        .bind(client_id)
-        .execute(pool)
-        .await
-        .map_err(ApiError::Database)?;
+    sqlx::query(
+        "UPDATE backup_reports SET matched = true WHERE client_id = $1 AND matched = false",
+    )
+    .bind(client_id)
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
     Ok(())
 }
 
@@ -659,6 +663,7 @@ pub struct UpdateRepoParams<'a> {
     pub compression: &'a str,
     pub encryption: &'a str,
     pub enabled: bool,
+    pub sync_schedule: Option<&'a str>,
 }
 
 pub async fn list_importing_repo_ids(pool: &PgPool) -> Result<Vec<i64>, ApiError> {
@@ -746,7 +751,7 @@ pub async fn insert_repo(
         "INSERT INTO repos (name, repo_path, ssh_user, ssh_host, ssh_port, passphrase_encrypted, \
          compression, encryption, owner_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING \
          id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, enabled, \
-         owner_id, visibility",
+         owner_id, visibility, sync_schedule, last_synced_at",
     )
     .bind(params.name)
     .bind(params.repo_path)
@@ -784,9 +789,9 @@ pub async fn update_repo(
 ) -> Result<RepoRow, ApiError> {
     sqlx::query_as::<_, RepoRow>(
         "UPDATE repos SET repo_path = $2, ssh_user = $3, ssh_host = $4, ssh_port = $5, \
-         compression = $6, encryption = $7, enabled = $8 WHERE id = $1 RETURNING id, name, \
-         repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, enabled, owner_id, \
-         visibility",
+         compression = $6, encryption = $7, enabled = $8, sync_schedule = $9 WHERE id = $1 \
+         RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, \
+         enabled, owner_id, visibility, sync_schedule, last_synced_at",
     )
     .bind(params.repo_id)
     .bind(params.repo_path)
@@ -796,6 +801,7 @@ pub async fn update_repo(
     .bind(params.compression)
     .bind(params.encryption)
     .bind(params.enabled)
+    .bind(params.sync_schedule)
     .fetch_one(pool)
     .await
     .map_err(|e| match e {
@@ -958,7 +964,8 @@ pub async fn get_repo_with_passphrase(
 ) -> Result<RepoWithPassphraseRow, ApiError> {
     sqlx::query_as::<_, RepoWithPassphraseRow>(
         "SELECT id, name, repo_path, ssh_user, ssh_host, ssh_port, passphrase_encrypted, \
-         compression, encryption, enabled, relocation_pending FROM repos WHERE id = $1",
+         compression, encryption, enabled, relocation_pending, sync_schedule FROM repos WHERE id \
+         = $1",
     )
     .bind(repo_id)
     .fetch_one(pool)
@@ -1072,10 +1079,10 @@ pub async fn insert_schedule(
          canary_enabled, exclude_patterns, ignore_global_excludes, keep_daily, keep_weekly, \
          keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands, \
          post_backup_commands, execution_mode, on_failure, owner_id) VALUES ($1, $2, $3, $4, $5, \
-         $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING id, \
-         repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, last_run_at, \
-         next_run_at, exclude_patterns, ignore_global_excludes, keep_daily, keep_weekly, \
-         keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands, \
+         $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING id, repo_id, \
+         name, schedule_type, cron_expression, enabled, canary_enabled, last_run_at, next_run_at, \
+         exclude_patterns, ignore_global_excludes, keep_daily, keep_weekly, keep_monthly, \
+         keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands, \
          post_backup_commands, execution_mode, on_failure, owner_id, visibility",
     )
     .bind(repo_id)
@@ -1182,12 +1189,13 @@ pub struct RepoWithPassphraseRow {
     pub encryption: String,
     pub enabled: bool,
     pub relocation_pending: bool,
+    pub sync_schedule: Option<String>,
 }
 
 pub async fn list_all_repos(pool: &PgPool) -> Result<Vec<RepoRow>, ApiError> {
     sqlx::query_as::<_, RepoRow>(
         "SELECT id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, \
-         enabled, owner_id, visibility FROM repos ORDER BY name",
+         enabled, owner_id, visibility, sync_schedule, last_synced_at FROM repos ORDER BY name",
     )
     .fetch_all(pool)
     .await
@@ -1200,9 +1208,9 @@ pub async fn list_repos_for_client(
 ) -> Result<Vec<RepoWithPassphraseRow>, ApiError> {
     sqlx::query_as::<_, RepoWithPassphraseRow>(
         "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, \
-         r.passphrase_encrypted, r.compression, r.encryption, r.enabled, r.relocation_pending \
-         FROM repos r JOIN schedules s ON s.repo_id = r.id JOIN schedule_targets st ON \
-         st.schedule_id = s.id WHERE st.client_id = $1 ORDER BY r.id",
+         r.passphrase_encrypted, r.compression, r.encryption, r.enabled, r.relocation_pending, \
+         r.sync_schedule FROM repos r JOIN schedules s ON s.repo_id = r.id JOIN schedule_targets \
+         st ON st.schedule_id = s.id WHERE st.client_id = $1 ORDER BY r.id",
     )
     .bind(client_id)
     .fetch_all(pool)
@@ -1216,9 +1224,9 @@ pub async fn list_repos_for_client_public(
 ) -> Result<Vec<RepoRow>, ApiError> {
     sqlx::query_as::<_, RepoRow>(
         "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, \
-         r.compression, r.encryption, r.enabled, r.owner_id, r.visibility FROM repos r JOIN \
-         schedules s ON s.repo_id = r.id JOIN schedule_targets st ON st.schedule_id = s.id WHERE \
-         st.client_id = $1 ORDER BY r.id",
+         r.compression, r.encryption, r.enabled, r.owner_id, r.visibility, r.sync_schedule, \
+         r.last_synced_at FROM repos r JOIN schedules s ON s.repo_id = r.id JOIN schedule_targets \
+         st ON st.schedule_id = s.id WHERE st.client_id = $1 ORDER BY r.id",
     )
     .bind(client_id)
     .fetch_all(pool)
@@ -1463,7 +1471,10 @@ pub async fn list_all_per_host_excludes_for_schedule(
 
     Ok(map
         .into_iter()
-        .map(|(client_id, patterns)| PerHostExcludePatterns { client_id, patterns })
+        .map(|(client_id, patterns)| PerHostExcludePatterns {
+            client_id,
+            patterns,
+        })
         .collect())
 }
 
@@ -1506,10 +1517,7 @@ pub async fn insert_exclude_for_schedule_client(
     Ok(())
 }
 
-pub async fn delete_excludes_for_schedule(
-    pool: &PgPool,
-    schedule_id: i64,
-) -> Result<(), ApiError> {
+pub async fn delete_excludes_for_schedule(pool: &PgPool, schedule_id: i64) -> Result<(), ApiError> {
     sqlx::query("DELETE FROM schedule_excludes WHERE schedule_id = $1 AND client_id IS NULL")
         .bind(schedule_id)
         .execute(pool)
@@ -1558,8 +1566,8 @@ pub async fn get_backup_schedule_for_hostname_repo(
          s.ignore_global_excludes, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, \
          s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands, s.post_backup_commands, \
          s.execution_mode, s.on_failure, s.owner_id, s.visibility FROM schedules s JOIN \
-         schedule_targets st ON st.schedule_id = s.id JOIN clients m ON st.client_id = m.id \
-         WHERE m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = 'backup' LIMIT 1",
+         schedule_targets st ON st.schedule_id = s.id JOIN clients m ON st.client_id = m.id WHERE \
+         m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = 'backup' LIMIT 1",
     )
     .bind(hostname)
     .bind(repo_id)
@@ -2673,6 +2681,7 @@ pub struct RepoWithStatsRow {
     pub import_error: Option<String>,
     pub owner_id: Option<i64>,
     pub visibility: String,
+    pub sync_schedule: Option<String>,
     pub archive_count: i64,
     pub last_backup_at: Option<DateTime<Utc>>,
     pub total_original_size: i64,
@@ -2686,7 +2695,7 @@ pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow
     sqlx::query_as::<_, RepoWithStatsRow>(
         "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.compression, \
          r.encryption, r.enabled, r.importing, r.import_error, r.owner_id, r.visibility, \
-         COALESCE(agg.archive_count, 0) AS archive_count, agg.last_backup_at, \
+         r.sync_schedule, COALESCE(agg.archive_count, 0) AS archive_count, agg.last_backup_at, \
          COALESCE(latest.original_size, 0)::INT8 AS total_original_size, \
          COALESCE(latest.compressed_size, 0)::INT8 AS total_compressed_size, \
          COALESCE(latest.deduplicated_size, 0)::INT8 AS total_deduplicated_size, \
@@ -2712,7 +2721,7 @@ pub async fn get_repo_with_stats(
     sqlx::query_as::<_, RepoWithStatsRow>(
         "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.compression, \
          r.encryption, r.enabled, r.importing, r.import_error, r.owner_id, r.visibility, \
-         COALESCE(agg.archive_count, 0) AS archive_count, agg.last_backup_at, \
+         r.sync_schedule, COALESCE(agg.archive_count, 0) AS archive_count, agg.last_backup_at, \
          COALESCE(latest.original_size, 0)::INT8 AS total_original_size, \
          COALESCE(latest.compressed_size, 0)::INT8 AS total_compressed_size, \
          COALESCE(latest.deduplicated_size, 0)::INT8 AS total_deduplicated_size, \

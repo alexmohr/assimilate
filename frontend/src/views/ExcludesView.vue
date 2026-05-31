@@ -62,8 +62,9 @@ async function save(): Promise<void> {
   saveError.value = null
   saveOk.value = false
   try {
-    const desired = textToPatterns(text.value)
-    const existing = excludes.value
+    const desired = [...new Set(textToPatterns(text.value))]
+    const freshRes = await apiClient.get<GlobalExclude[]>('/excludes')
+    const existing = freshRes.data
 
     const toDelete = existing.filter((e) => !desired.includes(e.pattern))
     const toAdd = desired.filter((p) => !existing.some((e) => e.pattern === p))

@@ -43,6 +43,10 @@ enum StartupError {
 
 #[tokio::main]
 async fn main() -> Result<(), StartupError> {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+
     let log_buffer = LogBuffer::default();
 
     tracing_subscriber::registry()

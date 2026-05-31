@@ -32,6 +32,7 @@ russh = { workspace = true }
 russh-sftp = { workspace = true }
 ssh-key = { workspace = true }
 lz4_flex = { workspace = true }
+rustls = { workspace = true }
 shared = { path = "../shared" }
 reqwest = { workspace = true }
 lettre = { workspace = true }

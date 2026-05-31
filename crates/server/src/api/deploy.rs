@@ -41,29 +41,41 @@ pub struct DeployAgentResponse {
     pub error: Option<String>,
 }
 
-pub fn agent_binary_path() -> PathBuf {
-    if let Ok(path) = std::env::var("AGENT_BINARY_PATH") {
+pub fn agent_binary_dir() -> PathBuf {
+    if let Ok(path) = std::env::var("AGENT_BINARY_DIR") {
         return PathBuf::from(path);
     }
 
-    let docker_path = PathBuf::from("/app/agent");
-    if docker_path.exists() {
+    let docker_path = PathBuf::from("/app");
+    if std::fs::read_dir(&docker_path)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .any(|e| e.file_name().to_string_lossy().starts_with("agent-"))
+        })
+        .unwrap_or(false)
+    {
         return docker_path;
     }
 
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
     {
-        let sibling = dir.join("agent");
-        if sibling.exists() {
-            return sibling;
-        }
+        return dir.to_path_buf();
     }
 
     docker_path
 }
 
-pub async fn query_available_agent_version(binary_path: &std::path::Path) -> Option<String> {
+pub async fn query_available_agent_version(binary_dir: &std::path::Path) -> Option<String> {
+    let server_arch = std::env::consts::ARCH;
+    let candidates = [
+        binary_dir.join(format!("agent-{server_arch}")),
+        binary_dir.join("agent-x86_64"),
+        binary_dir.join("agent-aarch64"),
+    ];
+
+    let binary_path = candidates.iter().find(|p| p.exists())?;
     let output = tokio::process::Command::new(binary_path)
         .arg("--version")
         .output()
@@ -113,17 +125,11 @@ pub async fn deploy_agent(
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
     helpers::validate_non_empty(&req.server_url, "server_url")?;
 
-    let binary_path = agent_binary_path();
-    if !binary_path.exists() {
-        return Err(ApiError::Internal(format!(
-            "agent binary not found at {}. Set AGENT_BINARY_PATH to the correct location.",
-            binary_path.display()
-        )));
-    }
+    let binary_dir = agent_binary_dir();
 
     let client = db::get_client_by_hostname(&state.pool, &hostname).await?;
 
-    let available_version = query_available_agent_version(&binary_path).await;
+    let available_version = query_available_agent_version(&binary_dir).await;
 
     if let Some(ref available) = available_version
         && let Some(ref deployed) = client.agent_version
@@ -159,7 +165,7 @@ pub async fn deploy_agent(
         host: &req.ssh_host,
         user: &req.ssh_user,
         port,
-        local_binary: &binary_path,
+        binary_dir: &binary_dir,
         remote_path: install_path,
         server_url: &req.server_url,
         token: &token_hex,
@@ -190,20 +196,19 @@ pub async fn deploy_agent(
         })),
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // Tests combined into one: both mutate AGENT_BINARY_PATH env var, causing races when parallel.
+    // Tests combined into one: both mutate AGENT_BINARY_DIR env var, causing races when parallel.
     #[test]
-    fn agent_binary_path_selection() {
-        unsafe { std::env::set_var("AGENT_BINARY_PATH", "/custom/path/agent") };
-        let path = agent_binary_path();
-        assert_eq!(path, PathBuf::from("/custom/path/agent"));
+    fn agent_binary_dir_selection() {
+        unsafe { std::env::set_var("AGENT_BINARY_DIR", "/custom/path") };
+        let path = agent_binary_dir();
+        assert_eq!(path, PathBuf::from("/custom/path"));
 
-        unsafe { std::env::remove_var("AGENT_BINARY_PATH") };
-        let path = agent_binary_path();
-        assert_eq!(path.file_name().unwrap(), "agent");
+        unsafe { std::env::remove_var("AGENT_BINARY_DIR") };
+        let path = agent_binary_dir();
+        assert!(path.is_absolute());
     }
 }

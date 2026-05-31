@@ -575,7 +575,7 @@ pub struct DeployAgentParams<'a> {
     pub host: &'a str,
     pub user: &'a str,
     pub port: u16,
-    pub local_binary: &'a std::path::Path,
+    pub binary_dir: &'a std::path::Path,
     pub remote_path: &'a str,
     pub server_url: &'a str,
     pub token: &'a str,
@@ -659,6 +659,26 @@ fn build_write_unit_cmd(content: &str, path: &str) -> String {
     format!("echo {encoded} | base64 -d > {path}")
 }
 
+async fn detect_remote_arch(
+    session: &client::Handle<SshClientHandler>,
+) -> Result<String, SshError> {
+    let (exit_code, stdout, stderr) = exec_command(session, "uname -m").await?;
+    if exit_code != 0 {
+        return Err(SshError::Exec(format!(
+            "uname -m failed (exit {exit_code}): {stderr}"
+        )));
+    }
+    let raw = stdout.trim().to_owned();
+    let canonical = match raw.as_str() {
+        "x86_64" => "x86_64".to_owned(),
+        "aarch64" | "arm64" => "aarch64".to_owned(),
+        "armv7l" | "armhf" => "armv7".to_owned(),
+        other => other.to_owned(),
+    };
+    Ok(canonical)
+}
+
+
 pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError> {
     let session = match params.password {
         Some(pw) => connect_with_password(params.host, params.user, params.port, pw).await?,
@@ -666,7 +686,29 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
     };
     let sftp = open_sftp(&session).await?;
 
-    let binary_data = tokio::fs::read(params.local_binary).await.map_err(|e| {
+    let arch = detect_remote_arch(&session).await?;
+    let binary_path = params.binary_dir.join(format!("agent-{arch}"));
+
+    if !binary_path.exists() {
+        let available: Vec<String> = std::fs::read_dir(params.binary_dir)
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.file_name().to_string_lossy().starts_with("agent-"))
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        return Err(SshError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!(
+                "no agent binary found for arch {arch} in {}; available binaries: {available:?}",
+                params.binary_dir.display()
+            ),
+        )));
+    }
+
+    let binary_data = tokio::fs::read(&binary_path).await.map_err(|e| {
         SshError::Io(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!("failed to read agent binary: {e}"),

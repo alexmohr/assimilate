@@ -78,6 +78,11 @@ pub enum ServerToAgent {
         new_passphrase: String,
     },
     RestartAgent,
+    DeleteArchives {
+        request_id: String,
+        repo_id: RepoId,
+        archive_names: Vec<String>,
+    },
     Ping,
 }
 
@@ -189,6 +194,12 @@ pub enum AgentToServer {
     MigrateEncryptionCompleted {
         request_id: String,
         success: bool,
+        error_message: Option<String>,
+    },
+    DeleteArchivesResult {
+        request_id: String,
+        success: bool,
+        deleted_count: u32,
         error_message: Option<String>,
     },
     Pong,

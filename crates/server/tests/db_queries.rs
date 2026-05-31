@@ -559,7 +559,6 @@ async fn create_test_schedule(pool: &PgPool) -> (ClientRow, RepoRow, ScheduleRow
     .unwrap();
     let schedule = db::insert_schedule(
         pool,
-        client.id,
         repo.id,
         &ScheduleParams {
             schedule_type: "backup",
@@ -576,11 +575,16 @@ async fn create_test_schedule(pool: &PgPool) -> (ClientRow, RepoRow, ScheduleRow
             rate_limit_kbps: Some(5000),
             pre_backup_commands: "",
             post_backup_commands: "",
+            execution_mode: "parallel",
+            on_failure: "stop",
         },
         None,
     )
     .await
     .unwrap();
+    db::insert_schedule_targets(pool, schedule.id, &[(client.id, 0)])
+        .await
+        .unwrap();
     (client, repo, schedule)
 }
 
@@ -620,6 +624,8 @@ async fn schedule_update(pool: PgPool) {
             rate_limit_kbps: None,
             pre_backup_commands: "echo pre",
             post_backup_commands: "echo post",
+            execution_mode: "sequential",
+            on_failure: "continue",
         },
     )
     .await
@@ -721,10 +727,10 @@ async fn schedule_due_and_trigger(pool: PgPool) {
 async fn schedule_client_hostname(pool: PgPool) {
     let (_, _, schedule) = create_test_schedule(&pool).await;
 
-    let hostname = db::get_client_hostname_for_schedule(&pool, schedule.id)
+    let hostnames = db::get_schedule_target_hostnames(&pool, schedule.id)
         .await
         .unwrap();
-    assert_eq!(hostname, "sched-host");
+    assert_eq!(hostnames, vec!["sched-host"]);
 }
 
 #[sqlx::test(migrations = "./migrations")]

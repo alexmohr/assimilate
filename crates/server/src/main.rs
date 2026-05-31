@@ -246,16 +246,16 @@ async fn main() -> Result<(), StartupError> {
                 .delete(api::schedules::delete_schedule),
         )
         .route(
-            "/api/schedules/{id}/clone",
-            post(api::schedules::clone_schedule),
-        )
-        .route(
             "/api/schedules/{id}/run",
             post(api::schedules::run_schedule_now),
         )
         .route(
             "/api/schedules/{id}/reports",
             get(api::schedules::list_schedule_reports),
+        )
+        .route(
+            "/api/schedules/{id}/targets",
+            get(api::schedules::list_schedule_targets),
         )
         .route(
             "/api/clients/{hostname}/reports",
@@ -289,6 +289,7 @@ async fn main() -> Result<(), StartupError> {
         .route("/api/stats/system-events", get(api::stats::system_events))
         .route("/api/stats/health", get(api::stats::health))
         .route("/api/stats/trends", get(api::stats::trends))
+        .route("/api/stats/storage-trends", get(api::stats::storage_trends))
         .route("/api/stats/calendar", get(api::stats::calendar))
         .route("/api/logs", get(api::logs::get_logs))
         .route(

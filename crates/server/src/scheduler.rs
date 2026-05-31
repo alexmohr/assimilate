@@ -186,7 +186,9 @@ async fn tick(
 
     let tz = db::get_schedule_timezone(pool).await?;
 
-    for schedule in due {
+    let mut triggered_schedules = std::collections::HashSet::new();
+
+    for schedule in &due {
         let repo_id = RepoId(schedule.repo_id);
 
         let Ok(schedule_type) = schedule.schedule_type.parse::<ScheduleType>() else {
@@ -244,9 +246,18 @@ async fn tick(
             }
         }
 
-        let next = calculate_next_run(&schedule.cron_expression, now, tz)
+        triggered_schedules.insert(schedule.schedule_id);
+    }
+
+    for schedule_id in &triggered_schedules {
+        let cron = due
+            .iter()
+            .find(|s| s.schedule_id == *schedule_id)
+            .map(|s| s.cron_expression.as_str())
+            .unwrap_or_default();
+        let next = calculate_next_run(cron, now, tz)
             .map_err(|e| crate::error::ApiError::Internal(format!("cron error: {e}")))?;
-        db::mark_schedule_triggered(pool, schedule.schedule_id, now, next).await?;
+        db::mark_schedule_triggered(pool, *schedule_id, now, next).await?;
     }
 
     Ok(())

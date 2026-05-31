@@ -9,6 +9,7 @@ import { useRouter } from 'vue-router'
 import { apiClient } from '../api/client'
 import { useWebSocket } from '../composables/useWebSocket'
 import { formatBytes, relativeTime } from '../utils/format'
+import { cronToHuman } from '../utils/cron'
 import { logger } from '../utils/logger'
 import BaseSkeleton from '../components/BaseSkeleton.vue'
 import TrendsChart from '../components/TrendsChart.vue'
@@ -47,6 +48,14 @@ interface DashboardSummary {
   last_warning_at: string | null
   last_failure_schedule_id: number | null
   last_warning_schedule_id: number | null
+  last_failure_message: string | null
+  last_warning_message: string | null
+  last_failure_repo_id: number | null
+  last_warning_repo_id: number | null
+  last_failure_repo_name: string | null
+  last_warning_repo_name: string | null
+  last_failure_schedule_name: string | null
+  last_warning_schedule_name: string | null
 }
 
 interface HealthEntry {
@@ -402,6 +411,48 @@ function navigateToLastBackup(): void {
   }
   router.push({ path: `/repos/${summary.value.last_backup_repo_id}`, query })
 }
+
+interface StatusPopup {
+  type: 'failure' | 'warning'
+  message: string
+  repo_name: string | null
+  repo_id: number | null
+  schedule_name: string | null
+  schedule_id: number | null
+  at: string | null
+}
+
+const statusPopup = ref<StatusPopup | null>(null)
+
+function showFailurePopup(): void {
+  if (!summary.value?.last_failure_at) return
+  statusPopup.value = {
+    type: 'failure',
+    message: summary.value.last_failure_message ?? 'No error details available.',
+    repo_name: summary.value.last_failure_repo_name,
+    repo_id: summary.value.last_failure_repo_id,
+    schedule_name: summary.value.last_failure_schedule_name,
+    schedule_id: summary.value.last_failure_schedule_id,
+    at: summary.value.last_failure_at,
+  }
+}
+
+function showWarningPopup(): void {
+  if (!summary.value?.last_warning_at) return
+  statusPopup.value = {
+    type: 'warning',
+    message: summary.value.last_warning_message ?? 'No warning details available.',
+    repo_name: summary.value.last_warning_repo_name,
+    repo_id: summary.value.last_warning_repo_id,
+    schedule_name: summary.value.last_warning_schedule_name,
+    schedule_id: summary.value.last_warning_schedule_id,
+    at: summary.value.last_warning_at,
+  }
+}
+
+function closeStatusPopup(): void {
+  statusPopup.value = null
+}
 </script>
 
 <template>
@@ -502,11 +553,8 @@ function navigateToLastBackup(): void {
         </div>
         <div
           class="stat-card"
-          :class="{ 'stat-card-link': summary?.last_failure_schedule_id }"
-          @click="
-            summary?.last_failure_schedule_id &&
-            router.push(`/schedules/${summary.last_failure_schedule_id}`)
-          "
+          :class="{ 'stat-card-link': summary?.last_failure_at }"
+          @click="showFailurePopup"
         >
           <span class="stat-label">Last Failure</span>
           <span
@@ -518,11 +566,8 @@ function navigateToLastBackup(): void {
         </div>
         <div
           class="stat-card"
-          :class="{ 'stat-card-link': summary?.last_warning_schedule_id }"
-          @click="
-            summary?.last_warning_schedule_id &&
-            router.push(`/schedules/${summary.last_warning_schedule_id}`)
-          "
+          :class="{ 'stat-card-link': summary?.last_warning_at }"
+          @click="showWarningPopup"
         >
           <span class="stat-label">Last Warning</span>
           <span
@@ -911,7 +956,7 @@ function navigateToLastBackup(): void {
       <!-- Section 5b: Widget Row -->
       <div class="widgets-row">
         <BackupStatsWidget :repos="repoOptions" />
-        <StorageTrendWidget />
+        <StorageTrendWidget :repos="repoOptions" />
       </div>
 
       <!-- Section 6: Trends Chart -->
@@ -926,6 +971,64 @@ function navigateToLastBackup(): void {
         </div>
       </div>
     </template>
+
+    <!-- Status Popup (Last Failure / Last Warning) -->
+    <div
+      v-if="statusPopup"
+      class="status-popup-overlay"
+      @click="closeStatusPopup"
+    >
+      <div
+        class="status-popup"
+        @click.stop
+      >
+        <div class="status-popup-header">
+          <span
+            class="status-popup-title"
+            :class="{
+              'status-popup-title-danger': statusPopup.type === 'failure',
+              'status-popup-title-warning': statusPopup.type === 'warning',
+            }"
+          >
+            {{ statusPopup.type === 'failure' ? 'Backup Failed' : 'Backup Warning' }}
+          </span>
+          <button
+            class="status-popup-close"
+            @click="closeStatusPopup"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="status-popup-meta">
+          <span v-if="statusPopup.at">{{ relativeTime(statusPopup.at) }}</span>
+          <template v-if="statusPopup.repo_name">
+            &middot;
+            <a
+              v-if="statusPopup.repo_id"
+              class="status-popup-link"
+              @click="router.push(`/repos/${statusPopup.repo_id}`); closeStatusPopup()"
+            >
+              {{ statusPopup.repo_name }}
+            </a>
+            <span v-else>{{ statusPopup.repo_name }}</span>
+          </template>
+          <template v-if="statusPopup.schedule_name">
+            &middot;
+            <a
+              v-if="statusPopup.schedule_id"
+              class="status-popup-link"
+              @click="router.push(`/schedules/${statusPopup.schedule_id}`); closeStatusPopup()"
+            >
+              {{ cronToHuman(statusPopup.schedule_name) || statusPopup.schedule_name }}
+            </a>
+            <span v-else>{{
+              cronToHuman(statusPopup.schedule_name) || statusPopup.schedule_name
+            }}</span>
+          </template>
+        </div>
+        <pre class="status-popup-msg">{{ statusPopup.message }}</pre>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -1490,5 +1593,85 @@ function navigateToLastBackup(): void {
   color: var(--text-secondary);
   font-family: var(--mono);
   font-size: 0.8rem;
+}
+
+/* Status Popup */
+.status-popup-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.status-popup {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  max-width: 32rem;
+  width: 90%;
+  max-height: 60vh;
+  overflow: auto;
+}
+
+.status-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.status-popup-title {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.status-popup-title-danger {
+  color: var(--danger);
+}
+
+.status-popup-title-warning {
+  color: var(--warning);
+}
+
+.status-popup-close {
+  background: transparent;
+  border: none;
+  font-size: 1.25rem;
+  cursor: pointer;
+  color: var(--text-muted);
+  line-height: 1;
+}
+
+.status-popup-meta {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+}
+
+.status-popup-link {
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.status-popup-link:hover {
+  text-decoration: underline;
+}
+
+.status-popup-msg {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--text-primary);
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

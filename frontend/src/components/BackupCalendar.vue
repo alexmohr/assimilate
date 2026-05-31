@@ -139,11 +139,19 @@ function selectDay(cell: GridCell): void {
 function eventColor(status: string): string {
   if (status === 'success') return 'var(--success)'
   if (status === 'failed') return 'var(--danger)'
+  if (status === 'warning') return 'var(--warning)'
   return 'var(--info)'
 }
 
 const router = useRouter()
-const errorPopup = ref<{ repo_name: string; time: string; message: string } | null>(null)
+const errorPopup = ref<{
+  repo_name: string
+  repo_id?: number
+  schedule_id?: number
+  schedule_name?: string
+  time: string
+  message: string
+} | null>(null)
 
 function onEventClick(evt: CalendarEvent): void {
   if (evt.status === 'success' && evt.repo_id) {
@@ -155,8 +163,18 @@ function onEventClick(evt: CalendarEvent): void {
   } else if (evt.status === 'failed') {
     errorPopup.value = {
       repo_name: evt.repo_name,
+      repo_id: evt.repo_id,
+      schedule_id: evt.schedule_id,
       time: evt.time,
       message: evt.error_message ?? 'No error details available.',
+    }
+  } else if (evt.status === 'warning') {
+    errorPopup.value = {
+      repo_name: evt.repo_name,
+      repo_id: evt.repo_id,
+      schedule_id: evt.schedule_id,
+      time: evt.time,
+      message: evt.error_message ?? 'No warning details available.',
     }
   } else if (evt.status === 'scheduled' && evt.schedule_id) {
     router.push(`/schedules/${evt.schedule_id}`)
@@ -269,7 +287,8 @@ function closeErrorPopup(): void {
           :class="{
             'cal-event-clickable':
               evt.status === 'success' ||
-              (evt.status === 'failed' && evt.error_message) ||
+              evt.status === 'failed' ||
+              evt.status === 'warning' ||
               evt.status === 'scheduled',
           }"
           @click="onEventClick(evt)"
@@ -279,7 +298,19 @@ function closeErrorPopup(): void {
             :style="{ background: eventColor(evt.status) }"
           />
           <span class="cal-event-time">{{ evt.time }}</span>
-          <span class="cal-event-repo">{{ evt.repo_name }}</span>
+          <a
+            v-if="evt.repo_id"
+            class="cal-event-repo cal-event-repo-link"
+            @click.stop="router.push(`/repos/${evt.repo_id}`)"
+          >
+            {{ evt.repo_name }}
+          </a>
+          <span
+            v-else
+            class="cal-event-repo"
+          >
+            {{ evt.repo_name }}
+          </span>
           <span
             class="cal-event-badge"
             :class="`cal-badge-${evt.status}`"
@@ -307,7 +338,26 @@ function closeErrorPopup(): void {
             &times;
           </button>
         </div>
-        <div class="cal-error-meta">{{ errorPopup.repo_name }} at {{ errorPopup.time }}</div>
+        <div class="cal-error-meta">
+          <a
+            v-if="errorPopup.repo_id"
+            class="cal-error-link"
+            @click="router.push(`/repos/${errorPopup.repo_id}`); closeErrorPopup()"
+          >
+            {{ errorPopup.repo_name }}
+          </a>
+          <span v-else>{{ errorPopup.repo_name }}</span>
+          at {{ errorPopup.time }}
+          <template v-if="errorPopup.schedule_id">
+            &middot;
+            <a
+              class="cal-error-link"
+              @click="router.push(`/schedules/${errorPopup.schedule_id}`); closeErrorPopup()"
+            >
+              Schedule
+            </a>
+          </template>
+        </div>
         <pre class="cal-error-msg">{{ errorPopup.message }}</pre>
       </div>
     </div>
@@ -481,6 +531,26 @@ function closeErrorPopup(): void {
   color: var(--text-primary);
   font-weight: 500;
   flex: 1;
+}
+
+.cal-event-repo-link {
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.cal-event-repo-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.cal-error-link {
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.cal-error-link:hover {
+  text-decoration: underline;
 }
 
 .cal-event-badge {

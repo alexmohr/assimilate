@@ -1066,6 +1066,8 @@ watch(wsStatus, (newStatus, oldStatus) => {
           <h3 class="info-title">Hostname Aliases</h3>
           <p class="field-hint">
             Glob patterns that match archive hostnames to this client during repository import.
+            Only affects future discoveries — existing imported clients are not retroactively
+            reassigned. Use "Merge into" on an imported client to move its historical archives.
           </p>
           <div
             v-if="hostnamePatterns.length > 0"
@@ -1164,7 +1166,8 @@ watch(wsStatus, (newStatus, oldStatus) => {
               <div class="danger-info">
                 <span class="danger-heading">Delete Host</span>
                 <span class="danger-desc">
-                  Permanently remove this host and all associated data. This action cannot be undone.
+                  Permanently remove this host and all associated data. This action cannot be
+                  undone.
                 </span>
               </div>
               <button

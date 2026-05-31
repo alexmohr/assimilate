@@ -285,6 +285,23 @@ async fn handle_text_message(
         ServerToAgent::ChangePassphrase { .. } => {
             warn!("ChangePassphrase not yet implemented in agent");
         }
+        ServerToAgent::DeleteArchives {
+            request_id,
+            repo_id,
+            archive_names,
+        } => {
+            if exec_cmd_tx
+                .send(ExecutorCommand::DeleteArchives {
+                    repo_id,
+                    archive_names,
+                    request_id,
+                })
+                .await
+                .is_err()
+            {
+                warn!("Executor command channel closed");
+            }
+        }
     }
 
     Ok(())

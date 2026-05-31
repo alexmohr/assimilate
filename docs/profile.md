@@ -2,6 +2,8 @@
 
 The Profile page lets you manage your account settings, API tokens, and UI preferences. Access it from **Settings → Profile** in the sidebar.
 
+![Profile](assets/screenshots/profile.png)
+
 ## Change Password
 
 The **Change Password** tab lets you update your login password.

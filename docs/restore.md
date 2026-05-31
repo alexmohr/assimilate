@@ -24,7 +24,7 @@ Use browser download to retrieve individual files or a directory tree directly t
 
 The server streams data live from the borg repository. For details on the export format, see [Exporting as tar.lz4](archives.md#exporting-as-tarlz4).
 
-<!-- screenshot: restore-browser-download -->
+![Archive Browser - Download](assets/screenshots/archive-browse.png)
 
 !!! warning "Streaming timeout"
     Large downloads stream data live over SSH. The server enforces a 5-minute per-file timeout and a 10-minute archive-export timeout. For multi-GB restores, use agent-side restore instead.
@@ -48,8 +48,6 @@ Agent-side restore extracts files directly on the agent machine — no data pass
 | **Strip components** | Number of leading path components to strip from extracted paths |
 
 1. Click **Start Restore**. The server sends a `RestoreArchive` message to the connected agent.
-
-<!-- screenshot: restore-agent-side -->
 
 ### Restore Status
 

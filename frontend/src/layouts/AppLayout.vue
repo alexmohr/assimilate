@@ -16,6 +16,7 @@ import {
   Activity,
   Bell,
   BookOpen,
+  Braces,
   Cable,
   ChevronLeft,
   ChevronRight,
@@ -273,6 +274,18 @@ onMounted(() => {
               :size="16"
             />
             <span class="nav-label">Docs</span>
+          </a>
+          <a
+            href="/api/docs"
+            target="_blank"
+            class="signout-btn docs-btn"
+            title="API Reference"
+          >
+            <Braces
+              class="nav-icon"
+              :size="16"
+            />
+            <span class="nav-label">API</span>
           </a>
           <button
             v-if="authStore.user"
@@ -607,6 +620,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .signout-btn {
@@ -625,6 +639,7 @@ onMounted(() => {
     color 0.15s,
     border-color 0.15s;
   overflow: hidden;
+  white-space: nowrap;
 }
 
 .collapsed .signout-btn {

@@ -31,9 +31,16 @@ pub struct HostBackupSources {
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct HostExcludePatterns {
+    pub client_id: i64,
+    pub patterns: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateScheduleRequest {
     pub client_ids: Vec<i64>,
     pub repo_id: i64,
+    pub name: Option<String>,
     #[schema(value_type = Option<String>)]
     pub schedule_type: Option<ScheduleType>,
     pub cron_expression: String,
@@ -51,6 +58,7 @@ pub struct CreateScheduleRequest {
     pub post_backup_commands: Option<Vec<String>>,
     pub backup_sources: Option<Vec<String>>,
     pub backup_sources_per_host: Option<Vec<HostBackupSources>>,
+    pub exclude_patterns_per_host: Option<Vec<HostExcludePatterns>>,
     #[schema(value_type = Option<String>)]
     pub execution_mode: Option<ExecutionMode>,
     #[schema(value_type = Option<String>)]
@@ -59,6 +67,7 @@ pub struct CreateScheduleRequest {
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateScheduleRequest {
+    pub name: Option<String>,
     pub cron_expression: String,
     pub enabled: Option<bool>,
     pub canary_enabled: Option<bool>,
@@ -74,6 +83,7 @@ pub struct UpdateScheduleRequest {
     pub post_backup_commands: Option<Vec<String>>,
     pub backup_sources: Option<Vec<String>>,
     pub backup_sources_per_host: Option<Vec<HostBackupSources>>,
+    pub exclude_patterns_per_host: Option<Vec<HostExcludePatterns>>,
     pub client_ids: Option<Vec<i64>>,
     #[schema(value_type = Option<String>)]
     pub execution_mode: Option<ExecutionMode>,
@@ -190,10 +200,11 @@ pub async fn create_schedule(
     let on_failure_str = on_failure.to_string();
 
     let params = ScheduleParams {
+        name: req.name.as_deref().unwrap_or(""),
         schedule_type,
         cron_expression: &req.cron_expression,
         enabled,
-        canary_enabled: req.canary_enabled.unwrap_or(false),
+        canary_enabled: req.canary_enabled.unwrap_or(true),
         exclude_patterns: &exclude_patterns,
         ignore_global_excludes: req.ignore_global_excludes.unwrap_or(false),
         keep_daily: req.keep_daily.unwrap_or(7),
@@ -249,6 +260,23 @@ pub async fn create_schedule(
                     schedule.id,
                     entry.client_id,
                     path,
+                    sort_order,
+                )
+                .await?;
+            }
+        }
+    }
+
+    if let Some(per_host) = &req.exclude_patterns_per_host {
+        for entry in per_host {
+            for (i, pattern) in entry.patterns.iter().enumerate() {
+                let sort_order = i32::try_from(i)
+                    .map_err(|_| ApiError::BadRequest("too many exclude patterns".into()))?;
+                db::insert_exclude_for_schedule_client(
+                    &state.pool,
+                    schedule.id,
+                    entry.client_id,
+                    pattern,
                     sort_order,
                 )
                 .await?;
@@ -359,7 +387,12 @@ pub async fn update_schedule(
         .on_failure
         .map_or_else(|| existing.on_failure.clone(), |f| f.to_string());
 
+    let name = req
+        .name
+        .unwrap_or_else(|| existing.name.clone());
+
     let params = ScheduleParams {
+        name: &name,
         schedule_type: &existing.schedule_type,
         cron_expression: &req.cron_expression,
         enabled,
@@ -425,6 +458,24 @@ pub async fn update_schedule(
                     schedule.id,
                     entry.client_id,
                     path,
+                    sort_order,
+                )
+                .await?;
+            }
+        }
+    }
+
+    if let Some(per_host) = &req.exclude_patterns_per_host {
+        db::delete_per_host_excludes_for_schedule(&state.pool, schedule.id).await?;
+        for entry in per_host {
+            for (i, pattern) in entry.patterns.iter().enumerate() {
+                let sort_order = i32::try_from(i)
+                    .map_err(|_| ApiError::BadRequest("too many exclude patterns".into()))?;
+                db::insert_exclude_for_schedule_client(
+                    &state.pool,
+                    schedule.id,
+                    entry.client_id,
+                    pattern,
                     sort_order,
                 )
                 .await?;
@@ -615,6 +666,7 @@ pub async fn list_schedule_targets(
 pub struct ScheduleBackupSourcesResponse {
     pub backup_sources: Vec<String>,
     pub backup_sources_per_host: Vec<db::PerHostBackupSources>,
+    pub exclude_patterns_per_host: Vec<db::PerHostExcludePatterns>,
 }
 
 #[utoipa::path(
@@ -639,8 +691,11 @@ pub async fn list_schedule_backup_sources(
     let backup_sources = db::list_backup_sources_for_schedule(&state.pool, id).await?;
     let backup_sources_per_host =
         db::list_all_per_host_backup_sources_for_schedule(&state.pool, id).await?;
+    let exclude_patterns_per_host =
+        db::list_all_per_host_excludes_for_schedule(&state.pool, id).await?;
     Ok(Json(ScheduleBackupSourcesResponse {
         backup_sources,
         backup_sources_per_host,
+        exclude_patterns_per_host,
     }))
 }

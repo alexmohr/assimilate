@@ -32,6 +32,7 @@ interface ClientRow {
   last_seen_at: string | null
   is_connected: boolean
   is_imported: boolean
+  is_hidden: boolean
   supports_restart: boolean
   restart_unavailable_reason: string | null
   default_backup_paths: string[]
@@ -297,6 +298,43 @@ async function confirmDeleteHost(): Promise<void> {
   }
 }
 
+// Hide imported client
+const hideLoading = ref(false)
+
+async function hideClient(): Promise<void> {
+  if (!client.value) return
+  hideLoading.value = true
+  try {
+    await apiClient.put(`/clients/${client.value.hostname}/hide`)
+    router.push('/clients')
+  } catch (e: unknown) {
+    logger.error('Failed to hide client', e)
+  } finally {
+    hideLoading.value = false
+  }
+}
+
+// Delete archives & remove imported client
+const showDeleteArchivesDialog = ref(false)
+const deleteArchivesLoading = ref(false)
+
+useEscapeKey(showDeleteArchivesDialog, () => {
+  showDeleteArchivesDialog.value = false
+})
+
+async function confirmDeleteArchives(): Promise<void> {
+  if (!client.value) return
+  deleteArchivesLoading.value = true
+  try {
+    await apiClient.post(`/clients/${client.value.hostname}/delete-archives`)
+    router.push('/clients')
+  } catch (e: unknown) {
+    logger.error('Failed to delete archives', e)
+  } finally {
+    deleteArchivesLoading.value = false
+  }
+}
+
 interface CreateClientResponse {
   client: ClientRow
   token: string
@@ -373,9 +411,7 @@ async function loadHostnamePatterns(hostname?: string): Promise<void> {
   const h = hostname ?? client.value?.hostname
   if (!h) return
   try {
-    const res = await apiClient.get<HostnamePattern[]>(
-      `/clients/${h}/hostname-patterns`,
-    )
+    const res = await apiClient.get<HostnamePattern[]>(`/clients/${h}/hostname-patterns`)
     hostnamePatterns.value = res.data
   } catch (e: unknown) {
     logger.error('loadHostnamePatterns failed', e)
@@ -1087,25 +1123,59 @@ watch(wsStatus, (newStatus, oldStatus) => {
 
         <!-- Danger Zone -->
         <div
-          v-if="isAdmin && !isImported"
+          v-if="isAdmin"
           class="info-card danger-zone"
         >
           <h3 class="info-title">Danger Zone</h3>
-          <div class="danger-body">
-            <div class="danger-info">
-              <span class="danger-heading">Delete Host</span>
-              <span class="danger-desc">
-                Permanently remove this host and all associated data. This action cannot be undone.
-              </span>
+          <template v-if="isImported">
+            <div class="danger-body">
+              <div class="danger-info">
+                <span class="danger-heading">Hide Client</span>
+                <span class="danger-desc">
+                  Hide this imported client from the default list view.
+                </span>
+              </div>
+              <button
+                class="btn btn-sm btn-ghost"
+                :disabled="hideLoading"
+                @click="hideClient"
+              >
+                {{ hideLoading ? 'Hiding...' : 'Hide' }}
+              </button>
             </div>
-            <button
-              class="btn btn-sm btn-danger"
-              :disabled="deleteLoading"
-              @click="showDeleteDialog = true"
-            >
-              {{ deleteLoading ? 'Deleting...' : 'Delete Host' }}
-            </button>
-          </div>
+            <div class="danger-body danger-body-sep">
+              <div class="danger-info">
+                <span class="danger-heading">Delete Archives &amp; Remove</span>
+                <span class="danger-desc">
+                  Permanently delete all borg archives and remove this client. This is irreversible.
+                </span>
+              </div>
+              <button
+                class="btn btn-sm btn-danger"
+                :disabled="deleteArchivesLoading"
+                @click="showDeleteArchivesDialog = true"
+              >
+                {{ deleteArchivesLoading ? 'Deleting...' : 'Delete Archives & Remove' }}
+              </button>
+            </div>
+          </template>
+          <template v-else>
+            <div class="danger-body">
+              <div class="danger-info">
+                <span class="danger-heading">Delete Host</span>
+                <span class="danger-desc">
+                  Permanently remove this host and all associated data. This action cannot be undone.
+                </span>
+              </div>
+              <button
+                class="btn btn-sm btn-danger"
+                :disabled="deleteLoading"
+                @click="showDeleteDialog = true"
+              >
+                {{ deleteLoading ? 'Deleting...' : 'Delete Host' }}
+              </button>
+            </div>
+          </template>
         </div>
       </div>
 
@@ -1320,8 +1390,9 @@ watch(wsStatus, (newStatus, oldStatus) => {
           </div>
           <div class="dialog-body">
             <p>
-              Permanently delete <strong>{{ client?.hostname }}</strong>? All associated schedules
-              and backup reports will be removed. This action cannot be undone.
+              Permanently delete <strong>{{ client?.hostname }}</strong
+              >? All associated schedules and backup reports will be removed. This action cannot be
+              undone.
             </p>
           </div>
           <div class="dialog-footer">
@@ -1337,6 +1408,52 @@ watch(wsStatus, (newStatus, oldStatus) => {
               @click="confirmDeleteHost"
             >
               {{ deleteLoading ? 'Deleting...' : 'Delete Host' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Delete Archives Confirmation Dialog -->
+    <Teleport to="body">
+      <div
+        v-if="showDeleteArchivesDialog"
+        class="overlay"
+        @click.self="showDeleteArchivesDialog = false"
+      >
+        <div class="dialog">
+          <div class="dialog-header">
+            <h2 class="dialog-title">Delete Archives &amp; Remove Client</h2>
+            <button
+              class="close-btn"
+              @click="showDeleteArchivesDialog = false"
+            >
+              &times;
+            </button>
+          </div>
+          <div class="dialog-body">
+            <p class="danger-warning-text">
+              This will <strong>permanently destroy all borg archives</strong> belonging to
+              <strong>{{ client?.hostname }}</strong> and remove the client from the system.
+            </p>
+            <p class="danger-warning-text">
+              This operation is <strong>irreversible</strong>. Backup data will be permanently lost
+              and cannot be recovered.
+            </p>
+          </div>
+          <div class="dialog-footer">
+            <button
+              class="btn btn-ghost"
+              @click="showDeleteArchivesDialog = false"
+            >
+              Cancel
+            </button>
+            <button
+              class="btn btn-danger"
+              :disabled="deleteArchivesLoading"
+              @click="confirmDeleteArchives"
+            >
+              {{ deleteArchivesLoading ? 'Deleting...' : 'Delete Archives & Remove' }}
             </button>
           </div>
         </div>
@@ -1363,7 +1480,8 @@ watch(wsStatus, (newStatus, oldStatus) => {
           <div class="dialog-body">
             <p>
               Hostname changed from <strong>{{ pendingAliasOldHostname }}</strong> to
-              <strong>{{ pendingAliasNewHostname }}</strong>.
+              <strong>{{ pendingAliasNewHostname }}</strong
+              >.
             </p>
             <p>
               Add <code>{{ pendingAliasOldHostname }}</code> as an alternative hostname pattern so
@@ -2178,5 +2296,17 @@ watch(wsStatus, (newStatus, oldStatus) => {
 .danger-desc {
   font-size: 0.8rem;
   color: var(--text-muted);
+}
+
+.danger-body-sep {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.danger-warning-text {
+  font-size: 0.875rem;
+  color: var(--danger);
+  margin-bottom: 0.5rem;
 }
 </style>

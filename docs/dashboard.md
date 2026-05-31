@@ -16,6 +16,8 @@ The top row shows six summary statistics:
 | **Last Backup** | Relative time since the most recent completed backup across all hosts |
 | **Next Backup** | Relative time until the next scheduled backup fires |
 | **Total Storage** | Sum of deduplicated storage across all repositories |
+| **Last Failure** | Relative time since the most recent failed backup. Click to open a detail popup showing the error message, with links to the affected repository and schedule. |
+| **Last Warning** | Relative time since the most recent backup warning. Click to open a detail popup showing the warning message, with links to the affected repository and schedule. |
 
 ## 30-Day Success Rate
 
@@ -86,7 +88,9 @@ The calendar view shows backup activity for the current month. Each day cell is 
 | Red | At least one backup failed |
 | Empty | No backups scheduled or run |
 
-Click any day to see a list of backup runs for that date with their result, duration, and archive size.
+Click any day to see a list of backup runs for that date with their result, duration, and archive size. Repository names in the event list are clickable links to the repository detail page.
+
+When clicking a failed or warning event, a popup appears showing the full error or warning message. The popup includes clickable links to the affected repository and schedule for quick navigation.
 
 <!-- screenshot: dashboard-calendar -->
 

@@ -13,6 +13,7 @@
 //! and applies migrations automatically.
 
 use chrono::{Datelike, Duration, Utc};
+use chrono_tz::Tz;
 use server::db::{self, patterns, *};
 use sqlx::PgPool;
 
@@ -759,6 +760,69 @@ async fn backup_sources_crud(pool: PgPool) {
         .await
         .unwrap();
     assert!(sources.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn backup_sources_per_host_crud(pool: PgPool) {
+    let (client, _, schedule) = create_test_schedule(&pool).await;
+
+    let client2 = db::insert_client(&pool, "host-two", None, "hash2", None)
+        .await
+        .unwrap();
+
+    db::insert_backup_source_for_schedule(&pool, schedule.id, "/shared", 0)
+        .await
+        .unwrap();
+
+    db::insert_backup_source_for_schedule_client(&pool, schedule.id, client.id, "/home/one", 0)
+        .await
+        .unwrap();
+    db::insert_backup_source_for_schedule_client(&pool, schedule.id, client.id, "/var/one", 1)
+        .await
+        .unwrap();
+    db::insert_backup_source_for_schedule_client(&pool, schedule.id, client2.id, "/data/two", 0)
+        .await
+        .unwrap();
+
+    let schedule_level = db::list_backup_sources_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(schedule_level, vec!["/shared"]);
+
+    let client1_sources =
+        db::list_backup_sources_for_schedule_client(&pool, schedule.id, client.id)
+            .await
+            .unwrap();
+    assert_eq!(client1_sources, vec!["/home/one", "/var/one"]);
+
+    let client2_sources =
+        db::list_backup_sources_for_schedule_client(&pool, schedule.id, client2.id)
+            .await
+            .unwrap();
+    assert_eq!(client2_sources, vec!["/data/two"]);
+
+    let all_per_host = db::list_all_per_host_backup_sources_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(all_per_host.len(), 2);
+    assert_eq!(all_per_host[0].client_id, client.id);
+    assert_eq!(all_per_host[0].paths, vec!["/home/one", "/var/one"]);
+    assert_eq!(all_per_host[1].client_id, client2.id);
+    assert_eq!(all_per_host[1].paths, vec!["/data/two"]);
+
+    db::delete_per_host_backup_sources_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+
+    let all_per_host = db::list_all_per_host_backup_sources_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert!(all_per_host.is_empty());
+
+    let schedule_level = db::list_backup_sources_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(schedule_level, vec!["/shared"]);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1961,7 +2025,9 @@ async fn test_backup_trends_filtered_by_repo(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_calendar_events_empty(pool: PgPool) {
-    let events = db::get_calendar_events(&pool, 2026, 1, None).await.unwrap();
+    let events = db::get_calendar_events(&pool, 2026, 1, None, Tz::UTC)
+        .await
+        .unwrap();
     assert!(events.is_empty());
 }
 
@@ -1980,6 +2046,7 @@ async fn test_calendar_events_with_data(pool: PgPool) {
         now.date_naive().year(),
         now.date_naive().month(),
         None,
+        Tz::UTC,
     )
     .await
     .unwrap();
@@ -2004,6 +2071,7 @@ async fn test_calendar_events_filtered_by_repo(pool: PgPool) {
         now.date_naive().year(),
         now.date_naive().month(),
         Some(repo.id),
+        Tz::UTC,
     )
     .await
     .unwrap();
@@ -2014,6 +2082,7 @@ async fn test_calendar_events_filtered_by_repo(pool: PgPool) {
         now.date_naive().year(),
         now.date_naive().month(),
         Some(repo.id + 999),
+        Tz::UTC,
     )
     .await
     .unwrap();

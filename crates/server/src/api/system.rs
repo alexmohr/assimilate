@@ -7,7 +7,7 @@ use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
 use ssh_key::{Algorithm, LineEnding, rand_core::OsRng};
 
-use super::deploy::{agent_binary_path, query_available_agent_version};
+use super::deploy::{agent_binary_dir, query_available_agent_version};
 use crate::{AppState, api::auth::RequireAdmin, db, error::ApiError};
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -220,7 +220,6 @@ pub async fn update_settings(
         timezone: effective_tz.name().to_owned(),
     }))
 }
-
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct VersionResponse {
     pub server_version: String,
@@ -242,12 +241,8 @@ pub struct VersionResponse {
     )
 )]
 pub async fn get_version(_admin: RequireAdmin) -> Result<Json<VersionResponse>, ApiError> {
-    let binary_path = agent_binary_path();
-    let agent_version = if binary_path.exists() {
-        query_available_agent_version(&binary_path).await
-    } else {
-        None
-    };
+    let binary_dir = agent_binary_dir();
+    let agent_version = query_available_agent_version(&binary_dir).await;
 
     let git_sha = env!("GIT_SHA");
     let server_version = if git_sha.is_empty() {

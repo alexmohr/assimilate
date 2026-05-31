@@ -74,7 +74,7 @@ async fn client_update_last_seen_and_version(pool: PgPool) {
         .await
         .unwrap();
 
-    db::update_last_seen_and_version(&pool, client.id, "2.0.0")
+    db::update_last_seen_and_version(&pool, client.id, "2.0.0", None, None)
         .await
         .unwrap();
 
@@ -1021,7 +1021,7 @@ async fn activity_feed(pool: PgPool) {
 
     insert_test_report(&pool, client.id, repo.id).await;
 
-    let activity = db::get_activity_feed(&pool, 10).await.unwrap();
+    let activity = db::get_activity_feed(&pool, 10, None, None).await.unwrap();
     assert_eq!(activity.len(), 1);
     assert_eq!(activity[0].hostname, "act-host");
     assert_eq!(activity[0].target_name, "test-repo");
@@ -1036,7 +1036,7 @@ async fn activity_feed_days(pool: PgPool) {
 
     insert_test_report(&pool, client.id, repo.id).await;
 
-    let activity = db::get_activity_feed_days(&pool, 7).await.unwrap();
+    let activity = db::get_activity_feed_days(&pool, 7, None, None).await.unwrap();
     assert_eq!(activity.len(), 1);
 }
 

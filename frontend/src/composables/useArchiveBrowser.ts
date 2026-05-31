@@ -84,13 +84,15 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     const currentDir = currentPath.value.replace(/^\//, '')
     const entries: DirDisplayEntry[] = []
 
+    const currentEntry = contents.value.find((e) => e.type === 'd' && e.path === currentDir)
+    if (currentEntry) {
+      entries.push({ ...currentEntry, displayName: '.' })
+    } else if (currentPath.value === '/') {
+      entries.push({ type: 'd', path: '', size: 0, mtime: '', mode: '', displayName: '.' })
+    }
+
     if (currentPath.value !== '/') {
       const parentPath = currentPath.value.replace(/\/[^/]+$/, '') || '/'
-      const currentEntry = contents.value.find((e) => e.type === 'd' && e.path === currentDir)
-      if (currentEntry) {
-        entries.push({ ...currentEntry, displayName: '.' })
-      }
-
       entries.push({
         type: 'd',
         path: parentPath,
@@ -147,7 +149,7 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
         `/repos/${repoId.value}/archives/${encodeURIComponent(selectedArchive.value.name)}/contents`,
         { params: apiPath ? { path: apiPath } : {} },
       )
-      contents.value = res.data
+      contents.value = res.data.filter((e) => e.path !== '.' && e.path !== '..')
     } catch (e: unknown) {
       contentsError.value = extractError(e)
     } finally {

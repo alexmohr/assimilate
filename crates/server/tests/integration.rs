@@ -7,7 +7,7 @@ use axum::{
     Router,
     body::Body,
     http::{Request, StatusCode},
-    routing::{get, post, put},
+    routing::{get, put},
 };
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
@@ -83,10 +83,6 @@ async fn build_test_app(pool: PgPool) -> Router {
         .route(
             "/api/schedules",
             get(server::api::schedules::list_schedules),
-        )
-        .route(
-            "/api/schedules/{id}/clone",
-            post(server::api::schedules::clone_schedule),
         )
         .route(
             "/api/clients/{hostname}/reports",
@@ -427,14 +423,22 @@ async fn test_stats_endpoints() {
 
     let repo_id = insert_test_repo(&pool, "stats-repo").await;
 
-    sqlx::query(
-        "INSERT INTO schedules (client_id, repo_id, cron_expression, enabled) VALUES ($1, $2, $3, \
-         $4)",
+    let schedule_id: i64 = sqlx::query_scalar(
+        "INSERT INTO schedules (repo_id, cron_expression, enabled) VALUES ($1, $2, $3) RETURNING \
+         id",
     )
-    .bind(client_id)
     .bind(repo_id)
     .bind("0 2 * * *")
     .bind(true)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO schedule_targets (schedule_id, client_id, execution_order) VALUES ($1, $2, 0)",
+    )
+    .bind(schedule_id)
+    .bind(client_id)
     .execute(&pool)
     .await
     .unwrap();
@@ -497,101 +501,6 @@ async fn test_stats_endpoints() {
     assert_eq!(health[0]["target_name"], "stats-repo");
     assert_eq!(health[0]["last_status"], "success");
     assert!(health[0]["last_backup_at"].is_string());
-}
-
-#[tokio::test]
-#[ignore]
-async fn test_schedule_clone() {
-    let pool = setup_pool().await;
-    clean_tables(&pool).await;
-    create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
-
-    let client_id: i64 = sqlx::query_scalar(
-        "INSERT INTO clients (hostname, display_name, agent_token_hash) VALUES ('clone-host', \
-         'Clone Host', 'fakehash') RETURNING id",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-
-    let repo_id = insert_test_repo(&pool, "clone-repo").await;
-
-    let schedule_id: i64 = sqlx::query_scalar(
-        "INSERT INTO schedules (client_id, repo_id, schedule_type, cron_expression, enabled, \
-         canary_enabled, exclude_patterns, ignore_global_excludes, keep_daily, keep_weekly, \
-         keep_monthly, keep_yearly, compact_enabled, pre_backup_commands, post_backup_commands) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id",
-    )
-    .bind(client_id)
-    .bind(repo_id)
-    .bind("backup")
-    .bind("0 3 * * *")
-    .bind(true)
-    .bind(true)
-    .bind(vec!["*.tmp".to_string(), "*.cache".to_string()])
-    .bind(true)
-    .bind(10_i32)
-    .bind(11_i32)
-    .bind(12_i32)
-    .bind(13_i32)
-    .bind(false)
-    .bind("[\"echo pre\"]")
-    .bind("[\"echo post\"]")
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-
-    sqlx::query(
-        "INSERT INTO backup_sources (schedule_id, path, sort_order) VALUES ($1, $2, $3), ($1, $4, \
-         $5)",
-    )
-    .bind(schedule_id)
-    .bind("/src/one")
-    .bind(0_i32)
-    .bind("/src/two")
-    .bind(1_i32)
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    let req = Request::builder()
-        .uri(format!("/api/schedules/{schedule_id}/clone"))
-        .method("POST")
-        .header("cookie", session_cookie())
-        .body(Body::empty())
-        .unwrap();
-    let resp = oneshot(&mut app, req).await;
-    assert_eq!(resp.status(), StatusCode::CREATED);
-
-    let body = body_json(resp).await;
-    let cloned_id = body["id"].as_i64().unwrap();
-    assert_ne!(cloned_id, schedule_id);
-    assert!(!body["enabled"].as_bool().unwrap());
-    assert_eq!(body["cron_expression"], "0 3 * * *");
-    assert_eq!(body["repo_id"], repo_id);
-    assert_eq!(body["schedule_type"], "backup");
-    assert_eq!(body["canary_enabled"], true);
-    assert_eq!(body["exclude_patterns"], json!(["*.tmp", "*.cache"]));
-    assert_eq!(body["ignore_global_excludes"], true);
-    assert_eq!(body["keep_daily"], 10);
-    assert_eq!(body["keep_weekly"], 11);
-    assert_eq!(body["keep_monthly"], 12);
-    assert_eq!(body["keep_yearly"], 13);
-    assert_eq!(body["compact_enabled"], false);
-    assert_eq!(body["pre_backup_commands"], "[\"echo pre\"]");
-    assert_eq!(body["post_backup_commands"], "[\"echo post\"]");
-    assert!(body["last_run_at"].is_null());
-    assert!(body["next_run_at"].is_null());
-
-    let cloned_sources = sqlx::query_scalar::<_, String>(
-        "SELECT path FROM backup_sources WHERE schedule_id = $1 ORDER BY sort_order, id",
-    )
-    .bind(cloned_id)
-    .fetch_all(&pool)
-    .await
-    .unwrap();
-    assert_eq!(cloned_sources, vec!["/src/one", "/src/two"]);
 }
 
 #[tokio::test]

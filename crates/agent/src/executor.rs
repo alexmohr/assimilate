@@ -47,6 +47,11 @@ pub enum ExecutorCommand {
         target_path: String,
         request_id: String,
     },
+    DeleteArchives {
+        repo_id: RepoId,
+        archive_names: Vec<String>,
+        request_id: String,
+    },
 }
 
 pub struct Executor {
@@ -135,6 +140,14 @@ impl Executor {
                         &outbound_tx,
                     )
                     .await;
+                }
+                ExecutorCommand::DeleteArchives {
+                    repo_id,
+                    archive_names,
+                    request_id,
+                } => {
+                    self.handle_delete_archives(repo_id, archive_names, request_id, &outbound_tx)
+                        .await;
                 }
             }
         }
@@ -470,6 +483,63 @@ impl Executor {
                 &hostname,
                 &server_url,
                 &token,
+                request_id,
+                &borg_binary,
+                &outbound,
+            )
+            .await;
+        });
+    }
+
+    async fn handle_delete_archives(
+        &self,
+        repo_id: RepoId,
+        archive_names: Vec<String>,
+        request_id: String,
+        outbound_tx: &mpsc::Sender<AgentToServer>,
+    ) {
+        let config_guard = self.current_config.lock().await;
+        let Some(config) = config_guard.as_ref() else {
+            warn!(repo_id = ?repo_id, "no config available for delete archives");
+            let msg = AgentToServer::OperationFailed {
+                request_id,
+                error: "agent has no config yet".to_owned(),
+            };
+            if let Err(e) = outbound_tx.send(msg).await {
+                tracing::debug!(error = %e, "outbound send failed");
+            }
+            return;
+        };
+
+        let Some(repo) = config.repos.iter().find(|r| r.repo_id == repo_id) else {
+            warn!(repo_id = ?repo_id, "repo not found in config for delete archives");
+            let msg = AgentToServer::OperationFailed {
+                request_id,
+                error: "repo not found in agent config".to_owned(),
+            };
+            if let Err(e) = outbound_tx.send(msg).await {
+                tracing::debug!(error = %e, "outbound send failed");
+            }
+            return;
+        };
+
+        let target = backup_target_from_repo(repo, &config.client_hostname);
+        let hostname = config.client_hostname.clone();
+        drop(config_guard);
+
+        let outbound = outbound_tx.clone();
+        let server_url = self.server_url.clone();
+        let token = self.token.clone();
+        let borg_binary = std::env::var("BORG_BINARY").map_or_else(
+            |_| std::path::PathBuf::from("borg"),
+            std::path::PathBuf::from,
+        );
+
+        tokio::spawn(async move {
+            run_delete_archives_task(
+                target,
+                archive_names,
+                (&hostname, &server_url, &token),
                 request_id,
                 &borg_binary,
                 &outbound,
@@ -1044,6 +1114,102 @@ async fn run_restore_task(
         request_id,
         success: true,
         files_restored,
+        error_message: None,
+    };
+    if let Err(e) = outbound_tx.send(msg).await {
+        tracing::debug!(error = %e, "outbound send failed");
+    }
+}
+
+async fn run_delete_archives_task(
+    mut target: BackupTarget,
+    archive_names: Vec<String>,
+    ssh_params: (&str, &str, &str),
+    request_id: String,
+    borg_binary: &std::path::Path,
+    outbound_tx: &mpsc::Sender<AgentToServer>,
+) {
+    let (hostname, server_url, token) = ssh_params;
+    let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
+
+    let env_vars = build_borg_env(&target);
+    let mut deleted_count: u32 = 0;
+
+    for archive_name in &archive_names {
+        let args = vec![
+            "delete".to_owned(),
+            "--lock-wait".to_owned(),
+            "600".to_owned(),
+            format!("::{archive_name}"),
+        ];
+
+        info!(archive = %archive_name, "running borg delete");
+
+        let output = match tokio::time::timeout(
+            Duration::from_mins(10),
+            tokio::process::Command::new(borg_binary)
+                .args(&args)
+                .envs(env_vars.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+                .output(),
+        )
+        .await
+        {
+            Ok(Ok(out)) => out,
+            Ok(Err(e)) => {
+                let msg = AgentToServer::DeleteArchivesResult {
+                    request_id,
+                    success: false,
+                    deleted_count,
+                    error_message: Some(format!(
+                        "failed to execute borg delete for {archive_name}: {e}"
+                    )),
+                };
+                if let Err(send_err) = outbound_tx.send(msg).await {
+                    tracing::debug!(error = %send_err, "outbound send failed");
+                }
+                return;
+            }
+            Err(_) => {
+                let msg = AgentToServer::DeleteArchivesResult {
+                    request_id,
+                    success: false,
+                    deleted_count,
+                    error_message: Some(format!("borg delete timed out for {archive_name}")),
+                };
+                if let Err(send_err) = outbound_tx.send(msg).await {
+                    tracing::debug!(error = %send_err, "outbound send failed");
+                }
+                return;
+            }
+        };
+
+        let exit_code = output.status.code().unwrap_or(-1);
+        if exit_code != 0 && exit_code != 1 {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            error!(archive = %archive_name, exit_code, stderr = %stderr, "borg delete failed");
+            let msg = AgentToServer::DeleteArchivesResult {
+                request_id,
+                success: false,
+                deleted_count,
+                error_message: Some(format!(
+                    "borg delete failed for {archive_name} (exit {exit_code}): {stderr}"
+                )),
+            };
+            if let Err(send_err) = outbound_tx.send(msg).await {
+                tracing::debug!(error = %send_err, "outbound send failed");
+            }
+            return;
+        }
+
+        deleted_count = deleted_count.saturating_add(1);
+    }
+
+    info!(deleted_count, "borg delete archives completed");
+
+    let msg = AgentToServer::DeleteArchivesResult {
+        request_id,
+        success: true,
+        deleted_count,
         error_message: None,
     };
     if let Err(e) = outbound_tx.send(msg).await {

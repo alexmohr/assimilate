@@ -122,7 +122,7 @@ router.beforeEach(async (to) => {
   await authStore.fetchMe()
 
   if (!authStore.user) {
-    return { name: 'login' }
+    return { name: 'login', query: { next: to.fullPath } }
   }
 
   if (authStore.user.must_change_password && !to.meta.changePassword) {

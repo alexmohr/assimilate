@@ -21,7 +21,8 @@ apiClient.interceptors.response.use(
       if (!redirectingToLogin) {
         redirectingToLogin = true
         const { router } = await import('../router')
-        await router.push({ name: 'login' })
+        const next = router.currentRoute.value.fullPath
+        await router.push({ name: 'login', query: { next } })
         redirectingToLogin = false
       }
     }

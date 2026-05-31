@@ -5,11 +5,12 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { validatePassword } from '../utils/validation'
 import { extractError } from '../utils/error'
 const authStore = useAuthStore()
+const route = useRoute()
 const router = useRouter()
 
 const newPassword = ref('')
@@ -29,7 +30,10 @@ async function handleSubmit(): Promise<void> {
   submitting.value = true
   try {
     await authStore.changePassword(newPassword.value)
-    router.push('/')
+    const next = typeof route.query.next === 'string' && route.query.next.startsWith('/')
+      ? route.query.next
+      : '/'
+    router.push(next)
   } catch (e: unknown) {
     error.value = extractError(e, 'Failed to change password')
   } finally {

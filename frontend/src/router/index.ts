@@ -74,12 +74,6 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAdmin: true },
   },
   {
-    path: '/keys',
-    name: 'keys',
-    component: () => import('../views/KeyManagementView.vue'),
-    meta: { requiresAdmin: true },
-  },
-  {
     path: '/tunnels',
     name: 'tunnels',
     component: () => import('../views/TunnelsView.vue'),

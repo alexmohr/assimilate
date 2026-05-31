@@ -36,7 +36,9 @@ describe('QuotaPanel', () => {
 
   it('shows loading state initially', async () => {
     mockGet.mockReturnValue(new Promise(() => {}))
-    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: false, currentUsageBytes: 0 } })
+    const wrapper = renderWithPlugins(QuotaPanel, {
+      props: { repoId: 1, isAdmin: false, currentUsageBytes: 0 },
+    })
     await nextTick()
     expect(wrapper.text()).toContain('Loading quota')
   })
@@ -49,7 +51,9 @@ describe('QuotaPanel', () => {
         enabled: true,
       },
     })
-    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: false, currentUsageBytes: 1_073_741_824 } })
+    const wrapper = renderWithPlugins(QuotaPanel, {
+      props: { repoId: 1, isAdmin: false, currentUsageBytes: 1_073_741_824 },
+    })
     await flushPromises()
     expect(wrapper.find('.progress-bar-fill').exists()).toBe(true)
     expect(wrapper.find('.bar-ok').exists()).toBe(true)
@@ -65,7 +69,9 @@ describe('QuotaPanel', () => {
         enabled: true,
       },
     })
-    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: false, currentUsageBytes: 5_368_709_120 } })
+    const wrapper = renderWithPlugins(QuotaPanel, {
+      props: { repoId: 1, isAdmin: false, currentUsageBytes: 5_368_709_120 },
+    })
     await flushPromises()
     expect(wrapper.find('.bar-warn').exists()).toBe(true)
     expect(wrapper.find('.badge-warn').exists()).toBe(true)
@@ -80,7 +86,9 @@ describe('QuotaPanel', () => {
         enabled: true,
       },
     })
-    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: false, currentUsageBytes: 6_442_450_944 } })
+    const wrapper = renderWithPlugins(QuotaPanel, {
+      props: { repoId: 1, isAdmin: false, currentUsageBytes: 6_442_450_944 },
+    })
     await flushPromises()
     expect(wrapper.find('.bar-crit').exists()).toBe(true)
     expect(wrapper.find('.badge-crit').exists()).toBe(true)
@@ -95,7 +103,9 @@ describe('QuotaPanel', () => {
         enabled: false,
       },
     })
-    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: false, currentUsageBytes: 0 } })
+    const wrapper = renderWithPlugins(QuotaPanel, {
+      props: { repoId: 1, isAdmin: false, currentUsageBytes: 0 },
+    })
     await flushPromises()
     expect(wrapper.text()).toContain('disabled')
   })
@@ -104,7 +114,9 @@ describe('QuotaPanel', () => {
     mockGet.mockResolvedValue({
       data: { warn_bytes: 0, critical_bytes: 0, enabled: true },
     })
-    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: true, currentUsageBytes: 0 } })
+    const wrapper = renderWithPlugins(QuotaPanel, {
+      props: { repoId: 1, isAdmin: true, currentUsageBytes: 0 },
+    })
     await flushPromises()
     expect(wrapper.text()).toContain('Edit')
   })
@@ -113,14 +125,18 @@ describe('QuotaPanel', () => {
     mockGet.mockResolvedValue({
       data: { warn_bytes: 0, critical_bytes: 0, enabled: true },
     })
-    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: false, currentUsageBytes: 0 } })
+    const wrapper = renderWithPlugins(QuotaPanel, {
+      props: { repoId: 1, isAdmin: false, currentUsageBytes: 0 },
+    })
     await flushPromises()
     expect(wrapper.text()).not.toContain('Edit')
   })
 
   it('shows error message when API fails', async () => {
     mockGet.mockRejectedValue(new Error('network error'))
-    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: false, currentUsageBytes: 0 } })
+    const wrapper = renderWithPlugins(QuotaPanel, {
+      props: { repoId: 1, isAdmin: false, currentUsageBytes: 0 },
+    })
     await flushPromises()
     expect(wrapper.text()).toContain('API error')
   })

@@ -41,9 +41,33 @@ describe('BackupStatsWidget', () => {
   it('displays the success rate percentage', async () => {
     mockGet.mockResolvedValue({
       data: [
-        { id: 1, hostname: 'h1', target_name: 't1', started_at: '', finished_at: '', status: 'success', duration_secs: 10 },
-        { id: 2, hostname: 'h2', target_name: 't2', started_at: '', finished_at: '', status: 'success', duration_secs: 10 },
-        { id: 3, hostname: 'h3', target_name: 't3', started_at: '', finished_at: '', status: 'failed', duration_secs: 10 },
+        {
+          id: 1,
+          hostname: 'h1',
+          target_name: 't1',
+          started_at: '',
+          finished_at: '',
+          status: 'success',
+          duration_secs: 10,
+        },
+        {
+          id: 2,
+          hostname: 'h2',
+          target_name: 't2',
+          started_at: '',
+          finished_at: '',
+          status: 'success',
+          duration_secs: 10,
+        },
+        {
+          id: 3,
+          hostname: 'h3',
+          target_name: 't3',
+          started_at: '',
+          finished_at: '',
+          status: 'failed',
+          duration_secs: 10,
+        },
       ],
     })
     const wrapper = renderWithPlugins(BackupStatsWidget, {
@@ -56,9 +80,33 @@ describe('BackupStatsWidget', () => {
   it('displays failed count', async () => {
     mockGet.mockResolvedValue({
       data: [
-        { id: 1, hostname: 'h1', target_name: 't1', started_at: '', finished_at: '', status: 'success', duration_secs: 10 },
-        { id: 2, hostname: 'h2', target_name: 't2', started_at: '', finished_at: '', status: 'failed', duration_secs: 10 },
-        { id: 3, hostname: 'h3', target_name: 't3', started_at: '', finished_at: '', status: 'failed', duration_secs: 10 },
+        {
+          id: 1,
+          hostname: 'h1',
+          target_name: 't1',
+          started_at: '',
+          finished_at: '',
+          status: 'success',
+          duration_secs: 10,
+        },
+        {
+          id: 2,
+          hostname: 'h2',
+          target_name: 't2',
+          started_at: '',
+          finished_at: '',
+          status: 'failed',
+          duration_secs: 10,
+        },
+        {
+          id: 3,
+          hostname: 'h3',
+          target_name: 't3',
+          started_at: '',
+          finished_at: '',
+          status: 'failed',
+          duration_secs: 10,
+        },
       ],
     })
     const wrapper = renderWithPlugins(BackupStatsWidget, {

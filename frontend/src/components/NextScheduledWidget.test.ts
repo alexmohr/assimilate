@@ -51,7 +51,13 @@ describe('NextScheduledWidget', () => {
         {
           date: '2026-06-01',
           events: [
-            { type: 'backup', status: 'scheduled', repo_name: 'daily-repo', time: '03:00', schedule_id: 1 },
+            {
+              type: 'backup',
+              status: 'scheduled',
+              repo_name: 'daily-repo',
+              time: '03:00',
+              schedule_id: 1,
+            },
           ],
         },
       ],

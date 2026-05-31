@@ -49,12 +49,7 @@ vi.mock('../utils/error', () => ({
   extractError: (_e: unknown, fallback?: string) => fallback ?? 'Unknown error',
 }))
 
-import {
-  listChannels,
-  listRules,
-  listDeliveries,
-  getVapidPublicKey,
-} from '../api/notifications'
+import { listChannels, listRules, listDeliveries, getVapidPublicKey } from '../api/notifications'
 import { apiClient } from '../api/client'
 
 const mockListChannels = vi.mocked(listChannels)
@@ -97,7 +92,14 @@ const EMAIL_CHANNEL: NotificationChannel = {
 }
 
 const MOCK_RULES: NotificationRule[] = [
-  { id: 1, channel_id: 1, event_type: 'backup_failed', repo_id: null, client_id: null, enabled: true },
+  {
+    id: 1,
+    channel_id: 1,
+    event_type: 'backup_failed',
+    repo_id: null,
+    client_id: null,
+    enabled: true,
+  },
 ]
 
 function setupDefaultMocks(): void {

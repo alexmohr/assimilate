@@ -210,11 +210,11 @@ const {
 } = useArchiveBrowser(repoIdRef)
 
 const unmatchedCount = computed(
-  () => sortedArchives.value.filter((a) => a.matched === false).length,
+  () => sortedArchives.value.filter((a) => a.matched !== true).length,
 )
 
 const unmatchedHostnames = computed(() => [
-  ...new Set(sortedArchives.value.filter((a) => a.matched === false).map((a) => a.hostname)),
+  ...new Set(sortedArchives.value.filter((a) => a.matched !== true).map((a) => a.hostname)),
 ])
 
 const archiveFilter = ref('')
@@ -237,12 +237,13 @@ const groupedArchives = computed<ArchiveGroup[]>(() => {
 
   const groups = new Map<string, ArchiveGroup>()
   for (const archive of filtered) {
-    const key = archive.client_hostname ?? archive.hostname
+    const isMatched = archive.matched === true
+    const key = isMatched ? (archive.client_hostname ?? archive.hostname) : archive.hostname
     if (!groups.has(key)) {
       groups.set(key, {
         hostname: key,
-        matched: archive.matched === true,
-        clientHostname: archive.matched === true ? archive.client_hostname : null,
+        matched: isMatched,
+        clientHostname: isMatched ? archive.client_hostname : null,
         archives: [],
       })
     }
@@ -986,13 +987,14 @@ async function syncRepo(): Promise<void> {
                     >
                       {{ group.hostname }}
                     </RouterLink>
-                    <span
+                    <RouterLink
                       v-else
-                      class="group-hostname"
-                      :class="{ 'group-unmatched': !group.matched }"
+                      :to="{ name: 'client-detail', params: { hostname: group.hostname } }"
+                      class="host-link group-unmatched"
+                      @click.stop
                     >
                       {{ group.hostname }}
-                    </span>
+                    </RouterLink>
                     <span
                       v-if="!group.matched"
                       class="match-icon match-warn"
@@ -1074,8 +1076,8 @@ async function syncRepo(): Promise<void> {
                 <tr
                   v-for="entry in dirs"
                   :key="entry.displayName + entry.path"
-                  class="clickable"
-                  @click="archiveNavigateTo(entry.path)"
+                  :class="{ clickable: entry.displayName !== '.' }"
+                  @click="entry.displayName !== '.' && archiveNavigateTo(entry.path)"
                 >
                   <td class="td-name">
                     <Folder

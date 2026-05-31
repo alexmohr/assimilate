@@ -107,17 +107,27 @@ const browserEntries = computed<DisplayEntry[]>(() => {
 
   const entries: DisplayEntry[] = []
 
+  const currentEntry = contents.value.find((e) => e.type === 'd' && e.path === currentDir)
+  if (currentEntry) {
+    entries.push({
+      ...currentEntry,
+      displayName: '.',
+      isDir: true,
+    })
+  } else if (currentPath.value === '/') {
+    entries.push({
+      type: 'd',
+      path: '',
+      size: 0,
+      mtime: '',
+      mode: '',
+      displayName: '.',
+      isDir: true,
+    })
+  }
+
   if (currentPath.value !== '/') {
     const parentPath = currentPath.value.replace(/\/[^/]+$/, '') || '/'
-    const currentEntry = contents.value.find((e) => e.type === 'd' && e.path === currentDir)
-    if (currentEntry) {
-      entries.push({
-        ...currentEntry,
-        displayName: '.',
-        isDir: true,
-      })
-    }
-
     entries.push({
       type: 'd',
       path: parentPath,
@@ -203,7 +213,9 @@ async function loadContents(path: string): Promise<void> {
       `/repos/${selectedRepoId.value}/archives/${encodeURIComponent(selectedArchive.value.name)}/contents`,
       { params: apiPath ? { path: apiPath } : {} },
     )
-    contents.value = res.data
+    contents.value = res.data.filter(
+        (e) => e.path !== '.' && e.path !== '..',
+      )
   } catch (e: unknown) {
     contentsError.value = extractError(e)
   } finally {
@@ -452,8 +464,8 @@ onMounted(loadRepos)
                   {{ data.client_hostname }}
                 </RouterLink>
                 <RouterLink
-                  v-else-if="data.matched === false"
-                  to="/clients"
+                  v-else-if="data.matched !== true"
+                  :to="{ name: 'client-detail', params: { hostname: data.hostname } }"
                   class="unmatched-host-link"
                   @click.stop
                 >
@@ -479,7 +491,7 @@ onMounted(loadRepos)
                   >&#10003;</span
                 >
                 <span
-                  v-else-if="data.matched === false"
+                  v-else-if="data.matched !== true"
                   class="match-icon match-warn"
                   title="Unmatched"
                   >&#9888;</span
@@ -552,7 +564,7 @@ onMounted(loadRepos)
             :row-class="(data: DisplayEntry) => (data.isDir ? 'clickable' : '')"
             filter-display="row"
             table-class="data-table"
-            @row-click="(e: { data: DisplayEntry }) => e.data.isDir && navigateTo(e.data.path)"
+            @row-click="(e: { data: DisplayEntry }) => e.data.isDir && e.data.displayName !== '.' && navigateTo(e.data.path)"
           >
             <Column
               field="displayName"

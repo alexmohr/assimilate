@@ -179,14 +179,8 @@ pub async fn deploy_agent(
     match result {
         Ok(()) => {
             if let Some(ref version) = available_version {
-                db::update_last_seen_and_version(
-                    &state.pool,
-                    client.id,
-                    version,
-                    None,
-                    None,
-                )
-                .await?;
+                db::update_last_seen_and_version(&state.pool, client.id, version, None, None)
+                    .await?;
             }
             info!(hostname = %hostname, ssh_host = %req.ssh_host, "agent deployed successfully");
             Ok(Json(DeployAgentResponse {

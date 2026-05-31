@@ -651,6 +651,14 @@ pub struct UpdateRepoParams<'a> {
     pub enabled: bool,
 }
 
+pub async fn list_importing_repo_ids(pool: &PgPool) -> Result<Vec<i64>, ApiError> {
+    let rows = sqlx::query_scalar::<_, i64>("SELECT id FROM repos WHERE importing = true")
+        .fetch_all(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(rows)
+}
+
 pub async fn set_repo_importing(
     pool: &PgPool,
     repo_id: i64,

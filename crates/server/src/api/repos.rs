@@ -9,6 +9,7 @@ use axum::{
     http::StatusCode,
 };
 use chrono::DateTime;
+use futures_util::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use shared::{crypto::encrypt_passphrase, types::BorgEncryption};
 use sqlx::PgPool;
@@ -1009,6 +1010,15 @@ async fn run_borg_list_with_retry(
     unreachable!()
 }
 
+fn is_ssh_connection_error(stderr: &str) -> bool {
+    let lower = stderr.to_lowercase();
+    lower.contains("connection refused")
+        || lower.contains("connection timed out")
+        || lower.contains("connection reset")
+        || lower.contains("broken pipe")
+        || lower.contains("ssh: connect to host")
+}
+
 async fn run_borg_archive_info_with_retry(
     repo_archive: &str,
     env: &std::collections::HashMap<String, String>,
@@ -1032,22 +1042,45 @@ async fn run_borg_archive_info_with_retry(
         }
 
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if !is_lock_error(&stderr) {
+        if is_lock_error(&stderr) || is_ssh_connection_error(&stderr) {
+            if attempt == LOCK_RETRY_MAX_ATTEMPTS {
+                warn!(
+                    repo_archive,
+                    stderr = %stderr,
+                    "borg info exhausted retries, skipping archive"
+                );
+                return Ok(None);
+            }
+            warn!(
+                attempt,
+                max = LOCK_RETRY_MAX_ATTEMPTS,
+                repo_archive,
+                "borg info retryable error, retrying in {}s",
+                LOCK_RETRY_INTERVAL.as_secs()
+            );
+            tokio::time::sleep(LOCK_RETRY_INTERVAL).await;
+        } else {
+            warn!(
+                repo_archive,
+                stderr = %stderr,
+                "borg info non-retryable error, skipping archive"
+            );
             return Ok(None);
         }
-        if attempt == LOCK_RETRY_MAX_ATTEMPTS {
-            return Ok(None);
-        }
-        warn!(
-            attempt,
-            max = LOCK_RETRY_MAX_ATTEMPTS,
-            repo_archive,
-            "borg info lock contention, retrying in {}s",
-            LOCK_RETRY_INTERVAL.as_secs()
-        );
-        tokio::time::sleep(LOCK_RETRY_INTERVAL).await;
     }
     unreachable!()
+}
+
+fn parse_borg_timestamp(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    DateTime::parse_from_rfc3339(s)
+        .or_else(|_| DateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f"))
+        .map(|dt| dt.to_utc())
+        .or_else(|_| {
+            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f")
+                .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S"))
+                .map(|naive| naive.and_utc())
+        })
+        .ok()
 }
 
 pub async fn sync_existing_archives(
@@ -1070,16 +1103,15 @@ pub async fn sync_existing_archives(
         return Ok(0);
     }
 
-    let mut imported = 0u64;
+    const CONCURRENCY: usize = 8;
 
+    let mut archive_clients: Vec<(String, String, i64, bool)> = Vec::with_capacity(archives.len());
     for archive in &archives {
         let name = archive["name"].as_str().unwrap_or_default();
         let hostname = archive["hostname"].as_str().unwrap_or("unknown");
-
         if name.is_empty() {
             continue;
         }
-
         let (client, matched) = match db::resolve_client_for_hostname(pool, hostname).await? {
             db::ResolveResult::ExactMatch(c) => (c, true),
             db::ResolveResult::PatternMatch(c) => (c, true),
@@ -1088,86 +1120,95 @@ pub async fn sync_existing_archives(
                 (c, false)
             }
         };
-
-        let repo_archive = format!("{borg_repo}::{name}");
-        let Some(info_output) = run_borg_archive_info_with_retry(&repo_archive, &env).await? else {
-            warn!(archive = name, "borg info failed for archive, skipping");
-            continue;
-        };
-
-        let info_json: serde_json::Value = serde_json::from_slice(&info_output.stdout)
-            .map_err(|e| ApiError::Internal(format!("failed to parse borg info output: {e}")))?;
-
-        let Some(archive_info) = info_json["archives"].as_array().and_then(|a| a.first()) else {
-            continue;
-        };
-
-        let stats = &archive_info["stats"];
-        let start_str = archive_info["start"].as_str().unwrap_or_default();
-        let end_str = archive_info["end"].as_str().unwrap_or_default();
-        let duration = archive_info["duration"].as_f64().unwrap_or(0.0);
-
-        let started_at = DateTime::parse_from_rfc3339(start_str)
-            .or_else(|_| DateTime::parse_from_str(start_str, "%Y-%m-%dT%H:%M:%S%.f"))
-            .map(|dt| dt.to_utc())
-            .or_else(|_| {
-                chrono::NaiveDateTime::parse_from_str(start_str, "%Y-%m-%dT%H:%M:%S%.f")
-                    .or_else(|_| {
-                        chrono::NaiveDateTime::parse_from_str(start_str, "%Y-%m-%dT%H:%M:%S")
-                    })
-                    .map(|naive| naive.and_utc())
-            });
-        let finished_at = DateTime::parse_from_rfc3339(end_str)
-            .or_else(|_| DateTime::parse_from_str(end_str, "%Y-%m-%dT%H:%M:%S%.f"))
-            .map(|dt| dt.to_utc())
-            .or_else(|_| {
-                chrono::NaiveDateTime::parse_from_str(end_str, "%Y-%m-%dT%H:%M:%S%.f")
-                    .or_else(|_| {
-                        chrono::NaiveDateTime::parse_from_str(end_str, "%Y-%m-%dT%H:%M:%S")
-                    })
-                    .map(|naive| naive.and_utc())
-            });
-
-        let (Some(started_at), Some(finished_at)) = (started_at.ok(), finished_at.ok()) else {
-            warn!(
-                archive = name,
-                start = start_str,
-                end = end_str,
-                "failed to parse archive timestamps, skipping"
-            );
-            continue;
-        };
-
-        #[allow(clippy::cast_possible_truncation)]
-        let params = db::InsertReportParams {
-            client_id: client.id,
-            repo_id,
-            started_at,
-            finished_at,
-            status: "success".to_string(),
-            original_size: stats["original_size"].as_i64().unwrap_or(0),
-            compressed_size: stats["compressed_size"].as_i64().unwrap_or(0),
-            deduplicated_size: stats["deduplicated_size"].as_i64().unwrap_or(0),
-            files_processed: stats["nfiles"].as_i64().unwrap_or(0),
-            duration_secs: duration as i64,
-            error_message: None,
-            warnings: vec![],
-            borg_version: None,
-            matched,
-            archive_name: Some(name.to_string()),
-        };
-
-        if let Err(e) = db::insert_backup_report(pool, &params).await {
-            warn!(archive = name, error = %e, "failed to insert imported archive report");
-            continue;
-        }
-
-        imported += 1;
+        archive_clients.push((name.to_string(), hostname.to_string(), client.id, matched));
     }
+
+    let (imported, skipped): (u64, u64) = stream::iter(archive_clients)
+        .map(|(name, _hostname, client_id, matched)| {
+            let borg_repo = &borg_repo;
+            let env = &env;
+            async move {
+                let repo_archive = format!("{borg_repo}::{name}");
+                let info_output = match run_borg_archive_info_with_retry(&repo_archive, env).await {
+                    Ok(Some(output)) => output,
+                    Ok(None) => {
+                        return (None, true);
+                    }
+                    Err(e) => {
+                        warn!(archive = %name, error = %e, "borg info error, skipping");
+                        return (None, true);
+                    }
+                };
+
+                let info_json: serde_json::Value = match serde_json::from_slice(&info_output.stdout)
+                {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!(archive = %name, error = %e, "failed to parse borg info output");
+                        return (None, true);
+                    }
+                };
+
+                let Some(archive_info) = info_json["archives"].as_array().and_then(|a| a.first())
+                else {
+                    return (None, true);
+                };
+
+                let stats = &archive_info["stats"];
+                let start_str = archive_info["start"].as_str().unwrap_or_default();
+                let end_str = archive_info["end"].as_str().unwrap_or_default();
+                let duration = archive_info["duration"].as_f64().unwrap_or(0.0);
+
+                let Some(started_at) = parse_borg_timestamp(start_str) else {
+                    return (None, true);
+                };
+                let Some(finished_at) = parse_borg_timestamp(end_str) else {
+                    return (None, true);
+                };
+
+                #[allow(clippy::cast_possible_truncation)]
+                let params = db::InsertReportParams {
+                    client_id,
+                    repo_id,
+                    started_at,
+                    finished_at,
+                    status: "success".to_string(),
+                    original_size: stats["original_size"].as_i64().unwrap_or(0),
+                    compressed_size: stats["compressed_size"].as_i64().unwrap_or(0),
+                    deduplicated_size: stats["deduplicated_size"].as_i64().unwrap_or(0),
+                    files_processed: stats["nfiles"].as_i64().unwrap_or(0),
+                    duration_secs: duration as i64,
+                    error_message: None,
+                    warnings: vec![],
+                    borg_version: None,
+                    matched,
+                    archive_name: Some(name.to_string()),
+                };
+
+                (Some(params), false)
+            }
+        })
+        .buffer_unordered(CONCURRENCY)
+        .fold((0u64, 0u64), |(acc, skip), (params, skipped)| async move {
+            if skipped {
+                return (acc, skip + 1);
+            }
+            let Some(params) = params else {
+                return (acc, skip + 1);
+            };
+            let name = params.archive_name.as_deref().unwrap_or("?");
+            if let Err(e) = db::insert_backup_report(pool, &params).await {
+                warn!(archive = name, error = %e, "failed to insert imported archive report");
+                return (acc, skip + 1);
+            }
+            (acc + 1, skip)
+        })
+        .await;
 
     info!(
         repo_id,
         imported,
+        skipped,
         total = archives.len(),
         "synced existing archives"
     );

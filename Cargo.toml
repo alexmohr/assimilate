@@ -18,7 +18,7 @@ aes-gcm = "0.10"
 rand = "0.8"
 hkdf = "0.12"
 sha2 = "0.10"
-tokio-tungstenite = "0.26"
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"

@@ -1065,9 +1065,9 @@ watch(wsStatus, (newStatus, oldStatus) => {
         <div class="info-card">
           <h3 class="info-title">Hostname Aliases</h3>
           <p class="field-hint">
-            Glob patterns that match archive hostnames to this client during repository import.
-            Only affects future discoveries — existing imported clients are not retroactively
-            reassigned. Use "Merge into" on an imported client to move its historical archives.
+            Glob patterns that match archive hostnames to this client during repository import. Only
+            affects future discoveries — existing imported clients are not retroactively reassigned.
+            Use "Merge into" on an imported client to move its historical archives.
           </p>
           <div
             v-if="hostnamePatterns.length > 0"

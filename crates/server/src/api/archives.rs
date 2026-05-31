@@ -653,12 +653,12 @@ mod tests {
             ),
         ];
 
-        let result =
-            find_matching_report("unknown-host-backup-2025-01-01", "2025-01-01T02:00:01", &reports);
-        assert_eq!(
-            result.unwrap().client_hostname,
-            "unknown-legacy-host"
+        let result = find_matching_report(
+            "unknown-host-backup-2025-01-01",
+            "2025-01-01T02:00:01",
+            &reports,
         );
+        assert_eq!(result.unwrap().client_hostname, "unknown-legacy-host");
     }
 
     #[test]

@@ -108,7 +108,7 @@ async fn client_list(pool: PgPool) {
         .await
         .unwrap();
 
-    let clients = db::list_clients(&pool).await.unwrap();
+    let clients = db::list_clients(&pool, false).await.unwrap();
     assert_eq!(clients.len(), 2);
     assert_eq!(clients[0].hostname, "alpha");
     assert_eq!(clients[1].hostname, "beta");
@@ -1036,7 +1036,9 @@ async fn activity_feed_days(pool: PgPool) {
 
     insert_test_report(&pool, client.id, repo.id).await;
 
-    let activity = db::get_activity_feed_days(&pool, 7, None, None).await.unwrap();
+    let activity = db::get_activity_feed_days(&pool, 7, None, None)
+        .await
+        .unwrap();
     assert_eq!(activity.len(), 1);
 }
 

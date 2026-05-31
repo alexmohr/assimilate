@@ -139,6 +139,17 @@ fn content_type_for_extension(filename: &str) -> &'static str {
     }
 }
 
+fn ensure_utc_suffix(ts: &str) -> String {
+    if ts.is_empty() {
+        return String::new();
+    }
+    if ts.ends_with('Z') || ts.contains('+') {
+        ts.to_string()
+    } else {
+        format!("{ts}Z")
+    }
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ArchiveEntry {
     pub name: String,
@@ -291,7 +302,7 @@ pub async fn list_archives(
                     let stats = &a["stats"];
                     ArchiveEntry {
                         name: a["name"].as_str().unwrap_or("").to_string(),
-                        start: a["start"].as_str().unwrap_or("").to_string(),
+                        start: ensure_utc_suffix(a["start"].as_str().unwrap_or("")),
                         hostname: a["hostname"].as_str().unwrap_or("").to_string(),
                         comment: a["comment"].as_str().unwrap_or("").to_string(),
                         original_size: stats["original_size"].as_i64().unwrap_or(0),
@@ -383,8 +394,8 @@ pub async fn archive_info(
         deduplicated_size: stats["deduplicated_size"].as_i64().unwrap_or(0),
         nfiles: stats["nfiles"].as_i64().unwrap_or(0),
         duration: archive["duration"].as_f64().unwrap_or(0.0),
-        start: archive["start"].as_str().unwrap_or("").to_string(),
-        end: archive["end"].as_str().unwrap_or("").to_string(),
+        start: ensure_utc_suffix(archive["start"].as_str().unwrap_or("")),
+        end: ensure_utc_suffix(archive["end"].as_str().unwrap_or("")),
     };
 
     Ok(Json(info))

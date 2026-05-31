@@ -11,17 +11,29 @@ import { logger } from '../utils/logger'
 
 interface TrendEntry {
   date: string
-  deduplicated_size: number
+  total_size: number
 }
+
+interface RepoOption {
+  id: number
+  name: string
+}
+
+const props = defineProps<{ repos: RepoOption[] }>()
 
 const entries = ref<TrendEntry[]>([])
 const loading = ref(true)
 const selectedDays = ref<number>(30)
+const selectedRepoId = ref<number | undefined>(undefined)
 
 async function fetchTrends(): Promise<void> {
   loading.value = true
   try {
-    const response = await apiClient.get<TrendEntry[]>(`/stats/trends?days=${selectedDays.value}`)
+    const params = new URLSearchParams({ days: String(selectedDays.value) })
+    if (selectedRepoId.value !== undefined) {
+      params.set('repo_id', String(selectedRepoId.value))
+    }
+    const response = await apiClient.get<TrendEntry[]>(`/stats/storage-trends?${params.toString()}`)
     entries.value = response.data
   } finally {
     loading.value = false
@@ -32,7 +44,7 @@ onMounted(() => {
   fetchTrends().catch(logger.error)
 })
 
-watch(selectedDays, () => {
+watch([selectedDays, selectedRepoId], () => {
   fetchTrends().catch(logger.error)
 })
 
@@ -45,7 +57,7 @@ const svgH = 80
 const plotW = svgW - padLeft - padRight
 const plotH = svgH - padTop - padBottom
 
-const values = computed((): number[] => entries.value.map((e) => e.deduplicated_size))
+const values = computed((): number[] => entries.value.map((e) => e.total_size))
 
 const yMin = computed((): number => {
   if (values.value.length === 0) return 0
@@ -98,14 +110,12 @@ const xLabels = computed((): Array<{ label: string; x: number }> => {
 
 const currentSize = computed((): number => {
   if (entries.value.length === 0) return 0
-  return entries.value[entries.value.length - 1].deduplicated_size
+  return entries.value[entries.value.length - 1].total_size
 })
 
 const delta = computed((): number => {
   if (entries.value.length < 2) return 0
-  return (
-    entries.value[entries.value.length - 1].deduplicated_size - entries.value[0].deduplicated_size
-  )
+  return entries.value[entries.value.length - 1].total_size - entries.value[0].total_size
 })
 
 const deltaPositive = computed((): boolean => delta.value >= 0)
@@ -115,35 +125,50 @@ const deltaPositive = computed((): boolean => delta.value >= 0)
   <section class="panel">
     <div class="panel-header">
       <h2 class="panel-title">Storage Trend</h2>
-      <div class="view-toggle">
-        <button
-          class="toggle-btn"
-          :class="{ active: selectedDays === 14 }"
-          @click="selectedDays = 14"
+      <div class="controls">
+        <select
+          v-model="selectedRepoId"
+          class="stats-select"
         >
-          14d
-        </button>
-        <button
-          class="toggle-btn"
-          :class="{ active: selectedDays === 30 }"
-          @click="selectedDays = 30"
-        >
-          30d
-        </button>
-        <button
-          class="toggle-btn"
-          :class="{ active: selectedDays === 90 }"
-          @click="selectedDays = 90"
-        >
-          90d
-        </button>
-        <button
-          class="toggle-btn"
-          :class="{ active: selectedDays === 365 }"
-          @click="selectedDays = 365"
-        >
-          1y
-        </button>
+          <option :value="undefined">All Repos</option>
+          <option
+            v-for="repo in props.repos"
+            :key="repo.id"
+            :value="repo.id"
+          >
+            {{ repo.name }}
+          </option>
+        </select>
+        <div class="view-toggle">
+          <button
+            class="toggle-btn"
+            :class="{ active: selectedDays === 14 }"
+            @click="selectedDays = 14"
+          >
+            14d
+          </button>
+          <button
+            class="toggle-btn"
+            :class="{ active: selectedDays === 30 }"
+            @click="selectedDays = 30"
+          >
+            30d
+          </button>
+          <button
+            class="toggle-btn"
+            :class="{ active: selectedDays === 90 }"
+            @click="selectedDays = 90"
+          >
+            90d
+          </button>
+          <button
+            class="toggle-btn"
+            :class="{ active: selectedDays === 365 }"
+            @click="selectedDays = 365"
+          >
+            1y
+          </button>
+        </div>
       </div>
     </div>
     <div
@@ -189,13 +214,19 @@ const deltaPositive = computed((): boolean => delta.value >= 0)
         />
       </svg>
       <div class="trend-summary">
-        <span class="trend-current">{{ formatBytes(currentSize) }}</span>
-        <span
-          class="trend-delta"
-          :class="{ 'delta-up': deltaPositive, 'delta-down': !deltaPositive }"
-        >
-          {{ deltaPositive ? '+' : '' }}{{ formatBytes(Math.abs(delta)) }}
-        </span>
+        <div class="trend-stat">
+          <span class="trend-current">{{ formatBytes(currentSize) }}</span>
+          <span class="trend-label">Current Size</span>
+        </div>
+        <div class="trend-stat">
+          <span
+            class="trend-delta"
+            :class="{ 'delta-up': deltaPositive, 'delta-down': !deltaPositive }"
+          >
+            {{ deltaPositive ? '+' : '' }}{{ formatBytes(Math.abs(delta)) }}
+          </span>
+          <span class="trend-label">Change ({{ selectedDays }}d)</span>
+        </div>
       </div>
     </template>
     <div
@@ -231,6 +262,21 @@ const deltaPositive = computed((): boolean => delta.value >= 0)
   letter-spacing: 0.06em;
   color: var(--text-muted);
   margin: 0;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.stats-select {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--text-primary);
 }
 
 .view-toggle {
@@ -308,8 +354,21 @@ const deltaPositive = computed((): boolean => delta.value >= 0)
 
 .trend-summary {
   display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
+  align-items: flex-start;
+  gap: 1.5rem;
+}
+
+.trend-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.trend-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 
 .trend-current {

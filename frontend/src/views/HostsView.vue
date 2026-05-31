@@ -36,11 +36,6 @@ interface CreateClientResponse {
   token: string
 }
 
-interface ScheduleRow {
-  id: number
-  client_id: number | null
-}
-
 interface TagRow {
   id: number
   name: string
@@ -280,9 +275,8 @@ async function loadClients(): Promise<void> {
   loading.value = true
   error.value = null
   try {
-    const [clientsRes, schedulesRes, hostTagAssocRes, hostTagsRes, healthRes] = await Promise.all([
+    const [clientsRes, hostTagAssocRes, hostTagsRes, healthRes] = await Promise.all([
       apiClient.get<ClientRow[]>('/clients'),
-      apiClient.get<ScheduleRow[]>('/schedules'),
       apiClient.get<HostTagRow[]>('/host-tags').catch(() => ({ data: [] as HostTagRow[] })),
       apiClient
         .get<TagRow[]>('/tags', { params: { scope: 'host' } })
@@ -290,13 +284,7 @@ async function loadClients(): Promise<void> {
       apiClient.get<HealthEntry[]>('/stats/health'),
     ])
     clients.value = clientsRes.data
-    const countByClient: Record<number, number> = {}
-    schedulesRes.data.forEach((schedule) => {
-      if (schedule.client_id !== null) {
-        countByClient[schedule.client_id] = (countByClient[schedule.client_id] ?? 0) + 1
-      }
-    })
-    machineScheduleCount.value = countByClient
+    machineScheduleCount.value = {}
 
     allHostTags.value = hostTagsRes.data
     const tagMap: Record<number, { name: string; color: string }[]> = {}

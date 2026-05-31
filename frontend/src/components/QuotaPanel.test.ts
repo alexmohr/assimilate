@@ -36,7 +36,7 @@ describe('QuotaPanel', () => {
 
   it('shows loading state initially', async () => {
     mockGet.mockReturnValue(new Promise(() => {}))
-    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: false } })
+    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: false, currentUsageBytes: 0 } })
     await nextTick()
     expect(wrapper.text()).toContain('Loading quota')
   })
@@ -47,10 +47,9 @@ describe('QuotaPanel', () => {
         warn_bytes: 10_737_418_240,
         critical_bytes: 21_474_836_480,
         enabled: true,
-        current_usage_bytes: 1_073_741_824,
       },
     })
-    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: false } })
+    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: false, currentUsageBytes: 1_073_741_824 } })
     await flushPromises()
     expect(wrapper.find('.progress-bar-fill').exists()).toBe(true)
     expect(wrapper.find('.bar-ok').exists()).toBe(true)
@@ -64,10 +63,9 @@ describe('QuotaPanel', () => {
         warn_bytes: 1_073_741_824,
         critical_bytes: 10_737_418_240,
         enabled: true,
-        current_usage_bytes: 5_368_709_120,
       },
     })
-    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: false } })
+    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: false, currentUsageBytes: 5_368_709_120 } })
     await flushPromises()
     expect(wrapper.find('.bar-warn').exists()).toBe(true)
     expect(wrapper.find('.badge-warn').exists()).toBe(true)
@@ -80,10 +78,9 @@ describe('QuotaPanel', () => {
         warn_bytes: 1_073_741_824,
         critical_bytes: 5_368_709_120,
         enabled: true,
-        current_usage_bytes: 6_442_450_944,
       },
     })
-    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: false } })
+    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: false, currentUsageBytes: 6_442_450_944 } })
     await flushPromises()
     expect(wrapper.find('.bar-crit').exists()).toBe(true)
     expect(wrapper.find('.badge-crit').exists()).toBe(true)
@@ -96,35 +93,34 @@ describe('QuotaPanel', () => {
         warn_bytes: 0,
         critical_bytes: 0,
         enabled: false,
-        current_usage_bytes: 0,
       },
     })
-    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: false } })
+    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: false, currentUsageBytes: 0 } })
     await flushPromises()
     expect(wrapper.text()).toContain('disabled')
   })
 
   it('shows Edit button for admin users', async () => {
     mockGet.mockResolvedValue({
-      data: { warn_bytes: 0, critical_bytes: 0, enabled: true, current_usage_bytes: 0 },
+      data: { warn_bytes: 0, critical_bytes: 0, enabled: true },
     })
-    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: true } })
+    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: true, currentUsageBytes: 0 } })
     await flushPromises()
     expect(wrapper.text()).toContain('Edit')
   })
 
   it('does not show Edit button for non-admin users', async () => {
     mockGet.mockResolvedValue({
-      data: { warn_bytes: 0, critical_bytes: 0, enabled: true, current_usage_bytes: 0 },
+      data: { warn_bytes: 0, critical_bytes: 0, enabled: true },
     })
-    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: false } })
+    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: false, currentUsageBytes: 0 } })
     await flushPromises()
     expect(wrapper.text()).not.toContain('Edit')
   })
 
   it('shows error message when API fails', async () => {
     mockGet.mockRejectedValue(new Error('network error'))
-    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: false } })
+    const wrapper = renderWithPlugins(QuotaPanel, { props: { repoId: 1, isAdmin: false, currentUsageBytes: 0 } })
     await flushPromises()
     expect(wrapper.text()).toContain('API error')
   })

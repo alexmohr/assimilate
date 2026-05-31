@@ -40,8 +40,8 @@ describe('service worker (sw.js)', () => {
   })
 
   it('skips API and WebSocket requests', () => {
-    expect(swContent).toContain("/api/")
-    expect(swContent).toContain("/ws/")
+    expect(swContent).toContain('/api/')
+    expect(swContent).toContain('/ws/')
   })
 
   it('cleans up old caches on activate', () => {

@@ -101,6 +101,9 @@ async fn main() -> Result<(), StartupError> {
         pending_migrations: std::sync::Arc::new(tokio::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),
+        pending_deletes: std::sync::Arc::new(tokio::sync::Mutex::new(
+            std::collections::HashMap::new(),
+        )),
     };
 
     tokio::spawn(server::scheduler::run(
@@ -179,6 +182,18 @@ async fn main() -> Result<(), StartupError> {
         .route(
             "/api/clients/{hostname}/merge-from/{source_id}",
             post(api::clients::merge_client),
+        )
+        .route(
+            "/api/clients/{hostname}/hide",
+            put(api::clients::hide_client),
+        )
+        .route(
+            "/api/clients/{hostname}/unhide",
+            put(api::clients::unhide_client),
+        )
+        .route(
+            "/api/clients/{hostname}/delete-archives",
+            post(api::clients::delete_client_archives),
         )
         .route(
             "/api/clients/{hostname}/deploy",

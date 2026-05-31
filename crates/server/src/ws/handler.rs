@@ -608,11 +608,29 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 let _ = tx.send((Vec::new(), 0, Some(error)));
             } else if let Some(tx) = state.pending_restores.lock().await.remove(&request_id) {
                 let _ = tx.send((false, 0, Some(error)));
+            } else if let Some(tx) = state.pending_deletes.lock().await.remove(&request_id) {
+                let _ = tx.send((false, 0, Some(error)));
             } else {
                 tracing::warn!(
                     hostname = %hostname,
                     request_id = %request_id,
                     "unexpected OperationFailed with no pending request"
+                );
+            }
+        }
+        AgentToServer::DeleteArchivesResult {
+            request_id,
+            success,
+            deleted_count,
+            error_message,
+        } => {
+            if let Some(tx) = state.pending_deletes.lock().await.remove(&request_id) {
+                let _ = tx.send((success, deleted_count, error_message));
+            } else {
+                tracing::warn!(
+                    hostname = %hostname,
+                    request_id = %request_id,
+                    "unexpected DeleteArchivesResult with no pending request"
                 );
             }
         }

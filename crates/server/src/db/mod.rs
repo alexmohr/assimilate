@@ -27,7 +27,7 @@ pub async fn resolve_client_for_hostname(
     let exact = sqlx::query_as::<_, ClientRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns FROM clients WHERE hostname = $1 AND agent_token_hash != \
+         default_exclude_patterns, agent_token_hash FROM clients WHERE hostname = $1 AND agent_token_hash != \
          'imported:no-auth'",
     )
     .bind(hostname)
@@ -52,7 +52,7 @@ pub async fn merge_client(pool: &PgPool, source_id: i64, target_id: i64) -> Resu
     let source = sqlx::query_as::<_, ClientRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns FROM clients WHERE id = $1",
+         default_exclude_patterns, agent_token_hash FROM clients WHERE id = $1",
     )
     .bind(source_id)
     .fetch_optional(&mut *tx)
@@ -134,6 +134,8 @@ pub struct ClientRow {
     pub default_backup_paths: Vec<String>,
     #[serde(default)]
     pub default_exclude_patterns: Vec<String>,
+    #[serde(skip)]
+    pub agent_token_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
@@ -232,7 +234,7 @@ pub async fn get_client_by_hostname(pool: &PgPool, hostname: &str) -> Result<Cli
     sqlx::query_as::<_, ClientRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns FROM clients WHERE hostname = $1",
+         default_exclude_patterns, agent_token_hash FROM clients WHERE hostname = $1",
     )
     .bind(hostname)
     .fetch_one(pool)
@@ -247,7 +249,7 @@ pub async fn get_client_by_id(pool: &PgPool, client_id: i64) -> Result<ClientRow
     sqlx::query_as::<_, ClientRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns FROM clients WHERE id = $1",
+         default_exclude_patterns, agent_token_hash FROM clients WHERE id = $1",
     )
     .bind(client_id)
     .fetch_one(pool)
@@ -328,7 +330,7 @@ pub async fn list_clients(pool: &PgPool) -> Result<Vec<ClientRow>, ApiError> {
     sqlx::query_as::<_, ClientRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns FROM clients ORDER BY hostname",
+         default_exclude_patterns, agent_token_hash FROM clients ORDER BY hostname",
     )
     .fetch_all(pool)
     .await
@@ -346,7 +348,7 @@ pub async fn get_or_create_client_by_hostname(
     let existing = sqlx::query_as::<_, ClientRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns FROM clients WHERE hostname = $1",
+         default_exclude_patterns, agent_token_hash FROM clients WHERE hostname = $1",
     )
     .bind(hostname)
     .fetch_optional(pool)
@@ -361,7 +363,7 @@ pub async fn get_or_create_client_by_hostname(
         "INSERT INTO clients (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, \
          $3, NULL) RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
          agent_build_time, created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns",
+         default_exclude_patterns, agent_token_hash",
     )
     .bind(hostname)
     .bind(Some(format!("{hostname} (imported)")))
@@ -382,7 +384,7 @@ pub async fn insert_client(
         "INSERT INTO clients (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, \
          $3, $4) RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
          agent_build_time, created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns",
+         default_exclude_patterns, agent_token_hash",
     )
     .bind(hostname)
     .bind(display_name)
@@ -396,17 +398,19 @@ pub async fn insert_client(
 pub async fn update_client(
     pool: &PgPool,
     hostname: &str,
+    new_hostname: &str,
     display_name: Option<&str>,
     default_backup_paths: &[String],
     default_exclude_patterns: &[String],
 ) -> Result<ClientRow, ApiError> {
     sqlx::query_as::<_, ClientRow>(
-        "UPDATE clients SET display_name = $2, default_backup_paths = $3, \
-         default_exclude_patterns = $4 WHERE hostname = $1 RETURNING id, hostname, display_name, \
+        "UPDATE clients SET hostname = $2, display_name = $3, default_backup_paths = $4, \
+         default_exclude_patterns = $5 WHERE hostname = $1 RETURNING id, hostname, display_name, \
          agent_version, agent_git_sha, agent_build_time, created_at, last_seen_at, owner_id, \
-         visibility, default_backup_paths, default_exclude_patterns",
+         visibility, default_backup_paths, default_exclude_patterns, agent_token_hash",
     )
     .bind(hostname)
+    .bind(new_hostname)
     .bind(display_name)
     .bind(default_backup_paths)
     .bind(default_exclude_patterns)
@@ -424,9 +428,9 @@ pub async fn regenerate_client_token(
     token_hash: &str,
 ) -> Result<ClientRow, ApiError> {
     sqlx::query_as::<_, ClientRow>(
-        "UPDATE clients SET agent_token_hash = $2 WHERE hostname = $1 RETURNING id, hostname, \
+         "UPDATE clients SET agent_token_hash = $2 WHERE hostname = $1 RETURNING id, hostname, \
          display_name, agent_version, agent_git_sha, agent_build_time, created_at, last_seen_at, \
-         owner_id, visibility, default_backup_paths, default_exclude_patterns",
+         owner_id, visibility, default_backup_paths, default_exclude_patterns, agent_token_hash",
     )
     .bind(hostname)
     .bind(token_hash)

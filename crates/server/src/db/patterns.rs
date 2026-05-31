@@ -69,6 +69,7 @@ struct PatternClientJoinRow {
     pub visibility: String,
     pub default_backup_paths: Vec<String>,
     pub default_exclude_patterns: Vec<String>,
+    pub agent_token_hash: String,
 }
 
 pub async fn find_client_by_pattern(
@@ -78,7 +79,7 @@ pub async fn find_client_by_pattern(
     let rows = sqlx::query_as::<_, PatternClientJoinRow>(
         "SELECT p.pattern, c.id, c.hostname, c.display_name, c.agent_version, c.agent_git_sha, \
          c.agent_build_time, c.created_at, c.last_seen_at, c.owner_id, c.visibility, \
-         c.default_backup_paths, c.default_exclude_patterns FROM client_hostname_patterns p JOIN \
+         c.default_backup_paths, c.default_exclude_patterns, c.agent_token_hash FROM client_hostname_patterns p JOIN \
          clients c ON c.id = p.client_id ORDER BY p.pattern",
     )
     .fetch_all(pool)
@@ -102,5 +103,6 @@ pub async fn find_client_by_pattern(
         visibility: row.visibility.clone(),
         default_backup_paths: row.default_backup_paths.clone(),
         default_exclude_patterns: row.default_exclude_patterns.clone(),
+        agent_token_hash: row.agent_token_hash.clone(),
     }))
 }

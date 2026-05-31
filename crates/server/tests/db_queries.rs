@@ -120,7 +120,7 @@ async fn client_update(pool: PgPool) {
         .await
         .unwrap();
 
-    let updated = db::update_client(&pool, "upd-host", Some("New Name"), &[], &[])
+    let updated = db::update_client(&pool, "upd-host", "upd-host", Some("New Name"), &[], &[])
         .await
         .unwrap();
     assert_eq!(updated.display_name.as_deref(), Some("New Name"));

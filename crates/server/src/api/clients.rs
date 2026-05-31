@@ -28,6 +28,7 @@ pub struct CreateClientRequest {
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateClientRequest {
+    pub hostname: Option<String>,
     pub display_name: Option<String>,
     #[serde(default)]
     pub default_backup_paths: Vec<String>,
@@ -40,6 +41,7 @@ pub struct ClientResponse {
     #[serde(flatten)]
     pub client: ClientRow,
     pub is_connected: bool,
+    pub is_imported: bool,
     pub supports_restart: bool,
     pub restart_unavailable_reason: Option<String>,
 }
@@ -126,6 +128,7 @@ pub async fn list_clients(
         let (supports_restart, restart_unavailable_reason) =
             state.registry.restart_capability(&c.hostname).await;
         responses.push(ClientResponse {
+            is_imported: c.agent_token_hash == "imported:no-auth",
             client: c,
             is_connected,
             supports_restart,
@@ -160,6 +163,7 @@ pub async fn get_client(
     let (supports_restart, restart_unavailable_reason) =
         state.registry.restart_capability(&hostname).await;
     Ok(Json(ClientResponse {
+        is_imported: client.agent_token_hash == "imported:no-auth",
         client,
         is_connected,
         supports_restart,
@@ -189,19 +193,22 @@ pub async fn update_client(
     Path(hostname): Path<String>,
     ApiJson(req): ApiJson<UpdateClientRequest>,
 ) -> Result<Json<ClientResponse>, ApiError> {
+    let new_hostname = req.hostname.as_deref().unwrap_or(&hostname);
     let client = db::update_client(
         &state.pool,
         &hostname,
+        new_hostname,
         req.display_name.as_deref(),
         &req.default_backup_paths,
         &req.default_exclude_patterns,
     )
     .await?;
-    config_assembler::push_config_to_agent(&state, &hostname).await;
+    config_assembler::push_config_to_agent(&state, new_hostname).await;
     let is_connected = state.registry.is_connected(&hostname).await;
     let (supports_restart, restart_unavailable_reason) =
         state.registry.restart_capability(&hostname).await;
     Ok(Json(ClientResponse {
+        is_imported: client.agent_token_hash == "imported:no-auth",
         client,
         is_connected,
         supports_restart,

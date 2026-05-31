@@ -788,7 +788,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
             Edit
           </button>
           <button
-            v-if="deployButtonLabel(client)"
+            v-if="deployButtonLabel(client) && !isImported(client)"
             class="btn btn-sm btn-ghost"
             @click="openDeployDialog(client)"
           >

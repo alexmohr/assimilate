@@ -22,8 +22,10 @@ fn resolve_git_sha() -> Option<String> {
 
 fn main() {
     let sha = resolve_git_sha().unwrap_or_default();
+    let build_timestamp = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     println!("cargo::rustc-env=GIT_SHA={sha}");
+    println!("cargo::rustc-env=BUILD_TIMESTAMP={build_timestamp}");
     println!("cargo::rerun-if-changed=../.git/HEAD");
     println!("cargo::rerun-if-changed=../.git/refs/");
 }

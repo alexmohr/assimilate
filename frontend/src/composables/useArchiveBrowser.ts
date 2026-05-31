@@ -27,6 +27,10 @@ export interface BreadcrumbSegment {
   path: string
 }
 
+export interface DirDisplayEntry extends ContentEntry {
+  displayName: string
+}
+
 interface UseArchiveBrowserReturn {
   archives: Ref<ArchiveEntry[]>
   archivesLoading: Ref<boolean>
@@ -38,7 +42,7 @@ interface UseArchiveBrowserReturn {
   contentsLoading: Ref<boolean>
   contentsError: Ref<string | null>
   breadcrumbs: ComputedRef<BreadcrumbSegment[]>
-  dirs: ComputedRef<ContentEntry[]>
+  dirs: ComputedRef<DirDisplayEntry[]>
   files: ComputedRef<ContentEntry[]>
   loadArchives: () => Promise<void>
   selectArchive: (archive: ArchiveEntry) => Promise<void>
@@ -76,9 +80,35 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     return segments
   })
 
-  const dirs = computed<ContentEntry[]>(() =>
-    contents.value.filter((e) => e.type === 'd').sort((a, b) => a.path.localeCompare(b.path)),
-  )
+  const dirs = computed<DirDisplayEntry[]>(() => {
+    const currentDir = currentPath.value.replace(/^\//, '')
+    const entries: DirDisplayEntry[] = []
+
+    if (currentPath.value !== '/') {
+      const parentPath = currentPath.value.replace(/\/[^/]+$/, '') || '/'
+      const currentEntry = contents.value.find((e) => e.type === 'd' && e.path === currentDir)
+      if (currentEntry) {
+        entries.push({ ...currentEntry, displayName: '.' })
+      }
+
+      entries.push({
+        type: 'd',
+        path: parentPath,
+        size: 0,
+        mtime: '',
+        mode: '',
+        displayName: '..',
+      })
+    }
+
+    const childDirs = contents.value
+      .filter((e) => e.type === 'd' && e.path !== currentDir)
+      .sort((a, b) => a.path.localeCompare(b.path))
+    return [
+      ...entries,
+      ...childDirs.map((e) => ({ ...e, displayName: e.path.split('/').pop() ?? e.path })),
+    ]
+  })
 
   const files = computed<ContentEntry[]>(() =>
     contents.value.filter((e) => e.type !== 'd').sort((a, b) => a.path.localeCompare(b.path)),
@@ -109,9 +139,10 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     if (!selectedArchive.value) return
     contentsLoading.value = true
     contentsError.value = null
-    currentPath.value = path
+    const normalizedPath = path === '/' ? '/' : `/${path.replace(/^\//, '')}`
+    currentPath.value = normalizedPath
     try {
-      const apiPath = path === '/' ? undefined : path.replace(/^\//, '')
+      const apiPath = normalizedPath === '/' ? undefined : normalizedPath.replace(/^\//, '')
       const res = await apiClient.get<ContentEntry[]>(
         `/repos/${repoId.value}/archives/${encodeURIComponent(selectedArchive.value.name)}/contents`,
         { params: apiPath ? { path: apiPath } : {} },

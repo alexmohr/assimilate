@@ -623,6 +623,11 @@ async fn exec_sudo_command(
     exec_command(session, &sudo_cmd).await
 }
 
+fn build_write_unit_cmd(content: &str, path: &str) -> String {
+    let encoded = base64::engine::general_purpose::STANDARD.encode(content.as_bytes());
+    format!("echo {encoded} | base64 -d > {path}")
+}
+
 fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
@@ -672,7 +677,6 @@ async fn detect_remote_arch(
     };
     Ok(canonical)
 }
-
 
 pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError> {
     let session = match params.password {

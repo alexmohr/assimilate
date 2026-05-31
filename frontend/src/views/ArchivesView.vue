@@ -5,6 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { RouterLink } from 'vue-router'
 import { FilterMatchMode } from '@primevue/core/api'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
@@ -33,6 +34,8 @@ interface ArchiveEntry {
   comment: string
   original_size: number
   deduplicated_size: number
+  matched: boolean | null
+  client_hostname: string | null
 }
 
 interface ContentEntry {
@@ -94,17 +97,46 @@ interface DisplayEntry extends ContentEntry {
 }
 
 const browserEntries = computed<DisplayEntry[]>(() => {
+  const currentDir = currentPath.value.replace(/^\//, '')
   const dirList = contents.value
-    .filter((e) => e.type === 'd')
+    .filter((e) => e.type === 'd' && e.path !== currentDir)
     .sort((a, b) => a.path.localeCompare(b.path))
   const fileList = contents.value
     .filter((e) => e.type !== 'd')
     .sort((a, b) => a.path.localeCompare(b.path))
-  return [...dirList, ...fileList].map((e) => ({
-    ...e,
-    displayName: e.path.split('/').pop() ?? e.path,
-    isDir: e.type === 'd',
-  }))
+
+  const entries: DisplayEntry[] = []
+
+  if (currentPath.value !== '/') {
+    const parentPath = currentPath.value.replace(/\/[^/]+$/, '') || '/'
+    const currentEntry = contents.value.find((e) => e.type === 'd' && e.path === currentDir)
+    if (currentEntry) {
+      entries.push({
+        ...currentEntry,
+        displayName: '.',
+        isDir: true,
+      })
+    }
+
+    entries.push({
+      type: 'd',
+      path: parentPath,
+      size: 0,
+      mtime: '',
+      mode: '',
+      displayName: '..',
+      isDir: true,
+    })
+  }
+
+  return [
+    ...entries,
+    ...[...dirList, ...fileList].map((e) => ({
+      ...e,
+      displayName: e.path.split('/').pop() ?? e.path,
+      isDir: e.type === 'd',
+    })),
+  ]
 })
 
 const browserFilters = ref({
@@ -163,9 +195,10 @@ async function loadContents(path: string): Promise<void> {
   if (selectedRepoId.value === null || !selectedArchive.value) return
   contentsLoading.value = true
   contentsError.value = null
-  currentPath.value = path
+  const normalizedPath = path === '/' ? '/' : `/${path.replace(/^\//, '')}`
+  currentPath.value = normalizedPath
   try {
-    const apiPath = path === '/' ? undefined : path.replace(/^\//, '')
+    const apiPath = normalizedPath === '/' ? undefined : normalizedPath.replace(/^\//, '')
     const res = await apiClient.get<ContentEntry[]>(
       `/repos/${selectedRepoId.value}/archives/${encodeURIComponent(selectedArchive.value.name)}/contents`,
       { params: apiPath ? { path: apiPath } : {} },
@@ -410,7 +443,47 @@ onMounted(loadRepos)
                 />
               </template>
               <template #body="{ data }">
-                <span class="td-host">{{ data.hostname }}</span>
+                <RouterLink
+                  v-if="data.matched === true && data.client_hostname"
+                  :to="{ name: 'client-detail', params: { hostname: data.client_hostname } }"
+                  class="host-link"
+                  @click.stop
+                >
+                  {{ data.client_hostname }}
+                </RouterLink>
+                <RouterLink
+                  v-else-if="data.matched === false"
+                  to="/clients"
+                  class="unmatched-host-link"
+                  @click.stop
+                >
+                  {{ data.hostname }}
+                </RouterLink>
+                <span
+                  v-else
+                  class="td-host"
+                  >{{ data.hostname }}</span
+                >
+              </template>
+            </Column>
+            <Column
+              field="matched"
+              header=""
+              style="width: 3rem"
+            >
+              <template #body="{ data }">
+                <span
+                  v-if="data.matched === true"
+                  class="match-icon match-ok"
+                  title="Matched"
+                  >&#10003;</span
+                >
+                <span
+                  v-else-if="data.matched === false"
+                  class="match-icon match-warn"
+                  title="Unmatched"
+                  >&#9888;</span
+                >
               </template>
             </Column>
             <Column
@@ -802,6 +875,38 @@ onMounted(loadRepos)
 .td-host {
   font-size: 0.8rem;
   color: var(--text-muted);
+}
+
+.host-link {
+  font-size: 0.8rem;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.host-link:hover {
+  text-decoration: underline;
+}
+
+.unmatched-host-link {
+  font-size: 0.8rem;
+  color: var(--warning);
+  text-decoration: none;
+}
+
+.unmatched-host-link:hover {
+  text-decoration: underline;
+}
+
+.match-icon {
+  font-size: 0.9rem;
+}
+
+.match-ok {
+  color: var(--success, #22c55e);
+}
+
+.match-warn {
+  color: var(--warning);
 }
 
 .td-name {

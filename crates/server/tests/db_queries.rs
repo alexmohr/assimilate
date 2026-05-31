@@ -563,6 +563,7 @@ async fn create_test_schedule(pool: &PgPool) -> (ClientRow, RepoRow, ScheduleRow
         pool,
         repo.id,
         &ScheduleParams {
+            name: "test-schedule",
             schedule_type: "backup",
             cron_expression: "0 3 * * *",
             enabled: true,
@@ -612,6 +613,7 @@ async fn schedule_update(pool: PgPool) {
         &pool,
         schedule.id,
         &ScheduleParams {
+            name: "updated-schedule",
             schedule_type: "backup",
             cron_expression: "0 6 * * *",
             enabled: false,

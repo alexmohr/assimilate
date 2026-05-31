@@ -282,7 +282,7 @@ async fn test_client_crud() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
     assert!(body.is_object());
-    assert!(body["items"].is_array());
+    assert_eq!(body["hostname"], "test-host-1");
 }
 
 #[tokio::test]

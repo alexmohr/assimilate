@@ -278,11 +278,18 @@ pub async fn regenerate_token(
     _auth: AuthUser,
     Path(hostname): Path<String>,
 ) -> Result<Json<CreateClientResponse>, ApiError> {
+    let existing = db::get_client_by_hostname(&state.pool, &hostname).await?;
+    let was_imported = existing.agent_token_hash == "imported:no-auth";
+
     let token_hex = helpers::generate_random_hex(32);
 
     let token_hash = bcrypt::hash(&token_hex, bcrypt::DEFAULT_COST)?;
 
     let client = db::regenerate_client_token(&state.pool, &hostname, &token_hash).await?;
+
+    if was_imported {
+        db::mark_client_reports_matched(&state.pool, client.id).await?;
+    }
 
     Ok(Json(CreateClientResponse {
         client,

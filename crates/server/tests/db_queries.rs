@@ -2349,6 +2349,64 @@ async fn test_merge_client_refuses_non_placeholder(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn test_mark_client_reports_matched(pool: PgPool) {
+    let client = db::insert_client(
+        &pool,
+        "adopt-host",
+        Some("Adopt Host (imported)"),
+        "imported:no-auth",
+        None,
+    )
+    .await
+    .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    let now = Utc::now();
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            client_id: client.id,
+            repo_id: repo.id,
+            started_at: now - Duration::minutes(5),
+            finished_at: now,
+            status: "success".to_string(),
+            original_size: 1_000_000,
+            compressed_size: 500_000,
+            deduplicated_size: 250_000,
+            files_processed: 1000,
+            duration_secs: 300,
+            error_message: None,
+            warnings: vec![],
+            borg_version: Some("1.4.0".to_string()),
+            matched: false,
+            archive_name: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let unmatched =
+        sqlx::query_scalar::<_, bool>("SELECT matched FROM backup_reports WHERE client_id = $1")
+            .bind(client.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(!unmatched);
+
+    db::mark_client_reports_matched(&pool, client.id)
+        .await
+        .unwrap();
+
+    let matched =
+        sqlx::query_scalar::<_, bool>("SELECT matched FROM backup_reports WHERE client_id = $1")
+            .bind(client.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(matched);
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn get_archives_for_client_across_multiple_repos(pool: PgPool) {
     let client = db::insert_client(&pool, "primary-host", None, "hash", None)
         .await

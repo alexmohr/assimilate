@@ -488,6 +488,15 @@ pub async fn regenerate_client_token(
     })
 }
 
+pub async fn mark_client_reports_matched(pool: &PgPool, client_id: i64) -> Result<(), ApiError> {
+    sqlx::query("UPDATE backup_reports SET matched = true WHERE client_id = $1 AND matched = false")
+        .bind(client_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(())
+}
+
 pub async fn delete_client(pool: &PgPool, hostname: &str) -> Result<(), ApiError> {
     let result = sqlx::query("DELETE FROM clients WHERE hostname = $1")
         .bind(hostname)

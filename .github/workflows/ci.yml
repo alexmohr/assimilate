@@ -167,7 +167,9 @@ jobs:
         working-directory: frontend
         run: npm run test:coverage
       - name: Merge coverage files
-        run: cat lcov.info frontend/coverage/lcov.info > merged.info
+        run: |
+          sed 's|^SF:|SF:frontend/|' frontend/coverage/lcov.info > frontend-lcov-fixed.info
+          cat lcov.info frontend-lcov-fixed.info > merged.info
       - name: Upload coverage to Coveralls
         uses: coverallsapp/github-action@v2
         with:

@@ -766,12 +766,13 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
             )));
         }
 
-        let enable_cmd = "systemctl daemon-reload && systemctl enable --now assimilate-agent";
+        let enable_cmd =
+            "systemctl daemon-reload && systemctl enable assimilate-agent && systemctl restart assimilate-agent";
         let (exit_code, _, stderr) =
             exec_sudo_command(&session, enable_cmd, params.sudo_password).await?;
         if exit_code != 0 {
             return Err(SshError::Exec(format!(
-                "systemctl enable/start via sudo failed (exit {exit_code}): {stderr}"
+                "systemctl enable/restart via sudo failed (exit {exit_code}): {stderr}"
             )));
         }
     } else {
@@ -782,16 +783,17 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
             )));
         }
 
-        let enable_cmd = "systemctl daemon-reload && systemctl enable --now assimilate-agent";
+        let enable_cmd =
+            "systemctl daemon-reload && systemctl enable assimilate-agent && systemctl restart assimilate-agent";
         let (exit_code, _, stderr) = exec_command(&session, enable_cmd).await?;
         if exit_code != 0 {
             return Err(SshError::Exec(format!(
-                "systemctl enable/start failed (exit {exit_code}): {stderr}"
+                "systemctl enable/restart failed (exit {exit_code}): {stderr}"
             )));
         }
     }
 
-    info!(host = %params.host, "agent deployed and service started");
+    info!(host = %params.host, "agent deployed and service restarted");
     Ok(())
 }
 

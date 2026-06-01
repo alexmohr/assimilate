@@ -702,6 +702,20 @@ pub async fn set_repo_import_error(
     Ok(())
 }
 
+pub async fn set_import_status_message(
+    pool: &PgPool,
+    repo_id: i64,
+    msg: Option<&str>,
+) -> Result<(), ApiError> {
+    sqlx::query("UPDATE repos SET import_status_message = $2 WHERE id = $1")
+        .bind(repo_id)
+        .bind(msg)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(())
+}
+
 pub async fn update_repo_import_progress(
     pool: &PgPool,
     repo_id: i64,
@@ -1969,6 +1983,81 @@ pub async fn insert_backup_report(
     Ok(())
 }
 
+pub async fn bulk_insert_backup_reports(
+    pool: &PgPool,
+    params: &[InsertReportParams],
+) -> Result<u64, ApiError> {
+    if params.is_empty() {
+        return Ok(0);
+    }
+
+    let mut client_ids = Vec::with_capacity(params.len());
+    let mut repo_ids = Vec::with_capacity(params.len());
+    let mut started_ats = Vec::with_capacity(params.len());
+    let mut finished_ats = Vec::with_capacity(params.len());
+    let mut statuses: Vec<&str> = Vec::with_capacity(params.len());
+    let mut original_sizes = Vec::with_capacity(params.len());
+    let mut compressed_sizes = Vec::with_capacity(params.len());
+    let mut deduplicated_sizes = Vec::with_capacity(params.len());
+    let mut files_processed_v = Vec::with_capacity(params.len());
+    let mut duration_secs_v = Vec::with_capacity(params.len());
+    let mut error_messages: Vec<Option<&str>> = Vec::with_capacity(params.len());
+    let mut borg_versions: Vec<Option<&str>> = Vec::with_capacity(params.len());
+    let mut matcheds = Vec::with_capacity(params.len());
+    let mut archive_names: Vec<Option<&str>> = Vec::with_capacity(params.len());
+
+    for p in params {
+        client_ids.push(p.client_id);
+        repo_ids.push(p.repo_id);
+        started_ats.push(p.started_at);
+        finished_ats.push(p.finished_at);
+        statuses.push(p.status.as_str());
+        original_sizes.push(p.original_size);
+        compressed_sizes.push(p.compressed_size);
+        deduplicated_sizes.push(p.deduplicated_size);
+        files_processed_v.push(p.files_processed);
+        duration_secs_v.push(p.duration_secs);
+        error_messages.push(p.error_message.as_deref());
+        borg_versions.push(p.borg_version.as_deref());
+        matcheds.push(p.matched);
+        archive_names.push(p.archive_name.as_deref());
+    }
+
+    let result = sqlx::query(
+        "INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, \
+         original_size, compressed_size, deduplicated_size, files_processed, duration_secs, \
+         error_message, warnings, borg_version, matched, archive_name) SELECT t.client_id, \
+         t.repo_id, t.started_at, t.finished_at, t.status, t.original_size, t.compressed_size, \
+         t.deduplicated_size, t.files_processed, t.duration_secs, t.error_message, \
+         ARRAY[]::text[], t.borg_version, t.matched, t.archive_name FROM UNNEST($1::bigint[], \
+         $2::bigint[], $3::timestamptz[], $4::timestamptz[], $5::text[], $6::bigint[], \
+         $7::bigint[], $8::bigint[], $9::bigint[], $10::bigint[], $11::text[], $12::text[], \
+         $13::bool[], $14::text[]) AS t(client_id, repo_id, started_at, finished_at, status, \
+         original_size, compressed_size, deduplicated_size, files_processed, duration_secs, \
+         error_message, borg_version, matched, archive_name) ON CONFLICT (repo_id, client_id, \
+         started_at) DO NOTHING",
+    )
+    .bind(&client_ids)
+    .bind(&repo_ids)
+    .bind(&started_ats)
+    .bind(&finished_ats)
+    .bind(&statuses)
+    .bind(&original_sizes)
+    .bind(&compressed_sizes)
+    .bind(&deduplicated_sizes)
+    .bind(&files_processed_v)
+    .bind(&duration_secs_v)
+    .bind(&error_messages)
+    .bind(&borg_versions)
+    .bind(&matcheds)
+    .bind(&archive_names)
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    Ok(result.rows_affected())
+}
+
 pub async fn list_reports_for_client(
     pool: &PgPool,
     client_id: i64,
@@ -2697,9 +2786,11 @@ pub struct RepoWithStatsRow {
     pub import_error: Option<String>,
     pub import_progress: i32,
     pub import_total: i32,
+    pub import_status_message: Option<String>,
     pub owner_id: Option<i64>,
     pub visibility: String,
     pub sync_schedule: Option<String>,
+    pub last_synced_at: Option<DateTime<Utc>>,
     pub archive_count: i64,
     pub last_backup_at: Option<DateTime<Utc>>,
     pub total_original_size: i64,
@@ -2713,21 +2804,22 @@ pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow
     sqlx::query_as::<_, RepoWithStatsRow>(
         "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.compression, \
          r.encryption, r.enabled, r.importing, r.import_error, r.import_progress, r.import_total, \
-         r.owner_id, r.visibility, r.sync_schedule, COALESCE(agg.archive_count, 0) AS \
-         archive_count, agg.last_backup_at, COALESCE(latest.original_size, 0)::INT8 AS \
-         total_original_size, COALESCE(latest.compressed_size, 0)::INT8 AS total_compressed_size, \
+         r.import_status_message, r.owner_id, r.visibility, r.sync_schedule, r.last_synced_at, \
+         COALESCE(agg.archive_count, 0) AS archive_count, agg.last_backup_at, \
+         COALESCE(latest.original_size, 0)::INT8 AS total_original_size, \
+         COALESCE(latest.compressed_size, 0)::INT8 AS total_compressed_size, \
          COALESCE(latest.deduplicated_size, 0)::INT8 AS total_deduplicated_size, \
          COALESCE(agg.client_count, 0) AS client_count, COALESCE(agg.unmatched_count, 0) AS \
          unmatched_count FROM repos r LEFT JOIN LATERAL (SELECT SUM(sub.original_size) AS \
-         original_size, SUM(sub.compressed_size) AS compressed_size, \
-         SUM(sub.deduplicated_size) AS deduplicated_size FROM (SELECT DISTINCT ON (br.client_id) \
-         br.original_size, br.compressed_size, br.deduplicated_size FROM backup_reports br WHERE \
-         br.repo_id = r.id AND br.status = 'success' ORDER BY br.client_id, br.started_at DESC) \
-         sub) latest ON true LEFT JOIN LATERAL (SELECT COUNT(br.id) AS archive_count, MAX(CASE \
-         WHEN br.finished_at > '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, \
-         COUNT(DISTINCT br.client_id) AS client_count, COUNT(DISTINCT br.client_id) FILTER (WHERE \
-         br.matched = false) AS unmatched_count FROM backup_reports br WHERE br.repo_id = r.id \
-         AND br.status = 'success') agg ON true ORDER BY r.name",
+         original_size, SUM(sub.compressed_size) AS compressed_size, SUM(sub.deduplicated_size) \
+         AS deduplicated_size FROM (SELECT DISTINCT ON (br.client_id) br.original_size, \
+         br.compressed_size, br.deduplicated_size FROM backup_reports br WHERE br.repo_id = r.id \
+         AND br.status = 'success' ORDER BY br.client_id, br.started_at DESC) sub) latest ON true \
+         LEFT JOIN LATERAL (SELECT COUNT(br.id) AS archive_count, MAX(CASE WHEN br.finished_at > \
+         '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT \
+         br.client_id) AS client_count, COUNT(DISTINCT br.client_id) FILTER (WHERE br.matched = \
+         false) AS unmatched_count FROM backup_reports br WHERE br.repo_id = r.id AND br.status = \
+         'success') agg ON true ORDER BY r.name",
     )
     .fetch_all(pool)
     .await
@@ -2741,21 +2833,22 @@ pub async fn get_repo_with_stats(
     sqlx::query_as::<_, RepoWithStatsRow>(
         "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.compression, \
          r.encryption, r.enabled, r.importing, r.import_error, r.import_progress, r.import_total, \
-         r.owner_id, r.visibility, r.sync_schedule, COALESCE(agg.archive_count, 0) AS \
-         archive_count, agg.last_backup_at, COALESCE(latest.original_size, 0)::INT8 AS \
-         total_original_size, COALESCE(latest.compressed_size, 0)::INT8 AS total_compressed_size, \
+         r.import_status_message, r.owner_id, r.visibility, r.sync_schedule, r.last_synced_at, \
+         COALESCE(agg.archive_count, 0) AS archive_count, agg.last_backup_at, \
+         COALESCE(latest.original_size, 0)::INT8 AS total_original_size, \
+         COALESCE(latest.compressed_size, 0)::INT8 AS total_compressed_size, \
          COALESCE(latest.deduplicated_size, 0)::INT8 AS total_deduplicated_size, \
          COALESCE(agg.client_count, 0) AS client_count, COALESCE(agg.unmatched_count, 0) AS \
          unmatched_count FROM repos r LEFT JOIN LATERAL (SELECT SUM(sub.original_size) AS \
-         original_size, SUM(sub.compressed_size) AS compressed_size, \
-         SUM(sub.deduplicated_size) AS deduplicated_size FROM (SELECT DISTINCT ON (br.client_id) \
-         br.original_size, br.compressed_size, br.deduplicated_size FROM backup_reports br WHERE \
-         br.repo_id = r.id AND br.status = 'success' ORDER BY br.client_id, br.started_at DESC) \
-         sub) latest ON true LEFT JOIN LATERAL (SELECT COUNT(br.id) AS archive_count, MAX(CASE \
-         WHEN br.finished_at > '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, \
-         COUNT(DISTINCT br.client_id) AS client_count, COUNT(DISTINCT br.client_id) FILTER (WHERE \
-         br.matched = false) AS unmatched_count FROM backup_reports br WHERE br.repo_id = r.id \
-         AND br.status = 'success') agg ON true WHERE r.id = $1",
+         original_size, SUM(sub.compressed_size) AS compressed_size, SUM(sub.deduplicated_size) \
+         AS deduplicated_size FROM (SELECT DISTINCT ON (br.client_id) br.original_size, \
+         br.compressed_size, br.deduplicated_size FROM backup_reports br WHERE br.repo_id = r.id \
+         AND br.status = 'success' ORDER BY br.client_id, br.started_at DESC) sub) latest ON true \
+         LEFT JOIN LATERAL (SELECT COUNT(br.id) AS archive_count, MAX(CASE WHEN br.finished_at > \
+         '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT \
+         br.client_id) AS client_count, COUNT(DISTINCT br.client_id) FILTER (WHERE br.matched = \
+         false) AS unmatched_count FROM backup_reports br WHERE br.repo_id = r.id AND br.status = \
+         'success') agg ON true WHERE r.id = $1",
     )
     .bind(repo_id)
     .fetch_one(pool)
@@ -3639,6 +3732,38 @@ pub async fn get_storage_trends(
         .await
         .map_err(ApiError::Database)
     }
+}
+
+pub async fn list_archive_names_for_repo(
+    pool: &PgPool,
+    repo_id: i64,
+) -> Result<std::collections::HashSet<String>, ApiError> {
+    let names = sqlx::query_scalar::<_, String>(
+        "SELECT archive_name FROM backup_reports WHERE repo_id = $1 AND archive_name IS NOT NULL",
+    )
+    .bind(repo_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(names.into_iter().collect())
+}
+
+pub async fn delete_archive_reports_by_names(
+    pool: &PgPool,
+    repo_id: i64,
+    names: &[String],
+) -> Result<u64, ApiError> {
+    if names.is_empty() {
+        return Ok(0);
+    }
+    let result =
+        sqlx::query("DELETE FROM backup_reports WHERE repo_id = $1 AND archive_name = ANY($2)")
+            .bind(repo_id)
+            .bind(names)
+            .execute(pool)
+            .await
+            .map_err(ApiError::Database)?;
+    Ok(result.rows_affected())
 }
 
 pub async fn get_storage_trends_by_repo(

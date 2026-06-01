@@ -254,6 +254,12 @@ pub enum ServerToUi {
         hostname: String,
     },
     DataChanged,
+    ImportProgress {
+        repo_id: i64,
+        progress: i32,
+        total: i32,
+        message: Option<String>,
+    },
     TunnelStatusChanged {
         client_id: i64,
         hostname: String,

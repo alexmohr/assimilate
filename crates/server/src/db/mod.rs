@@ -1933,7 +1933,6 @@ pub struct HealthRow {
     pub schedule_enabled: Option<bool>,
 }
 
-#[derive(Clone)]
 pub struct InsertReportParams {
     pub client_id: i64,
     pub repo_id: i64,

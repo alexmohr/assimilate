@@ -3036,6 +3036,45 @@ async fn repo_reset_import_clears_state(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn repo_import_progress_updates_and_resets(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    let stats = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
+    assert_eq!(stats.import_progress, 0);
+    assert_eq!(stats.import_total, 0);
+
+    db::update_repo_import_progress(&pool, repo.id, 42, 100)
+        .await
+        .unwrap();
+
+    let stats = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
+    assert_eq!(stats.import_progress, 42);
+    assert_eq!(stats.import_total, 100);
+
+    db::update_repo_import_progress(&pool, repo.id, 0, 0)
+        .await
+        .unwrap();
+
+    let stats = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
+    assert_eq!(stats.import_progress, 0);
+    assert_eq!(stats.import_total, 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_import_progress_reflected_in_list(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    db::update_repo_import_progress(&pool, repo.id, 7, 20)
+        .await
+        .unwrap();
+
+    let repos = db::list_repos_with_stats(&pool).await.unwrap();
+    let found = repos.iter().find(|r| r.id == repo.id).unwrap();
+    assert_eq!(found.import_progress, 7);
+    assert_eq!(found.import_total, 20);
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn repo_last_synced_at_updates(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
     assert!(repo.last_synced_at.is_none());

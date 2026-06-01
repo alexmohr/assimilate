@@ -43,7 +43,12 @@ pub fn validate_compression(value: Option<&str>) -> Result<String, ApiError> {
             "invalid compression level in '{s}'"
         )));
     }
-    Ok(s.to_string())
+    let normalized = match s {
+        "zstd" => "zstd,3".to_string(),
+        "zlib" => "zlib,6".to_string(),
+        other => other.to_string(),
+    };
+    Ok(normalized)
 }
 
 /// Hashes a password using bcrypt in a blocking task.

@@ -333,6 +333,54 @@ describe('ActivityLogView', () => {
       const backupRows = wrapper.findAll('tr.log-row:not(.row-system)')
       expect(backupRows.length).toBe(0)
     })
+
+    it('expands a system event row on click to show full message', async () => {
+      setupDefaultMocks()
+      const wrapper = mountView()
+      await flushPromises()
+
+      const systemRows = wrapper.findAll('tr.row-system')
+      expect(systemRows.length).toBeGreaterThan(0)
+
+      expect(wrapper.find('tr.detail-row').exists()).toBe(false)
+
+      await systemRows[0].trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('tr.detail-row').exists()).toBe(true)
+      expect(wrapper.find('tr.detail-row pre.error-pre').text()).toBe(
+        SYSTEM_EVENTS[0].message,
+      )
+    })
+
+    it('collapses a system event row on second click', async () => {
+      setupDefaultMocks()
+      const wrapper = mountView()
+      await flushPromises()
+
+      const systemRows = wrapper.findAll('tr.row-system')
+      await systemRows[0].trigger('click')
+      await flushPromises()
+      expect(wrapper.find('tr.detail-row').exists()).toBe(true)
+
+      await systemRows[0].trigger('click')
+      await flushPromises()
+      expect(wrapper.find('tr.detail-row').exists()).toBe(false)
+    })
+
+    it('adds expanded class to the clicked system event row', async () => {
+      setupDefaultMocks()
+      const wrapper = mountView()
+      await flushPromises()
+
+      const systemRows = wrapper.findAll('tr.row-system')
+      expect(systemRows[0].classes()).not.toContain('expanded')
+
+      await systemRows[0].trigger('click')
+      await flushPromises()
+
+      expect(systemRows[0].classes()).toContain('expanded')
+    })
   })
 
   describe('filter controls', () => {

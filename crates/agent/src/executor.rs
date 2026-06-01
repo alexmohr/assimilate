@@ -6,7 +6,9 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 use chrono::Utc;
 use shared::{
     protocol::AgentToServer,
-    types::{AgentConfig, BorgEncryption, Compression, DryRunFile, RepoConfig, RepoId},
+    types::{
+        AgentConfig, BorgEncryption, Compression, DryRunFile, RepoConfig, RepoId, build_repo_url,
+    },
 };
 use tokio::sync::{Mutex, mpsc};
 use tracing::{error, info, warn};
@@ -309,8 +311,7 @@ impl Executor {
                 .map_or_else(|| "unknown".to_owned(), |c| c.client_hostname.clone())
         };
 
-        let repo_path_trimmed = repo_path.trim_start_matches('/');
-        let repo_url = format!("ssh://{ssh_user}@{ssh_host}:{ssh_port}/{repo_path_trimmed}");
+        let repo_url = build_repo_url(ssh_user, ssh_host, ssh_port, repo_path);
         info!(repo_url = %repo_url, "initializing repository");
 
         let server_url = self.server_url.clone();
@@ -1254,12 +1255,11 @@ fn write_temp_excludes(patterns: &[String]) -> Result<tempfile::NamedTempFile, s
 }
 
 fn build_borg_env(target: &BackupTarget) -> Vec<(String, String)> {
-    let path = target.repo_path.trim_start_matches('/');
-    let repo_url = format!(
-        "ssh://{user}@{host}:{port}/{path}",
-        user = target.ssh_user,
-        host = target.ssh_host,
-        port = target.ssh_port,
+    let repo_url = build_repo_url(
+        &target.ssh_user,
+        &target.ssh_host,
+        target.ssh_port,
+        &target.repo_path,
     );
 
     let mut env = vec![

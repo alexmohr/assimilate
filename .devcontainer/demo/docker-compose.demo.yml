@@ -22,6 +22,7 @@ services:
       ASSIMILATE_SECRET_KEY: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
       ASSIMILATE_BIND_ADDR: "0.0.0.0:8080"
       SSH_KEY_DIR: /ssh-keys
+      RUST_LOG: debug
     ports:
       - "8080:8080"
     depends_on:

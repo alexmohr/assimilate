@@ -26,6 +26,7 @@ use crate::{
     AppState,
     db::{self, InsertRepoParams, RepoRow, RepoWithStatsRow, UpdateRepoParams},
     error::{ApiError, ApiJson},
+    ws::ui_broadcast::UiBroadcast,
 };
 
 /// Extracts a concise, user-facing error message from borg stderr.
@@ -237,7 +238,8 @@ pub async fn create_repo(
             }
         }
 
-        if let Err(e) = sync_existing_archives(&pool, &encryption_key, repo_id).await {
+        if let Err(e) = sync_existing_archives(&pool, &encryption_key, repo_id, &ui_broadcast).await
+        {
             warn!(repo_id, error = %e, "failed to sync existing archives on import");
             let _ = db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await;
         }
@@ -1091,6 +1093,7 @@ pub async fn sync_existing_archives(
     pool: &PgPool,
     encryption_key: &[u8; 32],
     repo_id: i64,
+    ui_broadcast: &UiBroadcast,
 ) -> Result<u64, ApiError> {
     let (borg_repo, env) = super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
 
@@ -1127,7 +1130,11 @@ pub async fn sync_existing_archives(
         archive_clients.push((name.to_string(), hostname.to_string(), client.id, matched));
     }
 
-    let (imported, skipped): (u64, u64) = stream::iter(archive_clients)
+    let total = archive_clients.len();
+    let _ = db::update_repo_import_progress(pool, repo_id, 0, total as i64).await;
+    ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
+
+    let (imported, _skipped): (u64, u64) = stream::iter(archive_clients)
         .map(|(name, _hostname, client_id, matched)| {
             let borg_repo = &borg_repo;
             let env = &env;
@@ -1193,27 +1200,41 @@ pub async fn sync_existing_archives(
             }
         })
         .buffer_unordered(CONCURRENCY)
-        .fold((0u64, 0u64), |(acc, skip), (params, skipped)| async move {
-            if skipped {
-                return (acc, skip + 1);
-            }
-            let Some(params) = params else {
-                return (acc, skip + 1);
+        .fold((0u64, 0u64), |(imported, skipped), (params, is_skipped)| async move {
+            let (new_imported, new_skipped) = if is_skipped {
+                (imported, skipped + 1)
+            } else {
+                let Some(params) = params else {
+                    return (imported, skipped + 1);
+                };
+                let name = params.archive_name.as_deref().unwrap_or("?");
+                if let Err(e) = db::insert_backup_report(pool, &params).await {
+                    warn!(archive = name, error = %e, "failed to insert imported archive report");
+                    (imported, skipped + 1)
+                } else {
+                    (imported + 1, skipped)
+                }
             };
-            let name = params.archive_name.as_deref().unwrap_or("?");
-            if let Err(e) = db::insert_backup_report(pool, &params).await {
-                warn!(archive = name, error = %e, "failed to insert imported archive report");
-                return (acc, skip + 1);
+            let processed = new_imported + new_skipped;
+            if processed % 10 == 0 || processed as usize == total {
+                let _ = db::update_repo_import_progress(
+                    pool,
+                    repo_id,
+                    processed as i64,
+                    total as i64,
+                )
+                .await;
+                ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
             }
-            (acc + 1, skip)
+            (new_imported, new_skipped)
         })
         .await;
 
     info!(
         repo_id,
         imported,
-        skipped,
-        total = archives.len(),
+        skipped = total as u64 - imported,
+        total,
         "synced existing archives"
     );
     Ok(imported)
@@ -1338,7 +1359,13 @@ pub async fn sync_repo(
     db::set_repo_importing(&state.pool, repo_id, true).await?;
 
     let start = std::time::Instant::now();
-    let result = sync_existing_archives(&state.pool, &state.encryption_key, repo_id).await;
+    let result = sync_existing_archives(
+        &state.pool,
+        &state.encryption_key,
+        repo_id,
+        &state.ui_broadcast,
+    )
+    .await;
     let elapsed = start.elapsed();
 
     db::set_repo_importing(&state.pool, repo_id, false).await?;

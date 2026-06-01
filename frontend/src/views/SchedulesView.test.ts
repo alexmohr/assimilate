@@ -34,6 +34,18 @@ vi.mock('../composables/useTimezone', () => ({
   getConfiguredTimezone: (): string | undefined => undefined,
 }))
 
+const mockToastSuccess = vi.fn()
+const mockToastError = vi.fn()
+vi.mock('../composables/useToast', () => ({
+  useToast: (): {
+    success: ReturnType<typeof vi.fn>
+    error: ReturnType<typeof vi.fn>
+  } => ({
+    success: mockToastSuccess,
+    error: mockToastError,
+  }),
+}))
+
 vi.mock('../components/BaseSpinner.vue', () => ({
   default: { template: '<div class="base-spinner" />' },
 }))
@@ -296,7 +308,7 @@ describe('SchedulesView', () => {
     expect(wrapper.text()).not.toContain('database-hourly')
   })
 
-  it('calls run now API on run button click', async () => {
+  it('calls run now API on run button click and shows success toast', async () => {
     setupApiSuccess()
     mockApiClient.post.mockResolvedValue({ data: {} })
     const wrapper = renderWithPlugins(SchedulesView)
@@ -310,6 +322,21 @@ describe('SchedulesView', () => {
     expect(mockApiClient.post).toHaveBeenCalledWith(
       expect.stringMatching(/^\/schedules\/\d+\/run$/),
     )
+    expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringMatching(/started/i))
+  })
+
+  it('shows error toast when run now API fails', async () => {
+    setupApiSuccess()
+    mockApiClient.post.mockRejectedValue({ response: { data: { error: 'agent offline' } } })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const runButtons = wrapper.findAll('button').filter((b) => b.text() === 'Run')
+    expect(runButtons.length).toBeGreaterThan(0)
+    await runButtons[0].trigger('click')
+    await flushPromises()
+
+    expect(mockToastError).toHaveBeenCalled()
   })
 
   it('has New button linking to /schedules/new', async () => {

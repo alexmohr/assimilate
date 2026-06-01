@@ -7,9 +7,10 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiClient } from '../api/client'
-import { formatDateShort } from '../utils/format'
+import { formatDateShort, formatDuration, formatBytes } from '../utils/format'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
+import { useToast } from '../composables/useToast'
 import { parseLines } from '../utils/validation'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import CronBuilder from '../components/CronBuilder.vue'
@@ -73,6 +74,24 @@ interface RepoRow {
   repo_path: string
 }
 
+interface ReportRow {
+  id: number
+  client_id: number
+  repo_id: number
+  started_at: string
+  finished_at: string
+  status: string
+  original_size: number
+  compressed_size: number
+  deduplicated_size: number
+  files_processed: number
+  duration_secs: number
+  error_message: string | null
+  warnings: string[]
+  borg_version: string | null
+  archive_name: string | null
+}
+
 const props = defineProps<{ id: string }>()
 const route = useRoute()
 const router = useRouter()
@@ -92,6 +111,11 @@ const saveSuccess = ref(false)
 const showDeleteDialog = ref(false)
 const deleteLoading = ref(false)
 const refOpen = ref(false)
+const runNowLoading = ref(false)
+const reports = ref<ReportRow[]>([])
+const reportsLoading = ref(false)
+const reportsError = ref<string | null>(null)
+const { success: toastSuccess, error: toastError } = useToast()
 
 const selectedClientIds = ref<number[]>([])
 const selectedRepoId = ref<number | null>(null)
@@ -106,11 +130,12 @@ const perHostExcludes = ref<Record<number, string>>({})
 const showClientDropdown = ref(false)
 const clientDropdownRef = ref<HTMLElement | null>(null)
 
-type TabId = 'settings' | 'advanced'
+type TabId = 'settings' | 'advanced' | 'logs'
 const activeTab = computed<TabId>({
   get() {
     const t = route.query.tab as string | undefined
     if (t === 'advanced') return t
+    if (t === 'logs') return t
     return 'settings'
   },
   set(val: TabId) {
@@ -122,6 +147,12 @@ const scheduleType = computed(() =>
   isCreate.value ? selectedType.value : (schedule.value?.schedule_type ?? 'backup'),
 )
 const isBackup = computed(() => scheduleType.value === 'backup')
+
+const clientMap = computed(() => {
+  const m = new Map<number, ClientRow>()
+  clients.value.forEach((c) => m.set(c.id, c))
+  return m
+})
 
 const form = ref({
   name: '',
@@ -384,7 +415,46 @@ async function confirmDeleteSchedule(): Promise<void> {
   }
 }
 
+async function runNow(): Promise<void> {
+  runNowLoading.value = true
+  try {
+    await apiClient.post(`/schedules/${props.id}/run`)
+    toastSuccess(`${scheduleTypeLabel(schedule.value?.schedule_type ?? 'backup')} started.`)
+  } catch (e: unknown) {
+    toastError(extractError(e))
+  } finally {
+    runNowLoading.value = false
+  }
+}
+
+async function loadReports(): Promise<void> {
+  reportsLoading.value = true
+  reportsError.value = null
+  try {
+    const res = await apiClient.get<ReportRow[]>(`/schedules/${props.id}/reports`, {
+      params: { limit: 100 },
+    })
+    reports.value = res.data
+  } catch (e: unknown) {
+    reportsError.value = extractError(e, 'Failed to load reports')
+  } finally {
+    reportsLoading.value = false
+  }
+}
+
+function reportStatusClass(status: string): string {
+  const s = status.toLowerCase()
+  if (s === 'success') return 'badge-success'
+  if (s === 'warning') return 'badge-warning'
+  return 'badge-failed'
+}
+
 watch(() => props.id, loadData)
+watch(activeTab, (tab) => {
+  if (tab === 'logs' && !isCreate.value) {
+    loadReports().catch(() => undefined)
+  }
+})
 </script>
 
 <template>
@@ -412,6 +482,18 @@ watch(() => props.id, loadData)
         </template>
         <template v-else>Schedule</template>
       </h1>
+      <div
+        v-if="!isCreate && schedule"
+        class="header-actions"
+      >
+        <button
+          class="btn btn-sm btn-primary"
+          :disabled="runNowLoading"
+          @click="runNow"
+        >
+          {{ runNowLoading ? '...' : 'Run Now' }}
+        </button>
+      </div>
     </div>
 
     <div
@@ -442,6 +524,14 @@ watch(() => props.id, loadData)
           @click="activeTab = 'advanced'"
         >
           Advanced
+        </button>
+        <button
+          v-if="!isCreate"
+          class="tab-btn"
+          :class="{ active: activeTab === 'logs' }"
+          @click="activeTab = 'logs'"
+        >
+          Logs
         </button>
       </div>
 
@@ -1052,8 +1142,90 @@ watch(() => props.id, loadData)
         </div>
       </div>
 
+      <!-- Logs Tab -->
+      <div
+        v-if="activeTab === 'logs'"
+        class="tab-content"
+      >
+        <div
+          v-if="reportsLoading"
+          class="reports-loading"
+        >
+          <BaseSpinner size="sm" />
+        </div>
+        <div
+          v-else-if="reportsError"
+          class="error-banner"
+        >
+          {{ reportsError }}
+        </div>
+        <div
+          v-else-if="reports.length === 0"
+          class="empty-state"
+        >
+          No backup reports found for this schedule.
+        </div>
+        <div
+          v-else
+          class="reports-table-wrap"
+        >
+          <table class="reports-table">
+            <thead>
+              <tr>
+                <th>Started</th>
+                <th>Host</th>
+                <th>Status</th>
+                <th>Duration</th>
+                <th>Size</th>
+                <th>Error</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="r in reports"
+                :key="r.id"
+                class="report-row"
+              >
+                <td class="cell-ts">{{ formatDateShort(r.started_at) }}</td>
+                <td class="cell-host">{{
+                  clientMap.get(r.client_id)?.display_name ??
+                  clientMap.get(r.client_id)?.hostname ??
+                  `#${r.client_id}`
+                }}</td>
+                <td>
+                  <span
+                    class="badge"
+                    :class="reportStatusClass(r.status)"
+                    >{{ r.status }}</span
+                  >
+                </td>
+                <td class="cell-dur">{{ formatDuration(r.duration_secs) }}</td>
+                <td class="cell-size">{{ formatBytes(r.original_size) }}</td>
+                <td class="cell-error">
+                  <span
+                    v-if="r.error_message"
+                    class="error-snippet"
+                    :title="r.error_message"
+                    >{{ r.error_message.slice(0, 80)
+                    }}{{ r.error_message.length > 80 ? '\u2026' : '' }}</span
+                  >
+                  <span
+                    v-else
+                    class="no-error"
+                    >—</span
+                  >
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <!-- Save bar -->
-      <div class="save-bar">
+      <div
+        v-if="activeTab !== 'logs'"
+        class="save-bar"
+      >
         <div
           v-if="saveError"
           class="error-inline"
@@ -1781,5 +1953,100 @@ watch(() => props.id, loadData)
   gap: 0.75rem;
   padding: 1rem 1.25rem;
   border-top: 1px solid var(--border);
+}
+
+.reports-loading {
+  padding: 2rem 0;
+  display: flex;
+  justify-content: center;
+}
+
+.reports-table-wrap {
+  overflow-x: auto;
+}
+
+.reports-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.reports-table th {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.report-row td {
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+
+.report-row:last-child td {
+  border-bottom: none;
+}
+
+.cell-ts {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.cell-host {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.cell-dur,
+.cell-size {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.cell-error {
+  max-width: 280px;
+}
+
+.error-snippet {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--danger);
+  word-break: break-all;
+}
+
+.no-error {
+  color: var(--text-muted);
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.badge-success {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.badge-warning {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.badge-failed {
+  background: var(--danger-subtle);
+  color: var(--danger);
 }
 </style>

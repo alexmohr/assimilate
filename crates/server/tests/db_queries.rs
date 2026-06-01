@@ -3163,7 +3163,7 @@ async fn bulk_insert_backup_reports_conflict_skipped(pool: PgPool) {
         archive_name: Some("dup-archive".to_string()),
     };
 
-    db::bulk_insert_backup_reports(&pool, &[param.clone()])
+    db::bulk_insert_backup_reports(&pool, std::slice::from_ref(&param))
         .await
         .unwrap();
     let affected = db::bulk_insert_backup_reports(&pool, &[param])
@@ -3187,4 +3187,658 @@ async fn repo_last_synced_at_updates(pool: PgPool) {
     let all = db::list_all_repos(&pool).await.unwrap();
     let updated = all.iter().find(|r| r.id == repo.id).unwrap();
     assert!(updated.last_synced_at.is_some());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn client_get_by_id(pool: PgPool) {
+    let client = db::insert_client(&pool, "byid-host", None, "hash-byid", None)
+        .await
+        .unwrap();
+
+    let fetched = db::get_client_by_id(&pool, client.id).await.unwrap();
+    assert_eq!(fetched.id, client.id);
+    assert_eq!(fetched.hostname, "byid-host");
+
+    let result = db::get_client_by_id(&pool, 999_999_999).await;
+    assert!(result.is_err());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn client_set_hidden_and_list(pool: PgPool) {
+    db::insert_client(&pool, "hidden-host", None, "hash-hidden", None)
+        .await
+        .unwrap();
+
+    let before = db::list_clients(&pool, false).await.unwrap();
+    assert!(before.iter().any(|c| c.hostname == "hidden-host"));
+
+    db::set_client_hidden(&pool, "hidden-host", true)
+        .await
+        .unwrap();
+
+    let visible = db::list_clients(&pool, false).await.unwrap();
+    assert!(!visible.iter().any(|c| c.hostname == "hidden-host"));
+
+    let all = db::list_clients(&pool, true).await.unwrap();
+    assert!(all.iter().any(|c| c.hostname == "hidden-host"));
+
+    db::set_client_hidden(&pool, "hidden-host", false)
+        .await
+        .unwrap();
+
+    let restored = db::list_clients(&pool, false).await.unwrap();
+    assert!(restored.iter().any(|c| c.hostname == "hidden-host"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn client_token_hash_lookup(pool: PgPool) {
+    let client = db::insert_client(&pool, "token-host", None, "secret-hash", None)
+        .await
+        .unwrap();
+
+    let (id, hash) = db::get_client_token_hash(&pool, "token-host")
+        .await
+        .unwrap();
+    assert_eq!(id, client.id);
+    assert_eq!(hash, "secret-hash");
+
+    let result = db::get_client_token_hash(&pool, "nonexistent-host").await;
+    assert!(result.is_err());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn client_last_seen_updates(pool: PgPool) {
+    let client = db::insert_client(&pool, "seen-host", None, "hash-seen", None)
+        .await
+        .unwrap();
+
+    assert!(client.last_seen_at.is_none());
+
+    db::update_last_seen(&pool, client.id).await.unwrap();
+    let fetched = db::get_client_by_id(&pool, client.id).await.unwrap();
+    assert!(fetched.last_seen_at.is_some());
+
+    db::update_last_seen_and_version(
+        &pool,
+        client.id,
+        "1.5.0",
+        Some("abc123"),
+        Some("2026-01-01"),
+    )
+    .await
+    .unwrap();
+    let fetched = db::get_client_by_id(&pool, client.id).await.unwrap();
+    assert_eq!(fetched.agent_version.as_deref(), Some("1.5.0"));
+    assert_eq!(fetched.agent_git_sha.as_deref(), Some("abc123"));
+
+    db::update_last_seen_by_hostname(&pool, "seen-host")
+        .await
+        .unwrap();
+    let fetched = db::get_client_by_id(&pool, client.id).await.unwrap();
+    assert!(fetched.last_seen_at.is_some());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn get_or_create_client_by_hostname_creates_new(pool: PgPool) {
+    let client = db::get_or_create_client_by_hostname(&pool, "placeholder-new")
+        .await
+        .unwrap();
+    assert_eq!(client.hostname, "placeholder-new");
+    assert_eq!(client.agent_token_hash, "imported:no-auth");
+
+    let again = db::get_or_create_client_by_hostname(&pool, "placeholder-new")
+        .await
+        .unwrap();
+    assert_eq!(again.id, client.id);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn get_or_create_client_by_hostname_returns_existing(pool: PgPool) {
+    let real = db::insert_client(&pool, "existing-real", None, "realhash", None)
+        .await
+        .unwrap();
+
+    let fetched = db::get_or_create_client_by_hostname(&pool, "existing-real")
+        .await
+        .unwrap();
+    assert_eq!(fetched.id, real.id);
+    assert_eq!(fetched.agent_token_hash, "realhash");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_counts_by_client(pool: PgPool) {
+    let (client, _, _) = create_test_schedule(&pool).await;
+
+    let counts = db::get_schedule_counts_by_client(&pool).await.unwrap();
+    let entry = counts.iter().find(|c| c.client_id == client.id);
+    assert!(entry.is_some());
+    assert_eq!(entry.unwrap().count, 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn list_importing_repo_ids_test(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    let before = db::list_importing_repo_ids(&pool).await.unwrap();
+    assert!(!before.contains(&repo.id));
+
+    db::set_repo_importing(&pool, repo.id, true).await.unwrap();
+
+    let after = db::list_importing_repo_ids(&pool).await.unwrap();
+    assert!(after.contains(&repo.id));
+
+    db::set_repo_importing(&pool, repo.id, false).await.unwrap();
+
+    let cleared = db::list_importing_repo_ids(&pool).await.unwrap();
+    assert!(!cleared.contains(&repo.id));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_import_status_message_test(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    db::set_import_status_message(&pool, repo.id, Some("scanning archives"))
+        .await
+        .unwrap();
+
+    let stats = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
+    assert_eq!(
+        stats.import_status_message.as_deref(),
+        Some("scanning archives")
+    );
+
+    db::set_import_status_message(&pool, repo.id, None)
+        .await
+        .unwrap();
+
+    let stats = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
+    assert!(stats.import_status_message.is_none());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_relocation_pending_test(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    db::set_relocation_pending(&pool, repo.id).await.unwrap();
+
+    let row = db::get_repo_with_passphrase(&pool, repo.id).await.unwrap();
+    assert!(row.relocation_pending);
+
+    db::clear_relocation_pending(&pool, repo.id).await.unwrap();
+
+    let row = db::get_repo_with_passphrase(&pool, repo.id).await.unwrap();
+    assert!(!row.relocation_pending);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_encryption_update(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    db::update_repo_encryption(&pool, repo.id, "keyfile")
+        .await
+        .unwrap();
+
+    let row = db::get_repo_with_passphrase(&pool, repo.id).await.unwrap();
+    assert_eq!(row.encryption, "keyfile");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_passphrase_update(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    db::update_repo_passphrase(&pool, repo.id, b"new-encrypted-passphrase")
+        .await
+        .unwrap();
+
+    let passphrase = db::get_repo_passphrase(&pool, repo.id).await.unwrap();
+    assert_eq!(passphrase, b"new-encrypted-passphrase");
+
+    let result = db::update_repo_passphrase(&pool, 999_999_999, b"x").await;
+    assert!(result.is_err());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_connection_test(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    let conn = db::get_repo_connection(&pool, repo.id).await.unwrap();
+    assert_eq!(conn.ssh_host, "storage.local");
+    assert_eq!(conn.ssh_user, "backup");
+    assert_eq!(conn.ssh_port, 22);
+
+    let result = db::get_repo_connection(&pool, 999_999_999).await;
+    assert!(result.is_err());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_name_test(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    let name = db::get_repo_name(&pool, repo.id).await.unwrap();
+    assert_eq!(name, "test-repo");
+
+    let result = db::get_repo_name(&pool, 999_999_999).await;
+    assert!(result.is_err());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_targets_list_and_delete(pool: PgPool) {
+    let (client, _, schedule) = create_test_schedule(&pool).await;
+
+    let targets = db::list_schedule_targets(&pool, schedule.id).await.unwrap();
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].client_id, client.id);
+
+    db::delete_schedule_targets(&pool, schedule.id)
+        .await
+        .unwrap();
+
+    let empty = db::list_schedule_targets(&pool, schedule.id).await.unwrap();
+    assert!(empty.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_target_hostnames_for_repo_test(pool: PgPool) {
+    let (_, repo, _) = create_test_schedule(&pool).await;
+
+    let hostnames = db::get_schedule_target_hostnames_for_repo(&pool, repo.id)
+        .await
+        .unwrap();
+    assert_eq!(hostnames, vec!["sched-host"]);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_timezone_default(pool: PgPool) {
+    let tz = db::get_schedule_timezone(&pool).await.unwrap();
+    assert_eq!(tz, chrono_tz::Tz::UTC);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_timezone_set(pool: PgPool) {
+    db::set_setting(&pool, "timezone", "Europe/Berlin")
+        .await
+        .unwrap();
+
+    let tz = db::get_schedule_timezone(&pool).await.unwrap();
+    assert_eq!(tz, chrono_tz::Tz::Europe__Berlin);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn reports_for_schedule_test(pool: PgPool) {
+    let (client, repo, schedule) = create_test_schedule(&pool).await;
+
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let reports = db::list_reports_for_schedule(&pool, schedule.id, 10)
+        .await
+        .unwrap();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].status, "success");
+
+    let empty = db::list_reports_for_schedule(&pool, schedule.id + 999, 10)
+        .await
+        .unwrap();
+    assert!(empty.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn activity_feed_repo_filter(pool: PgPool) {
+    let client = db::insert_client(&pool, "feed-repo-filter-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let all = db::get_activity_feed(&pool, 10, None, None).await.unwrap();
+    assert!(!all.is_empty());
+
+    let filtered = db::get_activity_feed(&pool, 10, Some(repo.id), None)
+        .await
+        .unwrap();
+    assert_eq!(filtered.len(), 1);
+
+    let empty = db::get_activity_feed(&pool, 10, Some(repo.id + 999), None)
+        .await
+        .unwrap();
+    assert!(empty.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn activity_feed_hostname_filter(pool: PgPool) {
+    let client = db::insert_client(&pool, "hostname-filter-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let filtered = db::get_activity_feed(&pool, 10, None, Some("hostname-filter-host"))
+        .await
+        .unwrap();
+    assert_eq!(filtered.len(), 1);
+
+    let empty = db::get_activity_feed(&pool, 10, None, Some("nonexistent-host"))
+        .await
+        .unwrap();
+    assert!(empty.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn activity_feed_days_test(pool: PgPool) {
+    let client = db::insert_client(&pool, "days-feed-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let all = db::get_activity_feed_days(&pool, 7, None, None)
+        .await
+        .unwrap();
+    assert!(!all.is_empty());
+
+    let with_repo = db::get_activity_feed_days(&pool, 7, Some(repo.id), None)
+        .await
+        .unwrap();
+    assert_eq!(with_repo.len(), 1);
+
+    let with_host = db::get_activity_feed_days(&pool, 7, None, Some("days-feed-host"))
+        .await
+        .unwrap();
+    assert_eq!(with_host.len(), 1);
+
+    let no_match = db::get_activity_feed_days(&pool, 7, None, Some("wrong-host"))
+        .await
+        .unwrap();
+    assert!(no_match.is_empty());
+}
+
+#[test]
+fn compression_round_trip() {
+    let cases = &[
+        ("none", "none"),
+        ("lz4", "lz4"),
+        ("zstd,3", "zstd,3"),
+        ("zlib,6", "zlib,6"),
+    ];
+    for (input, expected) in cases {
+        let c = db::compression_from_str(input).unwrap();
+        assert_eq!(db::compression_to_str(&c), *expected);
+    }
+    assert!(db::compression_from_str("unknown").is_err());
+    assert!(db::compression_from_str("zstd,bad").is_err());
+    assert!(db::compression_from_str("zlib,bad").is_err());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn storage_trends_test(pool: PgPool) {
+    let empty_trends = db::get_storage_trends(&pool, None, 7).await.unwrap();
+    assert!(empty_trends.iter().all(|t| t.total_size == 0));
+
+    let client = db::insert_client(&pool, "strend-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let trends = db::get_storage_trends(&pool, None, 7).await.unwrap();
+    assert!(trends.iter().any(|t| t.total_size > 0));
+
+    let trends_repo = db::get_storage_trends(&pool, Some(repo.id), 7)
+        .await
+        .unwrap();
+    assert!(trends_repo.iter().any(|t| t.total_size > 0));
+
+    let trends_other = db::get_storage_trends(&pool, Some(repo.id + 999), 7)
+        .await
+        .unwrap();
+    assert!(trends_other.iter().all(|t| t.total_size == 0));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn storage_trends_by_repo_test(pool: PgPool) {
+    let empty = db::get_storage_trends_by_repo(&pool, 7).await.unwrap();
+    assert!(empty.is_empty());
+
+    let client = db::insert_client(&pool, "strend-repo-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let trends = db::get_storage_trends_by_repo(&pool, 7).await.unwrap();
+    assert!(!trends.is_empty());
+    assert!(
+        trends
+            .iter()
+            .any(|t| t.repo_name == "test-repo" && t.size > 0)
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn archive_names_and_delete_test(pool: PgPool) {
+    let client = db::insert_client(&pool, "archive-del-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            client_id: client.id,
+            repo_id: repo.id,
+            started_at: now - Duration::minutes(10),
+            finished_at: now - Duration::minutes(5),
+            status: "success".to_string(),
+            original_size: 1_000_000,
+            compressed_size: 500_000,
+            deduplicated_size: 250_000,
+            files_processed: 100,
+            duration_secs: 300,
+            error_message: None,
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: Some("archive-2026-01-01".to_string()),
+        },
+    )
+    .await
+    .unwrap();
+
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            client_id: client.id,
+            repo_id: repo.id,
+            started_at: now - Duration::minutes(20),
+            finished_at: now - Duration::minutes(15),
+            status: "success".to_string(),
+            original_size: 2_000_000,
+            compressed_size: 1_000_000,
+            deduplicated_size: 500_000,
+            files_processed: 200,
+            duration_secs: 300,
+            error_message: None,
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: Some("archive-2026-01-02".to_string()),
+        },
+    )
+    .await
+    .unwrap();
+
+    let names = db::list_archive_names_for_repo(&pool, repo.id)
+        .await
+        .unwrap();
+    assert_eq!(names.len(), 2);
+    assert!(names.contains("archive-2026-01-01"));
+    assert!(names.contains("archive-2026-01-02"));
+
+    let no_delete = db::delete_archive_reports_by_names(&pool, repo.id, &[])
+        .await
+        .unwrap();
+    assert_eq!(no_delete, 0);
+
+    let deleted =
+        db::delete_archive_reports_by_names(&pool, repo.id, &["archive-2026-01-01".to_string()])
+            .await
+            .unwrap();
+    assert_eq!(deleted, 1);
+
+    let remaining = db::list_archive_names_for_repo(&pool, repo.id)
+        .await
+        .unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert!(remaining.contains("archive-2026-01-02"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_backup_reports_before_test(pool: PgPool) {
+    let client = db::insert_client(&pool, "del-before-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            client_id: client.id,
+            repo_id: repo.id,
+            started_at: now - Duration::hours(2),
+            finished_at: now - Duration::hours(2),
+            status: "success".to_string(),
+            original_size: 1_000_000,
+            compressed_size: 500_000,
+            deduplicated_size: 250_000,
+            files_processed: 100,
+            duration_secs: 300,
+            error_message: None,
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let cutoff = now - Duration::hours(1);
+    let deleted = db::delete_backup_reports_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 1);
+
+    let reports = db::list_reports_for_client(&pool, client.id, None, 10)
+        .await
+        .unwrap();
+    assert!(reports.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn audit_filter_by_target_type(pool: PgPool) {
+    db::audit::insert_audit_entry(
+        &pool,
+        &db::audit::NewAuditEntry {
+            user_id: None,
+            username: "admin",
+            action: "create",
+            target_type: Some("repo"),
+            target_id: Some(1),
+            details: None,
+            ip_address: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    db::audit::insert_audit_entry(
+        &pool,
+        &db::audit::NewAuditEntry {
+            user_id: None,
+            username: "admin",
+            action: "create",
+            target_type: Some("client"),
+            target_id: Some(2),
+            details: None,
+            ip_address: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let (items, total) = db::audit::list_audit_entries(
+        &pool,
+        &db::audit::AuditEntryFilters {
+            page: 1,
+            per_page: 50,
+            filter_user_id: None,
+            filter_action: None,
+            filter_target_type: Some("repo"),
+            filter_from: None,
+            filter_to: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(total, 1);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].target_type.as_deref(), Some("repo"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn audit_filter_by_action(pool: PgPool) {
+    db::audit::insert_audit_entry(
+        &pool,
+        &db::audit::NewAuditEntry {
+            user_id: None,
+            username: "admin",
+            action: "delete",
+            target_type: Some("repo"),
+            target_id: Some(1),
+            details: None,
+            ip_address: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    db::audit::insert_audit_entry(
+        &pool,
+        &db::audit::NewAuditEntry {
+            user_id: None,
+            username: "admin",
+            action: "update",
+            target_type: Some("repo"),
+            target_id: Some(1),
+            details: None,
+            ip_address: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let (items, total) = db::audit::list_audit_entries(
+        &pool,
+        &db::audit::AuditEntryFilters {
+            page: 1,
+            per_page: 50,
+            filter_user_id: None,
+            filter_action: Some("delete"),
+            filter_target_type: None,
+            filter_from: None,
+            filter_to: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(total, 1);
+    assert_eq!(items[0].action, "delete");
 }

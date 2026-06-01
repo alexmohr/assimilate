@@ -44,6 +44,8 @@ interface RepoWithStats {
   enabled: boolean
   importing: boolean
   import_error: string | null
+  import_progress: number
+  import_total: number
   sync_schedule: string | null
   archive_count: number
   last_backup_at: string | null
@@ -646,12 +648,30 @@ async function resetImport(): Promise<void> {
                     repo.import_error
                       ? 'Import Failed'
                       : repo.importing
-                        ? 'Importing\u2026'
+                        ? repo.import_total > 0
+                          ? `Importing ${repo.import_progress}/${repo.import_total}`
+                          : 'Importing\u2026'
                         : repo.enabled
                           ? 'Enabled'
                           : 'Disabled'
                   }}
                 </span>
+                <div
+                  v-if="repo.importing && repo.import_total > 0"
+                  class="import-progress"
+                >
+                  <div class="import-progress-track">
+                    <div
+                      class="import-progress-bar"
+                      :style="{
+                        width: `${Math.round((repo.import_progress / repo.import_total) * 100)}%`,
+                      }"
+                    ></div>
+                  </div>
+                  <span class="import-progress-label">
+                    {{ Math.round((repo.import_progress / repo.import_total) * 100) }}%
+                  </span>
+                </div>
               </dd>
               <dt>Archives</dt>
               <dd>{{ repo.archive_count }}</dd>
@@ -1381,6 +1401,34 @@ async function resetImport(): Promise<void> {
 <style scoped>
 .repo-detail {
   max-width: 1200px;
+}
+
+.import-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+}
+
+.import-progress-track {
+  flex: 1;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.import-progress-bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+.import-progress-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 /* Breadcrumb nav */

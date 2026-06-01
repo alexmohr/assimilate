@@ -61,6 +61,8 @@ interface RepoWithStats {
   enabled: boolean
   importing: boolean
   import_error: string | null
+  import_progress: number
+  import_total: number
   archive_count: number
   last_backup_at: string | null
   total_original_size: number
@@ -577,6 +579,8 @@ async function submitRepo(): Promise<void> {
             enabled: res.data.enabled,
             importing: true,
             import_error: null,
+            import_progress: 0,
+            import_total: 0,
             archive_count: 0,
             last_backup_at: null,
             total_original_size: 0,
@@ -814,8 +818,7 @@ onMounted(loadRepos)
         v-for="repo in filteredRepos"
         :key="repo.id"
         class="repo-card"
-        :class="{ 'repo-card-importing': repo.importing }"
-        @click="!repo.importing && navigateToRepo(repo)"
+        @click="navigateToRepo(repo)"
       >
         <div class="card-top">
           <div class="card-info">
@@ -825,12 +828,6 @@ onMounted(loadRepos)
             >
           </div>
           <div class="card-badges">
-            <span
-              v-if="repo.importing"
-              class="status-badge status-readonly"
-            >
-              Read Only
-            </span>
             <span
               class="status-badge"
               :class="
@@ -848,13 +845,24 @@ onMounted(loadRepos)
                 repo.import_error
                   ? 'Import Failed'
                   : repo.importing
-                    ? 'Importing\u2026'
+                    ? repo.import_total > 0
+                      ? `Importing ${repo.import_progress}/${repo.import_total}`
+                      : 'Importing\u2026'
                     : repo.enabled
                       ? 'Enabled'
                       : 'Disabled'
               }}
             </span>
           </div>
+        </div>
+        <div
+          v-if="repo.importing && repo.import_total > 0"
+          class="import-progress"
+        >
+          <div
+            class="import-progress-bar"
+            :style="{ width: `${Math.round((repo.import_progress / repo.import_total) * 100)}%` }"
+          ></div>
         </div>
         <div class="card-meta">
           <span class="meta-pill">{{ repo.encryption }}</span>
@@ -920,8 +928,7 @@ onMounted(loadRepos)
             v-for="repo in group.repos"
             :key="`${group.label}-${repo.id}`"
             class="repo-card"
-            :class="{ 'repo-card-importing': repo.importing }"
-            @click="!repo.importing && navigateToRepo(repo)"
+            @click="navigateToRepo(repo)"
           >
             <div class="card-top">
               <div class="card-info">
@@ -931,12 +938,6 @@ onMounted(loadRepos)
                 >
               </div>
               <div class="card-badges">
-                <span
-                  v-if="repo.importing"
-                  class="status-badge status-readonly"
-                >
-                  Read Only
-                </span>
                 <span
                   class="status-badge"
                   :class="
@@ -954,13 +955,26 @@ onMounted(loadRepos)
                     repo.import_error
                       ? 'Import Failed'
                       : repo.importing
-                        ? 'Importing\u2026'
+                        ? repo.import_total > 0
+                          ? `Importing ${repo.import_progress}/${repo.import_total}`
+                          : 'Importing\u2026'
                         : repo.enabled
                           ? 'Enabled'
                           : 'Disabled'
                   }}
                 </span>
               </div>
+            </div>
+            <div
+              v-if="repo.importing && repo.import_total > 0"
+              class="import-progress"
+            >
+              <div
+                class="import-progress-bar"
+                :style="{
+                  width: `${Math.round((repo.import_progress / repo.import_total) * 100)}%`,
+                }"
+              ></div>
             </div>
             <div class="card-meta">
               <span class="meta-pill">{{ repo.encryption }}</span>
@@ -1493,15 +1507,19 @@ onMounted(loadRepos)
   box-shadow: var(--shadow);
 }
 
-.repo-card-importing {
-  cursor: default;
-  opacity: 0.75;
-  border-style: dashed;
+.import-progress {
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  margin: 0.5rem 0 0.25rem;
+  overflow: hidden;
 }
 
-.repo-card-importing:hover {
-  border-color: var(--border);
-  box-shadow: none;
+.import-progress-bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.4s ease;
 }
 
 .card-badges {
@@ -1509,11 +1527,6 @@ onMounted(loadRepos)
   gap: 0.35rem;
   align-items: center;
   flex-shrink: 0;
-}
-
-.status-readonly {
-  background: color-mix(in srgb, var(--info, #3b82f6) 12%, transparent);
-  color: var(--info, #3b82f6);
 }
 
 .card-top {

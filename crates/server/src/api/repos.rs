@@ -998,9 +998,10 @@ async fn run_borg_list_with_retry(
     borg_repo: &str,
     env: &std::collections::HashMap<String, String>,
 ) -> Result<std::process::Output, ApiError> {
+    let borg = borg_binary();
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
         debug!(
-            cmd = %format!("{} list --json --lock-wait {LOCK_WAIT_SECS} {borg_repo}", borg_binary()),
+            cmd = %format!("{borg} list --json --lock-wait {LOCK_WAIT_SECS} {borg_repo}"),
             "running borg command"
         );
         let output = Command::new(borg_binary())
@@ -1048,9 +1049,10 @@ async fn run_borg_archive_info_with_retry(
     repo_archive: &str,
     env: &std::collections::HashMap<String, String>,
 ) -> Result<Option<std::process::Output>, ApiError> {
+    let borg = borg_binary();
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
         debug!(
-            cmd = %format!("{} info --json --lock-wait {LOCK_WAIT_SECS} {repo_archive}", borg_binary()),
+            cmd = %format!("{borg} info --json --lock-wait {LOCK_WAIT_SECS} {repo_archive}"),
             "running borg command"
         );
         let output = Command::new(borg_binary())

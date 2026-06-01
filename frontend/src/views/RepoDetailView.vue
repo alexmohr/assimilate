@@ -161,7 +161,6 @@ const breakLockError = ref<string | null>(null)
 const breakLockResult = ref<string | null>(null)
 const activeBackupClient = ref<string | null>(null)
 
-
 // Re-scan
 const rescanLoading = ref(false)
 const syncLoading = ref(false)

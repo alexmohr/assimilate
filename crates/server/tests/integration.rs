@@ -420,7 +420,7 @@ async fn test_repo_update() {
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    assert_eq!(body["compression"], "zstd");
+    assert_eq!(body["compression"], "zstd,3");
 }
 
 #[tokio::test]

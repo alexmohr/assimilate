@@ -309,7 +309,8 @@ impl Executor {
                 .map_or_else(|| "unknown".to_owned(), |c| c.client_hostname.clone())
         };
 
-        let repo_url = format!("ssh://{ssh_user}@{ssh_host}:{ssh_port}/{repo_path}");
+        let repo_path_trimmed = repo_path.trim_start_matches('/');
+        let repo_url = format!("ssh://{ssh_user}@{ssh_host}:{ssh_port}/{repo_path_trimmed}");
         info!(repo_url = %repo_url, "initializing repository");
 
         let server_url = self.server_url.clone();
@@ -1253,12 +1254,12 @@ fn write_temp_excludes(patterns: &[String]) -> Result<tempfile::NamedTempFile, s
 }
 
 fn build_borg_env(target: &BackupTarget) -> Vec<(String, String)> {
+    let path = target.repo_path.trim_start_matches('/');
     let repo_url = format!(
         "ssh://{user}@{host}:{port}/{path}",
         user = target.ssh_user,
         host = target.ssh_host,
         port = target.ssh_port,
-        path = target.repo_path,
     );
 
     let mut env = vec![

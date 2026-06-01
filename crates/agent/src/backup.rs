@@ -170,12 +170,12 @@ impl BackupEngine {
     }
 
     fn borg_env(target: &BackupTarget) -> Vec<(String, String)> {
+        let path = target.repo_path.trim_start_matches('/');
         let repo_url = format!(
             "ssh://{user}@{host}:{port}/{path}",
             user = target.ssh_user,
             host = target.ssh_host,
             port = target.ssh_port,
-            path = target.repo_path,
         );
 
         let mut env = vec![

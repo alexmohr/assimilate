@@ -100,8 +100,6 @@ pub async fn assemble_config(
         let mut seen = std::collections::HashSet::new();
         exclude_patterns.retain(|p| seen.insert(p.clone()));
 
-        backup_sources.extend(exclude_patterns.iter().map(|p| format!("!{p}")));
-
         let schedule_config = ScheduleConfig {
             id: schedule.id,
             schedule_type: schedule_type_from_str(&schedule.schedule_type)?,
@@ -110,7 +108,7 @@ pub async fn assemble_config(
             backup_sources,
             rate_limit_kbps,
             canary_enabled: schedule.canary_enabled,
-            exclude_patterns: schedule.exclude_patterns,
+            exclude_patterns,
             ignore_global_excludes: schedule.ignore_global_excludes,
             keep_daily,
             keep_weekly,

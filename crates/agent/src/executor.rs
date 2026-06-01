@@ -793,7 +793,7 @@ pub fn backup_target_from_repo(repo: &RepoConfig, hostname: &str) -> BackupTarge
         pre_backup_commands: schedule.map_or_else(Vec::new, |s| s.pre_backup_commands.clone()),
         post_backup_commands: schedule.map_or_else(Vec::new, |s| s.post_backup_commands.clone()),
         skip_targets: Vec::new(),
-        exclude_patterns: Vec::new(),
+        exclude_patterns: schedule.map_or_else(Vec::new, |s| s.exclude_patterns.clone()),
         ssh_auth_sock: None,
         canary_enabled: schedule.is_some_and(|s| s.canary_enabled),
         accept_relocation: repo.accept_relocation,

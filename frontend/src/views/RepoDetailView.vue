@@ -14,6 +14,7 @@ import { useArchiveBrowser, type ArchiveEntry } from '../composables/useArchiveB
 import { useWebSocket } from '../composables/useWebSocket'
 import { useToast } from '../composables/useToast'
 import { formatBytes, formatDate } from '../utils/format'
+import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import { Folder, File, Download } from '@lucide/vue'
@@ -22,7 +23,7 @@ import BaseSpinner from '../components/BaseSpinner.vue'
 import QuotaPanel from '../components/QuotaPanel.vue'
 
 type TabId = 'overview' | 'archives'
-type CompressionType = 'lz4' | 'zstd' | 'none'
+type CompressionType = 'lz4' | 'zstd' | 'zlib' | 'none'
 type EncryptionType =
   | 'repokey'
   | 'repokey-blake2'
@@ -46,7 +47,9 @@ interface RepoWithStats {
   import_error: string | null
   import_progress: number
   import_total: number
+  import_status_message: string | null
   sync_schedule: string | null
+  last_synced_at: string | null
   archive_count: number
   last_backup_at: string | null
   total_original_size: number
@@ -158,6 +161,7 @@ const breakLockError = ref<string | null>(null)
 const breakLockResult = ref<string | null>(null)
 const activeBackupClient = ref<string | null>(null)
 
+
 // Re-scan
 const rescanLoading = ref(false)
 const syncLoading = ref(false)
@@ -183,7 +187,24 @@ interface BackupStartedPayload {
   target_name: string
 }
 
+interface ImportProgressPayload {
+  repo_id: number
+  progress: number
+  total: number
+  message: string | null
+}
+
 const { onMessage } = useWebSocket()
+
+onMessage('DataChanged', () => refreshRepo().catch(logger.error))
+
+onMessage<ImportProgressPayload>('ImportProgress', (payload) => {
+  if (repo.value && repo.value.id === payload.repo_id) {
+    repo.value.import_progress = payload.progress
+    repo.value.import_total = payload.total
+    repo.value.import_status_message = payload.message
+  }
+})
 
 onMessage<BackupStartedPayload>('BackupStarted', (payload) => {
   if (repo.value && payload.target_name === repo.value.name) {
@@ -305,6 +326,15 @@ async function loadRepo(): Promise<void> {
   }
 }
 
+async function refreshRepo(): Promise<void> {
+  try {
+    const res = await apiClient.get<RepoWithStats>(`/repos/${repoId.value}`)
+    repo.value = res.data
+  } catch (e: unknown) {
+    logger.error('background repo refresh failed', e)
+  }
+}
+
 async function loadTags(): Promise<void> {
   tagsLoading.value = true
   try {
@@ -324,13 +354,20 @@ async function loadTags(): Promise<void> {
   }
 }
 
+const VALID_COMPRESSION_BASES: CompressionType[] = ['lz4', 'zstd', 'zlib', 'none']
+
+function normalizeCompression(raw: string): CompressionType {
+  const base = raw.split(',')[0] as CompressionType
+  return VALID_COMPRESSION_BASES.includes(base) ? base : 'lz4'
+}
+
 function startEdit(): void {
   if (!repo.value) return
   editForm.repo_path = repo.value.repo_path
   editForm.ssh_user = repo.value.ssh_user
   editForm.ssh_host = repo.value.ssh_host
   editForm.ssh_port = repo.value.ssh_port
-  editForm.compression = repo.value.compression as CompressionType
+  editForm.compression = normalizeCompression(repo.value.compression)
   editForm.encryption = repo.value.encryption as EncryptionType
   editForm.enabled = repo.value.enabled
   editForm.sync_schedule = repo.value.sync_schedule
@@ -347,6 +384,19 @@ async function saveEdit(): Promise<void> {
   editLoading.value = true
   editError.value = null
   try {
+    const connRes = await apiClient.post<{
+      ssh_ok: boolean
+      borg_installed: boolean
+      error?: string
+    }>('/ssh/test-connection', {
+      ssh_host: editForm.ssh_host.trim(),
+      ssh_user: editForm.ssh_user.trim(),
+      ssh_port: editForm.ssh_port,
+    })
+    if (!connRes.data.ssh_ok) {
+      editError.value = connRes.data.error ?? 'Cannot reach repository host — changes not saved'
+      return
+    }
     await apiClient.put(`/repos/${repoId.value}`, {
       repo_path: editForm.repo_path.trim(),
       ssh_user: editForm.ssh_user.trim(),
@@ -586,11 +636,12 @@ async function resetImport(): Promise<void> {
             <div class="info-header-actions">
               <template v-if="isAdmin && !isEditing">
                 <button
+                  v-if="!repo.importing"
                   class="btn btn-sm btn-ghost"
                   :disabled="syncLoading"
                   @click="syncRepo"
                 >
-                  {{ syncLoading ? 'Syncing...' : 'Sync' }}
+                  {{ syncLoading ? 'Syncing...' : 'Full Resync' }}
                 </button>
                 <button
                   v-if="repo.importing || repo.import_error"
@@ -672,6 +723,12 @@ async function resetImport(): Promise<void> {
                     {{ Math.round((repo.import_progress / repo.import_total) * 100) }}%
                   </span>
                 </div>
+                <p
+                  v-if="repo.importing && repo.import_status_message"
+                  class="import-status-msg"
+                >
+                  {{ repo.import_status_message }}
+                </p>
               </dd>
               <dt>Archives</dt>
               <dd>{{ repo.archive_count }}</dd>
@@ -683,6 +740,15 @@ async function resetImport(): Promise<void> {
               <dd>{{ formatBytes(repo.total_deduplicated_size) }}</dd>
               <dt>Last Backup</dt>
               <dd>{{ formatLastBackup(repo.last_backup_at) }}</dd>
+              <dt>Disk Sync</dt>
+              <dd>
+                <template v-if="repo.sync_schedule">
+                  {{ cronToHuman(repo.sync_schedule) ?? repo.sync_schedule }}
+                </template>
+                <template v-else>Disabled</template>
+              </dd>
+              <dt>Last Synced</dt>
+              <dd>{{ repo.last_synced_at ? formatDate(repo.last_synced_at) : 'Never' }}</dd>
               <dt>Clients</dt>
               <dd>{{ repo.client_count }}</dd>
             </dl>
@@ -730,6 +796,7 @@ async function resetImport(): Promise<void> {
                   >
                     <option value="lz4">lz4</option>
                     <option value="zstd">zstd</option>
+                    <option value="zlib">zlib</option>
                     <option value="none">none</option>
                   </select>
                 </div>
@@ -1431,6 +1498,13 @@ async function resetImport(): Promise<void> {
   white-space: nowrap;
 }
 
+.import-status-msg {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: 0.4rem 0 0;
+  word-break: break-word;
+}
+
 /* Breadcrumb nav */
 .breadcrumb-nav {
   display: flex;
@@ -1619,6 +1693,7 @@ async function resetImport(): Promise<void> {
   flex-direction: row;
   gap: 1.5rem;
   align-items: center;
+  justify-content: space-between;
   margin-top: 0.5rem;
 }
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::{process::Stdio, time::Duration};
+use std::{collections::HashMap, process::Stdio, time::Duration};
 
 use axum::{
     Json,
@@ -9,11 +9,15 @@ use axum::{
     http::StatusCode,
 };
 use chrono::DateTime;
+use futures_util::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
-use shared::{crypto::encrypt_passphrase, types::BorgEncryption};
+use shared::{
+    crypto::encrypt_passphrase,
+    types::{BorgEncryption, build_repo_url},
+};
 use sqlx::PgPool;
 use tokio::process::Command;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use super::{
     archives::{LOCK_WAIT_SECS, borg_binary},
@@ -167,12 +171,11 @@ pub async fn create_repo(
     )
     .await?;
 
-    let repo_url = format!(
-        "ssh://{user}@{host}:{port}/{path}",
-        user = req.ssh_user,
-        host = req.ssh_host,
-        port = ssh_port,
-        path = req.repo_path,
+    let repo_url = build_repo_url(
+        &req.ssh_user,
+        &req.ssh_host,
+        u16::try_from(ssh_port).unwrap_or(22),
+        &req.repo_path,
     );
 
     let info_timeout = Duration::from_secs(30);
@@ -523,12 +526,11 @@ pub async fn init_repo(
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
 
     let ssh_port = req.ssh_port.unwrap_or(22);
-    let repo_url = format!(
-        "ssh://{user}@{host}:{port}/{path}",
-        user = req.ssh_user,
-        host = req.ssh_host,
-        port = ssh_port,
-        path = req.repo_path,
+    let repo_url = build_repo_url(
+        &req.ssh_user,
+        &req.ssh_host,
+        u16::try_from(ssh_port).unwrap_or(22),
+        &req.repo_path,
     );
 
     let borg_output = run_borg_init(&repo_url, &req.passphrase, req.encryption).await?;
@@ -594,9 +596,11 @@ pub async fn break_lock(
     let passphrase =
         shared::crypto::decrypt_passphrase(&repo.passphrase_encrypted, &state.encryption_key)?;
 
-    let repo_url = format!(
-        "ssh://{}@{}:{}/{}",
-        repo.ssh_user, repo.ssh_host, repo.ssh_port, repo.repo_path
+    let repo_url = build_repo_url(
+        &repo.ssh_user,
+        &repo.ssh_host,
+        u16::try_from(repo.ssh_port).unwrap_or(22),
+        &repo.repo_path,
     );
 
     let borg_output = run_borg_break_lock(&repo_url, &passphrase).await?;
@@ -664,9 +668,11 @@ pub async fn migrate_encryption(
         ));
     }
 
-    let repo_url = format!(
-        "ssh://{}@{}:{}/{}",
-        repo.ssh_user, repo.ssh_host, repo.ssh_port, repo.repo_path
+    let repo_url = build_repo_url(
+        &repo.ssh_user,
+        &repo.ssh_host,
+        u16::try_from(repo.ssh_port).unwrap_or(22),
+        &repo.repo_path,
     );
 
     let date_suffix = chrono::Utc::now().format("%Y-%m-%d").to_string();
@@ -976,13 +982,29 @@ async fn run_borg_init(
     Ok(combined.trim().to_string())
 }
 
-async fn run_borg_info_repo_with_retry(
+fn human_bytes(bytes: i64) -> String {
+    if bytes >= 1_073_741_824 {
+        format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)
+    } else if bytes >= 1_048_576 {
+        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
+    } else if bytes >= 1_024 {
+        format!("{:.1} KB", bytes as f64 / 1_024.0)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+async fn run_borg_list_with_retry(
     borg_repo: &str,
     env: &std::collections::HashMap<String, String>,
 ) -> Result<std::process::Output, ApiError> {
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
+        debug!(
+            cmd = %format!("{} list --json --lock-wait {LOCK_WAIT_SECS} {borg_repo}", borg_binary()),
+            "running borg command"
+        );
         let output = Command::new(borg_binary())
-            .arg("info")
+            .arg("list")
             .arg("--json")
             .arg("--lock-wait")
             .arg(LOCK_WAIT_SECS)
@@ -992,28 +1014,87 @@ async fn run_borg_info_repo_with_retry(
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| ApiError::Internal(format!("failed to execute borg info: {e}")))?;
+            .map_err(|e| ApiError::Internal(format!("failed to execute borg list: {e}")))?;
 
         if output.status.success() {
             return Ok(output);
         }
 
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if is_lock_error(&stderr) {
+        if !is_lock_error(&stderr) || attempt == LOCK_RETRY_MAX_ATTEMPTS {
+            return Err(ApiError::Internal(format!("borg list failed: {stderr}")));
+        }
+        warn!(
+            attempt,
+            max = LOCK_RETRY_MAX_ATTEMPTS,
+            "borg list lock contention, retrying in {}s",
+            LOCK_RETRY_INTERVAL.as_secs()
+        );
+        tokio::time::sleep(LOCK_RETRY_INTERVAL).await;
+    }
+    unreachable!()
+}
+
+fn is_ssh_connection_error(stderr: &str) -> bool {
+    let lower = stderr.to_lowercase();
+    lower.contains("connection refused")
+        || lower.contains("connection timed out")
+        || lower.contains("connection reset")
+        || lower.contains("broken pipe")
+        || lower.contains("ssh: connect to host")
+}
+
+async fn run_borg_archive_info_with_retry(
+    repo_archive: &str,
+    env: &std::collections::HashMap<String, String>,
+) -> Result<Option<std::process::Output>, ApiError> {
+    for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
+        debug!(
+            cmd = %format!("{} info --json --lock-wait {LOCK_WAIT_SECS} {repo_archive}", borg_binary()),
+            "running borg command"
+        );
+        let output = Command::new(borg_binary())
+            .arg("info")
+            .arg("--json")
+            .arg("--lock-wait")
+            .arg(LOCK_WAIT_SECS)
+            .arg(repo_archive)
+            .envs(env)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| ApiError::Internal(format!("failed to execute borg info: {e}")))?;
+
+        if output.status.success() {
+            return Ok(Some(output));
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if is_lock_error(&stderr) || is_ssh_connection_error(&stderr) {
             if attempt == LOCK_RETRY_MAX_ATTEMPTS {
-                return Err(ApiError::Internal(format!(
-                    "borg info exhausted lock retries: {stderr}"
-                )));
+                warn!(
+                    repo_archive,
+                    stderr = %stderr,
+                    "borg info exhausted retries, skipping archive"
+                );
+                return Ok(None);
             }
             warn!(
                 attempt,
                 max = LOCK_RETRY_MAX_ATTEMPTS,
-                "borg info repo lock contention, retrying in {}s",
+                repo_archive,
+                "borg info retryable error, retrying in {}s",
                 LOCK_RETRY_INTERVAL.as_secs()
             );
             tokio::time::sleep(LOCK_RETRY_INTERVAL).await;
         } else {
-            return Err(ApiError::Internal(format!("borg info failed: {stderr}")));
+            warn!(
+                repo_archive,
+                stderr = %stderr,
+                "borg info non-retryable error, skipping archive"
+            );
+            return Ok(None);
         }
     }
     unreachable!()
@@ -1036,125 +1117,536 @@ pub async fn sync_existing_archives(
     encryption_key: &[u8; 32],
     repo_id: i64,
     ui_broadcast: &UiBroadcast,
-) -> Result<u64, ApiError> {
+) -> Result<(u64, u64), ApiError> {
     let (borg_repo, env) = super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
 
-    let output = run_borg_info_repo_with_retry(&borg_repo, &env).await?;
+    ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
+        repo_id,
+        progress: 0,
+        total: 0,
+        message: Some("Listing archives\u{2026}".to_string()),
+    });
+    let output = run_borg_list_with_retry(&borg_repo, &env).await?;
 
     let json_output: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|e| ApiError::Internal(format!("failed to parse borg info output: {e}")))?;
+        .map_err(|e| ApiError::Internal(format!("failed to parse borg list output: {e}")))?;
 
     let archives = json_output["archives"]
         .as_array()
         .map_or_else(Vec::new, Clone::clone);
 
-    if archives.is_empty() {
-        return Ok(0);
+    let borg_names: std::collections::HashSet<String> = archives
+        .iter()
+        .filter_map(|a| a["name"].as_str())
+        .filter(|n| !n.is_empty())
+        .map(String::from)
+        .collect();
+
+    let known_names = db::list_archive_names_for_repo(pool, repo_id).await?;
+    let stale: Vec<String> = known_names.difference(&borg_names).cloned().collect();
+    let removed = db::delete_archive_reports_by_names(pool, repo_id, &stale).await?;
+    if removed > 0 {
+        info!(repo_id, removed, "removed stale archives during full sync");
     }
 
-    let existing_names: std::collections::HashSet<String> = sqlx::query_scalar(
-        "SELECT archive_name FROM backup_reports WHERE repo_id = $1 AND archive_name IS NOT NULL",
-    )
-    .bind(repo_id)
-    .fetch_all(pool)
-    .await
-    .map_err(ApiError::Database)?
-    .into_iter()
-    .collect();
+    if archives.is_empty() {
+        return Ok((0, removed));
+    }
 
-    let total = archives.len();
-    #[allow(clippy::cast_possible_truncation)]
-    let already_imported = archives
+    const CONCURRENCY: usize = 8;
+
+    let mut hostname_cache: HashMap<String, (i64, bool)> = HashMap::new();
+    let mut archive_clients = Vec::with_capacity(archives.len());
+    for archive in &archives {
+        let name = archive["name"].as_str().unwrap_or_default();
+        let hostname = archive["hostname"].as_str().unwrap_or("unknown");
+        if name.is_empty() {
+            continue;
+        }
+        let (client_id, matched) = if let Some(&cached) = hostname_cache.get(hostname) {
+            cached
+        } else {
+            let (client, matched) = match db::resolve_client_for_hostname(pool, hostname).await? {
+                db::ResolveResult::ExactMatch(c) => (c, true),
+                db::ResolveResult::PatternMatch(c) => (c, true),
+                db::ResolveResult::Unmatched => {
+                    let c = db::get_or_create_client_by_hostname(pool, hostname).await?;
+                    (c, false)
+                }
+            };
+            let entry = (client.id, matched);
+            hostname_cache.insert(hostname.to_string(), entry);
+            entry
+        };
+        let list_start = parse_borg_timestamp(archive["start"].as_str().unwrap_or_default());
+        let list_end = parse_borg_timestamp(archive["end"].as_str().unwrap_or_default());
+        archive_clients.push((
+            name.to_string(),
+            hostname.to_string(),
+            client_id,
+            matched,
+            list_start,
+            list_end,
+        ));
+    }
+
+    let needs_full_info: std::collections::HashSet<String> = archive_clients
+        .iter()
+        .filter_map(|(name, hostname, _, _, started_at, _)| {
+            started_at.map(|t| (hostname.as_str(), name.as_str(), t))
+        })
+        .fold(
+            HashMap::<&str, (&str, DateTime<chrono::Utc>)>::new(),
+            |mut map, (hostname, name, t)| {
+                let entry = map.entry(hostname).or_insert((name, t));
+                if t > entry.1 {
+                    *entry = (name, t);
+                }
+                map
+            },
+        )
+        .into_values()
+        .map(|(name, _)| name.to_string())
+        .collect();
+
+    let total = archive_clients.len();
+    ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
+        repo_id,
+        progress: 0,
+        total: total as i32,
+        message: Some(format!("Importing {total} archives\u{2026}")),
+    });
+
+    let (report_params, _skipped) = stream::iter(archive_clients)
+        .map(
+            |(name, hostname, client_id, matched, list_started_at, list_finished_at)| {
+                let borg_repo = &borg_repo;
+                let env = &env;
+                let needs_full_info = &needs_full_info;
+                async move {
+                    if !needs_full_info.contains(&name)
+                        && let Some(started_at) = list_started_at
+                    {
+                        let finished_at = list_finished_at.unwrap_or(started_at);
+                        let duration_secs = finished_at
+                            .signed_duration_since(started_at)
+                            .num_seconds()
+                            .max(0);
+                        let params = db::InsertReportParams {
+                            client_id,
+                            repo_id,
+                            started_at,
+                            finished_at,
+                            status: "success".to_string(),
+                            original_size: 0,
+                            compressed_size: 0,
+                            deduplicated_size: 0,
+                            files_processed: 0,
+                            duration_secs,
+                            error_message: None,
+                            warnings: vec![],
+                            borg_version: None,
+                            matched,
+                            archive_name: Some(name.clone()),
+                        };
+                        return (Some(params), name);
+                    }
+                    info!(repo_id, archive = %name, %hostname, "fetching borg archive info");
+                    ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
+                        repo_id,
+                        progress: 0,
+                        total: total as i32,
+                        message: Some(format!(
+                            "Querying borg for \u{2018}{name}\u{2019}\u{2026}"
+                        )),
+                    });
+                    let repo_archive = format!("{borg_repo}::{name}");
+                    let info_output =
+                        match run_borg_archive_info_with_retry(&repo_archive, env).await {
+                            Ok(Some(output)) => output,
+                            Ok(None) => {
+                                return (None, name);
+                            }
+                            Err(e) => {
+                                warn!(archive = %name, error = %e, "borg info error, skipping");
+                                return (None, name);
+                            }
+                        };
+
+                    let info_json: serde_json::Value =
+                        match serde_json::from_slice(&info_output.stdout) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                warn!(
+                                    archive = %name,
+                                    error = %e,
+                                    "failed to parse borg info output"
+                                );
+                                return (None, name);
+                            }
+                        };
+
+                    let Some(archive_info) =
+                        info_json["archives"].as_array().and_then(|a| a.first())
+                    else {
+                        return (None, name);
+                    };
+
+                    let stats = &archive_info["stats"];
+                    let start_str = archive_info["start"].as_str().unwrap_or_default();
+                    let end_str = archive_info["end"].as_str().unwrap_or_default();
+                    let duration = archive_info["duration"].as_f64().unwrap_or(0.0);
+
+                    let Some(started_at) = parse_borg_timestamp(start_str) else {
+                        return (None, name);
+                    };
+                    let Some(finished_at) = parse_borg_timestamp(end_str) else {
+                        return (None, name);
+                    };
+
+                    #[allow(clippy::cast_possible_truncation)]
+                    let params = db::InsertReportParams {
+                        client_id,
+                        repo_id,
+                        started_at,
+                        finished_at,
+                        status: "success".to_string(),
+                        original_size: stats["original_size"].as_i64().unwrap_or(0),
+                        compressed_size: stats["compressed_size"].as_i64().unwrap_or(0),
+                        deduplicated_size: stats["deduplicated_size"].as_i64().unwrap_or(0),
+                        files_processed: stats["nfiles"].as_i64().unwrap_or(0),
+                        duration_secs: duration as i64,
+                        error_message: None,
+                        warnings: vec![],
+                        borg_version: None,
+                        matched,
+                        archive_name: Some(name.to_string()),
+                    };
+
+                    (Some(params), name)
+                }
+            },
+        )
+        .buffer_unordered(CONCURRENCY)
+        .fold(
+            (Vec::<db::InsertReportParams>::with_capacity(total), 0u64),
+            |(mut params, skipped), (opt_params, archive_name)| async move {
+                let original_size = opt_params.as_ref().map_or(0, |p| p.original_size);
+                let (new_params, new_skipped) = match opt_params {
+                    None => {
+                        warn!(repo_id, archive = %archive_name, "archive skipped (borg info unavailable)");
+                        (params, skipped + 1)
+                    }
+                    Some(p) => {
+                        params.push(p);
+                        (params, skipped)
+                    }
+                };
+                let processed = new_params.len() as u64 + new_skipped;
+                info!(
+                    repo_id,
+                    archive = %archive_name,
+                    processed,
+                    total,
+                    original_size,
+                    "archive fetched"
+                );
+                ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
+                    repo_id,
+                    progress: processed as i32,
+                    total: total as i32,
+                    message: Some(format!(
+                        "Fetched \u{2018}{archive_name}\u{2019} ({processed}/{total}) \u{00b7} {}",
+                        human_bytes(original_size)
+                    )),
+                });
+                (new_params, new_skipped)
+            },
+        )
+        .await;
+
+    let imported = report_params.len() as u64;
+    db::bulk_insert_backup_reports(pool, &report_params).await?;
+    info!(
+        repo_id,
+        imported,
+        skipped = _skipped,
+        total,
+        "synced existing archives"
+    );
+    Ok((imported, removed))
+}
+
+pub async fn sync_new_archives(
+    pool: &PgPool,
+    encryption_key: &[u8; 32],
+    repo_id: i64,
+    ui_broadcast: &UiBroadcast,
+) -> Result<(u64, u64), ApiError> {
+    let (borg_repo, env) = super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
+
+    ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
+        repo_id,
+        progress: 0,
+        total: 0,
+        message: Some("Listing archives\u{2026}".to_string()),
+    });
+    let output = run_borg_list_with_retry(&borg_repo, &env).await?;
+
+    let json_output: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| ApiError::Internal(format!("failed to parse borg list output: {e}")))?;
+
+    let archives = json_output["archives"]
+        .as_array()
+        .map_or_else(Vec::new, Clone::clone);
+
+    let borg_names: std::collections::HashSet<String> = archives
+        .iter()
+        .filter_map(|a| a["name"].as_str())
+        .filter(|n| !n.is_empty())
+        .map(String::from)
+        .collect();
+
+    let known_names = db::list_archive_names_for_repo(pool, repo_id).await?;
+
+    let stale: Vec<String> = known_names.difference(&borg_names).cloned().collect();
+    let removed = db::delete_archive_reports_by_names(pool, repo_id, &stale).await?;
+    if removed > 0 {
+        info!(
+            repo_id,
+            removed, "removed stale archives during incremental sync"
+        );
+    }
+
+    let new_archives: Vec<&serde_json::Value> = archives
         .iter()
         .filter(|a| {
             a["name"]
                 .as_str()
-                .is_some_and(|n| existing_names.contains(n))
+                .is_some_and(|n| !n.is_empty() && !known_names.contains(n))
         })
-        .count() as u64;
+        .collect();
 
-    let _ =
-        db::update_repo_import_progress(pool, repo_id, already_imported as i64, total as i64).await;
-    ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
-
-    let mut imported = 0u64;
-    let mut skipped = 0u64;
-
-    for archive in &archives {
-        let name = archive["name"].as_str().unwrap_or_default();
-        if name.is_empty() {
-            skipped += 1;
-            continue;
-        }
-        if existing_names.contains(name) {
-            continue;
-        }
-
-        let hostname = archive["hostname"].as_str().unwrap_or("unknown");
-        let stats = &archive["stats"];
-        let start_str = archive["start"].as_str().unwrap_or_default();
-        let end_str = archive["end"].as_str().unwrap_or_default();
-        let duration = archive["duration"].as_f64().unwrap_or(0.0);
-
-        let Some(started_at) = parse_borg_timestamp(start_str) else {
-            warn!(archive = name, "unparseable start timestamp, skipping");
-            skipped += 1;
-            continue;
-        };
-        let Some(finished_at) = parse_borg_timestamp(end_str) else {
-            warn!(archive = name, "unparseable end timestamp, skipping");
-            skipped += 1;
-            continue;
-        };
-
-        let (client, matched) = match db::resolve_client_for_hostname(pool, hostname).await? {
-            db::ResolveResult::ExactMatch(c) => (c, true),
-            db::ResolveResult::PatternMatch(c) => (c, true),
-            db::ResolveResult::Unmatched => {
-                let c = db::get_or_create_client_by_hostname(pool, hostname).await?;
-                (c, false)
-            }
-        };
-
-        #[allow(clippy::cast_possible_truncation)]
-        let params = db::InsertReportParams {
-            client_id: client.id,
-            repo_id,
-            started_at,
-            finished_at,
-            status: "success".to_string(),
-            original_size: stats["original_size"].as_i64().unwrap_or(0),
-            compressed_size: stats["compressed_size"].as_i64().unwrap_or(0),
-            deduplicated_size: stats["deduplicated_size"].as_i64().unwrap_or(0),
-            files_processed: stats["nfiles"].as_i64().unwrap_or(0),
-            duration_secs: duration as i64,
-            error_message: None,
-            warnings: vec![],
-            borg_version: None,
-            matched,
-            archive_name: Some(name.to_string()),
-        };
-
-        if let Err(e) = db::insert_backup_report(pool, &params).await {
-            warn!(archive = name, error = %e, "failed to insert imported archive report");
-            skipped += 1;
-        } else {
-            imported += 1;
-        }
-
-        let total_done = already_imported + imported + skipped;
-        if total_done.is_multiple_of(10) || total_done as usize >= total {
-            let _ = db::update_repo_import_progress(pool, repo_id, total_done as i64, total as i64)
-                .await;
-            ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
-        }
+    if new_archives.is_empty() {
+        return Ok((0, removed));
     }
 
-    info!(
+    const CONCURRENCY: usize = 8;
+
+    let mut hostname_cache: HashMap<String, (i64, bool)> = HashMap::new();
+    let mut archive_clients = Vec::with_capacity(new_archives.len());
+    for archive in &new_archives {
+        let name = archive["name"].as_str().unwrap_or_default();
+        let hostname = archive["hostname"].as_str().unwrap_or("unknown");
+        if name.is_empty() {
+            continue;
+        }
+        let (client_id, matched) = if let Some(&cached) = hostname_cache.get(hostname) {
+            cached
+        } else {
+            let (client, matched) = match db::resolve_client_for_hostname(pool, hostname).await? {
+                db::ResolveResult::ExactMatch(c) => (c, true),
+                db::ResolveResult::PatternMatch(c) => (c, true),
+                db::ResolveResult::Unmatched => {
+                    let c = db::get_or_create_client_by_hostname(pool, hostname).await?;
+                    (c, false)
+                }
+            };
+            let entry = (client.id, matched);
+            hostname_cache.insert(hostname.to_string(), entry);
+            entry
+        };
+        let list_start = parse_borg_timestamp(archive["start"].as_str().unwrap_or_default());
+        let list_end = parse_borg_timestamp(archive["end"].as_str().unwrap_or_default());
+        archive_clients.push((
+            name.to_string(),
+            hostname.to_string(),
+            client_id,
+            matched,
+            list_start,
+            list_end,
+        ));
+    }
+
+    let needs_full_info: std::collections::HashSet<String> = archive_clients
+        .iter()
+        .filter_map(|(name, hostname, _, _, started_at, _)| {
+            started_at.map(|t| (hostname.as_str(), name.as_str(), t))
+        })
+        .fold(
+            HashMap::<&str, (&str, DateTime<chrono::Utc>)>::new(),
+            |mut map, (hostname, name, t)| {
+                let entry = map.entry(hostname).or_insert((name, t));
+                if t > entry.1 {
+                    *entry = (name, t);
+                }
+                map
+            },
+        )
+        .into_values()
+        .map(|(name, _)| name.to_string())
+        .collect();
+
+    let total = archive_clients.len();
+    ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
         repo_id,
-        imported, skipped, already_imported, total, "synced existing archives"
-    );
-    Ok(imported)
+        progress: 0,
+        total: total as i32,
+        message: Some(format!("Importing {total} archives\u{2026}")),
+    });
+
+    let (report_params, _skipped) = stream::iter(archive_clients)
+        .map(
+            |(name, hostname, client_id, matched, list_started_at, list_finished_at)| {
+                let borg_repo = &borg_repo;
+                let env = &env;
+                let needs_full_info = &needs_full_info;
+                async move {
+                    if !needs_full_info.contains(&name)
+                        && let Some(started_at) = list_started_at
+                    {
+                        let finished_at = list_finished_at.unwrap_or(started_at);
+                        let duration_secs = finished_at
+                            .signed_duration_since(started_at)
+                            .num_seconds()
+                            .max(0);
+                        let params = db::InsertReportParams {
+                            client_id,
+                            repo_id,
+                            started_at,
+                            finished_at,
+                            status: "success".to_string(),
+                            original_size: 0,
+                            compressed_size: 0,
+                            deduplicated_size: 0,
+                            files_processed: 0,
+                            duration_secs,
+                            error_message: None,
+                            warnings: vec![],
+                            borg_version: None,
+                            matched,
+                            archive_name: Some(name.clone()),
+                        };
+                        return (Some(params), name);
+                    }
+                    info!(repo_id, archive = %name, %hostname, "fetching borg archive info");
+                    ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
+                        repo_id,
+                        progress: 0,
+                        total: total as i32,
+                        message: Some(format!(
+                            "Querying borg for \u{2018}{name}\u{2019}\u{2026}"
+                        )),
+                    });
+                    let repo_archive = format!("{borg_repo}::{name}");
+                    let info_output =
+                        match run_borg_archive_info_with_retry(&repo_archive, env).await {
+                            Ok(Some(output)) => output,
+                            Ok(None) => {
+                                return (None, name);
+                            }
+                            Err(e) => {
+                                warn!(archive = %name, error = %e, "borg info error, skipping");
+                                return (None, name);
+                            }
+                        };
+
+                    let info_json: serde_json::Value =
+                        match serde_json::from_slice(&info_output.stdout) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                warn!(
+                                    archive = %name,
+                                    error = %e,
+                                    "failed to parse borg info output"
+                                );
+                                return (None, name);
+                            }
+                        };
+
+                    let Some(archive_info) =
+                        info_json["archives"].as_array().and_then(|a| a.first())
+                    else {
+                        return (None, name);
+                    };
+
+                    let stats = &archive_info["stats"];
+                    let start_str = archive_info["start"].as_str().unwrap_or_default();
+                    let end_str = archive_info["end"].as_str().unwrap_or_default();
+                    let duration = archive_info["duration"].as_f64().unwrap_or(0.0);
+
+                    let Some(started_at) = parse_borg_timestamp(start_str) else {
+                        return (None, name);
+                    };
+                    let Some(finished_at) = parse_borg_timestamp(end_str) else {
+                        return (None, name);
+                    };
+
+                    #[allow(clippy::cast_possible_truncation)]
+                    let params = db::InsertReportParams {
+                        client_id,
+                        repo_id,
+                        started_at,
+                        finished_at,
+                        status: "success".to_string(),
+                        original_size: stats["original_size"].as_i64().unwrap_or(0),
+                        compressed_size: stats["compressed_size"].as_i64().unwrap_or(0),
+                        deduplicated_size: stats["deduplicated_size"].as_i64().unwrap_or(0),
+                        files_processed: stats["nfiles"].as_i64().unwrap_or(0),
+                        duration_secs: duration as i64,
+                        error_message: None,
+                        warnings: vec![],
+                        borg_version: None,
+                        matched,
+                        archive_name: Some(name.to_string()),
+                    };
+
+                    (Some(params), name)
+                }
+            },
+        )
+        .buffer_unordered(CONCURRENCY)
+        .fold(
+            (Vec::<db::InsertReportParams>::with_capacity(total), 0u64),
+            |(mut params, skipped), (opt_params, archive_name)| async move {
+                let original_size = opt_params.as_ref().map_or(0, |p| p.original_size);
+                let (new_params, new_skipped) = match opt_params {
+                    None => {
+                        warn!(repo_id, archive = %archive_name, "archive skipped (borg info unavailable)");
+                        (params, skipped + 1)
+                    }
+                    Some(p) => {
+                        params.push(p);
+                        (params, skipped)
+                    }
+                };
+                let processed = new_params.len() as u64 + new_skipped;
+                info!(
+                    repo_id,
+                    archive = %archive_name,
+                    processed,
+                    total,
+                    original_size,
+                    "archive fetched"
+                );
+                ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
+                    repo_id,
+                    progress: processed as i32,
+                    total: total as i32,
+                    message: Some(format!(
+                        "Fetched \u{2018}{archive_name}\u{2019} ({processed}/{total}) \u{00b7} {}",
+                        human_bytes(original_size)
+                    )),
+                });
+                (new_params, new_skipped)
+            },
+        )
+        .await;
+
+    let added = report_params.len() as u64;
+    db::bulk_insert_backup_reports(pool, &report_params).await?;
+    info!(repo_id, added, removed, total, "incremental sync complete");
+    Ok((added, removed))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -1242,6 +1734,7 @@ pub async fn rescan_repo(
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SyncResponse {
     pub imported: u64,
+    pub removed: u64,
     pub duration_secs: u64,
 }
 
@@ -1288,8 +1781,8 @@ pub async fn sync_repo(
     db::set_repo_importing(&state.pool, repo_id, false).await?;
     db::update_repo_last_synced(&state.pool, repo_id).await?;
 
-    let imported = match result {
-        Ok(n) => n,
+    let (imported, removed) = match result {
+        Ok(counts) => counts,
         Err(e) => {
             let msg = format!(
                 "repo sync failed for '{}' after {:.1}s: {e}",
@@ -1308,7 +1801,8 @@ pub async fn sync_repo(
 
     let duration_secs = elapsed.as_secs();
     let msg = format!(
-        "repo sync completed for '{}': imported {imported} archives in {duration_secs}s",
+        "repo sync completed for '{}': imported {imported}, removed {removed} archives in \
+         {duration_secs}s",
         repo.name
     );
 
@@ -1342,6 +1836,7 @@ pub async fn sync_repo(
 
     Ok(Json(SyncResponse {
         imported,
+        removed,
         duration_secs,
     }))
 }

@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { Search, SlidersHorizontal, Activity } from '@lucide/vue'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
@@ -75,6 +75,7 @@ const loadingMore = ref(false)
 const expandedId = ref<number | null>(null)
 const expandedDetail = ref<ReportRow | null>(null)
 const expandedLoading = ref(false)
+const expandedSystemId = ref<number | null>(null)
 const offset = ref(0)
 const hasMore = ref(true)
 const PAGE_SIZE = 50
@@ -95,6 +96,7 @@ let logSearchTimer: ReturnType<typeof setTimeout> | null = null
 const { isMobile } = useMobile()
 const showMobileFilters = ref(false)
 const route = useRoute()
+const router = useRouter()
 
 const availableTargets = computed(() => {
   const targets = new Set(rows.value.map((r) => r.target_name))
@@ -115,6 +117,19 @@ const hasActiveFilters = computed((): boolean => {
 })
 
 onMounted(async () => {
+  const catParam = route.query.category as string | undefined
+  if (
+    catParam === 'all' ||
+    catParam === 'backup' ||
+    catParam === 'system' ||
+    catParam === 'logs'
+  ) {
+    activeCategory.value = catParam
+  }
+  const targetParam = route.query.target as string | undefined
+  if (targetParam) {
+    filterTarget.value = targetParam
+  }
   const statusParam = route.query.status as string | undefined
   if (statusParam === 'success' || statusParam === 'warning' || statusParam === 'failed') {
     filterStatus.value = statusParam
@@ -138,6 +153,7 @@ onMessage('AgentConnected', () => fetchData(true).catch(logger.error))
 onMessage('AgentDisconnected', () => fetchData(true).catch(logger.error))
 
 watch(activeCategory, (cat) => {
+  router.replace({ query: { ...route.query, category: cat } }).catch(() => {})
   if (cat === 'logs') {
     fetchLogs().catch(logger.error)
   } else {
@@ -187,6 +203,7 @@ async function fetchData(reset: boolean): Promise<void> {
     systemEvents.value = []
     expandedId.value = null
     expandedDetail.value = null
+    expandedSystemId.value = null
   } else {
     loadingMore.value = true
   }
@@ -225,6 +242,10 @@ async function fetchData(reset: boolean): Promise<void> {
 
 async function loadMore(): Promise<void> {
   await fetchData(false)
+}
+
+function toggleSystemRow(event: SystemEvent): void {
+  expandedSystemId.value = expandedSystemId.value === event.id ? null : event.id
 }
 
 async function toggleRow(row: ActivityRow): Promise<void> {
@@ -709,6 +730,8 @@ function clearFilters(): void {
               <tr
                 v-if="row.kind === 'system' && row.event"
                 class="log-row row-system"
+                :class="{ expanded: expandedSystemId === row.event.id }"
+                @click="toggleSystemRow(row.event)"
               >
                 <td class="cell-ts">
                   {{ formatDateShort(row.event.created_at) }}
@@ -727,6 +750,16 @@ function clearFilters(): void {
                   >
                 </td>
                 <td class="cell-dur">—</td>
+              </tr>
+              <tr
+                v-if="row.kind === 'system' && row.event && expandedSystemId === row.event.id"
+                class="detail-row"
+              >
+                <td colspan="5">
+                  <div class="detail-panel">
+                    <pre class="error-pre">{{ row.event.message }}</pre>
+                  </div>
+                </td>
               </tr>
             </template>
           </tbody>

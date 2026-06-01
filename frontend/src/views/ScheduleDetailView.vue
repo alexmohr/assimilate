@@ -143,6 +143,15 @@ const activeTab = computed<TabId>({
   },
 })
 
+function goToLogs(): void {
+  const target = repo.value?.name
+  router.push(
+    target
+      ? `/activity?category=backup&target=${encodeURIComponent(target)}`
+      : '/activity?category=backup',
+  )
+}
+
 const scheduleType = computed(() =>
   isCreate.value ? selectedType.value : (schedule.value?.schedule_type ?? 'backup'),
 )
@@ -527,11 +536,10 @@ watch(activeTab, (tab) => {
         </button>
         <button
           v-if="!isCreate"
-          class="tab-btn"
-          :class="{ active: activeTab === 'logs' }"
-          @click="activeTab = 'logs'"
+          class="tab-btn tab-btn-link"
+          @click="goToLogs"
         >
-          Logs
+          Logs ↗
         </button>
       </div>
 
@@ -1398,6 +1406,11 @@ watch(activeTab, (tab) => {
 .tab-btn.active {
   color: var(--accent);
   border-bottom-color: var(--accent);
+}
+
+.tab-btn-link {
+  margin-left: auto;
+  color: var(--text-muted);
 }
 
 .form-grid {

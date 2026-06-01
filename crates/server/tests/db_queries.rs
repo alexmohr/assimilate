@@ -3075,6 +3075,109 @@ async fn repo_import_progress_reflected_in_list(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn bulk_insert_backup_reports_empty(pool: PgPool) {
+    let affected = db::bulk_insert_backup_reports(&pool, &[]).await.unwrap();
+    assert_eq!(affected, 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn bulk_insert_backup_reports_basic(pool: PgPool) {
+    let client = db::insert_client(&pool, "bulk-host", None, "hash-bulk", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+
+    let params = vec![
+        InsertReportParams {
+            client_id: client.id,
+            repo_id: repo.id,
+            started_at: now - Duration::minutes(10),
+            finished_at: now - Duration::minutes(5),
+            status: "success".to_string(),
+            original_size: 2_000_000,
+            compressed_size: 1_000_000,
+            deduplicated_size: 500_000,
+            files_processed: 200,
+            duration_secs: 300,
+            error_message: None,
+            warnings: vec![],
+            borg_version: Some("1.4.0".to_string()),
+            matched: true,
+            archive_name: Some("bulk-archive-1".to_string()),
+        },
+        InsertReportParams {
+            client_id: client.id,
+            repo_id: repo.id,
+            started_at: now - Duration::minutes(20),
+            finished_at: now - Duration::minutes(15),
+            status: "success".to_string(),
+            original_size: 1_000_000,
+            compressed_size: 500_000,
+            deduplicated_size: 250_000,
+            files_processed: 100,
+            duration_secs: 300,
+            error_message: None,
+            warnings: vec![],
+            borg_version: None,
+            matched: false,
+            archive_name: Some("bulk-archive-2".to_string()),
+        },
+    ];
+
+    let affected = db::bulk_insert_backup_reports(&pool, &params)
+        .await
+        .unwrap();
+    assert_eq!(affected, 2);
+
+    let reports = db::list_backup_reports_for_repo(&pool, repo.id, None, None, 100, 0)
+        .await
+        .unwrap();
+    assert_eq!(reports.len(), 2);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn bulk_insert_backup_reports_conflict_skipped(pool: PgPool) {
+    let client = db::insert_client(&pool, "bulk-dup-host", None, "hash-dup", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+    let started = now - Duration::minutes(10);
+
+    let param = InsertReportParams {
+        client_id: client.id,
+        repo_id: repo.id,
+        started_at: started,
+        finished_at: now,
+        status: "success".to_string(),
+        original_size: 1_000,
+        compressed_size: 800,
+        deduplicated_size: 600,
+        files_processed: 10,
+        duration_secs: 60,
+        error_message: None,
+        warnings: vec![],
+        borg_version: None,
+        matched: true,
+        archive_name: Some("dup-archive".to_string()),
+    };
+
+    db::bulk_insert_backup_reports(&pool, &[param.clone()])
+        .await
+        .unwrap();
+    let affected = db::bulk_insert_backup_reports(&pool, &[param])
+        .await
+        .unwrap();
+    assert_eq!(affected, 0);
+
+    let reports = db::list_backup_reports_for_repo(&pool, repo.id, None, None, 100, 0)
+        .await
+        .unwrap();
+    assert_eq!(reports.len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn repo_last_synced_at_updates(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
     assert!(repo.last_synced_at.is_none());

@@ -118,12 +118,7 @@ const hasActiveFilters = computed((): boolean => {
 
 onMounted(async () => {
   const catParam = route.query.category as string | undefined
-  if (
-    catParam === 'all' ||
-    catParam === 'backup' ||
-    catParam === 'system' ||
-    catParam === 'logs'
-  ) {
+  if (catParam === 'all' || catParam === 'backup' || catParam === 'system' || catParam === 'logs') {
     activeCategory.value = catParam
   }
   const targetParam = route.query.target as string | undefined

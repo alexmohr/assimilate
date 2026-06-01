@@ -348,9 +348,7 @@ describe('ActivityLogView', () => {
       await flushPromises()
 
       expect(wrapper.find('tr.detail-row').exists()).toBe(true)
-      expect(wrapper.find('tr.detail-row pre.error-pre').text()).toBe(
-        SYSTEM_EVENTS[0].message,
-      )
+      expect(wrapper.find('tr.detail-row pre.error-pre').text()).toBe(SYSTEM_EVENTS[0].message)
     })
 
     it('collapses a system event row on second click', async () => {

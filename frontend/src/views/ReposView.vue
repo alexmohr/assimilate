@@ -1428,9 +1428,11 @@ onMounted(loadRepos)
     >
       <template v-if="importDetailsRepo">
         <p class="import-modal-name">{{ importDetailsRepo.name }}</p>
-        <p class="import-modal-ssh"
-          >{{ importDetailsRepo.ssh_user }}@{{ importDetailsRepo.ssh_host }}:{{ importDetailsRepo.ssh_port }}</p
-        >
+        <p class="import-modal-ssh">
+          {{ importDetailsRepo.ssh_user }}@{{ importDetailsRepo.ssh_host }}:{{
+            importDetailsRepo.ssh_port
+          }}
+        </p>
         <p class="import-modal-msg">
           {{
             importDetailsRepo.import_status_message ??
@@ -1451,11 +1453,15 @@ onMounted(loadRepos)
           </div>
           <div class="import-modal-counts">
             <span
-              >{{ importDetailsRepo.import_progress }} / {{ importDetailsRepo.import_total }}
-              archives</span
+              >{{ importDetailsRepo.import_progress }} /
+              {{ importDetailsRepo.import_total }} archives</span
             >
             <span
-              >{{ Math.round((importDetailsRepo.import_progress / importDetailsRepo.import_total) * 100) }}%</span
+              >{{
+                Math.round(
+                  (importDetailsRepo.import_progress / importDetailsRepo.import_total) * 100,
+                )
+              }}%</span
             >
           </div>
         </div>

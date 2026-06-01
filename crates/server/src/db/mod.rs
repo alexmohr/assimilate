@@ -2714,17 +2714,17 @@ pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow
         "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.compression, \
          r.encryption, r.enabled, r.importing, r.import_error, r.import_progress, r.import_total, \
          r.owner_id, r.visibility, r.sync_schedule, COALESCE(agg.archive_count, 0) AS \
-         archive_count, agg.last_backup_at, COALESCE(latest.original_size, 0)::INT8 AS \
-         total_original_size, COALESCE(latest.compressed_size, 0)::INT8 AS total_compressed_size, \
-         COALESCE(latest.deduplicated_size, 0)::INT8 AS total_deduplicated_size, \
-         COALESCE(agg.client_count, 0) AS client_count, COALESCE(agg.unmatched_count, 0) AS \
-         unmatched_count FROM repos r LEFT JOIN LATERAL (SELECT br.original_size, \
-         br.compressed_size, br.deduplicated_size FROM backup_reports br WHERE br.repo_id = r.id \
-         AND br.status = 'success' ORDER BY br.started_at DESC LIMIT 1) latest ON true LEFT JOIN \
-         LATERAL (SELECT COUNT(br.id) AS archive_count, MAX(CASE WHEN br.finished_at > \
+         archive_count, agg.last_backup_at, COALESCE(agg.total_original_size, 0)::INT8 AS \
+         total_original_size, COALESCE(agg.total_compressed_size, 0)::INT8 AS \
+         total_compressed_size, COALESCE(agg.total_deduplicated_size, 0)::INT8 AS \
+         total_deduplicated_size, COALESCE(agg.client_count, 0) AS client_count, \
+         COALESCE(agg.unmatched_count, 0) AS unmatched_count FROM repos r LEFT JOIN LATERAL \
+         (SELECT COUNT(br.id) AS archive_count, MAX(CASE WHEN br.finished_at > \
          '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT \
          br.client_id) AS client_count, COUNT(DISTINCT br.client_id) FILTER (WHERE br.matched = \
-         false) AS unmatched_count FROM backup_reports br WHERE br.repo_id = r.id AND br.status = \
+         false) AS unmatched_count, SUM(br.original_size) AS total_original_size, \
+         SUM(br.compressed_size) AS total_compressed_size, SUM(br.deduplicated_size) AS \
+         total_deduplicated_size FROM backup_reports br WHERE br.repo_id = r.id AND br.status = \
          'success') agg ON true ORDER BY r.name",
     )
     .fetch_all(pool)
@@ -2740,17 +2740,17 @@ pub async fn get_repo_with_stats(
         "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.compression, \
          r.encryption, r.enabled, r.importing, r.import_error, r.import_progress, r.import_total, \
          r.owner_id, r.visibility, r.sync_schedule, COALESCE(agg.archive_count, 0) AS \
-         archive_count, agg.last_backup_at, COALESCE(latest.original_size, 0)::INT8 AS \
-         total_original_size, COALESCE(latest.compressed_size, 0)::INT8 AS total_compressed_size, \
-         COALESCE(latest.deduplicated_size, 0)::INT8 AS total_deduplicated_size, \
-         COALESCE(agg.client_count, 0) AS client_count, COALESCE(agg.unmatched_count, 0) AS \
-         unmatched_count FROM repos r LEFT JOIN LATERAL (SELECT br.original_size, \
-         br.compressed_size, br.deduplicated_size FROM backup_reports br WHERE br.repo_id = r.id \
-         AND br.status = 'success' ORDER BY br.started_at DESC LIMIT 1) latest ON true LEFT JOIN \
-         LATERAL (SELECT COUNT(br.id) AS archive_count, MAX(CASE WHEN br.finished_at > \
+         archive_count, agg.last_backup_at, COALESCE(agg.total_original_size, 0)::INT8 AS \
+         total_original_size, COALESCE(agg.total_compressed_size, 0)::INT8 AS \
+         total_compressed_size, COALESCE(agg.total_deduplicated_size, 0)::INT8 AS \
+         total_deduplicated_size, COALESCE(agg.client_count, 0) AS client_count, \
+         COALESCE(agg.unmatched_count, 0) AS unmatched_count FROM repos r LEFT JOIN LATERAL \
+         (SELECT COUNT(br.id) AS archive_count, MAX(CASE WHEN br.finished_at > \
          '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT \
          br.client_id) AS client_count, COUNT(DISTINCT br.client_id) FILTER (WHERE br.matched = \
-         false) AS unmatched_count FROM backup_reports br WHERE br.repo_id = r.id AND br.status = \
+         false) AS unmatched_count, SUM(br.original_size) AS total_original_size, \
+         SUM(br.compressed_size) AS total_compressed_size, SUM(br.deduplicated_size) AS \
+         total_deduplicated_size FROM backup_reports br WHERE br.repo_id = r.id AND br.status = \
          'success') agg ON true WHERE r.id = $1",
     )
     .bind(repo_id)

@@ -62,6 +62,7 @@ pub struct BackupResult {
     pub duration_secs: i64,
     pub error_message: Option<String>,
     pub warnings: Vec<String>,
+    pub archive_name: Option<String>,
 }
 
 pub struct BackupEngine {
@@ -133,6 +134,7 @@ impl BackupEngine {
             duration_secs,
             error_message: create_result.error_message,
             warnings: create_result.warnings,
+            archive_name: Some(create_result.archive_name),
         })
     }
 
@@ -243,6 +245,7 @@ impl BackupEngine {
                     files_processed: stats.files_processed,
                     error_message: None,
                     warnings: Vec::new(),
+                    archive_name,
                 })
             }
             1 if stderr.contains("file changed while we") => {
@@ -257,6 +260,7 @@ impl BackupEngine {
                     files_processed: stats.files_processed,
                     error_message: Some(stderr.into_owned()),
                     warnings,
+                    archive_name,
                 })
             }
             _ => Err(BackupError::BorgFailed(format!(
@@ -625,6 +629,7 @@ struct CreateResult {
     files_processed: i64,
     error_message: Option<String>,
     warnings: Vec<String>,
+    archive_name: String,
 }
 
 struct ParsedStats {

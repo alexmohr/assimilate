@@ -108,7 +108,7 @@ async fn run_repo_sync(pool: &PgPool, encryption_key: &[u8; 32], ui_broadcast: &
         }
 
         let start = std::time::Instant::now();
-        match sync_existing_archives(pool, encryption_key, repo.id).await {
+        match sync_existing_archives(pool, encryption_key, repo.id, ui_broadcast).await {
             Ok(imported) => {
                 let elapsed = start.elapsed();
                 let duration_secs = elapsed.as_secs();

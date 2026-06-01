@@ -1874,6 +1874,8 @@ pub async fn reset_import(
 
 #[cfg(test)]
 mod tests {
+    use chrono::Datelike as _;
+
     use super::*;
 
     #[test]
@@ -1912,5 +1914,65 @@ mod tests {
     fn is_lock_error_returns_false_for_partial_matches() {
         assert!(!is_lock_error("lock timeout after 60 seconds"));
         assert!(!is_lock_error("unlock successful"));
+    }
+
+    #[test]
+    fn human_bytes_formats_bytes() {
+        assert_eq!(human_bytes(0), "0 B");
+        assert_eq!(human_bytes(512), "512 B");
+        assert_eq!(human_bytes(1023), "1023 B");
+    }
+
+    #[test]
+    fn human_bytes_formats_kilobytes() {
+        assert_eq!(human_bytes(1_024), "1.0 KB");
+        assert_eq!(human_bytes(2_048), "2.0 KB");
+        assert_eq!(human_bytes(1_048_575), "1024.0 KB");
+    }
+
+    #[test]
+    fn human_bytes_formats_megabytes() {
+        assert_eq!(human_bytes(1_048_576), "1.0 MB");
+        assert_eq!(human_bytes(5_242_880), "5.0 MB");
+        assert_eq!(human_bytes(1_073_741_823), "1024.0 MB");
+    }
+
+    #[test]
+    fn human_bytes_formats_gigabytes() {
+        assert_eq!(human_bytes(1_073_741_824), "1.0 GB");
+        assert_eq!(human_bytes(10_737_418_240), "10.0 GB");
+    }
+
+    #[test]
+    fn parse_borg_timestamp_rfc3339() {
+        let ts = parse_borg_timestamp("2024-03-15T10:30:00+00:00");
+        assert!(ts.is_some());
+        let dt = ts.unwrap();
+        assert_eq!(dt.year(), 2024);
+        assert_eq!(dt.month(), 3);
+        assert_eq!(dt.day(), 15);
+    }
+
+    #[test]
+    fn parse_borg_timestamp_naive_with_fraction() {
+        let ts = parse_borg_timestamp("2024-06-01T08:00:00.123456");
+        assert!(ts.is_some());
+    }
+
+    #[test]
+    fn parse_borg_timestamp_naive_without_fraction() {
+        let ts = parse_borg_timestamp("2024-06-01T08:00:00");
+        assert!(ts.is_some());
+    }
+
+    #[test]
+    fn parse_borg_timestamp_empty_returns_none() {
+        assert!(parse_borg_timestamp("").is_none());
+    }
+
+    #[test]
+    fn parse_borg_timestamp_invalid_returns_none() {
+        assert!(parse_borg_timestamp("not-a-date").is_none());
+        assert!(parse_borg_timestamp("2024-13-01T00:00:00").is_none());
     }
 }

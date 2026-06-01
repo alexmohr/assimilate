@@ -6,6 +6,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
 };
+use chrono::Utc;
 use serde::Deserialize;
 use shared::{
     protocol::ServerToAgent,
@@ -576,6 +577,7 @@ pub async fn run_schedule_now(
         .parse::<ScheduleType>()
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
+    let mut any_sent = false;
     for hostname in &hostnames {
         let msg = match schedule_type {
             ScheduleType::Check => ServerToAgent::RunCheckNow {
@@ -592,13 +594,22 @@ pub async fn run_schedule_now(
             },
         };
 
-        if let Err(e) = state.registry.send_to(hostname, msg).await {
-            tracing::warn!(
+        match state.registry.send_to(hostname, msg).await {
+            Ok(()) => any_sent = true,
+            Err(e) => tracing::warn!(
                 hostname = %hostname,
                 error = %e,
                 "agent not connected for run_schedule_now"
-            );
+            ),
         }
+    }
+
+    if any_sent {
+        let now = Utc::now();
+        let tz = db::get_schedule_timezone(&state.pool).await?;
+        let next = calculate_next_run(&schedule.cron_expression, now, tz)
+            .map_err(|e| ApiError::Internal(format!("cron error: {e}")))?;
+        db::mark_schedule_triggered(&state.pool, id, now, next).await?;
     }
 
     Ok(StatusCode::ACCEPTED)

@@ -182,7 +182,12 @@ for repo in server-daily database-hourly; do
 done
 
 echo "==> Waiting for repo import to settle..."
-sleep 5
+for _attempt in $(seq 1 60); do
+    still=$(curl -sf "$BASE_URL/api/repos" -H "$AUTH_HEADER" \
+        | jq '[.[] | select(.importing == true)] | length' 2>/dev/null || echo 1)
+    [ "$still" = "0" ] && break
+    sleep 2
+done
 
 echo "==> Syncing repos to import borg archives..."
 api POST /api/repos/1/sync > /dev/null

@@ -702,6 +702,22 @@ pub async fn set_repo_import_error(
     Ok(())
 }
 
+pub async fn update_repo_import_progress(
+    pool: &PgPool,
+    repo_id: i64,
+    progress: i64,
+    total: i64,
+) -> Result<(), ApiError> {
+    sqlx::query("UPDATE repos SET import_progress = $2, import_total = $3 WHERE id = $1")
+        .bind(repo_id)
+        .bind(i32::try_from(progress).unwrap_or(i32::MAX))
+        .bind(i32::try_from(total).unwrap_or(i32::MAX))
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(())
+}
+
 pub async fn update_repo_last_synced(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
     sqlx::query("UPDATE repos SET last_synced_at = NOW() WHERE id = $1")
         .bind(repo_id)
@@ -2679,6 +2695,8 @@ pub struct RepoWithStatsRow {
     pub enabled: bool,
     pub importing: bool,
     pub import_error: Option<String>,
+    pub import_progress: i32,
+    pub import_total: i32,
     pub owner_id: Option<i64>,
     pub visibility: String,
     pub sync_schedule: Option<String>,
@@ -2694,10 +2712,10 @@ pub struct RepoWithStatsRow {
 pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow>, ApiError> {
     sqlx::query_as::<_, RepoWithStatsRow>(
         "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.compression, \
-         r.encryption, r.enabled, r.importing, r.import_error, r.owner_id, r.visibility, \
-         r.sync_schedule, COALESCE(agg.archive_count, 0) AS archive_count, agg.last_backup_at, \
-         COALESCE(latest.original_size, 0)::INT8 AS total_original_size, \
-         COALESCE(latest.compressed_size, 0)::INT8 AS total_compressed_size, \
+         r.encryption, r.enabled, r.importing, r.import_error, r.import_progress, r.import_total, \
+         r.owner_id, r.visibility, r.sync_schedule, COALESCE(agg.archive_count, 0) AS \
+         archive_count, agg.last_backup_at, COALESCE(latest.original_size, 0)::INT8 AS \
+         total_original_size, COALESCE(latest.compressed_size, 0)::INT8 AS total_compressed_size, \
          COALESCE(latest.deduplicated_size, 0)::INT8 AS total_deduplicated_size, \
          COALESCE(agg.client_count, 0) AS client_count, COALESCE(agg.unmatched_count, 0) AS \
          unmatched_count FROM repos r LEFT JOIN LATERAL (SELECT br.original_size, \
@@ -2720,10 +2738,10 @@ pub async fn get_repo_with_stats(
 ) -> Result<RepoWithStatsRow, ApiError> {
     sqlx::query_as::<_, RepoWithStatsRow>(
         "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.compression, \
-         r.encryption, r.enabled, r.importing, r.import_error, r.owner_id, r.visibility, \
-         r.sync_schedule, COALESCE(agg.archive_count, 0) AS archive_count, agg.last_backup_at, \
-         COALESCE(latest.original_size, 0)::INT8 AS total_original_size, \
-         COALESCE(latest.compressed_size, 0)::INT8 AS total_compressed_size, \
+         r.encryption, r.enabled, r.importing, r.import_error, r.import_progress, r.import_total, \
+         r.owner_id, r.visibility, r.sync_schedule, COALESCE(agg.archive_count, 0) AS \
+         archive_count, agg.last_backup_at, COALESCE(latest.original_size, 0)::INT8 AS \
+         total_original_size, COALESCE(latest.compressed_size, 0)::INT8 AS total_compressed_size, \
          COALESCE(latest.deduplicated_size, 0)::INT8 AS total_deduplicated_size, \
          COALESCE(agg.client_count, 0) AS client_count, COALESCE(agg.unmatched_count, 0) AS \
          unmatched_count FROM repos r LEFT JOIN LATERAL (SELECT br.original_size, \

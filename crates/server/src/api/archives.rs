@@ -79,9 +79,10 @@ pub async fn get_repo_env(
     let passphrase =
         shared::crypto::decrypt_passphrase(&repo.passphrase_encrypted, encryption_key)?;
 
+    let path = repo.repo_path.trim_start_matches('/');
     let borg_repo = format!(
         "ssh://{}@{}:{}/{}",
-        repo.ssh_user, repo.ssh_host, repo.ssh_port, repo.repo_path
+        repo.ssh_user, repo.ssh_host, repo.ssh_port, path
     );
 
     let mut env = HashMap::new();

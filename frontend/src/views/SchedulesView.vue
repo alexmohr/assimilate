@@ -12,6 +12,7 @@ import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useMobile } from '../composables/useMobile'
+import { useToast } from '../composables/useToast'
 import { logger } from '../utils/logger'
 import {
   Plus,
@@ -105,6 +106,7 @@ const { isMobile } = useMobile()
 const showMobileFilters = ref(false)
 
 const runNowLoading = ref<number | null>(null)
+const { success: toastSuccess, error: toastError } = useToast()
 
 function scheduleTypeLabel(t: ScheduleType): string {
   switch (t) {
@@ -278,8 +280,9 @@ async function runNow(s: ScheduleRow): Promise<void> {
   runNowLoading.value = s.id
   try {
     await apiClient.post(`/schedules/${s.id}/run`)
+    toastSuccess(`${scheduleTypeLabel(s.schedule_type)} started.`)
   } catch (e: unknown) {
-    error.value = extractError(e)
+    toastError(extractError(e))
   } finally {
     runNowLoading.value = null
   }

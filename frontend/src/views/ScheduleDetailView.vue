@@ -1187,11 +1187,13 @@ watch(activeTab, (tab) => {
                 class="report-row"
               >
                 <td class="cell-ts">{{ formatDateShort(r.started_at) }}</td>
-                <td class="cell-host">{{
-                  clientMap.get(r.client_id)?.display_name ??
-                  clientMap.get(r.client_id)?.hostname ??
-                  `#${r.client_id}`
-                }}</td>
+                <td class="cell-host">
+                  {{
+                    clientMap.get(r.client_id)?.display_name ??
+                    clientMap.get(r.client_id)?.hostname ??
+                    `#${r.client_id}`
+                  }}
+                </td>
                 <td>
                   <span
                     class="badge"

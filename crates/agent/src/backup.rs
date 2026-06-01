@@ -8,7 +8,7 @@ use std::{
 };
 
 use chrono::Utc;
-use shared::types::{BackupStatus, Compression};
+use shared::types::{BackupStatus, Compression, build_repo_url};
 use tokio::process::Command;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -170,12 +170,11 @@ impl BackupEngine {
     }
 
     fn borg_env(target: &BackupTarget) -> Vec<(String, String)> {
-        let path = target.repo_path.trim_start_matches('/');
-        let repo_url = format!(
-            "ssh://{user}@{host}:{port}/{path}",
-            user = target.ssh_user,
-            host = target.ssh_host,
-            port = target.ssh_port,
+        let repo_url = build_repo_url(
+            &target.ssh_user,
+            &target.ssh_host,
+            target.ssh_port,
+            &target.repo_path,
         );
 
         let mut env = vec![

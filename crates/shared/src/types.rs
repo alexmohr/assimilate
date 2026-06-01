@@ -6,6 +6,13 @@ use std::{fmt, str::FromStr};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+pub fn build_repo_url(ssh_user: &str, ssh_host: &str, ssh_port: u16, repo_path: &str) -> String {
+    format!(
+        "ssh://{ssh_user}@{ssh_host}:{ssh_port}/{}",
+        repo_path.trim_start_matches('/')
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ClientId(pub i64);
 
@@ -503,5 +510,21 @@ mod tests {
         let json = r#"{}"#;
         let p: Partial = serde_json::from_str(json).unwrap();
         assert!(!p.accept_relocation);
+    }
+
+    #[test]
+    fn build_repo_url_strips_leading_slash() {
+        assert_eq!(
+            build_repo_url("root", "host.example.com", 22, "/mnt/backup/borg"),
+            "ssh://root@host.example.com:22/mnt/backup/borg"
+        );
+    }
+
+    #[test]
+    fn build_repo_url_no_leading_slash() {
+        assert_eq!(
+            build_repo_url("borg", "host.example.com", 2222, "mnt/backup/borg"),
+            "ssh://borg@host.example.com:2222/mnt/backup/borg"
+        );
     }
 }

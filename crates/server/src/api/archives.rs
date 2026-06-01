@@ -12,6 +12,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use shared::types::build_repo_url;
 use sqlx::PgPool;
 use tokio::process::Command;
 use tokio_util::io::ReaderStream;
@@ -79,10 +80,11 @@ pub async fn get_repo_env(
     let passphrase =
         shared::crypto::decrypt_passphrase(&repo.passphrase_encrypted, encryption_key)?;
 
-    let path = repo.repo_path.trim_start_matches('/');
-    let borg_repo = format!(
-        "ssh://{}@{}:{}/{}",
-        repo.ssh_user, repo.ssh_host, repo.ssh_port, path
+    let borg_repo = build_repo_url(
+        &repo.ssh_user,
+        &repo.ssh_host,
+        u16::try_from(repo.ssh_port).unwrap_or(22),
+        &repo.repo_path,
     );
 
     let mut env = HashMap::new();

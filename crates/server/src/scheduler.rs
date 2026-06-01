@@ -12,7 +12,7 @@ use shared::{
 use sqlx::PgPool;
 
 use crate::{
-    api::repos::sync_existing_archives,
+    api::repos::sync_new_archives,
     db,
     tunnel::TunnelManager,
     ws::{registry::AgentRegistry, ui_broadcast::UiBroadcast},
@@ -108,8 +108,8 @@ async fn run_repo_sync(pool: &PgPool, encryption_key: &[u8; 32], ui_broadcast: &
         }
 
         let start = std::time::Instant::now();
-        match sync_existing_archives(pool, encryption_key, repo.id, ui_broadcast).await {
-            Ok(imported) => {
+        match sync_new_archives(pool, encryption_key, repo.id, ui_broadcast).await {
+            Ok((added, removed)) => {
                 let elapsed = start.elapsed();
                 let duration_secs = elapsed.as_secs();
 
@@ -124,9 +124,9 @@ async fn run_repo_sync(pool: &PgPool, encryption_key: &[u8; 32], ui_broadcast: &
                     tracing::error!(repo_id = repo.id, error = %e, "failed to clear import_error after sync");
                 }
 
-                if imported > 0 {
+                if added > 0 || removed > 0 {
                     let msg = format!(
-                        "periodic sync for '{}': imported {imported} new archives in \
+                        "periodic sync for '{}': added {added}, removed {removed} archives in \
                          {duration_secs}s",
                         repo.name
                     );

@@ -105,6 +105,9 @@ pub fn classify_borg_error(exit_code: i32, stderr: &str) -> ApiError {
     if exit_code == 1 && stderr.to_lowercase().contains("lock") {
         return ApiError::Conflict("repository is locked by another operation".to_string());
     }
+    if stderr.contains("Archive") && stderr.contains("does not exist") {
+        return ApiError::NotFound(format!("archive not found: {stderr}"));
+    }
     if stderr.contains("Connection refused")
         || stderr.contains("Connection timed out")
         || stderr.contains("ssh: connect to host")
@@ -231,7 +234,8 @@ pub async fn list_archives(
     let rows = sqlx::query_as::<_, Row>(
         "SELECT br.archive_name, br.started_at, br.original_size, br.deduplicated_size, \
          br.matched, c.hostname AS client_hostname FROM backup_reports br JOIN clients c ON c.id \
-         = br.client_id WHERE br.repo_id = $1 ORDER BY br.started_at DESC",
+         = br.client_id WHERE br.repo_id = $1 AND br.archive_name IS NOT NULL AND br.status IN \
+         ('success', 'warning') ORDER BY br.started_at DESC",
     )
     .bind(repo_id)
     .fetch_all(&state.pool)

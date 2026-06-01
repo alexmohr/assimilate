@@ -985,8 +985,6 @@ async fn run_borg_list_with_retry(
         let output = Command::new(borg_binary())
             .arg("list")
             .arg("--json")
-            .arg("--format")
-            .arg("{hostname}")
             .arg("--lock-wait")
             .arg(LOCK_WAIT_SECS)
             .arg(borg_repo)

@@ -3130,7 +3130,7 @@ async fn bulk_insert_backup_reports_basic(pool: PgPool) {
         .unwrap();
     assert_eq!(affected, 2);
 
-    let reports = db::list_backup_reports_for_repo(&pool, repo.id, None, None, 100, 0)
+    let reports = db::list_reports_for_client(&pool, client.id, None, 100)
         .await
         .unwrap();
     assert_eq!(reports.len(), 2);
@@ -3171,7 +3171,7 @@ async fn bulk_insert_backup_reports_conflict_skipped(pool: PgPool) {
         .unwrap();
     assert_eq!(affected, 0);
 
-    let reports = db::list_backup_reports_for_repo(&pool, repo.id, None, None, 100, 0)
+    let reports = db::list_reports_for_client(&pool, client.id, None, 100)
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);

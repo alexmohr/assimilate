@@ -185,6 +185,8 @@ impl BackupEngine {
                 "BORG_RSH".to_owned(),
                 "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new".to_owned(),
             ),
+            ("LANG".to_owned(), "en_US.UTF-8".to_owned()),
+            ("LC_CTYPE".to_owned(), "en_US.UTF-8".to_owned()),
         ];
 
         if target.accept_relocation {
@@ -236,28 +238,35 @@ impl BackupEngine {
         match exit_code {
             0 => {
                 let stats = parse_json_stats(&output.stdout)?;
+                let warnings = parse_warnings(&stderr);
+                let status = if warnings.is_empty() {
+                    BackupStatus::Success
+                } else {
+                    BackupStatus::Warning
+                };
                 Ok(CreateResult {
-                    status: BackupStatus::Success,
+                    status,
                     original_size: stats.original_size,
                     compressed_size: stats.compressed_size,
                     deduplicated_size: stats.deduplicated_size,
                     files_processed: stats.files_processed,
                     error_message: None,
-                    warnings: Vec::new(),
+                    warnings,
                     archive_name,
                 })
             }
-            1 if stderr.contains("file changed while we") => {
-                warn!("Borg reported file-changed warning: {stderr}");
-                let stats = parse_json_stats(&output.stdout)?;
+            1 if stderr_has_warnings(&stderr) => {
                 let warnings = parse_warnings(&stderr);
+                let summary = warnings.join("; ");
+                warn!("Borg reported warnings: {summary}");
+                let stats = parse_json_stats(&output.stdout)?;
                 Ok(CreateResult {
                     status: BackupStatus::Warning,
                     original_size: stats.original_size,
                     compressed_size: stats.compressed_size,
                     deduplicated_size: stats.deduplicated_size,
                     files_processed: stats.files_processed,
-                    error_message: Some(stderr.into_owned()),
+                    error_message: Some(summary),
                     warnings,
                     archive_name,
                 })
@@ -280,6 +289,7 @@ impl BackupEngine {
             "600".to_owned(),
             "--show-rc".to_owned(),
             "--json".to_owned(),
+            "--log-json".to_owned(),
             "--compression".to_owned(),
             Self::compression_arg(&target.compression),
             "--exclude-caches".to_owned(),
@@ -317,6 +327,7 @@ impl BackupEngine {
             "600",
             "--list",
             "--show-rc",
+            "--log-json",
             "-a",
             &glob_pattern,
             "--keep-daily",
@@ -355,6 +366,14 @@ impl BackupEngine {
             )));
         }
 
+        if exit_code == 1 {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let warnings = parse_warnings(&stderr);
+            if !warnings.is_empty() {
+                warn!("borg prune warnings: {}", warnings.join("; "));
+            }
+        }
+
         Ok(())
     }
 
@@ -366,7 +385,7 @@ impl BackupEngine {
         let output = tokio::time::timeout(
             Duration::from_mins(5),
             Command::new(&self.borg_binary)
-                .args(["compact", "--lock-wait", "600"])
+                .args(["compact", "--lock-wait", "600", "--log-json"])
                 .envs(env_vars.iter().map(|(k, v)| (k.as_str(), v.as_str())))
                 .envs(self.extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
                 .output(),
@@ -382,6 +401,14 @@ impl BackupEngine {
             )));
         }
 
+        if exit_code == 1 {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let warnings = parse_warnings(&stderr);
+            if !warnings.is_empty() {
+                warn!("borg compact warnings: {}", warnings.join("; "));
+            }
+        }
+
         Ok(())
     }
 
@@ -393,7 +420,7 @@ impl BackupEngine {
         let output = tokio::time::timeout(
             Duration::from_mins(5),
             Command::new(&self.borg_binary)
-                .args(["check", "--lock-wait", "600", "--show-rc"])
+                .args(["check", "--lock-wait", "600", "--show-rc", "--log-json"])
                 .envs(env_vars.iter().map(|(k, v)| (k.as_str(), v.as_str())))
                 .envs(self.extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
                 .output(),
@@ -411,7 +438,10 @@ impl BackupEngine {
 
         if exit_code == 1 {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!("borg check returned warnings: {stderr}");
+            let warnings = parse_warnings(&stderr);
+            if !warnings.is_empty() {
+                warn!("borg check warnings: {}", warnings.join("; "));
+            }
         }
 
         info!(target = %target.target_name, "borg check completed");
@@ -676,12 +706,42 @@ fn parse_json_stats(stdout: &[u8]) -> Result<ParsedStats, BackupError> {
     })
 }
 
-fn parse_warnings(stderr: &str) -> Vec<String> {
+pub(crate) fn parse_warnings(stderr: &str) -> Vec<String> {
     stderr
         .lines()
-        .filter(|line| line.contains("file changed") || line.starts_with("WARNING"))
-        .map(std::borrow::ToOwned::to_owned)
+        .filter_map(|line| {
+            let value: serde_json::Value = serde_json::from_str(line).ok()?;
+            let msg_type = value.get("type")?.as_str()?;
+            if msg_type != "log_message" {
+                return None;
+            }
+            let level = value.get("levelname").and_then(serde_json::Value::as_str);
+            match level {
+                Some("WARNING" | "ERROR") => value
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .map(std::borrow::ToOwned::to_owned),
+                Some(_) | None => None,
+            }
+        })
         .collect()
+}
+
+pub(crate) fn stderr_has_warnings(stderr: &str) -> bool {
+    stderr.lines().any(|line| {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            return false;
+        };
+        let is_log = value
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|t| t == "log_message");
+        let is_warning = value
+            .get("levelname")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|l| l == "WARNING" || l == "ERROR");
+        is_log && is_warning
+    })
 }
 
 #[cfg(test)]
@@ -792,8 +852,8 @@ mod tests {
                 .contains("file changed")
         );
         assert_eq!(result.warnings.len(), 2);
-        assert!(result.warnings[0].contains("file changed"));
-        assert!(result.warnings[1].starts_with("WARNING"));
+        assert!(result.warnings[0].contains("file changed while we backed it up"));
+        assert!(result.warnings[1].contains("file changed while we backed it up"));
     }
 
     #[tokio::test]
@@ -878,5 +938,57 @@ mod tests {
         assert_eq!(stats.compressed_size, 80);
         assert_eq!(stats.deduplicated_size, 50);
         assert_eq!(stats.files_processed, 42);
+    }
+
+    #[test]
+    fn test_parse_warnings_json() {
+        let stderr = [
+            concat!(
+                r#"{"type": "log_message", "time": 1704067200, "#,
+                r#""levelname": "WARNING", "name": "borg.archive", "#,
+                r#""msgid": "FileChangedWarning", "#,
+                r#""message": "/tmp/test.log: file changed"}"#,
+            ),
+            concat!(
+                r#"{"type": "log_message", "time": 1704067200, "#,
+                r#""levelname": "INFO", "name": "borg.archive", "#,
+                r#""message": "some info"}"#,
+            ),
+            concat!(
+                r#"{"type": "log_message", "time": 1704067200, "#,
+                r#""levelname": "ERROR", "name": "borg.archive", "#,
+                r#""msgid": "BackupError", "#,
+                r#""message": "some error"}"#,
+            ),
+        ]
+        .join("\n");
+
+        let warnings = parse_warnings(&stderr);
+        assert_eq!(warnings.len(), 2);
+        assert!(warnings[0].contains("file changed"));
+        assert_eq!(warnings[1], "some error");
+    }
+
+    #[test]
+    fn test_parse_warnings_ignores_non_log_types() {
+        let stderr = [
+            r#"{"type": "archive_progress", "original_size": 100}"#,
+            r#"{"type": "file_status", "status": "A", "path": "/a"}"#,
+        ]
+        .join("\n");
+
+        let warnings = parse_warnings(&stderr);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_stderr_has_warnings_json() {
+        let with_warning = r#"{"type": "log_message", "levelname": "WARNING", "message": "oops"}"#;
+        assert!(stderr_has_warnings(with_warning));
+
+        let without_warning = r#"{"type": "log_message", "levelname": "INFO", "message": "ok"}"#;
+        assert!(!stderr_has_warnings(without_warning));
+
+        assert!(!stderr_has_warnings("plain text warning"));
     }
 }

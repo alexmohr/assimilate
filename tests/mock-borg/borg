@@ -17,8 +17,13 @@ SUBCOMMAND="${1:-}"
 case "$SUBCOMMAND" in
   create)
     if [[ "${MOCK_BORG_SIMULATE_WARNING:-0}" == "1" ]]; then
-      printf '%s\n' '/tmp/test.log: file changed while we backed it up' >&2
-      printf '%s\n' 'WARNING: /var/log/syslog: file changed while we backed it up' >&2
+      if [[ " $* " == *" --log-json "* ]]; then
+        printf '%s\n' '{"type": "log_message", "time": 1704067200, "levelname": "WARNING", "name": "borg.archive", "msgid": "FileChangedWarning", "message": "/tmp/test.log: file changed while we backed it up"}' >&2
+        printf '%s\n' '{"type": "log_message", "time": 1704067200, "levelname": "WARNING", "name": "borg.archive", "msgid": "FileChangedWarning", "message": "/var/log/syslog: file changed while we backed it up"}' >&2
+      else
+        printf '%s\n' '/tmp/test.log: file changed while we backed it up' >&2
+        printf '%s\n' 'WARNING: /var/log/syslog: file changed while we backed it up' >&2
+      fi
     fi
 
     if [[ " $* " == *" --json "* ]]; then

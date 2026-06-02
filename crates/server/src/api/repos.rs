@@ -230,12 +230,7 @@ pub async fn create_repo(
                     }
                 }
                 Err(e) => {
-                    let msg = format!("{e}");
-                    warn!(repo_id, error = %msg, "deferred borg info failed");
-                    let _ = db::set_repo_import_error(&pool, repo_id, Some(&msg)).await;
-                    let _ = db::set_repo_importing(&pool, repo_id, false).await;
-                    ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
-                    return;
+                    warn!(repo_id, error = %e, "deferred borg info failed, continuing to archive sync");
                 }
             }
         }
@@ -1001,12 +996,17 @@ async fn run_borg_list_with_retry(
     let borg = borg_binary();
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
         debug!(
-            cmd = %format!("{borg} list --json --lock-wait {LOCK_WAIT_SECS} {borg_repo}"),
+            cmd = %format!(
+                "{borg} list --json --format {{hostname}}{{end}} \
+                 --lock-wait {LOCK_WAIT_SECS} {borg_repo}"
+            ),
             "running borg command"
         );
         let output = Command::new(borg_binary())
             .arg("list")
             .arg("--json")
+            .arg("--format")
+            .arg("{hostname}{end}")
             .arg("--lock-wait")
             .arg(LOCK_WAIT_SECS)
             .arg(borg_repo)

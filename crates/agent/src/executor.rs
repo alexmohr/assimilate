@@ -592,10 +592,13 @@ async fn run_init_repo_task(
     let mut cmd = tokio::process::Command::new(&borg_binary);
     cmd.args(["init", "--encryption", encryption.as_borg_arg(), repo_url])
         .env("BORG_PASSPHRASE", passphrase)
+        .env("BORG_DISPLAY_PASSPHRASE", "no")
         .env(
             "BORG_RSH",
             "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
-        );
+        )
+        .env("LANG", "en_US.UTF-8")
+        .env("LC_CTYPE", "en_US.UTF-8");
 
     if let Some(sock) = &ssh_forward_target.ssh_auth_sock {
         cmd.env("SSH_AUTH_SOCK", sock);
@@ -1050,6 +1053,7 @@ async fn run_restore_task(
 
     let mut args = vec![
         "extract".to_owned(),
+        "--log-json".to_owned(),
         format!("::{archive_name}"),
         "--destination".to_owned(),
         target_path,
@@ -1106,6 +1110,14 @@ async fn run_restore_task(
             tracing::debug!(error = %send_err, "outbound send failed");
         }
         return;
+    }
+
+    if exit_code == 1 {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let warnings = crate::backup::parse_warnings(&stderr);
+        if !warnings.is_empty() {
+            warn!(repo_id = ?repo_id, "borg extract warnings: {}", warnings.join("; "));
+        }
     }
 
     let files_restored = u64::try_from(paths.len()).unwrap_or(0);
@@ -1227,18 +1239,29 @@ fn parse_dry_run_output(stderr: &str) -> (Vec<DryRunFile>, i64) {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
-        let Some(path) = value.get("path").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        let size = value
-            .get("size")
-            .and_then(serde_json::Value::as_i64)
-            .unwrap_or(0);
-        total_size = total_size.saturating_add(size);
-        files.push(DryRunFile {
-            path: path.to_owned(),
-            size,
-        });
+
+        let event_type = value.get("type").and_then(serde_json::Value::as_str);
+
+        match event_type {
+            Some("file_status") => {
+                let Some(path) = value.get("path").and_then(serde_json::Value::as_str) else {
+                    continue;
+                };
+                files.push(DryRunFile {
+                    path: path.to_owned(),
+                    size: 0,
+                });
+            }
+            Some("archive_progress") => {
+                if let Some(size) = value
+                    .get("original_size")
+                    .and_then(serde_json::Value::as_i64)
+                {
+                    total_size = size;
+                }
+            }
+            Some(_) | None => {}
+        }
     }
 
     (files, total_size)
@@ -1270,6 +1293,8 @@ fn build_borg_env(target: &BackupTarget) -> Vec<(String, String)> {
             "BORG_RSH".to_owned(),
             "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new".to_owned(),
         ),
+        ("LANG".to_owned(), "en_US.UTF-8".to_owned()),
+        ("LC_CTYPE".to_owned(), "en_US.UTF-8".to_owned()),
     ];
 
     if target.accept_relocation {
@@ -1287,4 +1312,93 @@ fn build_borg_env(target: &BackupTarget) -> Vec<(String, String)> {
     }
 
     env
+}
+
+#[cfg(test)]
+#[allow(clippy::indexing_slicing)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_dry_run_file_status_and_archive_progress() {
+        let stderr = [
+            r#"{"type": "file_status", "status": "A", "path": "/home/user/doc.txt"}"#,
+            concat!(
+                r#"{"type": "archive_progress", "#,
+                r#""original_size": 500, "compressed_size": 300, "#,
+                r#""deduplicated_size": 200, "nfiles": 1, "#,
+                r#""path": "/home/user/doc.txt"}"#,
+            ),
+            r#"{"type": "file_status", "status": "U", "path": "/home/user/photo.jpg"}"#,
+            concat!(
+                r#"{"type": "archive_progress", "#,
+                r#""original_size": 10240, "compressed_size": 8000, "#,
+                r#""deduplicated_size": 5000, "nfiles": 2, "#,
+                r#""path": "/home/user/photo.jpg", "finished": true}"#,
+            ),
+        ]
+        .join("\n");
+
+        let (files, total_size) = parse_dry_run_output(&stderr);
+
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].path, "/home/user/doc.txt");
+        assert_eq!(files[0].size, 0);
+        assert_eq!(files[1].path, "/home/user/photo.jpg");
+        assert_eq!(files[1].size, 0);
+        assert_eq!(total_size, 10240);
+    }
+
+    #[test]
+    fn parse_dry_run_file_status_only() {
+        let stderr = [
+            r#"{"type": "file_status", "status": "A", "path": "/etc/hostname"}"#,
+            r#"{"type": "file_status", "status": "A", "path": "/etc/passwd"}"#,
+        ]
+        .join("\n");
+
+        let (files, total_size) = parse_dry_run_output(&stderr);
+
+        assert_eq!(files.len(), 2);
+        assert_eq!(total_size, 0);
+    }
+
+    #[test]
+    fn parse_dry_run_ignores_non_json_lines() {
+        let stderr = [
+            "not json",
+            r#"{"type": "file_status", "status": "A", "path": "/a"}"#,
+            "some garbage",
+        ]
+        .join("\n");
+
+        let (files, total_size) = parse_dry_run_output(&stderr);
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "/a");
+        assert_eq!(total_size, 0);
+    }
+
+    #[test]
+    fn parse_dry_run_ignores_log_messages() {
+        let stderr = [
+            r#"{"type": "log_message", "levelname": "WARNING", "message": "something"}"#,
+            r#"{"type": "file_status", "status": "A", "path": "/b"}"#,
+        ]
+        .join("\n");
+
+        let (files, total_size) = parse_dry_run_output(&stderr);
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "/b");
+        assert_eq!(total_size, 0);
+    }
+
+    #[test]
+    fn parse_dry_run_empty_input() {
+        let (files, total_size) = parse_dry_run_output("");
+
+        assert!(files.is_empty());
+        assert_eq!(total_size, 0);
+    }
 }

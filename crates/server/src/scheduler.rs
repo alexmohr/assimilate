@@ -13,6 +13,7 @@ use sqlx::PgPool;
 
 use crate::{
     api::repos::sync_new_archives,
+    config_assembler,
     db,
     tunnel::TunnelManager,
     ws::{registry::AgentRegistry, ui_broadcast::UiBroadcast},
@@ -39,7 +40,7 @@ pub async fn run(
         let mut interval = tokio::time::interval(TICK_INTERVAL);
         loop {
             interval.tick().await;
-            if let Err(e) = tick(&schedule_pool, &registry, &tunnel_manager).await {
+            if let Err(e) = tick(&schedule_pool, &registry, &encryption_key, &tunnel_manager).await {
                 tracing::error!(error = %e, "scheduler tick failed");
             }
         }
@@ -209,6 +210,7 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
 async fn tick(
     pool: &PgPool,
     registry: &AgentRegistry,
+    encryption_key: &[u8; 32],
     tunnel_manager: &TunnelManager,
 ) -> Result<(), crate::error::ApiError> {
     let now = Utc::now();
@@ -258,6 +260,30 @@ async fn tick(
         tunnel_manager
             .ensure_client_tunnel_connected(schedule.client_id)
             .await;
+
+        // Push the current config before triggering so the agent always runs
+        // with the latest global excludes, not a potentially stale cached version.
+        match config_assembler::assemble_config(pool, encryption_key, &schedule.hostname).await {
+            Ok(config) => {
+                let config_msg = ServerToAgent::ConfigUpdate(config);
+                if let Err(e) = registry.send_to(&schedule.hostname, config_msg).await {
+                    tracing::warn!(
+                        hostname = %schedule.hostname,
+                        error = %e,
+                        "agent not connected for pre-run config push, skipping trigger"
+                    );
+                    continue;
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    hostname = %schedule.hostname,
+                    error = %e,
+                    "failed to assemble config before scheduled run, skipping trigger"
+                );
+                continue;
+            }
+        }
 
         match registry.send_to(&schedule.hostname, msg).await {
             Ok(()) => {

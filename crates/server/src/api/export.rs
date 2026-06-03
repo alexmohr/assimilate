@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::process::Stdio;
-
 use axum::{
     body::Body,
     extract::{Path as AxumPath, Query, State},
@@ -11,15 +9,15 @@ use axum::{
 };
 use lz4_flex::frame::FrameEncoder;
 use serde::Deserialize;
-use tokio::{io::AsyncReadExt, process::Command};
+use tokio::io::AsyncReadExt;
 use tokio_util::io::{ReaderStream, SyncIoBridge};
 
 use super::{
-    archives::{LOCK_WAIT_SECS, borg_binary, get_repo_env},
+    archives::{LOCK_WAIT_SECS, get_repo_env},
     auth::AuthUser,
     permissions::check_repo_permission,
 };
-use crate::{AppState, error::ApiError};
+use crate::{AppState, borg::Borg, error::ApiError};
 
 #[derive(Debug, Deserialize)]
 pub struct ExportQuery {
@@ -96,27 +94,22 @@ pub async fn export_archive(
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
     let repo_archive = format!("{borg_repo}::{archive_name}");
 
-    let mut borg_cmd = Command::new(borg_binary());
-    borg_cmd
-        .arg("export-tar")
-        .arg("--lock-wait")
-        .arg(LOCK_WAIT_SECS)
-        .arg(&repo_archive)
-        .arg("-")
-        .envs(&env)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-
+    let mut args = vec![
+        "export-tar".to_owned(),
+        "--lock-wait".to_owned(),
+        LOCK_WAIT_SECS.to_owned(),
+        repo_archive,
+        "-".to_owned(),
+    ];
     if let Some(ref p) = query.path {
-        borg_cmd.arg(p);
+        args.push(p.clone());
     }
 
-    let mut borg = borg_cmd
-        .spawn()
+    let mut child = Borg::new()
+        .spawn(&args, &env)
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
 
-    let borg_stdout = borg
+    let borg_stdout = child
         .stdout
         .take()
         .ok_or_else(|| ApiError::Internal("failed to capture borg stdout".to_string()))?;
@@ -127,7 +120,7 @@ pub async fn export_archive(
         let mut stdout = borg_stdout;
         let mut buf = Vec::new();
         let read_result = stdout.read_to_end(&mut buf).await;
-        let _r = borg.wait().await;
+        let _r = child.wait().await;
 
         if read_result.is_ok() {
             let bridge = SyncIoBridge::new(writer);

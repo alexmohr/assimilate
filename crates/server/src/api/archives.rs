@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::{collections::HashMap, path::Path, process::Stdio, time::Duration};
+use std::{collections::HashMap, path::Path, time::Duration};
 
 use axum::{
     Json,
@@ -14,18 +14,13 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use shared::types::build_repo_url;
 use sqlx::PgPool;
-use tokio::process::Command;
 use tokio_util::io::ReaderStream;
 
 use super::{auth::AuthUser, permissions::check_repo_permission};
-use crate::{AppState, db, error::ApiError};
+use crate::{AppState, borg::Borg, db, error::ApiError};
 
 const EXTRACT_TIMEOUT: Duration = Duration::from_secs(300);
 pub const LOCK_WAIT_SECS: &str = "60";
-
-pub fn borg_binary() -> String {
-    std::env::var("BORG_BINARY").unwrap_or_else(|_| "borg".to_string())
-}
 
 pub fn validate_path(path: &str) -> Result<(), ApiError> {
     if path.is_empty() {
@@ -294,16 +289,17 @@ pub async fn archive_info(
 
     let repo_archive = format!("{borg_repo}::{archive_name}");
 
-    let output = Command::new(borg_binary())
-        .arg("info")
-        .arg("--json")
-        .arg("--lock-wait")
-        .arg(LOCK_WAIT_SECS)
-        .arg(&repo_archive)
-        .envs(&env)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
+    let output = Borg::new()
+        .run(
+            &[
+                "info",
+                "--json",
+                "--lock-wait",
+                LOCK_WAIT_SECS,
+                repo_archive.as_str(),
+            ],
+            &env,
+        )
         .await
         .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
 
@@ -376,20 +372,18 @@ pub async fn list_contents(
 
     let repo_archive = format!("{borg_repo}::{archive_name}");
 
-    let mut cmd = Command::new(borg_binary());
-    cmd.arg("list")
-        .arg("--json-lines")
-        .arg("--lock-wait")
-        .arg(LOCK_WAIT_SECS)
-        .arg(&repo_archive);
+    let mut args: Vec<&str> = vec![
+        "list",
+        "--json-lines",
+        "--lock-wait",
+        LOCK_WAIT_SECS,
+        repo_archive.as_str(),
+    ];
     if let Some(p) = path {
-        cmd.arg(p);
+        args.push(p);
     }
-    let output = cmd
-        .envs(&env)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
+    let output = Borg::new()
+        .run(&args, &env)
         .await
         .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
 
@@ -456,18 +450,18 @@ pub async fn extract_file(
 
     let repo_archive = format!("{borg_repo}::{archive_name}");
 
-    let mut child = Command::new(borg_binary())
-        .arg("extract")
-        .arg("--stdout")
-        .arg("--lock-wait")
-        .arg(LOCK_WAIT_SECS)
-        .arg(&repo_archive)
-        .arg(&query.path)
-        .envs(&env)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
+    let mut child = Borg::new()
+        .spawn(
+            &[
+                "extract",
+                "--stdout",
+                "--lock-wait",
+                LOCK_WAIT_SECS,
+                repo_archive.as_str(),
+                query.path.as_str(),
+            ],
+            &env,
+        )
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
 
     let stdout = child

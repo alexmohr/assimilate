@@ -32,11 +32,11 @@ done
 
 echo "==> Cleaning up existing demo data (idempotent re-run)..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<'SQL' > /dev/null 2>&1
-DELETE FROM backup_reports WHERE client_id IN (SELECT id FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver (imported)','legacy-db-prod (imported)'));
+DELETE FROM backup_reports WHERE client_id IN (SELECT id FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod'));
 DELETE FROM schedules WHERE id IN (SELECT st.schedule_id FROM schedule_targets st JOIN clients c ON c.id = st.client_id WHERE c.hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM ssh_tunnels WHERE client_id IN (SELECT id FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM client_hostname_patterns WHERE client_id IN (SELECT id FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
-DELETE FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver (imported)','legacy-db-prod (imported)');
+DELETE FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod');
 DELETE FROM repo_quotas WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly'));
 DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly'));
 DELETE FROM notification_rules;
@@ -120,79 +120,106 @@ api PUT "/api/repos/3" "{
 
 echo "==> Creating sample borg archives for browsing/diff..."
 
-# Helper: create borg archive with spoofed hostname metadata.
+# Helper: create borg archive with spoofed hostname metadata and a back-dated
+# archive timestamp.
 # Borg 1.x stores socket.gethostname() in archive metadata with no env override,
-# so we monkey-patch it via Python before invoking borg's main().
-# Usage: borg_create_as <hostname> <repo::archive> <source_path>
+# so we monkey-patch it via Python before invoking borg's main(). We also pass
+# `--timestamp` so the archive's recorded start/end matches the historical date
+# encoded in its name -- otherwise every archive would record "now", and all the
+# imported history (trends, calendar, activity) would collapse onto today.
+#
+# This is deliberate: the demo seeds NO backup_reports manually. Every archive,
+# size, count, and date the UI shows is derived from real borg state via repo
+# import/sync -- borg info/list are the single source of truth.
+#
+# Usage: borg_create_as <hostname> <repo::archive> <source_path> <timestamp>
 borg_create_as() {
-    local fake_host="$1" repo_archive="$2" source_path="$3"
+    local fake_host="$1" repo_archive="$2" source_path="$3" timestamp="$4"
     su -c "cd $source_path && BORG_PASSPHRASE=demo-passphrase-123 python3 -c \"
 import socket, platform, sys
 socket.gethostname = lambda: '$fake_host'
 platform.node = lambda: '$fake_host'
 from borg.archiver import main
-sys.argv = ['borg', 'create', '$repo_archive', '.']
+sys.argv = ['borg', 'create', '--timestamp', '$timestamp', '$repo_archive', '.']
 sys.exit(main())
 \"" borg
 }
 
-for i in 1 2 3; do
-    ARCHIVE_DATE=$(date -u -d "$i days ago" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -v-"${i}"d +%Y-%m-%dT%H:%M:%S)
+# server-daily: 30 days of daily web-server-01 backups.
+for i in $(seq 1 30); do
+    ARCHIVE_DATE=$(date -u -d "$i days ago" +%Y-%m-%dT02:00:00 2>/dev/null || date -u -v-"${i}"d +%Y-%m-%dT02:00:00)
     ARCHIVE_DIR=$(mktemp -d)
     chmod 755 "$ARCHIVE_DIR"
     mkdir -p "$ARCHIVE_DIR/var/www/html" "$ARCHIVE_DIR/etc/nginx/conf.d"
     echo "<html><body>Version $i</body></html>" > "$ARCHIVE_DIR/var/www/html/index.html"
     echo "server { listen 80; }" > "$ARCHIVE_DIR/etc/nginx/conf.d/default.conf"
     dd if=/dev/urandom of="$ARCHIVE_DIR/var/www/html/app.js" bs=1024 count=$((50 + i * 10)) 2>/dev/null
-    borg_create_as "web-server-01" "/backup/repos/server-daily::web-server-01-backup-$ARCHIVE_DATE" "$ARCHIVE_DIR"
+    borg_create_as "web-server-01" "/backup/repos/server-daily::web-server-01-backup-$ARCHIVE_DATE" "$ARCHIVE_DIR" "$ARCHIVE_DATE"
     rm -rf "$ARCHIVE_DIR"
 done
 
-for i in 1 2; do
-    ARCHIVE_DATE=$(date -u -d "$i hours ago" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -v-"${i}"H +%Y-%m-%dT%H:%M:%S)
+# database-hourly: 48 hours of hourly db-server-01 backups.
+for i in $(seq 1 48); do
+    ARCHIVE_DATE=$(date -u -d "$i hours ago" +%Y-%m-%dT%H:00:00 2>/dev/null || date -u -v-"${i}"H +%Y-%m-%dT%H:00:00)
     ARCHIVE_DIR=$(mktemp -d)
     chmod 755 "$ARCHIVE_DIR"
     mkdir -p "$ARCHIVE_DIR/tmp" "$ARCHIVE_DIR/var/lib/postgresql"
     echo "-- pg_dump output v$i" > "$ARCHIVE_DIR/tmp/mydb.sql"
     dd if=/dev/urandom of="$ARCHIVE_DIR/var/lib/postgresql/data.bin" bs=1024 count=$((100 + i * 20)) 2>/dev/null
-    borg_create_as "db-server-01" "/backup/repos/database-hourly::db-server-01-backup-$ARCHIVE_DATE" "$ARCHIVE_DIR"
+    borg_create_as "db-server-01" "/backup/repos/database-hourly::db-server-01-backup-$ARCHIVE_DATE" "$ARCHIVE_DIR" "$ARCHIVE_DATE"
     rm -rf "$ARCHIVE_DIR"
 done
 
-for i in 1 2; do
-    ARCHIVE_DATE=$(date -u -d "$((i + 3)) days ago" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -v-"$((i + 3))"d +%Y-%m-%dT%H:%M:%S)
+# media-weekly: 12 weeks of weekly media-store-01 backups.
+for i in $(seq 1 12); do
+    ARCHIVE_DATE=$(date -u -d "$((i * 7)) days ago" +%Y-%m-%dT03:00:00 2>/dev/null || date -u -v-"$((i * 7))"d +%Y-%m-%dT03:00:00)
     ARCHIVE_DIR=$(mktemp -d)
     chmod 755 "$ARCHIVE_DIR"
     mkdir -p "$ARCHIVE_DIR/mnt/media/photos" "$ARCHIVE_DIR/mnt/media/videos"
     dd if=/dev/urandom of="$ARCHIVE_DIR/mnt/media/photos/img_$i.jpg" bs=1024 count=$((200 + i * 50)) 2>/dev/null
     dd if=/dev/urandom of="$ARCHIVE_DIR/mnt/media/videos/clip_$i.mp4" bs=1024 count=$((500 + i * 100)) 2>/dev/null
-    borg_create_as "media-store-01" "/backup/repos/media-weekly::media-store-01-backup-$ARCHIVE_DATE" "$ARCHIVE_DIR"
+    borg_create_as "media-store-01" "/backup/repos/media-weekly::media-store-01-backup-$ARCHIVE_DATE" "$ARCHIVE_DIR" "$ARCHIVE_DATE"
     rm -rf "$ARCHIVE_DIR"
 done
 
 echo "==> Creating unmatched archives (unknown hostnames)..."
-UNMATCHED_DATE=$(date -u -d "5 days ago" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -v-5d +%Y-%m-%dT%H:%M:%S)
-for repo in server-daily database-hourly; do
-    ARCHIVE_DIR=$(mktemp -d)
-    chmod 755 "$ARCHIVE_DIR"
-    mkdir -p "$ARCHIVE_DIR/tmp"
-    echo "old backup data" > "$ARCHIVE_DIR/tmp/data.txt"
-    borg_create_as "unknown-legacy-host" "/backup/repos/$repo::unknown-host-backup-$UNMATCHED_DATE" "$ARCHIVE_DIR"
-    rm -rf "$ARCHIVE_DIR"
-done
+# Hostnames that don't match any registered host or pattern. On import these
+# resolve to auto-created, unmatched ("imported") clients -- demonstrating the
+# unmatched-archive scenario entirely from real borg data.
+UNMATCHED_DATE=$(date -u -d "5 days ago" +%Y-%m-%dT04:00:00 2>/dev/null || date -u -v-5d +%Y-%m-%dT04:00:00)
+create_unmatched_archive() {
+    local repo="$1" fake_host="$2"
+    local dir
+    dir=$(mktemp -d)
+    chmod 755 "$dir"
+    mkdir -p "$dir/tmp"
+    echo "old backup data" > "$dir/tmp/data.txt"
+    borg_create_as "$fake_host" "/backup/repos/$repo::${fake_host}-backup-$UNMATCHED_DATE" "$dir" "$UNMATCHED_DATE"
+    rm -rf "$dir"
+}
+create_unmatched_archive server-daily old-webserver
+create_unmatched_archive database-hourly legacy-db-prod
 
-echo "==> Waiting for repo import to settle..."
-for _attempt in $(seq 1 60); do
-    still=$(curl -sf "$BASE_URL/api/repos" -H "$AUTH_HEADER" \
-        | jq '[.[] | select(.importing == true)] | length' 2>/dev/null || echo 1)
-    [ "$still" = "0" ] && break
-    sleep 2
-done
+# Blocks until no repo reports importing == true (sync runs in the background).
+wait_for_imports() {
+    for _attempt in $(seq 1 120); do
+        still=$(curl -sf "$BASE_URL/api/repos" -H "$AUTH_HEADER" \
+            | jq '[.[] | select(.importing == true)] | length' 2>/dev/null || echo 1)
+        [ "$still" = "0" ] && break
+        sleep 2
+    done
+}
+
+echo "==> Waiting for registration-time import to settle..."
+wait_for_imports
 
 echo "==> Syncing repos to import borg archives..."
 api POST /api/repos/1/sync > /dev/null
 api POST /api/repos/2/sync > /dev/null
 api POST /api/repos/3/sync > /dev/null
+
+echo "==> Waiting for archive import to complete..."
+wait_for_imports
 
 echo "==> Fetching IDs..."
 WEB01_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM clients WHERE hostname='web-server-01'")
@@ -280,126 +307,14 @@ echo "==> Creating groups..."
 api POST "/api/groups" '{"name":"backend-team","description":"Backend infrastructure engineers"}' > /dev/null 2>&1 || true
 api POST "/api/groups" '{"name":"data-team","description":"Database and analytics team"}' > /dev/null 2>&1 || true
 
-echo "==> Adding hostname aliases for unmatched archive scenario..."
-PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
-INSERT INTO clients (hostname, display_name, agent_token_hash)
-VALUES
-    ('old-webserver (imported)', NULL, 'imported:no-auth'),
-    ('legacy-db-prod (imported)', NULL, 'imported:no-auth')
-ON CONFLICT (hostname) DO NOTHING;
-
--- Mark one imported client as hidden to demonstrate the hide feature
-UPDATE clients SET is_hidden = true WHERE hostname = 'legacy-db-prod (imported)';
-SQL
-
+echo "==> Configuring hostname pattern matching..."
+# Demonstrates pattern-based host matching: archives from any 'web-server-*'
+# host resolve to web-server-01.
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
 INSERT INTO client_hostname_patterns (client_id, pattern)
 SELECT id, 'web-server-*' FROM clients WHERE hostname='web-server-01'
 ON CONFLICT DO NOTHING;
 SQL
-
-echo "==> Inserting backup report history..."
-PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
-INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, original_size, compressed_size, deduplicated_size, files_processed, duration_secs, error_message, warnings, borg_version, matched)
-SELECT
-    $WEB01_ID, $REPO_DAILY_ID,
-    NOW() - (n || ' days')::interval - interval '2 hours',
-    NOW() - (n || ' days')::interval - interval '2 hours' + (120 + (random() * 180)::int || ' seconds')::interval,
-    CASE
-        WHEN n = 3 THEN 'warning'
-        WHEN n = 7 THEN 'failed'
-        ELSE 'success'
-    END,
-    (1024*1024*1024 * (2.1 + random() * 0.5))::bigint,
-    (1024*1024*1024 * (1.5 + random() * 0.3))::bigint,
-    (1024*1024*512 * (0.8 + random() * 0.2))::bigint,
-    (45000 + (random() * 10000)::int),
-    (120 + (random() * 180)::int),
-    CASE WHEN n = 7 THEN 'Repository lock could not be acquired after 600s' ELSE NULL END,
-    CASE WHEN n = 3 THEN ARRAY['file changed while reading: /var/www/app/cache/sess_abc123'] ELSE ARRAY[]::text[] END,
-    '1.4.0',
-    true
-FROM generate_series(0, 29) AS n;
-
-INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, original_size, compressed_size, deduplicated_size, files_processed, duration_secs, borg_version, matched)
-SELECT
-    $DB01_ID, $REPO_HOURLY_ID,
-    NOW() - (n || ' hours')::interval,
-    NOW() - (n || ' hours')::interval + (30 + (random() * 60)::int || ' seconds')::interval,
-    CASE WHEN n = 18 THEN 'failed' ELSE 'success' END,
-    (1024*1024*256 * (1.0 + random() * 0.3))::bigint,
-    (1024*1024*128 * (0.8 + random() * 0.2))::bigint,
-    (1024*1024*32 * (0.5 + random() * 0.3))::bigint,
-    (200 + (random() * 100)::int),
-    (30 + (random() * 60)::int),
-    '1.4.0',
-    true
-FROM generate_series(0, 71) AS n;
-
-INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, original_size, compressed_size, deduplicated_size, files_processed, duration_secs, borg_version, matched)
-SELECT
-    $MEDIA_ID, $REPO_WEEKLY_ID,
-    NOW() - (n * 7 || ' days')::interval - interval '3 hours',
-    NOW() - (n * 7 || ' days')::interval - interval '3 hours' + (1800 + (random() * 1200)::int || ' seconds')::interval,
-    'success',
-    (1024*1024*1024 * (50.0 + random() * 10.0))::bigint,
-    (1024*1024*1024 * (48.0 + random() * 8.0))::bigint,
-    (1024*1024*1024 * (5.0 + random() * 2.0))::bigint,
-    (150000 + (random() * 50000)::int),
-    (1800 + (random() * 1200)::int),
-    '1.4.0',
-    true
-FROM generate_series(0, 11) AS n;
-
-INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, original_size, compressed_size, deduplicated_size, files_processed, duration_secs, borg_version, matched)
-SELECT
-    c.id, $REPO_DAILY_ID,
-    NOW() - (n || ' days')::interval - interval '2 hours',
-    NOW() - (n || ' days')::interval - interval '2 hours' + interval '90 seconds',
-    'success',
-    (1024*1024*512)::bigint,
-    (1024*1024*400)::bigint,
-    (1024*1024*100)::bigint,
-    5000, 90, '1.4.0',
-    false
-FROM clients c, generate_series(0, 14) AS n
-WHERE c.hostname = 'old-webserver (imported)';
-SQL
-
-echo "==> Linking backup reports to actual borg archives..."
-# Get real archive names from borg and update matching report rows
-DAILY_ARCHIVES=$(su -c "BORG_PASSPHRASE=demo-passphrase-123 borg list --short /backup/repos/server-daily" borg | grep '^web-server-01-backup-' | sort -r)
-HOURLY_ARCHIVES=$(su -c "BORG_PASSPHRASE=demo-passphrase-123 borg list --short /backup/repos/database-hourly" borg | grep '^db-server-01-backup-' | sort -r)
-
-# For each real daily archive, update the report row closest to that archive's date
-i=1
-for archive in $DAILY_ARCHIVES; do
-    PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -c "
-        UPDATE backup_reports SET archive_name = '$archive'
-        WHERE id = (
-            SELECT id FROM backup_reports
-            WHERE client_id = $WEB01_ID AND repo_id = $REPO_DAILY_ID AND status = 'success' AND archive_name IS NULL
-            ORDER BY started_at DESC
-            LIMIT 1 OFFSET $((i - 1))
-        );
-    " > /dev/null
-    i=$((i + 1))
-done
-
-# For each real hourly archive, update the report row closest to that archive's date
-i=1
-for archive in $HOURLY_ARCHIVES; do
-    PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -c "
-        UPDATE backup_reports SET archive_name = '$archive'
-        WHERE id = (
-            SELECT id FROM backup_reports
-            WHERE client_id = $DB01_ID AND repo_id = $REPO_HOURLY_ID AND status = 'success' AND archive_name IS NULL
-            ORDER BY started_at DESC
-            LIMIT 1 OFFSET $((i - 1))
-        );
-    " > /dev/null
-    i=$((i + 1))
-done
 
 echo "==> Setting up repo quotas..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
@@ -460,10 +375,21 @@ echo "==> Adding SSH tunnel entry..."
 api POST "/api/tunnels" "{\"client_id\":$MEDIA_ID,\"ssh_host\":\"127.0.0.1\",\"ssh_user\":\"borg\",\"ssh_port\":22,\"tunnel_port\":18080,\"enabled\":true}" > /dev/null
 
 echo "==> Adding archive tags..."
+# Tag real imported archives (by actual name from backup_reports) rather than
+# guessing names -- the most recent and 3rd-most-recent web-server-01 archives.
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
-INSERT INTO archive_tags (repo_id, archive_name, tag, created_by) VALUES
-    ($REPO_DAILY_ID, (SELECT name FROM (SELECT 'web-server-01-backup-' || to_char(NOW() - interval '1 day', 'YYYY-MM-DD"T"HH24:MI:SS') AS name) x), 'pre-upgrade', 1),
-    ($REPO_DAILY_ID, (SELECT name FROM (SELECT 'web-server-01-backup-' || to_char(NOW() - interval '3 days', 'YYYY-MM-DD"T"HH24:MI:SS') AS name) x), 'weekly-baseline', 1)
+INSERT INTO archive_tags (repo_id, archive_name, tag, created_by)
+SELECT $REPO_DAILY_ID, archive_name, 'pre-upgrade', 1
+FROM backup_reports
+WHERE repo_id = $REPO_DAILY_ID AND archive_name LIKE 'web-server-01-backup-%'
+ORDER BY started_at DESC LIMIT 1
+ON CONFLICT DO NOTHING;
+
+INSERT INTO archive_tags (repo_id, archive_name, tag, created_by)
+SELECT $REPO_DAILY_ID, archive_name, 'weekly-baseline', 1
+FROM backup_reports
+WHERE repo_id = $REPO_DAILY_ID AND archive_name LIKE 'web-server-01-backup-%'
+ORDER BY started_at DESC OFFSET 2 LIMIT 1
 ON CONFLICT DO NOTHING;
 SQL
 

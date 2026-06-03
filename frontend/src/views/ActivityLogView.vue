@@ -125,6 +125,11 @@ onMounted(async () => {
   if (targetParam) {
     filterTarget.value = targetParam
   }
+  const hostnameParam = route.query.hostname as string | undefined
+  if (hostnameParam) {
+    filterMachine.value = hostnameParam
+    activeCategory.value = 'backup'
+  }
   const statusParam = route.query.status as string | undefined
   if (statusParam === 'success' || statusParam === 'warning' || statusParam === 'failed') {
     filterStatus.value = statusParam

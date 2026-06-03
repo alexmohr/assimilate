@@ -62,7 +62,17 @@ CREATE TABLE repos (
     encryption TEXT NOT NULL DEFAULT 'repokey',
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     owner_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
-    visibility TEXT NOT NULL DEFAULT 'shared' CHECK (visibility IN ('private', 'shared'))
+    visibility TEXT NOT NULL DEFAULT 'shared' CHECK (visibility IN ('private', 'shared')),
+    -- Authoritative repository statistics, sourced solely from `borg info --json`
+    -- (cache.stats) and `borg list --json`. These are the single source of truth
+    -- for repo size/archive counts; never derive these from backup_reports.
+    info_original_size BIGINT NOT NULL DEFAULT 0,
+    info_compressed_size BIGINT NOT NULL DEFAULT 0,
+    info_deduplicated_size BIGINT NOT NULL DEFAULT 0,
+    info_total_chunks BIGINT NOT NULL DEFAULT 0,
+    info_unique_chunks BIGINT NOT NULL DEFAULT 0,
+    info_archive_count INTEGER NOT NULL DEFAULT 0,
+    info_updated_at TIMESTAMPTZ
 );
 
 CREATE TABLE schedules (

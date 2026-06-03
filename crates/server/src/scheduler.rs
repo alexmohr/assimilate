@@ -81,8 +81,25 @@ async fn run_repo_sync(pool: &PgPool, encryption_key: &[u8; 32], ui_broadcast: &
         .unwrap_or(chrono_tz::Tz::UTC);
     let now = Utc::now();
 
+    let importing_ids: std::collections::HashSet<i64> =
+        match db::list_importing_repo_ids(pool).await {
+            Ok(ids) => ids.into_iter().collect(),
+            Err(e) => {
+                tracing::error!(error = %e, "failed to list importing repos for sync guard");
+                return;
+            }
+        };
+
     for repo in repos {
         if !repo.enabled {
+            continue;
+        }
+
+        if importing_ids.contains(&repo.id) {
+            tracing::debug!(
+                repo_id = repo.id,
+                "skipping scheduled sync: import in progress"
+            );
             continue;
         }
 
@@ -105,6 +122,11 @@ async fn run_repo_sync(pool: &PgPool, encryption_key: &[u8; 32], ui_broadcast: &
         };
 
         if next_run > now {
+            continue;
+        }
+
+        if let Err(e) = db::set_repo_importing(pool, repo.id, true).await {
+            tracing::error!(repo_id = repo.id, error = %e, "failed to set importing flag for scheduled sync");
             continue;
         }
 
@@ -159,6 +181,9 @@ async fn run_repo_sync(pool: &PgPool, encryption_key: &[u8; 32], ui_broadcast: &
                     reason = %reason,
                     "skipping sync for repo that no longer exists"
                 );
+                if let Err(e) = db::set_repo_importing(pool, repo.id, false).await {
+                    tracing::error!(repo_id = repo.id, error = %e, "failed to clear importing flag after NotFound");
+                }
             }
             Err(e) => {
                 let elapsed = start.elapsed();
@@ -170,6 +195,14 @@ async fn run_repo_sync(pool: &PgPool, encryption_key: &[u8; 32], ui_broadcast: &
                 tracing::error!("{msg}");
                 if let Err(log_err) = db::insert_system_event(pool, "repo_sync", None, &msg).await {
                     tracing::error!(error = %log_err, "failed to log sync event");
+                }
+                if let Err(e2) = db::set_repo_importing(pool, repo.id, false).await {
+                    tracing::error!(repo_id = repo.id, error = %e2, "failed to clear import flag");
+                }
+                if let Err(e2) =
+                    db::set_repo_import_error(pool, repo.id, Some(&format!("{e}"))).await
+                {
+                    tracing::error!(repo_id = repo.id, error = %e2, "failed to set import_error");
                 }
             }
         }

@@ -10,13 +10,14 @@ import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useMobile } from '../composables/useMobile'
+import { useWebSocket } from '../composables/useWebSocket'
+import { logger } from '../utils/logger'
 import { formatBytes } from '../utils/format'
 import { extractError } from '../utils/error'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import { Plus, Download, SlidersHorizontal, Database, Folder, FolderPlus } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
-import BaseModal from '../components/BaseModal.vue'
 
 type CompressionType = 'lz4' | 'zstd' | 'none'
 type EncryptionType =
@@ -137,8 +138,6 @@ const showMobileFilters = ref(false)
 const allRepoTags = ref<TagRow[]>([])
 const repoTagsMap = ref<Record<number, { name: string; color: string }[]>>({})
 
-const importDetailsRepo = ref<RepoWithStats | null>(null)
-
 const showRepoDialog = ref(false)
 const repoMode = ref<'create' | 'edit'>('create')
 const addTab = ref<AddTab>('import')
@@ -170,13 +169,6 @@ const browser = reactive<BrowserState>({
 useEscapeKey(showRepoDialog, () => {
   showRepoDialog.value = false
 })
-
-function handleBadgeClick(repo: RepoWithStats, e: MouseEvent): void {
-  if (repo.importing) {
-    e.stopPropagation()
-    importDetailsRepo.value = repo
-  }
-}
 
 const filteredRepos = computed<RepoWithStats[]>(() => {
   let list = [...repos.value]
@@ -680,6 +672,28 @@ async function deploySshKey(): Promise<void> {
   }
 }
 
+interface ImportProgressPayload {
+  repo_id: number
+  progress: number
+  total: number
+  message: string | null
+}
+
+const { onMessage } = useWebSocket()
+
+onMessage('DataChanged', () => loadRepos().catch(logger.error))
+
+onMessage<ImportProgressPayload>('ImportProgress', (payload) => {
+  const repo = repos.value.find((r) => r.id === payload.repo_id)
+  if (repo) {
+    if (payload.progress >= 0) {
+      repo.import_progress = payload.progress
+      repo.import_total = payload.total
+    }
+    repo.import_status_message = payload.message
+  }
+})
+
 onMounted(loadRepos)
 </script>
 
@@ -842,18 +856,16 @@ onMounted(loadRepos)
           <div class="card-badges">
             <span
               class="status-badge"
-              :class="[
+              :class="
                 repo.import_error
                   ? 'status-error'
                   : repo.importing
                     ? 'status-importing'
                     : repo.enabled
                       ? 'status-online'
-                      : 'status-offline',
-                { 'status-badge-btn': repo.importing },
-              ]"
+                      : 'status-offline'
+              "
               :title="repo.import_error ?? undefined"
-              @click="handleBadgeClick(repo, $event)"
             >
               {{
                 repo.import_error
@@ -883,6 +895,12 @@ onMounted(loadRepos)
             {{ Math.round((repo.import_progress / repo.import_total) * 100) }}%
           </span>
         </div>
+        <p
+          v-if="repo.importing && repo.import_status_message"
+          class="import-status-inline"
+        >
+          {{ repo.import_status_message }}
+        </p>
         <div class="card-meta">
           <span class="meta-pill">{{ repo.encryption }}</span>
           <span class="meta-pill">{{ repo.compression }}</span>
@@ -959,18 +977,16 @@ onMounted(loadRepos)
               <div class="card-badges">
                 <span
                   class="status-badge"
-                  :class="[
+                  :class="
                     repo.import_error
                       ? 'status-error'
                       : repo.importing
                         ? 'status-importing'
                         : repo.enabled
                           ? 'status-online'
-                          : 'status-offline',
-                    { 'status-badge-btn': repo.importing },
-                  ]"
+                          : 'status-offline'
+                  "
                   :title="repo.import_error ?? undefined"
-                  @click="handleBadgeClick(repo, $event)"
                 >
                   {{
                     repo.import_error
@@ -1002,6 +1018,12 @@ onMounted(loadRepos)
                 {{ Math.round((repo.import_progress / repo.import_total) * 100) }}%
               </span>
             </div>
+            <p
+              v-if="repo.importing && repo.import_status_message"
+              class="import-status-inline"
+            >
+              {{ repo.import_status_message }}
+            </p>
             <div class="card-meta">
               <span class="meta-pill">{{ repo.encryption }}</span>
               <span class="meta-pill">{{ repo.compression }}</span>
@@ -1420,53 +1442,6 @@ onMounted(loadRepos)
         </div>
       </div>
     </Teleport>
-    <BaseModal
-      :open="importDetailsRepo !== null"
-      size="sm"
-      title="Import Progress"
-      @close="importDetailsRepo = null"
-    >
-      <template v-if="importDetailsRepo">
-        <p class="import-modal-name">{{ importDetailsRepo.name }}</p>
-        <p class="import-modal-ssh">
-          {{ importDetailsRepo.ssh_user }}@{{ importDetailsRepo.ssh_host }}:{{
-            importDetailsRepo.ssh_port
-          }}
-        </p>
-        <p class="import-modal-msg">
-          {{
-            importDetailsRepo.import_status_message ??
-            (importDetailsRepo.import_total > 0 ? `Importing archives\u2026` : 'Initializing\u2026')
-          }}
-        </p>
-        <div
-          v-if="importDetailsRepo.import_total > 0"
-          class="import-modal-progress"
-        >
-          <div class="import-modal-track">
-            <div
-              class="import-modal-bar"
-              :style="{
-                width: `${Math.round((importDetailsRepo.import_progress / importDetailsRepo.import_total) * 100)}%`,
-              }"
-            ></div>
-          </div>
-          <div class="import-modal-counts">
-            <span
-              >{{ importDetailsRepo.import_progress }} /
-              {{ importDetailsRepo.import_total }} archives</span
-            >
-            <span
-              >{{
-                Math.round(
-                  (importDetailsRepo.import_progress / importDetailsRepo.import_total) * 100,
-                )
-              }}%</span
-            >
-          </div>
-        </div>
-      </template>
-    </BaseModal>
   </div>
 </template>
 
@@ -1607,58 +1582,13 @@ onMounted(loadRepos)
   white-space: nowrap;
 }
 
-.status-badge-btn {
-  cursor: pointer;
-}
-
-.status-badge-btn:hover {
-  filter: brightness(1.1);
-}
-
-.import-modal-name {
-  font-weight: 600;
-  font-size: 1rem;
-  margin: 0 0 0.25rem;
-}
-
-.import-modal-ssh {
-  font-size: 0.8rem;
+.import-status-inline {
+  font-size: 0.78rem;
   color: var(--text-muted);
-  font-family: monospace;
-  margin: 0 0 1rem;
-}
-
-.import-modal-msg {
-  font-size: 0.875rem;
-  color: var(--text-secondary);
-  margin: 0 0 1rem;
-  word-break: break-word;
-}
-
-.import-modal-progress {
-  margin-top: 0.25rem;
-}
-
-.import-modal-track {
-  height: 8px;
-  background: var(--border);
-  border-radius: 4px;
+  margin: 0;
+  white-space: nowrap;
   overflow: hidden;
-  margin-bottom: 0.5rem;
-}
-
-.import-modal-bar {
-  height: 100%;
-  background: var(--accent);
-  border-radius: 4px;
-  transition: width 0.4s ease;
-}
-
-.import-modal-counts {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.8rem;
-  color: var(--text-muted);
+  text-overflow: ellipsis;
 }
 
 .card-badges {

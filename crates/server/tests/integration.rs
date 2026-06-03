@@ -90,6 +90,14 @@ async fn build_test_app(pool: PgPool) -> Router {
                 .delete(server::api::repos::delete_repo),
         )
         .route(
+            "/api/repos/{repo_id}/sync",
+            post(server::api::repos::sync_repo),
+        )
+        .route(
+            "/api/repos/{repo_id}/reset-import",
+            post(server::api::repos::reset_import),
+        )
+        .route(
             "/api/excludes",
             get(server::api::excludes::get_excludes).put(server::api::excludes::set_excludes),
         )
@@ -108,6 +116,11 @@ async fn build_test_app(pool: PgPool) -> Router {
         .route("/api/stats/storage", get(server::api::stats::storage))
         .route("/api/stats/activity", get(server::api::stats::activity))
         .route("/api/stats/health", get(server::api::stats::health))
+        .route("/api/stats/summary", get(server::api::stats::summary))
+        .route(
+            "/api/stats/storage-breakdown",
+            get(server::api::stats::storage_breakdown),
+        )
         .route("/api/audit-log", get(server::api::audit::list_audit_log))
         .route(
             "/api/notifications/channels",
@@ -439,6 +452,172 @@ async fn test_repo_delete() {
     let req = get_request(&format!("/api/repos/{repo_id}"));
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_sync_repo_unreachable_returns_error_and_clears_importing() {
+    // sync_repo runs synchronously. The test repo points at an unreachable host
+    // ("storage.local"), so the borg list fails and the endpoint returns an
+    // error -- but the importing flag must be cleared again before it returns.
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    let repo_id = insert_test_repo(&pool, "sync-accepted-repo").await;
+
+    let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
+    let resp = oneshot(&mut app, req).await;
+    assert!(
+        resp.status().is_server_error(),
+        "expected a server error for an unreachable repo, got {}",
+        resp.status()
+    );
+
+    let importing: bool = sqlx::query_scalar("SELECT importing FROM repos WHERE id = $1")
+        .bind(repo_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        !importing,
+        "importing should be cleared after the synchronous sync returns"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_sync_repo_returns_409_when_already_importing() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    let repo_id = insert_test_repo(&pool, "sync-conflict-repo").await;
+
+    // pre-set importing = true to simulate in-progress sync
+    server::db::set_repo_importing(&pool, repo_id, true)
+        .await
+        .unwrap();
+
+    let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+    // flag must still be true (we didn't touch it)
+    let importing: bool = sqlx::query_scalar("SELECT importing FROM repos WHERE id = $1")
+        .bind(repo_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        importing,
+        "importing should remain true after rejected sync"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_stats_summary_returns_200() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    let req = get_request("/api/stats/summary");
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert!(body.is_object(), "summary should be a JSON object");
+    assert!(body["total_clients"].is_number());
+    assert!(body["total_repos"].is_number());
+    assert!(body["total_storage_bytes"].is_number());
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_storage_breakdown_empty() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    let req = get_request("/api/stats/storage-breakdown");
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert!(body.is_array(), "storage breakdown should be a JSON array");
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_storage_breakdown_with_data() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    let repo_id = insert_test_repo(&pool, "breakdown-repo").await;
+    server::db::update_repo_info_stats(
+        &pool,
+        repo_id,
+        &server::db::RepoInfoStats {
+            compressed_size: 500_000,
+            deduplicated_size: 250_000,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let req = get_request("/api/stats/storage-breakdown");
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let entries = body.as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["name"], "breakdown-repo");
+    assert_eq!(entries[0]["compressed_size"], 500_000);
+    assert_eq!(entries[0]["deduplicated_size"], 250_000);
+    // sole repo owns 100 % of storage
+    let pct = entries[0]["percentage"].as_f64().unwrap();
+    assert!(
+        (pct - 100.0).abs() < 0.01,
+        "single repo should be 100%, got {pct}"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_reset_import_clears_state() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    let repo_id = insert_test_repo(&pool, "reset-import-repo").await;
+
+    // Simulate a stuck import
+    server::db::set_repo_importing(&pool, repo_id, true)
+        .await
+        .unwrap();
+    server::db::set_repo_import_error(&pool, repo_id, Some("stuck error"))
+        .await
+        .unwrap();
+
+    let req = json_request("POST", &format!("/api/repos/{repo_id}/reset-import"), None);
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let stats = server::db::get_repo_with_stats(&pool, repo_id)
+        .await
+        .unwrap();
+    assert!(!stats.importing, "importing should be cleared after reset");
+    assert!(
+        stats.import_error.is_none(),
+        "import_error should be cleared after reset"
+    );
 }
 
 #[tokio::test]

@@ -49,11 +49,17 @@ async fn main() -> Result<(), StartupError> {
 
     let log_buffer = LogBuffer::default();
 
+    let default_filter = "info,sqlx=info,russh=info";
+    let noise_clamp = ",sqlx=info,russh=info";
+
+    let env_filter = std::env::var("RUST_LOG").map_or_else(
+        |_| EnvFilter::new(default_filter),
+        |val| EnvFilter::new(format!("{val}{noise_clamp}")),
+    );
+
     tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        ))
-        .with(LogBufferLayer::new(log_buffer.clone()))
+        .with(tracing_subscriber::fmt::layer().with_filter(env_filter))
+        .with(LogBufferLayer::new(log_buffer.clone()).with_filter(EnvFilter::new(default_filter)))
         .init();
 
     let database_url = std::env::var("DATABASE_URL")?;
@@ -148,6 +154,7 @@ async fn main() -> Result<(), StartupError> {
                             db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await;
                     }
                     let _ = db::set_repo_importing(&pool, repo_id, false).await;
+                    broadcast.clear_import_progress(repo_id);
                     broadcast.send(shared::protocol::ServerToUi::DataChanged);
                 });
             }

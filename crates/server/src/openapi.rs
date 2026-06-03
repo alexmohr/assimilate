@@ -15,7 +15,7 @@ use crate::{
         permissions::UpsertPermissionRequest,
         repos::{
             CreateRepoRequest, InitRepoRequest, InitRepoResponse, PassphraseResponse,
-            RescanResponse, SyncResponse, UpdateRepoRequest,
+            RescanResponse, UpdateRepoRequest,
         },
         schedules::{CreateScheduleRequest, UpdateScheduleRequest},
         search::{SearchEntry, SearchResponse},
@@ -158,7 +158,6 @@ use crate::{
         InitRepoRequest,
         InitRepoResponse,
         RescanResponse,
-        SyncResponse,
         ArchiveEntry,
         ArchiveInfo,
         ContentEntry,

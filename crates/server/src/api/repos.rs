@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::{collections::HashMap, process::Stdio, time::Duration};
+use std::{collections::HashMap, process::Output, time::Duration};
 
 use axum::{
     Json,
@@ -16,17 +16,17 @@ use shared::{
     types::{BorgEncryption, build_repo_url},
 };
 use sqlx::PgPool;
-use tokio::process::Command;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 use super::{
-    archives::{LOCK_WAIT_SECS, borg_binary},
+    archives::LOCK_WAIT_SECS,
     auth::{AuthUser, RequireAdmin, Role},
     helpers,
     permissions::is_visible_to_user,
 };
 use crate::{
     AppState,
+    borg::Borg,
     db::{self, InsertRepoParams, RepoRow, RepoWithStatsRow, UpdateRepoParams},
     error::{ApiError, ApiJson},
     ws::ui_broadcast::UiBroadcast,
@@ -815,23 +815,19 @@ async fn run_borg_info_with_retry(
 }
 
 async fn run_borg_info_once(repo_url: &str, passphrase: &str) -> Result<BorgInfoResult, ApiError> {
-    let borg_binary = std::env::var("BORG_BINARY").unwrap_or_else(|_| "borg".to_string());
-    let ssh_auth_sock = std::env::var("SSH_AUTH_SOCK").ok();
-
-    let mut cmd = Command::new(&borg_binary);
-    cmd.args(["info", "--json", repo_url])
-        .env("BORG_PASSPHRASE", passphrase)
-        .env(
-            "BORG_RSH",
-            "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
-        );
-
-    if let Some(sock) = &ssh_auth_sock {
-        cmd.env("SSH_AUTH_SOCK", sock);
+    let mut env = HashMap::from([
+        ("BORG_PASSPHRASE".to_owned(), passphrase.to_owned()),
+        (
+            "BORG_RSH".to_owned(),
+            "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new".to_owned(),
+        ),
+    ]);
+    if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
+        env.insert("SSH_AUTH_SOCK".to_owned(), sock);
     }
 
-    let output = cmd
-        .output()
+    let output = Borg::new()
+        .run(&["info", "--json", repo_url], &env)
         .await
         .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
 
@@ -882,23 +878,19 @@ async fn run_borg_info_once(repo_url: &str, passphrase: &str) -> Result<BorgInfo
 }
 
 async fn run_borg_break_lock(repo_url: &str, passphrase: &str) -> Result<String, ApiError> {
-    let borg_binary = std::env::var("BORG_BINARY").unwrap_or_else(|_| "borg".to_string());
-    let ssh_auth_sock = std::env::var("SSH_AUTH_SOCK").ok();
-
-    let mut cmd = Command::new(&borg_binary);
-    cmd.args(["break-lock", repo_url])
-        .env("BORG_PASSPHRASE", passphrase)
-        .env(
-            "BORG_RSH",
-            "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
-        );
-
-    if let Some(sock) = &ssh_auth_sock {
-        cmd.env("SSH_AUTH_SOCK", sock);
+    let mut env = HashMap::from([
+        ("BORG_PASSPHRASE".to_owned(), passphrase.to_owned()),
+        (
+            "BORG_RSH".to_owned(),
+            "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new".to_owned(),
+        ),
+    ]);
+    if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
+        env.insert("SSH_AUTH_SOCK".to_owned(), sock);
     }
 
-    let output = cmd
-        .output()
+    let output = Borg::new()
+        .run(&["break-lock", repo_url], &env)
         .await
         .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
 
@@ -928,24 +920,22 @@ async fn run_borg_init(
     passphrase: &str,
     encryption: BorgEncryption,
 ) -> Result<String, ApiError> {
-    let borg_binary = std::env::var("BORG_BINARY").unwrap_or_else(|_| "borg".to_string());
-
-    let ssh_auth_sock = std::env::var("SSH_AUTH_SOCK").ok();
-
-    let mut cmd = Command::new(&borg_binary);
-    cmd.args(["init", "--encryption", encryption.as_borg_arg(), repo_url])
-        .env("BORG_PASSPHRASE", passphrase)
-        .env(
-            "BORG_RSH",
-            "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
-        );
-
-    if let Some(sock) = &ssh_auth_sock {
-        cmd.env("SSH_AUTH_SOCK", sock);
+    let mut env = HashMap::from([
+        ("BORG_PASSPHRASE".to_owned(), passphrase.to_owned()),
+        (
+            "BORG_RSH".to_owned(),
+            "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new".to_owned(),
+        ),
+    ]);
+    if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
+        env.insert("SSH_AUTH_SOCK".to_owned(), sock);
     }
 
-    let output = cmd
-        .output()
+    let output = Borg::new()
+        .run(
+            &["init", "--encryption", encryption.as_borg_arg(), repo_url],
+            &env,
+        )
         .await
         .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
 
@@ -992,28 +982,20 @@ fn human_bytes(bytes: i64) -> String {
 async fn run_borg_list_with_retry(
     borg_repo: &str,
     env: &std::collections::HashMap<String, String>,
-) -> Result<std::process::Output, ApiError> {
-    let borg = borg_binary();
+) -> Result<Output, ApiError> {
+    let borg = Borg::new();
+    let args = [
+        "list",
+        "--json",
+        "--format",
+        "{hostname}{end}",
+        "--lock-wait",
+        LOCK_WAIT_SECS,
+        borg_repo,
+    ];
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
-        debug!(
-            cmd = %format!(
-                "{borg} list --json --format {{hostname}}{{end}} \
-                 --lock-wait {LOCK_WAIT_SECS} {borg_repo}"
-            ),
-            "running borg command"
-        );
-        let output = Command::new(borg_binary())
-            .arg("list")
-            .arg("--json")
-            .arg("--format")
-            .arg("{hostname}{end}")
-            .arg("--lock-wait")
-            .arg(LOCK_WAIT_SECS)
-            .arg(borg_repo)
-            .envs(env)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
+        let output = borg
+            .run(&args, env)
             .await
             .map_err(|e| ApiError::Internal(format!("failed to execute borg list: {e}")))?;
 
@@ -1048,23 +1030,18 @@ fn is_ssh_connection_error(stderr: &str) -> bool {
 async fn run_borg_archive_info_with_retry(
     repo_archive: &str,
     env: &std::collections::HashMap<String, String>,
-) -> Result<Option<std::process::Output>, ApiError> {
-    let borg = borg_binary();
+) -> Result<Option<Output>, ApiError> {
+    let borg = Borg::new();
+    let args = [
+        "info",
+        "--json",
+        "--lock-wait",
+        LOCK_WAIT_SECS,
+        repo_archive,
+    ];
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
-        debug!(
-            cmd = %format!("{borg} info --json --lock-wait {LOCK_WAIT_SECS} {repo_archive}"),
-            "running borg command"
-        );
-        let output = Command::new(borg_binary())
-            .arg("info")
-            .arg("--json")
-            .arg("--lock-wait")
-            .arg(LOCK_WAIT_SECS)
-            .arg(repo_archive)
-            .envs(env)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
+        let output = borg
+            .run(&args, env)
             .await
             .map_err(|e| ApiError::Internal(format!("failed to execute borg info: {e}")))?;
 
@@ -1258,9 +1235,7 @@ pub async fn sync_existing_archives(
                         repo_id,
                         progress: 0,
                         total: total as i32,
-                        message: Some(format!(
-                            "Querying borg for \u{2018}{name}\u{2019}\u{2026}"
-                        )),
+                        message: Some(format!("Querying borg for \u{2018}{name}\u{2019}\u{2026}")),
                     });
                     let repo_archive = format!("{borg_repo}::{name}");
                     let info_output =
@@ -1336,7 +1311,7 @@ pub async fn sync_existing_archives(
                 let original_size = opt_params.as_ref().map_or(0, |p| p.original_size);
                 let (new_params, new_skipped) = match opt_params {
                     None => {
-                        warn!(repo_id, archive = %archive_name, "archive skipped (borg info unavailable)");
+                        warn!(repo_id, %archive_name, "archive skipped (borg info unavailable)");
                         (params, skipped + 1)
                     }
                     Some(p) => {
@@ -1536,9 +1511,7 @@ pub async fn sync_new_archives(
                         repo_id,
                         progress: 0,
                         total: total as i32,
-                        message: Some(format!(
-                            "Querying borg for \u{2018}{name}\u{2019}\u{2026}"
-                        )),
+                        message: Some(format!("Querying borg for \u{2018}{name}\u{2019}\u{2026}")),
                     });
                     let repo_archive = format!("{borg_repo}::{name}");
                     let info_output =
@@ -1614,7 +1587,7 @@ pub async fn sync_new_archives(
                 let original_size = opt_params.as_ref().map_or(0, |p| p.original_size);
                 let (new_params, new_skipped) = match opt_params {
                     None => {
-                        warn!(repo_id, archive = %archive_name, "archive skipped (borg info unavailable)");
+                        warn!(repo_id, %archive_name, "archive skipped (borg info unavailable)");
                         (params, skipped + 1)
                     }
                     Some(p) => {

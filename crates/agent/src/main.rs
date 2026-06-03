@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 mod backup;
+mod borg;
 mod executor;
 mod ssh_forward;
 mod systemd;

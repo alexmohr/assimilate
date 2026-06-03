@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::process::Stdio;
-
 use axum::{
     Json,
     extract::{Path as AxumPath, State},
@@ -10,14 +8,15 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::Deserialize;
-use tokio::{io::AsyncWriteExt, process::Command};
+use tokio::io::AsyncWriteExt;
 
 use super::{
-    archives::{borg_binary, classify_borg_error, get_repo_env},
+    archives::{classify_borg_error, get_repo_env},
     auth::RequireAdmin,
 };
 use crate::{
     AppState,
+    borg::Borg,
     db::{
         self,
         audit::{NewAuditEntry, insert_audit_entry},
@@ -59,15 +58,8 @@ pub async fn export_key(
 ) -> Result<Response, ApiError> {
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
 
-    let output = Command::new(borg_binary())
-        .arg("key")
-        .arg("export")
-        .arg("--stdout")
-        .arg(&borg_repo)
-        .envs(&env)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
+    let output = Borg::new()
+        .run(&["key", "export", "--stdout", borg_repo.as_str()], &env)
         .await
         .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
 
@@ -128,16 +120,8 @@ pub async fn import_key(
 ) -> Result<StatusCode, ApiError> {
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
 
-    let mut child = Command::new(borg_binary())
-        .arg("key")
-        .arg("import")
-        .arg(&borg_repo)
-        .arg("-")
-        .envs(&env)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+    let mut child = Borg::new()
+        .spawn_with_stdin(&["key", "import", borg_repo.as_str(), "-"], &env)
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
 
     let mut stdin = child
@@ -212,14 +196,8 @@ pub async fn change_passphrase(
         req.new_passphrase.clone(),
     );
 
-    let output = Command::new(borg_binary())
-        .arg("key")
-        .arg("change-passphrase")
-        .arg(&borg_repo)
-        .envs(&env)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
+    let output = Borg::new()
+        .run(&["key", "change-passphrase", borg_repo.as_str()], &env)
         .await
         .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
 

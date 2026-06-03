@@ -91,16 +91,15 @@ async fn build_test_app(pool: PgPool) -> Router {
         )
         .route(
             "/api/excludes",
-            get(server::api::excludes::list_excludes).post(server::api::excludes::create_exclude),
-        )
-        .route(
-            "/api/excludes/{id}",
-            put(server::api::excludes::update_exclude)
-                .delete(server::api::excludes::delete_exclude),
+            get(server::api::excludes::get_excludes).put(server::api::excludes::set_excludes),
         )
         .route(
             "/api/schedules",
             get(server::api::schedules::list_schedules),
+        )
+        .route(
+            "/api/schedules/{id}/sources",
+            get(server::api::schedules::list_schedule_backup_sources),
         )
         .route(
             "/api/clients/{hostname}/reports",
@@ -182,7 +181,7 @@ async fn clean_tables(pool: &PgPool) {
         .execute(pool)
         .await
         .unwrap();
-    sqlx::query("DELETE FROM excludes_global")
+    sqlx::query("UPDATE excludes_global_config SET raw_text = ''")
         .execute(pool)
         .await
         .unwrap();
@@ -455,4 +454,151 @@ async fn test_auth_me_without_session() {
         .unwrap();
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+// -- Excludes API tests --
+
+/// Helper: insert a schedule directly into the DB (bypasses SSH check in the API).
+async fn insert_test_schedule(pool: &sqlx::PgPool, client_id: i64, repo_id: i64) -> i64 {
+    let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-integration");
+    let passphrase_encrypted = shared::crypto::encrypt_passphrase("pass", &encryption_key).unwrap();
+    sqlx::query_scalar("UPDATE repos SET passphrase_encrypted = $2 WHERE id = $1 RETURNING id")
+        .bind(repo_id)
+        .bind(&passphrase_encrypted)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(repo_id);
+
+    let schedule_id: i64 = sqlx::query_scalar(
+        "INSERT INTO schedules (repo_id, name, schedule_type, cron_expression, enabled, \
+         canary_enabled, exclude_patterns_raw, ignore_global_excludes, keep_daily, keep_weekly, \
+         keep_monthly, keep_yearly, compact_enabled, pre_backup_commands, post_backup_commands, \
+         execution_mode, on_failure) VALUES ($1, 'test', 'backup', '0 3 * * *', true, false, $2, \
+         false, 7, 4, 6, 0, true, '[]', '[]', 'parallel', 'stop') RETURNING id",
+    )
+    .bind(repo_id)
+    .bind("")
+    .fetch_one(pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO schedule_targets (schedule_id, client_id, execution_order) VALUES ($1, $2, 0)",
+    )
+    .bind(schedule_id)
+    .bind(client_id)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO backup_sources (schedule_id, path, sort_order) VALUES ($1, '/home', 0)",
+    )
+    .bind(schedule_id)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    schedule_id
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_global_excludes_get_initially_empty(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    let resp = oneshot(&mut app, get_request("/api/excludes")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["raw_text"], "");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_global_excludes_roundtrip_preserves_blank_lines_and_comments(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    let raw = "# System paths\n/proc\n/sys\n\n# Cache\n*.cache\npp:__pycache__";
+
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            "/api/excludes",
+            Some(serde_json::json!({"raw_text": raw})),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = oneshot(&mut app, get_request("/api/excludes")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["raw_text"], raw);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_global_excludes_overwrite_replaces_fully(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    for text in &["first\nsecond\nthird", "only-this-one"] {
+        let resp = oneshot(
+            &mut app,
+            json_request(
+                "PUT",
+                "/api/excludes",
+                Some(serde_json::json!({"raw_text": text})),
+            ),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    let resp = oneshot(&mut app, get_request("/api/excludes")).await;
+    let body = body_json(resp).await;
+    assert_eq!(body["raw_text"], "only-this-one");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_per_host_excludes_roundtrip_preserves_raw_text(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    // Set up client and repo directly
+    let client_id: i64 = sqlx::query_scalar(
+        "INSERT INTO clients (hostname, agent_token_hash) VALUES ('exc-host', 'hash-exc') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let repo_id = insert_test_repo(&pool, "exc-repo").await;
+    let schedule_id = insert_test_schedule(&pool, client_id, repo_id).await;
+
+    let raw = "# Cache dirs\n*.cache\npp:__pycache__\n\n# Runtime\n/proc\n/sys";
+
+    sqlx::query(
+        "INSERT INTO per_host_excludes (schedule_id, client_id, raw_text) VALUES ($1, $2, $3)",
+    )
+    .bind(schedule_id)
+    .bind(client_id)
+    .bind(raw)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/schedules/{schedule_id}/sources")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+
+    let per_host = body["exclude_patterns_per_host"].as_array().unwrap();
+    assert_eq!(per_host.len(), 1);
+    assert_eq!(per_host[0]["client_id"], client_id);
+    assert_eq!(per_host[0]["raw_text"], raw);
 }

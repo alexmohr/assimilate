@@ -521,22 +521,19 @@ async fn tunnel_defaults(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn excludes_crud(pool: PgPool) {
-    let excl = db::insert_global_exclude(&pool, "*.tmp", 1).await.unwrap();
-    assert_eq!(excl.pattern, "*.tmp");
-    assert_eq!(excl.sort_order, 1);
+    let initial = db::get_global_excludes_raw(&pool).await.unwrap();
+    assert_eq!(initial, "");
 
-    let all = db::list_global_excludes(&pool).await.unwrap();
-    assert_eq!(all.len(), 1);
-
-    let updated = db::update_global_exclude(&pool, excl.id, "*.log", 2)
+    db::set_global_excludes_raw(&pool, "*.tmp\n*.log\n\n# comment\n/proc")
         .await
         .unwrap();
-    assert_eq!(updated.pattern, "*.log");
-    assert_eq!(updated.sort_order, 2);
 
-    db::delete_global_exclude(&pool, excl.id).await.unwrap();
-    let all = db::list_global_excludes(&pool).await.unwrap();
-    assert!(all.is_empty());
+    let raw = db::get_global_excludes_raw(&pool).await.unwrap();
+    assert_eq!(raw, "*.tmp\n*.log\n\n# comment\n/proc");
+
+    db::set_global_excludes_raw(&pool, "*.log").await.unwrap();
+    let raw = db::get_global_excludes_raw(&pool).await.unwrap();
+    assert_eq!(raw, "*.log");
 }
 
 async fn create_test_schedule(pool: &PgPool) -> (ClientRow, RepoRow, ScheduleRow) {
@@ -568,7 +565,7 @@ async fn create_test_schedule(pool: &PgPool) -> (ClientRow, RepoRow, ScheduleRow
             cron_expression: "0 3 * * *",
             enabled: true,
             canary_enabled: false,
-            exclude_patterns: &[],
+            exclude_patterns_raw: "",
             ignore_global_excludes: false,
             keep_daily: 7,
             keep_weekly: 4,
@@ -618,7 +615,7 @@ async fn schedule_update(pool: PgPool) {
             cron_expression: "0 6 * * *",
             enabled: false,
             canary_enabled: true,
-            exclude_patterns: &["*.cache".to_string()],
+            exclude_patterns_raw: "*.cache",
             ignore_global_excludes: true,
             keep_daily: 14,
             keep_weekly: 8,
@@ -638,7 +635,7 @@ async fn schedule_update(pool: PgPool) {
     assert_eq!(updated.cron_expression, "0 6 * * *");
     assert!(!updated.enabled);
     assert!(updated.canary_enabled);
-    assert_eq!(updated.exclude_patterns, vec!["*.cache"]);
+    assert_eq!(updated.exclude_patterns_raw, "*.cache");
     assert!(updated.ignore_global_excludes);
     assert_eq!(updated.keep_daily, 14);
     assert!(!updated.compact_enabled);
@@ -836,43 +833,30 @@ async fn excludes_per_host_crud(pool: PgPool) {
         .await
         .unwrap();
 
-    db::insert_exclude_for_schedule(&pool, schedule.id, "*.log", 0)
+    db::upsert_per_host_excludes_raw(&pool, schedule.id, client.id, "*.tmp\n*.cache")
         .await
         .unwrap();
-
-    db::insert_exclude_for_schedule_client(&pool, schedule.id, client.id, "*.tmp", 0)
+    db::upsert_per_host_excludes_raw(&pool, schedule.id, client2.id, "*.bak")
         .await
         .unwrap();
-    db::insert_exclude_for_schedule_client(&pool, schedule.id, client.id, "*.cache", 1)
-        .await
-        .unwrap();
-    db::insert_exclude_for_schedule_client(&pool, schedule.id, client2.id, "*.bak", 0)
-        .await
-        .unwrap();
-
-    let schedule_level = db::list_excludes_for_schedule(&pool, schedule.id)
-        .await
-        .unwrap();
-    assert_eq!(schedule_level, vec!["*.log"]);
-
-    let client1_excludes = db::list_excludes_for_schedule_client(&pool, schedule.id, client.id)
-        .await
-        .unwrap();
-    assert_eq!(client1_excludes, vec!["*.tmp", "*.cache"]);
-
-    let client2_excludes = db::list_excludes_for_schedule_client(&pool, schedule.id, client2.id)
-        .await
-        .unwrap();
-    assert_eq!(client2_excludes, vec!["*.bak"]);
 
     let all_per_host = db::list_all_per_host_excludes_for_schedule(&pool, schedule.id)
         .await
         .unwrap();
     assert_eq!(all_per_host.len(), 2);
     assert_eq!(all_per_host[0].client_id, client.id);
-    assert_eq!(all_per_host[0].patterns, vec!["*.tmp", "*.cache"]);
+    assert_eq!(all_per_host[0].raw_text, "*.tmp\n*.cache");
     assert_eq!(all_per_host[1].client_id, client2.id);
-    assert_eq!(all_per_host[1].patterns, vec!["*.bak"]);
+    assert_eq!(all_per_host[1].raw_text, "*.bak");
+
+    // Upsert updates existing row
+    db::upsert_per_host_excludes_raw(&pool, schedule.id, client.id, "*.tmp\n*.cache\n\n# new")
+        .await
+        .unwrap();
+    let all_per_host = db::list_all_per_host_excludes_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(all_per_host[0].raw_text, "*.tmp\n*.cache\n\n# new");
 
     db::delete_per_host_excludes_for_schedule(&pool, schedule.id)
         .await
@@ -882,11 +866,182 @@ async fn excludes_per_host_crud(pool: PgPool) {
         .await
         .unwrap();
     assert!(all_per_host.is_empty());
+}
 
-    let schedule_level = db::list_excludes_for_schedule(&pool, schedule.id)
+#[sqlx::test(migrations = "./migrations")]
+async fn global_excludes_preserves_blank_lines_and_comments(pool: PgPool) {
+    let raw = "# System paths\n/proc\n/sys\n\n# Cache files\n*.cache\npp:__pycache__";
+    db::set_global_excludes_raw(&pool, raw).await.unwrap();
+    assert_eq!(db::get_global_excludes_raw(&pool).await.unwrap(), raw);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn global_excludes_overwrite_replaces_fully(pool: PgPool) {
+    db::set_global_excludes_raw(&pool, "first\nsecond")
         .await
         .unwrap();
-    assert_eq!(schedule_level, vec!["*.log"]);
+    db::set_global_excludes_raw(&pool, "only-this")
+        .await
+        .unwrap();
+    assert_eq!(
+        db::get_global_excludes_raw(&pool).await.unwrap(),
+        "only-this"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_excludes_raw_text_round_trip(pool: PgPool) {
+    let (_, _, schedule) = create_test_schedule(&pool).await;
+
+    let raw = "# Cache\n*.cache\n\n# Runtime\n/proc\n/sys";
+    let updated = db::update_schedule(
+        &pool,
+        schedule.id,
+        &ScheduleParams {
+            name: "test-schedule",
+            schedule_type: "backup",
+            cron_expression: "0 3 * * *",
+            enabled: true,
+            canary_enabled: false,
+            exclude_patterns_raw: raw,
+            ignore_global_excludes: false,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 1,
+            compact_enabled: true,
+            rate_limit_kbps: None,
+            pre_backup_commands: "",
+            post_backup_commands: "",
+            execution_mode: "parallel",
+            on_failure: "stop",
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(updated.exclude_patterns_raw, raw);
+
+    let fetched = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
+    assert_eq!(fetched.exclude_patterns_raw, raw);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn per_host_excludes_preserves_blank_lines_and_comments(pool: PgPool) {
+    let (client, _, schedule) = create_test_schedule(&pool).await;
+
+    let raw = "# Cache\n*.cache\n\n# Runtime\n/proc";
+    db::upsert_per_host_excludes_raw(&pool, schedule.id, client.id, raw)
+        .await
+        .unwrap();
+
+    let all = db::list_all_per_host_excludes_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].raw_text, raw);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn per_host_excludes_upsert_replaces_existing(pool: PgPool) {
+    let (client, _, schedule) = create_test_schedule(&pool).await;
+
+    db::upsert_per_host_excludes_raw(&pool, schedule.id, client.id, "first")
+        .await
+        .unwrap();
+    db::upsert_per_host_excludes_raw(&pool, schedule.id, client.id, "second\n\n# comment")
+        .await
+        .unwrap();
+
+    let all = db::list_all_per_host_excludes_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].raw_text, "second\n\n# comment");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPool) {
+    let encryption_key = shared::crypto::derive_key(b"test-assembly-key-for-excludes");
+    let (client, repo, _schedule) = create_test_schedule(&pool).await;
+
+    // Global excludes: blank lines and comments should be stripped
+    db::set_global_excludes_raw(&pool, "# system\n/proc\n/sys\n\n# cache\n*.cache")
+        .await
+        .unwrap();
+
+    // Schedule-level excludes: same
+    db::update_schedule(
+        &pool,
+        _schedule.id,
+        &ScheduleParams {
+            name: "test-schedule",
+            schedule_type: "backup",
+            cron_expression: "0 3 * * *",
+            enabled: true,
+            canary_enabled: false,
+            exclude_patterns_raw: "# logs\n*.log\n\n*.tmp",
+            ignore_global_excludes: false,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 1,
+            compact_enabled: true,
+            rate_limit_kbps: None,
+            pre_backup_commands: "",
+            post_backup_commands: "",
+            execution_mode: "parallel",
+            on_failure: "stop",
+        },
+    )
+    .await
+    .unwrap();
+
+    // Store a properly encrypted passphrase so assemble_config can decrypt it
+    let passphrase_encrypted =
+        shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
+    sqlx::query("UPDATE repos SET passphrase_encrypted = $1 WHERE id = $2")
+        .bind(passphrase_encrypted.as_slice())
+        .bind(repo.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Insert a backup source so assemble_config does not fail
+    db::insert_backup_source_for_schedule(&pool, _schedule.id, "/home", 0)
+        .await
+        .unwrap();
+
+    // Enable the repo so it is reachable
+    let _ = sqlx::query("UPDATE repos SET enabled = true WHERE id = $1")
+        .bind(repo.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let config =
+        server::config_assembler::assemble_config(&pool, &encryption_key, &client.hostname)
+            .await
+            .unwrap();
+
+    let patterns: Vec<&str> = config.repos[0].schedules[0]
+        .exclude_patterns
+        .iter()
+        .map(String::as_str)
+        .collect();
+
+    // Comments and blank lines must not appear
+    assert!(!patterns.iter().any(|p| p.starts_with('#')));
+    assert!(!patterns.iter().any(|p| p.is_empty()));
+
+    // Effective patterns from global excludes
+    assert!(patterns.contains(&"/proc"));
+    assert!(patterns.contains(&"/sys"));
+    assert!(patterns.contains(&"*.cache"));
+
+    // Effective patterns from schedule excludes
+    assert!(patterns.contains(&"*.log"));
+    assert!(patterns.contains(&"*.tmp"));
 }
 
 #[sqlx::test(migrations = "./migrations")]

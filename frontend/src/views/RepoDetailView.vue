@@ -1155,6 +1155,23 @@ async function resetImport(): Promise<void> {
               <span class="panel-title">Files &mdash; {{ selectedArchive.name }}</span>
             </div>
 
+            <div class="archive-meta-bar">
+              <span class="archive-meta-item">
+                <span class="archive-meta-label">Date</span>
+                <span class="archive-meta-value">{{ formatDate(selectedArchive.start) }}</span>
+              </span>
+              <span class="archive-meta-sep" />
+              <span class="archive-meta-item">
+                <span class="archive-meta-label">Original</span>
+                <span class="archive-meta-value">{{ formatBytes(selectedArchive.original_size) }}</span>
+              </span>
+              <span class="archive-meta-sep" />
+              <span class="archive-meta-item">
+                <span class="archive-meta-label">Dedup</span>
+                <span class="archive-meta-value">{{ formatBytes(selectedArchive.deduplicated_size) }}</span>
+              </span>
+            </div>
+
             <div class="archive-breadcrumb">
               <button
                 v-for="(seg, i) in breadcrumbs"
@@ -2058,6 +2075,42 @@ async function resetImport(): Promise<void> {
 .entry-icon {
   flex-shrink: 0;
   color: var(--text-muted);
+}
+
+.archive-meta-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-base);
+}
+
+.archive-meta-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+
+.archive-meta-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.archive-meta-value {
+  font-size: 0.82rem;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.archive-meta-sep {
+  width: 1px;
+  height: 0.9rem;
+  background: var(--border);
+  flex-shrink: 0;
 }
 
 .archive-breadcrumb {

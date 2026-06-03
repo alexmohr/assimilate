@@ -1176,6 +1176,20 @@ pub async fn update_schedule(
     })
 }
 
+pub async fn update_schedule_repo(pool: &PgPool, id: i64, repo_id: i64) -> Result<(), ApiError> {
+    let rows_affected = sqlx::query("UPDATE schedules SET repo_id = $2 WHERE id = $1")
+        .bind(id)
+        .bind(repo_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?
+        .rows_affected();
+    if rows_affected == 0 {
+        return Err(ApiError::NotFound(format!("schedule {id} not found")));
+    }
+    Ok(())
+}
+
 pub fn compression_to_str(c: &Compression) -> String {
     c.to_string()
 }
@@ -3556,7 +3570,9 @@ pub async fn get_calendar_events(
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct StorageTrendRow {
     pub date: chrono::NaiveDate,
-    pub total_size: i64,
+    pub original_size: i64,
+    pub compressed_size: i64,
+    pub deduplicated_size: i64,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -3564,7 +3580,9 @@ pub struct StorageTrendByRepoRow {
     pub date: chrono::NaiveDate,
     pub repo_id: i64,
     pub repo_name: String,
-    pub size: i64,
+    pub original_size: i64,
+    pub compressed_size: i64,
+    pub deduplicated_size: i64,
 }
 
 pub async fn get_storage_trends(
@@ -3573,15 +3591,19 @@ pub async fn get_storage_trends(
     days: i64,
 ) -> Result<Vec<StorageTrendRow>, ApiError> {
     // For each day in the range, take the last backup report per repo up to that day
-    // and sum their deduplicated_size. This gives the total repo footprint per day.
+    // and sum their sizes. This gives the total repo footprint per day.
     let days_i32 = i32::try_from(days).unwrap_or(30);
     if let Some(rid) = repo_id {
         sqlx::query_as::<_, StorageTrendRow>(
             "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => \
              $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ) SELECT d.date, \
-             COALESCE(( SELECT br.deduplicated_size FROM backup_reports br WHERE br.repo_id = $2 \
-             AND br.started_at::date <= d.date AND br.status = 'success' ORDER BY br.started_at \
-             DESC LIMIT 1 ), 0)::INT8 AS total_size FROM days d ORDER BY d.date",
+             COALESCE(latest.original_size, 0)::INT8 AS original_size, \
+             COALESCE(latest.compressed_size, 0)::INT8 AS compressed_size, \
+             COALESCE(latest.deduplicated_size, 0)::INT8 AS deduplicated_size FROM days d LEFT \
+             JOIN LATERAL ( SELECT br.original_size, br.compressed_size, br.deduplicated_size FROM \
+             backup_reports br WHERE br.repo_id = $2 AND br.started_at::date <= d.date AND \
+             br.status = 'success' ORDER BY br.started_at DESC LIMIT 1 ) latest ON true ORDER BY \
+             d.date",
         )
         .bind(days_i32)
         .bind(rid)
@@ -3592,10 +3614,13 @@ pub async fn get_storage_trends(
         sqlx::query_as::<_, StorageTrendRow>(
             "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => \
              $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ) SELECT d.date, \
-             COALESCE(( SELECT SUM(latest.deduplicated_size) FROM ( SELECT DISTINCT ON \
-             (br.repo_id) br.deduplicated_size FROM backup_reports br WHERE br.started_at::date \
-             <= d.date AND br.status = 'success' ORDER BY br.repo_id, br.started_at DESC ) latest \
-             ), 0)::INT8 AS total_size FROM days d ORDER BY d.date",
+             COALESCE(SUM(latest.original_size), 0)::INT8 AS original_size, \
+             COALESCE(SUM(latest.compressed_size), 0)::INT8 AS compressed_size, \
+             COALESCE(SUM(latest.deduplicated_size), 0)::INT8 AS deduplicated_size FROM days d \
+             LEFT JOIN LATERAL ( SELECT DISTINCT ON (br.repo_id) br.original_size, \
+             br.compressed_size, br.deduplicated_size FROM backup_reports br WHERE \
+             br.started_at::date <= d.date AND br.status = 'success' ORDER BY br.repo_id, \
+             br.started_at DESC ) latest ON true GROUP BY d.date ORDER BY d.date",
         )
         .bind(days_i32)
         .fetch_all(pool)
@@ -3645,10 +3670,13 @@ pub async fn get_storage_trends_by_repo(
         "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => $1))::date, \
          CURRENT_DATE, '1 day'::interval )::date AS date ), repos_list AS ( SELECT DISTINCT r.id \
          AS repo_id, r.name AS repo_name FROM repos r JOIN backup_reports br ON br.repo_id = r.id \
-         ) SELECT d.date, rl.repo_id, rl.repo_name, COALESCE(( SELECT br.deduplicated_size FROM \
-         backup_reports br WHERE br.repo_id = rl.repo_id AND br.started_at::date <= d.date AND \
-         br.status = 'success' ORDER BY br.started_at DESC LIMIT 1 ), 0)::INT8 AS size FROM days \
-         d CROSS JOIN repos_list rl ORDER BY d.date, rl.repo_name",
+         ) SELECT d.date, rl.repo_id, rl.repo_name, COALESCE(latest.original_size, 0)::INT8 AS \
+         original_size, COALESCE(latest.compressed_size, 0)::INT8 AS compressed_size, \
+         COALESCE(latest.deduplicated_size, 0)::INT8 AS deduplicated_size FROM days d CROSS JOIN \
+         repos_list rl LEFT JOIN LATERAL ( SELECT br.original_size, br.compressed_size, \
+         br.deduplicated_size FROM backup_reports br WHERE br.repo_id = rl.repo_id AND \
+         br.started_at::date <= d.date AND br.status = 'success' ORDER BY br.started_at DESC LIMIT \
+         1 ) latest ON true ORDER BY d.date, rl.repo_name",
     )
     .bind(days_i32)
     .fetch_all(pool)

@@ -35,14 +35,18 @@ ChartJS.register(
 
 interface TrendEntry {
   date: string
-  total_size: number
+  original_size: number
+  compressed_size: number
+  deduplicated_size: number
 }
 
 interface ByRepoEntry {
   date: string
   repo_id: number
   repo_name: string
-  size: number
+  original_size: number
+  compressed_size: number
+  deduplicated_size: number
 }
 
 interface RepoOption {
@@ -145,7 +149,7 @@ const chartData = computed(() => {
       if (!dataByRepo.has(e.repo_name)) {
         dataByRepo.set(e.repo_name, new Map())
       }
-      dataByRepo.get(e.repo_name)!.set(e.date, e.size)
+      dataByRepo.get(e.repo_name)!.set(e.date, e.deduplicated_size)
     })
     return {
       labels: dates.map((d) => d.slice(5)),
@@ -163,10 +167,26 @@ const chartData = computed(() => {
     labels: entries.value.map((t) => t.date.slice(5)),
     datasets: [
       {
-        label: 'Total Storage',
-        data: entries.value.map((t) => t.total_size),
+        label: 'Original',
+        data: entries.value.map((t) => t.original_size),
+        borderColor: 'oklch(0.75 0.16 75)',
+        backgroundColor: 'oklch(0.75 0.16 75 / 0.1)',
+        fill: true,
+        tension: 0.3,
+      },
+      {
+        label: 'Compressed',
+        data: entries.value.map((t) => t.compressed_size),
         borderColor: 'oklch(0.62 0.19 255)',
         backgroundColor: 'oklch(0.62 0.19 255 / 0.1)',
+        fill: true,
+        tension: 0.3,
+      },
+      {
+        label: 'Deduplicated',
+        data: entries.value.map((t) => t.deduplicated_size),
+        borderColor: 'oklch(0.72 0.17 162)',
+        backgroundColor: 'oklch(0.72 0.17 162 / 0.1)',
         fill: true,
         tension: 0.3,
       },
@@ -179,6 +199,7 @@ const chartOptions = computed(() => {
   const textMuted = cssVar('--text-muted')
   const border = cssVar('--border')
   const isStacked = viewMode.value === 'stacked' && selectedRepoId.value === undefined
+  const showLegend = isStacked || viewMode.value === 'total'
   return {
     responsive: true,
     maintainAspectRatio: false,
@@ -188,7 +209,7 @@ const chartOptions = computed(() => {
     },
     plugins: {
       legend: {
-        display: isStacked,
+        display: showLegend,
         position: 'bottom' as const,
         labels: {
           color: textMuted,
@@ -226,14 +247,24 @@ const hasData = computed(
   (): boolean => entries.value.length >= 2 || byRepoEntries.value.length >= 2,
 )
 
+const currentOriginal = computed((): number => {
+  if (entries.value.length === 0) return 0
+  return entries.value[entries.value.length - 1].original_size
+})
+
+const currentCompressed = computed((): number => {
+  if (entries.value.length === 0) return 0
+  return entries.value[entries.value.length - 1].compressed_size
+})
+
 const currentSize = computed((): number => {
   if (entries.value.length === 0) return 0
-  return entries.value[entries.value.length - 1].total_size
+  return entries.value[entries.value.length - 1].deduplicated_size
 })
 
 const delta = computed((): number => {
   if (entries.value.length < 2) return 0
-  return entries.value[entries.value.length - 1].total_size - entries.value[0].total_size
+  return entries.value[entries.value.length - 1].deduplicated_size - entries.value[0].deduplicated_size
 })
 
 const deltaPositive = computed((): boolean => delta.value >= 0)
@@ -330,8 +361,16 @@ const deltaPositive = computed((): boolean => delta.value >= 0)
         class="trend-summary"
       >
         <div class="trend-stat">
+          <span class="trend-current">{{ formatBytes(currentOriginal) }}</span>
+          <span class="trend-label">Original Size</span>
+        </div>
+        <div class="trend-stat">
+          <span class="trend-current">{{ formatBytes(currentCompressed) }}</span>
+          <span class="trend-label">Compressed</span>
+        </div>
+        <div class="trend-stat">
           <span class="trend-current">{{ formatBytes(currentSize) }}</span>
-          <span class="trend-label">Current Size</span>
+          <span class="trend-label">Deduplicated</span>
         </div>
         <div class="trend-stat">
           <span
@@ -340,7 +379,7 @@ const deltaPositive = computed((): boolean => delta.value >= 0)
           >
             {{ deltaPositive ? '+' : '' }}{{ formatBytes(Math.abs(delta)) }}
           </span>
-          <span class="trend-label">Change ({{ selectedDays }}d)</span>
+          <span class="trend-label">Dedup Change ({{ selectedDays }}d)</span>
         </div>
       </div>
     </template>

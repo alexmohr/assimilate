@@ -16,6 +16,7 @@ import { formatBytes } from '../utils/format'
 import { extractError } from '../utils/error'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import { Plus, Download, SlidersHorizontal, Database, Folder, FolderPlus } from '@lucide/vue'
+import BaseModal from '../components/BaseModal.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 
@@ -164,6 +165,12 @@ const browser = reactive<BrowserState>({
   loading: false,
   error: null,
   showBrowser: false,
+})
+
+const folderModal = reactive({
+  open: false,
+  name: '',
+  error: null as string | null,
 })
 
 useEscapeKey(showRepoDialog, () => {
@@ -402,11 +409,19 @@ function hideAutocomplete(): void {
   }, 200)
 }
 
-async function createFolder(): Promise<void> {
-  const folderName = prompt('Enter folder name:')
-  if (!folderName || !folderName.trim()) return
-  const newPath =
-    browser.path === '/' ? `/${folderName.trim()}` : `${browser.path}/${folderName.trim()}`
+function createFolder(): void {
+  folderModal.name = ''
+  folderModal.error = null
+  folderModal.open = true
+}
+
+async function confirmCreateFolder(): Promise<void> {
+  const name = folderModal.name.trim()
+  if (!name) {
+    folderModal.error = 'Folder name is required.'
+    return
+  }
+  const newPath = browser.path === '/' ? `/${name}` : `${browser.path}/${name}`
   try {
     await apiClient.post('/ssh/mkdir', {
       ssh_host: repoForm.ssh_host.trim(),
@@ -414,9 +429,10 @@ async function createFolder(): Promise<void> {
       ssh_port: repoForm.ssh_port,
       path: newPath,
     })
+    folderModal.open = false
     await browseDir(newPath)
   } catch (e: unknown) {
-    browser.error = extractError(e)
+    folderModal.error = extractError(e)
   }
 }
 
@@ -1443,6 +1459,53 @@ onMounted(loadRepos)
       </div>
     </Teleport>
   </div>
+
+  <BaseModal
+    :open="folderModal.open"
+    title="New Folder"
+    size="sm"
+    @close="folderModal.open = false"
+  >
+    <form
+      class="folder-modal-form"
+      @submit.prevent="confirmCreateFolder"
+    >
+      <label
+        for="folder-name-input"
+        class="form-label"
+      >Folder name</label>
+      <input
+        id="folder-name-input"
+        v-model="folderModal.name"
+        class="form-control"
+        type="text"
+        placeholder="my-backups"
+        autofocus
+      />
+      <p
+        v-if="folderModal.error"
+        class="folder-modal-error"
+      >
+        {{ folderModal.error }}
+      </p>
+    </form>
+    <template #footer>
+      <button
+        class="btn btn-ghost"
+        type="button"
+        @click="folderModal.open = false"
+      >
+        Cancel
+      </button>
+      <button
+        class="btn btn-primary"
+        type="button"
+        @click="confirmCreateFolder"
+      >
+        Create
+      </button>
+    </template>
+  </BaseModal>
 </template>
 
 <style scoped>
@@ -2045,5 +2108,17 @@ onMounted(loadRepos)
   margin-top: 1.25rem;
   border-top: 1px solid var(--border);
   padding-top: 1rem;
+}
+
+.folder-modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.folder-modal-error {
+  font-size: 0.85rem;
+  color: var(--danger);
+  margin: 0;
 }
 </style>

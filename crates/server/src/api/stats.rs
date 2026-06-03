@@ -403,7 +403,9 @@ pub async fn trends(
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct StorageTrendEntry {
     pub date: String,
-    pub total_size: i64,
+    pub original_size: i64,
+    pub compressed_size: i64,
+    pub deduplicated_size: i64,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -411,7 +413,9 @@ pub struct StorageTrendByRepoEntry {
     pub date: String,
     pub repo_id: i64,
     pub repo_name: String,
-    pub size: i64,
+    pub original_size: i64,
+    pub compressed_size: i64,
+    pub deduplicated_size: i64,
 }
 
 #[utoipa::path(
@@ -440,7 +444,9 @@ pub async fn storage_trends(
         .into_iter()
         .map(|row| StorageTrendEntry {
             date: row.date.to_string(),
-            total_size: row.total_size,
+            original_size: row.original_size,
+            compressed_size: row.compressed_size,
+            deduplicated_size: row.deduplicated_size,
         })
         .collect();
     Ok(Json(entries))
@@ -474,7 +480,9 @@ pub async fn storage_trends_by_repo(
             date: row.date.to_string(),
             repo_id: row.repo_id,
             repo_name: row.repo_name,
-            size: row.size,
+            original_size: row.original_size,
+            compressed_size: row.compressed_size,
+            deduplicated_size: row.deduplicated_size,
         })
         .collect();
     Ok(Json(entries))

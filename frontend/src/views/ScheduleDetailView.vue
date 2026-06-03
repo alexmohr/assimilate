@@ -101,7 +101,7 @@ const isCreate = computed(() => props.id === 'new')
 const schedule = ref<ScheduleRow | null>(null)
 const clients = ref<ClientRow[]>([])
 const repos = ref<RepoRow[]>([])
-const repo = ref<RepoRow | null>(null)
+const repo = computed(() => repos.value.find((r) => r.id === selectedRepoId.value) ?? null)
 const scheduleTargets = ref<ScheduleTarget[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
@@ -249,6 +249,7 @@ function populateForm(s: ScheduleRow): void {
     post_backup_commands: (JSON.parse(s.post_backup_commands || '[]') as string[]).join('\n'),
     backup_sources: '',
   }
+  selectedRepoId.value = s.repo_id
   executionMode.value = (s.execution_mode as 'parallel' | 'sequential') ?? 'parallel'
   onFailure.value = (s.on_failure as 'stop' | 'continue') ?? 'stop'
 }
@@ -298,7 +299,7 @@ async function loadData(): Promise<void> {
       clients.value = clientsRes.data
       repos.value = reposRes.data
       scheduleTargets.value = targetsRes.data
-      repo.value = reposRes.data.find((r) => r.id === schedRes.data.repo_id) ?? null
+      selectedRepoId.value = schedRes.data.repo_id
       const sorted = [...targetsRes.data].sort((a, b) => a.execution_order - b.execution_order)
       selectedClientIds.value = sorted.map((t) => t.client_id)
       populateForm(schedRes.data)
@@ -391,6 +392,7 @@ async function save(): Promise<void> {
       const res = await apiClient.put<ScheduleRow>(`/schedules/${schedule.value!.id}`, {
         ...payload,
         client_ids: selectedClientIds.value,
+        repo_id: selectedRepoId.value,
         execution_mode: executionMode.value,
         on_failure: onFailure.value,
       })
@@ -816,6 +818,22 @@ watch(activeTab, (tab) => {
                   </label>
                 </div>
               </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Repository</label>
+              <select
+                v-model.number="selectedRepoId"
+                class="form-select"
+              >
+                <option
+                  v-for="r in repos"
+                  :key="r.id"
+                  :value="r.id"
+                >
+                  {{ r.name }}
+                </option>
+              </select>
             </div>
 
             <!-- Execution Mode -->

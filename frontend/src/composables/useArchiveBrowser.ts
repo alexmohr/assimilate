@@ -10,6 +10,8 @@ export interface ArchiveEntry {
   start: string
   hostname: string
   comment: string
+  original_size: number
+  deduplicated_size: number
   matched: boolean | null
   client_hostname: string | null
 }

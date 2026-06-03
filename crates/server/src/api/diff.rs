@@ -1,24 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::{process::Stdio, time::Duration};
+use std::time::Duration;
 
 use axum::{
     Json,
     extract::{Path as AxumPath, Query, State},
 };
 use serde::{Deserialize, Serialize};
-use tokio::process::Command;
 
 use super::{auth::AuthUser, permissions::check_repo_permission};
-use crate::{AppState, api::archives::get_repo_env, error::ApiError};
+use crate::{AppState, api::archives::get_repo_env, borg::Borg, error::ApiError};
 
 const DIFF_TIMEOUT: Duration = Duration::from_secs(60);
 const LOCK_WAIT_SECS: &str = "60";
-
-fn borg_binary() -> String {
-    std::env::var("BORG_BINARY").unwrap_or_else(|_| "borg".to_string())
-}
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DiffResponse {
@@ -147,18 +142,18 @@ pub async fn diff_archives(
 
     let repo_archive1 = format!("{borg_repo}::{}", query.archive1);
 
-    let child = Command::new(borg_binary())
-        .arg("diff")
-        .arg("--json-lines")
-        .arg("--lock-wait")
-        .arg(LOCK_WAIT_SECS)
-        .arg(&repo_archive1)
-        .arg(&query.archive2)
-        .envs(&env)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
+    let child = Borg::new()
+        .spawn(
+            &[
+                "diff",
+                "--json-lines",
+                "--lock-wait",
+                LOCK_WAIT_SECS,
+                repo_archive1.as_str(),
+                query.archive2.as_str(),
+            ],
+            &env,
+        )
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
 
     let output = tokio::time::timeout(DIFF_TIMEOUT, child.wait_with_output())

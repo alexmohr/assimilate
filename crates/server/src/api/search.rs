@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::{collections::HashMap, process::Stdio, time::Duration};
+use std::{collections::HashMap, time::Duration};
 
 use axum::{
     Json,
@@ -9,14 +9,13 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tokio::process::Command;
 
 use super::{
-    archives::{LOCK_WAIT_SECS, borg_binary, classify_borg_error, get_repo_env},
+    archives::{LOCK_WAIT_SECS, classify_borg_error, get_repo_env},
     auth::AuthUser,
     permissions::check_repo_permission,
 };
-use crate::{AppState, error::ApiError};
+use crate::{AppState, borg::Borg, error::ApiError};
 
 const SEARCH_TIMEOUT: Duration = Duration::from_secs(60);
 const PER_ARCHIVE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -98,18 +97,18 @@ pub async fn search_archive(
 
     let output = tokio::time::timeout(
         SEARCH_TIMEOUT,
-        Command::new(borg_binary())
-            .arg("list")
-            .arg("--json-lines")
-            .arg("--lock-wait")
-            .arg(LOCK_WAIT_SECS)
-            .arg("--pattern")
-            .arg(&borg_pattern)
-            .arg(&repo_archive)
-            .envs(&env)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output(),
+        Borg::new().run(
+            &[
+                "list",
+                "--json-lines",
+                "--lock-wait",
+                LOCK_WAIT_SECS,
+                "--pattern",
+                borg_pattern.as_str(),
+                repo_archive.as_str(),
+            ],
+            &env,
+        ),
     )
     .await
     .map_err(|_| ApiError::BadGateway("borg search timed out after 60s".to_string()))?
@@ -287,16 +286,11 @@ async fn list_archives_sorted(
     borg_repo: &str,
     env: &HashMap<String, String>,
 ) -> Result<Vec<ArchiveEntryBrief>, ApiError> {
-    let output = Command::new(borg_binary())
-        .arg("list")
-        .arg("--json")
-        .arg("--lock-wait")
-        .arg(LOCK_WAIT_SECS)
-        .arg(borg_repo)
-        .envs(env)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
+    let output = Borg::new()
+        .run(
+            &["list", "--json", "--lock-wait", LOCK_WAIT_SECS, borg_repo],
+            env,
+        )
         .await
         .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
 
@@ -337,18 +331,18 @@ async fn search_in_archive(
 
     let result = tokio::time::timeout(
         PER_ARCHIVE_TIMEOUT,
-        Command::new(borg_binary())
-            .arg("list")
-            .arg("--json-lines")
-            .arg("--lock-wait")
-            .arg(LOCK_WAIT_SECS)
-            .arg("--pattern")
-            .arg(borg_pattern)
-            .arg(&repo_archive)
-            .envs(env)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output(),
+        Borg::new().run(
+            &[
+                "list",
+                "--json-lines",
+                "--lock-wait",
+                LOCK_WAIT_SECS,
+                "--pattern",
+                borg_pattern,
+                repo_archive.as_str(),
+            ],
+            env,
+        ),
     )
     .await;
 

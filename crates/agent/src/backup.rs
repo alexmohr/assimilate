@@ -13,6 +13,8 @@ use tokio::process::Command;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use crate::borg::Borg;
+
 #[derive(Debug, thiserror::Error)]
 pub enum BackupError {
     #[error("backup skipped: {0}")]
@@ -66,25 +68,18 @@ pub struct BackupResult {
 }
 
 pub struct BackupEngine {
-    borg_binary: PathBuf,
-    extra_env: Vec<(String, String)>,
+    borg: Borg,
 }
 
 impl BackupEngine {
     pub fn new() -> Self {
-        let borg_binary =
-            std::env::var("BORG_BINARY").map_or_else(|_| PathBuf::from("borg"), PathBuf::from);
-        Self {
-            borg_binary,
-            extra_env: Vec::new(),
-        }
+        Self { borg: Borg::new() }
     }
 
     #[cfg(test)]
     fn with_config(borg_binary: PathBuf, extra_env: Vec<(String, String)>) -> Self {
         Self {
-            borg_binary,
-            extra_env,
+            borg: Borg::with_extra_env(borg_binary, extra_env),
         }
     }
 
@@ -225,12 +220,7 @@ impl BackupEngine {
 
         info!("Running borg create for archive {archive_name}");
 
-        let output = Command::new(&self.borg_binary)
-            .args(&args)
-            .envs(env_vars.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-            .envs(self.extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-            .output()
-            .await?;
+        let output = self.borg.run(&args, &env_vars).await?;
 
         let exit_code = output.status.code().unwrap_or(-1);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -347,16 +337,9 @@ impl BackupEngine {
 
         info!("Running borg prune");
 
-        let output = tokio::time::timeout(
-            Duration::from_mins(5),
-            Command::new(&self.borg_binary)
-                .args(&args)
-                .envs(env_vars.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-                .envs(self.extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-                .output(),
-        )
-        .await
-        .map_err(|_| BackupError::Timeout(300))??;
+        let output = tokio::time::timeout(Duration::from_mins(5), self.borg.run(&args, &env_vars))
+            .await
+            .map_err(|_| BackupError::Timeout(300))??;
 
         let exit_code = output.status.code().unwrap_or(-1);
         if exit_code >= 2 {
@@ -382,13 +365,10 @@ impl BackupEngine {
 
         info!("Running borg compact");
 
+        let compact_args = ["compact", "--lock-wait", "600", "--log-json"];
         let output = tokio::time::timeout(
             Duration::from_mins(5),
-            Command::new(&self.borg_binary)
-                .args(["compact", "--lock-wait", "600", "--log-json"])
-                .envs(env_vars.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-                .envs(self.extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-                .output(),
+            self.borg.run(&compact_args, &env_vars),
         )
         .await
         .map_err(|_| BackupError::Timeout(300))??;
@@ -417,13 +397,10 @@ impl BackupEngine {
 
         info!(target = %target.target_name, "Running borg check");
 
+        let check_args = ["check", "--lock-wait", "600", "--show-rc", "--log-json"];
         let output = tokio::time::timeout(
             Duration::from_mins(5),
-            Command::new(&self.borg_binary)
-                .args(["check", "--lock-wait", "600", "--show-rc", "--log-json"])
-                .envs(env_vars.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-                .envs(self.extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-                .output(),
+            self.borg.run(&check_args, &env_vars),
         )
         .await
         .map_err(|_| BackupError::Timeout(300))??;
@@ -455,25 +432,20 @@ impl BackupEngine {
         info!(target = %target.target_name, "Running borg extract --dry-run (verify)");
 
         let glob_pattern = format!("*{hostname}-*");
-        let output = tokio::time::timeout(
-            Duration::from_mins(5),
-            Command::new(&self.borg_binary)
-                .args([
-                    "list",
-                    "--lock-wait",
-                    "600",
-                    "--short",
-                    "--last",
-                    "1",
-                    "-a",
-                    &glob_pattern,
-                ])
-                .envs(env_vars.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-                .envs(self.extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-                .output(),
-        )
-        .await
-        .map_err(|_| BackupError::Timeout(300))??;
+        let list_args = [
+            "list",
+            "--lock-wait",
+            "600",
+            "--short",
+            "--last",
+            "1",
+            "-a",
+            glob_pattern.as_str(),
+        ];
+        let output =
+            tokio::time::timeout(Duration::from_mins(5), self.borg.run(&list_args, &env_vars))
+                .await
+                .map_err(|_| BackupError::Timeout(300))??;
 
         let exit_code = output.status.code().unwrap_or(-1);
         if exit_code != 0 {
@@ -492,13 +464,16 @@ impl BackupEngine {
         }
 
         let archive_ref = format!("::{archive_name}");
+        let extract_args = [
+            "extract",
+            "--dry-run",
+            "--lock-wait",
+            "600",
+            archive_ref.as_str(),
+        ];
         let output = tokio::time::timeout(
             Duration::from_mins(5),
-            Command::new(&self.borg_binary)
-                .args(["extract", "--dry-run", "--lock-wait", "600", &archive_ref])
-                .envs(env_vars.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-                .envs(self.extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-                .output(),
+            self.borg.run(&extract_args, &env_vars),
         )
         .await
         .map_err(|_| BackupError::Timeout(300))??;
@@ -548,25 +523,20 @@ impl BackupEngine {
         let hostname = &target.hostname;
 
         let glob_pattern = format!("*{hostname}-*");
-        let output = tokio::time::timeout(
-            Duration::from_mins(5),
-            Command::new(&self.borg_binary)
-                .args([
-                    "list",
-                    "--lock-wait",
-                    "600",
-                    "--short",
-                    "--last",
-                    "1",
-                    "-a",
-                    &glob_pattern,
-                ])
-                .envs(env_vars.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-                .envs(self.extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-                .output(),
-        )
-        .await
-        .map_err(|_| BackupError::Timeout(300))??;
+        let list_args = [
+            "list",
+            "--lock-wait",
+            "600",
+            "--short",
+            "--last",
+            "1",
+            "-a",
+            glob_pattern.as_str(),
+        ];
+        let output =
+            tokio::time::timeout(Duration::from_mins(5), self.borg.run(&list_args, &env_vars))
+                .await
+                .map_err(|_| BackupError::Timeout(300))??;
 
         let exit_code = output.status.code().unwrap_or(-1);
         if exit_code != 0 {
@@ -593,20 +563,17 @@ impl BackupEngine {
             .to_string_lossy()
             .into_owned();
 
+        let extract_args = [
+            "extract",
+            "--lock-wait",
+            "600",
+            archive_ref.as_str(),
+            canary_relative.as_str(),
+        ];
         let output = tokio::time::timeout(
             Duration::from_mins(5),
-            Command::new(&self.borg_binary)
-                .args([
-                    "extract",
-                    "--lock-wait",
-                    "600",
-                    &archive_ref,
-                    &canary_relative,
-                ])
-                .current_dir(extract_dir.path())
-                .envs(env_vars.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-                .envs(self.extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-                .output(),
+            self.borg
+                .run_in_dir(&extract_args, &env_vars, extract_dir.path()),
         )
         .await
         .map_err(|_| BackupError::Timeout(300))??;

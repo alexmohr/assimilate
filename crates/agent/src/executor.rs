@@ -15,6 +15,7 @@ use tracing::{error, info, warn};
 
 use crate::{
     backup::{BackupEngine, BackupError, BackupTarget, CanaryToken},
+    borg::Borg,
     ssh_forward::{SshForwardError, SshForwardSocket, run_ssh_forward},
 };
 
@@ -406,10 +407,7 @@ impl Executor {
         let outbound = outbound_tx.clone();
         let server_url = self.server_url.clone();
         let token = self.token.clone();
-        let borg_binary = std::env::var("BORG_BINARY").map_or_else(
-            |_| std::path::PathBuf::from("borg"),
-            std::path::PathBuf::from,
-        );
+        let borg = Borg::new();
 
         tokio::spawn(async move {
             run_dry_run_task(
@@ -421,7 +419,7 @@ impl Executor {
                 &server_url,
                 &token,
                 request_id,
-                &borg_binary,
+                &borg,
                 &outbound,
             )
             .await;
@@ -470,10 +468,7 @@ impl Executor {
         let outbound = outbound_tx.clone();
         let server_url = self.server_url.clone();
         let token = self.token.clone();
-        let borg_binary = std::env::var("BORG_BINARY").map_or_else(
-            |_| std::path::PathBuf::from("borg"),
-            std::path::PathBuf::from,
-        );
+        let borg = Borg::new();
 
         tokio::spawn(async move {
             run_restore_task(
@@ -486,7 +481,7 @@ impl Executor {
                 &server_url,
                 &token,
                 request_id,
-                &borg_binary,
+                &borg,
                 &outbound,
             )
             .await;
@@ -532,10 +527,7 @@ impl Executor {
         let outbound = outbound_tx.clone();
         let server_url = self.server_url.clone();
         let token = self.token.clone();
-        let borg_binary = std::env::var("BORG_BINARY").map_or_else(
-            |_| std::path::PathBuf::from("borg"),
-            std::path::PathBuf::from,
-        );
+        let borg = Borg::new();
 
         tokio::spawn(async move {
             run_delete_archives_task(
@@ -543,7 +535,7 @@ impl Executor {
                 archive_names,
                 (&hostname, &server_url, &token),
                 request_id,
-                &borg_binary,
+                &borg,
                 &outbound,
             )
             .await;
@@ -587,24 +579,26 @@ async fn run_init_repo_task(
     let _ssh_forward =
         setup_ssh_forward(&mut ssh_forward_target, hostname, server_url, token).await;
 
-    let borg_binary = std::env::var("BORG_BINARY").unwrap_or_else(|_| "borg".to_string());
-
-    let mut cmd = tokio::process::Command::new(&borg_binary);
-    cmd.args(["init", "--encryption", encryption.as_borg_arg(), repo_url])
-        .env("BORG_PASSPHRASE", passphrase)
-        .env("BORG_DISPLAY_PASSPHRASE", "no")
-        .env(
-            "BORG_RSH",
-            "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
-        )
-        .env("LANG", "en_US.UTF-8")
-        .env("LC_CTYPE", "en_US.UTF-8");
-
+    let mut env = vec![
+        ("BORG_PASSPHRASE".to_owned(), passphrase.to_owned()),
+        ("BORG_DISPLAY_PASSPHRASE".to_owned(), "no".to_owned()),
+        (
+            "BORG_RSH".to_owned(),
+            "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new".to_owned(),
+        ),
+        ("LANG".to_owned(), "en_US.UTF-8".to_owned()),
+        ("LC_CTYPE".to_owned(), "en_US.UTF-8".to_owned()),
+    ];
     if let Some(sock) = &ssh_forward_target.ssh_auth_sock {
-        cmd.env("SSH_AUTH_SOCK", sock);
+        env.push((
+            "SSH_AUTH_SOCK".to_owned(),
+            sock.to_string_lossy().into_owned(),
+        ));
     }
 
-    let output = tokio::time::timeout(Duration::from_mins(2), cmd.output())
+    let borg = Borg::new();
+    let init_args = ["init", "--encryption", encryption.as_borg_arg(), repo_url];
+    let output = tokio::time::timeout(Duration::from_mins(2), borg.run(&init_args, &env))
         .await
         .map_err(|_| "borg init timed out after 120 seconds".to_owned())?
         .map_err(|e| format!("failed to execute borg: {e}"))?;
@@ -934,7 +928,7 @@ async fn run_dry_run_task(
     server_url: &str,
     token: &str,
     request_id: String,
-    borg_binary: &std::path::Path,
+    borg: &Borg,
     outbound_tx: &mpsc::Sender<AgentToServer>,
 ) {
     let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
@@ -971,37 +965,30 @@ async fn run_dry_run_task(
 
     info!(repo_id = ?repo_id, "running borg create --dry-run");
 
-    let output = match tokio::time::timeout(
-        Duration::from_mins(10),
-        tokio::process::Command::new(borg_binary)
-            .args(&args)
-            .envs(env_vars.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-            .output(),
-    )
-    .await
-    {
-        Ok(Ok(out)) => out,
-        Ok(Err(e)) => {
-            let msg = AgentToServer::OperationFailed {
-                request_id,
-                error: format!("failed to execute borg: {e}"),
-            };
-            if let Err(send_err) = outbound_tx.send(msg).await {
-                tracing::debug!(error = %send_err, "outbound send failed");
+    let output =
+        match tokio::time::timeout(Duration::from_mins(10), borg.run(&args, &env_vars)).await {
+            Ok(Ok(out)) => out,
+            Ok(Err(e)) => {
+                let msg = AgentToServer::OperationFailed {
+                    request_id,
+                    error: format!("failed to execute borg: {e}"),
+                };
+                if let Err(send_err) = outbound_tx.send(msg).await {
+                    tracing::debug!(error = %send_err, "outbound send failed");
+                }
+                return;
             }
-            return;
-        }
-        Err(_) => {
-            let msg = AgentToServer::OperationFailed {
-                request_id,
-                error: "borg dry-run timed out".to_owned(),
-            };
-            if let Err(send_err) = outbound_tx.send(msg).await {
-                tracing::debug!(error = %send_err, "outbound send failed");
+            Err(_) => {
+                let msg = AgentToServer::OperationFailed {
+                    request_id,
+                    error: "borg dry-run timed out".to_owned(),
+                };
+                if let Err(send_err) = outbound_tx.send(msg).await {
+                    tracing::debug!(error = %send_err, "outbound send failed");
+                }
+                return;
             }
-            return;
-        }
-    };
+        };
 
     let exit_code = output.status.code().unwrap_or(-1);
     if exit_code != 0 && exit_code != 1 {
@@ -1044,7 +1031,7 @@ async fn run_restore_task(
     server_url: &str,
     token: &str,
     request_id: String,
-    borg_binary: &std::path::Path,
+    borg: &Borg,
     outbound_tx: &mpsc::Sender<AgentToServer>,
 ) {
     let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
@@ -1064,37 +1051,30 @@ async fn run_restore_task(
 
     info!(repo_id = ?repo_id, archive = %archive_name, "running borg extract");
 
-    let output = match tokio::time::timeout(
-        Duration::from_mins(30),
-        tokio::process::Command::new(borg_binary)
-            .args(&args)
-            .envs(env_vars.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-            .output(),
-    )
-    .await
-    {
-        Ok(Ok(out)) => out,
-        Ok(Err(e)) => {
-            let msg = AgentToServer::OperationFailed {
-                request_id,
-                error: format!("failed to execute borg: {e}"),
-            };
-            if let Err(send_err) = outbound_tx.send(msg).await {
-                tracing::debug!(error = %send_err, "outbound send failed");
+    let output =
+        match tokio::time::timeout(Duration::from_mins(30), borg.run(&args, &env_vars)).await {
+            Ok(Ok(out)) => out,
+            Ok(Err(e)) => {
+                let msg = AgentToServer::OperationFailed {
+                    request_id,
+                    error: format!("failed to execute borg: {e}"),
+                };
+                if let Err(send_err) = outbound_tx.send(msg).await {
+                    tracing::debug!(error = %send_err, "outbound send failed");
+                }
+                return;
             }
-            return;
-        }
-        Err(_) => {
-            let msg = AgentToServer::OperationFailed {
-                request_id,
-                error: "borg extract timed out".to_owned(),
-            };
-            if let Err(send_err) = outbound_tx.send(msg).await {
-                tracing::debug!(error = %send_err, "outbound send failed");
+            Err(_) => {
+                let msg = AgentToServer::OperationFailed {
+                    request_id,
+                    error: "borg extract timed out".to_owned(),
+                };
+                if let Err(send_err) = outbound_tx.send(msg).await {
+                    tracing::debug!(error = %send_err, "outbound send failed");
+                }
+                return;
             }
-            return;
-        }
-    };
+        };
 
     let exit_code = output.status.code().unwrap_or(-1);
     if exit_code != 0 && exit_code != 1 {
@@ -1140,7 +1120,7 @@ async fn run_delete_archives_task(
     archive_names: Vec<String>,
     ssh_params: (&str, &str, &str),
     request_id: String,
-    borg_binary: &std::path::Path,
+    borg: &Borg,
     outbound_tx: &mpsc::Sender<AgentToServer>,
 ) {
     let (hostname, server_url, token) = ssh_params;
@@ -1159,43 +1139,36 @@ async fn run_delete_archives_task(
 
         info!(archive = %archive_name, "running borg delete");
 
-        let output = match tokio::time::timeout(
-            Duration::from_mins(10),
-            tokio::process::Command::new(borg_binary)
-                .args(&args)
-                .envs(env_vars.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-                .output(),
-        )
-        .await
-        {
-            Ok(Ok(out)) => out,
-            Ok(Err(e)) => {
-                let msg = AgentToServer::DeleteArchivesResult {
-                    request_id,
-                    success: false,
-                    deleted_count,
-                    error_message: Some(format!(
-                        "failed to execute borg delete for {archive_name}: {e}"
-                    )),
-                };
-                if let Err(send_err) = outbound_tx.send(msg).await {
-                    tracing::debug!(error = %send_err, "outbound send failed");
+        let output =
+            match tokio::time::timeout(Duration::from_mins(10), borg.run(&args, &env_vars)).await {
+                Ok(Ok(out)) => out,
+                Ok(Err(e)) => {
+                    let msg = AgentToServer::DeleteArchivesResult {
+                        request_id,
+                        success: false,
+                        deleted_count,
+                        error_message: Some(format!(
+                            "failed to execute borg delete for {archive_name}: {e}"
+                        )),
+                    };
+                    if let Err(send_err) = outbound_tx.send(msg).await {
+                        tracing::debug!(error = %send_err, "outbound send failed");
+                    }
+                    return;
                 }
-                return;
-            }
-            Err(_) => {
-                let msg = AgentToServer::DeleteArchivesResult {
-                    request_id,
-                    success: false,
-                    deleted_count,
-                    error_message: Some(format!("borg delete timed out for {archive_name}")),
-                };
-                if let Err(send_err) = outbound_tx.send(msg).await {
-                    tracing::debug!(error = %send_err, "outbound send failed");
+                Err(_) => {
+                    let msg = AgentToServer::DeleteArchivesResult {
+                        request_id,
+                        success: false,
+                        deleted_count,
+                        error_message: Some(format!("borg delete timed out for {archive_name}")),
+                    };
+                    if let Err(send_err) = outbound_tx.send(msg).await {
+                        tracing::debug!(error = %send_err, "outbound send failed");
+                    }
+                    return;
                 }
-                return;
-            }
-        };
+            };
 
         let exit_code = output.status.code().unwrap_or(-1);
         if exit_code != 0 && exit_code != 1 {

@@ -14,6 +14,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use shared::types::build_repo_url;
 use sqlx::PgPool;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio_util::io::ReaderStream;
 
 use super::{auth::AuthUser, permissions::check_repo_permission};
@@ -372,47 +373,72 @@ pub async fn list_contents(
 
     let repo_archive = format!("{borg_repo}::{archive_name}");
 
-    let mut args: Vec<&str> = vec![
-        "list",
-        "--json-lines",
-        "--lock-wait",
-        LOCK_WAIT_SECS,
-        repo_archive.as_str(),
-    ];
-    if let Some(p) = path {
-        args.push(p);
+    // Use depth-limited shell glob patterns so borg only outputs direct children of the
+    // requested path. In borg's sh: syntax '*' does not cross directory separators, so
+    // "sh:parent/*" returns immediate children without recursing into subdirectories.
+    // This avoids enumerating the full archive subtree on every directory navigation.
+    let child_pattern = path.map_or_else(
+        || "sh:*".to_string(),
+        |p| format!("sh:{}/*", p.trim_end_matches('/')),
+    );
+    let dir_pattern = path.map(|p| format!("sh:{}", p.trim_end_matches('/')));
+
+    let mut args: Vec<&str> = vec!["list", "--json-lines", "--lock-wait", LOCK_WAIT_SECS];
+    if let Some(dp) = &dir_pattern {
+        args.extend_from_slice(&["--pattern", dp.as_str()]);
     }
-    let output = Borg::new()
-        .run(&args, &env)
+    args.extend_from_slice(&["--pattern", child_pattern.as_str(), repo_archive.as_str()]);
+
+    let mut child = Borg::new()
+        .spawn(&args, &env)
+        .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
+
+    let Some(stdout) = child.stdout.take() else {
+        return Err(ApiError::Internal("no stdout from borg".to_string()));
+    };
+
+    let mut lines = BufReader::new(stdout).lines();
+    let mut entries = Vec::new();
+
+    while let Some(line) = lines
+        .next_line()
         .await
-        .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let code = output.status.code().unwrap_or(1);
-        return Err(classify_borg_error(code, &stderr));
+        .map_err(|e| ApiError::Internal(format!("reading borg output: {e}")))?
+    {
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&line).inspect_err(|e| {
+            tracing::trace!(error = %e, "skipping unparseable borg output line");
+        }) else {
+            continue;
+        };
+        entries.push(ContentEntry {
+            entry_type: v["type"].as_str().unwrap_or("").to_string(),
+            path: v["path"].as_str().unwrap_or("").to_string(),
+            size: v["size"].as_i64().unwrap_or(0),
+            mtime: v["mtime"].as_str().unwrap_or("").to_string(),
+            mode: v["mode"].as_str().unwrap_or("").to_string(),
+        });
+        if entries.len() >= limit {
+            // Limit reached — kill_on_drop cleans up the borg process.
+            return Ok(Json(entries));
+        }
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let entries: Vec<ContentEntry> = stdout
-        .lines()
-        .filter(|line| !line.is_empty())
-        .take(limit)
-        .filter_map(|line| {
-            let v: serde_json::Value = serde_json::from_str(line)
-                .inspect_err(|e| {
-                    tracing::trace!(error = %e, "skipping unparseable borg output line");
-                })
-                .ok()?;
-            Some(ContentEntry {
-                entry_type: v["type"].as_str().unwrap_or("").to_string(),
-                path: v["path"].as_str().unwrap_or("").to_string(),
-                size: v["size"].as_i64().unwrap_or(0),
-                mtime: v["mtime"].as_str().unwrap_or("").to_string(),
-                mode: v["mode"].as_str().unwrap_or("").to_string(),
-            })
-        })
-        .collect();
+    // All output consumed — verify exit status.
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| ApiError::Internal(format!("borg wait failed: {e}")))?;
+    if !status.success() {
+        let mut stderr_str = String::new();
+        if let Some(mut se) = child.stderr.take() {
+            let _ = se.read_to_string(&mut stderr_str).await;
+        }
+        let code = status.code().unwrap_or(1);
+        return Err(classify_borg_error(code, &stderr_str));
+    }
 
     Ok(Json(entries))
 }

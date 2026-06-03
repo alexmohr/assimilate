@@ -47,6 +47,20 @@ async fn handle_ui_socket(socket: WebSocket, state: AppState) {
     let mut rx = state.ui_broadcast.subscribe();
     let (mut sink, mut stream) = socket.split();
 
+    for (repo_id, snap) in state.ui_broadcast.current_import_snapshots() {
+        let event = shared::protocol::ServerToUi::ImportProgress {
+            repo_id,
+            progress: snap.progress,
+            total: snap.total,
+            message: snap.message,
+        };
+        if let Ok(json) = serde_json::to_string(&event)
+            && sink.send(Message::Text(json.into())).await.is_err()
+        {
+            return;
+        }
+    }
+
     let recv_task = async {
         while let Some(Ok(msg)) = stream.next().await {
             if matches!(msg, Message::Close(_)) {

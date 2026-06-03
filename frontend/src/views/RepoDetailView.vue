@@ -172,11 +172,6 @@ interface RescanResult {
   remaining_unmatched: number
 }
 
-interface SyncResult {
-  imported: number
-  duration_secs: number
-}
-
 useEscapeKey(showBreakLockDialog, () => {
   showBreakLockDialog.value = false
 })
@@ -199,8 +194,10 @@ onMessage('DataChanged', () => refreshRepo().catch(logger.error))
 
 onMessage<ImportProgressPayload>('ImportProgress', (payload) => {
   if (repo.value && repo.value.id === payload.repo_id) {
-    repo.value.import_progress = payload.progress
-    repo.value.import_total = payload.total
+    if (payload.progress >= 0) {
+      repo.value.import_progress = payload.progress
+      repo.value.import_total = payload.total
+    }
     repo.value.import_status_message = payload.message
   }
 })
@@ -559,12 +556,8 @@ async function rescanArchives(): Promise<void> {
 async function syncRepo(): Promise<void> {
   syncLoading.value = true
   try {
-    const res = await apiClient.post<SyncResult>(`/repos/${repoId.value}/sync`)
-    toastSuccess(
-      `Sync complete: imported ${res.data.imported} archives in ${res.data.duration_secs}s.`,
-    )
-    await loadRepo()
-    await loadArchives()
+    await apiClient.post(`/repos/${repoId.value}/sync`)
+    toastSuccess('Full resync started.')
   } catch (e: unknown) {
     toastError(extractError(e))
   } finally {

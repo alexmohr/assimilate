@@ -1079,6 +1079,58 @@ async fn run_borg_archive_info_with_retry(
     unreachable!()
 }
 
+/// Refreshes the authoritative repo statistics from `borg info --json`
+/// (`cache.stats`) plus the archive count from the just-completed `borg list`.
+/// These are the single source of truth for repo size/archive numbers; failures
+/// are logged but never abort a sync.
+async fn refresh_repo_info_stats(
+    pool: &PgPool,
+    borg_repo: &str,
+    env: &std::collections::HashMap<String, String>,
+    repo_id: i64,
+    archive_count: i64,
+) {
+    let args = ["info", "--json", "--lock-wait", LOCK_WAIT_SECS, borg_repo];
+    let output = match Borg::new().run(&args, env).await {
+        Ok(output) => output,
+        Err(e) => {
+            warn!(repo_id, error = %e, "failed to run borg info for repo stats");
+            return;
+        }
+    };
+
+    if !output.status.success() {
+        warn!(
+            repo_id,
+            stderr = %String::from_utf8_lossy(&output.stderr),
+            "borg info (repo stats) failed"
+        );
+        return;
+    }
+
+    let json: serde_json::Value = match serde_json::from_slice(&output.stdout) {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(repo_id, error = %e, "failed to parse borg info repo stats");
+            return;
+        }
+    };
+
+    let stats = &json["cache"]["stats"];
+    let info_stats = db::RepoInfoStats {
+        original_size: stats["total_size"].as_i64().unwrap_or(0),
+        compressed_size: stats["total_csize"].as_i64().unwrap_or(0),
+        deduplicated_size: stats["unique_csize"].as_i64().unwrap_or(0),
+        total_chunks: stats["total_chunks"].as_i64().unwrap_or(0),
+        unique_chunks: stats["total_unique_chunks"].as_i64().unwrap_or(0),
+        archive_count,
+    };
+
+    if let Err(e) = db::update_repo_info_stats(pool, repo_id, &info_stats).await {
+        warn!(repo_id, error = %e, "failed to persist repo info stats");
+    }
+}
+
 fn parse_borg_timestamp(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     DateTime::parse_from_rfc3339(s)
         .or_else(|_| DateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f"))
@@ -1129,6 +1181,7 @@ pub async fn sync_existing_archives(
     }
 
     if archives.is_empty() {
+        refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, 0).await;
         return Ok((0, removed));
     }
 
@@ -1344,6 +1397,7 @@ pub async fn sync_existing_archives(
 
     let imported = report_params.len() as u64;
     db::bulk_insert_backup_reports(pool, &report_params).await?;
+    refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, borg_names.len() as i64).await;
     info!(
         repo_id,
         imported,
@@ -1405,6 +1459,7 @@ pub async fn sync_new_archives(
         .collect();
 
     if new_archives.is_empty() {
+        refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, borg_names.len() as i64).await;
         return Ok((0, removed));
     }
 
@@ -1620,6 +1675,7 @@ pub async fn sync_new_archives(
 
     let added = report_params.len() as u64;
     db::bulk_insert_backup_reports(pool, &report_params).await?;
+    refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, borg_names.len() as i64).await;
     info!(repo_id, added, removed, total, "incremental sync complete");
     Ok((added, removed))
 }

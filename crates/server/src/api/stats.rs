@@ -104,7 +104,7 @@ pub async fn summary(
         .into_iter()
         .map(|b| {
             let percentage = if total_storage > 0 {
-                percentage_of(b.deduplicated_size, total_storage)
+                percentage_of(b.compressed_size, total_storage)
             } else {
                 0.0
             };
@@ -191,28 +191,12 @@ pub async fn schedule_counts(
     Ok(Json(counts))
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, utoipa::ToSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum StorageGroupBy {
-    #[default]
-    Repo,
-    Host,
-    Server,
-}
-
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct StorageBreakdownQuery {
-    pub group_by: Option<StorageGroupBy>,
-}
-
 #[utoipa::path(
     get,
     path = "/api/stats/storage-breakdown",
     tag = "Statistics",
     operation_id = "getStorageBreakdown",
-    summary = "Get storage breakdown grouped by repo, host, or server",
-    params(("group_by" = Option<String>, Query,
-        description = "Group by: repo (default), host, or server")),
+    summary = "Get per-repo storage breakdown (sourced from borg info)",
     responses(
         (status = 200, description = "Storage breakdown", body = Vec<StorageRepoEntry>),
         (status = 401, description = "Unauthorized"),
@@ -221,14 +205,8 @@ pub struct StorageBreakdownQuery {
 pub async fn storage_breakdown(
     State(state): State<AppState>,
     _auth: AuthUser,
-    Query(query): Query<StorageBreakdownQuery>,
 ) -> Result<Json<Vec<StorageRepoEntry>>, ApiError> {
-    let group_by = query.group_by.unwrap_or_default();
-    let breakdown = match group_by {
-        StorageGroupBy::Host => db::get_storage_breakdown_by_host(&state.pool).await?,
-        StorageGroupBy::Server => db::get_storage_breakdown_by_server(&state.pool).await?,
-        StorageGroupBy::Repo => db::get_storage_breakdown(&state.pool).await?,
-    };
+    let breakdown = db::get_storage_breakdown(&state.pool).await?;
 
     let total: i64 = breakdown.iter().map(|b| b.deduplicated_size).sum();
     let entries = breakdown

@@ -114,8 +114,6 @@ const activityRepoFilter = ref<number | undefined>(undefined)
 const successDaysFilter = ref<number>(30)
 const successRepoFilter = ref<number | undefined>(undefined)
 
-type StorageViewMode = 'repo' | 'host' | 'server'
-const storageViewMode = ref<StorageViewMode>('repo')
 const storageBreakdown = ref<StorageRepoEntry[]>([])
 const hiddenSegments = ref<Set<string>>(new Set())
 const DONUT_COLORS = [
@@ -126,13 +124,6 @@ const DONUT_COLORS = [
   'oklch(0.59 0.19 293)',
   'oklch(0.72 0.13 200)',
 ]
-
-async function fetchStorageBreakdown(): Promise<void> {
-  const response = await apiClient.get<StorageRepoEntry[]>(
-    `/stats/storage-breakdown?group_by=${storageViewMode.value}`,
-  )
-  storageBreakdown.value = response.data
-}
 
 const successActivity = ref<ActivityEntry[]>([])
 
@@ -169,12 +160,6 @@ async function fetchAll(): Promise<void> {
   } finally {
     loading.value = false
   }
-}
-
-function setStorageViewMode(mode: StorageViewMode): void {
-  storageViewMode.value = mode
-  hiddenSegments.value = new Set()
-  fetchStorageBreakdown().catch(logger.error)
 }
 
 function toggleSegment(name: string): void {
@@ -503,7 +488,7 @@ function navigateToSchedule(scheduleId: number | null): void {
       <section class="status-banner">
         <div
           class="stat-card stat-card-link"
-          @click="router.push({ name: 'clients', query: { status: 'online' } })"
+          @click="router.push({ name: 'clients', query: { status: 'offline' } })"
         >
           <span class="stat-label">Online Clients</span>
           <span class="stat-value">
@@ -720,29 +705,6 @@ function navigateToSchedule(scheduleId: number | null): void {
           <section class="panel">
             <div class="panel-header">
               <h2 class="panel-title">Storage Breakdown</h2>
-              <div class="view-toggle">
-                <button
-                  class="toggle-btn"
-                  :class="{ active: storageViewMode === 'repo' }"
-                  @click="setStorageViewMode('repo')"
-                >
-                  Repo
-                </button>
-                <button
-                  class="toggle-btn"
-                  :class="{ active: storageViewMode === 'host' }"
-                  @click="setStorageViewMode('host')"
-                >
-                  Client
-                </button>
-                <button
-                  class="toggle-btn"
-                  :class="{ active: storageViewMode === 'server' }"
-                  @click="setStorageViewMode('server')"
-                >
-                  Server
-                </button>
-              </div>
             </div>
             <div class="ring-container">
               <svg
@@ -775,16 +737,7 @@ function navigateToSchedule(scheduleId: number | null): void {
                 <span class="ring-pct ring-pct-sm">
                   {{ formatBytes(summary?.total_storage_bytes ?? 0) }}
                 </span>
-                <span class="ring-sub"
-                  >{{ storageDonuts.length }}
-                  {{
-                    storageViewMode === 'repo'
-                      ? 'repos'
-                      : storageViewMode === 'host'
-                        ? 'clients'
-                        : 'servers'
-                  }}</span
-                >
+                <span class="ring-sub">{{ storageDonuts.length }} repos</span>
               </div>
             </div>
             <div class="storage-legend">

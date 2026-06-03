@@ -10,7 +10,7 @@ use std::{
 use chrono::Utc;
 use shared::types::{BackupStatus, Compression, build_repo_url};
 use tokio::process::Command;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::borg::Borg;
@@ -146,9 +146,9 @@ impl BackupEngine {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let exit_code = output.status.code().unwrap_or(-1);
-            warn!("{label} command failed with exit code {exit_code}: {stderr}");
-            return Err(BackupError::Skipped(format!(
-                "{label} command exited with code {exit_code}"
+            error!("{label} command `{cmd}` failed (exit {exit_code}): {stderr}");
+            return Err(BackupError::BorgFailed(format!(
+                "{label} command `{cmd}` exited with code {exit_code}"
             )));
         }
 
@@ -859,7 +859,7 @@ mod tests {
 
         let result = engine.run_backup(&target).await;
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), BackupError::Skipped(_)));
+        assert!(matches!(result.unwrap_err(), BackupError::BorgFailed(_)));
     }
 
     #[tokio::test]

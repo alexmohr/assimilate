@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
@@ -120,6 +120,26 @@ const reports = ref<ReportRow[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
 const expandedReportId = ref<number | null>(null)
+
+// Backup filter / sort
+const filterStatus = ref<'all' | 'success' | 'warning' | 'failed'>('all')
+const sortAscending = ref(false)
+
+const highlightedArchiveName = computed(() => {
+  const a = route.query.archive
+  return typeof a === 'string' ? a : undefined
+})
+
+const filteredSortedReports = computed(() => {
+  let result = reports.value
+  if (filterStatus.value !== 'all') {
+    result = result.filter((r) => r.status === filterStatus.value)
+  }
+  return [...result].sort((a, b) => {
+    const diff = new Date(b.finished_at).getTime() - new Date(a.finished_at).getTime()
+    return sortAscending.value ? -diff : diff
+  })
+})
 
 // Tags
 const allHostTags = ref<TagRow[]>([])
@@ -511,6 +531,22 @@ async function loadTabData(): Promise<void> {
     logger.error('loadTabData failed', e)
   }
 }
+
+watch(
+  [reports, highlightedArchiveName],
+  ([, archiveName]) => {
+    if (!archiveName) return
+    const report = reports.value.find((r) => r.archive_name === archiveName)
+    if (!report) return
+    expandedReportId.value = report.id
+    nextTick(() => {
+      document
+        .getElementById(`report-${report.id}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+  },
+  { immediate: true },
+)
 
 const clientSchedules = computed(() => {
   const repoIds = new Set(repos.value.map((r) => r.id))
@@ -1293,22 +1329,52 @@ watch(wsStatus, (newStatus, oldStatus) => {
       >
         <div class="tab-header">
           <h3 class="tab-title">Backup History</h3>
+          <div class="backup-controls">
+            <div class="filter-group">
+              <button
+                v-for="s in ['all', 'success', 'warning', 'failed'] as const"
+                :key="s"
+                class="btn btn-sm"
+                :class="filterStatus === s ? 'btn-primary' : 'btn-ghost'"
+                @click="filterStatus = s"
+              >
+                {{ s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1) }}
+              </button>
+            </div>
+            <button
+              class="btn btn-sm btn-ghost"
+              @click="sortAscending = !sortAscending"
+            >
+              {{ sortAscending ? '↑ Oldest' : '↓ Newest' }}
+            </button>
+          </div>
         </div>
         <div
-          v-if="reports.length === 0"
+          v-if="filteredSortedReports.length === 0"
           class="state-msg"
         >
-          No backup reports available.
+          {{
+            reports.length === 0
+              ? 'No backup reports available.'
+              : 'No backups match the current filter.'
+          }}
         </div>
         <div
           v-else
           class="results-list"
         >
           <div
-            v-for="r in reports"
+            v-for="r in filteredSortedReports"
             :key="r.id"
+            :id="`report-${r.id}`"
             class="result-card"
-            :class="[`result-${r.status}`, { 'result-card-link': r.status === 'success' }]"
+            :class="[
+              `result-${r.status}`,
+              {
+                'result-card-link': r.status === 'success',
+                'result-card-highlighted': r.archive_name === highlightedArchiveName,
+              },
+            ]"
             @click="handleResultClick(r)"
           >
             <div class="result-header">
@@ -2173,6 +2239,23 @@ watch(wsStatus, (newStatus, oldStatus) => {
 
 .result-error .result-section-label {
   color: var(--danger);
+}
+
+.result-card-highlighted {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.backup-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.filter-group {
+  display: flex;
+  gap: 0.25rem;
 }
 
 /* Overlay & Dialog */

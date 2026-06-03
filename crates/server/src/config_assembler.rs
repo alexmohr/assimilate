@@ -20,11 +20,7 @@ pub async fn assemble_config(
 ) -> Result<AgentConfig, ApiError> {
     let client = db::get_client_by_hostname(pool, hostname).await?;
 
-    let global_excludes: Vec<String> = db::list_global_excludes(pool)
-        .await?
-        .into_iter()
-        .map(|e| e.pattern)
-        .collect();
+    let global_excludes = parse_raw_excludes(&db::get_global_excludes_raw(pool).await?);
 
     let schedule_rows = db::list_schedules_for_client(pool, client.id).await?;
 
@@ -95,7 +91,7 @@ pub async fn assemble_config(
             exclude_patterns.extend(global_excludes.iter().cloned());
         }
         exclude_patterns.extend(client.default_exclude_patterns.iter().cloned());
-        exclude_patterns.extend(schedule.exclude_patterns.iter().cloned());
+        exclude_patterns.extend(parse_raw_excludes(&schedule.exclude_patterns_raw));
 
         let mut seen = std::collections::HashSet::new();
         exclude_patterns.retain(|p| seen.insert(p.clone()));
@@ -213,7 +209,79 @@ pub async fn push_config_to_all_schedule_targets(state: &AppState, schedule_id: 
     }
 }
 
+fn parse_raw_excludes(raw: &str) -> Vec<String> {
+    raw.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(String::from)
+        .collect()
+}
+
 fn schedule_type_from_str(s: &str) -> Result<ScheduleType, ApiError> {
     s.parse()
         .map_err(|e| ApiError::Internal(format!("invalid schedule type in database: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_raw_excludes;
+
+    #[test]
+    fn empty_input_returns_empty() {
+        assert!(parse_raw_excludes("").is_empty());
+    }
+
+    #[test]
+    fn blank_lines_stripped() {
+        let input = "*.log\n\n*.tmp\n\n";
+        assert_eq!(parse_raw_excludes(input), vec!["*.log", "*.tmp"]);
+    }
+
+    #[test]
+    fn comment_lines_stripped() {
+        let input = "# cache files\n*.cache\n# runtime\n/proc";
+        assert_eq!(parse_raw_excludes(input), vec!["*.cache", "/proc"]);
+    }
+
+    #[test]
+    fn leading_trailing_whitespace_trimmed_per_line() {
+        let input = "  *.log  \n\t/proc\t";
+        assert_eq!(parse_raw_excludes(input), vec!["*.log", "/proc"]);
+    }
+
+    #[test]
+    fn whitespace_only_lines_stripped() {
+        let input = "*.log\n   \n\t\n/proc";
+        assert_eq!(parse_raw_excludes(input), vec!["*.log", "/proc"]);
+    }
+
+    #[test]
+    fn mixed_content_produces_only_effective_patterns() {
+        let input = "# System paths\n/proc\n/sys\n\n# Cache\n*.cache\npp:__pycache__\n\n# \
+                     Downloads\n/home/*/Downloads";
+        assert_eq!(
+            parse_raw_excludes(input),
+            vec![
+                "/proc",
+                "/sys",
+                "*.cache",
+                "pp:__pycache__",
+                "/home/*/Downloads"
+            ]
+        );
+    }
+
+    #[test]
+    fn order_is_preserved() {
+        let input = "/z\n/a\n/m";
+        assert_eq!(parse_raw_excludes(input), vec!["/z", "/a", "/m"]);
+    }
+
+    #[test]
+    fn inline_comments_are_not_stripped() {
+        // Only full-line comments (trimmed line starts with #) are stripped;
+        // inline # is part of a valid borg pattern.
+        let input = "re:/tmp/[^/]+\\.sock$";
+        assert_eq!(parse_raw_excludes(input), vec!["re:/tmp/[^/]+\\.sock$"]);
+    }
 }

@@ -8,13 +8,6 @@ import { ref, onMounted } from 'vue'
 import { apiClient } from '../api/client'
 import BaseSpinner from '../components/BaseSpinner.vue'
 
-interface GlobalExclude {
-  id: number
-  pattern: string
-  sort_order: number
-}
-
-const excludes = ref<GlobalExclude[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
 const text = ref('')
@@ -32,24 +25,12 @@ function extractError(e: unknown): string {
   return 'Unknown error'
 }
 
-function patternsToText(patterns: string[]): string {
-  return patterns.join('\n')
-}
-
-function textToPatterns(t: string): string[] {
-  return t
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0)
-}
-
 async function loadData(): Promise<void> {
   loading.value = true
   error.value = null
   try {
-    const res = await apiClient.get<GlobalExclude[]>('/excludes')
-    excludes.value = res.data
-    text.value = patternsToText(res.data.map((e) => e.pattern))
+    const res = await apiClient.get<{ raw_text: string }>('/excludes')
+    text.value = res.data.raw_text
   } catch (e: unknown) {
     error.value = extractError(e)
   } finally {
@@ -62,27 +43,7 @@ async function save(): Promise<void> {
   saveError.value = null
   saveOk.value = false
   try {
-    const desired = textToPatterns(text.value)
-    const existing = excludes.value
-
-    const toDelete = existing.filter((e) => !desired.includes(e.pattern))
-    const toAdd = desired.filter((p) => !existing.some((e) => e.pattern === p))
-
-    await Promise.all(toDelete.map((e) => apiClient.delete(`/excludes/${e.id}`)))
-    const created = await Promise.all(
-      toAdd.map((pattern, i) =>
-        apiClient.post<GlobalExclude>('/excludes', {
-          pattern,
-          sort_order: existing.length + i,
-        }),
-      ),
-    )
-
-    excludes.value = [
-      ...existing.filter((e) => desired.includes(e.pattern)),
-      ...created.map((r) => r.data),
-    ]
-    text.value = patternsToText(excludes.value.map((e) => e.pattern))
+    await apiClient.put('/excludes', { raw_text: text.value })
     saveOk.value = true
     setTimeout(() => {
       saveOk.value = false

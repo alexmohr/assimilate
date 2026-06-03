@@ -9,8 +9,7 @@ import ExcludesView from './ExcludesView.vue'
 vi.mock('../api/client', () => ({
   apiClient: {
     get: vi.fn(),
-    post: vi.fn(),
-    delete: vi.fn(),
+    put: vi.fn(),
   },
 }))
 
@@ -18,10 +17,7 @@ import { apiClient } from '../api/client'
 
 const mockGet = vi.mocked(apiClient.get)
 
-const MOCK_EXCLUDES = [
-  { id: 1, pattern: 'node_modules', sort_order: 0 },
-  { id: 2, pattern: '__pycache__', sort_order: 1 },
-]
+const MOCK_RAW_TEXT = 'node_modules\n__pycache__'
 
 describe('ExcludesView', () => {
   beforeEach(() => {
@@ -29,14 +25,14 @@ describe('ExcludesView', () => {
   })
 
   it('renders page title', async () => {
-    mockGet.mockResolvedValue({ data: MOCK_EXCLUDES })
+    mockGet.mockResolvedValue({ data: { raw_text: MOCK_RAW_TEXT } })
     const wrapper = renderWithPlugins(ExcludesView)
     await flushPromises()
     expect(wrapper.text()).toContain('Global Excludes')
   })
 
   it('populates textarea with loaded patterns', async () => {
-    mockGet.mockResolvedValue({ data: MOCK_EXCLUDES })
+    mockGet.mockResolvedValue({ data: { raw_text: MOCK_RAW_TEXT } })
     const wrapper = renderWithPlugins(ExcludesView)
     await flushPromises()
     const textarea = wrapper.find<HTMLTextAreaElement>('textarea')
@@ -45,7 +41,7 @@ describe('ExcludesView', () => {
   })
 
   it('renders Save button', async () => {
-    mockGet.mockResolvedValue({ data: MOCK_EXCLUDES })
+    mockGet.mockResolvedValue({ data: { raw_text: MOCK_RAW_TEXT } })
     const wrapper = renderWithPlugins(ExcludesView)
     await flushPromises()
     const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save')
@@ -53,14 +49,14 @@ describe('ExcludesView', () => {
   })
 
   it('renders Pattern Reference toggle button', async () => {
-    mockGet.mockResolvedValue({ data: MOCK_EXCLUDES })
+    mockGet.mockResolvedValue({ data: { raw_text: MOCK_RAW_TEXT } })
     const wrapper = renderWithPlugins(ExcludesView)
     await flushPromises()
     expect(wrapper.text()).toContain('Pattern Reference')
   })
 
   it('shows pattern reference panel when button is clicked', async () => {
-    mockGet.mockResolvedValue({ data: MOCK_EXCLUDES })
+    mockGet.mockResolvedValue({ data: { raw_text: MOCK_RAW_TEXT } })
     const wrapper = renderWithPlugins(ExcludesView)
     await flushPromises()
     const refBtn = wrapper.findAll('button').find((b) => b.text().includes('Pattern Reference'))
@@ -76,7 +72,7 @@ describe('ExcludesView', () => {
   })
 
   it('renders empty textarea when no excludes returned', async () => {
-    mockGet.mockResolvedValue({ data: [] })
+    mockGet.mockResolvedValue({ data: { raw_text: '' } })
     const wrapper = renderWithPlugins(ExcludesView)
     await flushPromises()
     const textarea = wrapper.find<HTMLTextAreaElement>('textarea')
@@ -84,7 +80,7 @@ describe('ExcludesView', () => {
   })
 
   it('calls GET /excludes on mount', async () => {
-    mockGet.mockResolvedValue({ data: MOCK_EXCLUDES })
+    mockGet.mockResolvedValue({ data: { raw_text: MOCK_RAW_TEXT } })
     renderWithPlugins(ExcludesView)
     await flushPromises()
     expect(mockGet).toHaveBeenCalledWith('/excludes')

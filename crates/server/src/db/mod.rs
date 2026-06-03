@@ -195,11 +195,9 @@ pub struct UpdateSshTunnel {
     pub enabled: Option<bool>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, sqlx::FromRow, utoipa::ToSchema)]
-pub struct ExcludeGlobalRow {
-    pub id: i64,
-    pub pattern: String,
-    pub sort_order: i32,
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct GlobalExcludesConfig {
+    pub raw_text: String,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
@@ -213,7 +211,7 @@ pub struct ScheduleRow {
     pub canary_enabled: bool,
     pub last_run_at: Option<DateTime<Utc>>,
     pub next_run_at: Option<DateTime<Utc>>,
-    pub exclude_patterns: Vec<String>,
+    pub exclude_patterns_raw: String,
     pub ignore_global_excludes: bool,
     pub keep_daily: i32,
     pub keep_weekly: i32,
@@ -1006,69 +1004,31 @@ pub async fn get_repo_with_passphrase(
     })
 }
 
-pub async fn list_global_excludes(pool: &PgPool) -> Result<Vec<ExcludeGlobalRow>, ApiError> {
-    sqlx::query_as::<_, ExcludeGlobalRow>(
-        "SELECT id, pattern, sort_order FROM excludes_global ORDER BY sort_order, id",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(ApiError::Database)
+pub async fn get_global_excludes_raw(pool: &PgPool) -> Result<String, ApiError> {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT raw_text FROM excludes_global_config LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .map_err(ApiError::Database)?;
+    Ok(row.map(|(t,)| t).unwrap_or_default())
 }
 
-pub async fn insert_global_exclude(
-    pool: &PgPool,
-    pattern: &str,
-    sort_order: i32,
-) -> Result<ExcludeGlobalRow, ApiError> {
-    sqlx::query_as::<_, ExcludeGlobalRow>(
-        "INSERT INTO excludes_global (pattern, sort_order) VALUES ($1, $2) RETURNING id, pattern, \
-         sort_order",
+pub async fn set_global_excludes_raw(pool: &PgPool, raw_text: &str) -> Result<(), ApiError> {
+    sqlx::query(
+        "INSERT INTO excludes_global_config (raw_text) VALUES ($1) ON CONFLICT (id) DO UPDATE SET \
+         raw_text = EXCLUDED.raw_text",
     )
-    .bind(pattern)
-    .bind(sort_order)
-    .fetch_one(pool)
+    .bind(raw_text)
+    .execute(pool)
     .await
-    .map_err(ApiError::Database)
-}
-
-pub async fn update_global_exclude(
-    pool: &PgPool,
-    id: i64,
-    pattern: &str,
-    sort_order: i32,
-) -> Result<ExcludeGlobalRow, ApiError> {
-    sqlx::query_as::<_, ExcludeGlobalRow>(
-        "UPDATE excludes_global SET pattern = $2, sort_order = $3 WHERE id = $1 RETURNING id, \
-         pattern, sort_order",
-    )
-    .bind(id)
-    .bind(pattern)
-    .bind(sort_order)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| match e {
-        sqlx::Error::RowNotFound => ApiError::NotFound(format!("exclude {id} not found")),
-        other => ApiError::Database(other),
-    })
-}
-
-pub async fn delete_global_exclude(pool: &PgPool, id: i64) -> Result<(), ApiError> {
-    let result = sqlx::query("DELETE FROM excludes_global WHERE id = $1")
-        .bind(id)
-        .execute(pool)
-        .await
-        .map_err(ApiError::Database)?;
-
-    if result.rows_affected() == 0 {
-        return Err(ApiError::NotFound(format!("exclude {id} not found")));
-    }
+    .map_err(ApiError::Database)?;
     Ok(())
 }
 
 pub async fn list_schedules(pool: &PgPool) -> Result<Vec<ScheduleRow>, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
         "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
-         last_run_at, next_run_at, exclude_patterns, ignore_global_excludes, keep_daily, \
+         last_run_at, next_run_at, exclude_patterns_raw, ignore_global_excludes, keep_daily, \
          keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
          pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, \
          visibility FROM schedules ORDER BY id",
@@ -1084,7 +1044,7 @@ pub struct ScheduleParams<'a> {
     pub cron_expression: &'a str,
     pub enabled: bool,
     pub canary_enabled: bool,
-    pub exclude_patterns: &'a [String],
+    pub exclude_patterns_raw: &'a str,
     pub ignore_global_excludes: bool,
     pub keep_daily: i32,
     pub keep_weekly: i32,
@@ -1106,12 +1066,12 @@ pub async fn insert_schedule(
 ) -> Result<ScheduleRow, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
         "INSERT INTO schedules (repo_id, name, schedule_type, cron_expression, enabled, \
-         canary_enabled, exclude_patterns, ignore_global_excludes, keep_daily, keep_weekly, \
+         canary_enabled, exclude_patterns_raw, ignore_global_excludes, keep_daily, keep_weekly, \
          keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands, \
          post_backup_commands, execution_mode, on_failure, owner_id) VALUES ($1, $2, $3, $4, $5, \
          $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING id, repo_id, \
          name, schedule_type, cron_expression, enabled, canary_enabled, last_run_at, next_run_at, \
-         exclude_patterns, ignore_global_excludes, keep_daily, keep_weekly, keep_monthly, \
+         exclude_patterns_raw, ignore_global_excludes, keep_daily, keep_weekly, keep_monthly, \
          keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands, \
          post_backup_commands, execution_mode, on_failure, owner_id, visibility",
     )
@@ -1121,7 +1081,7 @@ pub async fn insert_schedule(
     .bind(params.cron_expression)
     .bind(params.enabled)
     .bind(params.canary_enabled)
-    .bind(params.exclude_patterns)
+    .bind(params.exclude_patterns_raw)
     .bind(params.ignore_global_excludes)
     .bind(params.keep_daily)
     .bind(params.keep_weekly)
@@ -1146,11 +1106,11 @@ pub async fn update_schedule(
 ) -> Result<ScheduleRow, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
         "UPDATE schedules SET name = $2, cron_expression = $3, enabled = $4, canary_enabled = $5, \
-         exclude_patterns = $6, ignore_global_excludes = $7, keep_daily = $8, keep_weekly = $9, \
-         keep_monthly = $10, keep_yearly = $11, compact_enabled = $12, rate_limit_kbps = $13, \
+         exclude_patterns_raw = $6, ignore_global_excludes = $7, keep_daily = $8, keep_weekly = \
+         $9, keep_monthly = $10, keep_yearly = $11, compact_enabled = $12, rate_limit_kbps = $13, \
          pre_backup_commands = $14, post_backup_commands = $15, execution_mode = $16, on_failure \
          = $17 WHERE id = $1 RETURNING id, repo_id, name, schedule_type, cron_expression, \
-         enabled, canary_enabled, last_run_at, next_run_at, exclude_patterns, \
+         enabled, canary_enabled, last_run_at, next_run_at, exclude_patterns_raw, \
          ignore_global_excludes, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
          compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, \
          execution_mode, on_failure, owner_id, visibility",
@@ -1160,7 +1120,7 @@ pub async fn update_schedule(
     .bind(params.cron_expression)
     .bind(params.enabled)
     .bind(params.canary_enabled)
-    .bind(params.exclude_patterns)
+    .bind(params.exclude_patterns_raw)
     .bind(params.ignore_global_excludes)
     .bind(params.keep_daily)
     .bind(params.keep_weekly)
@@ -1428,51 +1388,7 @@ pub async fn delete_per_host_backup_sources_for_schedule(
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct PerHostExcludePatterns {
     pub client_id: i64,
-    pub patterns: Vec<String>,
-}
-
-pub async fn list_excludes_for_schedule(
-    pool: &PgPool,
-    schedule_id: i64,
-) -> Result<Vec<String>, ApiError> {
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        pattern: String,
-    }
-
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT pattern FROM schedule_excludes WHERE schedule_id = $1 AND client_id IS NULL ORDER \
-         BY sort_order, id",
-    )
-    .bind(schedule_id)
-    .fetch_all(pool)
-    .await
-    .map_err(ApiError::Database)?;
-
-    Ok(rows.into_iter().map(|r| r.pattern).collect())
-}
-
-pub async fn list_excludes_for_schedule_client(
-    pool: &PgPool,
-    schedule_id: i64,
-    client_id: i64,
-) -> Result<Vec<String>, ApiError> {
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        pattern: String,
-    }
-
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT pattern FROM schedule_excludes WHERE schedule_id = $1 AND client_id = $2 ORDER BY \
-         sort_order, id",
-    )
-    .bind(schedule_id)
-    .bind(client_id)
-    .fetch_all(pool)
-    .await
-    .map_err(ApiError::Database)?;
-
-    Ok(rows.into_iter().map(|r| r.pattern).collect())
+    pub raw_text: String,
 }
 
 pub async fn list_all_per_host_excludes_for_schedule(
@@ -1482,77 +1398,43 @@ pub async fn list_all_per_host_excludes_for_schedule(
     #[derive(sqlx::FromRow)]
     struct Row {
         client_id: i64,
-        pattern: String,
+        raw_text: String,
     }
 
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT client_id, pattern FROM schedule_excludes WHERE schedule_id = $1 AND client_id IS \
-         NOT NULL ORDER BY client_id, sort_order, id",
+        "SELECT client_id, raw_text FROM per_host_excludes WHERE schedule_id = $1 ORDER BY \
+         client_id",
     )
     .bind(schedule_id)
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)?;
 
-    let mut map: std::collections::BTreeMap<i64, Vec<String>> = std::collections::BTreeMap::new();
-    for row in rows {
-        map.entry(row.client_id).or_default().push(row.pattern);
-    }
-
-    Ok(map
+    Ok(rows
         .into_iter()
-        .map(|(client_id, patterns)| PerHostExcludePatterns {
-            client_id,
-            patterns,
+        .map(|r| PerHostExcludePatterns {
+            client_id: r.client_id,
+            raw_text: r.raw_text,
         })
         .collect())
 }
 
-pub async fn insert_exclude_for_schedule(
-    pool: &PgPool,
-    schedule_id: i64,
-    pattern: &str,
-    sort_order: i32,
-) -> Result<(), ApiError> {
-    sqlx::query(
-        "INSERT INTO schedule_excludes (schedule_id, pattern, sort_order) VALUES ($1, $2, $3)",
-    )
-    .bind(schedule_id)
-    .bind(pattern)
-    .bind(sort_order)
-    .execute(pool)
-    .await
-    .map_err(ApiError::Database)?;
-    Ok(())
-}
-
-pub async fn insert_exclude_for_schedule_client(
+pub async fn upsert_per_host_excludes_raw(
     pool: &PgPool,
     schedule_id: i64,
     client_id: i64,
-    pattern: &str,
-    sort_order: i32,
+    raw_text: &str,
 ) -> Result<(), ApiError> {
     sqlx::query(
-        "INSERT INTO schedule_excludes (schedule_id, client_id, pattern, sort_order) VALUES ($1, \
-         $2, $3, $4)",
+        "INSERT INTO per_host_excludes (schedule_id, client_id, raw_text) VALUES ($1, $2, $3) ON \
+         CONFLICT (schedule_id, client_id) DO UPDATE SET raw_text = EXCLUDED.raw_text",
     )
     .bind(schedule_id)
     .bind(client_id)
-    .bind(pattern)
-    .bind(sort_order)
+    .bind(raw_text)
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
-    Ok(())
-}
-
-pub async fn delete_excludes_for_schedule(pool: &PgPool, schedule_id: i64) -> Result<(), ApiError> {
-    sqlx::query("DELETE FROM schedule_excludes WHERE schedule_id = $1 AND client_id IS NULL")
-        .bind(schedule_id)
-        .execute(pool)
-        .await
-        .map_err(ApiError::Database)?;
     Ok(())
 }
 
@@ -1560,7 +1442,7 @@ pub async fn delete_per_host_excludes_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
 ) -> Result<(), ApiError> {
-    sqlx::query("DELETE FROM schedule_excludes WHERE schedule_id = $1 AND client_id IS NOT NULL")
+    sqlx::query("DELETE FROM per_host_excludes WHERE schedule_id = $1")
         .bind(schedule_id)
         .execute(pool)
         .await
@@ -1574,7 +1456,7 @@ pub async fn get_schedule_for_repo(
 ) -> Result<Option<ScheduleRow>, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
         "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
-         last_run_at, next_run_at, exclude_patterns, ignore_global_excludes, keep_daily, \
+         last_run_at, next_run_at, exclude_patterns_raw, ignore_global_excludes, keep_daily, \
          keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
          pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, \
          visibility FROM schedules WHERE repo_id = $1",
@@ -1592,7 +1474,7 @@ pub async fn get_backup_schedule_for_hostname_repo(
 ) -> Result<Option<ScheduleRow>, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
         "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
-         s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns, \
+         s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
          s.ignore_global_excludes, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, \
          s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands, s.post_backup_commands, \
          s.execution_mode, s.on_failure, s.owner_id, s.visibility FROM schedules s JOIN \
@@ -1612,7 +1494,7 @@ pub async fn list_schedules_for_repo(
 ) -> Result<Vec<ScheduleRow>, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
         "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
-         last_run_at, next_run_at, exclude_patterns, ignore_global_excludes, keep_daily, \
+         last_run_at, next_run_at, exclude_patterns_raw, ignore_global_excludes, keep_daily, \
          keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
          pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, \
          visibility FROM schedules WHERE repo_id = $1 ORDER BY id",
@@ -1642,7 +1524,7 @@ pub async fn list_schedules_for_client(
 ) -> Result<Vec<ScheduleRow>, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
         "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
-         s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns, \
+         s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
          s.ignore_global_excludes, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, \
          s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands, s.post_backup_commands, \
          s.execution_mode, s.on_failure, s.owner_id, s.visibility FROM schedules s JOIN \
@@ -1718,7 +1600,7 @@ pub async fn set_next_run_at(
 pub async fn get_schedule_by_id(pool: &PgPool, id: i64) -> Result<ScheduleRow, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
         "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
-         last_run_at, next_run_at, exclude_patterns, ignore_global_excludes, keep_daily, \
+         last_run_at, next_run_at, exclude_patterns_raw, ignore_global_excludes, keep_daily, \
          keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
          pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, \
          visibility FROM schedules WHERE id = $1",
@@ -3791,7 +3673,7 @@ pub async fn get_enabled_schedules_for_calendar(
 ) -> Result<Vec<ScheduleRow>, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
         "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
-         last_run_at, next_run_at, exclude_patterns, ignore_global_excludes, keep_daily, \
+         last_run_at, next_run_at, exclude_patterns_raw, ignore_global_excludes, keep_daily, \
          keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
          pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, \
          visibility FROM schedules WHERE enabled = true",

@@ -28,7 +28,7 @@ interface ScheduleRow {
   canary_enabled: boolean
   last_run_at: string | null
   next_run_at: string | null
-  exclude_patterns: string[]
+  exclude_patterns_raw: string
   ignore_global_excludes: boolean
   keep_daily: number
   keep_weekly: number
@@ -53,7 +53,7 @@ interface PerHostBackupSources {
 
 interface PerHostExcludePatterns {
   client_id: number
-  patterns: string[]
+  raw_text: string
 }
 
 interface ScheduleBackupSourcesResponse {
@@ -238,7 +238,7 @@ function populateForm(s: ScheduleRow): void {
     cron_expression: s.cron_expression,
     enabled: s.enabled,
     canary_enabled: s.canary_enabled,
-    exclude_patterns: s.exclude_patterns.join('\n'),
+    exclude_patterns: s.exclude_patterns_raw,
     ignore_global_excludes: s.ignore_global_excludes,
     keep_daily: s.keep_daily,
     keep_weekly: s.keep_weekly,
@@ -317,7 +317,7 @@ async function loadData(): Promise<void> {
         usePerHostExcludes.value = true
         const map: Record<number, string> = {}
         for (const entry of sources.exclude_patterns_per_host) {
-          map[entry.client_id] = entry.patterns.join('\n')
+          map[entry.client_id] = entry.raw_text
         }
         perHostExcludes.value = map
       }
@@ -339,7 +339,7 @@ async function save(): Promise<void> {
       cron_expression: form.value.cron_expression,
       enabled: form.value.enabled,
       canary_enabled: form.value.canary_enabled,
-      exclude_patterns: parseLines(form.value.exclude_patterns),
+      exclude_patterns_raw: form.value.exclude_patterns,
       ignore_global_excludes: form.value.ignore_global_excludes,
       keep_daily: form.value.keep_daily,
       keep_weekly: form.value.keep_weekly,
@@ -364,14 +364,11 @@ async function save(): Promise<void> {
     }
 
     if (usePerHostExcludes.value) {
-      payload.exclude_patterns = []
-      const perHost: { client_id: number; patterns: string[] }[] = []
+      payload.exclude_patterns_raw = ''
+      const perHost: { client_id: number; raw_text: string }[] = []
       for (const id of selectedClientIds.value) {
-        const text = perHostExcludes.value[id] ?? ''
-        const patterns = parseLines(text)
-        if (patterns.length > 0) {
-          perHost.push({ client_id: id, patterns })
-        }
+        const raw_text = perHostExcludes.value[id] ?? ''
+        perHost.push({ client_id: id, raw_text })
       }
       payload.exclude_patterns_per_host = perHost
     }

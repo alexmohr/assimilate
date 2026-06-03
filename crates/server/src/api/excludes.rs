@@ -1,131 +1,62 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use axum::{
-    Json,
-    extract::{Path, State},
-    http::StatusCode,
-};
+use axum::{Json, extract::State};
 use serde::Deserialize;
 
-use super::{auth::AuthUser, helpers};
+use super::auth::AuthUser;
 use crate::{
     AppState,
-    db::{self, ExcludeGlobalRow},
+    db::{self, GlobalExcludesConfig},
     error::{ApiError, ApiJson},
 };
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct CreateExcludeRequest {
-    pub pattern: String,
-    pub sort_order: Option<i32>,
-}
-
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct UpdateExcludeRequest {
-    pub pattern: String,
-    pub sort_order: Option<i32>,
+pub struct SetGlobalExcludesRequest {
+    pub raw_text: String,
 }
 
 #[utoipa::path(
     get,
     path = "/api/excludes",
     tag = "Excludes",
-    operation_id = "listExcludes",
-    summary = "List global exclude patterns",
+    operation_id = "getExcludes",
+    summary = "Get global exclude patterns as raw text",
     responses(
-        (status = 200, description = "List of exclude patterns", body = Vec<ExcludeGlobalRow>),
+        (status = 200, description = "Global excludes raw text", body = GlobalExcludesConfig),
         (status = 401, description = "Unauthorized"),
     )
 )]
-pub async fn list_excludes(
+pub async fn get_excludes(
     State(state): State<AppState>,
     _auth: AuthUser,
-) -> Result<Json<Vec<ExcludeGlobalRow>>, ApiError> {
-    let global = db::list_global_excludes(&state.pool).await?;
-    Ok(Json(global))
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/excludes",
-    tag = "Excludes",
-    operation_id = "createExclude",
-    summary = "Create a global exclude pattern",
-    request_body = CreateExcludeRequest,
-    responses(
-        (status = 201, description = "Created", body = ExcludeGlobalRow),
-        (status = 400, description = "Bad request"),
-        (status = 401, description = "Unauthorized"),
-    )
-)]
-pub async fn create_exclude(
-    State(state): State<AppState>,
-    _auth: AuthUser,
-    ApiJson(req): ApiJson<CreateExcludeRequest>,
-) -> Result<(StatusCode, Json<ExcludeGlobalRow>), ApiError> {
-    helpers::validate_non_empty(&req.pattern, "pattern")?;
-
-    let sort_order = req.sort_order.unwrap_or(0);
-    let row = db::insert_global_exclude(&state.pool, &req.pattern, sort_order).await?;
-
-    helpers::push_config_to_all_agents(&state).await;
-
-    Ok((StatusCode::CREATED, Json(row)))
+) -> Result<Json<GlobalExcludesConfig>, ApiError> {
+    let raw_text = db::get_global_excludes_raw(&state.pool).await?;
+    Ok(Json(GlobalExcludesConfig { raw_text }))
 }
 
 #[utoipa::path(
     put,
-    path = "/api/excludes/{id}",
+    path = "/api/excludes",
     tag = "Excludes",
-    operation_id = "updateExclude",
-    summary = "Update a global exclude pattern",
-    params(("id" = i64, Path, description = "Exclude ID")),
-    request_body = UpdateExcludeRequest,
+    operation_id = "setExcludes",
+    summary = "Set global exclude patterns from raw text",
+    request_body = SetGlobalExcludesRequest,
     responses(
-        (status = 200, description = "Updated", body = ExcludeGlobalRow),
-        (status = 400, description = "Bad request"),
+        (status = 200, description = "Updated", body = GlobalExcludesConfig),
         (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Not found"),
     )
 )]
-pub async fn update_exclude(
+pub async fn set_excludes(
     State(state): State<AppState>,
     _auth: AuthUser,
-    Path(id): Path<i64>,
-    ApiJson(req): ApiJson<UpdateExcludeRequest>,
-) -> Result<Json<ExcludeGlobalRow>, ApiError> {
-    helpers::validate_non_empty(&req.pattern, "pattern")?;
+    ApiJson(req): ApiJson<SetGlobalExcludesRequest>,
+) -> Result<Json<GlobalExcludesConfig>, ApiError> {
+    db::set_global_excludes_raw(&state.pool, &req.raw_text).await?;
 
-    let sort_order = req.sort_order.unwrap_or(0);
-    let row = db::update_global_exclude(&state.pool, id, &req.pattern, sort_order).await?;
+    super::helpers::push_config_to_all_agents(&state).await;
 
-    helpers::push_config_to_all_agents(&state).await;
-
-    Ok(Json(row))
-}
-
-#[utoipa::path(
-    delete,
-    path = "/api/excludes/{id}",
-    tag = "Excludes",
-    operation_id = "deleteExclude",
-    summary = "Delete a global exclude pattern",
-    params(("id" = i64, Path, description = "Exclude ID")),
-    responses(
-        (status = 204, description = "Deleted"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Not found"),
-    )
-)]
-pub async fn delete_exclude(
-    State(state): State<AppState>,
-    _auth: AuthUser,
-    Path(id): Path<i64>,
-) -> Result<StatusCode, ApiError> {
-    db::delete_global_exclude(&state.pool, id).await?;
-
-    helpers::push_config_to_all_agents(&state).await;
-
-    Ok(StatusCode::NO_CONTENT)
+    Ok(Json(GlobalExcludesConfig {
+        raw_text: req.raw_text,
+    }))
 }

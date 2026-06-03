@@ -142,6 +142,7 @@ pub struct NotificationEvent {
     pub repo_id: Option<i64>,
     pub client_id: Option<i64>,
     pub schedule_id: Option<i64>,
+    pub archive_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -358,21 +359,7 @@ pub async fn deliver_to_channel(
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("")
             );
-            let push_url = if let Some(schedule_id) = payload
-                .get("schedule_id")
-                .and_then(serde_json::Value::as_i64)
-            {
-                format!("/schedules/{schedule_id}")
-            } else if let Some(hostname) =
-                payload.get("hostname").and_then(serde_json::Value::as_str)
-            {
-                format!("/clients/{hostname}")
-            } else if let Some(repo_id) = payload.get("repo_id").and_then(serde_json::Value::as_i64)
-            {
-                format!("/repos/{repo_id}")
-            } else {
-                "/".to_owned()
-            };
+            let push_url = build_push_url(payload);
 
             let push_payload = serde_json::json!({
                 "title": title,
@@ -410,5 +397,139 @@ pub async fn deliver_to_channel(
             }
             Ok(())
         }
+    }
+}
+
+pub(crate) fn build_push_url(payload: &serde_json::Value) -> String {
+    let event_type_str = payload
+        .get("event_type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let is_backup_problem = matches!(event_type_str, "backup_warning" | "backup_failed");
+
+    if let Some(schedule_id) = payload
+        .get("schedule_id")
+        .and_then(serde_json::Value::as_i64)
+    {
+        format!("/schedules/{schedule_id}")
+    } else if let Some(hostname) = payload.get("hostname").and_then(serde_json::Value::as_str) {
+        if is_backup_problem {
+            let archive_name = payload
+                .get("archive_name")
+                .and_then(serde_json::Value::as_str);
+            if let Some(name) = archive_name {
+                let encoded = name.replace(':', "%3A").replace(' ', "%20");
+                format!("/clients/{hostname}?tab=backups&archive={encoded}")
+            } else {
+                format!("/clients/{hostname}?tab=backups")
+            }
+        } else {
+            format!("/clients/{hostname}")
+        }
+    } else if let Some(repo_id) = payload.get("repo_id").and_then(serde_json::Value::as_i64) {
+        format!("/repos/{repo_id}")
+    } else {
+        "/".to_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn payload(json: serde_json::Value) -> serde_json::Value {
+        json
+    }
+
+    #[test]
+    fn backup_warning_with_archive_name_encodes_url() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_warning",
+            "hostname": "myhost",
+            "archive_name": "myhost-2026-06-03T12:30:00.000000",
+        }));
+        assert_eq!(
+            build_push_url(&p),
+            "/clients/myhost?tab=backups&archive=myhost-2026-06-03T12%3A30%3A00.000000"
+        );
+    }
+
+    #[test]
+    fn backup_warning_without_archive_name_goes_to_backups_tab() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_warning",
+            "hostname": "myhost",
+        }));
+        assert_eq!(build_push_url(&p), "/clients/myhost?tab=backups");
+    }
+
+    #[test]
+    fn backup_failed_with_archive_name_encodes_url() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_failed",
+            "hostname": "myhost",
+            "archive_name": "myhost-2026-06-03T08:00:00.000000",
+        }));
+        assert_eq!(
+            build_push_url(&p),
+            "/clients/myhost?tab=backups&archive=myhost-2026-06-03T08%3A00%3A00.000000"
+        );
+    }
+
+    #[test]
+    fn backup_failed_without_archive_name_goes_to_backups_tab() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_failed",
+            "hostname": "myhost",
+        }));
+        assert_eq!(build_push_url(&p), "/clients/myhost?tab=backups");
+    }
+
+    #[test]
+    fn backup_success_goes_to_client_overview() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_success",
+            "hostname": "myhost",
+            "archive_name": "myhost-2026-06-03T08:00:00.000000",
+        }));
+        assert_eq!(build_push_url(&p), "/clients/myhost");
+    }
+
+    #[test]
+    fn schedule_id_takes_priority_over_hostname() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_warning",
+            "hostname": "myhost",
+            "schedule_id": 42,
+        }));
+        assert_eq!(build_push_url(&p), "/schedules/42");
+    }
+
+    #[test]
+    fn repo_id_used_when_no_hostname() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_failed",
+            "repo_id": 7,
+        }));
+        assert_eq!(build_push_url(&p), "/repos/7");
+    }
+
+    #[test]
+    fn empty_payload_returns_root() {
+        let p = payload(serde_json::json!({}));
+        assert_eq!(build_push_url(&p), "/");
+    }
+
+    #[test]
+    fn archive_name_with_spaces_encoded() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_warning",
+            "hostname": "myhost",
+            "archive_name": "my host archive",
+        }));
+        assert_eq!(
+            build_push_url(&p),
+            "/clients/myhost?tab=backups&archive=my%20host%20archive"
+        );
     }
 }

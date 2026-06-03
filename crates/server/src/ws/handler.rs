@@ -271,6 +271,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 shared::types::BackupStatus::Failed => "failed",
             };
             let notification_error_message = report.error_message.clone();
+            let notification_archive_name = report.archive_name.clone();
             let params = db::InsertReportParams {
                 client_id,
                 repo_id: report.repo_id.0,
@@ -340,6 +341,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                         repo_id: Some(report.repo_id.0),
                         client_id: Some(client_id),
                         schedule_id: None,
+                        archive_name: None,
                     };
                     let service = state.notification_service.clone();
                     tokio::spawn(async move {
@@ -365,6 +367,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 repo_id: Some(report.repo_id.0),
                 client_id: Some(client_id),
                 schedule_id: None,
+                archive_name: notification_archive_name,
             };
             let service = state.notification_service.clone();
             tokio::spawn(async move {
@@ -428,6 +431,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 repo_id: Some(repo_id.0),
                 client_id: Some(client_id),
                 schedule_id: None,
+                archive_name: None,
             };
             let service = state.notification_service.clone();
             tokio::spawn(async move {

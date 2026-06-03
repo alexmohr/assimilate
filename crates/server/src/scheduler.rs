@@ -414,7 +414,7 @@ mod tests {
                 cron_expression: "0 3 * * *",
                 enabled: true,
                 canary_enabled: false,
-                exclude_patterns: &[],
+                exclude_patterns_raw: "",
                 ignore_global_excludes: false,
                 keep_daily: 7,
                 keep_weekly: 4,
@@ -490,12 +490,8 @@ mod tests {
         let key = tick_test_key();
         setup_due_schedule(&pool, &key).await;
 
-        // Create exclude with one value, then update it before tick fires.
-        db::insert_global_exclude(&pool, "*.log", 0).await.unwrap();
-        let excludes = db::list_global_excludes(&pool).await.unwrap();
-        db::update_global_exclude(&pool, excludes[0].id, "*.tmp", 0)
-            .await
-            .unwrap();
+        // Set global excludes raw text; tick must deliver the current value.
+        db::set_global_excludes_raw(&pool, "*.tmp").await.unwrap();
 
         let registry = AgentRegistry::new();
         let mut rx = register_fake_agent(&registry).await;
@@ -514,7 +510,7 @@ mod tests {
                     .collect();
                 assert!(
                     all_excludes.iter().any(|p| p == "*.tmp"),
-                    "updated exclude '*.tmp' missing; got: {all_excludes:?}"
+                    "exclude '*.tmp' missing; got: {all_excludes:?}"
                 );
                 assert!(
                     !all_excludes.iter().any(|p| p == "*.log"),

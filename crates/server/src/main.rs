@@ -289,11 +289,7 @@ async fn main() -> Result<(), StartupError> {
         )
         .route(
             "/api/excludes",
-            get(api::excludes::list_excludes).post(api::excludes::create_exclude),
-        )
-        .route(
-            "/api/excludes/{id}",
-            put(api::excludes::update_exclude).delete(api::excludes::delete_exclude),
+            get(api::excludes::get_excludes).put(api::excludes::set_excludes),
         )
         .route(
             "/api/schedules",

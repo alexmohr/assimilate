@@ -34,7 +34,7 @@ pub struct HostBackupSources {
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct HostExcludePatterns {
     pub client_id: i64,
-    pub patterns: Vec<String>,
+    pub raw_text: String,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -47,7 +47,7 @@ pub struct CreateScheduleRequest {
     pub cron_expression: String,
     pub enabled: Option<bool>,
     pub canary_enabled: Option<bool>,
-    pub exclude_patterns: Option<Vec<String>>,
+    pub exclude_patterns_raw: Option<String>,
     pub ignore_global_excludes: Option<bool>,
     pub keep_daily: Option<i32>,
     pub keep_weekly: Option<i32>,
@@ -72,7 +72,7 @@ pub struct UpdateScheduleRequest {
     pub cron_expression: String,
     pub enabled: Option<bool>,
     pub canary_enabled: Option<bool>,
-    pub exclude_patterns: Option<Vec<String>>,
+    pub exclude_patterns_raw: Option<String>,
     pub ignore_global_excludes: Option<bool>,
     pub keep_daily: Option<i32>,
     pub keep_weekly: Option<i32>,
@@ -154,7 +154,7 @@ pub async fn create_schedule(
     check_repo_permission(&state.pool, &auth, req.repo_id, |p| p.can_modify_schedules).await?;
     validate_cron(&req.cron_expression)
         .map_err(|e| ApiError::BadRequest(format!("invalid cron expression: {e}")))?;
-    let exclude_patterns = req.exclude_patterns.unwrap_or_default();
+    let exclude_patterns_raw = req.exclude_patterns_raw.unwrap_or_default();
     let enabled = req.enabled.unwrap_or(true);
     if enabled {
         let repo = db::get_repo_connection(&state.pool, req.repo_id).await?;
@@ -206,7 +206,7 @@ pub async fn create_schedule(
         cron_expression: &req.cron_expression,
         enabled,
         canary_enabled: req.canary_enabled.unwrap_or(true),
-        exclude_patterns: &exclude_patterns,
+        exclude_patterns_raw: &exclude_patterns_raw,
         ignore_global_excludes: req.ignore_global_excludes.unwrap_or(false),
         keep_daily: req.keep_daily.unwrap_or(7),
         keep_weekly: req.keep_weekly.unwrap_or(4),
@@ -270,18 +270,13 @@ pub async fn create_schedule(
 
     if let Some(per_host) = &req.exclude_patterns_per_host {
         for entry in per_host {
-            for (i, pattern) in entry.patterns.iter().enumerate() {
-                let sort_order = i32::try_from(i)
-                    .map_err(|_| ApiError::BadRequest("too many exclude patterns".into()))?;
-                db::insert_exclude_for_schedule_client(
-                    &state.pool,
-                    schedule.id,
-                    entry.client_id,
-                    pattern,
-                    sort_order,
-                )
-                .await?;
-            }
+            db::upsert_per_host_excludes_raw(
+                &state.pool,
+                schedule.id,
+                entry.client_id,
+                &entry.raw_text,
+            )
+            .await?;
         }
     }
 
@@ -349,7 +344,9 @@ pub async fn update_schedule(
     .await?;
     validate_cron(&req.cron_expression)
         .map_err(|e| ApiError::BadRequest(format!("invalid cron expression: {e}")))?;
-    let exclude_patterns = req.exclude_patterns.unwrap_or_default();
+    let exclude_patterns_raw = req
+        .exclude_patterns_raw
+        .unwrap_or_else(|| existing.exclude_patterns_raw.clone());
     let enabled = req.enabled.unwrap_or(true);
     if enabled {
         let repo = db::get_repo_connection(&state.pool, existing.repo_id).await?;
@@ -396,7 +393,7 @@ pub async fn update_schedule(
         cron_expression: &req.cron_expression,
         enabled,
         canary_enabled: req.canary_enabled.unwrap_or(existing.canary_enabled),
-        exclude_patterns: &exclude_patterns,
+        exclude_patterns_raw: &exclude_patterns_raw,
         ignore_global_excludes: req.ignore_global_excludes.unwrap_or(false),
         keep_daily: req.keep_daily.unwrap_or(existing.keep_daily),
         keep_weekly: req.keep_weekly.unwrap_or(existing.keep_weekly),
@@ -467,18 +464,13 @@ pub async fn update_schedule(
     if let Some(per_host) = &req.exclude_patterns_per_host {
         db::delete_per_host_excludes_for_schedule(&state.pool, schedule.id).await?;
         for entry in per_host {
-            for (i, pattern) in entry.patterns.iter().enumerate() {
-                let sort_order = i32::try_from(i)
-                    .map_err(|_| ApiError::BadRequest("too many exclude patterns".into()))?;
-                db::insert_exclude_for_schedule_client(
-                    &state.pool,
-                    schedule.id,
-                    entry.client_id,
-                    pattern,
-                    sort_order,
-                )
-                .await?;
-            }
+            db::upsert_per_host_excludes_raw(
+                &state.pool,
+                schedule.id,
+                entry.client_id,
+                &entry.raw_text,
+            )
+            .await?;
         }
     }
 

@@ -114,6 +114,10 @@ jobs:
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
         run: cargo +nightly test -p server --test integration -- --ignored --test-threads=1
+      - name: Run ignored library tests (require database)
+        env:
+          DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
+        run: cargo +nightly test -p server --lib -- --ignored --test-threads=1
   docs:
     name: Documentation (mkdocs build)
     runs-on: ubuntu-latest

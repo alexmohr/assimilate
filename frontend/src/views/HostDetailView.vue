@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
@@ -19,6 +19,7 @@ import { parseLines } from '../utils/validation'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import MergeClientDialog from '../components/MergeClientDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
+import ToggleSwitch from '../components/ToggleSwitch.vue'
 
 type TabId = 'overview' | 'schedules' | 'backups'
 
@@ -182,6 +183,61 @@ const restartError = ref<string | null>(null)
 // Deploy/Upgrade agent
 const availableAgentVersion = ref<string | null>(null)
 const showDeployDialog = ref(false)
+
+// Deploy SSH key
+interface DeployKeyState {
+  sshHost: string
+  sshUser: string
+  sshPort: number
+  password: string
+  useSftp: boolean
+  loading: boolean
+  result: { success: boolean; already_deployed: boolean; error?: string } | null
+}
+
+const showDeploySshKey = ref(false)
+const deployKey = reactive<DeployKeyState>({
+  sshHost: '',
+  sshUser: 'root',
+  sshPort: 22,
+  password: '',
+  useSftp: true,
+  loading: false,
+  result: null,
+})
+
+function openDeploySshKey(): void {
+  deployKey.sshHost = client.value?.hostname ?? ''
+  deployKey.sshUser = 'root'
+  deployKey.sshPort = 22
+  deployKey.password = ''
+  deployKey.useSftp = true
+  deployKey.result = null
+  showDeploySshKey.value = true
+}
+
+async function deploySshKey(): Promise<void> {
+  deployKey.loading = true
+  deployKey.result = null
+  try {
+    const res = await apiClient.post<{
+      success: boolean
+      already_deployed: boolean
+      error?: string
+    }>('/ssh/deploy-key', {
+      ssh_host: deployKey.sshHost.trim(),
+      ssh_user: deployKey.sshUser.trim(),
+      ssh_port: deployKey.sshPort,
+      password: deployKey.password,
+      use_sftp: deployKey.useSftp,
+    })
+    deployKey.result = res.data
+  } catch (e: unknown) {
+    deployKey.result = { success: false, already_deployed: false, error: extractError(e) }
+  } finally {
+    deployKey.loading = false
+  }
+}
 
 function deployButtonLabel(): string | null {
   if (!client.value) return null
@@ -854,12 +910,103 @@ watch(wsStatus, (newStatus, oldStatus) => {
             >
               {{ deployButtonLabel() }}
             </button>
+            <button
+              v-if="!isImported"
+              class="btn btn-sm btn-ghost"
+              @click="openDeploySshKey"
+            >
+              Deploy SSH Key
+            </button>
             <div
               v-if="restartError"
               class="form-error"
             >
               {{ restartError }}
             </div>
+          </div>
+        </div>
+
+        <!-- Deploy SSH Key -->
+        <div
+          v-if="showDeploySshKey && !isImported"
+          class="info-card"
+        >
+          <div class="info-title-row">
+            <h3 class="info-title">Deploy SSH Key</h3>
+            <button
+              class="btn btn-sm btn-ghost"
+              @click="showDeploySshKey = false"
+            >
+              &times;
+            </button>
+          </div>
+          <p class="deploy-hint">
+            Deploy the server's SSH public key to this host for passwordless access.
+          </p>
+          <div class="deploy-fields">
+            <div class="field">
+              <label class="field-label">SSH Host <span class="required">*</span></label>
+              <input
+                v-model="deployKey.sshHost"
+                class="input mono"
+                placeholder="e.g. 192.168.1.10"
+              />
+            </div>
+            <div class="deploy-row-fields">
+              <div class="field">
+                <label class="field-label">SSH User</label>
+                <input
+                  v-model="deployKey.sshUser"
+                  class="input mono"
+                  placeholder="root"
+                />
+              </div>
+              <div class="field field-narrow">
+                <label class="field-label">SSH Port</label>
+                <input
+                  v-model.number="deployKey.sshPort"
+                  class="input"
+                  type="number"
+                  min="1"
+                  max="65535"
+                />
+              </div>
+            </div>
+            <div class="field">
+              <label class="field-label">SSH Password <span class="required">*</span></label>
+              <input
+                v-model="deployKey.password"
+                class="input"
+                type="password"
+                placeholder="Password for initial login"
+              />
+            </div>
+            <div class="field toggle-row">
+              <span class="toggle-row-label">Use SFTP to deploy key (required for Hetzner)</span>
+              <ToggleSwitch v-model="deployKey.useSftp" />
+            </div>
+          </div>
+          <div class="deploy-row">
+            <button
+              class="btn btn-sm btn-primary"
+              :disabled="deployKey.loading || !deployKey.password || !deployKey.sshHost"
+              @click="deploySshKey"
+            >
+              {{ deployKey.loading ? 'Deploying...' : 'Deploy Key' }}
+            </button>
+            <span
+              v-if="deployKey.result"
+              class="deploy-result"
+              :class="
+                deployKey.result.success || deployKey.result.already_deployed
+                  ? 'result-ok'
+                  : 'result-error'
+              "
+            >
+              <template v-if="deployKey.result.already_deployed">Key already deployed</template>
+              <template v-else-if="deployKey.result.success">Key deployed successfully</template>
+              <template v-else>{{ deployKey.result.error ?? 'Deployment failed' }}</template>
+            </span>
           </div>
         </div>
 
@@ -2437,5 +2584,58 @@ watch(wsStatus, (newStatus, oldStatus) => {
   font-size: 0.875rem;
   color: var(--danger);
   margin-bottom: 0.5rem;
+}
+
+.info-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.info-title-row .info-title {
+  margin-bottom: 0;
+}
+
+.deploy-hint {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+}
+
+.deploy-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.deploy-row-fields {
+  display: flex;
+  gap: 1rem;
+}
+
+.deploy-row-fields .field {
+  flex: 1;
+}
+
+.deploy-row-fields .field-narrow {
+  max-width: 120px;
+  flex: 0 0 120px;
+}
+
+.deploy-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.deploy-result {
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.result-ok {
+  color: var(--success);
 }
 </style>

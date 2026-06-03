@@ -13,8 +13,7 @@ use sqlx::PgPool;
 
 use crate::{
     api::repos::sync_new_archives,
-    config_assembler,
-    db,
+    config_assembler, db,
     tunnel::TunnelManager,
     ws::{registry::AgentRegistry, ui_broadcast::UiBroadcast},
 };
@@ -40,7 +39,8 @@ pub async fn run(
         let mut interval = tokio::time::interval(TICK_INTERVAL);
         loop {
             interval.tick().await;
-            if let Err(e) = tick(&schedule_pool, &registry, &encryption_key, &tunnel_manager).await {
+            if let Err(e) = tick(&schedule_pool, &registry, &encryption_key, &tunnel_manager).await
+            {
                 tracing::error!(error = %e, "scheduler tick failed");
             }
         }
@@ -368,7 +368,7 @@ mod tests {
         assert!(next <= now);
     }
 
-    // ── tick() integration tests ──────────────────────────────────────────────
+    // tick() integration tests
     // Run with:
     //   DATABASE_URL=postgres://borg:borg_secret@localhost:5432/borg \
     //     cargo test -p server --test-threads=1
@@ -381,19 +381,11 @@ mod tests {
     }
 
     fn dummy_tunnel(pool: sqlx::PgPool) -> TunnelManager {
-        TunnelManager::new(
-            pool,
-            UiBroadcast::new(),
-            "127.0.0.1:0".parse().unwrap(),
-        )
+        TunnelManager::new(pool, UiBroadcast::new(), "127.0.0.1:0".parse().unwrap())
     }
 
-    async fn setup_due_schedule(
-        pool: &sqlx::PgPool,
-        key: &[u8; 32],
-    ) -> (i64, i64) {
-        let passphrase_enc =
-            shared::crypto::encrypt_passphrase("test-pass", key).unwrap();
+    async fn setup_due_schedule(pool: &sqlx::PgPool, key: &[u8; 32]) -> (i64, i64) {
+        let passphrase_enc = shared::crypto::encrypt_passphrase("test-pass", key).unwrap();
         let client = db::insert_client(pool, TICK_TEST_HOSTNAME, None, "hash", None)
             .await
             .unwrap();
@@ -471,13 +463,17 @@ mod tests {
 
         tick(&pool, &registry, &key, &tunnel).await.unwrap();
 
-        let first = rx.try_recv().expect("expected ConfigUpdate as first message");
+        let first = rx
+            .try_recv()
+            .expect("expected ConfigUpdate as first message");
         assert!(
             matches!(first, shared::protocol::ServerToAgent::ConfigUpdate(_)),
             "first message must be ConfigUpdate, got: {first:?}"
         );
 
-        let second = rx.try_recv().expect("expected RunBackupNow as second message");
+        let second = rx
+            .try_recv()
+            .expect("expected RunBackupNow as second message");
         match second {
             shared::protocol::ServerToAgent::RunBackupNow { repo_id: rid, .. } => {
                 assert_eq!(rid.0, repo_id, "RunBackupNow repo_id mismatch");
@@ -533,9 +529,7 @@ mod tests {
     /// leave the schedule in due state (not mark it as triggered).
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
-    async fn tick_skips_trigger_gracefully_when_agent_disconnected(
-        pool: sqlx::PgPool,
-    ) {
+    async fn tick_skips_trigger_gracefully_when_agent_disconnected(pool: sqlx::PgPool) {
         let key = tick_test_key();
         let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
 

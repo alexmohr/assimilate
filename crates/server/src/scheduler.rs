@@ -326,8 +326,14 @@ async fn tick(
 #[cfg(test)]
 mod tests {
     use chrono::TimeZone;
+    use tokio::sync::mpsc;
 
     use super::*;
+    use crate::{
+        db::{self, InsertRepoParams, ScheduleParams},
+        tunnel::TunnelManager,
+        ws::{registry::AgentRegistry, ui_broadcast::UiBroadcast},
+    };
 
     #[test]
     fn sync_due_when_next_run_in_past() {
@@ -360,5 +366,188 @@ mod tests {
 
         let next = calculate_next_run(cron_expr, last_synced, tz).unwrap();
         assert!(next <= now);
+    }
+
+    // ── tick() integration tests ──────────────────────────────────────────────
+    // Run with:
+    //   DATABASE_URL=postgres://borg:borg_secret@localhost:5432/borg \
+    //     cargo test -p server --test-threads=1
+
+    const TICK_TEST_HOSTNAME: &str = "tick-test-agent";
+    const TICK_TEST_KEY_MATERIAL: &[u8] = b"tick-test-scheduler-secret-key";
+
+    fn tick_test_key() -> [u8; 32] {
+        shared::crypto::derive_key(TICK_TEST_KEY_MATERIAL)
+    }
+
+    fn dummy_tunnel(pool: sqlx::PgPool) -> TunnelManager {
+        TunnelManager::new(
+            pool,
+            UiBroadcast::new(),
+            "127.0.0.1:0".parse().unwrap(),
+        )
+    }
+
+    async fn setup_due_schedule(
+        pool: &sqlx::PgPool,
+        key: &[u8; 32],
+    ) -> (i64, i64) {
+        let passphrase_enc =
+            shared::crypto::encrypt_passphrase("test-pass", key).unwrap();
+        let client = db::insert_client(pool, TICK_TEST_HOSTNAME, None, "hash", None)
+            .await
+            .unwrap();
+        let repo = db::insert_repo(
+            pool,
+            &InsertRepoParams {
+                name: "tick-repo",
+                repo_path: "/backup/tick",
+                ssh_user: "borg",
+                ssh_host: "host.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_enc,
+                compression: "lz4",
+                encryption: "none",
+                owner_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        let schedule = db::insert_schedule(
+            pool,
+            repo.id,
+            &ScheduleParams {
+                name: "tick-sched",
+                schedule_type: "backup",
+                cron_expression: "0 3 * * *",
+                enabled: true,
+                canary_enabled: false,
+                exclude_patterns: &[],
+                ignore_global_excludes: false,
+                keep_daily: 7,
+                keep_weekly: 4,
+                keep_monthly: 6,
+                keep_yearly: 0,
+                compact_enabled: true,
+                rate_limit_kbps: None,
+                pre_backup_commands: "[]",
+                post_backup_commands: "[]",
+                execution_mode: "parallel",
+                on_failure: "stop",
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        db::insert_schedule_targets(pool, schedule.id, &[(client.id, 0)])
+            .await
+            .unwrap();
+        let past = Utc::now() - chrono::Duration::hours(1);
+        db::set_next_run_at(pool, schedule.id, past).await.unwrap();
+        (repo.id, schedule.id)
+    }
+
+    async fn register_fake_agent(
+        registry: &AgentRegistry,
+    ) -> mpsc::Receiver<shared::protocol::ServerToAgent> {
+        let (tx, rx) = mpsc::channel(32);
+        registry
+            .register(TICK_TEST_HOSTNAME.to_owned(), tx, false, None)
+            .await;
+        rx
+    }
+
+    /// tick() must send ConfigUpdate *before* the run trigger so the agent
+    /// always executes with the current config.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_sends_config_update_before_run_trigger(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (repo_id, _) = setup_due_schedule(&pool, &key).await;
+
+        let registry = AgentRegistry::new();
+        let mut rx = register_fake_agent(&registry).await;
+        let tunnel = dummy_tunnel(pool.clone());
+
+        tick(&pool, &registry, &key, &tunnel).await.unwrap();
+
+        let first = rx.try_recv().expect("expected ConfigUpdate as first message");
+        assert!(
+            matches!(first, shared::protocol::ServerToAgent::ConfigUpdate(_)),
+            "first message must be ConfigUpdate, got: {first:?}"
+        );
+
+        let second = rx.try_recv().expect("expected RunBackupNow as second message");
+        match second {
+            shared::protocol::ServerToAgent::RunBackupNow { repo_id: rid, .. } => {
+                assert_eq!(rid.0, repo_id, "RunBackupNow repo_id mismatch");
+            }
+            other => panic!("expected RunBackupNow, got: {other:?}"),
+        }
+    }
+
+    /// ConfigUpdate sent before each trigger must reflect the *current* global
+    /// excludes, not those that were in place when the schedule was created.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_config_carries_updated_global_excludes(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        setup_due_schedule(&pool, &key).await;
+
+        // Create exclude with one value, then update it before tick fires.
+        db::insert_global_exclude(&pool, "*.log", 0).await.unwrap();
+        let excludes = db::list_global_excludes(&pool).await.unwrap();
+        db::update_global_exclude(&pool, excludes[0].id, "*.tmp", 0)
+            .await
+            .unwrap();
+
+        let registry = AgentRegistry::new();
+        let mut rx = register_fake_agent(&registry).await;
+        let tunnel = dummy_tunnel(pool.clone());
+
+        tick(&pool, &registry, &key, &tunnel).await.unwrap();
+
+        let msg = rx.try_recv().expect("expected ConfigUpdate");
+        match msg {
+            shared::protocol::ServerToAgent::ConfigUpdate(config) => {
+                let all_excludes: Vec<_> = config
+                    .repos
+                    .iter()
+                    .flat_map(|r| r.schedules.iter())
+                    .flat_map(|s| s.exclude_patterns.iter().cloned())
+                    .collect();
+                assert!(
+                    all_excludes.iter().any(|p| p == "*.tmp"),
+                    "updated exclude '*.tmp' missing; got: {all_excludes:?}"
+                );
+                assert!(
+                    !all_excludes.iter().any(|p| p == "*.log"),
+                    "stale exclude '*.log' present; got: {all_excludes:?}"
+                );
+            }
+            other => panic!("expected ConfigUpdate, got: {other:?}"),
+        }
+    }
+
+    /// When the target agent is not connected, tick() must not error and must
+    /// leave the schedule in due state (not mark it as triggered).
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_skips_trigger_gracefully_when_agent_disconnected(
+        pool: sqlx::PgPool,
+    ) {
+        let key = tick_test_key();
+        let (_, schedule_id) = setup_due_schedule(&pool, &key).await;
+
+        let registry = AgentRegistry::new(); // no agent registered
+        let tunnel = dummy_tunnel(pool.clone());
+
+        tick(&pool, &registry, &key, &tunnel).await.unwrap();
+
+        let due = db::list_due_schedules(&pool, Utc::now()).await.unwrap();
+        assert!(
+            due.iter().any(|s| s.schedule_id == schedule_id),
+            "schedule must remain due when the agent was not connected"
+        );
     }
 }

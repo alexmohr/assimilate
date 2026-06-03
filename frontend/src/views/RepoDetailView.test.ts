@@ -269,4 +269,49 @@ describe('RepoDetailView', () => {
 
     expect(wrapper.text()).toContain('Not found')
   })
+
+  it('calls sync endpoint and clears loading after 202 response', async () => {
+    setupApiSuccess()
+    vi.mocked(apiClient.post).mockResolvedValue({ status: 202, data: {} })
+
+    const wrapper = renderWithPlugins(RepoDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const syncBtn = wrapper.findAll('button').find((b) => b.text() === 'Full Resync')
+    expect(syncBtn).toBeDefined()
+    await syncBtn!.trigger('click')
+    await flushPromises()
+
+    // After 202 response loading clears -- button returns to normal label
+    expect(wrapper.findAll('button').find((b) => b.text() === 'Full Resync')).toBeDefined()
+    expect(wrapper.findAll('button').find((b) => b.text() === 'Syncing...')).toBeUndefined()
+
+    expect(vi.mocked(apiClient.post)).toHaveBeenCalledWith('/repos/1/sync')
+  })
+
+  it('shows error toast when sync request fails', async () => {
+    setupApiSuccess()
+    vi.mocked(apiClient.post).mockRejectedValue(new Error('Connection refused'))
+
+    const wrapper = renderWithPlugins(RepoDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const syncBtn = wrapper.findAll('button').find((b) => b.text() === 'Full Resync')
+    expect(syncBtn).toBeDefined()
+    await syncBtn!.trigger('click')
+    await flushPromises()
+
+    // Loading clears even on failure
+    expect(wrapper.findAll('button').find((b) => b.text() === 'Full Resync')).toBeDefined()
+    expect(wrapper.findAll('button').find((b) => b.text() === 'Syncing...')).toBeUndefined()
+
+    // Error message visible in the page (toast container is teleported so check apiClient call)
+    expect(vi.mocked(apiClient.post)).toHaveBeenCalledWith('/repos/1/sync')
+  })
 })

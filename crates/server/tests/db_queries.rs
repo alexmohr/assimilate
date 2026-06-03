@@ -180,6 +180,26 @@ async fn create_test_repo(pool: &PgPool) -> RepoRow {
     .unwrap()
 }
 
+/// Sets a repo's authoritative `borg info` statistics. Values mirror
+/// `insert_test_report` so stat assertions stay consistent now that repo
+/// size/archive numbers come from `repos.info_*` rather than backup reports.
+async fn set_test_repo_info_stats(pool: &PgPool, repo_id: i64, archive_count: i64) {
+    db::update_repo_info_stats(
+        pool,
+        repo_id,
+        &db::RepoInfoStats {
+            original_size: 1_000_000,
+            compressed_size: 500_000,
+            deduplicated_size: 250_000,
+            total_chunks: 100,
+            unique_chunks: 80,
+            archive_count,
+        },
+    )
+    .await
+    .unwrap();
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn repo_insert_and_list(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
@@ -1280,6 +1300,7 @@ async fn repos_with_stats(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
 
     insert_test_report(&pool, client.id, repo.id).await;
+    set_test_repo_info_stats(&pool, repo.id, 1).await;
 
     let repos = db::list_repos_with_stats(&pool).await.unwrap();
     assert_eq!(repos.len(), 1);
@@ -1310,6 +1331,7 @@ async fn repo_with_stats_single(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
 
     insert_test_report(&pool, client.id, repo.id).await;
+    set_test_repo_info_stats(&pool, repo.id, 1).await;
 
     let result = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
     assert_eq!(result.total_deduplicated_size, 250_000);
@@ -1323,6 +1345,7 @@ async fn storage_breakdown(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
 
     insert_test_report(&pool, client.id, repo.id).await;
+    set_test_repo_info_stats(&pool, repo.id, 1).await;
 
     let breakdown = db::get_storage_breakdown(&pool).await.unwrap();
     assert_eq!(breakdown.len(), 1);
@@ -1330,33 +1353,141 @@ async fn storage_breakdown(pool: PgPool) {
     assert_eq!(breakdown[0].deduplicated_size, 250_000);
 }
 
+/// Repos are returned in descending `info_deduplicated_size` order and
+/// compressed_size is also sourced from the info columns.
 #[sqlx::test(migrations = "./migrations")]
-async fn storage_breakdown_by_host(pool: PgPool) {
-    let client = db::insert_client(&pool, "brk-host-h", None, "hash", None)
-        .await
-        .unwrap();
-    let repo = create_test_repo(&pool).await;
+async fn storage_breakdown_multi_repo_ordering(pool: PgPool) {
+    let repo_small = create_test_repo(&pool).await;
+    let repo_large = db::insert_repo(
+        &pool,
+        &InsertRepoParams {
+            name: "large-repo",
+            repo_path: "/backups/large",
+            ssh_user: "u",
+            ssh_host: "storage.local",
+            ssh_port: 22,
+            passphrase_encrypted: b"enc",
+            compression: "lz4",
+            encryption: "none",
+            owner_id: None,
+        },
+    )
+    .await
+    .unwrap();
 
-    insert_test_report(&pool, client.id, repo.id).await;
+    db::update_repo_info_stats(
+        &pool,
+        repo_small.id,
+        &db::RepoInfoStats {
+            compressed_size: 200_000,
+            deduplicated_size: 100_000,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    db::update_repo_info_stats(
+        &pool,
+        repo_large.id,
+        &db::RepoInfoStats {
+            compressed_size: 800_000,
+            deduplicated_size: 400_000,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
 
-    let breakdown = db::get_storage_breakdown_by_host(&pool).await.unwrap();
-    assert!(!breakdown.is_empty());
-    assert_eq!(breakdown[0].name, "brk-host-h");
-    assert_eq!(breakdown[0].deduplicated_size, 250_000);
+    let breakdown = db::get_storage_breakdown(&pool).await.unwrap();
+    assert_eq!(breakdown.len(), 2);
+    // largest dedup first
+    assert_eq!(breakdown[0].name, "large-repo");
+    assert_eq!(breakdown[0].deduplicated_size, 400_000);
+    assert_eq!(breakdown[0].compressed_size, 800_000);
+    assert_eq!(breakdown[1].name, "test-repo");
+    assert_eq!(breakdown[1].deduplicated_size, 100_000);
 }
 
+/// A repo that has never had `update_repo_info_stats` called must return zeros
+/// without an error (columns default to 0).
 #[sqlx::test(migrations = "./migrations")]
-async fn storage_breakdown_by_server(pool: PgPool) {
-    let client = db::insert_client(&pool, "brk-host-s", None, "hash", None)
-        .await
-        .unwrap();
+async fn storage_breakdown_repo_with_no_info_stats(pool: PgPool) {
+    create_test_repo(&pool).await;
+
+    let breakdown = db::get_storage_breakdown(&pool).await.unwrap();
+    assert_eq!(breakdown.len(), 1);
+    assert_eq!(breakdown[0].compressed_size, 0);
+    assert_eq!(breakdown[0].deduplicated_size, 0);
+}
+
+/// `update_repo_info_stats` persists all six fields and they are readable back
+/// via `get_repo_with_stats` (the queries that feed the UI).
+#[sqlx::test(migrations = "./migrations")]
+async fn update_repo_info_stats_persists_all_fields(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
 
-    insert_test_report(&pool, client.id, repo.id).await;
+    db::update_repo_info_stats(
+        &pool,
+        repo.id,
+        &db::RepoInfoStats {
+            original_size: 10_000_000,
+            compressed_size: 6_000_000,
+            deduplicated_size: 3_000_000,
+            total_chunks: 500,
+            unique_chunks: 400,
+            archive_count: 7,
+        },
+    )
+    .await
+    .unwrap();
 
-    let breakdown = db::get_storage_breakdown_by_server(&pool).await.unwrap();
-    assert!(!breakdown.is_empty());
-    assert_eq!(breakdown[0].name, "storage.local");
+    let r = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
+    assert_eq!(r.total_original_size, 10_000_000);
+    assert_eq!(r.total_compressed_size, 6_000_000);
+    assert_eq!(r.total_deduplicated_size, 3_000_000);
+    assert_eq!(r.archive_count, 7);
+}
+
+/// A second call to `update_repo_info_stats` fully overwrites the previous values.
+#[sqlx::test(migrations = "./migrations")]
+async fn update_repo_info_stats_overwrite(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    db::update_repo_info_stats(
+        &pool,
+        repo.id,
+        &db::RepoInfoStats {
+            original_size: 1_000,
+            compressed_size: 800,
+            deduplicated_size: 600,
+            total_chunks: 10,
+            unique_chunks: 8,
+            archive_count: 2,
+        },
+    )
+    .await
+    .unwrap();
+
+    db::update_repo_info_stats(
+        &pool,
+        repo.id,
+        &db::RepoInfoStats {
+            original_size: 99_000,
+            compressed_size: 50_000,
+            deduplicated_size: 25_000,
+            total_chunks: 200,
+            unique_chunks: 150,
+            archive_count: 10,
+        },
+    )
+    .await
+    .unwrap();
+
+    let r = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
+    assert_eq!(r.total_original_size, 99_000);
+    assert_eq!(r.total_compressed_size, 50_000);
+    assert_eq!(r.total_deduplicated_size, 25_000);
+    assert_eq!(r.archive_count, 10);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1373,6 +1504,64 @@ async fn dashboard_summary(pool: PgPool) {
     assert_eq!(summary.success_30d, 1);
     assert_eq!(summary.failed_30d, 0);
     assert_eq!(summary.total_30d, 1);
+}
+
+/// `total_storage_bytes` in the dashboard summary must now aggregate
+/// `repos.info_deduplicated_size` rather than backup_reports.
+#[sqlx::test(migrations = "./migrations")]
+async fn dashboard_summary_total_storage_from_repo_info(pool: PgPool) {
+    let client = db::insert_client(&pool, "ds-storage-host", None, "hash", None)
+        .await
+        .unwrap();
+
+    // Create two repos with distinct info stats and confirm the sum is correct.
+    let repo1 = create_test_repo(&pool).await;
+    let repo2 = db::insert_repo(
+        &pool,
+        &InsertRepoParams {
+            name: "test-repo-2",
+            repo_path: "/backups/r2",
+            ssh_user: "u",
+            ssh_host: "storage.local",
+            ssh_port: 22,
+            passphrase_encrypted: b"enc",
+            compression: "lz4",
+            encryption: "none",
+            owner_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    insert_test_report(&pool, client.id, repo1.id).await;
+    insert_test_report(&pool, client.id, repo2.id).await;
+
+    db::update_repo_info_stats(
+        &pool,
+        repo1.id,
+        &db::RepoInfoStats {
+            deduplicated_size: 100_000,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    db::update_repo_info_stats(
+        &pool,
+        repo2.id,
+        &db::RepoInfoStats {
+            deduplicated_size: 200_000,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let summary = db::get_dashboard_summary(&pool).await.unwrap();
+    assert_eq!(
+        summary.total_storage_bytes, 300_000,
+        "should sum info_deduplicated_size across both repos"
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -3996,4 +4185,31 @@ async fn audit_filter_by_action(pool: PgPool) {
 
     assert_eq!(total, 1);
     assert_eq!(items[0].action, "delete");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn recovery_clears_stuck_importing_and_error(pool: PgPool) {
+    // Simulate what happens when the server crashes mid-sync:
+    // importing = true and an import_error are left in the DB.
+    let repo = create_test_repo(&pool).await;
+
+    db::set_repo_importing(&pool, repo.id, true).await.unwrap();
+    db::set_repo_import_error(&pool, repo.id, Some("previous crash"))
+        .await
+        .unwrap();
+
+    let stats = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
+    assert!(stats.importing);
+    assert_eq!(stats.import_error.as_deref(), Some("previous crash"));
+
+    // These are the exact DB calls the startup recovery task in main.rs makes
+    // after sync_existing_archives completes (or fails).
+    db::set_repo_importing(&pool, repo.id, false).await.unwrap();
+    db::set_repo_import_error(&pool, repo.id, None)
+        .await
+        .unwrap();
+
+    let stats = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
+    assert!(!stats.importing);
+    assert!(stats.import_error.is_none());
 }

@@ -615,6 +615,31 @@ async fn run_init_repo_task(
     Ok(())
 }
 
+fn make_failed_report(
+    repo_id: RepoId,
+    started_at: chrono::DateTime<Utc>,
+    error_message: String,
+) -> shared::types::BackupReport {
+    let finished_at = Utc::now();
+    shared::types::BackupReport {
+        id: shared::types::ReportId(0),
+        client_id: shared::types::ClientId(0),
+        repo_id,
+        started_at,
+        finished_at,
+        status: shared::types::BackupStatus::Failed,
+        original_size: 0,
+        compressed_size: 0,
+        deduplicated_size: 0,
+        files_processed: 0,
+        duration_secs: finished_at.signed_duration_since(started_at).num_seconds(),
+        error_message: Some(error_message),
+        warnings: Vec::new(),
+        borg_version: None,
+        archive_name: None,
+    }
+}
+
 async fn run_backup_task(
     repo_id: RepoId,
     mut target: BackupTarget,
@@ -647,7 +672,7 @@ async fn run_backup_task(
         None
     };
 
-    match engine.run_backup(&target).await {
+    let (report, run_canary) = match engine.run_backup(&target).await {
         Ok(result) => {
             let finished_at = Utc::now();
             let report = shared::types::BackupReport {
@@ -667,54 +692,31 @@ async fn run_backup_task(
                 borg_version: None,
                 archive_name: result.archive_name,
             };
-            let msg = AgentToServer::BackupCompleted { report };
-            if let Err(e) = outbound_tx.send(msg).await {
-                tracing::debug!(error = %e, "outbound send failed");
-            }
-
-            if let Some(canary) = &canary {
-                run_canary_verification(repo_id, &target, engine, canary, outbound_tx).await;
-                BackupEngine::cleanup_canary(canary);
-            }
+            (report, true)
         }
         Err(BackupError::Skipped(reason)) => {
-            warn!(repo_id = ?repo_id, reason = %reason, "backup skipped");
-            let msg = AgentToServer::BackupRejected { repo_id, reason };
-            if let Err(e) = outbound_tx.send(msg).await {
-                tracing::debug!(error = %e, "outbound send failed");
-            }
-            if let Some(canary) = &canary {
-                BackupEngine::cleanup_canary(canary);
-            }
+            error!(repo_id = ?repo_id, reason = %reason, "backup skipped, treating as failure");
+            (make_failed_report(repo_id, started_at, reason), false)
         }
         Err(e) => {
             error!(repo_id = ?repo_id, error = %e, "backup failed");
-            let finished_at = Utc::now();
-            let report = shared::types::BackupReport {
-                id: shared::types::ReportId(0),
-                client_id: shared::types::ClientId(0),
-                repo_id,
-                started_at,
-                finished_at,
-                status: shared::types::BackupStatus::Failed,
-                original_size: 0,
-                compressed_size: 0,
-                deduplicated_size: 0,
-                files_processed: 0,
-                duration_secs: finished_at.signed_duration_since(started_at).num_seconds(),
-                error_message: Some(e.to_string()),
-                warnings: Vec::new(),
-                borg_version: None,
-                archive_name: None,
-            };
-            let msg = AgentToServer::BackupCompleted { report };
-            if let Err(e) = outbound_tx.send(msg).await {
-                tracing::debug!(error = %e, "outbound send failed");
-            }
-            if let Some(canary) = &canary {
-                BackupEngine::cleanup_canary(canary);
-            }
+            (
+                make_failed_report(repo_id, started_at, e.to_string()),
+                false,
+            )
         }
+    };
+
+    let msg = AgentToServer::BackupCompleted { report };
+    if let Err(e) = outbound_tx.send(msg).await {
+        tracing::debug!(error = %e, "outbound send failed");
+    }
+
+    if let Some(canary) = &canary {
+        if run_canary {
+            run_canary_verification(repo_id, &target, engine, canary, outbound_tx).await;
+        }
+        BackupEngine::cleanup_canary(canary);
     }
 }
 

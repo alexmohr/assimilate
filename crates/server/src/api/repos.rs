@@ -1166,7 +1166,7 @@ fn is_ssh_connection_error(stderr: &str) -> bool {
 }
 
 /// Runs `borg info --glob '*' --json` once to fetch stats for all archives in
-/// the repository. Returns a map of archive name → JSON value (the archive
+/// the repository. Returns a map of archive name -> JSON value (the archive
 /// object from the `archives` array).
 ///
 /// Uses a single SSH connection for all archives, which is dramatically faster
@@ -1427,6 +1427,7 @@ pub async fn sync_existing_archives(
         report_params.push(db::InsertReportParams {
             client_id,
             repo_id,
+            schedule_id: None,
             started_at,
             finished_at,
             status: "success".to_string(),
@@ -1602,6 +1603,7 @@ pub async fn sync_new_archives(
         report_params.push(db::InsertReportParams {
             client_id,
             repo_id,
+            schedule_id: None,
             started_at,
             finished_at,
             status: "success".to_string(),
@@ -1769,7 +1771,7 @@ pub async fn sync_repo(
             );
             error!("{msg}");
             if let Err(log_err) =
-                db::insert_system_event(&state.pool, "repo_sync", None, &msg).await
+                db::insert_system_event(&state.pool, "repo_sync_failed", None, &msg).await
             {
                 error!(error = %log_err, "failed to log sync event");
             }

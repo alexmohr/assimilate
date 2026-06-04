@@ -106,6 +106,8 @@ pub enum AgentToServer {
     },
     BackupStarted {
         repo_id: RepoId,
+        #[serde(default)]
+        schedule_id: Option<i64>,
         started_at: DateTime<Utc>,
         #[serde(default)]
         borg_command: Option<String>,
@@ -234,7 +236,7 @@ pub enum ServerToUi {
     BackupCompleted {
         hostname: String,
         target_name: String,
-        report: BackupReport,
+        report: Box<BackupReport>,
     },
     CheckCompleted {
         hostname: String,

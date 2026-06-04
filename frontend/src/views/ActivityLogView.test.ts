@@ -519,6 +519,49 @@ describe('ActivityLogView', () => {
     })
   })
 
+  describe('system event badges', () => {
+    it('colors non-error system events without using the failed badge', async () => {
+      mockGet.mockImplementation((url: string) => {
+        if (url === '/clients') return Promise.resolve({ data: CLIENTS })
+        if (url === '/stats/activity') return Promise.resolve({ data: [] })
+        if (url === '/stats/system-events')
+          return Promise.resolve({
+            data: [
+              {
+                id: 1,
+                created_at: '2026-01-01T07:00:00Z',
+                event_type: 'repo_sync',
+                hostname: null,
+                message: 'repo sync completed: imported 14, removed 0 archives in 0s',
+              },
+              {
+                id: 2,
+                created_at: '2026-01-01T06:00:00Z',
+                event_type: 'repo_sync_failed',
+                hostname: null,
+                message: 'repo sync failed',
+              },
+            ],
+          })
+        return Promise.resolve({ data: [] })
+      })
+
+      const wrapper = mountView()
+      await flushPromises()
+
+      const systemBtn = wrapper.findAll('.segment-btn').find((b) => b.text() === 'System')
+      await systemBtn?.trigger('click')
+      await flushPromises()
+
+      const badges = wrapper.findAll('td .badge')
+      const successBadge = badges.find((b) => b.text() === 'repo_sync')
+      const failedBadge = badges.find((b) => b.text() === 'repo_sync_failed')
+      expect(successBadge?.classes()).toContain('badge-success')
+      expect(successBadge?.classes()).not.toContain('badge-failed')
+      expect(failedBadge?.classes()).toContain('badge-failed')
+    })
+  })
+
   describe('API integration', () => {
     it('fetches clients and activity data on mount', async () => {
       setupDefaultMocks()

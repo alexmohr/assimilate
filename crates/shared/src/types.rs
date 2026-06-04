@@ -304,6 +304,8 @@ pub struct BackupReport {
     pub id: ReportId,
     pub client_id: ClientId,
     pub repo_id: RepoId,
+    #[serde(default)]
+    pub schedule_id: Option<i64>,
     pub started_at: DateTime<Utc>,
     pub finished_at: DateTime<Utc>,
     pub status: BackupStatus,

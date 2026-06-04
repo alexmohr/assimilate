@@ -250,6 +250,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
         }
         AgentToServer::BackupStarted {
             repo_id,
+            schedule_id,
             started_at,
             borg_command,
         } => {
@@ -263,6 +264,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 &state.pool,
                 client_id,
                 repo_id.0,
+                schedule_id,
                 started_at,
                 borg_command.as_deref(),
             )
@@ -289,6 +291,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
             let params = db::InsertReportParams {
                 client_id,
                 repo_id: report.repo_id.0,
+                schedule_id: report.schedule_id,
                 started_at: report.started_at,
                 finished_at: report.finished_at,
                 status: status.to_string(),

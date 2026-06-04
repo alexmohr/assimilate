@@ -357,8 +357,24 @@ function statusClass(status: string): string {
   return 'badge-failed'
 }
 
-function eventTypeClass(_eventType: string): string {
-  return 'badge-failed'
+function eventTypeClass(eventType: string): string {
+  switch (eventType) {
+    case 'repo_sync':
+    case 'agent_connected':
+    case 'backup_complete':
+      return 'badge-success'
+    case 'repo_sync_slow':
+    case 'backup_warning':
+    case 'agent_disconnected':
+      return 'badge-warning'
+    case 'repo_sync_failed':
+    case 'backup_failed':
+    case 'auth_failed':
+    case 'error':
+      return 'badge-failed'
+    default:
+      return 'badge-started'
+  }
 }
 
 function logRowClass(entry: LogEntry): string {

@@ -90,6 +90,10 @@ async fn build_test_app(pool: PgPool) -> Router {
                 .delete(server::api::repos::delete_repo),
         )
         .route(
+            "/api/repos/{repo_id}/confirm-relocation",
+            post(server::api::repos::confirm_relocation),
+        )
+        .route(
             "/api/repos/{repo_id}/sync",
             post(server::api::repos::sync_repo),
         )
@@ -780,4 +784,52 @@ async fn test_per_host_excludes_roundtrip_preserves_raw_text(pool: sqlx::PgPool)
     assert_eq!(per_host.len(), 1);
     assert_eq!(per_host[0]["client_id"], client_id);
     assert_eq!(per_host[0]["raw_text"], raw);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_confirm_relocation_sets_flag(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    let repo_id = insert_test_repo(&pool, "reloc-repo").await;
+
+    let pending_before: bool =
+        sqlx::query_scalar("SELECT relocation_pending FROM repos WHERE id = $1")
+            .bind(repo_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(!pending_before);
+
+    let req = json_request(
+        "POST",
+        &format!("/api/repos/{repo_id}/confirm-relocation"),
+        None,
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert!(
+        body["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("reloc-repo"))
+    );
+
+    let pending_after: bool =
+        sqlx::query_scalar("SELECT relocation_pending FROM repos WHERE id = $1")
+            .bind(repo_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(pending_after);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_confirm_relocation_returns_404_for_missing_repo(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    let req = json_request("POST", "/api/repos/99999/confirm-relocation", None);
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }

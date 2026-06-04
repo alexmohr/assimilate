@@ -79,6 +79,7 @@ interface RepoWithStats {
   total_compressed_size: number
   total_deduplicated_size: number
   client_count: number
+  relocation_pending: boolean
 }
 
 const mockRepo: RepoWithStats = {
@@ -97,6 +98,7 @@ const mockRepo: RepoWithStats = {
   total_compressed_size: 5_368_709_120,
   total_deduplicated_size: 2_684_354_560,
   client_count: 2,
+  relocation_pending: false,
 }
 
 function setupApiSuccess(repo: RepoWithStats = mockRepo): void {
@@ -313,5 +315,86 @@ describe('RepoDetailView', () => {
 
     // Error message visible in the page (toast container is teleported so check apiClient call)
     expect(vi.mocked(apiClient.post)).toHaveBeenCalledWith('/repos/1/sync')
+  })
+
+  it('shows Confirm Relocation button in danger zone for admin', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(RepoDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Confirm Relocation')
+  })
+
+  it('shows relocation pending hint when relocation_pending is true', async () => {
+    setupApiSuccess({ ...mockRepo, relocation_pending: true })
+    const wrapper = renderWithPlugins(RepoDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Relocation already pending')
+  })
+
+  it('calls confirm-relocation endpoint when confirmed', async () => {
+    setupApiSuccess()
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: { message: "Relocation accepted for 'server-daily'." },
+    })
+
+    const wrapper = renderWithPlugins(RepoDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const confirmBtn = wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Confirm Relocation')
+    expect(confirmBtn).toBeDefined()
+    await confirmBtn!.trigger('click')
+    await flushPromises()
+
+    // Dialog is teleported to document.body
+    const yesBtn = Array.from(document.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Yes, Confirm Relocation',
+    )
+    expect(yesBtn).toBeDefined()
+    yesBtn!.click()
+    await flushPromises()
+
+    expect(vi.mocked(apiClient.post)).toHaveBeenCalledWith('/repos/1/confirm-relocation')
+    expect(document.body.textContent).toContain("Relocation accepted for 'server-daily'.")
+  })
+
+  it('shows error in confirm-relocation dialog when request fails', async () => {
+    setupApiSuccess()
+    vi.mocked(apiClient.post).mockRejectedValue(new Error('Forbidden'))
+
+    const wrapper = renderWithPlugins(RepoDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const confirmBtn = wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Confirm Relocation')
+    expect(confirmBtn).toBeDefined()
+    await confirmBtn!.trigger('click')
+    await flushPromises()
+
+    // Dialog is teleported to document.body
+    const yesBtn = Array.from(document.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Yes, Confirm Relocation',
+    )
+    expect(yesBtn).toBeDefined()
+    yesBtn!.click()
+    await flushPromises()
+
+    expect(document.body.textContent).toContain('Forbidden')
   })
 })

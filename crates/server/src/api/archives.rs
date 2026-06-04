@@ -334,18 +334,37 @@ pub async fn archive_info(
     Ok(Json(info))
 }
 
+// Strip the leading "./" or bare "." that borg emits when archives are
+// created with "borg create repo::name ." so the API always returns
+// clean relative paths (e.g. "var/www" instead of "./var/www").
+fn normalize_path(p: &str) -> String {
+    if p == "." {
+        String::new()
+    } else {
+        p.strip_prefix("./").unwrap_or(p).to_string()
+    }
+}
+
 // Build depth-limited borg sh: patterns for directory listing.
-// Borg includes unmatched paths by default in list mode, so an explicit
-// exclude-all ("-sh:**") must follow the include patterns to prevent
-// deeper entries from leaking into the result.
+// Patterns are paired: one for the bare path form and one for the
+// "./"-prefixed form that borg uses when archives are created with ".".
+// The explicit exclude-all ("-sh:**") must come last so that only the
+// immediate level is returned.
 fn list_patterns(path: Option<&str>) -> Vec<String> {
     match path {
-        None => vec!["+sh:*".to_string(), "-sh:**".to_string()],
+        None => vec![
+            "+sh:*".to_string(),
+            "+sh:.".to_string(),
+            "+sh:./*".to_string(),
+            "-sh:**".to_string(),
+        ],
         Some(p) => {
             let p = p.trim_end_matches('/');
             vec![
                 format!("+sh:{p}"),
                 format!("+sh:{p}/*"),
+                format!("+sh:./{p}"),
+                format!("+sh:./{p}/*"),
                 "-sh:**".to_string(),
             ]
         }
@@ -425,7 +444,7 @@ pub async fn list_contents(
         };
         entries.push(ContentEntry {
             entry_type: v["type"].as_str().unwrap_or("").to_string(),
-            path: v["path"].as_str().unwrap_or("").to_string(),
+            path: v["path"].as_str().map_or_else(String::new, normalize_path),
             size: v["size"].as_i64().unwrap_or(0),
             mtime: v["mtime"].as_str().unwrap_or("").to_string(),
             mode: v["mode"].as_str().unwrap_or("").to_string(),
@@ -575,15 +594,24 @@ mod tests {
     }
 
     #[test]
-    fn list_patterns_root_returns_top_level_glob() {
+    fn list_patterns_root_includes_dot_prefix_variants() {
         let patterns = list_patterns(None);
-        assert_eq!(patterns, vec!["+sh:*", "-sh:**"]);
+        assert_eq!(patterns, vec!["+sh:*", "+sh:.", "+sh:./*", "-sh:**"]);
     }
 
     #[test]
     fn list_patterns_simple_dir() {
         let patterns = list_patterns(Some("home"));
-        assert_eq!(patterns, vec!["+sh:home", "+sh:home/*", "-sh:**"]);
+        assert_eq!(
+            patterns,
+            vec![
+                "+sh:home",
+                "+sh:home/*",
+                "+sh:./home",
+                "+sh:./home/*",
+                "-sh:**"
+            ]
+        );
     }
 
     #[test]
@@ -591,13 +619,48 @@ mod tests {
         let patterns = list_patterns(Some("home/user/docs"));
         assert_eq!(
             patterns,
-            vec!["+sh:home/user/docs", "+sh:home/user/docs/*", "-sh:**"]
+            vec![
+                "+sh:home/user/docs",
+                "+sh:home/user/docs/*",
+                "+sh:./home/user/docs",
+                "+sh:./home/user/docs/*",
+                "-sh:**",
+            ]
         );
     }
 
     #[test]
     fn list_patterns_trailing_slash_stripped() {
         let patterns = list_patterns(Some("home/user/"));
-        assert_eq!(patterns, vec!["+sh:home/user", "+sh:home/user/*", "-sh:**"]);
+        assert_eq!(
+            patterns,
+            vec![
+                "+sh:home/user",
+                "+sh:home/user/*",
+                "+sh:./home/user",
+                "+sh:./home/user/*",
+                "-sh:**",
+            ]
+        );
+    }
+
+    #[test]
+    fn normalize_path_strips_dot_slash_prefix() {
+        assert_eq!(normalize_path("./var/www"), "var/www");
+    }
+
+    #[test]
+    fn normalize_path_bare_dot_becomes_empty() {
+        assert_eq!(normalize_path("."), "");
+    }
+
+    #[test]
+    fn normalize_path_bare_path_unchanged() {
+        assert_eq!(normalize_path("home/user"), "home/user");
+    }
+
+    #[test]
+    fn normalize_path_empty_unchanged() {
+        assert_eq!(normalize_path(""), "");
     }
 }

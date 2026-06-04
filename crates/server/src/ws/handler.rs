@@ -15,7 +15,9 @@ use shared::protocol::{AgentToServer, ServerToAgent, ServerToUi};
 use tokio::sync::mpsc;
 
 use crate::{
-    AppState, config_assembler, db,
+    AppState,
+    api::repos::sync_new_archives,
+    config_assembler, db,
     notifications::{self, EventType, NotificationEvent},
 };
 
@@ -249,6 +251,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
         AgentToServer::BackupStarted {
             repo_id,
             started_at,
+            borg_command,
         } => {
             tracing::info!(
                 hostname = %hostname,
@@ -256,6 +259,17 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 started_at = %started_at,
                 "backup started"
             );
+            if let Err(e) = db::insert_backup_started(
+                &state.pool,
+                client_id,
+                repo_id.0,
+                started_at,
+                borg_command.as_deref(),
+            )
+            .await
+            {
+                tracing::error!(hostname = %hostname, error = %e, "failed to insert backup started row");
+            }
             state.ui_broadcast.send(ServerToUi::DataChanged);
         }
         AgentToServer::BackupCompleted { report } => {
@@ -289,6 +303,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 borg_version: report.borg_version,
                 matched: true,
                 archive_name: report.archive_name,
+                borg_command: report.borg_command,
             };
             if let Err(e) = db::insert_backup_report(&state.pool, &params).await {
                 tracing::error!(hostname = %hostname, error = %e, "failed to persist backup report");
@@ -376,6 +391,97 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                     tracing::error!(error = %e, "notification dispatch failed");
                 }
             });
+
+            if matches!(
+                report.status,
+                shared::types::BackupStatus::Success | shared::types::BackupStatus::Warning
+            ) {
+                let sync_pool = state.pool.clone();
+                let sync_key = state.encryption_key;
+                let sync_repo_id = report.repo_id.0;
+                let sync_broadcast = state.ui_broadcast.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = db::set_repo_importing(&sync_pool, sync_repo_id, true).await {
+                        tracing::error!(
+                            repo_id = sync_repo_id,
+                            error = %e,
+                            "post-backup sync: failed to set importing flag"
+                        );
+                        return;
+                    }
+                    match sync_new_archives(&sync_pool, &sync_key, sync_repo_id, &sync_broadcast)
+                        .await
+                    {
+                        Ok((added, removed)) => {
+                            if let Err(e) =
+                                db::update_repo_last_synced(&sync_pool, sync_repo_id).await
+                            {
+                                tracing::error!(
+                                    repo_id = sync_repo_id,
+                                    error = %e,
+                                    "post-backup sync: failed to update last_synced_at"
+                                );
+                            }
+                            if let Err(e) =
+                                db::set_repo_importing(&sync_pool, sync_repo_id, false).await
+                            {
+                                tracing::error!(
+                                    repo_id = sync_repo_id,
+                                    error = %e,
+                                    "post-backup sync: failed to clear importing flag"
+                                );
+                            }
+                            if let Err(e) =
+                                db::set_repo_import_error(&sync_pool, sync_repo_id, None).await
+                            {
+                                tracing::error!(
+                                    repo_id = sync_repo_id,
+                                    error = %e,
+                                    "post-backup sync: failed to clear import_error"
+                                );
+                            }
+                            if added > 0 || removed > 0 {
+                                sync_broadcast.send(ServerToUi::DataChanged);
+                            }
+                            tracing::debug!(
+                                repo_id = sync_repo_id,
+                                added,
+                                removed,
+                                "post-backup sync completed"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                repo_id = sync_repo_id,
+                                error = %e,
+                                "post-backup sync failed"
+                            );
+                            if let Err(e2) =
+                                db::set_repo_importing(&sync_pool, sync_repo_id, false).await
+                            {
+                                tracing::error!(
+                                    repo_id = sync_repo_id,
+                                    error = %e2,
+                                    "post-backup sync: failed to clear importing flag"
+                                );
+                            }
+                            if let Err(e2) = db::set_repo_import_error(
+                                &sync_pool,
+                                sync_repo_id,
+                                Some(&format!("{e}")),
+                            )
+                            .await
+                            {
+                                tracing::error!(
+                                    repo_id = sync_repo_id,
+                                    error = %e2,
+                                    "post-backup sync: failed to set import_error"
+                                );
+                            }
+                        }
+                    }
+                });
+            }
 
             state.ui_broadcast.send(ServerToUi::DataChanged);
         }

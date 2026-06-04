@@ -227,6 +227,8 @@ function statusClass(entry: HealthEntry | null): string {
       return 'status-warning'
     case 'failed':
       return 'status-failed'
+    case 'started':
+      return 'status-started'
     default:
       return ''
   }
@@ -242,6 +244,8 @@ function statusLabel(entry: HealthEntry | null): string {
       return 'Warning'
     case 'failed':
       return 'Failed'
+    case 'started':
+      return 'Running'
     default:
       return 'No data'
   }
@@ -688,6 +692,11 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
 .health-badge.status-overdue {
   background: var(--warning-subtle);
   color: var(--warning);
+}
+
+.health-badge.status-started {
+  background: var(--info-subtle);
+  color: var(--info);
 }
 
 .card-error {

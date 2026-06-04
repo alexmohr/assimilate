@@ -249,7 +249,7 @@ api POST "/api/schedules" "{
     \"keep_daily\": 14,
     \"keep_weekly\": 8,
     \"keep_monthly\": 12,
-    \"pre_backup_commands\": [\"pg_dump -U postgres mydb > /tmp/mydb.sql\"],
+    \"pre_backup_commands\": [\"echo '-- demo pg_dump $(date)' > /tmp/mydb.sql\"],
     \"backup_sources\": [\"/tmp/mydb.sql\", \"/var/lib/postgresql\"],
     \"rate_limit_kbps\": 5000
 }" > /dev/null

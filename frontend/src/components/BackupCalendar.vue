@@ -586,6 +586,11 @@ function navigateToScheduleAndClose(scheduleId: number): void {
   color: var(--info);
 }
 
+.cal-badge-started {
+  background: var(--info-subtle);
+  color: var(--info);
+}
+
 .state-msg {
   color: var(--text-muted);
   font-size: 0.875rem;

@@ -49,6 +49,7 @@ interface ReportRow {
   duration_secs: number
   error_message: string | null
   borg_version: string | null
+  borg_command: string | null
 }
 
 interface Client {
@@ -64,7 +65,7 @@ interface LogEntry {
 }
 
 type CategoryFilter = 'all' | 'backup' | 'system' | 'logs'
-type StatusFilter = 'all' | 'success' | 'warning' | 'failed'
+type StatusFilter = 'all' | 'success' | 'warning' | 'failed' | 'started'
 type LogLevel = '' | 'error' | 'warn' | 'info' | 'debug' | 'trace'
 
 const rows = ref<ActivityRow[]>([])
@@ -283,6 +284,7 @@ const filtered = computed(() => {
       if (filterStatus.value === 'success' && s !== 'success') return false
       if (filterStatus.value === 'warning' && s !== 'warning') return false
       if (filterStatus.value === 'failed' && s !== 'failed' && s !== 'error') return false
+      if (filterStatus.value === 'started' && s !== 'started') return false
     }
     if (filterFrom.value) {
       if (new Date(r.started_at) < new Date(filterFrom.value)) return false
@@ -351,6 +353,7 @@ function statusClass(status: string): string {
   const s = status.toLowerCase()
   if (s === 'success') return 'badge-success'
   if (s === 'warning') return 'badge-warning'
+  if (s === 'started') return 'badge-started'
   return 'badge-failed'
 }
 
@@ -483,6 +486,7 @@ function clearFilters(): void {
                 <option value="success">Success</option>
                 <option value="warning">Warning</option>
                 <option value="failed">Failed</option>
+                <option value="started">Started</option>
               </select>
             </div>
 
@@ -708,6 +712,13 @@ function clearFilters(): void {
                           <dt>Borg version</dt>
                           <dd>{{ expandedDetail.borg_version ?? '—' }}</dd>
                         </dl>
+                      </div>
+                      <div
+                        v-if="expandedDetail.borg_command"
+                        class="detail-section detail-command-section"
+                      >
+                        <h3 class="detail-heading">Command</h3>
+                        <pre class="command-pre">{{ expandedDetail.borg_command }}</pre>
                       </div>
                       <div
                         v-if="expandedDetail.error_message"
@@ -1031,6 +1042,11 @@ function clearFilters(): void {
   color: var(--danger);
 }
 
+.badge-started {
+  background: var(--info-subtle);
+  color: var(--info);
+}
+
 .detail-row td {
   padding: 0;
   background: var(--bg-base);
@@ -1103,6 +1119,23 @@ function clearFilters(): void {
   font-size: 0.8rem;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.detail-command-section {
+  flex: 1 1 100%;
+}
+
+.command-pre {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: monospace;
 }
 
 .load-more {

@@ -22,7 +22,7 @@ fn log_run_result(
                 let stderr = String::from_utf8_lossy(&out.stderr);
                 tracing::warn!(subcommand, exit_code, elapsed_ms, %stderr, "borg: non-zero exit");
             } else {
-                tracing::debug!(subcommand, exit_code, elapsed_ms, "borg: done");
+                tracing::info!(subcommand, exit_code, elapsed_ms, "borg: done");
             }
         }
         Err(e) => tracing::error!(subcommand, error = %e, "borg: failed to spawn"),
@@ -87,7 +87,7 @@ impl Borg {
             || "<none>".to_owned(),
             |a| a.as_ref().to_string_lossy().into_owned(),
         );
-        tracing::debug!(subcommand, "borg: starting");
+        tracing::info!(subcommand, "borg: starting");
         let start = Instant::now();
         let mut cmd = Command::new(&self.binary);
         cmd.args(args)

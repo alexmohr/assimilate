@@ -165,10 +165,17 @@ async fn handle_text_message(
                 warn!("Executor command channel closed");
             }
         }
-        ServerToAgent::RunBackupNow { repo_id, .. } => {
+        ServerToAgent::RunBackupNow {
+            repo_id,
+            schedule_id,
+            ..
+        } => {
             info!("Received RunBackupNow for repo {repo_id:?}");
             if exec_cmd_tx
-                .send(ExecutorCommand::RunNow { repo_id })
+                .send(ExecutorCommand::RunNow {
+                    repo_id,
+                    schedule_id,
+                })
                 .await
                 .is_err()
             {

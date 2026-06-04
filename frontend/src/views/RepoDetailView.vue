@@ -541,6 +541,24 @@ async function confirmBreakLock(): Promise<void> {
   }
 }
 
+watch(
+  () => props.id,
+  async () => {
+    repo.value = null
+    error.value = null
+    allTags.value = []
+    repoTagIds.value = []
+    archiveFilter.value = ''
+    collapsedGroups.value = new Set()
+    selectedArchive.value = null
+    await loadRepo()
+    if (repo.value) {
+      await Promise.all([loadTags(), loadArchives()])
+      await selectArchiveFromQuery()
+    }
+  },
+)
+
 onMounted(async () => {
   await loadRepo()
   if (repo.value) {

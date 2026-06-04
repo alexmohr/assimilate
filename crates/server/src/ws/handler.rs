@@ -808,3 +808,164 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::{HashMap, HashSet},
+        net::SocketAddr,
+        sync::Arc,
+    };
+
+    use chrono::Utc;
+    use shared::{
+        protocol::AgentToServer,
+        types::{BackupReport, BackupStatus, ClientId, RepoId, ReportId},
+    };
+    use sqlx::PgPool;
+    use tokio::sync::{Mutex, RwLock};
+
+    use crate::{
+        AppState,
+        db::{self, InsertRepoParams, ScheduleParams},
+        log_buffer::LogBuffer,
+        notifications::NotificationService,
+        tunnel::TunnelManager,
+        ws::{registry::AgentRegistry, ui_broadcast::UiBroadcast},
+    };
+
+    fn build_test_state(pool: PgPool) -> AppState {
+        let ui_broadcast = UiBroadcast::new();
+        let server_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let tunnel_manager = TunnelManager::new(pool.clone(), ui_broadcast.clone(), server_addr);
+        AppState {
+            encryption_key: shared::crypto::derive_key(b"test-handler-key"),
+            registry: AgentRegistry::new(),
+            ui_broadcast,
+            tunnel_manager,
+            log_buffer: LogBuffer::default(),
+            notification_service: NotificationService::new(pool.clone(), reqwest::Client::new()),
+            pending_dryruns: Arc::new(Mutex::new(HashMap::new())),
+            pending_restores: Arc::new(Mutex::new(HashMap::new())),
+            pending_migrations: Arc::new(Mutex::new(HashMap::new())),
+            pending_deletes: Arc::new(Mutex::new(HashMap::new())),
+            running_schedules: Arc::new(RwLock::new(HashSet::new())),
+            pool,
+        }
+    }
+
+    async fn create_handler_test_data(pool: &PgPool) -> (i64, i64, i64) {
+        let client = db::insert_client(pool, "handler-host", None, "hash", None)
+            .await
+            .unwrap();
+        let repo = db::insert_repo(
+            pool,
+            &InsertRepoParams {
+                name: "handler-repo",
+                repo_path: "/backups/handler",
+                ssh_user: "user",
+                ssh_host: "host.local",
+                ssh_port: 22,
+                passphrase_encrypted: b"enc",
+                compression: "none",
+                encryption: "none",
+                owner_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        let schedule = db::insert_schedule(
+            pool,
+            repo.id,
+            &ScheduleParams {
+                name: "handler-schedule",
+                schedule_type: "backup",
+                cron_expression: "0 3 * * *",
+                enabled: true,
+                canary_enabled: false,
+                exclude_patterns_raw: "",
+                ignore_global_excludes: false,
+                keep_daily: 7,
+                keep_weekly: 4,
+                keep_monthly: 6,
+                keep_yearly: 1,
+                compact_enabled: true,
+                rate_limit_kbps: None,
+                pre_backup_commands: "[]",
+                post_backup_commands: "[]",
+                execution_mode: "parallel",
+                on_failure: "stop",
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        db::insert_schedule_targets(pool, schedule.id, &[(client.id, 0)])
+            .await
+            .unwrap();
+        (client.id, repo.id, schedule.id)
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn backup_started_sets_running_schedule(pool: PgPool) {
+        let state = build_test_state(pool.clone());
+        let (client_id, repo_id, schedule_id) = create_handler_test_data(&pool).await;
+
+        let msg = serde_json::to_string(&AgentToServer::BackupStarted {
+            repo_id: RepoId(repo_id),
+            started_at: Utc::now(),
+        })
+        .unwrap();
+        super::handle_agent_message(&msg, "handler-host", client_id, &state).await;
+
+        assert!(state.running_schedules.read().await.contains(&schedule_id));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn backup_rejected_clears_running_schedule(pool: PgPool) {
+        let state = build_test_state(pool.clone());
+        let (client_id, repo_id, schedule_id) = create_handler_test_data(&pool).await;
+
+        state.running_schedules.write().await.insert(schedule_id);
+
+        let msg = serde_json::to_string(&AgentToServer::BackupRejected {
+            repo_id: RepoId(repo_id),
+            reason: "already running".to_string(),
+        })
+        .unwrap();
+        super::handle_agent_message(&msg, "handler-host", client_id, &state).await;
+
+        assert!(!state.running_schedules.read().await.contains(&schedule_id));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn backup_completed_clears_running_schedule(pool: PgPool) {
+        let state = build_test_state(pool.clone());
+        let (client_id, repo_id, schedule_id) = create_handler_test_data(&pool).await;
+
+        state.running_schedules.write().await.insert(schedule_id);
+
+        let report = BackupReport {
+            id: ReportId(0),
+            client_id: ClientId(client_id),
+            repo_id: RepoId(repo_id),
+            started_at: Utc::now(),
+            finished_at: Utc::now(),
+            status: BackupStatus::Success,
+            original_size: 1000,
+            compressed_size: 500,
+            deduplicated_size: 250,
+            repo_unique_csize: 250,
+            files_processed: 10,
+            duration_secs: 5,
+            error_message: None,
+            warnings: Vec::new(),
+            borg_version: None,
+            archive_name: Some("handler-host-2026-01-01".to_string()),
+        };
+        let msg = serde_json::to_string(&AgentToServer::BackupCompleted { report }).unwrap();
+        super::handle_agent_message(&msg, "handler-host", client_id, &state).await;
+
+        assert!(!state.running_schedules.read().await.contains(&schedule_id));
+    }
+}

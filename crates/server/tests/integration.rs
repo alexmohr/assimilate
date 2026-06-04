@@ -109,6 +109,10 @@ async fn build_test_app(pool: PgPool) -> Router {
             get(server::api::schedules::list_schedules),
         )
         .route(
+            "/api/schedules/{id}",
+            get(server::api::schedules::get_schedule),
+        )
+        .route(
             "/api/schedules/{id}/sources",
             get(server::api::schedules::list_schedule_backup_sources),
         )
@@ -791,6 +795,41 @@ async fn test_per_host_excludes_roundtrip_preserves_raw_text(pool: sqlx::PgPool)
     assert_eq!(per_host.len(), 1);
     assert_eq!(per_host[0]["client_id"], client_id);
     assert_eq!(per_host[0]["raw_text"], raw);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_schedule_is_running_field(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    let client_id: i64 = sqlx::query_scalar(
+        "INSERT INTO clients (hostname, agent_token_hash) VALUES ('run-host', 'hash-run') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let repo_id = insert_test_repo(&pool, "run-repo").await;
+    let schedule_id = insert_test_schedule(&pool, client_id, repo_id).await;
+
+    let resp = oneshot(&mut app, get_request("/api/schedules")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let schedules = body.as_array().unwrap();
+    assert!(schedules.iter().any(|s| s["id"] == schedule_id));
+    let sched = schedules.iter().find(|s| s["id"] == schedule_id).unwrap();
+    assert_eq!(sched["is_running"], false);
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/schedules/{schedule_id}")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["id"], schedule_id);
+    assert_eq!(body["is_running"], false);
 }
 
 #[sqlx::test(migrations = "./migrations")]

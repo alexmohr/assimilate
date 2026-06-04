@@ -328,7 +328,10 @@ const dedupOptions = computed(() => {
           :options="dedupOptions"
         />
       </div>
-      <span class="dedup-label">Dedup Ratio — deduplicated ÷ original size; lower means more data was already stored in the repo</span>
+      <span class="dedup-label"
+        >Dedup Ratio — deduplicated ÷ original size; lower means more data was already stored in the
+        repo</span
+      >
     </template>
   </section>
 </template>

@@ -349,8 +349,8 @@ const deltaPositive = computed((): boolean => delta.value >= 0)
       v-else
       class="chart-desc"
     >
-      Repository disk usage over time. <strong>Deduplicated</strong> = actual on-disk footprint
-      (all unique compressed chunks across every archive in the repo).
+      Repository disk usage over time. <strong>Deduplicated</strong> = actual on-disk footprint (all
+      unique compressed chunks across every archive in the repo).
     </p>
     <div
       v-if="loading"

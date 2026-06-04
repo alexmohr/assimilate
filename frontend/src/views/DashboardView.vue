@@ -651,7 +651,10 @@ function navigateToSchedule(scheduleId: number | null): void {
                 </div>
               </div>
             </div>
-            <p class="chart-desc">Proportion of scheduled backup runs that completed without errors over the selected window.</p>
+            <p class="chart-desc">
+              Proportion of scheduled backup runs that completed without errors over the selected
+              window.
+            </p>
             <div class="ring-container">
               <svg
                 viewBox="0 0 128 128"
@@ -707,7 +710,10 @@ function navigateToSchedule(scheduleId: number | null): void {
             <div class="panel-header">
               <h2 class="panel-title">Storage Breakdown</h2>
             </div>
-            <p class="chart-desc">Current on-disk usage per repository — deduplicated (unique chunks across all archives).</p>
+            <p class="chart-desc">
+              Current on-disk usage per repository — deduplicated (unique chunks across all
+              archives).
+            </p>
             <div class="ring-container">
               <svg
                 viewBox="0 0 128 128"

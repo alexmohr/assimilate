@@ -649,6 +649,104 @@ pub async fn break_lock(
     }))
 }
 
+const ALLOWED_BORG_SUBCOMMANDS: &[&str] = &[
+    "info", "list", "check", "compact", "prune", "delete", "diff", "rename", "recreate",
+];
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct ExecBorgRequest {
+    pub args: Vec<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ExecBorgResponse {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/repos/{repo_id}/exec",
+    tag = "Repositories",
+    operation_id = "execBorgCommand",
+    summary = "Execute a borg command against the repository (admin only)",
+    params(
+        ("repo_id" = i64, Path, description = "Repository ID"),
+    ),
+    request_body = ExecBorgRequest,
+    responses(
+        (status = 200, description = "Command output", body = ExecBorgResponse),
+        (status = 400, description = "Invalid subcommand or arguments"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Admin only"),
+        (status = 404, description = "Not found"),
+    )
+)]
+pub async fn exec_borg(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(repo_id): Path<i64>,
+    ApiJson(req): ApiJson<ExecBorgRequest>,
+) -> Result<Json<ExecBorgResponse>, ApiError> {
+    let subcommand = req
+        .args
+        .first()
+        .ok_or_else(|| ApiError::BadRequest("args must not be empty".to_owned()))?;
+
+    if !ALLOWED_BORG_SUBCOMMANDS.contains(&subcommand.as_str()) {
+        return Err(ApiError::BadRequest(format!(
+            "subcommand '{}' is not allowed; permitted: {}",
+            subcommand,
+            ALLOWED_BORG_SUBCOMMANDS.join(", ")
+        )));
+    }
+
+    if req.args.len() > 32 {
+        return Err(ApiError::BadRequest("too many arguments".to_owned()));
+    }
+
+    let repo = db::get_repo_with_passphrase(&state.pool, repo_id).await?;
+    let passphrase =
+        shared::crypto::decrypt_passphrase(&repo.passphrase_encrypted, &state.encryption_key)?;
+
+    let repo_url = build_repo_url(
+        &repo.ssh_user,
+        &repo.ssh_host,
+        u16::try_from(repo.ssh_port).unwrap_or(22),
+        &repo.repo_path,
+    );
+
+    let mut env = HashMap::from([
+        ("BORG_PASSPHRASE".to_owned(), passphrase),
+        ("BORG_REPO".to_owned(), repo_url),
+        (
+            "BORG_RSH".to_owned(),
+            "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new".to_owned(),
+        ),
+    ]);
+    if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
+        env.insert("SSH_AUTH_SOCK".to_owned(), sock);
+    }
+
+    info!(repo_id, name = %repo.name, subcommand, "admin executing borg command");
+
+    let output = Borg::new()
+        .run(&req.args, &env)
+        .await
+        .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
+
+    let exit_code = output.status.code().unwrap_or(-1);
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+
+    Ok(Json(ExecBorgResponse {
+        stdout,
+        stderr,
+        exit_code,
+    }))
+}
+
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct MigrateEncryptionRequest {
     #[schema(value_type = String)]

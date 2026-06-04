@@ -48,7 +48,7 @@ interface RepoRow {
 
 interface ScheduleRow {
   id: number
-  repo_id: number
+  repo_id: number | null
   name: string
   schedule_type: string
   cron_expression: string
@@ -554,11 +554,11 @@ watch(
 
 const clientSchedules = computed(() => {
   const repoIds = new Set(repos.value.map((r) => r.id))
-  return schedules.value.filter((s) => repoIds.has(s.repo_id))
+  return schedules.value.filter((s) => s.repo_id != null && repoIds.has(s.repo_id))
 })
 
 function repoNameForSchedule(s: ScheduleRow): string {
-  return repos.value.find((r) => r.id === s.repo_id)?.target_name ?? `repo #${s.repo_id}`
+  return repos.value.find((r) => r.id === s.repo_id)?.target_name ?? (s.repo_id != null ? `repo #${s.repo_id}` : 'no repository')
 }
 
 function scheduleTypeLabel(t: string): string {

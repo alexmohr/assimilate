@@ -339,16 +339,18 @@ pub async fn update_schedule(
     ApiJson(req): ApiJson<UpdateScheduleRequest>,
 ) -> Result<Json<ScheduleRow>, ApiError> {
     let existing = db::get_schedule_by_id(&state.pool, id).await?;
-    check_repo_permission(&state.pool, &auth, existing.repo_id, |p| {
-        p.can_modify_schedules
-    })
-    .await?;
-    let effective_repo_id = req.repo_id.unwrap_or(existing.repo_id);
-    if effective_repo_id != existing.repo_id {
-        check_repo_permission(&state.pool, &auth, effective_repo_id, |p| {
-            p.can_modify_schedules
-        })
-        .await?;
+    if let Some(rid) = existing.repo_id {
+        check_repo_permission(&state.pool, &auth, rid, |p| p.can_modify_schedules).await?;
+    } else if auth.role != Role::Admin {
+        return Err(ApiError::Forbidden(
+            "only admins can edit orphaned schedules".into(),
+        ));
+    }
+    let effective_repo_id: Option<i64> = req.repo_id.or(existing.repo_id);
+    if effective_repo_id != existing.repo_id
+        && let Some(new_rid) = effective_repo_id
+    {
+        check_repo_permission(&state.pool, &auth, new_rid, |p| p.can_modify_schedules).await?;
     }
     validate_cron(&req.cron_expression)
         .map_err(|e| ApiError::BadRequest(format!("invalid cron expression: {e}")))?;
@@ -357,7 +359,12 @@ pub async fn update_schedule(
         .unwrap_or_else(|| existing.exclude_patterns_raw.clone());
     let enabled = req.enabled.unwrap_or(true);
     if enabled {
-        let repo = db::get_repo_connection(&state.pool, effective_repo_id).await?;
+        let Some(eff_rid) = effective_repo_id else {
+            return Err(ApiError::BadRequest(
+                "cannot enable a schedule with no repository assigned".into(),
+            ));
+        };
+        let repo = db::get_repo_connection(&state.pool, eff_rid).await?;
         let ssh_port = u16::try_from(repo.ssh_port).map_err(|_| {
             ApiError::Unprocessable("Cannot reach repository: invalid SSH port".into())
         })?;
@@ -421,8 +428,10 @@ pub async fn update_schedule(
         on_failure: &on_failure,
     };
 
-    if effective_repo_id != existing.repo_id {
-        db::update_schedule_repo(&state.pool, id, effective_repo_id).await?;
+    if effective_repo_id != existing.repo_id
+        && let Some(new_rid) = effective_repo_id
+    {
+        db::update_schedule_repo(&state.pool, id, new_rid).await?;
     }
     let schedule = db::update_schedule(&state.pool, id, &params).await?;
 
@@ -520,10 +529,13 @@ pub async fn delete_schedule(
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     let existing = db::get_schedule_by_id(&state.pool, id).await?;
-    check_repo_permission(&state.pool, &auth, existing.repo_id, |p| {
-        p.can_modify_schedules
-    })
-    .await?;
+    if let Some(rid) = existing.repo_id {
+        check_repo_permission(&state.pool, &auth, rid, |p| p.can_modify_schedules).await?;
+    } else if auth.role != Role::Admin {
+        return Err(ApiError::Forbidden(
+            "only admins can delete orphaned schedules".into(),
+        ));
+    }
 
     let hostnames = db::get_schedule_target_hostnames(&state.pool, id)
         .await
@@ -568,13 +580,18 @@ pub async fn run_schedule_now(
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     let schedule = db::get_schedule_by_id(&state.pool, id).await?;
-    check_repo_permission(&state.pool, &auth, schedule.repo_id, |p| {
+    let Some(schedule_repo_id) = schedule.repo_id else {
+        return Err(ApiError::BadRequest(
+            "schedule has no repository assigned".into(),
+        ));
+    };
+    check_repo_permission(&state.pool, &auth, schedule_repo_id, |p| {
         p.can_modify_schedules
     })
     .await?;
 
     let hostnames = db::get_schedule_target_hostnames(&state.pool, id).await?;
-    let repo_id = RepoId(schedule.repo_id);
+    let repo_id = RepoId(schedule_repo_id);
     let schedule_type = schedule
         .schedule_type
         .parse::<ScheduleType>()

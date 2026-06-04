@@ -20,7 +20,7 @@ type ScheduleType = 'backup' | 'check' | 'verify'
 
 interface ScheduleRow {
   id: number
-  repo_id: number
+  repo_id: number | null
   name: string
   schedule_type: string
   cron_expression: string
@@ -249,7 +249,7 @@ function populateForm(s: ScheduleRow): void {
     post_backup_commands: (JSON.parse(s.post_backup_commands || '[]') as string[]).join('\n'),
     backup_sources: '',
   }
-  selectedRepoId.value = s.repo_id
+  selectedRepoId.value = s.repo_id ?? null
   executionMode.value = (s.execution_mode as 'parallel' | 'sequential') ?? 'parallel'
   onFailure.value = (s.on_failure as 'stop' | 'continue') ?? 'stop'
 }
@@ -299,7 +299,7 @@ async function loadData(): Promise<void> {
       clients.value = clientsRes.data
       repos.value = reposRes.data
       scheduleTargets.value = targetsRes.data
-      selectedRepoId.value = schedRes.data.repo_id
+      selectedRepoId.value = schedRes.data.repo_id ?? null
       const sorted = [...targetsRes.data].sort((a, b) => a.execution_order - b.execution_order)
       selectedClientIds.value = sorted.map((t) => t.client_id)
       populateForm(schedRes.data)
@@ -755,7 +755,7 @@ watch(activeTab, (tab) => {
             </div>
             <div class="info-row">
               <span class="info-label">Repository</span>
-              <span class="info-value">{{ repo?.name ?? `#${schedule.repo_id}` }}</span>
+              <span class="info-value">{{ repo?.name ?? (schedule.repo_id != null ? `#${schedule.repo_id}` : 'No repository assigned') }}</span>
             </div>
             <div class="info-row">
               <span class="info-label">Type</span>

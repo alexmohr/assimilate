@@ -635,12 +635,15 @@ pub async fn calendar(
     let repos = db::list_all_repos(&state.pool).await?;
 
     for schedule in &schedules {
-        if query.repo_id.is_some_and(|rid| schedule.repo_id != rid) {
+        if query
+            .repo_id
+            .is_some_and(|rid| schedule.repo_id != Some(rid))
+        {
             continue;
         }
-        let repo_name = repos
-            .iter()
-            .find(|r| r.id == schedule.repo_id)
+        let repo_name = schedule
+            .repo_id
+            .and_then(|rid| repos.iter().find(|r| r.id == rid))
             .map(|r| r.name.clone())
             .unwrap_or_default();
         let hostname = db::get_schedule_target_hostnames(&state.pool, schedule.id)
@@ -672,7 +675,7 @@ pub async fn calendar(
                         hostname: hostname.clone(),
                         time: time_str,
                         report_id: None,
-                        repo_id: Some(schedule.repo_id),
+                        repo_id: schedule.repo_id,
                         schedule_id: Some(schedule.id),
                         archive_name: None,
                         error_message: None,

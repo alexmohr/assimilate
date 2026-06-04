@@ -29,7 +29,7 @@ type ScheduleType = 'backup' | 'check' | 'verify'
 
 interface ScheduleRow {
   id: number
-  repo_id: number
+  repo_id: number | null
   name: string
   schedule_type: ScheduleType
   cron_expression: string
@@ -144,7 +144,7 @@ const healthByRepo = computed(() => {
 const enrichedSchedules = computed<EnrichedSchedule[]>(() =>
   schedules.value.map((s) => {
     const machine: ClientRow | null = null
-    const repo: RepoRow | null = repoMap.value.get(s.repo_id) ?? null
+    const repo: RepoRow | null = s.repo_id != null ? (repoMap.value.get(s.repo_id) ?? null) : null
     const entries = repo ? (healthByRepo.value.get(repo.name) ?? []) : []
     const healthEntry: HealthEntry | null =
       entries.find((h) => h.is_overdue) ??
@@ -426,7 +426,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
       >
         <div class="card-top">
           <div class="card-info">
-            <span class="card-hostname">{{ s.name || s.repo?.name || `repo #${s.repo_id}` }}</span>
+            <span class="card-hostname">{{ s.name || s.repo?.name || (s.repo_id != null ? `repo #${s.repo_id}` : 'no repository') }}</span>
             <span class="card-repo">
               {{ s.execution_mode === 'sequential' ? 'Sequential' : 'Parallel' }}
             </span>

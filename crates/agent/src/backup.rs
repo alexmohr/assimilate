@@ -40,6 +40,7 @@ pub struct BackupTarget {
     pub hostname: String,
     pub compression: Compression,
     pub backup_sources: Vec<String>,
+    pub keep_hourly: u32,
     pub keep_daily: u32,
     pub keep_weekly: u32,
     pub keep_monthly: u32,
@@ -357,11 +358,22 @@ impl BackupEngine {
     }
 
     async fn run_borg_prune(&self, target: &BackupTarget) -> Result<(), BackupError> {
+        let all_zero = target.keep_hourly == 0
+            && target.keep_daily == 0
+            && target.keep_weekly == 0
+            && target.keep_monthly == 0
+            && target.keep_yearly == 0;
+
+        if all_zero {
+            warn!("no retention configured; skipping prune to avoid deleting all archives");
+            return Ok(());
+        }
+
         let glob_pattern = format!("*{hostname}-*", hostname = target.hostname);
+        let keep_hourly = target.keep_hourly.to_string();
         let keep_daily = target.keep_daily.to_string();
         let keep_weekly = target.keep_weekly.to_string();
         let keep_monthly = target.keep_monthly.to_string();
-
         let keep_yearly = target.keep_yearly.to_string();
 
         let mut args = vec![
@@ -373,14 +385,24 @@ impl BackupEngine {
             "--log-json",
             "-a",
             &glob_pattern,
-            "--keep-daily",
-            &keep_daily,
-            "--keep-weekly",
-            &keep_weekly,
-            "--keep-monthly",
-            &keep_monthly,
         ];
 
+        if target.keep_hourly > 0 {
+            args.push("--keep-hourly");
+            args.push(&keep_hourly);
+        }
+        if target.keep_daily > 0 {
+            args.push("--keep-daily");
+            args.push(&keep_daily);
+        }
+        if target.keep_weekly > 0 {
+            args.push("--keep-weekly");
+            args.push(&keep_weekly);
+        }
+        if target.keep_monthly > 0 {
+            args.push("--keep-monthly");
+            args.push(&keep_monthly);
+        }
         if target.keep_yearly > 0 {
             args.push("--keep-yearly");
             args.push(&keep_yearly);
@@ -831,6 +853,7 @@ mod tests {
             hostname: "test-host".to_owned(),
             compression: Compression::Lz4,
             backup_sources: vec!["/tmp".to_owned()],
+            keep_hourly: 24,
             keep_daily: 7,
             keep_weekly: 4,
             keep_monthly: 6,
@@ -1149,6 +1172,78 @@ mod tests {
         assert!(
             msg.contains("/mnt/missing"),
             "error should include the missing path: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_all_zero_retention_skips_prune() {
+        let log_file = tempfile::NamedTempFile::new().unwrap();
+        let engine = BackupEngine::with_config(
+            mock_borg_path(),
+            vec![(
+                "MOCK_BORG_LOG".to_owned(),
+                log_file.path().to_string_lossy().into_owned(),
+            )],
+        );
+        let mut target = test_target();
+        target.keep_hourly = 0;
+        target.keep_daily = 0;
+        target.keep_weekly = 0;
+        target.keep_monthly = 0;
+        target.keep_yearly = 0;
+
+        let result = engine.run_backup(&target).await.unwrap();
+        assert_eq!(result.status, BackupStatus::Success);
+
+        let log = std::fs::read_to_string(log_file.path()).unwrap();
+        assert!(
+            !log.contains("prune"),
+            "prune should not be called when all retention values are zero, but log contains: \
+             {log}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_partial_retention_only_includes_nonzero_keep_flags() {
+        let log_file = tempfile::NamedTempFile::new().unwrap();
+        let engine = BackupEngine::with_config(
+            mock_borg_path(),
+            vec![(
+                "MOCK_BORG_LOG".to_owned(),
+                log_file.path().to_string_lossy().into_owned(),
+            )],
+        );
+        let mut target = test_target();
+        target.keep_hourly = 0;
+        target.keep_daily = 7;
+        target.keep_weekly = 0;
+        target.keep_monthly = 3;
+        target.keep_yearly = 0;
+
+        let result = engine.run_backup(&target).await.unwrap();
+        assert_eq!(result.status, BackupStatus::Success);
+
+        let log = std::fs::read_to_string(log_file.path()).unwrap();
+        assert!(log.contains("prune"), "prune should be called");
+        assert!(
+            log.contains("--keep-daily"),
+            "keep-daily flag expected in: {log}"
+        );
+        assert!(
+            log.contains("--keep-monthly"),
+            "keep-monthly flag expected in: {log}"
+        );
+        assert!(
+            !log.contains("--keep-hourly"),
+            "keep-hourly should not appear when zero, but found in: {log}"
+        );
+        assert!(
+            !log.contains("--keep-weekly"),
+            "keep-weekly should not appear when zero, but found in: {log}"
+        );
+        assert!(
+            !log.contains("--keep-yearly"),
+            "keep-yearly should not appear when zero, but found in: {log}"
         );
     }
 }

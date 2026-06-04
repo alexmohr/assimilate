@@ -26,6 +26,7 @@ use super::{
 use crate::{
     AppState,
     borg::Borg,
+    config_assembler,
     db::{self, InsertRepoParams, RepoRow, RepoWithStatsRow, UpdateRepoParams},
     error::{ApiError, ApiJson},
     ws::ui_broadcast::UiBroadcast,
@@ -590,6 +591,12 @@ pub async fn confirm_relocation(
     let repo = db::get_repo_with_passphrase(&state.pool, repo_id).await?;
     db::set_relocation_pending(&state.pool, repo_id).await?;
     info!(repo_id, name = %repo.name, "relocation confirmation set");
+
+    let hostnames = db::get_schedule_target_hostnames_for_repo(&state.pool, repo_id).await?;
+    for hostname in &hostnames {
+        config_assembler::push_config_to_agent(&state, hostname).await;
+    }
+
     Ok(Json(ConfirmRelocationResponse {
         message: format!(
             "Relocation accepted for '{}'. The next backup will set \
@@ -1298,12 +1305,16 @@ pub async fn sync_existing_archives(
 ) -> Result<(u64, u64), ApiError> {
     let (borg_repo, env) = super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
 
+    let listing_msg = "Listing archives\u{2026}".to_string();
     ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
         repo_id,
         progress: 0,
         total: 0,
-        message: Some("Listing archives\u{2026}".to_string()),
+        message: Some(listing_msg.clone()),
     });
+    let _ = db::update_repo_import_progress(pool, repo_id, 0, 0).await;
+    let _ = db::set_import_status_message(pool, repo_id, Some(&listing_msg)).await;
+
     let output = run_borg_list_with_retry(&borg_repo, &env).await?;
 
     let json_output: serde_json::Value = serde_json::from_slice(&output.stdout)
@@ -1333,21 +1344,26 @@ pub async fn sync_existing_archives(
     }
 
     let total = archives.len();
+    let fetching_msg = format!("Fetching stats for {total} archives\u{2026}");
     ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
         repo_id,
         progress: 0,
         total: total as i32,
-        message: Some(format!("Fetching stats for {total} archives\u{2026}")),
+        message: Some(fetching_msg.clone()),
     });
+    let _ = db::update_repo_import_progress(pool, repo_id, 0, total as i64).await;
+    let _ = db::set_import_status_message(pool, repo_id, Some(&fetching_msg)).await;
 
     let archive_stats = run_borg_info_all_archives(&borg_repo, &env).await?;
 
+    let importing_msg = format!("Importing {total} archives\u{2026}");
     ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
         repo_id,
         progress: 0,
         total: total as i32,
-        message: Some(format!("Importing {total} archives\u{2026}")),
+        message: Some(importing_msg.clone()),
     });
+    let _ = db::set_import_status_message(pool, repo_id, Some(&importing_msg)).await;
 
     let mut hostname_cache: HashMap<String, (i64, bool)> = HashMap::new();
     let mut report_params = Vec::with_capacity(archives.len());
@@ -1414,15 +1430,20 @@ pub async fn sync_existing_archives(
 
         let processed_count = (processed + 1) as i32;
         info!(repo_id, archive = %name, processed = processed_count, total, original_size, "archive imported");
+        let progress_msg = format!(
+            "Imported \u{2018}{name}\u{2019} ({processed_count}/{total}) \u{00b7} {}",
+            human_bytes(original_size)
+        );
         ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
             repo_id,
             progress: processed_count,
             total: total as i32,
-            message: Some(format!(
-                "Imported \u{2018}{name}\u{2019} ({processed_count}/{total}) \u{00b7} {}",
-                human_bytes(original_size)
-            )),
+            message: Some(progress_msg.clone()),
         });
+        let _ =
+            db::update_repo_import_progress(pool, repo_id, processed_count as i64, total as i64)
+                .await;
+        let _ = db::set_import_status_message(pool, repo_id, Some(&progress_msg)).await;
 
         report_params.push(db::InsertReportParams {
             client_id,
@@ -1461,12 +1482,16 @@ pub async fn sync_new_archives(
 ) -> Result<(u64, u64), ApiError> {
     let (borg_repo, env) = super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
 
+    let listing_msg = "Listing archives\u{2026}".to_string();
     ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
         repo_id,
         progress: 0,
         total: 0,
-        message: Some("Listing archives\u{2026}".to_string()),
+        message: Some(listing_msg.clone()),
     });
+    let _ = db::update_repo_import_progress(pool, repo_id, 0, 0).await;
+    let _ = db::set_import_status_message(pool, repo_id, Some(&listing_msg)).await;
+
     let output = run_borg_list_with_retry(&borg_repo, &env).await?;
 
     let json_output: serde_json::Value = serde_json::from_slice(&output.stdout)
@@ -1509,21 +1534,26 @@ pub async fn sync_new_archives(
     }
 
     let total = new_archives.len();
+    let fetching_msg = format!("Fetching stats for {total} new archives\u{2026}");
     ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
         repo_id,
         progress: 0,
         total: total as i32,
-        message: Some(format!("Fetching stats for {total} new archives\u{2026}")),
+        message: Some(fetching_msg.clone()),
     });
+    let _ = db::update_repo_import_progress(pool, repo_id, 0, total as i64).await;
+    let _ = db::set_import_status_message(pool, repo_id, Some(&fetching_msg)).await;
 
     let archive_stats = run_borg_info_all_archives(&borg_repo, &env).await?;
 
+    let importing_msg = format!("Importing {total} archives\u{2026}");
     ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
         repo_id,
         progress: 0,
         total: total as i32,
-        message: Some(format!("Importing {total} archives\u{2026}")),
+        message: Some(importing_msg.clone()),
     });
+    let _ = db::set_import_status_message(pool, repo_id, Some(&importing_msg)).await;
 
     let mut hostname_cache: HashMap<String, (i64, bool)> = HashMap::new();
     let mut report_params = Vec::with_capacity(new_archives.len());
@@ -1590,15 +1620,20 @@ pub async fn sync_new_archives(
 
         let processed_count = (processed + 1) as i32;
         info!(repo_id, archive = %name, processed = processed_count, total, original_size, "archive imported");
+        let progress_msg = format!(
+            "Imported \u{2018}{name}\u{2019} ({processed_count}/{total}) \u{00b7} {}",
+            human_bytes(original_size)
+        );
         ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
             repo_id,
             progress: processed_count,
             total: total as i32,
-            message: Some(format!(
-                "Imported \u{2018}{name}\u{2019} ({processed_count}/{total}) \u{00b7} {}",
-                human_bytes(original_size)
-            )),
+            message: Some(progress_msg.clone()),
         });
+        let _ =
+            db::update_repo_import_progress(pool, repo_id, processed_count as i64, total as i64)
+                .await;
+        let _ = db::set_import_status_message(pool, repo_id, Some(&progress_msg)).await;
 
         report_params.push(db::InsertReportParams {
             client_id,

@@ -314,4 +314,26 @@ describe('RepoDetailView', () => {
     // Error message visible in the page (toast container is teleported so check apiClient call)
     expect(vi.mocked(apiClient.post)).toHaveBeenCalledWith('/repos/1/sync')
   })
+
+  it('reloads data when id prop changes', async () => {
+    const repo2 = { ...mockRepo, id: 2, name: 'db-hourly' }
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/repos/1') return Promise.resolve({ data: mockRepo })
+      if (url === '/repos/2') return Promise.resolve({ data: repo2 })
+      return Promise.resolve({ data: [] })
+    })
+
+    const wrapper = renderWithPlugins(RepoDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('server-daily')
+
+    await wrapper.setProps({ id: '2' })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('db-hourly')
+    expect(vi.mocked(apiClient.get)).toHaveBeenCalledWith('/repos/2')
+  })
 })

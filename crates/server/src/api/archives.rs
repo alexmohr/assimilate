@@ -334,6 +334,18 @@ pub async fn archive_info(
     Ok(Json(info))
 }
 
+// Build depth-limited borg sh: patterns for directory listing.
+// In borg's sh: syntax '*' does not cross directory separators, so
+// "sh:parent/*" returns only immediate children without recursing.
+fn list_patterns(path: Option<&str>) -> (String, Option<String>) {
+    let child = path.map_or_else(
+        || "sh:*".to_string(),
+        |p| format!("sh:{}/*", p.trim_end_matches('/')),
+    );
+    let dir = path.map(|p| format!("sh:{}", p.trim_end_matches('/')));
+    (child, dir)
+}
+
 #[utoipa::path(
     get,
     path = "/api/repos/{repo_id}/archives/{archive_name}/contents",
@@ -373,15 +385,7 @@ pub async fn list_contents(
 
     let repo_archive = format!("{borg_repo}::{archive_name}");
 
-    // Use depth-limited shell glob patterns so borg only outputs direct children of the
-    // requested path. In borg's sh: syntax '*' does not cross directory separators, so
-    // "sh:parent/*" returns immediate children without recursing into subdirectories.
-    // This avoids enumerating the full archive subtree on every directory navigation.
-    let child_pattern = path.map_or_else(
-        || "sh:*".to_string(),
-        |p| format!("sh:{}/*", p.trim_end_matches('/')),
-    );
-    let dir_pattern = path.map(|p| format!("sh:{}", p.trim_end_matches('/')));
+    let (child_pattern, dir_pattern) = list_patterns(path);
 
     let mut args: Vec<&str> = vec!["list", "--json-lines", "--lock-wait", LOCK_WAIT_SECS];
     if let Some(dp) = &dir_pattern {
@@ -421,12 +425,12 @@ pub async fn list_contents(
             mode: v["mode"].as_str().unwrap_or("").to_string(),
         });
         if entries.len() >= limit {
-            // Limit reached — kill_on_drop cleans up the borg process.
+            // Limit reached - kill_on_drop cleans up the borg process.
             return Ok(Json(entries));
         }
     }
 
-    // All output consumed — verify exit status.
+    // All output consumed - verify exit status.
     let status = child
         .wait()
         .await
@@ -562,5 +566,33 @@ mod tests {
     #[test]
     fn validate_path_accepts_nested_relative() {
         assert!(validate_path("a/b/c/d.txt").is_ok());
+    }
+
+    #[test]
+    fn list_patterns_root_returns_top_level_glob() {
+        let (child, dir) = list_patterns(None);
+        assert_eq!(child, "sh:*");
+        assert!(dir.is_none());
+    }
+
+    #[test]
+    fn list_patterns_simple_dir() {
+        let (child, dir) = list_patterns(Some("home"));
+        assert_eq!(child, "sh:home/*");
+        assert_eq!(dir.as_deref(), Some("sh:home"));
+    }
+
+    #[test]
+    fn list_patterns_nested_dir() {
+        let (child, dir) = list_patterns(Some("home/user/docs"));
+        assert_eq!(child, "sh:home/user/docs/*");
+        assert_eq!(dir.as_deref(), Some("sh:home/user/docs"));
+    }
+
+    #[test]
+    fn list_patterns_trailing_slash_stripped() {
+        let (child, dir) = list_patterns(Some("home/user/"));
+        assert_eq!(child, "sh:home/user/*");
+        assert_eq!(dir.as_deref(), Some("sh:home/user"));
     }
 }

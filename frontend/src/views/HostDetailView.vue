@@ -558,7 +558,10 @@ const clientSchedules = computed(() => {
 })
 
 function repoNameForSchedule(s: ScheduleRow): string {
-  return repos.value.find((r) => r.id === s.repo_id)?.target_name ?? (s.repo_id != null ? `repo #${s.repo_id}` : 'no repository')
+  return (
+    repos.value.find((r) => r.id === s.repo_id)?.target_name ??
+    (s.repo_id != null ? `repo #${s.repo_id}` : 'no repository')
+  )
 }
 
 function scheduleTypeLabel(t: string): string {

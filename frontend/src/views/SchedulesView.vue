@@ -426,7 +426,9 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
       >
         <div class="card-top">
           <div class="card-info">
-            <span class="card-hostname">{{ s.name || s.repo?.name || (s.repo_id != null ? `repo #${s.repo_id}` : 'no repository') }}</span>
+            <span class="card-hostname">{{
+              s.name || s.repo?.name || (s.repo_id != null ? `repo #${s.repo_id}` : 'no repository')
+            }}</span>
             <span class="card-repo">
               {{ s.execution_mode === 'sequential' ? 'Sequential' : 'Parallel' }}
             </span>

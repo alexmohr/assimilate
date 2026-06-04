@@ -1039,8 +1039,7 @@ async function resetImport(): Promise<void> {
               <span class="danger-desc"
                 >Remove this repository from the UI and database. All associated schedules will be
                 <strong>disabled</strong> and their repository link removed — they must be fixed
-                manually. Reports will be deleted. The repository data on disk is NOT
-                touched.</span
+                manually. Reports will be deleted. The repository data on disk is NOT touched.</span
               >
             </div>
             <button

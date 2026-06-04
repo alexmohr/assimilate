@@ -755,7 +755,10 @@ watch(activeTab, (tab) => {
             </div>
             <div class="info-row">
               <span class="info-label">Repository</span>
-              <span class="info-value">{{ repo?.name ?? (schedule.repo_id != null ? `#${schedule.repo_id}` : 'No repository assigned') }}</span>
+              <span class="info-value">{{
+                repo?.name ??
+                (schedule.repo_id != null ? `#${schedule.repo_id}` : 'No repository assigned')
+              }}</span>
             </div>
             <div class="info-row">
               <span class="info-label">Type</span>

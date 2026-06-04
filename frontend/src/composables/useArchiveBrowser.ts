@@ -106,7 +106,11 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     }
 
     const childDirs = contents.value
-      .filter((e) => e.type === 'd' && e.path !== currentDir)
+      .filter((e) => {
+        if (e.type !== 'd' || e.path === currentDir) return false
+        const parent = e.path.includes('/') ? e.path.substring(0, e.path.lastIndexOf('/')) : ''
+        return parent === currentDir
+      })
       .sort((a, b) => a.path.localeCompare(b.path))
     return [
       ...entries,
@@ -114,9 +118,16 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     ]
   })
 
-  const files = computed<ContentEntry[]>(() =>
-    contents.value.filter((e) => e.type !== 'd').sort((a, b) => a.path.localeCompare(b.path)),
-  )
+  const files = computed<ContentEntry[]>(() => {
+    const currentDir = currentPath.value.replace(/^\//, '')
+    return contents.value
+      .filter((e) => {
+        if (e.type === 'd') return false
+        const parent = e.path.includes('/') ? e.path.substring(0, e.path.lastIndexOf('/')) : ''
+        return parent === currentDir
+      })
+      .sort((a, b) => a.path.localeCompare(b.path))
+  })
 
   async function loadArchives(): Promise<void> {
     archivesLoading.value = true

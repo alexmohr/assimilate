@@ -335,15 +335,21 @@ pub async fn archive_info(
 }
 
 // Build depth-limited borg sh: patterns for directory listing.
-// In borg's sh: syntax '*' does not cross directory separators, so
-// "sh:parent/*" returns only immediate children without recursing.
-fn list_patterns(path: Option<&str>) -> (String, Option<String>) {
-    let child = path.map_or_else(
-        || "+sh:*".to_string(),
-        |p| format!("+sh:{}/*", p.trim_end_matches('/')),
-    );
-    let dir = path.map(|p| format!("+sh:{}", p.trim_end_matches('/')));
-    (child, dir)
+// Borg includes unmatched paths by default in list mode, so an explicit
+// exclude-all ("-sh:**") must follow the include patterns to prevent
+// deeper entries from leaking into the result.
+fn list_patterns(path: Option<&str>) -> Vec<String> {
+    match path {
+        None => vec!["+sh:*".to_string(), "-sh:**".to_string()],
+        Some(p) => {
+            let p = p.trim_end_matches('/');
+            vec![
+                format!("+sh:{p}"),
+                format!("+sh:{p}/*"),
+                "-sh:**".to_string(),
+            ]
+        }
+    }
 }
 
 #[utoipa::path(
@@ -385,13 +391,13 @@ pub async fn list_contents(
 
     let repo_archive = format!("{borg_repo}::{archive_name}");
 
-    let (child_pattern, dir_pattern) = list_patterns(path);
+    let patterns = list_patterns(path);
 
     let mut args: Vec<&str> = vec!["list", "--json-lines", "--lock-wait", LOCK_WAIT_SECS];
-    if let Some(dp) = &dir_pattern {
-        args.extend_from_slice(&["--pattern", dp.as_str()]);
+    for p in &patterns {
+        args.extend_from_slice(&["--pattern", p.as_str()]);
     }
-    args.extend_from_slice(&["--pattern", child_pattern.as_str(), repo_archive.as_str()]);
+    args.push(repo_archive.as_str());
 
     let mut child = Borg::new()
         .spawn(&args, &env)
@@ -570,29 +576,28 @@ mod tests {
 
     #[test]
     fn list_patterns_root_returns_top_level_glob() {
-        let (child, dir) = list_patterns(None);
-        assert_eq!(child, "+sh:*");
-        assert!(dir.is_none());
+        let patterns = list_patterns(None);
+        assert_eq!(patterns, vec!["+sh:*", "-sh:**"]);
     }
 
     #[test]
     fn list_patterns_simple_dir() {
-        let (child, dir) = list_patterns(Some("home"));
-        assert_eq!(child, "+sh:home/*");
-        assert_eq!(dir.as_deref(), Some("+sh:home"));
+        let patterns = list_patterns(Some("home"));
+        assert_eq!(patterns, vec!["+sh:home", "+sh:home/*", "-sh:**"]);
     }
 
     #[test]
     fn list_patterns_nested_dir() {
-        let (child, dir) = list_patterns(Some("home/user/docs"));
-        assert_eq!(child, "+sh:home/user/docs/*");
-        assert_eq!(dir.as_deref(), Some("+sh:home/user/docs"));
+        let patterns = list_patterns(Some("home/user/docs"));
+        assert_eq!(
+            patterns,
+            vec!["+sh:home/user/docs", "+sh:home/user/docs/*", "-sh:**"]
+        );
     }
 
     #[test]
     fn list_patterns_trailing_slash_stripped() {
-        let (child, dir) = list_patterns(Some("home/user/"));
-        assert_eq!(child, "+sh:home/user/*");
-        assert_eq!(dir.as_deref(), Some("+sh:home/user"));
+        let patterns = list_patterns(Some("home/user/"));
+        assert_eq!(patterns, vec!["+sh:home/user", "+sh:home/user/*", "-sh:**"]);
     }
 }

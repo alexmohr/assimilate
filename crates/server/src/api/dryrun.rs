@@ -59,7 +59,7 @@ pub async fn dry_run(
 ) -> Result<Json<DryRunResponse>, ApiError> {
     let schedule = db::get_schedule_by_id(&state.pool, req.schedule_id).await?;
 
-    if schedule.repo_id != repo_id {
+    if schedule.repo_id != Some(repo_id) {
         return Err(ApiError::NotFound(format!(
             "schedule {} not found for repo {repo_id}",
             req.schedule_id

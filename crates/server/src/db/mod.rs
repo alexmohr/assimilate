@@ -203,7 +203,7 @@ pub struct GlobalExcludesConfig {
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ScheduleRow {
     pub id: i64,
-    pub repo_id: i64,
+    pub repo_id: Option<i64>,
     pub name: String,
     pub schedule_type: String,
     pub cron_expression: String,
@@ -877,6 +877,12 @@ pub async fn update_repo(
 }
 
 pub async fn delete_repo(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
+    sqlx::query("UPDATE schedules SET enabled = false WHERE repo_id = $1")
+        .bind(repo_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+
     let result = sqlx::query("DELETE FROM repos WHERE id = $1")
         .bind(repo_id)
         .execute(pool)

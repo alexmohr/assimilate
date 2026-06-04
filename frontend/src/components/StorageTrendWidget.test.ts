@@ -66,8 +66,18 @@ describe('StorageTrendWidget', () => {
   it('displays chart when data is available', async () => {
     mockGet.mockResolvedValue({
       data: [
-        { date: '2026-05-01', total_size: 1_073_741_824 },
-        { date: '2026-05-02', total_size: 2_147_483_648 },
+        {
+          date: '2026-05-01',
+          original_size: 2_000_000_000,
+          compressed_size: 1_500_000_000,
+          deduplicated_size: 1_073_741_824,
+        },
+        {
+          date: '2026-05-02',
+          original_size: 4_000_000_000,
+          compressed_size: 3_000_000_000,
+          deduplicated_size: 2_147_483_648,
+        },
       ],
     })
     const wrapper = renderWithPlugins(StorageTrendWidget, {

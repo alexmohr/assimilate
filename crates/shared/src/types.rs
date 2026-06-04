@@ -322,6 +322,8 @@ pub struct BackupReport {
     pub borg_version: Option<String>,
     #[serde(default)]
     pub archive_name: Option<String>,
+    #[serde(default)]
+    pub borg_command: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

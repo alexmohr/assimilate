@@ -66,6 +66,7 @@ pub struct BackupResult {
     pub error_message: Option<String>,
     pub warnings: Vec<String>,
     pub archive_name: Option<String>,
+    pub borg_command: Option<String>,
 }
 
 pub struct BackupEngine {
@@ -132,6 +133,7 @@ impl BackupEngine {
             error_message: create_result.error_message,
             warnings: create_result.warnings,
             archive_name: Some(create_result.archive_name),
+            borg_command: Some(create_result.borg_command),
         })
     }
 
@@ -149,8 +151,14 @@ impl BackupEngine {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let exit_code = output.status.code().unwrap_or(-1);
             error!("{label} command `{cmd}` failed (exit {exit_code}): {stderr}");
+            let stderr_trimmed = stderr.trim();
+            let detail = if stderr_trimmed.is_empty() {
+                String::new()
+            } else {
+                format!(": {stderr_trimmed}")
+            };
             return Err(BackupError::BorgFailed(format!(
-                "{label} command `{cmd}` exited with code {exit_code}"
+                "{label} command `{cmd}` exited with code {exit_code}{detail}"
             )));
         }
 
@@ -217,6 +225,7 @@ impl BackupEngine {
         let archive_name = format!("{hostname}-{now}", hostname = target.hostname);
 
         let args = Self::borg_create_args(target, backup_sources, exclude_file, &archive_name);
+        let borg_command = Self::format_command_string(target, &args);
 
         let env_vars = Self::borg_env(target);
 
@@ -226,6 +235,15 @@ impl BackupEngine {
 
         let exit_code = output.status.code().unwrap_or(-1);
         let stderr = String::from_utf8_lossy(&output.stderr);
+
+        let source_not_found = parse_source_not_found_errors(&stderr);
+        if !source_not_found.is_empty() {
+            let summary = source_not_found.join("; ");
+            error!("Borg backup source(s) not found: {summary}");
+            return Err(BackupError::BorgFailed(format!(
+                "backup source(s) not found: {summary}"
+            )));
+        }
 
         match exit_code {
             0 => {
@@ -246,6 +264,7 @@ impl BackupEngine {
                     error_message: None,
                     warnings,
                     archive_name,
+                    borg_command,
                 })
             }
             1 if stderr_has_warnings(&stderr) => {
@@ -263,12 +282,41 @@ impl BackupEngine {
                     error_message: Some(summary),
                     warnings,
                     archive_name,
+                    borg_command,
                 })
             }
             _ => Err(BackupError::BorgFailed(format!(
                 "borg create exited with code {exit_code}: {stderr}"
             ))),
         }
+    }
+
+    /// Build a preview of the borg create command that will be run, using a
+    /// placeholder for the transient exclude-from temp file path.
+    pub fn preview_create_command(target: &BackupTarget) -> String {
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%S");
+        let archive_name = format!("{hostname}-{now}", hostname = target.hostname);
+        let exclude_placeholder = std::path::Path::new("<exclude-file>");
+        let args = Self::borg_create_args(
+            target,
+            &target.backup_sources,
+            exclude_placeholder,
+            &archive_name,
+        );
+        Self::format_command_string(target, &args)
+    }
+
+    /// Build a human-readable borg command string with `BORG_REPO` expanded but
+    /// the passphrase omitted (it is always passed via the environment).
+    fn format_command_string(target: &BackupTarget, args: &[String]) -> String {
+        let repo_url = build_repo_url(
+            &target.ssh_user,
+            &target.ssh_host,
+            target.ssh_port,
+            &target.repo_path,
+        );
+        let args_str = args.join(" ");
+        format!("BORG_REPO={repo_url} borg {args_str}")
     }
 
     fn borg_create_args(
@@ -631,6 +679,7 @@ struct CreateResult {
     error_message: Option<String>,
     warnings: Vec<String>,
     archive_name: String,
+    borg_command: String,
 }
 
 struct ParsedStats {
@@ -723,6 +772,35 @@ pub(crate) fn stderr_has_warnings(stderr: &str) -> bool {
             .is_some_and(|l| l == "WARNING" || l == "ERROR");
         is_log && is_warning
     })
+}
+
+/// Returns the messages for any log entries whose `msgid` indicates a backup
+/// source path was not found.  These are emitted as `WARNING` by borg (rc=1)
+/// but represent a configuration error — a configured source directory did
+/// not exist at backup time — and must be surfaced as a hard failure rather
+/// than a silent warning.
+pub(crate) fn parse_source_not_found_errors(stderr: &str) -> Vec<String> {
+    stderr
+        .lines()
+        .filter_map(|line| {
+            let value: serde_json::Value = serde_json::from_str(line).ok()?;
+            if value.get("type")?.as_str()? != "log_message" {
+                return None;
+            }
+            if value
+                .get("msgid")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|id| id == "BackupFileNotFoundError")
+            {
+                value
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .map(std::borrow::ToOwned::to_owned)
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -878,6 +956,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_pre_backup_command_failure_includes_stderr() {
+        let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
+        let mut target = test_target();
+        target.pre_backup_commands = vec!["echo 'connection refused' >&2 && exit 1".to_owned()];
+
+        let result = engine.run_backup(&target).await;
+        let err = result.unwrap_err();
+        let BackupError::BorgFailed(msg) = err else {
+            panic!("expected BorgFailed, got {err:?}");
+        };
+        assert!(
+            msg.contains("connection refused"),
+            "error message should include stderr: {msg}"
+        );
+    }
+
+    #[tokio::test]
     async fn test_skip_targets() {
         let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
         let mut target = test_target();
@@ -1005,5 +1100,53 @@ mod tests {
         assert!(!stderr_has_warnings(without_warning));
 
         assert!(!stderr_has_warnings("plain text warning"));
+    }
+
+    #[test]
+    fn test_parse_source_not_found_errors_detects_msgid() {
+        let stderr = concat!(
+            r#"{"type": "log_message", "time": 1704067200, "levelname": "WARNING", "#,
+            r#""name": "borg.archiver", "msgid": "BackupFileNotFoundError", "#,
+            r#""message": "/mnt/photos: stat: [Errno 2] No such file or directory"}"#,
+        );
+        let errors = parse_source_not_found_errors(stderr);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("/mnt/photos"));
+    }
+
+    #[test]
+    fn test_parse_source_not_found_errors_ignores_other_warnings() {
+        let stderr = concat!(
+            r#"{"type": "log_message", "levelname": "WARNING", "#,
+            r#""msgid": "FileChangedWarning", "message": "/tmp/test.log: file changed"}"#,
+        );
+        let errors = parse_source_not_found_errors(stderr);
+        assert!(errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_missing_backup_source_is_error_not_warning() {
+        let engine = BackupEngine::with_config(
+            mock_borg_path(),
+            vec![(
+                "MOCK_BORG_SIMULATE_SOURCE_NOT_FOUND".to_owned(),
+                "1".to_owned(),
+            )],
+        );
+        let target = test_target();
+
+        let result = engine.run_backup(&target).await;
+        let err = result.unwrap_err();
+        let BackupError::BorgFailed(msg) = err else {
+            panic!("expected BorgFailed, got {err:?}");
+        };
+        assert!(
+            msg.contains("backup source(s) not found"),
+            "error should mention missing source: {msg}"
+        );
+        assert!(
+            msg.contains("/mnt/missing"),
+            "error should include the missing path: {msg}"
+        );
     }
 }

@@ -1833,6 +1833,7 @@ pub struct ReportRow {
     pub warnings: Vec<String>,
     pub borg_version: Option<String>,
     pub archive_name: Option<String>,
+    pub borg_command: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
@@ -1888,6 +1889,29 @@ pub struct InsertReportParams {
     pub borg_version: Option<String>,
     pub matched: bool,
     pub archive_name: Option<String>,
+    pub borg_command: Option<String>,
+}
+
+pub async fn insert_backup_started(
+    pool: &PgPool,
+    client_id: i64,
+    repo_id: i64,
+    started_at: DateTime<Utc>,
+    borg_command: Option<&str>,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, \
+         borg_command) VALUES ($1, $2, $3, $3, 'started', $4) ON CONFLICT (repo_id, client_id, \
+         started_at) DO NOTHING",
+    )
+    .bind(client_id)
+    .bind(repo_id)
+    .bind(started_at)
+    .bind(borg_command)
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
 }
 
 pub async fn insert_backup_report(
@@ -1897,9 +1921,16 @@ pub async fn insert_backup_report(
     sqlx::query(
         "INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, \
          original_size, compressed_size, deduplicated_size, repo_unique_csize, files_processed, \
-         duration_secs, error_message, warnings, borg_version, matched, archive_name) VALUES ($1, \
-         $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) ON CONFLICT (repo_id, \
-         client_id, started_at) DO NOTHING",
+         duration_secs, error_message, warnings, borg_version, matched, archive_name, \
+         borg_command) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, \
+         $16, $17) ON CONFLICT (repo_id, client_id, started_at) DO UPDATE SET finished_at = \
+         EXCLUDED.finished_at, status = EXCLUDED.status, original_size = EXCLUDED.original_size, \
+         compressed_size = EXCLUDED.compressed_size, deduplicated_size = \
+         EXCLUDED.deduplicated_size, repo_unique_csize = EXCLUDED.repo_unique_csize, \
+         files_processed = EXCLUDED.files_processed, duration_secs = EXCLUDED.duration_secs, \
+         error_message = EXCLUDED.error_message, warnings = EXCLUDED.warnings, borg_version = \
+         EXCLUDED.borg_version, matched = EXCLUDED.matched, archive_name = EXCLUDED.archive_name, \
+         borg_command = EXCLUDED.borg_command",
     )
     .bind(params.client_id)
     .bind(params.repo_id)
@@ -1917,6 +1948,7 @@ pub async fn insert_backup_report(
     .bind(&params.borg_version)
     .bind(params.matched)
     .bind(&params.archive_name)
+    .bind(&params.borg_command)
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
@@ -1946,6 +1978,7 @@ pub async fn bulk_insert_backup_reports(
     let mut borg_versions: Vec<Option<&str>> = Vec::with_capacity(params.len());
     let mut matcheds = Vec::with_capacity(params.len());
     let mut archive_names: Vec<Option<&str>> = Vec::with_capacity(params.len());
+    let mut borg_commands: Vec<Option<&str>> = Vec::with_capacity(params.len());
 
     for p in params {
         client_ids.push(p.client_id);
@@ -1963,22 +1996,23 @@ pub async fn bulk_insert_backup_reports(
         borg_versions.push(p.borg_version.as_deref());
         matcheds.push(p.matched);
         archive_names.push(p.archive_name.as_deref());
+        borg_commands.push(p.borg_command.as_deref());
     }
 
     let result = sqlx::query(
         "INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, \
          original_size, compressed_size, deduplicated_size, repo_unique_csize, files_processed, \
-         duration_secs, error_message, warnings, borg_version, matched, archive_name) SELECT \
-         t.client_id, t.repo_id, t.started_at, t.finished_at, t.status, t.original_size, \
-         t.compressed_size, t.deduplicated_size, t.repo_unique_csize, t.files_processed, \
-         t.duration_secs, t.error_message, ARRAY[]::text[], t.borg_version, t.matched, \
-         t.archive_name FROM UNNEST($1::bigint[], $2::bigint[], $3::timestamptz[], \
-         $4::timestamptz[], $5::text[], $6::bigint[], $7::bigint[], $8::bigint[], $9::bigint[], \
-         $10::bigint[], $11::bigint[], $12::text[], $13::text[], $14::bool[], $15::text[]) AS \
-         t(client_id, repo_id, started_at, finished_at, status, original_size, compressed_size, \
-         deduplicated_size, repo_unique_csize, files_processed, duration_secs, error_message, \
-         borg_version, matched, archive_name) ON CONFLICT (repo_id, client_id, started_at) DO \
-         NOTHING",
+         duration_secs, error_message, warnings, borg_version, matched, archive_name, \
+         borg_command) SELECT t.client_id, t.repo_id, t.started_at, t.finished_at, t.status, \
+         t.original_size, t.compressed_size, t.deduplicated_size, t.repo_unique_csize, \
+         t.files_processed, t.duration_secs, t.error_message, ARRAY[]::text[], t.borg_version, \
+         t.matched, t.archive_name, t.borg_command FROM UNNEST($1::bigint[], $2::bigint[], \
+         $3::timestamptz[], $4::timestamptz[], $5::text[], $6::bigint[], $7::bigint[], \
+         $8::bigint[], $9::bigint[], $10::bigint[], $11::bigint[], $12::text[], $13::text[], \
+         $14::bool[], $15::text[], $16::text[]) AS t(client_id, repo_id, started_at, finished_at, \
+         status, original_size, compressed_size, deduplicated_size, repo_unique_csize, \
+         files_processed, duration_secs, error_message, borg_version, matched, archive_name, \
+         borg_command) ON CONFLICT (repo_id, client_id, started_at) DO NOTHING",
     )
     .bind(&client_ids)
     .bind(&repo_ids)
@@ -1995,6 +2029,7 @@ pub async fn bulk_insert_backup_reports(
     .bind(&borg_versions)
     .bind(&matcheds)
     .bind(&archive_names)
+    .bind(&borg_commands)
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
@@ -2012,9 +2047,9 @@ pub async fn list_reports_for_client(
         sqlx::query_as::<_, ReportRow>(
             "SELECT br.id, br.client_id, br.repo_id, br.started_at, br.finished_at, br.status, \
              br.original_size, br.compressed_size, br.deduplicated_size, br.files_processed, \
-             br.duration_secs, br.error_message, br.warnings, br.borg_version, br.archive_name \
-             FROM backup_reports br JOIN repos r ON r.id = br.repo_id WHERE br.client_id = $1 AND \
-             r.name = $2 ORDER by br.started_at DESC LIMIT $3",
+             br.duration_secs, br.error_message, br.warnings, br.borg_version, br.archive_name, \
+             br.borg_command FROM backup_reports br JOIN repos r ON r.id = br.repo_id WHERE \
+             br.client_id = $1 AND r.name = $2 ORDER by br.started_at DESC LIMIT $3",
         )
         .bind(client_id)
         .bind(target_name)
@@ -2026,8 +2061,8 @@ pub async fn list_reports_for_client(
         sqlx::query_as::<_, ReportRow>(
             "SELECT id, client_id, repo_id, started_at, finished_at, status, original_size, \
              compressed_size, deduplicated_size, files_processed, duration_secs, error_message, \
-             warnings, borg_version, archive_name FROM backup_reports WHERE client_id = $1 ORDER \
-             BY started_at DESC LIMIT $2",
+             warnings, borg_version, archive_name, borg_command FROM backup_reports WHERE \
+             client_id = $1 ORDER BY started_at DESC LIMIT $2",
         )
         .bind(client_id)
         .bind(limit)
@@ -2045,9 +2080,9 @@ pub async fn list_reports_for_schedule(
     sqlx::query_as::<_, ReportRow>(
         "SELECT id, client_id, repo_id, started_at, finished_at, status, original_size, \
          compressed_size, deduplicated_size, files_processed, duration_secs, error_message, \
-         warnings, borg_version, archive_name FROM backup_reports WHERE repo_id = (SELECT repo_id \
-         FROM schedules WHERE id = $1) AND client_id IN (SELECT client_id FROM schedule_targets \
-         WHERE schedule_id = $1) ORDER BY started_at DESC LIMIT $2",
+         warnings, borg_version, archive_name, borg_command FROM backup_reports WHERE repo_id = \
+         (SELECT repo_id FROM schedules WHERE id = $1) AND client_id IN (SELECT client_id FROM \
+         schedule_targets WHERE schedule_id = $1) ORDER BY started_at DESC LIMIT $2",
     )
     .bind(schedule_id)
     .bind(limit)

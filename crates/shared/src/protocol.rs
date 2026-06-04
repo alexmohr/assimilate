@@ -107,6 +107,8 @@ pub enum AgentToServer {
     BackupStarted {
         repo_id: RepoId,
         started_at: DateTime<Utc>,
+        #[serde(default)]
+        borg_command: Option<String>,
     },
     BackupCompleted {
         report: BackupReport,

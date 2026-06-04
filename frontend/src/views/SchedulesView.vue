@@ -64,6 +64,7 @@ interface RepoRow {
 }
 
 interface HealthEntry {
+  schedule_id: number
   hostname: string
   target_name: string
   last_status: string | null
@@ -131,12 +132,12 @@ interface EnrichedSchedule extends ScheduleRow {
   health: HealthEntry | null
 }
 
-const healthByRepo = computed(() => {
-  const m = new Map<string, HealthEntry[]>()
+const healthBySchedule = computed(() => {
+  const m = new Map<number, HealthEntry[]>()
   health.value.forEach((h) => {
-    const entries = m.get(h.target_name) ?? []
+    const entries = m.get(h.schedule_id) ?? []
     entries.push(h)
-    m.set(h.target_name, entries)
+    m.set(h.schedule_id, entries)
   })
   return m
 })
@@ -145,7 +146,7 @@ const enrichedSchedules = computed<EnrichedSchedule[]>(() =>
   schedules.value.map((s) => {
     const machine: ClientRow | null = null
     const repo: RepoRow | null = s.repo_id != null ? (repoMap.value.get(s.repo_id) ?? null) : null
-    const entries = repo ? (healthByRepo.value.get(repo.name) ?? []) : []
+    const entries = healthBySchedule.value.get(s.id) ?? []
     const healthEntry: HealthEntry | null =
       entries.find((h) => h.is_overdue) ??
       entries.find((h) => h.last_status === 'failed') ??

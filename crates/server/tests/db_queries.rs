@@ -1111,9 +1111,45 @@ async fn insert_test_report(pool: &PgPool, client_id: i64, repo_id: i64) {
         &InsertReportParams {
             client_id,
             repo_id,
+            schedule_id: None,
             started_at: now - Duration::minutes(5),
             finished_at: now,
             status: "success".to_string(),
+            original_size: 1_000_000,
+            compressed_size: 500_000,
+            deduplicated_size: 250_000,
+            repo_unique_csize: 250_000,
+            files_processed: 1000,
+            duration_secs: 300,
+            error_message: None,
+            warnings: vec![],
+            borg_version: Some("1.4.0".to_string()),
+            matched: true,
+            archive_name: None,
+            borg_command: None,
+        },
+    )
+    .await
+    .unwrap();
+}
+
+async fn insert_test_report_for_schedule(
+    pool: &PgPool,
+    client_id: i64,
+    repo_id: i64,
+    schedule_id: i64,
+    status: &str,
+) {
+    let now = Utc::now();
+    db::insert_backup_report(
+        pool,
+        &InsertReportParams {
+            client_id,
+            repo_id,
+            schedule_id: Some(schedule_id),
+            started_at: now - Duration::minutes(5),
+            finished_at: now,
+            status: status.to_string(),
             original_size: 1_000_000,
             compressed_size: 500_000,
             deduplicated_size: 250_000,
@@ -1187,6 +1223,7 @@ async fn backup_report_with_warnings(pool: PgPool) {
         &InsertReportParams {
             client_id: client.id,
             repo_id: repo.id,
+            schedule_id: None,
             started_at: now - Duration::minutes(5),
             finished_at: now,
             status: "warning".to_string(),
@@ -1287,13 +1324,70 @@ async fn activity_feed_days(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn health_summary(pool: PgPool) {
-    let (client, repo, _) = create_test_schedule(&pool).await;
-    insert_test_report(&pool, client.id, repo.id).await;
+    let (client, repo, schedule) = create_test_schedule(&pool).await;
+    insert_test_report_for_schedule(&pool, client.id, repo.id, schedule.id, "success").await;
 
     let health = db::get_health_summary(&pool).await.unwrap();
     assert_eq!(health.len(), 1);
     assert_eq!(health[0].hostname, "sched-host");
+    assert_eq!(health[0].schedule_id, schedule.id);
     assert_eq!(health[0].last_status.as_deref(), Some("success"));
+}
+
+/// Two schedules that share the same repository and client must report
+/// independent health: a backup run for one schedule must not surface as the
+/// status of the other.
+#[sqlx::test(migrations = "./migrations")]
+async fn health_summary_is_per_schedule(pool: PgPool) {
+    let (client, repo, schedule_a) = create_test_schedule(&pool).await;
+    let schedule_b = db::insert_schedule(
+        &pool,
+        repo.id,
+        &ScheduleParams {
+            name: "second-schedule",
+            schedule_type: "backup",
+            cron_expression: "0 4 * * *",
+            enabled: true,
+            canary_enabled: false,
+            exclude_patterns_raw: "",
+            ignore_global_excludes: false,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 1,
+            compact_enabled: true,
+            rate_limit_kbps: None,
+            pre_backup_commands: "",
+            post_backup_commands: "",
+            execution_mode: "parallel",
+            on_failure: "stop",
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    db::insert_schedule_targets(&pool, schedule_b.id, &[(client.id, 0)])
+        .await
+        .unwrap();
+
+    // Only schedule_a has a backup run recorded.
+    insert_test_report_for_schedule(&pool, client.id, repo.id, schedule_a.id, "success").await;
+
+    let health = db::get_health_summary(&pool).await.unwrap();
+    let entry_a = health
+        .iter()
+        .find(|h| h.schedule_id == schedule_a.id)
+        .expect("schedule_a health row");
+    let entry_b = health
+        .iter()
+        .find(|h| h.schedule_id == schedule_b.id)
+        .expect("schedule_b health row");
+
+    assert_eq!(entry_a.last_status.as_deref(), Some("success"));
+    assert_eq!(
+        entry_b.last_status, None,
+        "schedule_b must not inherit schedule_a's run status"
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2779,6 +2873,7 @@ async fn test_mark_client_reports_matched(pool: PgPool) {
         &InsertReportParams {
             client_id: client.id,
             repo_id: repo.id,
+            schedule_id: None,
             started_at: now - Duration::minutes(5),
             finished_at: now,
             status: "success".to_string(),
@@ -2865,6 +2960,7 @@ async fn get_archives_for_client_across_multiple_repos(pool: PgPool) {
         &InsertReportParams {
             client_id: client.id,
             repo_id: repo1.id,
+            schedule_id: None,
             started_at: now - Duration::minutes(10),
             finished_at: now - Duration::minutes(5),
             status: "success".to_string(),
@@ -2889,6 +2985,7 @@ async fn get_archives_for_client_across_multiple_repos(pool: PgPool) {
         &InsertReportParams {
             client_id: client.id,
             repo_id: repo1.id,
+            schedule_id: None,
             started_at: now - Duration::minutes(20),
             finished_at: now - Duration::minutes(15),
             status: "success".to_string(),
@@ -2914,6 +3011,7 @@ async fn get_archives_for_client_across_multiple_repos(pool: PgPool) {
         &InsertReportParams {
             client_id: client.id,
             repo_id: repo2.id,
+            schedule_id: None,
             started_at: now - Duration::minutes(30),
             finished_at: now - Duration::minutes(25),
             status: "success".to_string(),
@@ -2939,6 +3037,7 @@ async fn get_archives_for_client_across_multiple_repos(pool: PgPool) {
         &InsertReportParams {
             client_id: client.id,
             repo_id: repo1.id,
+            schedule_id: None,
             started_at: now - Duration::minutes(40),
             finished_at: now - Duration::minutes(35),
             status: "success".to_string(),
@@ -3001,6 +3100,7 @@ async fn get_archives_for_client_includes_pattern_matched_archives(pool: PgPool)
         &InsertReportParams {
             client_id: client.id,
             repo_id: repo.id,
+            schedule_id: None,
             started_at: now - Duration::minutes(10),
             finished_at: now - Duration::minutes(5),
             status: "success".to_string(),
@@ -3026,6 +3126,7 @@ async fn get_archives_for_client_includes_pattern_matched_archives(pool: PgPool)
         &InsertReportParams {
             client_id: client.id,
             repo_id: repo.id,
+            schedule_id: None,
             started_at: now - Duration::minutes(20),
             finished_at: now - Duration::minutes(15),
             status: "success".to_string(),
@@ -3060,6 +3161,7 @@ async fn get_archives_for_client_includes_pattern_matched_archives(pool: PgPool)
         &InsertReportParams {
             client_id: imported.id,
             repo_id: repo.id,
+            schedule_id: None,
             started_at: now - Duration::minutes(30),
             finished_at: now - Duration::minutes(25),
             status: "success".to_string(),
@@ -3154,6 +3256,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
         &InsertReportParams {
             client_id: client.id,
             repo_id: repo1.id,
+            schedule_id: None,
             started_at: now - Duration::minutes(10),
             finished_at: now - Duration::minutes(5),
             status: "success".to_string(),
@@ -3178,6 +3281,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
         &InsertReportParams {
             client_id: client.id,
             repo_id: repo2.id,
+            schedule_id: None,
             started_at: now - Duration::minutes(20),
             finished_at: now - Duration::minutes(15),
             status: "success".to_string(),
@@ -3212,6 +3316,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
         &InsertReportParams {
             client_id: imported.id,
             repo_id: repo1.id,
+            schedule_id: None,
             started_at: now - Duration::minutes(30),
             finished_at: now - Duration::minutes(25),
             status: "success".to_string(),
@@ -3246,6 +3351,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
         &InsertReportParams {
             client_id: imported2.id,
             repo_id: repo2.id,
+            schedule_id: None,
             started_at: now - Duration::minutes(40),
             finished_at: now - Duration::minutes(35),
             status: "success".to_string(),
@@ -3280,6 +3386,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
         &InsertReportParams {
             client_id: unrelated.id,
             repo_id: repo1.id,
+            schedule_id: None,
             started_at: now - Duration::minutes(50),
             finished_at: now - Duration::minutes(45),
             status: "success".to_string(),
@@ -3466,6 +3573,7 @@ async fn bulk_insert_backup_reports_basic(pool: PgPool) {
         InsertReportParams {
             client_id: client.id,
             repo_id: repo.id,
+            schedule_id: None,
             started_at: now - Duration::minutes(10),
             finished_at: now - Duration::minutes(5),
             status: "success".to_string(),
@@ -3485,6 +3593,7 @@ async fn bulk_insert_backup_reports_basic(pool: PgPool) {
         InsertReportParams {
             client_id: client.id,
             repo_id: repo.id,
+            schedule_id: None,
             started_at: now - Duration::minutes(20),
             finished_at: now - Duration::minutes(15),
             status: "success".to_string(),
@@ -3526,6 +3635,7 @@ async fn bulk_insert_backup_reports_conflict_skipped(pool: PgPool) {
     let param = InsertReportParams {
         client_id: client.id,
         repo_id: repo.id,
+        schedule_id: None,
         started_at: started,
         finished_at: now,
         status: "success".to_string(),
@@ -3847,7 +3957,7 @@ async fn schedule_timezone_set(pool: PgPool) {
 async fn reports_for_schedule_test(pool: PgPool) {
     let (client, repo, schedule) = create_test_schedule(&pool).await;
 
-    insert_test_report(&pool, client.id, repo.id).await;
+    insert_test_report_for_schedule(&pool, client.id, repo.id, schedule.id, "success").await;
 
     let reports = db::list_reports_for_schedule(&pool, schedule.id, 10)
         .await
@@ -4011,6 +4121,7 @@ async fn archive_names_and_delete_test(pool: PgPool) {
         &InsertReportParams {
             client_id: client.id,
             repo_id: repo.id,
+            schedule_id: None,
             started_at: now - Duration::minutes(10),
             finished_at: now - Duration::minutes(5),
             status: "success".to_string(),
@@ -4036,6 +4147,7 @@ async fn archive_names_and_delete_test(pool: PgPool) {
         &InsertReportParams {
             client_id: client.id,
             repo_id: repo.id,
+            schedule_id: None,
             started_at: now - Duration::minutes(20),
             finished_at: now - Duration::minutes(15),
             status: "success".to_string(),
@@ -4094,6 +4206,7 @@ async fn delete_backup_reports_before_test(pool: PgPool) {
         &InsertReportParams {
             client_id: client.id,
             repo_id: repo.id,
+            schedule_id: None,
             started_at: now - Duration::hours(2),
             finished_at: now - Duration::hours(2),
             status: "success".to_string(),

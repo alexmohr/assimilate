@@ -145,6 +145,7 @@ const mockRepos = [
 
 const mockHealth = [
   {
+    schedule_id: 1,
     hostname: 'web-server-01',
     target_name: 'server-daily',
     last_status: 'success',
@@ -155,6 +156,7 @@ const mockHealth = [
     schedule_enabled: true,
   },
   {
+    schedule_id: 2,
     hostname: 'db-server-01',
     target_name: 'database-hourly',
     last_status: 'failed',

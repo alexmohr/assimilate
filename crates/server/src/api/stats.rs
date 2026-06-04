@@ -30,6 +30,7 @@ pub struct ActivityQuery {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct HealthResponse {
     pub repo_id: i64,
+    pub schedule_id: i64,
     pub hostname: String,
     pub target_name: String,
     pub last_status: Option<String>,
@@ -306,6 +307,7 @@ pub async fn health(
             let overdue = is_overdue(row.last_backup_at, row.cron_expression.as_deref(), tz);
             HealthResponse {
                 repo_id: row.repo_id,
+                schedule_id: row.schedule_id,
                 hostname: row.hostname,
                 target_name: row.target_name,
                 last_status: row.last_status,

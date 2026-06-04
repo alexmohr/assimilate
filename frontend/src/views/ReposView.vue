@@ -18,6 +18,7 @@ import ToggleSwitch from '../components/ToggleSwitch.vue'
 import { Plus, Download, SlidersHorizontal, Database, Folder, FolderPlus } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
+import SshKeyDeployPanel from '../components/SshKeyDeployPanel.vue'
 
 type CompressionType = 'lz4' | 'zstd' | 'none'
 type EncryptionType =
@@ -94,12 +95,6 @@ interface SshTarget {
   ssh_port: number
 }
 
-interface DeployKeyState {
-  password: string
-  useSftp: boolean
-  loading: boolean
-  result: { success: boolean; already_deployed: boolean; error?: string } | null
-}
 
 interface TestConnState {
   loading: boolean
@@ -145,13 +140,6 @@ const repoLoading = ref(false)
 const repoError = ref<string | null>(null)
 const editingRepo = ref<RepoWithStats | null>(null)
 const showDeployKey = ref(false)
-
-const deployKey = reactive<DeployKeyState>({
-  password: '',
-  useSftp: true,
-  loading: false,
-  result: null,
-})
 
 const testConn = reactive<TestConnState>({
   loading: false,
@@ -457,8 +445,6 @@ function openCreateRepo(): void {
   editingRepo.value = null
   repoError.value = null
   showDeployKey.value = false
-  deployKey.password = ''
-  deployKey.result = null
   testConn.result = null
   browser.path = '/'
   browser.entries = []
@@ -474,8 +460,6 @@ function openImportRepo(): void {
   editingRepo.value = null
   repoError.value = null
   showDeployKey.value = false
-  deployKey.password = ''
-  deployKey.result = null
   testConn.result = null
   browser.path = '/'
   browser.entries = []
@@ -649,28 +633,6 @@ async function testConnection(): Promise<void> {
   }
 }
 
-async function deploySshKey(): Promise<void> {
-  deployKey.loading = true
-  deployKey.result = null
-  try {
-    const res = await apiClient.post<{
-      success: boolean
-      already_deployed: boolean
-      error?: string
-    }>('/ssh/deploy-key', {
-      ssh_host: repoForm.ssh_host.trim(),
-      ssh_user: repoForm.ssh_user.trim(),
-      ssh_port: repoForm.ssh_port,
-      password: deployKey.password,
-      use_sftp: deployKey.useSftp,
-    })
-    deployKey.result = res.data
-  } catch (e: unknown) {
-    deployKey.result = { success: false, already_deployed: false, error: extractError(e) }
-  } finally {
-    deployKey.loading = false
-  }
-}
 
 interface ImportProgressPayload {
   repo_id: number
@@ -1197,61 +1159,12 @@ onMounted(loadRepos)
                   </span>
                 </div>
 
-                <div
+                <SshKeyDeployPanel
                   v-if="showDeployKey"
-                  class="deploy-body"
-                >
-                  <p class="deploy-hint">
-                    Deploy the server's SSH public key to the target host for passwordless access.
-                  </p>
-                  <div class="deploy-fields">
-                    <div class="field">
-                      <label class="field-label"
-                        >SSH Password <span class="required">*</span></label
-                      >
-                      <input
-                        v-model="deployKey.password"
-                        class="input"
-                        type="password"
-                        placeholder="Password for initial login"
-                      />
-                    </div>
-                    <div class="field toggle-row">
-                      <span class="toggle-row-label"
-                        >Use SFTP to deploy key (required for Hetzner)</span
-                      >
-                      <ToggleSwitch v-model="deployKey.useSftp" />
-                    </div>
-                  </div>
-                  <div class="deploy-row">
-                    <button
-                      class="btn btn-sm btn-primary"
-                      :disabled="deployKey.loading || !deployKey.password || !sshReady"
-                      @click="deploySshKey"
-                    >
-                      {{ deployKey.loading ? 'Deploying...' : 'Deploy Key' }}
-                    </button>
-                    <span
-                      v-if="deployKey.result"
-                      class="deploy-result"
-                      :class="
-                        deployKey.result.success || deployKey.result.already_deployed
-                          ? 'result-ok'
-                          : 'result-error'
-                      "
-                    >
-                      <template v-if="deployKey.result.already_deployed"
-                        >Key already deployed</template
-                      >
-                      <template v-else-if="deployKey.result.success"
-                        >Key deployed successfully</template
-                      >
-                      <template v-else>{{
-                        deployKey.result.error ?? 'Deployment failed'
-                      }}</template>
-                    </span>
-                  </div>
-                </div>
+                  :ssh-host="repoForm.ssh_host"
+                  :ssh-user="repoForm.ssh_user"
+                  :ssh-port="repoForm.ssh_port"
+                />
               </div>
             </div>
 
@@ -1728,37 +1641,6 @@ onMounted(loadRepos)
   flex-wrap: wrap;
 }
 
-.deploy-body {
-  margin-top: 0.75rem;
-  padding: 0.75rem;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-}
-
-.deploy-hint {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  margin-bottom: 0.75rem;
-}
-
-.deploy-fields {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
-}
-
-.deploy-fields .field {
-  margin-bottom: 0;
-}
-
-.deploy-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
 .deploy-result {
   font-size: 0.8rem;
   font-weight: 500;
@@ -1770,10 +1652,6 @@ onMounted(loadRepos)
 
 .result-warn {
   color: var(--text-muted);
-}
-
-.result-error {
-  color: var(--danger);
 }
 
 .browser-section {

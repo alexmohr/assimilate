@@ -1055,8 +1055,9 @@ async function resetImport(): Promise<void> {
             <div class="danger-info">
               <span class="danger-heading">Remove Repository</span>
               <span class="danger-desc"
-                >Remove this repository from the UI and database. All associated schedules and
-                reports will be deleted. The repository data on disk is NOT touched.</span
+                >Remove this repository from the UI and database. All associated schedules will be
+                <strong>disabled</strong> and their repository link removed — they must be fixed
+                manually. Reports will be deleted. The repository data on disk is NOT touched.</span
               >
             </div>
             <button
@@ -1430,6 +1431,10 @@ async function resetImport(): Promise<void> {
               The repository at <code>{{ repo?.repo_path }}</code> on
               <code>{{ repo?.ssh_host }}</code> will be removed using <code>rm -rf</code>.
             </p>
+            <p>
+              All associated schedules will be <strong>disabled</strong> and their repository link
+              removed. They will need to be reassigned or deleted manually.
+            </p>
           </div>
           <div class="dialog-footer">
             <button
@@ -1470,7 +1475,10 @@ async function resetImport(): Promise<void> {
           <div class="dialog-body">
             <p>
               Are you sure you want to remove <strong>{{ repo?.name }}</strong> from the database?
-              This will also remove all associated schedules and reports.
+            </p>
+            <p>
+              All associated schedules will be <strong>disabled</strong> and their repository link
+              removed. They will need to be reassigned or deleted manually. Reports will be deleted.
             </p>
             <p>The repository data on disk will NOT be touched.</p>
           </div>

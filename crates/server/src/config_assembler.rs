@@ -30,7 +30,9 @@ pub async fn assemble_config(
     > = std::collections::HashMap::new();
 
     for schedule in schedule_rows {
-        let repo_id = schedule.repo_id;
+        let Some(repo_id) = schedule.repo_id else {
+            continue;
+        };
 
         if !repo_map.contains_key(&repo_id) {
             let repo_rows = db::list_repos_for_client(pool, client.id).await?;

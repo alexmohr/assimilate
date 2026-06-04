@@ -19,6 +19,7 @@ import { parseLines } from '../utils/validation'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import MergeClientDialog from '../components/MergeClientDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
+import SshKeyDeployPanel from '../components/SshKeyDeployPanel.vue'
 
 type TabId = 'overview' | 'schedules' | 'backups'
 
@@ -182,6 +183,9 @@ const restartError = ref<string | null>(null)
 // Deploy/Upgrade agent
 const availableAgentVersion = ref<string | null>(null)
 const showDeployDialog = ref(false)
+
+// Deploy SSH key
+const showDeploySshKey = ref(false)
 
 function deployButtonLabel(): string | null {
   if (!client.value) return null
@@ -854,6 +858,13 @@ watch(wsStatus, (newStatus, oldStatus) => {
             >
               {{ deployButtonLabel() }}
             </button>
+            <button
+              v-if="!isImported"
+              class="btn btn-sm btn-ghost"
+              @click="showDeploySshKey = true"
+            >
+              Deploy SSH Key
+            </button>
             <div
               v-if="restartError"
               class="form-error"
@@ -861,6 +872,26 @@ watch(wsStatus, (newStatus, oldStatus) => {
               {{ restartError }}
             </div>
           </div>
+        </div>
+
+        <!-- Deploy SSH Key -->
+        <div
+          v-if="showDeploySshKey && !isImported"
+          class="info-card"
+        >
+          <div class="info-title-row">
+            <h3 class="info-title">Deploy SSH Key</h3>
+            <button
+              class="btn btn-sm btn-ghost"
+              @click="showDeploySshKey = false"
+            >
+              &times;
+            </button>
+          </div>
+          <SshKeyDeployPanel
+            :ssh-host="client.hostname"
+            show-credentials
+          />
         </div>
 
         <!-- Edit Identity -->
@@ -2437,5 +2468,16 @@ watch(wsStatus, (newStatus, oldStatus) => {
   font-size: 0.875rem;
   color: var(--danger);
   margin-bottom: 0.5rem;
+}
+
+.info-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.info-title-row .info-title {
+  margin-bottom: 0;
 }
 </style>

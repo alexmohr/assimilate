@@ -310,6 +310,10 @@ pub struct BackupReport {
     pub original_size: i64,
     pub compressed_size: i64,
     pub deduplicated_size: i64,
+    /// Total unique compressed size of the repository at backup time (`cache.stats.unique_csize`).
+    /// This is the actual on-disk usage of the repository.
+    #[serde(default)]
+    pub repo_unique_csize: i64,
     pub files_processed: i64,
     pub duration_secs: i64,
     pub error_message: Option<String>,

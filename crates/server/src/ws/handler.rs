@@ -281,6 +281,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 original_size: report.original_size,
                 compressed_size: report.compressed_size,
                 deduplicated_size: report.deduplicated_size,
+                repo_unique_csize: report.repo_unique_csize,
                 files_processed: report.files_processed,
                 duration_secs: report.duration_secs,
                 error_message: report.error_message,

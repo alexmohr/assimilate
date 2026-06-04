@@ -60,6 +60,7 @@ pub struct BackupResult {
     pub original_size: i64,
     pub compressed_size: i64,
     pub deduplicated_size: i64,
+    pub repo_unique_csize: i64,
     pub files_processed: i64,
     pub duration_secs: i64,
     pub error_message: Option<String>,
@@ -125,6 +126,7 @@ impl BackupEngine {
             original_size: create_result.original_size,
             compressed_size: create_result.compressed_size,
             deduplicated_size: create_result.deduplicated_size,
+            repo_unique_csize: create_result.repo_unique_csize,
             files_processed: create_result.files_processed,
             duration_secs,
             error_message: create_result.error_message,
@@ -239,6 +241,7 @@ impl BackupEngine {
                     original_size: stats.original_size,
                     compressed_size: stats.compressed_size,
                     deduplicated_size: stats.deduplicated_size,
+                    repo_unique_csize: stats.repo_unique_csize,
                     files_processed: stats.files_processed,
                     error_message: None,
                     warnings,
@@ -255,6 +258,7 @@ impl BackupEngine {
                     original_size: stats.original_size,
                     compressed_size: stats.compressed_size,
                     deduplicated_size: stats.deduplicated_size,
+                    repo_unique_csize: stats.repo_unique_csize,
                     files_processed: stats.files_processed,
                     error_message: Some(summary),
                     warnings,
@@ -622,6 +626,7 @@ struct CreateResult {
     original_size: i64,
     compressed_size: i64,
     deduplicated_size: i64,
+    repo_unique_csize: i64,
     files_processed: i64,
     error_message: Option<String>,
     warnings: Vec<String>,
@@ -632,6 +637,7 @@ struct ParsedStats {
     original_size: i64,
     compressed_size: i64,
     deduplicated_size: i64,
+    repo_unique_csize: i64,
     files_processed: i64,
 }
 
@@ -660,6 +666,13 @@ fn parse_json_stats(stdout: &[u8]) -> Result<ParsedStats, BackupError> {
         .and_then(serde_json::Value::as_i64)
         .ok_or_else(|| BackupError::StatsParse("missing deduplicated_size".to_owned()))?;
 
+    let repo_unique_csize = json
+        .get("cache")
+        .and_then(|c| c.get("stats"))
+        .and_then(|s| s.get("unique_csize"))
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0);
+
     let files_processed = stats
         .get("nfiles")
         .and_then(serde_json::Value::as_i64)
@@ -669,6 +682,7 @@ fn parse_json_stats(stdout: &[u8]) -> Result<ParsedStats, BackupError> {
         original_size,
         compressed_size,
         deduplicated_size,
+        repo_unique_csize,
         files_processed,
     })
 }
@@ -794,6 +808,7 @@ mod tests {
         assert_eq!(result.original_size, 1_073_741_824);
         assert_eq!(result.compressed_size, 536_870_912);
         assert_eq!(result.deduplicated_size, 268_435_456);
+        assert_eq!(result.repo_unique_csize, 402_653_184);
         assert_eq!(result.files_processed, 1234);
         assert!(result.error_message.is_none());
         assert!(result.warnings.is_empty());
@@ -904,6 +919,39 @@ mod tests {
         assert_eq!(stats.original_size, 100);
         assert_eq!(stats.compressed_size, 80);
         assert_eq!(stats.deduplicated_size, 50);
+        assert_eq!(stats.repo_unique_csize, 0);
+        assert_eq!(stats.files_processed, 42);
+    }
+
+    #[tokio::test]
+    async fn test_parse_json_stats_with_cache() {
+        let json = r#"{
+            "archive": {
+                "name": "test",
+                "stats": {
+                    "original_size": 100,
+                    "compressed_size": 80,
+                    "deduplicated_size": 50,
+                    "nfiles": 42
+                }
+            },
+            "cache": {
+                "stats": {
+                    "total_size": 1000,
+                    "total_csize": 800,
+                    "unique_size": 400,
+                    "unique_csize": 300,
+                    "total_unique_chunks": 10,
+                    "total_chunks": 40
+                }
+            }
+        }"#;
+
+        let stats = parse_json_stats(json.as_bytes()).unwrap();
+        assert_eq!(stats.original_size, 100);
+        assert_eq!(stats.compressed_size, 80);
+        assert_eq!(stats.deduplicated_size, 50);
+        assert_eq!(stats.repo_unique_csize, 300);
         assert_eq!(stats.files_processed, 42);
     }
 

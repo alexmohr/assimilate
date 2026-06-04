@@ -42,7 +42,16 @@ case "$SUBCOMMAND" in
       "nfiles": 1234
     }
   },
-  "cache": {},
+  "cache": {
+    "stats": {
+      "total_size": 2147483648,
+      "total_csize": 1073741824,
+      "unique_size": 536870912,
+      "unique_csize": 402653184,
+      "total_unique_chunks": 512,
+      "total_chunks": 2048
+    }
+  },
   "encryption": {"mode": "repokey"},
   "repository": {"id": "repo123", "location": "ssh://borg-backup/backup/test", "last_modified": "2024-01-01T00:00:05.000000"}
 }

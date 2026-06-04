@@ -1874,6 +1874,7 @@ pub struct InsertReportParams {
     pub original_size: i64,
     pub compressed_size: i64,
     pub deduplicated_size: i64,
+    pub repo_unique_csize: i64,
     pub files_processed: i64,
     pub duration_secs: i64,
     pub error_message: Option<String>,
@@ -1889,10 +1890,10 @@ pub async fn insert_backup_report(
 ) -> Result<(), ApiError> {
     sqlx::query(
         "INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, \
-         original_size, compressed_size, deduplicated_size, files_processed, duration_secs, \
-         error_message, warnings, borg_version, matched, archive_name) VALUES ($1, $2, $3, $4, \
-         $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) ON CONFLICT (repo_id, client_id, \
-         started_at) DO NOTHING",
+         original_size, compressed_size, deduplicated_size, repo_unique_csize, files_processed, \
+         duration_secs, error_message, warnings, borg_version, matched, archive_name) VALUES ($1, \
+         $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) ON CONFLICT (repo_id, \
+         client_id, started_at) DO NOTHING",
     )
     .bind(params.client_id)
     .bind(params.repo_id)
@@ -1902,6 +1903,7 @@ pub async fn insert_backup_report(
     .bind(params.original_size)
     .bind(params.compressed_size)
     .bind(params.deduplicated_size)
+    .bind(params.repo_unique_csize)
     .bind(params.files_processed)
     .bind(params.duration_secs)
     .bind(&params.error_message)
@@ -1931,6 +1933,7 @@ pub async fn bulk_insert_backup_reports(
     let mut original_sizes = Vec::with_capacity(params.len());
     let mut compressed_sizes = Vec::with_capacity(params.len());
     let mut deduplicated_sizes = Vec::with_capacity(params.len());
+    let mut repo_unique_csizes = Vec::with_capacity(params.len());
     let mut files_processed_v = Vec::with_capacity(params.len());
     let mut duration_secs_v = Vec::with_capacity(params.len());
     let mut error_messages: Vec<Option<&str>> = Vec::with_capacity(params.len());
@@ -1947,6 +1950,7 @@ pub async fn bulk_insert_backup_reports(
         original_sizes.push(p.original_size);
         compressed_sizes.push(p.compressed_size);
         deduplicated_sizes.push(p.deduplicated_size);
+        repo_unique_csizes.push(p.repo_unique_csize);
         files_processed_v.push(p.files_processed);
         duration_secs_v.push(p.duration_secs);
         error_messages.push(p.error_message.as_deref());
@@ -1957,17 +1961,18 @@ pub async fn bulk_insert_backup_reports(
 
     let result = sqlx::query(
         "INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, \
-         original_size, compressed_size, deduplicated_size, files_processed, duration_secs, \
-         error_message, warnings, borg_version, matched, archive_name) SELECT t.client_id, \
-         t.repo_id, t.started_at, t.finished_at, t.status, t.original_size, t.compressed_size, \
-         t.deduplicated_size, t.files_processed, t.duration_secs, t.error_message, \
-         ARRAY[]::text[], t.borg_version, t.matched, t.archive_name FROM UNNEST($1::bigint[], \
-         $2::bigint[], $3::timestamptz[], $4::timestamptz[], $5::text[], $6::bigint[], \
-         $7::bigint[], $8::bigint[], $9::bigint[], $10::bigint[], $11::text[], $12::text[], \
-         $13::bool[], $14::text[]) AS t(client_id, repo_id, started_at, finished_at, status, \
-         original_size, compressed_size, deduplicated_size, files_processed, duration_secs, \
-         error_message, borg_version, matched, archive_name) ON CONFLICT (repo_id, client_id, \
-         started_at) DO NOTHING",
+         original_size, compressed_size, deduplicated_size, repo_unique_csize, files_processed, \
+         duration_secs, error_message, warnings, borg_version, matched, archive_name) SELECT \
+         t.client_id, t.repo_id, t.started_at, t.finished_at, t.status, t.original_size, \
+         t.compressed_size, t.deduplicated_size, t.repo_unique_csize, t.files_processed, \
+         t.duration_secs, t.error_message, ARRAY[]::text[], t.borg_version, t.matched, \
+         t.archive_name FROM UNNEST($1::bigint[], $2::bigint[], $3::timestamptz[], \
+         $4::timestamptz[], $5::text[], $6::bigint[], $7::bigint[], $8::bigint[], $9::bigint[], \
+         $10::bigint[], $11::bigint[], $12::text[], $13::text[], $14::bool[], $15::text[]) AS \
+         t(client_id, repo_id, started_at, finished_at, status, original_size, compressed_size, \
+         deduplicated_size, repo_unique_csize, files_processed, duration_secs, error_message, \
+         borg_version, matched, archive_name) ON CONFLICT (repo_id, client_id, started_at) DO \
+         NOTHING",
     )
     .bind(&client_ids)
     .bind(&repo_ids)
@@ -1977,6 +1982,7 @@ pub async fn bulk_insert_backup_reports(
     .bind(&original_sizes)
     .bind(&compressed_sizes)
     .bind(&deduplicated_sizes)
+    .bind(&repo_unique_csizes)
     .bind(&files_processed_v)
     .bind(&duration_secs_v)
     .bind(&error_messages)
@@ -3599,8 +3605,8 @@ pub async fn get_storage_trends(
              $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ) SELECT d.date, \
              COALESCE(latest.original_size, 0)::INT8 AS original_size, \
              COALESCE(latest.compressed_size, 0)::INT8 AS compressed_size, \
-             COALESCE(latest.deduplicated_size, 0)::INT8 AS deduplicated_size FROM days d LEFT \
-             JOIN LATERAL ( SELECT br.original_size, br.compressed_size, br.deduplicated_size \
+             COALESCE(latest.repo_unique_csize, 0)::INT8 AS deduplicated_size FROM days d LEFT \
+             JOIN LATERAL ( SELECT br.original_size, br.compressed_size, br.repo_unique_csize \
              FROM backup_reports br WHERE br.repo_id = $2 AND br.started_at::date <= d.date AND \
              br.status = 'success' ORDER BY br.started_at DESC LIMIT 1 ) latest ON true ORDER BY \
              d.date",
@@ -3616,9 +3622,9 @@ pub async fn get_storage_trends(
              $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ) SELECT d.date, \
              COALESCE(SUM(latest.original_size), 0)::INT8 AS original_size, \
              COALESCE(SUM(latest.compressed_size), 0)::INT8 AS compressed_size, \
-             COALESCE(SUM(latest.deduplicated_size), 0)::INT8 AS deduplicated_size FROM days d \
+             COALESCE(SUM(latest.repo_unique_csize), 0)::INT8 AS deduplicated_size FROM days d \
              LEFT JOIN LATERAL ( SELECT DISTINCT ON (br.repo_id) br.original_size, \
-             br.compressed_size, br.deduplicated_size FROM backup_reports br WHERE \
+             br.compressed_size, br.repo_unique_csize FROM backup_reports br WHERE \
              br.started_at::date <= d.date AND br.status = 'success' ORDER BY br.repo_id, \
              br.started_at DESC ) latest ON true GROUP BY d.date ORDER BY d.date",
         )
@@ -3672,9 +3678,9 @@ pub async fn get_storage_trends_by_repo(
          AS repo_id, r.name AS repo_name FROM repos r JOIN backup_reports br ON br.repo_id = r.id \
          ) SELECT d.date, rl.repo_id, rl.repo_name, COALESCE(latest.original_size, 0)::INT8 AS \
          original_size, COALESCE(latest.compressed_size, 0)::INT8 AS compressed_size, \
-         COALESCE(latest.deduplicated_size, 0)::INT8 AS deduplicated_size FROM days d CROSS JOIN \
+         COALESCE(latest.repo_unique_csize, 0)::INT8 AS deduplicated_size FROM days d CROSS JOIN \
          repos_list rl LEFT JOIN LATERAL ( SELECT br.original_size, br.compressed_size, \
-         br.deduplicated_size FROM backup_reports br WHERE br.repo_id = rl.repo_id AND \
+         br.repo_unique_csize FROM backup_reports br WHERE br.repo_id = rl.repo_id AND \
          br.started_at::date <= d.date AND br.status = 'success' ORDER BY br.started_at DESC \
          LIMIT 1 ) latest ON true ORDER BY d.date, rl.repo_name",
     )

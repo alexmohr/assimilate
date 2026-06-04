@@ -211,6 +211,8 @@ pub async fn create_repo(
     .await?;
 
     let repo_id = repo.id;
+    db::set_relocation_pending(&state.pool, repo_id).await?;
+
     let pool = state.pool.clone();
     let encryption_key = state.encryption_key;
     let ui_broadcast = state.ui_broadcast.clone();
@@ -554,6 +556,7 @@ pub async fn init_repo(
     )
     .await?;
 
+    db::set_relocation_pending(&state.pool, repo.id).await?;
     info!(repo_id = repo.id, name = %req.name, "repository initialized");
 
     Ok((
@@ -862,6 +865,7 @@ async fn run_borg_info_once(repo_url: &str, passphrase: &str) -> Result<BorgInfo
             "BORG_RSH".to_owned(),
             "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new".to_owned(),
         ),
+        ("BORG_RELOCATED_REPO_ACCESS_IS_OK".to_owned(), "yes".to_owned()),
     ]);
     if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
         env.insert("SSH_AUTH_SOCK".to_owned(), sock);
@@ -967,6 +971,7 @@ async fn run_borg_init(
             "BORG_RSH".to_owned(),
             "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new".to_owned(),
         ),
+        ("BORG_RELOCATED_REPO_ACCESS_IS_OK".to_owned(), "yes".to_owned()),
     ]);
     if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
         env.insert("SSH_AUTH_SOCK".to_owned(), sock);

@@ -13,6 +13,10 @@ cp "$SSH_KEY.pub" /home/borg/.ssh/authorized_keys
 chmod 600 /home/borg/.ssh/authorized_keys
 chown borg:borg /home/borg/.ssh/authorized_keys
 
+cp "$SSH_KEY" /home/borg/.ssh/id_ed25519
+chmod 600 /home/borg/.ssh/id_ed25519
+chown borg:borg /home/borg/.ssh/id_ed25519
+
 if [ ! -f /etc/ssh/ssh_host_ed25519_key ]; then
     ssh-keygen -A
 fi

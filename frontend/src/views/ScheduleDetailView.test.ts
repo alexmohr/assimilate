@@ -295,7 +295,7 @@ describe('ScheduleDetailView - edit mode', () => {
     const retentionGrid = wrapper.find('.retention-grid')
     expect(retentionGrid.exists()).toBe(true)
     const inputs = retentionGrid.findAll('input[type="number"]')
-    const weeklyInput = inputs[1]
+    const weeklyInput = inputs[2]
     expect(weeklyInput.element.value).toBe('52')
   })
 })

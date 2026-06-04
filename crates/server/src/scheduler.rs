@@ -280,6 +280,7 @@ async fn tick(
             },
             ScheduleType::Backup => ServerToAgent::RunBackupNow {
                 repo_id,
+                schedule_id: Some(schedule.schedule_id),
                 request_id: None,
             },
         };

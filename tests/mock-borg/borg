@@ -26,6 +26,13 @@ case "$SUBCOMMAND" in
       fi
     fi
 
+    if [[ "${MOCK_BORG_SIMULATE_SOURCE_NOT_FOUND:-0}" == "1" ]]; then
+      if [[ " $* " == *" --log-json "* ]]; then
+        printf '%s\n' '{"type": "log_message", "time": 1704067200, "levelname": "WARNING", "name": "borg.archiver", "msgid": "BackupFileNotFoundError", "message": "/mnt/missing: stat: [Errno 2] No such file or directory: '"'"'/mnt/missing'"'"'"}' >&2
+      fi
+      exit 1
+    fi
+
     if [[ " $* " == *" --json "* ]]; then
       cat <<'JSON'
 {

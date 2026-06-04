@@ -67,6 +67,7 @@ onUnmounted(() => {
 function statusColor(status: string): string {
   if (status === 'success') return 'var(--success)'
   if (status === 'warning') return 'var(--warning)'
+  if (status === 'started') return 'var(--info)'
   return 'var(--danger)'
 }
 

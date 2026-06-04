@@ -454,6 +454,7 @@ function reportStatusClass(status: string): string {
   const s = status.toLowerCase()
   if (s === 'success') return 'badge-success'
   if (s === 'warning') return 'badge-warning'
+  if (s === 'started') return 'badge-started'
   return 'badge-failed'
 }
 
@@ -2081,5 +2082,10 @@ watch(activeTab, (tab) => {
 .badge-failed {
   background: var(--danger-subtle);
   color: var(--danger);
+}
+
+.badge-started {
+  background: var(--info-subtle);
+  color: var(--info);
 }
 </style>

@@ -9,7 +9,6 @@ use axum::{
     http::StatusCode,
 };
 use chrono::DateTime;
-use futures_util::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use shared::{
     crypto::encrypt_passphrase,
@@ -1166,17 +1165,25 @@ fn is_ssh_connection_error(stderr: &str) -> bool {
         || lower.contains("ssh: connect to host")
 }
 
-async fn run_borg_archive_info_with_retry(
-    repo_archive: &str,
+/// Runs `borg info --glob '*' --json` once to fetch stats for all archives in
+/// the repository. Returns a map of archive name → JSON value (the archive
+/// object from the `archives` array).
+///
+/// Uses a single SSH connection for all archives, which is dramatically faster
+/// than one `borg info <repo>::<name>` call per archive.
+async fn run_borg_info_all_archives(
+    borg_repo: &str,
     env: &std::collections::HashMap<String, String>,
-) -> Result<Option<Output>, ApiError> {
+) -> Result<HashMap<String, serde_json::Value>, ApiError> {
     let borg = Borg::new();
     let args = [
         "info",
         "--json",
         "--lock-wait",
         LOCK_WAIT_SECS,
-        repo_archive,
+        "--glob-archives",
+        "*",
+        borg_repo,
     ];
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
         let output = borg
@@ -1185,35 +1192,36 @@ async fn run_borg_archive_info_with_retry(
             .map_err(|e| ApiError::Internal(format!("failed to execute borg info: {e}")))?;
 
         if output.status.success() {
-            return Ok(Some(output));
+            let json: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| {
+                ApiError::Internal(format!("failed to parse borg info output: {e}"))
+            })?;
+            let map = json["archives"]
+                .as_array()
+                .map_or_else(Vec::new, Clone::clone)
+                .into_iter()
+                .filter_map(|a| a["name"].as_str().map(|n| (n.to_string(), a.clone())))
+                .collect();
+            return Ok(map);
         }
 
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if is_lock_error(&stderr) || is_ssh_connection_error(&stderr) {
-            if attempt == LOCK_RETRY_MAX_ATTEMPTS {
-                warn!(
-                    repo_archive,
-                    stderr = %stderr,
-                    "borg info exhausted retries, skipping archive"
-                );
-                return Ok(None);
-            }
+        if (!is_lock_error(&stderr) && !is_ssh_connection_error(&stderr))
+            || attempt == LOCK_RETRY_MAX_ATTEMPTS
+        {
             warn!(
-                attempt,
-                max = LOCK_RETRY_MAX_ATTEMPTS,
-                repo_archive,
-                "borg info retryable error, retrying in {}s",
-                LOCK_RETRY_INTERVAL.as_secs()
-            );
-            tokio::time::sleep(LOCK_RETRY_INTERVAL).await;
-        } else {
-            warn!(
-                repo_archive,
+                borg_repo,
                 stderr = %stderr,
-                "borg info non-retryable error, skipping archive"
+                "borg info --glob-archives failed, archive stats will be unavailable"
             );
-            return Ok(None);
+            return Ok(HashMap::new());
         }
+        warn!(
+            attempt,
+            max = LOCK_RETRY_MAX_ATTEMPTS,
+            "borg info --glob-archives retryable error, retrying in {}s",
+            LOCK_RETRY_INTERVAL.as_secs()
+        );
+        tokio::time::sleep(LOCK_RETRY_INTERVAL).await;
     }
     unreachable!()
 }
@@ -1324,16 +1332,32 @@ pub async fn sync_existing_archives(
         return Ok((0, removed));
     }
 
-    const CONCURRENCY: usize = 8;
+    let total = archives.len();
+    ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
+        repo_id,
+        progress: 0,
+        total: total as i32,
+        message: Some(format!("Fetching stats for {total} archives\u{2026}")),
+    });
+
+    let archive_stats = run_borg_info_all_archives(&borg_repo, &env).await?;
+
+    ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
+        repo_id,
+        progress: 0,
+        total: total as i32,
+        message: Some(format!("Importing {total} archives\u{2026}")),
+    });
 
     let mut hostname_cache: HashMap<String, (i64, bool)> = HashMap::new();
-    let mut archive_clients = Vec::with_capacity(archives.len());
-    for archive in &archives {
+    let mut report_params = Vec::with_capacity(archives.len());
+    for (processed, archive) in archives.iter().enumerate() {
         let name = archive["name"].as_str().unwrap_or_default();
         let hostname = archive["hostname"].as_str().unwrap_or("unknown");
         if name.is_empty() {
             continue;
         }
+
         let (client_id, matched) = if let Some(&cached) = hostname_cache.get(hostname) {
             cached
         } else {
@@ -1349,203 +1373,82 @@ pub async fn sync_existing_archives(
             hostname_cache.insert(hostname.to_string(), entry);
             entry
         };
-        let list_start = parse_borg_timestamp(archive["start"].as_str().unwrap_or_default());
-        let list_end = parse_borg_timestamp(archive["end"].as_str().unwrap_or_default());
-        archive_clients.push((
-            name.to_string(),
-            hostname.to_string(),
+
+        let (
+            started_at,
+            finished_at,
+            original_size,
+            compressed_size,
+            deduplicated_size,
+            files_processed,
+            duration_secs,
+        ) = if let Some(info) = archive_stats.get(name) {
+            let stats = &info["stats"];
+            #[allow(clippy::cast_possible_truncation)]
+            let dur = info["duration"].as_f64().unwrap_or(0.0) as i64;
+            let start = parse_borg_timestamp(info["start"].as_str().unwrap_or_default());
+            let end = parse_borg_timestamp(info["end"].as_str().unwrap_or_default());
+            (
+                start,
+                end,
+                stats["original_size"].as_i64().unwrap_or(0),
+                stats["compressed_size"].as_i64().unwrap_or(0),
+                stats["deduplicated_size"].as_i64().unwrap_or(0),
+                stats["nfiles"].as_i64().unwrap_or(0),
+                dur,
+            )
+        } else {
+            let start = parse_borg_timestamp(archive["start"].as_str().unwrap_or_default());
+            let end = parse_borg_timestamp(archive["end"].as_str().unwrap_or_default());
+            let dur = end
+                .zip(start)
+                .map_or(0, |(e, s)| e.signed_duration_since(s).num_seconds().max(0));
+            (start, end, 0, 0, 0, 0, dur)
+        };
+
+        let Some(started_at) = started_at else {
+            warn!(repo_id, archive = %name, "skipping archive with unparseable start timestamp");
+            continue;
+        };
+        let finished_at = finished_at.unwrap_or(started_at);
+
+        let processed_count = (processed + 1) as i32;
+        info!(repo_id, archive = %name, processed = processed_count, total, original_size, "archive imported");
+        ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
+            repo_id,
+            progress: processed_count,
+            total: total as i32,
+            message: Some(format!(
+                "Imported \u{2018}{name}\u{2019} ({processed_count}/{total}) \u{00b7} {}",
+                human_bytes(original_size)
+            )),
+        });
+
+        report_params.push(db::InsertReportParams {
             client_id,
+            repo_id,
+            started_at,
+            finished_at,
+            status: "success".to_string(),
+            original_size,
+            compressed_size,
+            deduplicated_size,
+            repo_unique_csize: 0,
+            files_processed,
+            duration_secs,
+            error_message: None,
+            warnings: vec![],
+            borg_version: None,
             matched,
-            list_start,
-            list_end,
-        ));
+            archive_name: Some(name.to_string()),
+            borg_command: None,
+        });
     }
-
-    let needs_full_info: std::collections::HashSet<String> = archive_clients
-        .iter()
-        .filter_map(|(name, hostname, _, _, started_at, _)| {
-            started_at.map(|t| (hostname.as_str(), name.as_str(), t))
-        })
-        .fold(
-            HashMap::<&str, (&str, DateTime<chrono::Utc>)>::new(),
-            |mut map, (hostname, name, t)| {
-                let entry = map.entry(hostname).or_insert((name, t));
-                if t > entry.1 {
-                    *entry = (name, t);
-                }
-                map
-            },
-        )
-        .into_values()
-        .map(|(name, _)| name.to_string())
-        .collect();
-
-    let total = archive_clients.len();
-    ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
-        repo_id,
-        progress: 0,
-        total: total as i32,
-        message: Some(format!("Importing {total} archives\u{2026}")),
-    });
-
-    let (report_params, _skipped) = stream::iter(archive_clients)
-        .map(
-            |(name, hostname, client_id, matched, list_started_at, list_finished_at)| {
-                let borg_repo = &borg_repo;
-                let env = &env;
-                let needs_full_info = &needs_full_info;
-                async move {
-                    if !needs_full_info.contains(&name)
-                        && let Some(started_at) = list_started_at
-                    {
-                        let finished_at = list_finished_at.unwrap_or(started_at);
-                        let duration_secs = finished_at
-                            .signed_duration_since(started_at)
-                            .num_seconds()
-                            .max(0);
-                        let params = db::InsertReportParams {
-                            client_id,
-                            repo_id,
-                            started_at,
-                            finished_at,
-                            status: "success".to_string(),
-                            original_size: 0,
-                            compressed_size: 0,
-                            deduplicated_size: 0,
-                            repo_unique_csize: 0,
-                            files_processed: 0,
-                            duration_secs,
-                            error_message: None,
-                            warnings: vec![],
-                            borg_version: None,
-                            matched,
-                            archive_name: Some(name.clone()),
-                        };
-                        return (Some(params), name);
-                    }
-                    info!(repo_id, archive = %name, %hostname, "fetching borg archive info");
-                    ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
-                        repo_id,
-                        progress: 0,
-                        total: total as i32,
-                        message: Some(format!("Querying borg for \u{2018}{name}\u{2019}\u{2026}")),
-                    });
-                    let repo_archive = format!("{borg_repo}::{name}");
-                    let info_output =
-                        match run_borg_archive_info_with_retry(&repo_archive, env).await {
-                            Ok(Some(output)) => output,
-                            Ok(None) => {
-                                return (None, name);
-                            }
-                            Err(e) => {
-                                warn!(archive = %name, error = %e, "borg info error, skipping");
-                                return (None, name);
-                            }
-                        };
-
-                    let info_json: serde_json::Value =
-                        match serde_json::from_slice(&info_output.stdout) {
-                            Ok(v) => v,
-                            Err(e) => {
-                                warn!(
-                                    archive = %name,
-                                    error = %e,
-                                    "failed to parse borg info output"
-                                );
-                                return (None, name);
-                            }
-                        };
-
-                    let Some(archive_info) =
-                        info_json["archives"].as_array().and_then(|a| a.first())
-                    else {
-                        return (None, name);
-                    };
-
-                    let stats = &archive_info["stats"];
-                    let start_str = archive_info["start"].as_str().unwrap_or_default();
-                    let end_str = archive_info["end"].as_str().unwrap_or_default();
-                    let duration = archive_info["duration"].as_f64().unwrap_or(0.0);
-
-                    let Some(started_at) = parse_borg_timestamp(start_str) else {
-                        return (None, name);
-                    };
-                    let Some(finished_at) = parse_borg_timestamp(end_str) else {
-                        return (None, name);
-                    };
-
-                    #[allow(clippy::cast_possible_truncation)]
-                    let params = db::InsertReportParams {
-                        client_id,
-                        repo_id,
-                        started_at,
-                        finished_at,
-                        status: "success".to_string(),
-                        original_size: stats["original_size"].as_i64().unwrap_or(0),
-                        compressed_size: stats["compressed_size"].as_i64().unwrap_or(0),
-                        deduplicated_size: stats["deduplicated_size"].as_i64().unwrap_or(0),
-                        repo_unique_csize: 0,
-                        files_processed: stats["nfiles"].as_i64().unwrap_or(0),
-                        duration_secs: duration as i64,
-                        error_message: None,
-                        warnings: vec![],
-                        borg_version: None,
-                        matched,
-                        archive_name: Some(name.to_string()),
-                    };
-
-                    (Some(params), name)
-                }
-            },
-        )
-        .buffer_unordered(CONCURRENCY)
-        .fold(
-            (Vec::<db::InsertReportParams>::with_capacity(total), 0u64),
-            |(mut params, skipped), (opt_params, archive_name)| async move {
-                let original_size = opt_params.as_ref().map_or(0, |p| p.original_size);
-                let (new_params, new_skipped) = match opt_params {
-                    None => {
-                        warn!(repo_id, %archive_name, "archive skipped (borg info unavailable)");
-                        (params, skipped + 1)
-                    }
-                    Some(p) => {
-                        params.push(p);
-                        (params, skipped)
-                    }
-                };
-                let processed = new_params.len() as u64 + new_skipped;
-                info!(
-                    repo_id,
-                    archive = %archive_name,
-                    processed,
-                    total,
-                    original_size,
-                    "archive fetched"
-                );
-                ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
-                    repo_id,
-                    progress: processed as i32,
-                    total: total as i32,
-                    message: Some(format!(
-                        "Fetched \u{2018}{archive_name}\u{2019} ({processed}/{total}) \u{00b7} {}",
-                        human_bytes(original_size)
-                    )),
-                });
-                (new_params, new_skipped)
-            },
-        )
-        .await;
 
     let imported = report_params.len() as u64;
     db::bulk_insert_backup_reports(pool, &report_params).await?;
     refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, borg_names.len() as i64).await;
-    info!(
-        repo_id,
-        imported,
-        skipped = _skipped,
-        total,
-        "synced existing archives"
-    );
+    info!(repo_id, imported, total, "synced existing archives");
     Ok((imported, removed))
 }
 
@@ -1604,16 +1507,32 @@ pub async fn sync_new_archives(
         return Ok((0, removed));
     }
 
-    const CONCURRENCY: usize = 8;
+    let total = new_archives.len();
+    ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
+        repo_id,
+        progress: 0,
+        total: total as i32,
+        message: Some(format!("Fetching stats for {total} new archives\u{2026}")),
+    });
+
+    let archive_stats = run_borg_info_all_archives(&borg_repo, &env).await?;
+
+    ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
+        repo_id,
+        progress: 0,
+        total: total as i32,
+        message: Some(format!("Importing {total} archives\u{2026}")),
+    });
 
     let mut hostname_cache: HashMap<String, (i64, bool)> = HashMap::new();
-    let mut archive_clients = Vec::with_capacity(new_archives.len());
-    for archive in &new_archives {
+    let mut report_params = Vec::with_capacity(new_archives.len());
+    for (processed, archive) in new_archives.iter().enumerate() {
         let name = archive["name"].as_str().unwrap_or_default();
         let hostname = archive["hostname"].as_str().unwrap_or("unknown");
         if name.is_empty() {
             continue;
         }
+
         let (client_id, matched) = if let Some(&cached) = hostname_cache.get(hostname) {
             cached
         } else {
@@ -1629,192 +1548,77 @@ pub async fn sync_new_archives(
             hostname_cache.insert(hostname.to_string(), entry);
             entry
         };
-        let list_start = parse_borg_timestamp(archive["start"].as_str().unwrap_or_default());
-        let list_end = parse_borg_timestamp(archive["end"].as_str().unwrap_or_default());
-        archive_clients.push((
-            name.to_string(),
-            hostname.to_string(),
+
+        let (
+            started_at,
+            finished_at,
+            original_size,
+            compressed_size,
+            deduplicated_size,
+            files_processed,
+            duration_secs,
+        ) = if let Some(info) = archive_stats.get(name) {
+            let stats = &info["stats"];
+            #[allow(clippy::cast_possible_truncation)]
+            let dur = info["duration"].as_f64().unwrap_or(0.0) as i64;
+            let start = parse_borg_timestamp(info["start"].as_str().unwrap_or_default());
+            let end = parse_borg_timestamp(info["end"].as_str().unwrap_or_default());
+            (
+                start,
+                end,
+                stats["original_size"].as_i64().unwrap_or(0),
+                stats["compressed_size"].as_i64().unwrap_or(0),
+                stats["deduplicated_size"].as_i64().unwrap_or(0),
+                stats["nfiles"].as_i64().unwrap_or(0),
+                dur,
+            )
+        } else {
+            let start = parse_borg_timestamp(archive["start"].as_str().unwrap_or_default());
+            let end = parse_borg_timestamp(archive["end"].as_str().unwrap_or_default());
+            let dur = end
+                .zip(start)
+                .map_or(0, |(e, s)| e.signed_duration_since(s).num_seconds().max(0));
+            (start, end, 0, 0, 0, 0, dur)
+        };
+
+        let Some(started_at) = started_at else {
+            warn!(repo_id, archive = %name, "skipping archive with unparseable start timestamp");
+            continue;
+        };
+        let finished_at = finished_at.unwrap_or(started_at);
+
+        let processed_count = (processed + 1) as i32;
+        info!(repo_id, archive = %name, processed = processed_count, total, original_size, "archive imported");
+        ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
+            repo_id,
+            progress: processed_count,
+            total: total as i32,
+            message: Some(format!(
+                "Imported \u{2018}{name}\u{2019} ({processed_count}/{total}) \u{00b7} {}",
+                human_bytes(original_size)
+            )),
+        });
+
+        report_params.push(db::InsertReportParams {
             client_id,
+            repo_id,
+            started_at,
+            finished_at,
+            status: "success".to_string(),
+            original_size,
+            compressed_size,
+            deduplicated_size,
+            repo_unique_csize: 0,
+            files_processed,
+            duration_secs,
+            error_message: None,
+            warnings: vec![],
+            borg_version: None,
             matched,
-            list_start,
-            list_end,
-        ));
+            archive_name: Some(name.to_string()),
+            borg_command: None,
+        });
     }
-
-    let needs_full_info: std::collections::HashSet<String> = archive_clients
-        .iter()
-        .filter_map(|(name, hostname, _, _, started_at, _)| {
-            started_at.map(|t| (hostname.as_str(), name.as_str(), t))
-        })
-        .fold(
-            HashMap::<&str, (&str, DateTime<chrono::Utc>)>::new(),
-            |mut map, (hostname, name, t)| {
-                let entry = map.entry(hostname).or_insert((name, t));
-                if t > entry.1 {
-                    *entry = (name, t);
-                }
-                map
-            },
-        )
-        .into_values()
-        .map(|(name, _)| name.to_string())
-        .collect();
-
-    let total = archive_clients.len();
-    ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
-        repo_id,
-        progress: 0,
-        total: total as i32,
-        message: Some(format!("Importing {total} archives\u{2026}")),
-    });
-
-    let (report_params, _skipped) = stream::iter(archive_clients)
-        .map(
-            |(name, hostname, client_id, matched, list_started_at, list_finished_at)| {
-                let borg_repo = &borg_repo;
-                let env = &env;
-                let needs_full_info = &needs_full_info;
-                async move {
-                    if !needs_full_info.contains(&name)
-                        && let Some(started_at) = list_started_at
-                    {
-                        let finished_at = list_finished_at.unwrap_or(started_at);
-                        let duration_secs = finished_at
-                            .signed_duration_since(started_at)
-                            .num_seconds()
-                            .max(0);
-                        let params = db::InsertReportParams {
-                            client_id,
-                            repo_id,
-                            started_at,
-                            finished_at,
-                            status: "success".to_string(),
-                            original_size: 0,
-                            compressed_size: 0,
-                            deduplicated_size: 0,
-                            repo_unique_csize: 0,
-                            files_processed: 0,
-                            duration_secs,
-                            error_message: None,
-                            warnings: vec![],
-                            borg_version: None,
-                            matched,
-                            archive_name: Some(name.clone()),
-                        };
-                        return (Some(params), name);
-                    }
-                    info!(repo_id, archive = %name, %hostname, "fetching borg archive info");
-                    ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
-                        repo_id,
-                        progress: 0,
-                        total: total as i32,
-                        message: Some(format!("Querying borg for \u{2018}{name}\u{2019}\u{2026}")),
-                    });
-                    let repo_archive = format!("{borg_repo}::{name}");
-                    let info_output =
-                        match run_borg_archive_info_with_retry(&repo_archive, env).await {
-                            Ok(Some(output)) => output,
-                            Ok(None) => {
-                                return (None, name);
-                            }
-                            Err(e) => {
-                                warn!(archive = %name, error = %e, "borg info error, skipping");
-                                return (None, name);
-                            }
-                        };
-
-                    let info_json: serde_json::Value =
-                        match serde_json::from_slice(&info_output.stdout) {
-                            Ok(v) => v,
-                            Err(e) => {
-                                warn!(
-                                    archive = %name,
-                                    error = %e,
-                                    "failed to parse borg info output"
-                                );
-                                return (None, name);
-                            }
-                        };
-
-                    let Some(archive_info) =
-                        info_json["archives"].as_array().and_then(|a| a.first())
-                    else {
-                        return (None, name);
-                    };
-
-                    let stats = &archive_info["stats"];
-                    let start_str = archive_info["start"].as_str().unwrap_or_default();
-                    let end_str = archive_info["end"].as_str().unwrap_or_default();
-                    let duration = archive_info["duration"].as_f64().unwrap_or(0.0);
-
-                    let Some(started_at) = parse_borg_timestamp(start_str) else {
-                        return (None, name);
-                    };
-                    let Some(finished_at) = parse_borg_timestamp(end_str) else {
-                        return (None, name);
-                    };
-
-                    #[allow(clippy::cast_possible_truncation)]
-                    let params = db::InsertReportParams {
-                        client_id,
-                        repo_id,
-                        started_at,
-                        finished_at,
-                        status: "success".to_string(),
-                        original_size: stats["original_size"].as_i64().unwrap_or(0),
-                        compressed_size: stats["compressed_size"].as_i64().unwrap_or(0),
-                        deduplicated_size: stats["deduplicated_size"].as_i64().unwrap_or(0),
-                        repo_unique_csize: 0,
-                        files_processed: stats["nfiles"].as_i64().unwrap_or(0),
-                        duration_secs: duration as i64,
-                        error_message: None,
-                        warnings: vec![],
-                        borg_version: None,
-                        matched,
-                        archive_name: Some(name.to_string()),
-                    };
-
-                    (Some(params), name)
-                }
-            },
-        )
-        .buffer_unordered(CONCURRENCY)
-        .fold(
-            (Vec::<db::InsertReportParams>::with_capacity(total), 0u64),
-            |(mut params, skipped), (opt_params, archive_name)| async move {
-                let original_size = opt_params.as_ref().map_or(0, |p| p.original_size);
-                let (new_params, new_skipped) = match opt_params {
-                    None => {
-                        warn!(repo_id, %archive_name, "archive skipped (borg info unavailable)");
-                        (params, skipped + 1)
-                    }
-                    Some(p) => {
-                        params.push(p);
-                        (params, skipped)
-                    }
-                };
-                let processed = new_params.len() as u64 + new_skipped;
-                info!(
-                    repo_id,
-                    archive = %archive_name,
-                    processed,
-                    total,
-                    original_size,
-                    "archive fetched"
-                );
-                ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
-                    repo_id,
-                    progress: processed as i32,
-                    total: total as i32,
-                    message: Some(format!(
-                        "Fetched \u{2018}{archive_name}\u{2019} ({processed}/{total}) \u{00b7} {}",
-                        human_bytes(original_size)
-                    )),
-                });
-                (new_params, new_skipped)
-            },
-        )
-        .await;
 
     let added = report_params.len() as u64;
     db::bulk_insert_backup_reports(pool, &report_params).await?;

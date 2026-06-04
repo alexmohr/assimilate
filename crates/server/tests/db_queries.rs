@@ -1125,6 +1125,7 @@ async fn insert_test_report(pool: &PgPool, client_id: i64, repo_id: i64) {
             borg_version: Some("1.4.0".to_string()),
             matched: true,
             archive_name: None,
+            borg_command: None,
         },
     )
     .await
@@ -1200,6 +1201,7 @@ async fn backup_report_with_warnings(pool: PgPool) {
             borg_version: None,
             matched: true,
             archive_name: Some("test-archive".to_string()),
+            borg_command: None,
         },
     )
     .await
@@ -2791,6 +2793,7 @@ async fn test_mark_client_reports_matched(pool: PgPool) {
             borg_version: Some("1.4.0".to_string()),
             matched: false,
             archive_name: None,
+            borg_command: None,
         },
     )
     .await
@@ -2876,6 +2879,7 @@ async fn get_archives_for_client_across_multiple_repos(pool: PgPool) {
             borg_version: Some("1.4.0".to_string()),
             matched: true,
             archive_name: Some("primary-host-2026-01-01T10:00:00".to_string()),
+            borg_command: None,
         },
     )
     .await
@@ -2899,6 +2903,7 @@ async fn get_archives_for_client_across_multiple_repos(pool: PgPool) {
             borg_version: Some("1.4.0".to_string()),
             matched: true,
             archive_name: Some("primary-host-2026-01-02T10:00:00".to_string()),
+            borg_command: None,
         },
     )
     .await
@@ -2923,6 +2928,7 @@ async fn get_archives_for_client_across_multiple_repos(pool: PgPool) {
             borg_version: Some("1.4.0".to_string()),
             matched: true,
             archive_name: Some("primary-host-2026-01-03T10:00:00".to_string()),
+            borg_command: None,
         },
     )
     .await
@@ -2947,6 +2953,7 @@ async fn get_archives_for_client_across_multiple_repos(pool: PgPool) {
             borg_version: Some("1.4.0".to_string()),
             matched: true,
             archive_name: None,
+            borg_command: None,
         },
     )
     .await
@@ -3008,6 +3015,7 @@ async fn get_archives_for_client_includes_pattern_matched_archives(pool: PgPool)
             borg_version: Some("1.4.0".to_string()),
             matched: true,
             archive_name: Some("web-server-01-2026-01-01T10:00:00".to_string()),
+            borg_command: None,
         },
     )
     .await
@@ -3032,6 +3040,7 @@ async fn get_archives_for_client_includes_pattern_matched_archives(pool: PgPool)
             borg_version: Some("1.4.0".to_string()),
             matched: true,
             archive_name: Some("web-server-02-2026-01-01T10:00:00".to_string()),
+            borg_command: None,
         },
     )
     .await
@@ -3065,6 +3074,7 @@ async fn get_archives_for_client_includes_pattern_matched_archives(pool: PgPool)
             borg_version: Some("1.4.0".to_string()),
             matched: false,
             archive_name: Some("web-server-legacy-2026-01-01T10:00:00".to_string()),
+            borg_command: None,
         },
     )
     .await
@@ -3158,6 +3168,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
             borg_version: Some("1.4.0".to_string()),
             matched: true,
             archive_name: Some("db-server-01-daily-2026-01-01".to_string()),
+            borg_command: None,
         },
     )
     .await
@@ -3181,6 +3192,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
             borg_version: Some("1.4.0".to_string()),
             matched: true,
             archive_name: Some("db-server-01-weekly-2026-01-01".to_string()),
+            borg_command: None,
         },
     )
     .await
@@ -3214,6 +3226,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
             borg_version: Some("1.4.0".to_string()),
             matched: false,
             archive_name: Some("db-server-02-daily-2026-01-01".to_string()),
+            borg_command: None,
         },
     )
     .await
@@ -3247,6 +3260,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
             borg_version: Some("1.4.0".to_string()),
             matched: false,
             archive_name: Some("db-server-staging-weekly-2026-01-01".to_string()),
+            borg_command: None,
         },
     )
     .await
@@ -3280,6 +3294,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
             borg_version: Some("1.4.0".to_string()),
             matched: false,
             archive_name: Some("app-server-01-daily-2026-01-01".to_string()),
+            borg_command: None,
         },
     )
     .await
@@ -3465,6 +3480,7 @@ async fn bulk_insert_backup_reports_basic(pool: PgPool) {
             borg_version: Some("1.4.0".to_string()),
             matched: true,
             archive_name: Some("bulk-archive-1".to_string()),
+            borg_command: None,
         },
         InsertReportParams {
             client_id: client.id,
@@ -3483,6 +3499,7 @@ async fn bulk_insert_backup_reports_basic(pool: PgPool) {
             borg_version: None,
             matched: false,
             archive_name: Some("bulk-archive-2".to_string()),
+            borg_command: None,
         },
     ];
 
@@ -3523,6 +3540,7 @@ async fn bulk_insert_backup_reports_conflict_skipped(pool: PgPool) {
         borg_version: None,
         matched: true,
         archive_name: Some("dup-archive".to_string()),
+        borg_command: None,
     };
 
     db::bulk_insert_backup_reports(&pool, std::slice::from_ref(&param))
@@ -4007,6 +4025,7 @@ async fn archive_names_and_delete_test(pool: PgPool) {
             borg_version: None,
             matched: true,
             archive_name: Some("archive-2026-01-01".to_string()),
+            borg_command: None,
         },
     )
     .await
@@ -4031,6 +4050,7 @@ async fn archive_names_and_delete_test(pool: PgPool) {
             borg_version: None,
             matched: true,
             archive_name: Some("archive-2026-01-02".to_string()),
+            borg_command: None,
         },
     )
     .await
@@ -4088,6 +4108,7 @@ async fn delete_backup_reports_before_test(pool: PgPool) {
             borg_version: None,
             matched: true,
             archive_name: None,
+            borg_command: None,
         },
     )
     .await

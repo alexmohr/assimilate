@@ -648,6 +648,7 @@ fn make_failed_report(
         warnings: Vec::new(),
         borg_version: None,
         archive_name: None,
+        borg_command: None,
     }
 }
 
@@ -661,9 +662,11 @@ async fn run_backup_task(
     outbound_tx: &mpsc::Sender<AgentToServer>,
 ) {
     let started_at = Utc::now();
+    let borg_command = BackupEngine::preview_create_command(&target);
     let started_msg = AgentToServer::BackupStarted {
         repo_id,
         started_at,
+        borg_command: Some(borg_command),
     };
     if let Err(e) = outbound_tx.send(started_msg).await {
         tracing::debug!(error = %e, "outbound send failed");
@@ -703,6 +706,7 @@ async fn run_backup_task(
                 warnings: result.warnings,
                 borg_version: None,
                 archive_name: result.archive_name,
+                borg_command: result.borg_command,
             };
             (report, true)
         }

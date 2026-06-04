@@ -27,6 +27,7 @@ function statusColor(entry: HealthEntry): string {
   if (entry.is_overdue) return 'var(--danger)'
   if (entry.last_status === 'success') return 'var(--success)'
   if (entry.last_status === 'warning') return 'var(--warning)'
+  if (entry.last_status === 'started') return 'var(--info)'
   return 'var(--danger)'
 }
 </script>

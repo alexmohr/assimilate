@@ -304,17 +304,16 @@ onMounted(() => {
     </aside>
 
     <main class="content">
-      <RouterView v-slot="{ Component: RouteComponent }">
-        <Transition
-          name="page"
-          mode="out-in"
-        >
-          <component
-            :is="RouteComponent"
-            :key="route.path"
-          />
-        </Transition>
-      </RouterView>
+      <div class="page-wrapper">
+        <RouterView v-slot="{ Component: RouteComponent }">
+          <Transition name="page">
+            <component
+              :is="RouteComponent"
+              :key="route.path"
+            />
+          </Transition>
+        </RouterView>
+      </div>
     </main>
 
     <BackendUnreachable />
@@ -805,9 +804,19 @@ onMounted(() => {
   }
 }
 
+.page-wrapper {
+  position: relative;
+}
+
 .page-enter-active,
 .page-leave-active {
   transition: opacity 0.15s ease;
+}
+
+.page-leave-active {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 
 .page-enter-from,

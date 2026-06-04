@@ -23,7 +23,7 @@ fn log_run_result(
                 let stderr = String::from_utf8_lossy(&out.stderr);
                 tracing::warn!(subcommand, exit_code, elapsed_ms, %stderr, "borg: non-zero exit");
             } else {
-                tracing::debug!(subcommand, exit_code, elapsed_ms, "borg: done");
+                tracing::info!(subcommand, exit_code, elapsed_ms, "borg: done");
             }
         }
         Err(e) => tracing::error!(subcommand, error = %e, "borg: failed to spawn"),
@@ -63,7 +63,7 @@ impl Borg {
             .first()
             .map(|a| a.as_ref().to_string_lossy().into_owned())
             .unwrap_or_else(|| "<none>".to_owned());
-        tracing::debug!(subcommand, "borg: starting");
+        tracing::info!(subcommand, "borg: starting");
         let start = Instant::now();
         let result = Command::new(&self.binary)
             .args(args)
@@ -87,7 +87,7 @@ impl Borg {
             .first()
             .map(|a| a.as_ref().to_string_lossy().into_owned())
             .unwrap_or_else(|| "<none>".to_owned());
-        tracing::debug!(subcommand, "borg: spawning");
+        tracing::info!(subcommand, "borg: spawning");
         Command::new(&self.binary)
             .args(args)
             .envs(env)
@@ -107,7 +107,7 @@ impl Borg {
             .first()
             .map(|a| a.as_ref().to_string_lossy().into_owned())
             .unwrap_or_else(|| "<none>".to_owned());
-        tracing::debug!(subcommand, "borg: spawning");
+        tracing::info!(subcommand, "borg: spawning");
         Command::new(&self.binary)
             .args(args)
             .envs(env)

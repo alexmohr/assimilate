@@ -70,6 +70,7 @@ pub struct CreateScheduleRequest {
 pub struct UpdateScheduleRequest {
     pub name: Option<String>,
     pub cron_expression: String,
+    pub repo_id: Option<i64>,
     pub enabled: Option<bool>,
     pub canary_enabled: Option<bool>,
     pub exclude_patterns_raw: Option<String>,
@@ -342,6 +343,13 @@ pub async fn update_schedule(
         p.can_modify_schedules
     })
     .await?;
+    let effective_repo_id = req.repo_id.unwrap_or(existing.repo_id);
+    if effective_repo_id != existing.repo_id {
+        check_repo_permission(&state.pool, &auth, effective_repo_id, |p| {
+            p.can_modify_schedules
+        })
+        .await?;
+    }
     validate_cron(&req.cron_expression)
         .map_err(|e| ApiError::BadRequest(format!("invalid cron expression: {e}")))?;
     let exclude_patterns_raw = req
@@ -349,7 +357,7 @@ pub async fn update_schedule(
         .unwrap_or_else(|| existing.exclude_patterns_raw.clone());
     let enabled = req.enabled.unwrap_or(true);
     if enabled {
-        let repo = db::get_repo_connection(&state.pool, existing.repo_id).await?;
+        let repo = db::get_repo_connection(&state.pool, effective_repo_id).await?;
         let ssh_port = u16::try_from(repo.ssh_port).map_err(|_| {
             ApiError::Unprocessable("Cannot reach repository: invalid SSH port".into())
         })?;
@@ -413,6 +421,9 @@ pub async fn update_schedule(
         on_failure: &on_failure,
     };
 
+    if effective_repo_id != existing.repo_id {
+        db::update_schedule_repo(&state.pool, id, effective_repo_id).await?;
+    }
     let schedule = db::update_schedule(&state.pool, id, &params).await?;
 
     if let Some(client_ids) = &req.client_ids {

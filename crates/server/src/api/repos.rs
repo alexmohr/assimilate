@@ -179,10 +179,13 @@ pub async fn create_repo(
     );
 
     let info_timeout = Duration::from_secs(30);
-    let info_result = tokio::time::timeout(info_timeout, run_borg_info(&repo_url, &req.passphrase))
-        .await
-        .ok()
-        .transpose()?;
+    let info_result: Option<BorgInfoResult> =
+        match tokio::time::timeout(info_timeout, run_borg_info(&repo_url, &req.passphrase)).await {
+            Err(_) => None,
+            Ok(Ok(info)) => Some(info),
+            Ok(Err(ApiError::BadGateway(ref msg))) if is_lock_error(msg) => None,
+            Ok(Err(e)) => return Err(e),
+        };
 
     let encryption = info_result
         .as_ref()

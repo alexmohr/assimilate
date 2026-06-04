@@ -23,6 +23,7 @@ pub enum ExecutorCommand {
     UpdateConfig(AgentConfig),
     RunNow {
         repo_id: RepoId,
+        schedule_id: Option<i64>,
     },
     RunCheckNow {
         repo_id: RepoId,
@@ -91,8 +92,12 @@ impl Executor {
                     info!("Config updated: {} repos configured", config.repos.len());
                     *self.current_config.lock().await = Some(config);
                 }
-                ExecutorCommand::RunNow { repo_id } => {
-                    self.handle_run_now(repo_id, &outbound_tx).await;
+                ExecutorCommand::RunNow {
+                    repo_id,
+                    schedule_id,
+                } => {
+                    self.handle_run_now(repo_id, schedule_id, &outbound_tx)
+                        .await;
                 }
                 ExecutorCommand::RunCheckNow { repo_id } => {
                     self.handle_run_check(repo_id, &outbound_tx).await;
@@ -156,7 +161,12 @@ impl Executor {
         }
     }
 
-    async fn handle_run_now(&self, repo_id: RepoId, outbound_tx: &mpsc::Sender<AgentToServer>) {
+    async fn handle_run_now(
+        &self,
+        repo_id: RepoId,
+        schedule_id: Option<i64>,
+        outbound_tx: &mpsc::Sender<AgentToServer>,
+    ) {
         {
             let mut active = self.active_repos.lock().await;
             if !active.insert(repo_id) {
@@ -199,7 +209,7 @@ impl Executor {
             return;
         };
 
-        let target = backup_target_from_repo(repo, &config.client_hostname);
+        let target = backup_target_from_repo(repo, &config.client_hostname, schedule_id);
         let hostname = config.client_hostname.clone();
         drop(config_guard);
 
@@ -236,7 +246,7 @@ impl Executor {
             return;
         };
 
-        let target = backup_target_from_repo(repo, &config.client_hostname);
+        let target = backup_target_from_repo(repo, &config.client_hostname, None);
         let hostname = config.client_hostname.clone();
         drop(config_guard);
 
@@ -271,7 +281,7 @@ impl Executor {
             return;
         };
 
-        let target = backup_target_from_repo(repo, &config.client_hostname);
+        let target = backup_target_from_repo(repo, &config.client_hostname, None);
         let hostname = config.client_hostname.clone();
         drop(config_guard);
 
@@ -400,7 +410,7 @@ impl Executor {
 
         let backup_sources = schedule.backup_sources.clone();
         let exclude_patterns = schedule.exclude_patterns.clone();
-        let target = backup_target_from_repo(repo, &config.client_hostname);
+        let target = backup_target_from_repo(repo, &config.client_hostname, Some(schedule_id));
         let hostname = config.client_hostname.clone();
         drop(config_guard);
 
@@ -461,7 +471,7 @@ impl Executor {
             return;
         };
 
-        let target = backup_target_from_repo(repo, &config.client_hostname);
+        let target = backup_target_from_repo(repo, &config.client_hostname, None);
         let hostname = config.client_hostname.clone();
         drop(config_guard);
 
@@ -520,7 +530,7 @@ impl Executor {
             return;
         };
 
-        let target = backup_target_from_repo(repo, &config.client_hostname);
+        let target = backup_target_from_repo(repo, &config.client_hostname, None);
         let hostname = config.client_hostname.clone();
         drop(config_guard);
 
@@ -775,8 +785,14 @@ async fn run_canary_verification(
     }
 }
 
-pub fn backup_target_from_repo(repo: &RepoConfig, hostname: &str) -> BackupTarget {
-    let schedule = repo.schedules.first();
+pub fn backup_target_from_repo(
+    repo: &RepoConfig,
+    hostname: &str,
+    schedule_id: Option<i64>,
+) -> BackupTarget {
+    let schedule = schedule_id
+        .and_then(|id| repo.schedules.iter().find(|s| s.id == id))
+        .or_else(|| repo.schedules.first());
     BackupTarget {
         target_name: repo.name.clone(),
         repo_path: repo.repo_path.clone(),
@@ -1377,5 +1393,72 @@ mod tests {
 
         assert!(files.is_empty());
         assert_eq!(total_size, 0);
+    }
+
+    fn make_schedule(id: i64, sources: Vec<&str>) -> shared::types::ScheduleConfig {
+        shared::types::ScheduleConfig {
+            id,
+            schedule_type: shared::types::ScheduleType::Backup,
+            cron_expression: "0 3 * * *".to_owned(),
+            enabled: true,
+            backup_sources: sources.into_iter().map(str::to_owned).collect(),
+            rate_limit_kbps: None,
+            canary_enabled: false,
+            exclude_patterns: Vec::new(),
+            ignore_global_excludes: false,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 0,
+            compact_enabled: true,
+            pre_backup_commands: Vec::new(),
+            post_backup_commands: Vec::new(),
+        }
+    }
+
+    fn make_repo(schedules: Vec<shared::types::ScheduleConfig>) -> shared::types::RepoConfig {
+        shared::types::RepoConfig {
+            repo_id: shared::types::RepoId(1),
+            name: "test-repo".to_owned(),
+            repo_path: "/backup/test".to_owned(),
+            ssh_user: "borg".to_owned(),
+            ssh_host: "backup.example.com".to_owned(),
+            ssh_port: 22,
+            passphrase: "secret".to_owned(),
+            compression: shared::types::Compression::Lz4,
+            enabled: true,
+            accept_relocation: false,
+            schedules,
+        }
+    }
+
+    #[test]
+    fn backup_target_uses_first_schedule_when_no_id_given() {
+        let repo = make_repo(vec![
+            make_schedule(10, vec!["/var"]),
+            make_schedule(20, vec!["/home"]),
+        ]);
+        let target = backup_target_from_repo(&repo, "hostname", None);
+        assert_eq!(target.backup_sources, vec!["/var"]);
+    }
+
+    #[test]
+    fn backup_target_uses_specified_schedule_id() {
+        let repo = make_repo(vec![
+            make_schedule(10, vec!["/var"]),
+            make_schedule(20, vec!["/home"]),
+        ]);
+        let target = backup_target_from_repo(&repo, "hostname", Some(20));
+        assert_eq!(target.backup_sources, vec!["/home"]);
+    }
+
+    #[test]
+    fn backup_target_falls_back_to_first_when_id_not_found() {
+        let repo = make_repo(vec![
+            make_schedule(10, vec!["/var"]),
+            make_schedule(20, vec!["/home"]),
+        ]);
+        let target = backup_target_from_repo(&repo, "hostname", Some(99));
+        assert_eq!(target.backup_sources, vec!["/var"]);
     }
 }

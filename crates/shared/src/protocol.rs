@@ -15,6 +15,8 @@ pub enum ServerToAgent {
     RunBackupNow {
         repo_id: RepoId,
         #[serde(default)]
+        schedule_id: Option<i64>,
+        #[serde(default)]
         request_id: Option<String>,
     },
     RunCheckNow {
@@ -390,6 +392,7 @@ mod tests {
     fn server_to_agent_run_backup_now_with_request_id_round_trips() {
         let msg = ServerToAgent::RunBackupNow {
             repo_id: RepoId(1),
+            schedule_id: Some(42),
             request_id: Some("req-8".into()),
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -406,6 +409,36 @@ mod tests {
         let msg2: ServerToAgent = serde_json::from_str(&json2).unwrap();
         let json3 = serde_json::to_string(&msg2).unwrap();
         assert_eq!(json2, json3);
+    }
+
+    #[test]
+    fn server_to_agent_run_backup_now_with_schedule_id_round_trips() {
+        let msg = ServerToAgent::RunBackupNow {
+            repo_id: RepoId(1),
+            schedule_id: Some(7),
+            request_id: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn server_to_agent_run_backup_now_without_schedule_id_backward_compat() {
+        let json = r#"{"type":"RunBackupNow","payload":{"repo_id":5}}"#;
+        let msg: ServerToAgent = serde_json::from_str(json).unwrap();
+        match msg {
+            ServerToAgent::RunBackupNow {
+                repo_id,
+                schedule_id,
+                ..
+            } => {
+                assert_eq!(repo_id.0, 5);
+                assert!(schedule_id.is_none());
+            }
+            other => panic!("unexpected variant: {other:?}"),
+        }
     }
 
     #[test]

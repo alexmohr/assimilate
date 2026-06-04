@@ -593,6 +593,7 @@ pub async fn run_schedule_now(
             },
             ScheduleType::Backup => ServerToAgent::RunBackupNow {
                 repo_id,
+                schedule_id: Some(id),
                 request_id: None,
             },
         };

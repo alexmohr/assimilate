@@ -287,6 +287,7 @@ async fn main() -> Result<(), StartupError> {
             "/api/repos/{repo_id}/break-lock",
             post(api::repos::break_lock),
         )
+        .route("/api/repos/{repo_id}/exec", post(api::repos::exec_borg))
         .route("/api/repos/{repo_id}/rescan", post(api::repos::rescan_repo))
         .route("/api/repos/{repo_id}/sync", post(api::repos::sync_repo))
         .route(

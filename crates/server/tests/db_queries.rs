@@ -758,6 +758,33 @@ async fn schedule_client_hostname(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn schedule_ids_for_hostname(pool: PgPool) {
+    let (_, _, schedule) = create_test_schedule(&pool).await;
+
+    let ids = db::get_schedule_ids_for_hostname(&pool, "sched-host")
+        .await
+        .unwrap();
+    assert_eq!(ids, vec![schedule.id]);
+
+    let ids_unknown = db::get_schedule_ids_for_hostname(&pool, "no-such-host")
+        .await
+        .unwrap();
+    assert!(ids_unknown.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_is_running_default_false(pool: PgPool) {
+    let (_, _, schedule) = create_test_schedule(&pool).await;
+
+    let fetched = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
+    assert!(!fetched.is_running);
+
+    let all = db::list_schedules(&pool).await.unwrap();
+    assert_eq!(all.len(), 1);
+    assert!(!all[0].is_running);
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn backup_sources_crud(pool: PgPool) {
     let (_, _, schedule) = create_test_schedule(&pool).await;
 

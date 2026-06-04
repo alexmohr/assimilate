@@ -6,6 +6,10 @@ use std::{fmt, str::FromStr};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+fn default_keep_hourly() -> u32 {
+    24
+}
+
 pub fn build_repo_url(ssh_user: &str, ssh_host: &str, ssh_port: u16, repo_path: &str) -> String {
     format!(
         "ssh://{ssh_user}@{ssh_host}:{ssh_port}/{}",
@@ -369,6 +373,8 @@ pub struct ScheduleConfig {
     pub exclude_patterns: Vec<String>,
     #[serde(default)]
     pub ignore_global_excludes: bool,
+    #[serde(default = "default_keep_hourly")]
+    pub keep_hourly: u32,
     pub keep_daily: u32,
     pub keep_weekly: u32,
     pub keep_monthly: u32,

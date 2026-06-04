@@ -452,6 +452,7 @@ mod tests {
                 canary_enabled: false,
                 exclude_patterns_raw: "",
                 ignore_global_excludes: false,
+                keep_hourly: 24,
                 keep_daily: 7,
                 keep_weekly: 4,
                 keep_monthly: 6,

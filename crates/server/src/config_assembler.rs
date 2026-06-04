@@ -43,6 +43,12 @@ pub async fn assemble_config(
             }
         }
 
+        let keep_hourly = u32::try_from(schedule.keep_hourly).map_err(|_| {
+            ApiError::Internal(format!(
+                "keep_hourly {} out of u32 range",
+                schedule.keep_hourly
+            ))
+        })?;
         let keep_daily = u32::try_from(schedule.keep_daily).map_err(|_| {
             ApiError::Internal(format!(
                 "keep_daily {} out of u32 range",
@@ -108,6 +114,7 @@ pub async fn assemble_config(
             canary_enabled: schedule.canary_enabled,
             exclude_patterns,
             ignore_global_excludes: schedule.ignore_global_excludes,
+            keep_hourly,
             keep_daily,
             keep_weekly,
             keep_monthly,

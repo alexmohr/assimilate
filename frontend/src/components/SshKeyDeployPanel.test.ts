@@ -23,7 +23,9 @@ function mountPanel(props: Record<string, unknown> = {}): ReturnType<typeof moun
 }
 
 function deployBtn(wrapper: ReturnType<typeof mount>): ReturnType<typeof mount.prototype.find> {
-  return wrapper.findAll('button').find((b) => b.text().includes('Deploy')) ?? wrapper.find('button')
+  return (
+    wrapper.findAll('button').find((b) => b.text().includes('Deploy')) ?? wrapper.find('button')
+  )
 }
 
 describe('SshKeyDeployPanel', () => {

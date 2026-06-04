@@ -31,13 +31,9 @@ const useSftp = ref(true)
 const loading = ref(false)
 const result = ref<{ success: boolean; already_deployed: boolean; error?: string } | null>(null)
 
-const effectiveHost = computed(() =>
-  props.showCredentials ? localHost.value : props.sshHost,
-)
+const effectiveHost = computed(() => (props.showCredentials ? localHost.value : props.sshHost))
 
-const canDeploy = computed(
-  () => !loading.value && !!password.value && !!effectiveHost.value.trim(),
-)
+const canDeploy = computed(() => !loading.value && !!password.value && !!effectiveHost.value.trim())
 
 async function deploy(): Promise<void> {
   loading.value = true

@@ -95,7 +95,6 @@ interface SshTarget {
   ssh_port: number
 }
 
-
 interface TestConnState {
   loading: boolean
   result: { ssh_ok: boolean; borg_installed: boolean; borg_version?: string; error?: string } | null
@@ -632,7 +631,6 @@ async function testConnection(): Promise<void> {
     testConn.loading = false
   }
 }
-
 
 interface ImportProgressPayload {
   repo_id: number

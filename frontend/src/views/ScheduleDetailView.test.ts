@@ -64,6 +64,7 @@ const mockSchedule = {
   next_run_at: '2026-05-31T02:00:00Z',
   exclude_patterns: ['*.cache', 'node_modules'],
   ignore_global_excludes: false,
+  keep_hourly: 24,
   keep_daily: 7,
   keep_weekly: 4,
   keep_monthly: 6,

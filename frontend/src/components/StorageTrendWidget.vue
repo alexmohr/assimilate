@@ -339,6 +339,19 @@ const deltaPositive = computed((): boolean => delta.value >= 0)
         </div>
       </div>
     </div>
+    <p
+      v-if="viewMode === 'stacked' && selectedRepoId === undefined"
+      class="chart-desc"
+    >
+      Actual on-disk size (deduplicated) per repository over time, stacked.
+    </p>
+    <p
+      v-else
+      class="chart-desc"
+    >
+      Repository disk usage over time. <strong>Deduplicated</strong> = actual on-disk footprint
+      (all unique compressed chunks across every archive in the repo).
+    </p>
     <div
       v-if="loading"
       class="state-msg"
@@ -469,6 +482,13 @@ const deltaPositive = computed((): boolean => delta.value >= 0)
   color: var(--text-muted);
   font-size: 0.875rem;
   padding: 1rem 0;
+}
+
+.chart-desc {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  margin: 0 0 0.75rem;
+  line-height: 1.4;
 }
 
 .chart-container {

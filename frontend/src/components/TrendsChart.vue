@@ -299,6 +299,10 @@ const dedupOptions = computed(() => {
         </div>
       </div>
     </div>
+    <p class="chart-desc">
+      Size of each backup run over the selected period. <strong>Deduplicated</strong> = new unique
+      chunks this backup added to the repository (data not already stored).
+    </p>
     <div
       v-if="loading"
       class="state-msg"
@@ -324,7 +328,7 @@ const dedupOptions = computed(() => {
           :options="dedupOptions"
         />
       </div>
-      <span class="dedup-label">Dedup Ratio</span>
+      <span class="dedup-label">Dedup Ratio — deduplicated ÷ original size; lower means more data was already stored in the repo</span>
     </template>
   </section>
 </template>
@@ -428,5 +432,12 @@ const dedupOptions = computed(() => {
   color: var(--text-muted);
   font-size: 0.875rem;
   padding: 1rem 0;
+}
+
+.chart-desc {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  margin: 0 0 0.75rem;
+  line-height: 1.4;
 }
 </style>

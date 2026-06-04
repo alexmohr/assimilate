@@ -560,6 +560,44 @@ pub async fn init_repo(
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ConfirmRelocationResponse {
+    pub message: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/repos/{repo_id}/confirm-relocation",
+    tag = "Repositories",
+    operation_id = "confirmRepoRelocation",
+    summary = "Accept a borg repository relocation for the next backup run",
+    params(
+        ("repo_id" = i64, Path, description = "Repository ID"),
+    ),
+    responses(
+        (status = 200, description = "Relocation accepted", body = ConfirmRelocationResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Not found"),
+    )
+)]
+pub async fn confirm_relocation(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(repo_id): Path<i64>,
+) -> Result<Json<ConfirmRelocationResponse>, ApiError> {
+    let repo = db::get_repo_with_passphrase(&state.pool, repo_id).await?;
+    db::set_relocation_pending(&state.pool, repo_id).await?;
+    info!(repo_id, name = %repo.name, "relocation confirmation set");
+    Ok(Json(ConfirmRelocationResponse {
+        message: format!(
+            "Relocation accepted for '{}'. The next backup will set \
+             BORG_RELOCATED_REPO_ACCESS_IS_OK=yes.",
+            repo.name
+        ),
+    }))
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct BreakLockResponse {
     pub message: String,
     pub borg_output: String,

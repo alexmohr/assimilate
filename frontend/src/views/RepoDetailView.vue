@@ -56,6 +56,7 @@ interface RepoWithStats {
   total_compressed_size: number
   total_deduplicated_size: number
   client_count: number
+  relocation_pending: boolean
 }
 
 interface TagRow {
@@ -175,6 +176,35 @@ interface RescanResult {
 useEscapeKey(showBreakLockDialog, () => {
   showBreakLockDialog.value = false
 })
+
+// Confirm Relocation
+const showConfirmRelocationDialog = ref(false)
+const confirmRelocationLoading = ref(false)
+const confirmRelocationError = ref<string | null>(null)
+const confirmRelocationResult = ref<string | null>(null)
+
+useEscapeKey(showConfirmRelocationDialog, () => {
+  showConfirmRelocationDialog.value = false
+})
+
+async function doConfirmRelocation(): Promise<void> {
+  confirmRelocationLoading.value = true
+  confirmRelocationError.value = null
+  confirmRelocationResult.value = null
+  try {
+    const res = await apiClient.post<{ message: string }>(
+      `/repos/${repoId.value}/confirm-relocation`,
+    )
+    confirmRelocationResult.value = res.data.message
+    if (repo.value) {
+      repo.value.relocation_pending = true
+    }
+  } catch (e: unknown) {
+    confirmRelocationError.value = extractError(e)
+  } finally {
+    confirmRelocationLoading.value = false
+  }
+}
 
 interface BackupStartedPayload {
   hostname: string
@@ -951,6 +981,31 @@ async function resetImport(): Promise<void> {
           <h3 class="info-title">Danger Zone</h3>
           <div class="danger-body">
             <div class="danger-info">
+              <span class="danger-heading">Confirm Repository Relocation</span>
+              <span class="danger-desc">
+                Allow the next backup to accept this repository at its current location. Use this
+                when borg reports the repository was previously at a different path. The flag is
+                cleared automatically after the backup succeeds.
+              </span>
+            </div>
+            <div class="danger-action-wrap">
+              <button
+                class="btn btn-sm btn-danger"
+                :disabled="confirmRelocationLoading"
+                @click="showConfirmRelocationDialog = true"
+              >
+                {{ confirmRelocationLoading ? 'Confirming...' : 'Confirm Relocation' }}
+              </button>
+              <span
+                v-if="repo?.relocation_pending"
+                class="danger-hint"
+              >
+                Relocation already pending — will apply on the next backup run.
+              </span>
+            </div>
+          </div>
+          <div class="danger-body">
+            <div class="danger-info">
               <span class="danger-heading">Break Repository Lock</span>
               <span class="danger-desc">
                 Remove a stale lock from the repository. Using this while a backup is in progress
@@ -1393,6 +1448,62 @@ async function resetImport(): Promise<void> {
               @click="confirmRemove"
             >
               {{ removeLoading ? 'Removing...' : 'Remove' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Confirm Relocation Dialog -->
+    <Teleport to="body">
+      <div
+        v-if="showConfirmRelocationDialog"
+        class="overlay"
+        @click.self="showConfirmRelocationDialog = false"
+      >
+        <div class="dialog">
+          <div class="dialog-header">
+            <h2 class="dialog-title">Confirm Repository Relocation</h2>
+            <button
+              class="close-btn"
+              @click="showConfirmRelocationDialog = false"
+            >
+              &times;
+            </button>
+          </div>
+          <div class="dialog-body">
+            <p class="break-lock-warning">
+              This sets <code>BORG_RELOCATED_REPO_ACCESS_IS_OK=yes</code> for the next backup run,
+              allowing borg to accept the repository at its new location. Only confirm if you
+              intentionally moved or re-pathed the repository.
+            </p>
+            <div
+              v-if="confirmRelocationResult"
+              class="break-lock-success"
+            >
+              {{ confirmRelocationResult }}
+            </div>
+            <div
+              v-if="confirmRelocationError"
+              class="form-error"
+            >
+              {{ confirmRelocationError }}
+            </div>
+          </div>
+          <div class="dialog-footer">
+            <button
+              class="btn btn-ghost"
+              @click="showConfirmRelocationDialog = false"
+            >
+              {{ confirmRelocationResult ? 'Close' : 'Cancel' }}
+            </button>
+            <button
+              v-if="!confirmRelocationResult"
+              class="btn btn-danger"
+              :disabled="confirmRelocationLoading"
+              @click="doConfirmRelocation"
+            >
+              {{ confirmRelocationLoading ? 'Confirming...' : 'Yes, Confirm Relocation' }}
             </button>
           </div>
         </div>

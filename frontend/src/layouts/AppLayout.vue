@@ -309,10 +309,7 @@ onMounted(() => {
           name="page"
           mode="out-in"
         >
-          <component
-            :is="RouteComponent"
-            :key="route.path"
-          />
+          <component :is="RouteComponent" />
         </Transition>
       </RouterView>
     </main>

@@ -1863,6 +1863,7 @@ pub struct ActivityRow {
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct HealthRow {
     pub repo_id: i64,
+    pub schedule_id: i64,
     pub hostname: String,
     pub target_name: String,
     pub last_status: Option<String>,
@@ -1875,6 +1876,7 @@ pub struct HealthRow {
 pub struct InsertReportParams {
     pub client_id: i64,
     pub repo_id: i64,
+    pub schedule_id: Option<i64>,
     pub started_at: DateTime<Utc>,
     pub finished_at: DateTime<Utc>,
     pub status: String,
@@ -1896,16 +1898,18 @@ pub async fn insert_backup_started(
     pool: &PgPool,
     client_id: i64,
     repo_id: i64,
+    schedule_id: Option<i64>,
     started_at: DateTime<Utc>,
     borg_command: Option<&str>,
 ) -> Result<(), ApiError> {
     sqlx::query(
-        "INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, \
-         borg_command) VALUES ($1, $2, $3, $3, 'started', $4) ON CONFLICT (repo_id, client_id, \
-         started_at) DO NOTHING",
+        "INSERT INTO backup_reports (client_id, repo_id, schedule_id, started_at, finished_at, \
+         status, borg_command) VALUES ($1, $2, $3, $4, $4, 'started', $5) ON CONFLICT (repo_id, \
+         client_id, started_at) DO NOTHING",
     )
     .bind(client_id)
     .bind(repo_id)
+    .bind(schedule_id)
     .bind(started_at)
     .bind(borg_command)
     .execute(pool)
@@ -1919,11 +1923,12 @@ pub async fn insert_backup_report(
     params: &InsertReportParams,
 ) -> Result<(), ApiError> {
     sqlx::query(
-        "INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, \
-         original_size, compressed_size, deduplicated_size, repo_unique_csize, files_processed, \
-         duration_secs, error_message, warnings, borg_version, matched, archive_name, \
-         borg_command) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, \
-         $16, $17) ON CONFLICT (repo_id, client_id, started_at) DO UPDATE SET finished_at = \
+        "INSERT INTO backup_reports (client_id, repo_id, schedule_id, started_at, finished_at, \
+         status, original_size, compressed_size, deduplicated_size, repo_unique_csize, \
+         files_processed, duration_secs, error_message, warnings, borg_version, matched, \
+         archive_name, borg_command) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, \
+         $13, $14, $15, $16, $17, $18) ON CONFLICT (repo_id, client_id, started_at) DO UPDATE SET \
+         schedule_id = COALESCE(EXCLUDED.schedule_id, backup_reports.schedule_id), finished_at = \
          EXCLUDED.finished_at, status = EXCLUDED.status, original_size = EXCLUDED.original_size, \
          compressed_size = EXCLUDED.compressed_size, deduplicated_size = \
          EXCLUDED.deduplicated_size, repo_unique_csize = EXCLUDED.repo_unique_csize, \
@@ -1934,6 +1939,7 @@ pub async fn insert_backup_report(
     )
     .bind(params.client_id)
     .bind(params.repo_id)
+    .bind(params.schedule_id)
     .bind(params.started_at)
     .bind(params.finished_at)
     .bind(&params.status)
@@ -2080,9 +2086,8 @@ pub async fn list_reports_for_schedule(
     sqlx::query_as::<_, ReportRow>(
         "SELECT id, client_id, repo_id, started_at, finished_at, status, original_size, \
          compressed_size, deduplicated_size, files_processed, duration_secs, error_message, \
-         warnings, borg_version, archive_name, borg_command FROM backup_reports WHERE repo_id = \
-         (SELECT repo_id FROM schedules WHERE id = $1) AND client_id IN (SELECT client_id FROM \
-         schedule_targets WHERE schedule_id = $1) ORDER BY started_at DESC LIMIT $2",
+         warnings, borg_version, archive_name, borg_command FROM backup_reports WHERE schedule_id \
+         = $1 ORDER BY started_at DESC LIMIT $2",
     )
     .bind(schedule_id)
     .bind(limit)
@@ -2142,15 +2147,16 @@ pub async fn get_activity_feed(
 
 pub async fn get_health_summary(pool: &PgPool) -> Result<Vec<HealthRow>, ApiError> {
     sqlx::query_as::<_, HealthRow>(
-        "SELECT r.id AS repo_id, c.hostname, r.name AS target_name, (SELECT br.status FROM \
-         backup_reports br WHERE br.repo_id = r.id AND br.client_id = c.id ORDER BY br.started_at \
-         DESC LIMIT 1) AS last_status, (SELECT br.finished_at FROM backup_reports br WHERE \
-         br.repo_id = r.id AND br.client_id = c.id ORDER BY br.started_at DESC LIMIT 1) AS \
-         last_backup_at, (SELECT br.error_message FROM backup_reports br WHERE br.repo_id = r.id \
-         AND br.client_id = c.id ORDER BY br.started_at DESC LIMIT 1) AS last_error_message, \
-         s.cron_expression, s.enabled AS schedule_enabled FROM schedules s JOIN schedule_targets \
-         st ON st.schedule_id = s.id JOIN clients c ON c.id = st.client_id JOIN repos r ON r.id = \
-         s.repo_id WHERE c.is_hidden = false ORDER BY c.hostname, r.name",
+        "SELECT r.id AS repo_id, s.id AS schedule_id, c.hostname, r.name AS target_name, (SELECT \
+         br.status FROM backup_reports br WHERE br.schedule_id = s.id AND br.client_id = c.id \
+         ORDER BY br.started_at DESC LIMIT 1) AS last_status, (SELECT br.finished_at FROM \
+         backup_reports br WHERE br.schedule_id = s.id AND br.client_id = c.id ORDER BY \
+         br.started_at DESC LIMIT 1) AS last_backup_at, (SELECT br.error_message FROM \
+         backup_reports br WHERE br.schedule_id = s.id AND br.client_id = c.id ORDER BY \
+         br.started_at DESC LIMIT 1) AS last_error_message, s.cron_expression, s.enabled AS \
+         schedule_enabled FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN \
+         clients c ON c.id = st.client_id JOIN repos r ON r.id = s.repo_id WHERE c.is_hidden = \
+         false ORDER BY c.hostname, r.name",
     )
     .fetch_all(pool)
     .await
@@ -3006,28 +3012,25 @@ pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow,
          'success' AND finished_at > '1970-01-01T00:00:00Z') AS last_backup_at, (SELECT \
          MIN(s.next_run_at) FROM schedules s JOIN repos r ON r.id = s.repo_id WHERE s.enabled = \
          true AND r.enabled = true AND s.next_run_at IS NOT NULL AND s.next_run_at > NOW()) AS \
-         next_backup_at, (SELECT s.id FROM schedules s JOIN schedule_targets st ON st.schedule_id \
-         = s.id JOIN backup_reports br ON br.repo_id = s.repo_id AND br.client_id = st.client_id \
-         ORDER BY br.finished_at DESC LIMIT 1) AS last_backup_schedule_id, (SELECT br.repo_id \
-         FROM backup_reports br WHERE br.status = 'success' ORDER BY br.finished_at DESC LIMIT 1) \
-         AS last_backup_repo_id, (SELECT br.archive_name FROM backup_reports br WHERE br.status = \
-         'success' ORDER BY br.finished_at DESC LIMIT 1) AS last_backup_archive_name, (SELECT \
-         s.id FROM schedules s JOIN repos r ON r.id = s.repo_id WHERE s.enabled = true AND \
-         r.enabled = true AND s.next_run_at IS NOT NULL AND s.next_run_at > NOW() ORDER BY \
-         s.next_run_at LIMIT 1) AS next_backup_schedule_id, (SELECT COUNT(*) FROM backup_reports \
-         WHERE status = 'success' AND started_at > NOW() - INTERVAL '30 days') AS success_30d, \
-         (SELECT COUNT(*) FROM backup_reports WHERE status != 'success' AND started_at > NOW() - \
-         INTERVAL '30 days') AS failed_30d, (SELECT COUNT(*) FROM backup_reports WHERE started_at \
-         > NOW() - INTERVAL '30 days') AS total_30d, (SELECT MAX(finished_at) FROM backup_reports \
-         WHERE status = 'failed' AND finished_at > '1970-01-01T00:00:00Z') AS last_failure_at, \
-         (SELECT MAX(finished_at) FROM backup_reports WHERE status = 'warning' AND finished_at > \
-         '1970-01-01T00:00:00Z') AS last_warning_at, (SELECT s.id FROM backup_reports br JOIN \
-         schedules s ON s.repo_id = br.repo_id JOIN schedule_targets st ON st.schedule_id = s.id \
-         AND st.client_id = br.client_id WHERE br.status = 'failed' AND br.finished_at > \
-         '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS \
-         last_failure_schedule_id, (SELECT s.id FROM backup_reports br JOIN schedules s ON \
-         s.repo_id = br.repo_id JOIN schedule_targets st ON st.schedule_id = s.id AND \
-         st.client_id = br.client_id WHERE br.status = 'warning' AND br.finished_at > \
+         next_backup_at, (SELECT br.schedule_id FROM backup_reports br WHERE br.schedule_id IS \
+         NOT NULL ORDER BY br.finished_at DESC LIMIT 1) AS last_backup_schedule_id, (SELECT \
+         br.repo_id FROM backup_reports br WHERE br.status = 'success' ORDER BY br.finished_at \
+         DESC LIMIT 1) AS last_backup_repo_id, (SELECT br.archive_name FROM backup_reports br \
+         WHERE br.status = 'success' ORDER BY br.finished_at DESC LIMIT 1) AS \
+         last_backup_archive_name, (SELECT s.id FROM schedules s JOIN repos r ON r.id = s.repo_id \
+         WHERE s.enabled = true AND r.enabled = true AND s.next_run_at IS NOT NULL AND \
+         s.next_run_at > NOW() ORDER BY s.next_run_at LIMIT 1) AS next_backup_schedule_id, \
+         (SELECT COUNT(*) FROM backup_reports WHERE status = 'success' AND started_at > NOW() - \
+         INTERVAL '30 days') AS success_30d, (SELECT COUNT(*) FROM backup_reports WHERE status != \
+         'success' AND started_at > NOW() - INTERVAL '30 days') AS failed_30d, (SELECT COUNT(*) \
+         FROM backup_reports WHERE started_at > NOW() - INTERVAL '30 days') AS total_30d, (SELECT \
+         MAX(finished_at) FROM backup_reports WHERE status = 'failed' AND finished_at > \
+         '1970-01-01T00:00:00Z') AS last_failure_at, (SELECT MAX(finished_at) FROM backup_reports \
+         WHERE status = 'warning' AND finished_at > '1970-01-01T00:00:00Z') AS last_warning_at, \
+         (SELECT br.schedule_id FROM backup_reports br WHERE br.schedule_id IS NOT NULL AND \
+         br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at \
+         DESC LIMIT 1) AS last_failure_schedule_id, (SELECT br.schedule_id FROM backup_reports br \
+         WHERE br.schedule_id IS NOT NULL AND br.status = 'warning' AND br.finished_at > \
          '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS \
          last_warning_schedule_id, (SELECT br.error_message FROM backup_reports br WHERE \
          br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at \
@@ -3043,12 +3046,10 @@ pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow,
          LIMIT 1) AS last_failure_repo_name, (SELECT r.name FROM backup_reports br JOIN repos r \
          ON r.id = br.repo_id WHERE br.status = 'warning' AND br.finished_at > \
          '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS last_warning_repo_name, \
-         (SELECT s.cron_expression FROM backup_reports br JOIN schedules s ON s.repo_id = \
-         br.repo_id JOIN schedule_targets st ON st.schedule_id = s.id AND st.client_id = \
-         br.client_id WHERE br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' \
+         (SELECT s.cron_expression FROM backup_reports br JOIN schedules s ON s.id = \
+         br.schedule_id WHERE br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' \
          ORDER BY br.finished_at DESC LIMIT 1) AS last_failure_schedule_name, (SELECT \
-         s.cron_expression FROM backup_reports br JOIN schedules s ON s.repo_id = br.repo_id JOIN \
-         schedule_targets st ON st.schedule_id = s.id AND st.client_id = br.client_id WHERE \
+         s.cron_expression FROM backup_reports br JOIN schedules s ON s.id = br.schedule_id WHERE \
          br.status = 'warning' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY \
          br.finished_at DESC LIMIT 1) AS last_warning_schedule_name",
     )

@@ -563,6 +563,7 @@ async fn run_init_repo_task(
 ) -> Result<(), String> {
     let mut ssh_forward_target = BackupTarget {
         target_name: String::new(),
+        schedule_id: None,
         repo_path: String::new(),
         ssh_user: String::new(),
         ssh_host: String::new(),
@@ -627,6 +628,7 @@ async fn run_init_repo_task(
 
 fn make_failed_report(
     repo_id: RepoId,
+    schedule_id: Option<i64>,
     started_at: chrono::DateTime<Utc>,
     error_message: String,
 ) -> shared::types::BackupReport {
@@ -635,6 +637,7 @@ fn make_failed_report(
         id: shared::types::ReportId(0),
         client_id: shared::types::ClientId(0),
         repo_id,
+        schedule_id,
         started_at,
         finished_at,
         status: shared::types::BackupStatus::Failed,
@@ -662,9 +665,11 @@ async fn run_backup_task(
     outbound_tx: &mpsc::Sender<AgentToServer>,
 ) {
     let started_at = Utc::now();
+    let schedule_id = target.schedule_id;
     let borg_command = BackupEngine::preview_create_command(&target);
     let started_msg = AgentToServer::BackupStarted {
         repo_id,
+        schedule_id,
         started_at,
         borg_command: Some(borg_command),
     };
@@ -693,6 +698,7 @@ async fn run_backup_task(
                 id: shared::types::ReportId(0),
                 client_id: shared::types::ClientId(0),
                 repo_id,
+                schedule_id,
                 started_at,
                 finished_at,
                 status: result.status,
@@ -712,12 +718,15 @@ async fn run_backup_task(
         }
         Err(BackupError::Skipped(reason)) => {
             error!(repo_id = ?repo_id, reason = %reason, "backup skipped, treating as failure");
-            (make_failed_report(repo_id, started_at, reason), false)
+            (
+                make_failed_report(repo_id, schedule_id, started_at, reason),
+                false,
+            )
         }
         Err(e) => {
             error!(repo_id = ?repo_id, error = %e, "backup failed");
             (
-                make_failed_report(repo_id, started_at, e.to_string()),
+                make_failed_report(repo_id, schedule_id, started_at, e.to_string()),
                 false,
             )
         }
@@ -799,6 +808,7 @@ pub fn backup_target_from_repo(
         .or_else(|| repo.schedules.first());
     BackupTarget {
         target_name: repo.name.clone(),
+        schedule_id: schedule.map(|s| s.id),
         repo_path: repo.repo_path.clone(),
         ssh_user: repo.ssh_user.clone(),
         ssh_host: repo.ssh_host.clone(),
@@ -835,6 +845,7 @@ async fn run_check_task(
     let start = std::time::Instant::now();
     let mut target = BackupTarget {
         target_name: target.target_name.clone(),
+        schedule_id: target.schedule_id,
         repo_path: target.repo_path.clone(),
         ssh_user: target.ssh_user.clone(),
         ssh_host: target.ssh_host.clone(),
@@ -894,6 +905,7 @@ async fn run_verify_task(
     let start = std::time::Instant::now();
     let mut target = BackupTarget {
         target_name: target.target_name.clone(),
+        schedule_id: target.schedule_id,
         repo_path: target.repo_path.clone(),
         ssh_user: target.ssh_user.clone(),
         ssh_host: target.ssh_host.clone(),

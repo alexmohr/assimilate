@@ -193,7 +193,9 @@ async fn run_repo_sync(pool: &PgPool, encryption_key: &[u8; 32], ui_broadcast: &
                     elapsed.as_secs_f64()
                 );
                 tracing::error!("{msg}");
-                if let Err(log_err) = db::insert_system_event(pool, "repo_sync", None, &msg).await {
+                if let Err(log_err) =
+                    db::insert_system_event(pool, "repo_sync_failed", None, &msg).await
+                {
                     tracing::error!(error = %log_err, "failed to log sync event");
                 }
                 if let Err(e2) = db::set_repo_importing(pool, repo.id, false).await {

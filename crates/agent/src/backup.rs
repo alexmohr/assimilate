@@ -31,6 +31,7 @@ pub enum BackupError {
 
 pub struct BackupTarget {
     pub target_name: String,
+    pub schedule_id: Option<i64>,
     pub repo_path: String,
     pub ssh_user: String,
     pub ssh_host: String,
@@ -776,8 +777,8 @@ pub(crate) fn stderr_has_warnings(stderr: &str) -> bool {
 
 /// Returns the messages for any log entries whose `msgid` indicates a backup
 /// source path was not found.  These are emitted as `WARNING` by borg (rc=1)
-/// but represent a configuration error — a configured source directory did
-/// not exist at backup time — and must be surfaced as a hard failure rather
+/// but represent a configuration error - a configured source directory did
+/// not exist at backup time - and must be surfaced as a hard failure rather
 /// than a silent warning.
 pub(crate) fn parse_source_not_found_errors(stderr: &str) -> Vec<String> {
     stderr
@@ -821,6 +822,7 @@ mod tests {
     fn test_target() -> BackupTarget {
         BackupTarget {
             target_name: "test-target".to_owned(),
+            schedule_id: None,
             repo_path: "backup/test".to_owned(),
             ssh_user: "borg".to_owned(),
             ssh_host: "backup-server".to_owned(),

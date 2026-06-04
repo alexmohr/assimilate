@@ -162,6 +162,17 @@ const breakLockError = ref<string | null>(null)
 const breakLockResult = ref<string | null>(null)
 const activeBackupClient = ref<string | null>(null)
 
+// Borg console
+interface BorgExecResult {
+  stdout: string
+  stderr: string
+  exit_code: number
+}
+const borgConsoleCommand = ref('')
+const borgConsoleLoading = ref(false)
+const borgConsoleError = ref<string | null>(null)
+const borgConsoleResult = ref<BorgExecResult | null>(null)
+
 // Re-scan
 const rescanLoading = ref(false)
 const syncLoading = ref(false)
@@ -538,6 +549,23 @@ async function confirmBreakLock(): Promise<void> {
     breakLockError.value = extractError(e)
   } finally {
     breakLockLoading.value = false
+  }
+}
+
+async function runBorgCommand(): Promise<void> {
+  const trimmed = borgConsoleCommand.value.trim()
+  if (!trimmed) return
+  borgConsoleLoading.value = true
+  borgConsoleError.value = null
+  borgConsoleResult.value = null
+  try {
+    const args = trimmed.split(/\s+/).filter((s) => s.length > 0)
+    const res = await apiClient.post<BorgExecResult>(`/repos/${repoId.value}/exec`, { args })
+    borgConsoleResult.value = res.data
+  } catch (e: unknown) {
+    borgConsoleError.value = extractError(e)
+  } finally {
+    borgConsoleLoading.value = false
   }
 }
 
@@ -988,6 +1016,93 @@ async function resetImport(): Promise<void> {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+
+        <!-- Borg Console -->
+        <div
+          v-if="isAdmin"
+          class="info-card"
+        >
+          <h3 class="info-title">Borg Console</h3>
+          <p class="console-desc">
+            Execute borg commands directly against this repository. The repository URL and
+            passphrase are injected automatically. Use <code class="console-code">::archive</code>
+            notation to reference a specific archive.
+          </p>
+          <div class="console-input-row">
+            <span class="console-prefix">borg</span>
+            <input
+              v-model="borgConsoleCommand"
+              class="input console-input"
+              placeholder="info"
+              :disabled="borgConsoleLoading"
+              @keydown.enter="runBorgCommand"
+            />
+            <button
+              class="btn btn-sm btn-primary"
+              :disabled="borgConsoleLoading || !borgConsoleCommand.trim()"
+              @click="runBorgCommand"
+            >
+              {{ borgConsoleLoading ? 'Running…' : 'Run' }}
+            </button>
+          </div>
+          <div class="console-hints">
+            <span class="console-hint-label">Commands:</span>
+            <code
+              v-for="cmd in [
+                'info',
+                'list',
+                'check',
+                'compact',
+                'prune',
+                'delete',
+                'diff',
+                'rename',
+                'recreate',
+              ]"
+              :key="cmd"
+              class="console-hint-cmd"
+              @click="borgConsoleCommand = cmd"
+              >{{ cmd }}</code
+            >
+          </div>
+          <div
+            v-if="borgConsoleError"
+            class="console-error"
+          >
+            {{ borgConsoleError }}
+          </div>
+          <div
+            v-if="borgConsoleResult"
+            class="console-output"
+          >
+            <div class="console-output-header">
+              <span class="console-output-label">Output</span>
+              <span
+                :class="{
+                  'exit-ok': borgConsoleResult.exit_code === 0,
+                  'exit-warn': borgConsoleResult.exit_code === 1,
+                  'exit-err': borgConsoleResult.exit_code > 1 || borgConsoleResult.exit_code < 0,
+                }"
+                >exit {{ borgConsoleResult.exit_code }}</span
+              >
+            </div>
+            <pre
+              v-if="borgConsoleResult.stdout"
+              class="console-pre"
+              >{{ borgConsoleResult.stdout }}</pre
+            >
+            <pre
+              v-if="borgConsoleResult.stderr"
+              class="console-pre console-pre-stderr"
+              >{{ borgConsoleResult.stderr }}</pre
+            >
+            <span
+              v-if="!borgConsoleResult.stdout && !borgConsoleResult.stderr"
+              class="console-empty"
+              >(no output)</span
+            >
           </div>
         </div>
 
@@ -1905,6 +2020,150 @@ async function resetImport(): Promise<void> {
   border-radius: var(--radius-sm);
   cursor: pointer;
   background: transparent;
+}
+
+/* Borg console */
+.console-desc {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+  line-height: 1.5;
+}
+
+.console-code {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.05rem 0.3rem;
+}
+
+.console-input-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.console-prefix {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.console-input {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+
+.console-hints {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+.console-hint-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.console-hint-cmd {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  padding: 0.1rem 0.4rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--accent);
+  transition: background 0.1s;
+}
+
+.console-hint-cmd:hover {
+  background: var(--accent-subtle);
+}
+
+.console-error {
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--danger-subtle, oklch(0.97 0.04 25));
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  color: var(--danger);
+}
+
+.console-output {
+  margin-top: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.console-output-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0.75rem;
+  background: var(--bg-input);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.78rem;
+}
+
+.console-output-label {
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.7rem;
+}
+
+.exit-ok {
+  color: var(--success);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.exit-warn {
+  color: var(--warning);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.exit-err {
+  color: var(--danger);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.console-pre {
+  margin: 0;
+  padding: 0.75rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-primary);
+  background: var(--bg-base);
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.console-pre-stderr {
+  color: var(--warning);
+  border-top: 1px solid var(--border);
+}
+
+.console-empty {
+  display: block;
+  padding: 0.75rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 /* Danger zone */

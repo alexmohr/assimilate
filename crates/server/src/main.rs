@@ -280,6 +280,10 @@ async fn main() -> Result<(), StartupError> {
             get(api::repos::get_passphrase),
         )
         .route(
+            "/api/repos/{repo_id}/confirm-relocation",
+            post(api::repos::confirm_relocation),
+        )
+        .route(
             "/api/repos/{repo_id}/break-lock",
             post(api::repos::break_lock),
         )

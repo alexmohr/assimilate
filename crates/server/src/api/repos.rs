@@ -27,6 +27,7 @@ use super::{
 use crate::{
     AppState,
     borg::Borg,
+    config_assembler,
     db::{self, InsertRepoParams, RepoRow, RepoWithStatsRow, UpdateRepoParams},
     error::{ApiError, ApiJson},
     ws::ui_broadcast::UiBroadcast,
@@ -591,6 +592,10 @@ pub async fn confirm_relocation(
     let repo = db::get_repo_with_passphrase(&state.pool, repo_id).await?;
     db::set_relocation_pending(&state.pool, repo_id).await?;
     info!(repo_id, name = %repo.name, "relocation confirmation set");
+    let hostnames = db::get_schedule_target_hostnames_for_repo(&state.pool, repo_id).await?;
+    for hostname in &hostnames {
+        config_assembler::push_config_to_agent(&state, hostname).await;
+    }
     Ok(Json(ConfirmRelocationResponse {
         message: format!(
             "Relocation accepted for '{}'. The next backup will set \

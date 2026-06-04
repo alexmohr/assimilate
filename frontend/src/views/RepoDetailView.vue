@@ -220,7 +220,13 @@ interface ImportProgressPayload {
 
 const { onMessage } = useWebSocket()
 
-onMessage('DataChanged', () => refreshRepo().catch(logger.error))
+onMessage('DataChanged', async () => {
+  const wasImporting = repo.value?.importing ?? false
+  await refreshRepo()
+  if (wasImporting && repo.value && !repo.value.importing && !repo.value.import_error) {
+    await loadArchives()
+  }
+})
 
 onMessage<ImportProgressPayload>('ImportProgress', (payload) => {
   if (repo.value && repo.value.id === payload.repo_id) {

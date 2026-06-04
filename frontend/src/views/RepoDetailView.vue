@@ -1163,12 +1163,16 @@ async function resetImport(): Promise<void> {
               <span class="archive-meta-sep" />
               <span class="archive-meta-item">
                 <span class="archive-meta-label">Original</span>
-                <span class="archive-meta-value">{{ formatBytes(selectedArchive.original_size) }}</span>
+                <span class="archive-meta-value">{{
+                  formatBytes(selectedArchive.original_size)
+                }}</span>
               </span>
               <span class="archive-meta-sep" />
               <span class="archive-meta-item">
                 <span class="archive-meta-label">Dedup</span>
-                <span class="archive-meta-value">{{ formatBytes(selectedArchive.deduplicated_size) }}</span>
+                <span class="archive-meta-value">{{
+                  formatBytes(selectedArchive.deduplicated_size)
+                }}</span>
               </span>
             </div>
 

@@ -1473,7 +1473,8 @@ onMounted(loadRepos)
       <label
         for="folder-name-input"
         class="form-label"
-      >Folder name</label>
+        >Folder name</label
+      >
       <input
         id="folder-name-input"
         v-model="folderModal.name"

@@ -264,7 +264,9 @@ const currentSize = computed((): number => {
 
 const delta = computed((): number => {
   if (entries.value.length < 2) return 0
-  return entries.value[entries.value.length - 1].deduplicated_size - entries.value[0].deduplicated_size
+  return (
+    entries.value[entries.value.length - 1].deduplicated_size - entries.value[0].deduplicated_size
+  )
 })
 
 const deltaPositive = computed((): boolean => delta.value >= 0)

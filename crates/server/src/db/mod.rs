@@ -3600,8 +3600,8 @@ pub async fn get_storage_trends(
              COALESCE(latest.original_size, 0)::INT8 AS original_size, \
              COALESCE(latest.compressed_size, 0)::INT8 AS compressed_size, \
              COALESCE(latest.deduplicated_size, 0)::INT8 AS deduplicated_size FROM days d LEFT \
-             JOIN LATERAL ( SELECT br.original_size, br.compressed_size, br.deduplicated_size FROM \
-             backup_reports br WHERE br.repo_id = $2 AND br.started_at::date <= d.date AND \
+             JOIN LATERAL ( SELECT br.original_size, br.compressed_size, br.deduplicated_size \
+             FROM backup_reports br WHERE br.repo_id = $2 AND br.started_at::date <= d.date AND \
              br.status = 'success' ORDER BY br.started_at DESC LIMIT 1 ) latest ON true ORDER BY \
              d.date",
         )
@@ -3675,8 +3675,8 @@ pub async fn get_storage_trends_by_repo(
          COALESCE(latest.deduplicated_size, 0)::INT8 AS deduplicated_size FROM days d CROSS JOIN \
          repos_list rl LEFT JOIN LATERAL ( SELECT br.original_size, br.compressed_size, \
          br.deduplicated_size FROM backup_reports br WHERE br.repo_id = rl.repo_id AND \
-         br.started_at::date <= d.date AND br.status = 'success' ORDER BY br.started_at DESC LIMIT \
-         1 ) latest ON true ORDER BY d.date, rl.repo_name",
+         br.started_at::date <= d.date AND br.status = 'success' ORDER BY br.started_at DESC \
+         LIMIT 1 ) latest ON true ORDER BY d.date, rl.repo_name",
     )
     .bind(days_i32)
     .fetch_all(pool)

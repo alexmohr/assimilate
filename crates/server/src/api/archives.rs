@@ -339,10 +339,10 @@ pub async fn archive_info(
 // "sh:parent/*" returns only immediate children without recursing.
 fn list_patterns(path: Option<&str>) -> (String, Option<String>) {
     let child = path.map_or_else(
-        || "sh:*".to_string(),
-        |p| format!("sh:{}/*", p.trim_end_matches('/')),
+        || "+sh:*".to_string(),
+        |p| format!("+sh:{}/*", p.trim_end_matches('/')),
     );
-    let dir = path.map(|p| format!("sh:{}", p.trim_end_matches('/')));
+    let dir = path.map(|p| format!("+sh:{}", p.trim_end_matches('/')));
     (child, dir)
 }
 
@@ -571,28 +571,28 @@ mod tests {
     #[test]
     fn list_patterns_root_returns_top_level_glob() {
         let (child, dir) = list_patterns(None);
-        assert_eq!(child, "sh:*");
+        assert_eq!(child, "+sh:*");
         assert!(dir.is_none());
     }
 
     #[test]
     fn list_patterns_simple_dir() {
         let (child, dir) = list_patterns(Some("home"));
-        assert_eq!(child, "sh:home/*");
-        assert_eq!(dir.as_deref(), Some("sh:home"));
+        assert_eq!(child, "+sh:home/*");
+        assert_eq!(dir.as_deref(), Some("+sh:home"));
     }
 
     #[test]
     fn list_patterns_nested_dir() {
         let (child, dir) = list_patterns(Some("home/user/docs"));
-        assert_eq!(child, "sh:home/user/docs/*");
-        assert_eq!(dir.as_deref(), Some("sh:home/user/docs"));
+        assert_eq!(child, "+sh:home/user/docs/*");
+        assert_eq!(dir.as_deref(), Some("+sh:home/user/docs"));
     }
 
     #[test]
     fn list_patterns_trailing_slash_stripped() {
         let (child, dir) = list_patterns(Some("home/user/"));
-        assert_eq!(child, "sh:home/user/*");
-        assert_eq!(dir.as_deref(), Some("sh:home/user"));
+        assert_eq!(child, "+sh:home/user/*");
+        assert_eq!(dir.as_deref(), Some("+sh:home/user"));
     }
 }

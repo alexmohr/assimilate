@@ -345,30 +345,97 @@ fn normalize_path(p: &str) -> String {
     }
 }
 
-// Build depth-limited borg sh: patterns for directory listing.
-// Patterns are paired: one for the bare path form and one for the
-// "./"-prefixed form that borg uses when archives are created with ".".
-// The explicit exclude-all ("-sh:**") must come last so that only the
-// immediate level is returned.
+// Build subtree borg patterns for a directory listing request.
+//
+// We request the whole subtree (using `**` which crosses separators in borg
+// 1.4+) and then fold the raw entries into immediate children ourselves via
+// `fold_immediate_children`. This is more robust than depth-limited patterns
+// because it synthesises directory entries for intermediate directories that
+// borg may not have emitted (e.g. archives created with borg 1.2 or with
+// unusual path styles).
 fn list_patterns(path: Option<&str>) -> Vec<String> {
     match path {
-        None => vec![
-            "+sh:*".to_string(),
-            "+sh:.".to_string(),
-            "+sh:./*".to_string(),
-            "-sh:**".to_string(),
-        ],
+        None => vec!["+sh:**".to_string()],
         Some(p) => {
             let p = p.trim_end_matches('/');
             vec![
                 format!("+sh:{p}"),
-                format!("+sh:{p}/*"),
+                format!("+sh:{p}/**"),
                 format!("+sh:./{p}"),
-                format!("+sh:./{p}/*"),
+                format!("+sh:./{p}/**"),
                 "-sh:**".to_string(),
             ]
         }
     }
+}
+
+// Given a flat stream of borg entries for a subtree rooted at `prefix`
+// (empty string = archive root), return only the immediate children.
+//
+// For each normalised entry path:
+// - If the path is exactly `prefix` (i.e. the directory entry itself) -> skip.
+// - Strip `prefix/` to get the remainder.
+// - Take the first path segment of the remainder as the child name.
+// - If there are more segments (i.e. the entry is deeper than one level),
+//   synthesise a directory `ContentEntry` for the child directory name.
+// - Otherwise use the real entry.
+//
+// Directories are deduplicated by name; the first occurrence wins.
+fn fold_immediate_children(prefix: &str, entries: Vec<ContentEntry>) -> Vec<ContentEntry> {
+    // Tracks the child paths already emitted (both real and synthesised),
+    // preventing both duplicate synthetic dirs and synthetic dirs clobbering
+    // a real immediate-child entry that was emitted first.
+    let mut emitted: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut result: Vec<ContentEntry> = Vec::new();
+
+    for entry in entries {
+        let path = &entry.path;
+
+        // Determine the remainder relative to prefix.
+        let remainder = if prefix.is_empty() {
+            path.as_str()
+        } else if path == prefix {
+            // This is the directory entry for the requested path itself - skip.
+            continue;
+        } else if let Some(rel) = path.strip_prefix(&format!("{prefix}/")) {
+            rel
+        } else {
+            // Entry is outside the requested subtree (shouldn't happen with correct patterns).
+            continue;
+        };
+
+        if remainder.is_empty() {
+            continue;
+        }
+
+        // Split on the first '/' to get the immediate child name.
+        if let Some(slash) = remainder.find('/') {
+            // Deeper entry - synthesise a directory for the first segment.
+            let dir_name = &remainder[..slash];
+            let child_path = if prefix.is_empty() {
+                dir_name.to_string()
+            } else {
+                format!("{prefix}/{dir_name}")
+            };
+            if emitted.insert(child_path.clone()) {
+                result.push(ContentEntry {
+                    entry_type: "d".to_string(),
+                    path: child_path,
+                    size: 0,
+                    mtime: entry.mtime.clone(),
+                    mode: String::new(),
+                });
+            }
+        } else {
+            // Immediate child - use the real entry unless we already emitted
+            // something with this path (e.g. a synthesised directory first).
+            if emitted.insert(path.clone()) {
+                result.push(entry);
+            }
+        }
+    }
+
+    result
 }
 
 #[utoipa::path(
@@ -427,7 +494,7 @@ pub async fn list_contents(
     };
 
     let mut lines = BufReader::new(stdout).lines();
-    let mut entries = Vec::new();
+    let mut raw_entries: Vec<ContentEntry> = Vec::new();
 
     while let Some(line) = lines
         .next_line()
@@ -442,17 +509,13 @@ pub async fn list_contents(
         }) else {
             continue;
         };
-        entries.push(ContentEntry {
+        raw_entries.push(ContentEntry {
             entry_type: v["type"].as_str().unwrap_or("").to_string(),
             path: v["path"].as_str().map_or_else(String::new, normalize_path),
             size: v["size"].as_i64().unwrap_or(0),
             mtime: v["mtime"].as_str().unwrap_or("").to_string(),
             mode: v["mode"].as_str().unwrap_or("").to_string(),
         });
-        if entries.len() >= limit {
-            // Limit reached - kill_on_drop cleans up the borg process.
-            return Ok(Json(entries));
-        }
     }
 
     // All output consumed - verify exit status.
@@ -469,7 +532,13 @@ pub async fn list_contents(
         return Err(classify_borg_error(code, &stderr_str));
     }
 
-    Ok(Json(entries))
+    let prefix = path
+        .map(|p| p.trim_end_matches('/').to_string())
+        .unwrap_or_default();
+    let children = fold_immediate_children(&prefix, raw_entries);
+    let limited: Vec<ContentEntry> = children.into_iter().take(limit).collect();
+
+    Ok(Json(limited))
 }
 
 #[utoipa::path(
@@ -594,9 +663,9 @@ mod tests {
     }
 
     #[test]
-    fn list_patterns_root_includes_dot_prefix_variants() {
+    fn list_patterns_root_is_wildcard_subtree() {
         let patterns = list_patterns(None);
-        assert_eq!(patterns, vec!["+sh:*", "+sh:.", "+sh:./*", "-sh:**"]);
+        assert_eq!(patterns, vec!["+sh:**"]);
     }
 
     #[test]
@@ -606,9 +675,9 @@ mod tests {
             patterns,
             vec![
                 "+sh:home",
-                "+sh:home/*",
+                "+sh:home/**",
                 "+sh:./home",
-                "+sh:./home/*",
+                "+sh:./home/**",
                 "-sh:**"
             ]
         );
@@ -621,9 +690,9 @@ mod tests {
             patterns,
             vec![
                 "+sh:home/user/docs",
-                "+sh:home/user/docs/*",
+                "+sh:home/user/docs/**",
                 "+sh:./home/user/docs",
-                "+sh:./home/user/docs/*",
+                "+sh:./home/user/docs/**",
                 "-sh:**",
             ]
         );
@@ -636,12 +705,98 @@ mod tests {
             patterns,
             vec![
                 "+sh:home/user",
-                "+sh:home/user/*",
+                "+sh:home/user/**",
                 "+sh:./home/user",
-                "+sh:./home/user/*",
+                "+sh:./home/user/**",
                 "-sh:**",
             ]
         );
+    }
+
+    fn make_entry(entry_type: &str, path: &str) -> ContentEntry {
+        ContentEntry {
+            entry_type: entry_type.to_string(),
+            path: path.to_string(),
+            size: 0,
+            mtime: "2024-01-01T00:00:00".to_string(),
+            mode: String::new(),
+        }
+    }
+
+    #[test]
+    fn fold_synthesises_dir_from_nested_file() {
+        // Archive has etc/passwd but no etc/ entry.
+        let entries = vec![make_entry("-", "etc/passwd")];
+        let result = fold_immediate_children("", entries);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].entry_type, "d");
+        assert_eq!(result[0].path, "etc");
+    }
+
+    #[test]
+    fn fold_uses_real_entry_for_immediate_file() {
+        let entries = vec![make_entry("-", "file.txt")];
+        let result = fold_immediate_children("", entries);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].entry_type, "-");
+        assert_eq!(result[0].path, "file.txt");
+    }
+
+    #[test]
+    fn fold_deduplicates_synthesised_dirs() {
+        let entries = vec![
+            make_entry("-", "etc/passwd"),
+            make_entry("-", "etc/hostname"),
+        ];
+        let result = fold_immediate_children("", entries);
+        assert_eq!(result.len(), 1, "etc should appear only once");
+        assert_eq!(result[0].entry_type, "d");
+        assert_eq!(result[0].path, "etc");
+    }
+
+    #[test]
+    fn fold_excludes_deeper_levels() {
+        let entries = vec![
+            make_entry("d", "home"),
+            make_entry("d", "home/user"),
+            make_entry("-", "home/user/notes.txt"),
+        ];
+        let result = fold_immediate_children("", entries);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].path, "home");
+        assert_eq!(result[0].entry_type, "d");
+    }
+
+    #[test]
+    fn fold_with_prefix_strips_prefix() {
+        let entries = vec![
+            make_entry("d", "etc"),
+            make_entry("-", "etc/passwd"),
+            make_entry("-", "etc/hostname"),
+        ];
+        let result = fold_immediate_children("etc", entries);
+        assert_eq!(result.len(), 2);
+        let paths: Vec<&str> = result.iter().map(|e| e.path.as_str()).collect();
+        assert!(paths.contains(&"etc/passwd"));
+        assert!(paths.contains(&"etc/hostname"));
+    }
+
+    #[test]
+    fn fold_with_prefix_synthesises_subdir() {
+        let entries = vec![make_entry("-", "usr/local/bin/tool")];
+        let result = fold_immediate_children("usr", entries);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].entry_type, "d");
+        assert_eq!(result[0].path, "usr/local");
+    }
+
+    #[test]
+    fn fold_handles_dot_slash_prefix_after_normalize() {
+        // After normalize_path, "./etc/passwd" becomes "etc/passwd".
+        let entries = vec![make_entry("-", "etc/passwd")];
+        let result = fold_immediate_children("", entries);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].path, "etc");
     }
 
     #[test]

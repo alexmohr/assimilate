@@ -12,6 +12,13 @@ import { extractError } from '../utils/error'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import TimezoneSelect from '../components/TimezoneSelect.vue'
 
+interface ImportResult {
+  hosts_created: number
+  hosts_updated: number
+  schedules_created: number
+  warnings: string[]
+}
+
 interface SettingsResponse {
   retention_days: number
   timezone: string
@@ -84,6 +91,67 @@ async function regenerateKey(): Promise<void> {
     regenError.value = extractError(e, 'Failed to regenerate key')
   } finally {
     regenerating.value = false
+  }
+}
+
+const exporting = ref(false)
+const exportError = ref('')
+
+const importing = ref(false)
+const importError = ref('')
+const importResult = ref<ImportResult | null>(null)
+const importFileInput = ref<HTMLInputElement | null>(null)
+const importFileName = ref('')
+
+async function exportConfig(): Promise<void> {
+  exporting.value = true
+  exportError.value = ''
+  try {
+    const res = await apiClient.get<unknown>('/config/export')
+    const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const date = new Date().toISOString().slice(0, 10)
+    a.download = `assimilate-config-${date}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (e: unknown) {
+    exportError.value = extractError(e, 'Export failed')
+  } finally {
+    exporting.value = false
+  }
+}
+
+function onImportFileChange(event: Event): void {
+  const target = event.target as HTMLInputElement
+  importFileName.value = target.files?.[0]?.name ?? ''
+  importResult.value = null
+  importError.value = ''
+}
+
+async function importConfig(): Promise<void> {
+  const file = importFileInput.value?.files?.[0]
+  if (!file) {
+    importError.value = 'Please select a file'
+    return
+  }
+  importing.value = true
+  importError.value = ''
+  importResult.value = null
+  try {
+    const text = await file.text()
+    const payload: unknown = JSON.parse(text)
+    const res = await apiClient.post<ImportResult>('/config/import', payload)
+    importResult.value = res.data
+    if (importFileInput.value) {
+      importFileInput.value.value = ''
+    }
+    importFileName.value = ''
+  } catch (e: unknown) {
+    importError.value = extractError(e, 'Import failed')
+  } finally {
+    importing.value = false
   }
 }
 
@@ -266,6 +334,101 @@ async function saveSettings(): Promise<void> {
           </div>
         </div>
       </template>
+    </div>
+
+    <div class="info-card">
+      <div class="card-header">
+        <h3 class="info-title">Configuration Export / Import</h3>
+      </div>
+      <p class="info-description">
+        Export host and schedule configuration as JSON for backup or migration. Importing restores
+        hosts and schedules by name; repositories must exist before importing.
+      </p>
+
+      <div class="config-io-section">
+        <div class="config-io-row">
+          <div class="config-io-label">Export</div>
+          <div class="config-io-controls">
+            <button
+              class="btn btn-sm btn-ghost"
+              :disabled="exporting"
+              @click="exportConfig"
+            >
+              {{ exporting ? 'Exporting...' : 'Download JSON' }}
+            </button>
+            <span
+              v-if="exportError"
+              class="config-io-error"
+            >
+              {{ exportError }}
+            </span>
+          </div>
+        </div>
+
+        <div class="config-io-row">
+          <div class="config-io-label">Import</div>
+          <div class="config-io-controls">
+            <label class="file-label">
+              <input
+                ref="importFileInput"
+                type="file"
+                accept=".json,application/json"
+                class="file-input-hidden"
+                @change="onImportFileChange"
+              />
+              <span class="btn btn-sm btn-ghost">Choose File</span>
+              <span
+                v-if="importFileName"
+                class="file-name"
+              >
+                {{ importFileName }}
+              </span>
+              <span
+                v-else
+                class="file-name muted"
+              >
+                No file chosen
+              </span>
+            </label>
+            <button
+              class="btn btn-sm btn-primary"
+              :disabled="importing || !importFileName"
+              @click="importConfig"
+            >
+              {{ importing ? 'Importing...' : 'Import' }}
+            </button>
+          </div>
+        </div>
+
+        <div
+          v-if="importError"
+          class="config-io-error"
+        >
+          {{ importError }}
+        </div>
+
+        <div
+          v-if="importResult"
+          class="import-result"
+        >
+          <div class="import-stats">
+            <span>Hosts created: {{ importResult.hosts_created }}</span>
+            <span>Hosts updated: {{ importResult.hosts_updated }}</span>
+            <span>Schedules created: {{ importResult.schedules_created }}</span>
+          </div>
+          <ul
+            v-if="importResult.warnings.length"
+            class="import-warnings"
+          >
+            <li
+              v-for="(w, i) in importResult.warnings"
+              :key="i"
+            >
+              {{ w }}
+            </li>
+          </ul>
+        </div>
+      </div>
     </div>
 
     <!-- Regenerate Confirmation -->
@@ -487,5 +650,81 @@ async function saveSettings(): Promise<void> {
 .version-value {
   font-size: 0.875rem;
   color: var(--text-primary);
+}
+
+.config-io-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+}
+
+.config-io-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.config-io-label {
+  flex-shrink: 0;
+  width: 60px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  padding-top: 0.375rem;
+}
+
+.config-io-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.config-io-error {
+  font-size: 0.875rem;
+  color: var(--danger);
+}
+
+.file-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.file-input-hidden {
+  display: none;
+}
+
+.file-name {
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.file-name.muted {
+  color: var(--text-muted);
+}
+
+.import-result {
+  margin-top: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+}
+
+.import-stats {
+  display: flex;
+  gap: 1.25rem;
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+
+.import-warnings {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+  color: var(--warning, #e6a817);
+  font-size: 0.8125rem;
 }
 </style>

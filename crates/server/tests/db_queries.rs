@@ -4444,3 +4444,24 @@ async fn cancel_backup_report_ignores_already_completed(pool: PgPool) {
     assert_eq!(reports.len(), 1);
     assert_eq!(reports[0].status, "success");
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn client_insert_with_paths(pool: PgPool) {
+    let paths = vec!["/etc".to_string(), "/home".to_string()];
+    let excludes = vec!["*.log".to_string()];
+    let client = db::insert_client_with_paths(
+        &pool,
+        "paths-host",
+        Some("Paths Host"),
+        "hash",
+        &paths,
+        &excludes,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(client.hostname, "paths-host");
+    assert_eq!(client.display_name.as_deref(), Some("Paths Host"));
+    assert_eq!(client.default_backup_paths, paths);
+    assert_eq!(client.default_exclude_patterns, excludes);
+}

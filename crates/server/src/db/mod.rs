@@ -442,6 +442,31 @@ pub async fn insert_client(
     .map_err(ApiError::Database)
 }
 
+pub async fn insert_client_with_paths(
+    pool: &PgPool,
+    hostname: &str,
+    display_name: Option<&str>,
+    token_hash: &str,
+    default_backup_paths: &[String],
+    default_exclude_patterns: &[String],
+) -> Result<ClientRow, ApiError> {
+    sqlx::query_as::<_, ClientRow>(
+        "INSERT INTO clients (hostname, display_name, agent_token_hash, default_backup_paths, \
+         default_exclude_patterns) VALUES ($1, $2, $3, $4, $5) RETURNING id, hostname, \
+         display_name, agent_version, agent_git_sha, agent_build_time, created_at, last_seen_at, \
+         owner_id, visibility, default_backup_paths, default_exclude_patterns, agent_token_hash, \
+         is_hidden",
+    )
+    .bind(hostname)
+    .bind(display_name)
+    .bind(token_hash)
+    .bind(default_backup_paths)
+    .bind(default_exclude_patterns)
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
 pub async fn update_client(
     pool: &PgPool,
     hostname: &str,

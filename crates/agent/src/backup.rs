@@ -329,6 +329,8 @@ impl BackupEngine {
     ) -> Vec<String> {
         let mut args = vec![
             "create".to_owned(),
+            // do not make inodes part of the cache, to prevent issues on nfs volumes
+            "--files-cache=ctime,size".to_owned(),
             "--lock-wait".to_owned(),
             "600".to_owned(),
             "--show-rc".to_owned(),

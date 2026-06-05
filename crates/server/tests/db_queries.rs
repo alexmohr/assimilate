@@ -4373,3 +4373,71 @@ async fn recovery_clears_stuck_importing_and_error(pool: PgPool) {
     assert!(!stats.importing);
     assert!(stats.import_error.is_none());
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn cancel_backup_report_updates_started_row(pool: PgPool) {
+    let client = db::insert_client(&pool, "cancel-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    let started_at = Utc::now();
+    db::insert_backup_started(&pool, client.id, repo.id, None, started_at, None)
+        .await
+        .unwrap();
+
+    db::cancel_backup_report(&pool, client.id, repo.id)
+        .await
+        .unwrap();
+
+    let reports = db::list_reports_for_client(&pool, client.id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].status, "cancelled");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn cancel_backup_report_ignores_already_completed(pool: PgPool) {
+    let client = db::insert_client(&pool, "cancel-done-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            client_id: client.id,
+            repo_id: repo.id,
+            schedule_id: None,
+            started_at: now - Duration::minutes(5),
+            finished_at: now,
+            status: "success".to_string(),
+            original_size: 0,
+            compressed_size: 0,
+            deduplicated_size: 0,
+            repo_unique_csize: 0,
+            files_processed: 0,
+            duration_secs: 300,
+            error_message: None,
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: None,
+            borg_command: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    db::cancel_backup_report(&pool, client.id, repo.id)
+        .await
+        .unwrap();
+
+    let reports = db::list_reports_for_client(&pool, client.id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].status, "success");
+}

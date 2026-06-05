@@ -634,4 +634,26 @@ mod tests {
         let json2 = serde_json::to_string(&msg2).unwrap();
         assert_eq!(json, json2);
     }
+
+    #[test]
+    fn server_to_agent_cancel_backup_round_trips() {
+        let msg = ServerToAgent::CancelBackup {
+            repo_id: RepoId(42),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn agent_to_server_backup_cancelled_round_trips() {
+        let msg = AgentToServer::BackupCancelled {
+            repo_id: RepoId(42),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
 }

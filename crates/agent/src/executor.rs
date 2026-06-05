@@ -1526,4 +1526,65 @@ mod tests {
         let target = backup_target_from_repo(&repo, "hostname", Some(99));
         assert_eq!(target.backup_sources, vec!["/var"]);
     }
+
+    #[tokio::test]
+    async fn cancel_backup_with_no_active_task_sends_nothing() {
+        let executor = Executor::new("ws://localhost", "token");
+        let (tx, mut rx) = mpsc::channel(8);
+        let repo_id = shared::types::RepoId(1);
+
+        executor.handle_cancel_backup(repo_id, &tx).await;
+
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn cancel_backup_with_finished_task_sends_nothing() {
+        let executor = Executor::new("ws://localhost", "token");
+        let (tx, mut rx) = mpsc::channel(8);
+        let repo_id = shared::types::RepoId(2);
+
+        let handle = tokio::spawn(async {});
+        handle.await.unwrap();
+        executor
+            .active_task_handles
+            .lock()
+            .await
+            .insert(repo_id, tokio::spawn(async {}));
+        tokio::task::yield_now().await;
+
+        executor.handle_cancel_backup(repo_id, &tx).await;
+
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn cancel_backup_aborts_running_task_and_sends_cancelled() {
+        let executor = Executor::new("ws://localhost", "token");
+        let (tx, mut rx) = mpsc::channel(8);
+        let repo_id = shared::types::RepoId(3);
+
+        executor.active_repos.lock().await.insert(repo_id);
+        let handle = tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        });
+        executor
+            .active_task_handles
+            .lock()
+            .await
+            .insert(repo_id, handle);
+
+        executor.handle_cancel_backup(repo_id, &tx).await;
+
+        let msg = rx.try_recv().unwrap();
+        assert!(matches!(msg, AgentToServer::BackupCancelled { repo_id: r } if r == repo_id));
+        assert!(!executor.active_repos.lock().await.contains(&repo_id));
+        assert!(
+            !executor
+                .active_task_handles
+                .lock()
+                .await
+                .contains_key(&repo_id)
+        );
+    }
 }

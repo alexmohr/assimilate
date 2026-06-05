@@ -235,6 +235,7 @@ async fn repo_update(pool: PgPool) {
         &pool,
         &UpdateRepoParams {
             repo_id: repo.id,
+            name: "test-repo-updated",
             repo_path: "/backups/v2",
             ssh_user: "user2",
             ssh_host: "host2.local",
@@ -3458,6 +3459,7 @@ async fn repo_sync_schedule_update(pool: PgPool) {
         &pool,
         &UpdateRepoParams {
             repo_id: repo.id,
+            name: "test-repo",
             repo_path: "/backups/test",
             ssh_user: "backup",
             ssh_host: "storage.local",
@@ -3482,6 +3484,7 @@ async fn repo_sync_schedule_disable(pool: PgPool) {
         &pool,
         &UpdateRepoParams {
             repo_id: repo.id,
+            name: "test-repo",
             repo_path: "/backups/test",
             ssh_user: "backup",
             ssh_host: "storage.local",

@@ -181,7 +181,7 @@ const filteredSchedules = computed(() => {
     const q = filterText.value.toLowerCase()
     list = list.filter(
       (s) =>
-        s.name.toLowerCase().includes(q) ||
+        (s.name?.toLowerCase().includes(q) ?? false) ||
         (s.machine?.hostname.toLowerCase().includes(q) ?? false) ||
         (s.machine?.display_name?.toLowerCase().includes(q) ?? false) ||
         (s.repo?.name.toLowerCase().includes(q) ?? false),

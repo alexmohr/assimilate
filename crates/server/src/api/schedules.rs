@@ -652,6 +652,53 @@ pub async fn run_schedule_now(
     Ok(StatusCode::ACCEPTED)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/schedules/{id}/cancel",
+    tag = "Schedules",
+    operation_id = "cancelRunningBackup",
+    summary = "Cancel a running backup for a schedule",
+    params(("id" = i64, Path, description = "Schedule ID")),
+    responses(
+        (status = 202, description = "Accepted"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Not found"),
+    )
+)]
+pub async fn cancel_running_backup(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let schedule = db::get_schedule_by_id(&state.pool, id).await?;
+    let Some(schedule_repo_id) = schedule.repo_id else {
+        return Err(ApiError::BadRequest(
+            "schedule has no repository assigned".into(),
+        ));
+    };
+    check_repo_permission(&state.pool, &auth, schedule_repo_id, |p| {
+        p.can_modify_schedules
+    })
+    .await?;
+
+    let hostnames = db::get_schedule_target_hostnames(&state.pool, id).await?;
+    let repo_id = RepoId(schedule_repo_id);
+
+    for hostname in &hostnames {
+        let msg = ServerToAgent::CancelBackup { repo_id };
+        if let Err(e) = state.registry.send_to(hostname, msg).await {
+            tracing::warn!(
+                hostname = %hostname,
+                error = %e,
+                "agent not connected for cancel_running_backup"
+            );
+        }
+    }
+
+    Ok(StatusCode::ACCEPTED)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ListScheduleReportsQuery {
     pub limit: Option<i64>,

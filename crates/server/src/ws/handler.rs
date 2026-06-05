@@ -748,5 +748,21 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 );
             }
         }
+        AgentToServer::BackupCancelled { repo_id } => {
+            tracing::info!(
+                hostname = %hostname,
+                repo_id = ?repo_id,
+                "backup cancelled by agent"
+            );
+            if let Err(e) = db::cancel_backup_report(&state.pool, client_id, repo_id.0).await {
+                tracing::error!(
+                    hostname = %hostname,
+                    repo_id = ?repo_id,
+                    error = %e,
+                    "failed to update cancelled backup report"
+                );
+            }
+            state.ui_broadcast.send(ServerToUi::DataChanged);
+        }
     }
 }

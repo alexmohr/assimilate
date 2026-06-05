@@ -85,6 +85,9 @@ pub enum ServerToAgent {
         repo_id: RepoId,
         archive_names: Vec<String>,
     },
+    CancelBackup {
+        repo_id: RepoId,
+    },
     Ping,
 }
 
@@ -207,6 +210,9 @@ pub enum AgentToServer {
         success: bool,
         deleted_count: u32,
         error_message: Option<String>,
+    },
+    BackupCancelled {
+        repo_id: RepoId,
     },
     Pong,
 }
@@ -622,6 +628,28 @@ mod tests {
             agent_build_time: Some("2026-01-01".into()),
             supports_restart: true,
             restart_unavailable_reason: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn server_to_agent_cancel_backup_round_trips() {
+        let msg = ServerToAgent::CancelBackup {
+            repo_id: RepoId(42),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn agent_to_server_backup_cancelled_round_trips() {
+        let msg = AgentToServer::BackupCancelled {
+            repo_id: RepoId(42),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let msg2: AgentToServer = serde_json::from_str(&json).unwrap();

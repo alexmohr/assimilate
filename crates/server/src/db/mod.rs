@@ -1925,6 +1925,23 @@ pub async fn insert_backup_started(
     Ok(())
 }
 
+pub async fn cancel_backup_report(
+    pool: &PgPool,
+    client_id: i64,
+    repo_id: i64,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE backup_reports SET status = 'cancelled', finished_at = NOW() WHERE client_id = $1 \
+         AND repo_id = $2 AND status = 'started'",
+    )
+    .bind(client_id)
+    .bind(repo_id)
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
 pub async fn insert_backup_report(
     pool: &PgPool,
     params: &InsertReportParams,

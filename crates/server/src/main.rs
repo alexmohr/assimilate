@@ -318,6 +318,10 @@ async fn main() -> Result<(), StartupError> {
             post(api::schedules::run_schedule_now),
         )
         .route(
+            "/api/schedules/{id}/cancel",
+            post(api::schedules::cancel_running_backup),
+        )
+        .route(
             "/api/schedules/{id}/reports",
             get(api::schedules::list_schedule_reports),
         )

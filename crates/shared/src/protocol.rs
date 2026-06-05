@@ -85,6 +85,9 @@ pub enum ServerToAgent {
         repo_id: RepoId,
         archive_names: Vec<String>,
     },
+    CancelBackup {
+        repo_id: RepoId,
+    },
     Ping,
 }
 
@@ -207,6 +210,9 @@ pub enum AgentToServer {
         success: bool,
         deleted_count: u32,
         error_message: Option<String>,
+    },
+    BackupCancelled {
+        repo_id: RepoId,
     },
     Pong,
 }

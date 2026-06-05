@@ -309,6 +309,16 @@ async fn handle_text_message(
                 warn!("Executor command channel closed");
             }
         }
+        ServerToAgent::CancelBackup { repo_id } => {
+            info!("Received CancelBackup for repo {repo_id:?}");
+            if exec_cmd_tx
+                .send(ExecutorCommand::CancelBackup { repo_id })
+                .await
+                .is_err()
+            {
+                warn!("Executor command channel closed");
+            }
+        }
     }
 
     Ok(())

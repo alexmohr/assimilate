@@ -98,7 +98,9 @@ impl Borg {
         if let Some(d) = dir {
             cmd.current_dir(d);
         }
-        let result = cmd.output().await;
+        cmd.kill_on_drop(true);
+        let child = cmd.spawn()?;
+        let result = child.wait_with_output().await;
         log_run_result(&subcommand, start.elapsed().as_millis(), &result);
         result
     }

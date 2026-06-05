@@ -48,6 +48,7 @@ utoipa-swagger-ui = { version = "9", features = ["axum"] }
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+tempfile = { workspace = true }
 
 [build-dependencies]
 chrono = { workspace = true }

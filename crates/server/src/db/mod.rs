@@ -3760,6 +3760,42 @@ pub async fn delete_archive_reports_by_names(
     Ok(result.rows_affected())
 }
 
+pub async fn delete_archive_records_by_names(
+    pool: &PgPool,
+    repo_id: i64,
+    names: &[String],
+) -> Result<u64, ApiError> {
+    if names.is_empty() {
+        return Ok(0);
+    }
+
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+    let result =
+        sqlx::query("DELETE FROM backup_reports WHERE repo_id = $1 AND archive_name = ANY($2)")
+            .bind(repo_id)
+            .bind(names)
+            .execute(&mut *tx)
+            .await
+            .map_err(ApiError::Database)?;
+
+    sqlx::query("DELETE FROM archive_files WHERE repo_id = $1 AND archive_name = ANY($2)")
+        .bind(repo_id)
+        .bind(names)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
+
+    sqlx::query("DELETE FROM archive_index_jobs WHERE repo_id = $1 AND archive_name = ANY($2)")
+        .bind(repo_id)
+        .bind(names)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
+
+    tx.commit().await.map_err(ApiError::Database)?;
+    Ok(result.rows_affected())
+}
+
 pub async fn get_storage_trends_by_repo(
     pool: &PgPool,
     days: i64,

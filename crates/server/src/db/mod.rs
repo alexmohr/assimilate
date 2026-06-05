@@ -226,6 +226,9 @@ pub struct ScheduleRow {
     pub on_failure: String,
     pub owner_id: Option<i64>,
     pub visibility: String,
+    #[sqlx(default)]
+    #[serde(default)]
+    pub is_running: bool,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
@@ -1573,6 +1576,20 @@ pub async fn get_backup_schedule_for_hostname_repo(
     .bind(hostname)
     .bind(repo_id)
     .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
+pub async fn get_schedule_ids_for_hostname(
+    pool: &PgPool,
+    hostname: &str,
+) -> Result<Vec<i64>, ApiError> {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT DISTINCT s.id FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id \
+         JOIN clients c ON c.id = st.client_id WHERE c.hostname = $1",
+    )
+    .bind(hostname)
+    .fetch_all(pool)
     .await
     .map_err(ApiError::Database)
 }

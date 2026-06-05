@@ -17,11 +17,14 @@ pub mod ssh;
 pub mod tunnel;
 pub mod ws;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use shared::types::DryRunFile;
 use sqlx::PgPool;
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{Mutex, RwLock, oneshot};
 
 use crate::{
     log_buffer::LogBuffer,
@@ -55,4 +58,5 @@ pub struct AppState {
     pub pending_restores: PendingRestores,
     pub pending_migrations: PendingMigrations,
     pub pending_deletes: PendingDeletes,
+    pub running_schedules: Arc<RwLock<HashSet<i64>>>,
 }

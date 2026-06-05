@@ -48,6 +48,7 @@ interface ScheduleRow {
   post_backup_commands: string
   execution_mode: string
   on_failure: string
+  is_running: boolean
 }
 
 interface ClientRow {
@@ -441,6 +442,13 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
           </div>
           <div class="card-badges">
             <span
+              v-if="s.is_running"
+              class="running-badge"
+            >
+              <span class="running-dot" />
+              Running
+            </span>
+            <span
               v-if="s.health && (s.health.last_status || s.health.is_overdue)"
               class="health-badge"
               :class="statusClass(s.health)"
@@ -663,6 +671,38 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
   gap: 0.4rem;
   align-items: center;
   flex-shrink: 0;
+}
+
+.running-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.running-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
 }
 
 .health-badge {

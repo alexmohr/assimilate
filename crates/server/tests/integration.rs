@@ -59,6 +59,9 @@ async fn build_test_app(pool: PgPool) -> Router {
         pending_deletes: std::sync::Arc::new(tokio::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),
+        running_schedules: std::sync::Arc::new(tokio::sync::RwLock::new(
+            std::collections::HashSet::new(),
+        )),
     };
 
     Router::new()

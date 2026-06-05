@@ -217,6 +217,17 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     }
 
     state.registry.unregister(&hostname).await;
+    match db::get_schedule_ids_for_hostname(&state.pool, &hostname).await {
+        Ok(ids) => {
+            let mut running = state.running_schedules.write().await;
+            for id in ids {
+                running.remove(&id);
+            }
+        }
+        Err(e) => {
+            tracing::warn!(hostname = %hostname, error = %e, "failed to clear running schedules on disconnect");
+        }
+    }
     state.ui_broadcast.send(ServerToUi::AgentDisconnected {
         hostname: hostname.clone(),
     });
@@ -272,6 +283,16 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
             {
                 tracing::error!(hostname = %hostname, error = %e, "failed to insert backup started row");
             }
+            match db::get_backup_schedule_for_hostname_repo(&state.pool, hostname, repo_id.0).await
+            {
+                Ok(Some(schedule)) => {
+                    state.running_schedules.write().await.insert(schedule.id);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(hostname = %hostname, error = %e, "failed to look up schedule for BackupStarted");
+                }
+            }
             state.ui_broadcast.send(ServerToUi::DataChanged);
         }
         AgentToServer::BackupCompleted { report } => {
@@ -281,6 +302,17 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 status = ?report.status,
                 "backup completed"
             );
+            match db::get_backup_schedule_for_hostname_repo(&state.pool, hostname, report.repo_id.0)
+                .await
+            {
+                Ok(Some(schedule)) => {
+                    state.running_schedules.write().await.remove(&schedule.id);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(hostname = %hostname, error = %e, "failed to look up schedule for BackupCompleted");
+                }
+            }
             let status = match report.status {
                 shared::types::BackupStatus::Success => "success",
                 shared::types::BackupStatus::Warning => "warning",
@@ -503,6 +535,16 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 reason = %reason,
                 "backup rejected by agent"
             );
+            match db::get_backup_schedule_for_hostname_repo(&state.pool, hostname, repo_id.0).await
+            {
+                Ok(Some(schedule)) => {
+                    state.running_schedules.write().await.remove(&schedule.id);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(hostname = %hostname, error = %e, "failed to look up schedule for BackupRejected");
+                }
+            }
         }
         AgentToServer::CheckCompleted {
             repo_id,

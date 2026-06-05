@@ -41,6 +41,7 @@ interface ScheduleRow {
   post_backup_commands: string
   execution_mode: string
   on_failure: string
+  is_running: boolean
 }
 
 interface ScheduleTarget {
@@ -508,6 +509,18 @@ watch(activeTab, (tab) => {
     loadReports().catch(() => undefined)
   }
 })
+
+const { onMessage } = useWebSocket()
+onMessage('DataChanged', async () => {
+  if (!isCreate.value && schedule.value) {
+    try {
+      const res = await apiClient.get<ScheduleRow>(`/schedules/${props.id}`)
+      schedule.value.is_running = res.data.is_running
+    } catch {
+      // ignore
+    }
+  }
+})
 </script>
 
 <template>
@@ -541,6 +554,13 @@ watch(activeTab, (tab) => {
         v-if="!isCreate && schedule"
         class="header-actions"
       >
+        <span
+          v-if="schedule.is_running"
+          class="running-badge"
+        >
+          <span class="running-dot" />
+          Running
+        </span>
         <button
           v-if="backupRunning"
           class="btn btn-sm btn-danger"
@@ -1446,6 +1466,38 @@ watch(activeTab, (tab) => {
   font-size: 1.3rem;
   font-weight: 700;
   margin: 0 0 0.4rem;
+}
+
+.running-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.running-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
 }
 
 .error-banner {

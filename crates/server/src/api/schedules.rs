@@ -111,8 +111,9 @@ pub async fn list_schedules(
 ) -> Result<Json<Vec<ScheduleRow>>, ApiError> {
     let schedules = db::list_schedules(&state.pool).await?;
     let is_admin = auth.role == Role::Admin;
+    let running = state.running_schedules.read().await;
     let mut visible = Vec::with_capacity(schedules.len());
-    for s in schedules {
+    for mut s in schedules {
         if is_visible_to_user(
             &state.pool,
             auth.user_id,
@@ -122,6 +123,7 @@ pub async fn list_schedules(
         )
         .await?
         {
+            s.is_running = running.contains(&s.id);
             visible.push(s);
         }
     }
@@ -314,7 +316,8 @@ pub async fn get_schedule(
     _auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<ScheduleRow>, ApiError> {
-    let schedule = db::get_schedule_by_id(&state.pool, id).await?;
+    let mut schedule = db::get_schedule_by_id(&state.pool, id).await?;
+    schedule.is_running = state.running_schedules.read().await.contains(&id);
     Ok(Json(schedule))
 }
 

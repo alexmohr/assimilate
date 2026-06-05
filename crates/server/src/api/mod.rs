@@ -5,6 +5,7 @@ pub mod archives;
 pub mod audit;
 pub mod auth;
 pub mod clients;
+pub mod config_io;
 pub mod deploy;
 pub mod diff;
 pub mod dryrun;

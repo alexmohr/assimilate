@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Duration,
+};
 
 use chrono::Utc;
 use shared::{
@@ -10,7 +14,10 @@ use shared::{
         AgentConfig, BorgEncryption, Compression, DryRunFile, RepoConfig, RepoId, build_repo_url,
     },
 };
-use tokio::sync::{Mutex, mpsc};
+use tokio::{
+    sync::{Mutex, mpsc},
+    task::JoinHandle,
+};
 use tracing::{error, info, warn};
 
 use crate::{
@@ -24,6 +31,9 @@ pub enum ExecutorCommand {
     RunNow {
         repo_id: RepoId,
         schedule_id: Option<i64>,
+    },
+    CancelBackup {
+        repo_id: RepoId,
     },
     RunCheckNow {
         repo_id: RepoId,
@@ -62,6 +72,7 @@ pub struct Executor {
     server_url: String,
     token: String,
     active_repos: Arc<Mutex<HashSet<RepoId>>>,
+    active_task_handles: Arc<Mutex<HashMap<RepoId, JoinHandle<()>>>>,
     current_config: Arc<Mutex<Option<AgentConfig>>>,
     engine: Arc<BackupEngine>,
 }
@@ -72,6 +83,7 @@ impl Executor {
             server_url: server_url.to_owned(),
             token: token.to_owned(),
             active_repos: Arc::new(Mutex::new(HashSet::new())),
+            active_task_handles: Arc::new(Mutex::new(HashMap::new())),
             current_config: Arc::new(Mutex::new(None)),
             engine: Arc::new(BackupEngine::new()),
         }
@@ -157,6 +169,9 @@ impl Executor {
                     self.handle_delete_archives(repo_id, archive_names, request_id, &outbound_tx)
                         .await;
                 }
+                ExecutorCommand::CancelBackup { repo_id } => {
+                    self.handle_cancel_backup(repo_id, &outbound_tx).await;
+                }
             }
         }
     }
@@ -214,12 +229,13 @@ impl Executor {
         drop(config_guard);
 
         let active_repos = Arc::clone(&self.active_repos);
+        let active_task_handles = Arc::clone(&self.active_task_handles);
         let engine = Arc::clone(&self.engine);
         let outbound = outbound_tx.clone();
         let server_url = self.server_url.clone();
         let token = self.token.clone();
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             run_backup_task(
                 repo_id,
                 target,
@@ -231,7 +247,35 @@ impl Executor {
             )
             .await;
             active_repos.lock().await.remove(&repo_id);
+            active_task_handles.lock().await.remove(&repo_id);
         });
+        self.active_task_handles
+            .lock()
+            .await
+            .insert(repo_id, handle);
+    }
+
+    async fn handle_cancel_backup(
+        &self,
+        repo_id: RepoId,
+        outbound_tx: &mpsc::Sender<AgentToServer>,
+    ) {
+        let handle = self.active_task_handles.lock().await.remove(&repo_id);
+        let Some(handle) = handle else {
+            warn!(repo_id = ?repo_id, "cancel requested but no active backup task found");
+            return;
+        };
+        if handle.is_finished() {
+            warn!(repo_id = ?repo_id, "cancel requested but backup already completed");
+            return;
+        }
+        handle.abort();
+        self.active_repos.lock().await.remove(&repo_id);
+        info!(repo_id = ?repo_id, "backup cancelled");
+        let msg = AgentToServer::BackupCancelled { repo_id };
+        if let Err(e) = outbound_tx.send(msg).await {
+            tracing::debug!(error = %e, "outbound send failed");
+        }
     }
 
     async fn handle_run_check(&self, repo_id: RepoId, outbound_tx: &mpsc::Sender<AgentToServer>) {
@@ -1481,5 +1525,66 @@ mod tests {
         ]);
         let target = backup_target_from_repo(&repo, "hostname", Some(99));
         assert_eq!(target.backup_sources, vec!["/var"]);
+    }
+
+    #[tokio::test]
+    async fn cancel_backup_with_no_active_task_sends_nothing() {
+        let executor = Executor::new("ws://localhost", "token");
+        let (tx, mut rx) = mpsc::channel(8);
+        let repo_id = shared::types::RepoId(1);
+
+        executor.handle_cancel_backup(repo_id, &tx).await;
+
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn cancel_backup_with_finished_task_sends_nothing() {
+        let executor = Executor::new("ws://localhost", "token");
+        let (tx, mut rx) = mpsc::channel(8);
+        let repo_id = shared::types::RepoId(2);
+
+        let handle = tokio::spawn(async {});
+        handle.await.unwrap();
+        executor
+            .active_task_handles
+            .lock()
+            .await
+            .insert(repo_id, tokio::spawn(async {}));
+        tokio::task::yield_now().await;
+
+        executor.handle_cancel_backup(repo_id, &tx).await;
+
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn cancel_backup_aborts_running_task_and_sends_cancelled() {
+        let executor = Executor::new("ws://localhost", "token");
+        let (tx, mut rx) = mpsc::channel(8);
+        let repo_id = shared::types::RepoId(3);
+
+        executor.active_repos.lock().await.insert(repo_id);
+        let handle = tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        });
+        executor
+            .active_task_handles
+            .lock()
+            .await
+            .insert(repo_id, handle);
+
+        executor.handle_cancel_backup(repo_id, &tx).await;
+
+        let msg = rx.try_recv().unwrap();
+        assert!(matches!(msg, AgentToServer::BackupCancelled { repo_id: r } if r == repo_id));
+        assert!(!executor.active_repos.lock().await.contains(&repo_id));
+        assert!(
+            !executor
+                .active_task_handles
+                .lock()
+                .await
+                .contains_key(&repo_id)
+        );
     }
 }

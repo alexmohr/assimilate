@@ -11,6 +11,7 @@ import { formatDateShort, formatDuration, formatBytes } from '../utils/format'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
 import { useToast } from '../composables/useToast'
+import { useWebSocket } from '../composables/useWebSocket'
 import { parseLines } from '../utils/validation'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import CronBuilder from '../components/CronBuilder.vue'
@@ -113,10 +114,13 @@ const showDeleteDialog = ref(false)
 const deleteLoading = ref(false)
 const refOpen = ref(false)
 const runNowLoading = ref(false)
+const cancelLoading = ref(false)
+const backupRunning = ref(false)
 const reports = ref<ReportRow[]>([])
 const reportsLoading = ref(false)
 const reportsError = ref<string | null>(null)
 const { success: toastSuccess, error: toastError } = useToast()
+const { onMessage } = useWebSocket()
 
 const selectedClientIds = ref<number[]>([])
 const selectedRepoId = ref<number | null>(null)
@@ -454,11 +458,47 @@ async function loadReports(): Promise<void> {
   }
 }
 
+async function cancelBackup(): Promise<void> {
+  cancelLoading.value = true
+  try {
+    await apiClient.post(`/schedules/${props.id}/cancel`)
+    toastSuccess('Cancel request sent.')
+  } catch (e: unknown) {
+    toastError(extractError(e))
+  } finally {
+    cancelLoading.value = false
+  }
+}
+
+interface BackupPayload {
+  hostname: string
+  target_name: string
+}
+
+onMessage<BackupPayload>('BackupStarted', (payload) => {
+  if (repo.value && payload.target_name === repo.value.name) {
+    backupRunning.value = true
+  }
+})
+
+onMessage<BackupPayload>('BackupCompleted', (payload) => {
+  if (repo.value && payload.target_name === repo.value.name) {
+    backupRunning.value = false
+  }
+})
+
+onMessage<{ repo_id: number }>('DataChanged', () => {
+  if (activeTab.value === 'logs' && !isCreate.value) {
+    loadReports().catch(() => undefined)
+  }
+})
+
 function reportStatusClass(status: string): string {
   const s = status.toLowerCase()
   if (s === 'success') return 'badge-success'
   if (s === 'warning') return 'badge-warning'
   if (s === 'started') return 'badge-started'
+  if (s === 'cancelled') return 'badge-cancelled'
   return 'badge-failed'
 }
 
@@ -500,8 +540,16 @@ watch(activeTab, (tab) => {
         class="header-actions"
       >
         <button
+          v-if="backupRunning"
+          class="btn btn-sm btn-danger"
+          :disabled="cancelLoading"
+          @click="cancelBackup"
+        >
+          {{ cancelLoading ? '...' : 'Cancel Backup' }}
+        </button>
+        <button
           class="btn btn-sm btn-primary"
-          :disabled="runNowLoading"
+          :disabled="runNowLoading || backupRunning"
           @click="runNow"
         >
           {{ runNowLoading ? '...' : 'Run Now' }}
@@ -2100,5 +2148,20 @@ watch(activeTab, (tab) => {
 .badge-started {
   background: var(--info-subtle);
   color: var(--info);
+}
+
+.badge-cancelled {
+  background: var(--muted-subtle, #f0f0f0);
+  color: var(--muted, #6b7280);
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: #fff;
+  border: none;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: var(--danger-hover, color-mix(in srgb, var(--danger) 85%, #000));
 }
 </style>

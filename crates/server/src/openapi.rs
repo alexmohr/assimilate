@@ -89,6 +89,7 @@ use crate::{
         crate::api::schedules::update_schedule,
         crate::api::schedules::delete_schedule,
         crate::api::schedules::run_schedule_now,
+        crate::api::schedules::cancel_running_backup,
         crate::api::schedules::list_schedule_reports,
         crate::api::schedules::list_schedule_targets,
         crate::api::schedules::list_schedule_backup_sources,

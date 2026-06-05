@@ -52,6 +52,8 @@ The browser starts at the repository root (`/`). Each entry shows:
 
 Click a directory to navigate into it. Use the breadcrumb path at the top to jump back up the tree. The browser loads up to 100 entries per directory by default; very large directories may be truncated.
 
+New archives from successful backup runs are recorded and indexed in the background immediately after the backup report is saved. Archives discovered later through repository sync are also queued for indexing. Older archives that have not been indexed yet are indexed on first browse.
+
 ## Extracting Files
 
 To download a file from an archive:

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+#[cfg(test)]
+use std::sync::{Mutex, OnceLock};
 use std::{
     collections::HashMap,
     ffi::OsStr,
@@ -10,6 +12,9 @@ use std::{
 };
 
 use tokio::process::{Child, Command};
+
+#[cfg(test)]
+static TEST_BINARY_OVERRIDE: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
 
 fn log_run_result(
     subcommand: &str,
@@ -43,6 +48,11 @@ impl Default for Borg {
 
 impl Borg {
     pub fn new() -> Self {
+        #[cfg(test)]
+        if let Some(binary) = test_binary_override() {
+            return Self { binary };
+        }
+
         Self {
             binary: std::env::var("BORG_BINARY")
                 .map_or_else(|_| PathBuf::from("borg"), PathBuf::from),
@@ -117,4 +127,37 @@ impl Borg {
             .kill_on_drop(true)
             .spawn()
     }
+}
+
+#[cfg(test)]
+fn test_binary_override() -> Option<PathBuf> {
+    TEST_BINARY_OVERRIDE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().cloned())
+}
+
+#[cfg(test)]
+pub(crate) struct TestBinaryOverrideGuard {
+    previous: Option<PathBuf>,
+}
+
+#[cfg(test)]
+impl Drop for TestBinaryOverrideGuard {
+    fn drop(&mut self) {
+        if let Ok(mut guard) = TEST_BINARY_OVERRIDE.get_or_init(|| Mutex::new(None)).lock() {
+            *guard = self.previous.take();
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn override_binary_for_tests(binary: PathBuf) -> TestBinaryOverrideGuard {
+    let previous = TEST_BINARY_OVERRIDE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .map_or(None, |mut guard| guard.replace(binary));
+
+    TestBinaryOverrideGuard { previous }
 }

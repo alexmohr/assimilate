@@ -38,12 +38,7 @@ pub async fn get_index_status(
     repo_id: i64,
     archive_name: &str,
 ) -> Result<Option<IndexStatus>, ApiError> {
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        status: String,
-    }
-
-    let row = sqlx::query_as::<_, Row>(
+    let row = sqlx::query_as::<_, (String,)>(
         "SELECT status FROM archive_index_jobs WHERE repo_id = $1 AND archive_name = $2",
     )
     .bind(repo_id)
@@ -52,10 +47,10 @@ pub async fn get_index_status(
     .await
     .map_err(ApiError::Database)?;
 
-    Ok(row.map(|r| get_index_status_from_str(&r.status)))
+    Ok(row.map(|(s,)| get_index_status_from_str(&s)))
 }
 
-/// Atomically claims the indexing job and spawns a background task if we won the race.
+/// Atomically claim the indexing job and spawn a background task if we won the race.
 /// Returns the current status after the claim attempt.
 pub async fn ensure_indexed(
     pool: PgPool,
@@ -74,6 +69,7 @@ pub async fn ensure_indexed(
     .map_err(ApiError::Database)?;
 
     if result.rows_affected() == 1 {
+        // We claimed the job — spawn background indexing.
         let pool_bg = pool.clone();
         let archive_name_bg = archive_name.clone();
         tokio::spawn(async move {
@@ -90,6 +86,7 @@ pub async fn ensure_indexed(
         return Ok(IndexStatus::Pending);
     }
 
+    // Another task already claimed it — return current status.
     get_index_status(&pool, repo_id, &archive_name)
         .await
         .map(|s| s.unwrap_or(IndexStatus::Pending))
@@ -205,6 +202,7 @@ async fn index_archive(
         return Err(classify_borg_error(status.code().unwrap_or(1), &stderr_str));
     }
 
+    // Build the full set of entries, synthesising missing ancestor directories.
     let mut paths: Vec<String> = Vec::new();
     let mut parent_paths: Vec<String> = Vec::new();
     let mut entry_types: Vec<String> = Vec::new();
@@ -351,6 +349,7 @@ mod tests {
 
     #[test]
     fn ancestor_synthesis_produces_all_dirs() {
+        // A single deep file should produce 3 synthetic directory entries.
         let path = "a/b/c/file.txt";
         let segments: Vec<&str> = path.split('/').collect();
         let mut dirs: Vec<String> = Vec::new();
@@ -362,6 +361,7 @@ mod tests {
 
     #[test]
     fn empty_path_skipped() {
+        // The archive root "." normalises to "" and must not produce a DB row.
         let path = "";
         assert!(path.is_empty());
     }

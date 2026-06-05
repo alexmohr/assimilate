@@ -128,6 +128,7 @@ pub struct CreateRepoRequest {
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateRepoRequest {
+    pub name: Option<String>,
     pub repo_path: String,
     #[serde(default = "helpers::default_ssh_user")]
     pub ssh_user: String,
@@ -276,6 +277,9 @@ pub async fn update_repo(
     ApiJson(req): ApiJson<UpdateRepoRequest>,
 ) -> Result<Json<RepoRow>, ApiError> {
     helpers::validate_non_empty(&req.repo_path, "repo_path")?;
+    if let Some(ref n) = req.name {
+        helpers::validate_non_empty(n, "name")?;
+    }
 
     let compression = helpers::validate_compression(req.compression.as_deref())?;
 
@@ -289,11 +293,13 @@ pub async fn update_repo(
         .map_or_else(|| "repokey-blake2".to_string(), |e| e.to_string());
 
     let sync_schedule = req.sync_schedule.unwrap_or(existing.sync_schedule);
+    let name = req.name.unwrap_or(existing.name);
 
     let repo = db::update_repo(
         &state.pool,
         &UpdateRepoParams {
             repo_id,
+            name: &name,
             repo_path: &req.repo_path,
             ssh_user: &req.ssh_user,
             ssh_host: &req.ssh_host,

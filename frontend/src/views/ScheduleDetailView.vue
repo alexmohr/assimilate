@@ -522,7 +522,9 @@ watch(activeTab, (tab) => {
       <span class="crumb-sep">/</span>
       <span class="crumb-current">
         <template v-if="isCreate">New</template>
-        <template v-else-if="schedule">{{ scheduleTypeLabel(schedule.schedule_type) }}</template>
+        <template v-else-if="schedule">{{
+          schedule.name || scheduleTypeLabel(schedule.schedule_type)
+        }}</template>
         <template v-else>#{{ props.id }}</template>
       </span>
     </nav>
@@ -531,7 +533,7 @@ watch(activeTab, (tab) => {
       <h1 class="page-title">
         <template v-if="isCreate">New Schedule</template>
         <template v-else-if="schedule">
-          {{ scheduleTypeLabel(schedule.schedule_type) }} Schedule
+          {{ schedule.name || `${scheduleTypeLabel(schedule.schedule_type)} Schedule` }}
         </template>
         <template v-else>Schedule</template>
       </h1>

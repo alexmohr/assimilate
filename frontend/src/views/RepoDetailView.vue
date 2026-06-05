@@ -67,6 +67,7 @@ interface TagRow {
 }
 
 interface EditForm {
+  name: string
   repo_path: string
   ssh_user: string
   ssh_host: string
@@ -110,6 +111,7 @@ const isEditing = ref(false)
 const editLoading = ref(false)
 const editError = ref<string | null>(null)
 const editForm = reactive<EditForm>({
+  name: '',
   repo_path: '',
   ssh_user: '',
   ssh_host: '',
@@ -401,6 +403,7 @@ function normalizeCompression(raw: string): CompressionType {
 
 function startEdit(): void {
   if (!repo.value) return
+  editForm.name = repo.value.name
   editForm.repo_path = repo.value.repo_path
   editForm.ssh_user = repo.value.ssh_user
   editForm.ssh_host = repo.value.ssh_host
@@ -436,6 +439,7 @@ async function saveEdit(): Promise<void> {
       return
     }
     await apiClient.put(`/repos/${repoId.value}`, {
+      name: editForm.name.trim(),
       repo_path: editForm.repo_path.trim(),
       ssh_user: editForm.ssh_user.trim(),
       ssh_host: editForm.ssh_host.trim(),
@@ -826,6 +830,14 @@ async function resetImport(): Promise<void> {
           <template v-else>
             <div class="edit-form">
               <div class="form-grid">
+                <div class="field field-full">
+                  <label class="field-label">Name</label>
+                  <input
+                    v-model="editForm.name"
+                    class="input"
+                    placeholder="e.g. Web Server Backup"
+                  />
+                </div>
                 <div class="field">
                   <label class="field-label">SSH User</label>
                   <input

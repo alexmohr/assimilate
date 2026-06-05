@@ -519,7 +519,7 @@ pub async fn list_contents(
             }));
         }
         None => {
-            // Not yet started — claim and launch background indexing.
+            // Not yet started - claim and launch background indexing.
             let triggered = archive_index::ensure_indexed(
                 state.pool.clone(),
                 state.encryption_key,

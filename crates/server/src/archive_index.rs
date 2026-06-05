@@ -69,7 +69,7 @@ pub async fn ensure_indexed(
     .map_err(ApiError::Database)?;
 
     if result.rows_affected() == 1 {
-        // We claimed the job — spawn background indexing.
+        // We claimed the job - spawn background indexing.
         let pool_bg = pool.clone();
         let archive_name_bg = archive_name.clone();
         tokio::spawn(async move {
@@ -86,7 +86,7 @@ pub async fn ensure_indexed(
         return Ok(IndexStatus::Pending);
     }
 
-    // Another task already claimed it — return current status.
+    // Another task already claimed it - return current status.
     get_index_status(&pool, repo_id, &archive_name)
         .await
         .map(|s| s.unwrap_or(IndexStatus::Pending))
@@ -264,7 +264,7 @@ async fn index_archive(
 
     let file_count = i64::try_from(paths.len()).unwrap_or(i64::MAX);
 
-    // Bulk insert using unnest arrays — one round-trip regardless of archive size.
+    // Bulk insert using unnest arrays - one round-trip regardless of archive size.
     sqlx::query(
         "INSERT INTO archive_files (repo_id, archive_name, path, parent_path, entry_type, size, \
          mtime, mode) SELECT $1, $2, unnest($3::text[]), unnest($4::text[]), unnest($5::text[]), \
@@ -327,8 +327,6 @@ pub async fn query_dir(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn parent_path_for_root_file() {
         let path = "README.md";

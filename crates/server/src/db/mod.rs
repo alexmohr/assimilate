@@ -219,6 +219,7 @@ pub struct ScheduleRow {
     pub keep_monthly: i32,
     pub keep_yearly: i32,
     pub compact_enabled: bool,
+    pub ignore_changed_files: bool,
     pub rate_limit_kbps: Option<i32>,
     pub pre_backup_commands: String,
     pub post_backup_commands: String,
@@ -1099,9 +1100,9 @@ pub async fn list_schedules(pool: &PgPool) -> Result<Vec<ScheduleRow>, ApiError>
     sqlx::query_as::<_, ScheduleRow>(
         "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns_raw, ignore_global_excludes, keep_hourly, \
-         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
-         pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, \
-         visibility FROM schedules ORDER BY id",
+         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, \
+         ignore_changed_files, rate_limit_kbps, pre_backup_commands, post_backup_commands, \
+         execution_mode, on_failure, owner_id, visibility FROM schedules ORDER BY id",
     )
     .fetch_all(pool)
     .await
@@ -1122,6 +1123,7 @@ pub struct ScheduleParams<'a> {
     pub keep_monthly: i32,
     pub keep_yearly: i32,
     pub compact_enabled: bool,
+    pub ignore_changed_files: bool,
     pub rate_limit_kbps: Option<i32>,
     pub pre_backup_commands: &'a str,
     pub post_backup_commands: &'a str,
@@ -1138,14 +1140,14 @@ pub async fn insert_schedule(
     sqlx::query_as::<_, ScheduleRow>(
         "INSERT INTO schedules (repo_id, name, schedule_type, cron_expression, enabled, \
          canary_enabled, exclude_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, \
-         keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
-         pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id) VALUES \
-         ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, \
-         $20) RETURNING id, repo_id, name, schedule_type, cron_expression, enabled, \
-         canary_enabled, last_run_at, next_run_at, exclude_patterns_raw, ignore_global_excludes, \
-         keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, \
+         keep_weekly, keep_monthly, keep_yearly, compact_enabled, ignore_changed_files, \
          rate_limit_kbps, pre_backup_commands, post_backup_commands, execution_mode, on_failure, \
-         owner_id, visibility",
+         owner_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, \
+         $17, $18, $19, $20, $21) RETURNING id, repo_id, name, schedule_type, cron_expression, \
+         enabled, canary_enabled, last_run_at, next_run_at, exclude_patterns_raw, \
+         ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
+         compact_enabled, ignore_changed_files, rate_limit_kbps, pre_backup_commands, \
+         post_backup_commands, execution_mode, on_failure, owner_id, visibility",
     )
     .bind(repo_id)
     .bind(params.name)
@@ -1161,6 +1163,7 @@ pub async fn insert_schedule(
     .bind(params.keep_monthly)
     .bind(params.keep_yearly)
     .bind(params.compact_enabled)
+    .bind(params.ignore_changed_files)
     .bind(params.rate_limit_kbps)
     .bind(params.pre_backup_commands)
     .bind(params.post_backup_commands)
@@ -1181,12 +1184,13 @@ pub async fn update_schedule(
         "UPDATE schedules SET name = $2, cron_expression = $3, enabled = $4, canary_enabled = $5, \
          exclude_patterns_raw = $6, ignore_global_excludes = $7, keep_hourly = $8, keep_daily = \
          $9, keep_weekly = $10, keep_monthly = $11, keep_yearly = $12, compact_enabled = $13, \
-         rate_limit_kbps = $14, pre_backup_commands = $15, post_backup_commands = $16, \
-         execution_mode = $17, on_failure = $18 WHERE id = $1 RETURNING id, repo_id, name, \
-         schedule_type, cron_expression, enabled, canary_enabled, last_run_at, next_run_at, \
-         exclude_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, \
-         keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands, \
-         post_backup_commands, execution_mode, on_failure, owner_id, visibility",
+         ignore_changed_files = $14, rate_limit_kbps = $15, pre_backup_commands = $16, \
+         post_backup_commands = $17, execution_mode = $18, on_failure = $19 WHERE id = $1 \
+         RETURNING id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
+         last_run_at, next_run_at, exclude_patterns_raw, ignore_global_excludes, keep_hourly, \
+         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, \
+         ignore_changed_files, rate_limit_kbps, pre_backup_commands, post_backup_commands, \
+         execution_mode, on_failure, owner_id, visibility",
     )
     .bind(id)
     .bind(params.name)
@@ -1201,6 +1205,7 @@ pub async fn update_schedule(
     .bind(params.keep_monthly)
     .bind(params.keep_yearly)
     .bind(params.compact_enabled)
+    .bind(params.ignore_changed_files)
     .bind(params.rate_limit_kbps)
     .bind(params.pre_backup_commands)
     .bind(params.post_backup_commands)
@@ -1545,9 +1550,9 @@ pub async fn get_schedule_for_repo(
     sqlx::query_as::<_, ScheduleRow>(
         "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns_raw, ignore_global_excludes, keep_hourly, \
-         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
-         pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, \
-         visibility FROM schedules WHERE repo_id = $1",
+         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, \
+         ignore_changed_files, rate_limit_kbps, pre_backup_commands, post_backup_commands, \
+         execution_mode, on_failure, owner_id, visibility FROM schedules WHERE repo_id = $1",
     )
     .bind(repo_id)
     .fetch_optional(pool)
@@ -1564,11 +1569,11 @@ pub async fn get_backup_schedule_for_hostname_repo(
         "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
          s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
          s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, \
-         s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands, \
-         s.post_backup_commands, s.execution_mode, s.on_failure, s.owner_id, s.visibility FROM \
-         schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN clients m ON \
-         st.client_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = \
-         'backup' LIMIT 1",
+         s.keep_yearly, s.compact_enabled, s.ignore_changed_files, s.rate_limit_kbps, \
+         s.pre_backup_commands, s.post_backup_commands, s.execution_mode, s.on_failure, \
+         s.owner_id, s.visibility FROM schedules s JOIN schedule_targets st ON st.schedule_id = \
+         s.id JOIN clients m ON st.client_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND \
+         s.schedule_type = 'backup' LIMIT 1",
     )
     .bind(hostname)
     .bind(repo_id)
@@ -1584,9 +1589,10 @@ pub async fn list_schedules_for_repo(
     sqlx::query_as::<_, ScheduleRow>(
         "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns_raw, ignore_global_excludes, keep_hourly, \
-         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
-         pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, \
-         visibility FROM schedules WHERE repo_id = $1 ORDER BY id",
+         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, \
+         ignore_changed_files, rate_limit_kbps, pre_backup_commands, post_backup_commands, \
+         execution_mode, on_failure, owner_id, visibility FROM schedules WHERE repo_id = $1 ORDER \
+         BY id",
     )
     .bind(repo_id)
     .fetch_all(pool)
@@ -1615,10 +1621,10 @@ pub async fn list_schedules_for_client(
         "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
          s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
          s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, \
-         s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands, \
-         s.post_backup_commands, s.execution_mode, s.on_failure, s.owner_id, s.visibility FROM \
-         schedules s JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.client_id = $1 \
-         ORDER by s.id",
+         s.keep_yearly, s.compact_enabled, s.ignore_changed_files, s.rate_limit_kbps, \
+         s.pre_backup_commands, s.post_backup_commands, s.execution_mode, s.on_failure, \
+         s.owner_id, s.visibility FROM schedules s JOIN schedule_targets st ON st.schedule_id = \
+         s.id WHERE st.client_id = $1 ORDER by s.id",
     )
     .bind(client_id)
     .fetch_all(pool)
@@ -1691,9 +1697,9 @@ pub async fn get_schedule_by_id(pool: &PgPool, id: i64) -> Result<ScheduleRow, A
     sqlx::query_as::<_, ScheduleRow>(
         "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns_raw, ignore_global_excludes, keep_hourly, \
-         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
-         pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, \
-         visibility FROM schedules WHERE id = $1",
+         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, \
+         ignore_changed_files, rate_limit_kbps, pre_backup_commands, post_backup_commands, \
+         execution_mode, on_failure, owner_id, visibility FROM schedules WHERE id = $1",
     )
     .bind(id)
     .fetch_one(pool)

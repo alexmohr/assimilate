@@ -45,15 +45,21 @@ pub struct BackupTarget {
     pub keep_weekly: u32,
     pub keep_monthly: u32,
     pub keep_yearly: u32,
-    pub compact_enabled: bool,
     pub pre_backup_commands: Vec<String>,
     pub post_backup_commands: Vec<String>,
     pub skip_targets: Vec<String>,
     pub exclude_patterns: Vec<String>,
     pub rate_limit_kbps: Option<u32>,
     pub ssh_auth_sock: Option<PathBuf>,
-    pub canary_enabled: bool,
     pub accept_relocation: bool,
+    pub options: BackupOptions,
+}
+
+#[derive(Debug, Default)]
+pub struct BackupOptions {
+    pub compact_enabled: bool,
+    pub canary_enabled: bool,
+    pub ignore_changed_files: bool,
 }
 
 #[derive(Debug)]
@@ -114,7 +120,7 @@ impl BackupEngine {
 
         self.run_borg_prune(target).await?;
 
-        if target.compact_enabled {
+        if target.options.compact_enabled {
             self.run_borg_compact(target).await?;
         }
 
@@ -251,11 +257,13 @@ impl BackupEngine {
             0 => {
                 let stats = parse_json_stats(&output.stdout)?;
                 let warnings = parse_warnings(&stderr);
-                let status = if warnings.is_empty() {
-                    BackupStatus::Success
-                } else {
-                    BackupStatus::Warning
-                };
+                let status =
+                    if effective_warnings_are_empty(&warnings, target.options.ignore_changed_files)
+                    {
+                        BackupStatus::Success
+                    } else {
+                        BackupStatus::Warning
+                    };
                 Ok(CreateResult {
                     status,
                     original_size: stats.original_size,
@@ -271,6 +279,23 @@ impl BackupEngine {
             }
             1 if stderr_has_warnings(&stderr) => {
                 let warnings = parse_warnings(&stderr);
+                let effective_only_changed_files =
+                    effective_warnings_are_empty(&warnings, target.options.ignore_changed_files);
+                if effective_only_changed_files {
+                    let stats = parse_json_stats(&output.stdout)?;
+                    return Ok(CreateResult {
+                        status: BackupStatus::Success,
+                        original_size: stats.original_size,
+                        compressed_size: stats.compressed_size,
+                        deduplicated_size: stats.deduplicated_size,
+                        repo_unique_csize: stats.repo_unique_csize,
+                        files_processed: stats.files_processed,
+                        error_message: None,
+                        warnings,
+                        archive_name,
+                        borg_command,
+                    });
+                }
                 let summary = warnings.join("; ");
                 warn!("Borg reported warnings: {summary}");
                 let stats = parse_json_stats(&output.stdout)?;
@@ -713,50 +738,59 @@ struct ParsedStats {
     files_processed: i64,
 }
 
+#[derive(serde::Deserialize)]
+struct BorgStatsOutput {
+    archive: BorgArchive,
+    cache: Option<BorgCache>,
+}
+
+#[derive(serde::Deserialize)]
+struct BorgArchive {
+    stats: BorgArchiveStats,
+}
+
+#[derive(serde::Deserialize)]
+struct BorgArchiveStats {
+    original_size: i64,
+    compressed_size: i64,
+    deduplicated_size: i64,
+    nfiles: i64,
+}
+
+#[derive(serde::Deserialize)]
+struct BorgCache {
+    stats: BorgCacheStats,
+}
+
+#[derive(serde::Deserialize)]
+struct BorgCacheStats {
+    unique_csize: i64,
+}
+
 fn parse_json_stats(stdout: &[u8]) -> Result<ParsedStats, BackupError> {
     let output = String::from_utf8_lossy(stdout);
-    let json: serde_json::Value = serde_json::from_str(output.trim())
+    let parsed: BorgStatsOutput = serde_json::from_str(output.trim())
         .map_err(|e| BackupError::StatsParse(format!("invalid JSON: {e}")))?;
 
-    let stats = json
-        .get("archive")
-        .and_then(|a| a.get("stats"))
-        .ok_or_else(|| BackupError::StatsParse("missing archive.stats".to_owned()))?;
-
-    let original_size = stats
-        .get("original_size")
-        .and_then(serde_json::Value::as_i64)
-        .ok_or_else(|| BackupError::StatsParse("missing original_size".to_owned()))?;
-
-    let compressed_size = stats
-        .get("compressed_size")
-        .and_then(serde_json::Value::as_i64)
-        .ok_or_else(|| BackupError::StatsParse("missing compressed_size".to_owned()))?;
-
-    let deduplicated_size = stats
-        .get("deduplicated_size")
-        .and_then(serde_json::Value::as_i64)
-        .ok_or_else(|| BackupError::StatsParse("missing deduplicated_size".to_owned()))?;
-
-    let repo_unique_csize = json
-        .get("cache")
-        .and_then(|c| c.get("stats"))
-        .and_then(|s| s.get("unique_csize"))
-        .and_then(serde_json::Value::as_i64)
-        .unwrap_or(0);
-
-    let files_processed = stats
-        .get("nfiles")
-        .and_then(serde_json::Value::as_i64)
-        .ok_or_else(|| BackupError::StatsParse("missing nfiles".to_owned()))?;
-
     Ok(ParsedStats {
-        original_size,
-        compressed_size,
-        deduplicated_size,
-        repo_unique_csize,
-        files_processed,
+        original_size: parsed.archive.stats.original_size,
+        compressed_size: parsed.archive.stats.compressed_size,
+        deduplicated_size: parsed.archive.stats.deduplicated_size,
+        repo_unique_csize: parsed.cache.map_or(0, |c| c.stats.unique_csize),
+        files_processed: parsed.archive.stats.nfiles,
     })
+}
+
+fn is_changed_file_warning(warning: &str) -> bool {
+    warning.contains("file changed while we backed it up")
+        || warning.contains("file type or inode changed while we backed it up")
+}
+
+fn effective_warnings_are_empty(warnings: &[String], ignore_changed_files: bool) -> bool {
+    if !ignore_changed_files {
+        return warnings.is_empty();
+    }
+    warnings.iter().all(|w| is_changed_file_warning(w))
 }
 
 pub(crate) fn parse_warnings(stderr: &str) -> Vec<String> {
@@ -858,15 +892,18 @@ mod tests {
             keep_weekly: 4,
             keep_monthly: 6,
             keep_yearly: 0,
-            compact_enabled: true,
             pre_backup_commands: Vec::new(),
             post_backup_commands: Vec::new(),
             skip_targets: Vec::new(),
             exclude_patterns: vec!["*.tmp".to_owned(), "/proc/*".to_owned()],
             rate_limit_kbps: None,
             ssh_auth_sock: None,
-            canary_enabled: false,
             accept_relocation: false,
+            options: BackupOptions {
+                compact_enabled: true,
+                canary_enabled: false,
+                ignore_changed_files: false,
+            },
         }
     }
 
@@ -939,6 +976,64 @@ mod tests {
         assert_eq!(result.warnings.len(), 2);
         assert!(result.warnings[0].contains("file changed while we backed it up"));
         assert!(result.warnings[1].contains("file changed while we backed it up"));
+    }
+
+    #[tokio::test]
+    async fn test_file_changed_warning_ignored_when_flag_set() {
+        let engine = BackupEngine::with_config(
+            mock_borg_path(),
+            vec![("MOCK_BORG_SIMULATE_WARNING".to_owned(), "1".to_owned())],
+        );
+        let mut target = test_target();
+        target.options.ignore_changed_files = true;
+
+        let result = engine.run_backup(&target).await.unwrap();
+
+        assert_eq!(result.status, BackupStatus::Success);
+        assert!(result.error_message.is_none());
+        assert_eq!(
+            result.warnings.len(),
+            2,
+            "warnings should still be recorded"
+        );
+        assert!(result.warnings[0].contains("file changed while we backed it up"));
+    }
+
+    #[test]
+    fn test_effective_warnings_are_empty_without_flag() {
+        let warnings = vec!["file changed while we backed it up".to_owned()];
+        assert!(!effective_warnings_are_empty(&warnings, false));
+        assert!(effective_warnings_are_empty(&[], false));
+    }
+
+    #[test]
+    fn test_effective_warnings_are_empty_with_flag() {
+        let only_changed = vec![
+            "file changed while we backed it up".to_owned(),
+            "file type or inode changed while we backed it up".to_owned(),
+        ];
+        assert!(effective_warnings_are_empty(&only_changed, true));
+
+        let mixed = vec![
+            "file changed while we backed it up".to_owned(),
+            "some other warning".to_owned(),
+        ];
+        assert!(!effective_warnings_are_empty(&mixed, true));
+
+        assert!(effective_warnings_are_empty(&[], true));
+    }
+
+    #[test]
+    fn test_changed_file_warning_detection_matches_borg_phrases() {
+        assert!(is_changed_file_warning(
+            "/tmp/a.log: file changed while we backed it up"
+        ));
+        assert!(is_changed_file_warning(
+            "/tmp/a.log: file type or inode changed while we backed it up"
+        ));
+        assert!(!is_changed_file_warning(
+            "/tmp/a.log: permission denied while backing up"
+        ));
     }
 
     #[tokio::test]

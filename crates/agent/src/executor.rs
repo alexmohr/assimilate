@@ -21,7 +21,7 @@ use tokio::{
 use tracing::{error, info, warn};
 
 use crate::{
-    backup::{BackupEngine, BackupError, BackupTarget, CanaryToken},
+    backup::{BackupEngine, BackupError, BackupOptions, BackupTarget, CanaryToken},
     borg::Borg,
     ssh_forward::{SshForwardError, SshForwardSocket, run_ssh_forward},
 };
@@ -622,14 +622,13 @@ async fn run_init_repo_task(
         keep_weekly: 0,
         keep_monthly: 0,
         keep_yearly: 0,
-        compact_enabled: false,
         pre_backup_commands: Vec::new(),
         post_backup_commands: Vec::new(),
         skip_targets: Vec::new(),
         exclude_patterns: Vec::new(),
         ssh_auth_sock: None,
-        canary_enabled: false,
         accept_relocation: false,
+        options: BackupOptions::default(),
     };
 
     let _ssh_forward =
@@ -724,7 +723,7 @@ async fn run_backup_task(
 
     let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
 
-    let canary = if target.canary_enabled {
+    let canary = if target.options.canary_enabled {
         match BackupEngine::write_canary(&target.backup_sources) {
             Ok(c) => Some(c),
             Err(e) => {
@@ -868,14 +867,17 @@ pub fn backup_target_from_repo(
         keep_weekly: schedule.map_or(4, |s| s.keep_weekly),
         keep_monthly: schedule.map_or(6, |s| s.keep_monthly),
         keep_yearly: schedule.map_or(0, |s| s.keep_yearly),
-        compact_enabled: schedule.is_none_or(|s| s.compact_enabled),
         pre_backup_commands: schedule.map_or_else(Vec::new, |s| s.pre_backup_commands.clone()),
         post_backup_commands: schedule.map_or_else(Vec::new, |s| s.post_backup_commands.clone()),
         skip_targets: Vec::new(),
         exclude_patterns: schedule.map_or_else(Vec::new, |s| s.exclude_patterns.clone()),
         ssh_auth_sock: None,
-        canary_enabled: schedule.is_some_and(|s| s.canary_enabled),
         accept_relocation: repo.accept_relocation,
+        options: BackupOptions {
+            compact_enabled: schedule.is_none_or(|s| s.compact_enabled),
+            canary_enabled: schedule.is_some_and(|s| s.canary_enabled),
+            ignore_changed_files: schedule.is_some_and(|s| s.ignore_changed_files),
+        },
     }
 }
 
@@ -906,14 +908,13 @@ async fn run_check_task(
         keep_weekly: 0,
         keep_monthly: 0,
         keep_yearly: 0,
-        compact_enabled: false,
         pre_backup_commands: Vec::new(),
         post_backup_commands: Vec::new(),
         skip_targets: Vec::new(),
         exclude_patterns: Vec::new(),
         ssh_auth_sock: None,
-        canary_enabled: false,
         accept_relocation: target.accept_relocation,
+        options: BackupOptions::default(),
     };
 
     let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
@@ -967,14 +968,13 @@ async fn run_verify_task(
         keep_weekly: 0,
         keep_monthly: 0,
         keep_yearly: 0,
-        compact_enabled: false,
         pre_backup_commands: Vec::new(),
         post_backup_commands: Vec::new(),
         skip_targets: Vec::new(),
         exclude_patterns: Vec::new(),
         ssh_auth_sock: None,
-        canary_enabled: false,
         accept_relocation: target.accept_relocation,
+        options: BackupOptions::default(),
     };
 
     let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
@@ -1476,6 +1476,7 @@ mod tests {
             keep_monthly: 6,
             keep_yearly: 0,
             compact_enabled: true,
+            ignore_changed_files: false,
             pre_backup_commands: Vec::new(),
             post_backup_commands: Vec::new(),
         }

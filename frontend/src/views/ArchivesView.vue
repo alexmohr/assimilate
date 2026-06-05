@@ -598,7 +598,7 @@ onMounted(loadRepos)
             class="state-msg"
           >
             <BaseSpinner size="sm" />
-            Indexing archive contents — this only happens once…
+            Indexing archive contents — this only happens once...
           </div>
           <div
             v-else-if="contentsError"

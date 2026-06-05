@@ -4,7 +4,15 @@
 version = 1
 
 [[annotations]]
-path = ["Cargo.lock", "package-lock.json", "*.png", "*.ico", "*.svg", "*.woff", "*.woff2"]
+path = [
+  "Cargo.lock",
+  "package-lock.json",
+  "*.png",
+  "*.ico",
+  "*.svg",
+  "*.woff",
+  "*.woff2",
+]
 SPDX-FileCopyrightText = "2026 Alexander Mohr"
 SPDX-License-Identifier = "Apache-2.0"
 

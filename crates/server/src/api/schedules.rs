@@ -54,6 +54,7 @@ pub struct CreateScheduleRequest {
     pub keep_monthly: Option<i32>,
     pub keep_yearly: Option<i32>,
     pub compact_enabled: Option<bool>,
+    pub ignore_changed_files: Option<bool>,
     pub rate_limit_kbps: Option<u32>,
     pub pre_backup_commands: Option<Vec<String>>,
     pub post_backup_commands: Option<Vec<String>>,
@@ -81,6 +82,7 @@ pub struct UpdateScheduleRequest {
     pub keep_monthly: Option<i32>,
     pub keep_yearly: Option<i32>,
     pub compact_enabled: Option<bool>,
+    pub ignore_changed_files: Option<bool>,
     pub rate_limit_kbps: Option<u32>,
     pub pre_backup_commands: Option<Vec<String>>,
     pub post_backup_commands: Option<Vec<String>>,
@@ -216,6 +218,7 @@ pub async fn create_schedule(
         keep_monthly: req.keep_monthly.unwrap_or(6),
         keep_yearly: req.keep_yearly.unwrap_or(0),
         compact_enabled: req.compact_enabled.unwrap_or(true),
+        ignore_changed_files: req.ignore_changed_files.unwrap_or(false),
         rate_limit_kbps: match req.rate_limit_kbps {
             Some(rate_limit_kbps) => Some(
                 i32::try_from(rate_limit_kbps)
@@ -418,6 +421,9 @@ pub async fn update_schedule(
         keep_monthly: req.keep_monthly.unwrap_or(existing.keep_monthly),
         keep_yearly: req.keep_yearly.unwrap_or(existing.keep_yearly),
         compact_enabled: req.compact_enabled.unwrap_or(existing.compact_enabled),
+        ignore_changed_files: req
+            .ignore_changed_files
+            .unwrap_or(existing.ignore_changed_files),
         rate_limit_kbps: match req.rate_limit_kbps {
             Some(rate_limit_kbps) => Some(
                 i32::try_from(rate_limit_kbps)

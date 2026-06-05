@@ -1076,11 +1076,34 @@ async fn test_export_config_with_hosts(pool: sqlx::PgPool) {
     create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone()).await;
 
+    let repo_id = insert_test_repo(&pool, "export-schedule-repo").await;
     sqlx::query(
         "INSERT INTO clients (hostname, display_name, agent_token_hash, default_backup_paths, \
          default_exclude_patterns) VALUES ('export-host', 'Export Host', 'real-token', \
          ARRAY['/etc','/home'], ARRAY['*.log'])",
     )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let client_id: i64 =
+        sqlx::query_scalar("SELECT id FROM clients WHERE hostname = 'export-host'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let schedule_id: i64 = sqlx::query_scalar(
+        "INSERT INTO schedules (repo_id, name, schedule_type, cron_expression, \
+         ignore_changed_files) VALUES ($1, 'export-schedule', 'backup', '0 3 * * *', true) \
+         RETURNING id",
+    )
+    .bind(repo_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO schedule_targets (schedule_id, client_id, execution_order) VALUES ($1, $2, 0)",
+    )
+    .bind(schedule_id)
+    .bind(client_id)
     .execute(&pool)
     .await
     .unwrap();
@@ -1095,6 +1118,9 @@ async fn test_export_config_with_hosts(pool: sqlx::PgPool) {
     assert_eq!(hosts[0]["default_backup_paths"][0], "/etc");
     assert_eq!(hosts[0]["default_backup_paths"][1], "/home");
     assert_eq!(hosts[0]["default_exclude_patterns"][0], "*.log");
+    let schedules = body["schedules"].as_array().unwrap();
+    assert_eq!(schedules.len(), 1);
+    assert_eq!(schedules[0]["ignore_changed_files"], true);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1313,6 +1339,7 @@ async fn test_import_config_creates_schedule_with_matching_repo(pool: sqlx::PgPo
                 "keep_monthly": 6,
                 "keep_yearly": 0,
                 "compact_enabled": true,
+                "ignore_changed_files": true,
                 "rate_limit_kbps": null,
                 "pre_backup_commands": ["/usr/bin/pre.sh"],
                 "post_backup_commands": [],
@@ -1339,6 +1366,14 @@ async fn test_import_config_creates_schedule_with_matching_repo(pool: sqlx::PgPo
     let body = body_json(resp).await;
     assert_eq!(body["schedules_created"], 1);
     assert_eq!(body["warnings"].as_array().unwrap().len(), 0);
+
+    let ignore_changed_files: bool = sqlx::query_scalar(
+        "SELECT ignore_changed_files FROM schedules WHERE name = 'import-schedule'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(ignore_changed_files);
 }
 
 #[sqlx::test(migrations = "./migrations")]

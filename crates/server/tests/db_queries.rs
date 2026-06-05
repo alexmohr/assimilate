@@ -594,6 +594,7 @@ async fn create_test_schedule(pool: &PgPool) -> (ClientRow, RepoRow, ScheduleRow
             keep_monthly: 6,
             keep_yearly: 1,
             compact_enabled: true,
+            ignore_changed_files: false,
             rate_limit_kbps: Some(5000),
             pre_backup_commands: "",
             post_backup_commands: "",
@@ -618,10 +619,12 @@ async fn schedule_insert_and_list(pool: PgPool) {
     assert_eq!(schedule.cron_expression, "0 3 * * *");
     assert!(schedule.enabled);
     assert_eq!(schedule.keep_daily, 7);
+    assert!(!schedule.ignore_changed_files);
     assert_eq!(schedule.rate_limit_kbps, Some(5000));
 
     let all = db::list_schedules(&pool).await.unwrap();
     assert_eq!(all.len(), 1);
+    assert!(!all[0].ignore_changed_files);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -645,6 +648,7 @@ async fn schedule_update(pool: PgPool) {
             keep_monthly: 12,
             keep_yearly: 2,
             compact_enabled: false,
+            ignore_changed_files: true,
             rate_limit_kbps: None,
             pre_backup_commands: "echo pre",
             post_backup_commands: "echo post",
@@ -662,9 +666,13 @@ async fn schedule_update(pool: PgPool) {
     assert!(updated.ignore_global_excludes);
     assert_eq!(updated.keep_daily, 14);
     assert!(!updated.compact_enabled);
+    assert!(updated.ignore_changed_files);
     assert_eq!(updated.rate_limit_kbps, None);
     assert_eq!(updated.pre_backup_commands, "echo pre");
     assert_eq!(updated.post_backup_commands, "echo post");
+
+    let fetched = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
+    assert!(fetched.ignore_changed_files);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -934,6 +942,7 @@ async fn schedule_excludes_raw_text_round_trip(pool: PgPool) {
             keep_monthly: 6,
             keep_yearly: 1,
             compact_enabled: true,
+            ignore_changed_files: true,
             rate_limit_kbps: None,
             pre_backup_commands: "",
             post_backup_commands: "",
@@ -1012,6 +1021,7 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
             keep_monthly: 6,
             keep_yearly: 1,
             compact_enabled: true,
+            ignore_changed_files: false,
             rate_limit_kbps: None,
             pre_backup_commands: "",
             post_backup_commands: "",
@@ -1048,6 +1058,7 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
         server::config_assembler::assemble_config(&pool, &encryption_key, &client.hostname)
             .await
             .unwrap();
+    assert!(config.repos[0].schedules[0].ignore_changed_files);
 
     let patterns: Vec<&str> = config.repos[0].schedules[0]
         .exclude_patterns
@@ -1362,6 +1373,7 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
             keep_monthly: 6,
             keep_yearly: 1,
             compact_enabled: true,
+            ignore_changed_files: false,
             rate_limit_kbps: None,
             pre_backup_commands: "",
             post_backup_commands: "",
@@ -4464,4 +4476,93 @@ async fn client_insert_with_paths(pool: PgPool) {
     assert_eq!(client.display_name.as_deref(), Some("Paths Host"));
     assert_eq!(client.default_backup_paths, paths);
     assert_eq!(client.default_exclude_patterns, excludes);
+}
+
+/// When an enabled SSH tunnel exists for a client, `assemble_config` must
+/// override `ssh_host` to `127.0.0.1` and `ssh_port` to `tunnel_port` so that
+/// borg connects through the tunnel instead of the unreachable real host.
+#[sqlx::test(migrations = "./migrations")]
+async fn config_assembly_uses_tunnel_override_when_enabled(pool: PgPool) {
+    let encryption_key = shared::crypto::derive_key(b"test-tunnel-override-key");
+    let (client, repo, schedule) = create_test_schedule(&pool).await;
+
+    let passphrase_encrypted =
+        shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
+    sqlx::query("UPDATE repos SET passphrase_encrypted = $1 WHERE id = $2")
+        .bind(passphrase_encrypted.as_slice())
+        .bind(repo.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    db::insert_backup_source_for_schedule(&pool, schedule.id, "/home", 0)
+        .await
+        .unwrap();
+
+    db::insert_tunnel(
+        &pool,
+        &db::NewSshTunnel {
+            client_id: client.id,
+            ssh_host: "agent.example.com".to_string(),
+            ssh_user: "root".to_string(),
+            ssh_port: Some(22),
+            tunnel_port: 19922,
+            enabled: Some(true),
+        },
+    )
+    .await
+    .unwrap();
+
+    let config =
+        server::config_assembler::assemble_config(&pool, &encryption_key, &client.hostname)
+            .await
+            .unwrap();
+
+    assert_eq!(config.repos.len(), 1);
+    assert_eq!(config.repos[0].ssh_host, "127.0.0.1");
+    assert_eq!(config.repos[0].ssh_port, 19922);
+}
+
+/// When a tunnel exists but is disabled, `assemble_config` must leave the
+/// repo's original `ssh_host` and `ssh_port` unchanged.
+#[sqlx::test(migrations = "./migrations")]
+async fn config_assembly_skips_tunnel_override_when_disabled(pool: PgPool) {
+    let encryption_key = shared::crypto::derive_key(b"test-tunnel-disabled-key");
+    let (client, repo, schedule) = create_test_schedule(&pool).await;
+
+    let passphrase_encrypted =
+        shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
+    sqlx::query("UPDATE repos SET passphrase_encrypted = $1 WHERE id = $2")
+        .bind(passphrase_encrypted.as_slice())
+        .bind(repo.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    db::insert_backup_source_for_schedule(&pool, schedule.id, "/home", 0)
+        .await
+        .unwrap();
+
+    db::insert_tunnel(
+        &pool,
+        &db::NewSshTunnel {
+            client_id: client.id,
+            ssh_host: "agent.example.com".to_string(),
+            ssh_user: "root".to_string(),
+            ssh_port: Some(22),
+            tunnel_port: 19922,
+            enabled: Some(false),
+        },
+    )
+    .await
+    .unwrap();
+
+    let config =
+        server::config_assembler::assemble_config(&pool, &encryption_key, &client.hostname)
+            .await
+            .unwrap();
+
+    assert_eq!(config.repos.len(), 1);
+    assert_eq!(config.repos[0].ssh_host, "host.local");
+    assert_eq!(config.repos[0].ssh_port, 22);
 }

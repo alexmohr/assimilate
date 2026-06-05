@@ -458,6 +458,7 @@ mod tests {
                 keep_monthly: 6,
                 keep_yearly: 0,
                 compact_enabled: true,
+                ignore_changed_files: false,
                 rate_limit_kbps: None,
                 pre_backup_commands: "[]",
                 post_backup_commands: "[]",

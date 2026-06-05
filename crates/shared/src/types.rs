@@ -381,6 +381,8 @@ pub struct ScheduleConfig {
     pub keep_yearly: u32,
     pub compact_enabled: bool,
     #[serde(default)]
+    pub ignore_changed_files: bool,
+    #[serde(default)]
     pub pre_backup_commands: Vec<String>,
     #[serde(default)]
     pub post_backup_commands: Vec<String>,

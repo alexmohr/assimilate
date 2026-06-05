@@ -20,6 +20,20 @@ pub async fn assemble_config(
 ) -> Result<AgentConfig, ApiError> {
     let client = db::get_client_by_hostname(pool, hostname).await?;
 
+    let tunnel_override: Option<(String, u16)> =
+        match db::get_tunnel_by_client_id(pool, client.id).await {
+            Ok(tunnel) if tunnel.enabled => {
+                let port = u16::try_from(tunnel.tunnel_port).map_err(|_| {
+                    ApiError::Internal(format!(
+                        "tunnel_port {} out of u16 range",
+                        tunnel.tunnel_port
+                    ))
+                })?;
+                Some(("127.0.0.1".to_owned(), port))
+            }
+            _ => None,
+        };
+
     let global_excludes = parse_raw_excludes(&db::get_global_excludes_raw(pool).await?);
 
     let schedule_rows = db::list_schedules_for_client(pool, client.id).await?;
@@ -120,6 +134,7 @@ pub async fn assemble_config(
             keep_monthly,
             keep_yearly,
             compact_enabled: schedule.compact_enabled,
+            ignore_changed_files: schedule.ignore_changed_files,
             pre_backup_commands: serde_json::from_str(&schedule.pre_backup_commands)
                 .inspect_err(|e| {
                     tracing::warn!(
@@ -157,13 +172,17 @@ pub async fn assemble_config(
             ApiError::Internal(format!("ssh_port {} out of u16 range", repo.ssh_port))
         })?;
 
+        let (effective_ssh_host, effective_ssh_port) = tunnel_override
+            .clone()
+            .map_or((repo.ssh_host, ssh_port), |(h, p)| (h, p));
+
         repos.push(RepoConfig {
             repo_id: RepoId(repo.id),
             name: repo.name,
             repo_path: repo.repo_path,
             ssh_user: repo.ssh_user,
-            ssh_host: repo.ssh_host,
-            ssh_port,
+            ssh_host: effective_ssh_host,
+            ssh_port: effective_ssh_port,
             passphrase,
             compression,
             enabled: repo.enabled,

@@ -37,6 +37,7 @@ interface ScheduleRow {
   keep_monthly: number
   keep_yearly: number
   compact_enabled: boolean
+  ignore_changed_files: boolean
   pre_backup_commands: string
   post_backup_commands: string
   execution_mode: string
@@ -181,6 +182,7 @@ const form = ref({
   keep_monthly: 12,
   keep_yearly: 10,
   compact_enabled: true,
+  ignore_changed_files: false,
   pre_backup_commands: '',
   post_backup_commands: '',
   backup_sources: '',
@@ -252,6 +254,7 @@ function populateForm(s: ScheduleRow): void {
     keep_monthly: s.keep_monthly,
     keep_yearly: s.keep_yearly,
     compact_enabled: s.compact_enabled,
+    ignore_changed_files: s.ignore_changed_files,
     pre_backup_commands: (JSON.parse(s.pre_backup_commands || '[]') as string[]).join('\n'),
     post_backup_commands: (JSON.parse(s.post_backup_commands || '[]') as string[]).join('\n'),
     backup_sources: '',
@@ -355,6 +358,7 @@ async function save(): Promise<void> {
       keep_monthly: form.value.keep_monthly,
       keep_yearly: form.value.keep_yearly,
       compact_enabled: form.value.compact_enabled,
+      ignore_changed_files: form.value.ignore_changed_files,
       pre_backup_commands: parseLines(form.value.pre_backup_commands),
       post_backup_commands: parseLines(form.value.post_backup_commands),
       backup_sources: usePerHostPaths.value ? [] : parseLines(form.value.backup_sources),
@@ -1109,6 +1113,10 @@ watch(activeTab, (tab) => {
             <div class="form-group form-group-inline">
               <label class="form-label">Compact after backup</label>
               <ToggleSwitch v-model="form.compact_enabled" />
+            </div>
+            <div class="form-group form-group-inline">
+              <label class="form-label">Ignore changed-file warnings</label>
+              <ToggleSwitch v-model="form.ignore_changed_files" />
             </div>
           </div>
 

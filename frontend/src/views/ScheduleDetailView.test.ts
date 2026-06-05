@@ -70,6 +70,7 @@ const mockSchedule = {
   keep_monthly: 6,
   keep_yearly: 1,
   compact_enabled: true,
+  ignore_changed_files: false,
   pre_backup_commands: '["docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"]',
   post_backup_commands: '[]',
 }
@@ -222,6 +223,31 @@ describe('ScheduleDetailView - edit mode', () => {
     await flushPromises()
 
     expect(mockApiClient.put).toHaveBeenCalledWith('/schedules/1', expect.any(Object))
+  })
+
+  it('saves changed-file warning preference from advanced tab', async () => {
+    setupEditMode()
+    mockApiClient.put.mockResolvedValue({ data: { ...mockSchedule, ignore_changed_files: true } })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    await wrapper
+      .findAll('.tab-btn')
+      .find((b) => b.text() === 'Advanced')!
+      .trigger('click')
+    await flushPromises()
+
+    const toggles = wrapper.findAll('input.toggle-switch-stub')
+    await toggles[3]!.setValue(true)
+
+    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save Changes')
+    await saveBtn!.trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.put).toHaveBeenCalledWith(
+      '/schedules/1',
+      expect.objectContaining({ ignore_changed_files: true }),
+    )
   })
 
   it('shows error banner on load failure', async () => {

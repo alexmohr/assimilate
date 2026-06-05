@@ -57,13 +57,14 @@ After each successful backup, Assimilate runs `borg prune` using the retention s
 
 | Field | Default | Description |
 |-------|---------|-------------|
+| `keep_hourly` | 24 | Keep the most recent N hourly archives |
 | `keep_daily` | 7 | Keep the most recent N daily archives |
 | `keep_weekly` | 4 | Keep the most recent N weekly archives |
 | `keep_monthly` | 6 | Keep the most recent N monthly archives |
 | `keep_yearly` | 0 | Keep the most recent N yearly archives (0 = disabled) |
 
 !!! tip "Sensible defaults"
-    The defaults (7 daily, 4 weekly, 6 monthly) give you roughly six months of recovery points without consuming excessive repository space. For critical data, increase `keep_monthly` or enable `keep_yearly`. For high-frequency backups, reduce `keep_daily` to avoid accumulating too many archives.
+    The defaults (24 hourly, 7 daily, 4 weekly, 6 monthly) give you roughly six months of recovery points without consuming excessive repository space. For critical data, increase `keep_monthly` or enable `keep_yearly`. For high-frequency backups, reduce `keep_hourly` or `keep_daily` to avoid accumulating too many archives.
 
 Pruning runs immediately after the backup completes. Only archives created by this schedule are considered — archives from other schedules or manual runs are not affected.
 

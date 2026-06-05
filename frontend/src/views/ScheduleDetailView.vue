@@ -30,6 +30,7 @@ interface ScheduleRow {
   next_run_at: string | null
   exclude_patterns_raw: string
   ignore_global_excludes: boolean
+  keep_hourly: number
   keep_daily: number
   keep_weekly: number
   keep_monthly: number
@@ -170,6 +171,7 @@ const form = ref({
   canary_enabled: true,
   exclude_patterns: '',
   ignore_global_excludes: false,
+  keep_hourly: 24,
   keep_daily: 7,
   keep_weekly: 4,
   keep_monthly: 12,
@@ -240,6 +242,7 @@ function populateForm(s: ScheduleRow): void {
     canary_enabled: s.canary_enabled,
     exclude_patterns: s.exclude_patterns_raw,
     ignore_global_excludes: s.ignore_global_excludes,
+    keep_hourly: s.keep_hourly,
     keep_daily: s.keep_daily,
     keep_weekly: s.keep_weekly,
     keep_monthly: s.keep_monthly,
@@ -342,6 +345,7 @@ async function save(): Promise<void> {
       canary_enabled: form.value.canary_enabled,
       exclude_patterns_raw: form.value.exclude_patterns,
       ignore_global_excludes: form.value.ignore_global_excludes,
+      keep_hourly: form.value.keep_hourly,
       keep_daily: form.value.keep_daily,
       keep_weekly: form.value.keep_weekly,
       keep_monthly: form.value.keep_monthly,
@@ -985,6 +989,15 @@ watch(activeTab, (tab) => {
             <div class="form-card">
               <h3 class="info-title">Retention</h3>
               <div class="retention-grid">
+                <div class="form-group">
+                  <label class="form-label">Hourly</label>
+                  <input
+                    v-model.number="form.keep_hourly"
+                    type="number"
+                    min="0"
+                    class="form-input"
+                  />
+                </div>
                 <div class="form-group">
                   <label class="form-label">Daily</label>
                   <input

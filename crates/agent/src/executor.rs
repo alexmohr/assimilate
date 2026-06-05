@@ -1566,7 +1566,7 @@ mod tests {
 
         executor.active_repos.lock().await.insert(repo_id);
         let handle = tokio::spawn(async {
-            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            tokio::time::sleep(std::time::Duration::from_mins(1)).await;
         });
         executor
             .active_task_handles

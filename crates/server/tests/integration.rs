@@ -3,6 +3,8 @@
 
 //! Run with: `DATABASE_URL=postgres://... cargo test -p server --test integration -- --ignored`
 
+use std::{os::unix::fs::PermissionsExt, sync::OnceLock};
+
 use axum::{
     Router,
     body::Body,
@@ -12,9 +14,28 @@ use axum::{
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use sqlx::PgPool;
+use tempfile::TempDir;
+use tokio::sync::Mutex;
 use tower::{Service, ServiceExt};
 
 const TEST_SESSION_ID: &str = "test-integration-session-id-00000000";
+static BORG_BINARY_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+struct BorgBinaryGuard {
+    previous: Option<String>,
+}
+
+impl Drop for BorgBinaryGuard {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.clone() {
+            // SAFETY: tests serialize BORG_BINARY changes with a process-local lock.
+            unsafe { std::env::set_var("BORG_BINARY", previous) };
+        } else {
+            // SAFETY: tests serialize BORG_BINARY changes with a process-local lock.
+            unsafe { std::env::remove_var("BORG_BINARY") };
+        }
+    }
+}
 
 async fn oneshot(app: &mut Router, req: Request<Body>) -> axum::response::Response {
     ServiceExt::<Request<Body>>::ready(app)
@@ -191,6 +212,99 @@ async fn create_test_user_and_session(pool: &PgPool) {
     .execute(pool)
     .await
     .unwrap();
+}
+
+async fn borg_binary_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    BORG_BINARY_LOCK.get_or_init(|| Mutex::new(())).lock().await
+}
+
+async fn install_fake_borg(
+    list_json: &str,
+    info_all_json: &str,
+    info_repo_json: &str,
+    json_lines: &str,
+) -> (TempDir, BorgBinaryGuard) {
+    let tempdir = tempfile::tempdir().unwrap();
+    let script = format!(
+        r#"#!/bin/sh
+set -eu
+case "$1" in
+  list)
+    case " $* " in
+      *" --json-lines "*) cat <<'EOF'
+{json_lines}
+EOF
+        ;;
+      *) cat <<'EOF'
+{list_json}
+EOF
+        ;;
+    esac
+    ;;
+  info)
+    case " $* " in
+      *" --glob-archives "*) cat <<'EOF'
+{info_all_json}
+EOF
+        ;;
+      *) cat <<'EOF'
+{info_repo_json}
+EOF
+        ;;
+    esac
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+"#
+    );
+
+    let borg_path = tempdir.path().join("borg");
+    tokio::fs::write(&borg_path, script).await.unwrap();
+    let mut permissions = tokio::fs::metadata(&borg_path).await.unwrap().permissions();
+    permissions.set_mode(0o755);
+    tokio::fs::set_permissions(&borg_path, permissions)
+        .await
+        .unwrap();
+
+    let previous = std::env::var("BORG_BINARY").ok();
+    // SAFETY: tests serialize BORG_BINARY changes with a process-local lock.
+    unsafe { std::env::set_var("BORG_BINARY", &borg_path) };
+
+    (tempdir, BorgBinaryGuard { previous })
+}
+
+async fn wait_for_archive_index(
+    pool: &PgPool,
+    repo_id: i64,
+    archive_name: &str,
+) -> (String, Option<i64>) {
+    use tokio::time::{Duration, timeout};
+
+    timeout(Duration::from_secs(10), async move {
+        loop {
+            let row = sqlx::query_as::<_, (String, Option<i64>)>(
+                "SELECT status, file_count FROM archive_index_jobs WHERE repo_id = $1 AND \
+                 archive_name = $2",
+            )
+            .bind(repo_id)
+            .bind(archive_name)
+            .fetch_optional(pool)
+            .await
+            .unwrap();
+
+            if let Some(row) = row
+                && row.0 == "done"
+            {
+                return row;
+            }
+
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap()
 }
 
 async fn clean_tables(pool: &PgPool) {
@@ -523,6 +637,159 @@ async fn test_sync_repo_returns_409_when_already_importing() {
         importing,
         "importing should remain true after rejected sync"
     );
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_sync_repo_indexes_new_archive_after_success() {
+    let _borg_lock = borg_binary_lock().await;
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let list_json = r#"{
+  "archives": [
+    {
+      "name": "sync-archive-1",
+      "hostname": "web-server-01",
+      "start": "2026-06-05T10:00:00Z",
+      "end": "2026-06-05T10:05:00Z",
+      "duration": 300.0,
+      "stats": {
+        "original_size": 1000,
+        "compressed_size": 500,
+        "deduplicated_size": 250,
+        "nfiles": 2
+      }
+    }
+  ]
+}"#;
+    let info_all_json = list_json;
+    let info_repo_json = r#"{
+  "cache": {
+    "stats": {
+      "total_size": 1000,
+      "total_csize": 600,
+      "unique_csize": 500,
+      "total_chunks": 10,
+      "unique_chunks": 8
+    }
+  }
+}"#;
+    let json_lines = concat!(
+        r#"{"type":"d","path":"docs","size":0,"mtime":"2026-06-05T10:00:00Z","#,
+        r#""mode":"drwxr-xr-x"}"#,
+        "\n",
+        r#"{"type":"f","path":"docs/manual.txt","size":12,"mtime":"2026-06-05T10:00:00Z","#,
+        r#""mode":"-rw-r--r--"}"#,
+    );
+
+    let (_borg_dir, _borg_guard) =
+        install_fake_borg(list_json, info_all_json, info_repo_json, json_lines).await;
+
+    let mut app = build_test_app(pool.clone()).await;
+    let client_id: i64 = sqlx::query_scalar(
+        "INSERT INTO clients (hostname, display_name, agent_token_hash) VALUES ($1, $2, $3) \
+         RETURNING id",
+    )
+    .bind("stale-host")
+    .bind("Stale Host")
+    .bind("token-hash")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "sync-success-repo").await;
+
+    let stale_started_at = chrono::Utc::now() - chrono::Duration::days(1);
+    let stale_finished_at = stale_started_at + chrono::Duration::minutes(5);
+    sqlx::query(
+        "INSERT INTO backup_reports (client_id, repo_id, schedule_id, started_at, finished_at, \
+         status, original_size, compressed_size, deduplicated_size, repo_unique_csize, \
+         files_processed, duration_secs, error_message, warnings, borg_version, matched, \
+         archive_name, borg_command) VALUES ($1, $2, NULL, $3, $4, 'success', 10, 5, 5, 5, 1, \
+         300, NULL, '{}'::text[], NULL, true, $5, NULL)",
+    )
+    .bind(client_id)
+    .bind(repo_id)
+    .bind(stale_started_at)
+    .bind(stale_finished_at)
+    .bind("stale-archive")
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO archive_index_jobs (repo_id, archive_name, status, file_count) VALUES ($1, \
+         $2, 'done', 1)",
+    )
+    .bind(repo_id)
+    .bind("stale-archive")
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO archive_files (repo_id, archive_name, path, parent_path, entry_type, size, \
+         mtime, mode) VALUES ($1, $2, $3, $4, 'f', 1, '', '')",
+    )
+    .bind(repo_id)
+    .bind("stale-archive")
+    .bind("stale.txt")
+    .bind("")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = json_request(
+        "POST",
+        &format!("/api/repos/{repo_id}/sync?build_index=true"),
+        None,
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["imported"], 1);
+    assert_eq!(body["removed"], 1);
+
+    let (status, file_count) = wait_for_archive_index(&pool, repo_id, "sync-archive-1").await;
+    assert_eq!(status, "done");
+    assert_eq!(file_count, Some(2));
+
+    let stale_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",
+    )
+    .bind(repo_id)
+    .bind("stale-archive")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stale_count, 0);
+    let stale_index_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM archive_index_jobs WHERE repo_id = $1 AND archive_name = $2",
+    )
+    .bind(repo_id)
+    .bind("stale-archive")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stale_index_rows, 0);
+    let stale_file_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM archive_files WHERE repo_id = $1 AND archive_name = $2",
+    )
+    .bind(repo_id)
+    .bind("stale-archive")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stale_file_rows, 0);
+
+    let file_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM archive_files WHERE repo_id = $1 AND archive_name = $2",
+    )
+    .bind(repo_id)
+    .bind("sync-archive-1")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(file_rows, 2);
 }
 
 #[tokio::test]

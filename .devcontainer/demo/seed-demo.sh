@@ -239,6 +239,7 @@ api POST "/api/schedules" "{
     \"keep_daily\": 7,
     \"keep_weekly\": 4,
     \"keep_monthly\": 6,
+    \"pre_backup_commands\": [\"sleep 90\"],
     \"backup_sources\": [\"/var/www\", \"/etc/nginx\"]
 }" > /dev/null
 
@@ -287,6 +288,14 @@ api POST "/api/schedules" "{
         {\"client_id\": $MEDIA_ID, \"paths\": [\"/mnt/media/photos\", \"/mnt/media/videos\"]}
     ]
 }" > /dev/null
+
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
+UPDATE schedules
+SET pre_backup_commands = '["sleep 90"]',
+    next_run_at = NOW() - interval '1 minute'
+WHERE repo_id = $REPO_DAILY_ID
+  AND cron_expression = '0 2 * * *';
+SQL
 
 echo "==> Adding global excludes..."
 for PATTERN in "pp:__pycache__" "pp:.cache" "pp:node_modules" "*.pyc" "*.swp" "*~" "/proc" "/sys" "/tmp"; do

@@ -94,6 +94,14 @@ pub struct UpdateScheduleRequest {
     pub on_failure: Option<OnFailure>,
 }
 
+async fn apply_running_status(state: &AppState, schedule: &mut ScheduleRow) {
+    schedule.is_running = state
+        .running_schedules
+        .read()
+        .await
+        .contains_key(&schedule.id);
+}
+
 #[utoipa::path(
     get,
     path = "/api/schedules",
@@ -111,7 +119,6 @@ pub async fn list_schedules(
 ) -> Result<Json<Vec<ScheduleRow>>, ApiError> {
     let schedules = db::list_schedules(&state.pool).await?;
     let is_admin = auth.role == Role::Admin;
-    let running = state.running_schedules.read().await;
     let mut visible = Vec::with_capacity(schedules.len());
     for mut s in schedules {
         if is_visible_to_user(
@@ -123,7 +130,7 @@ pub async fn list_schedules(
         )
         .await?
         {
-            s.is_running = running.contains(&s.id);
+            apply_running_status(&state, &mut s).await;
             visible.push(s);
         }
     }
@@ -295,6 +302,9 @@ pub async fn create_schedule(
 
     config_assembler::push_config_to_all_schedule_targets(&state, schedule.id).await;
 
+    let mut schedule = schedule;
+    apply_running_status(&state, &mut schedule).await;
+
     Ok((StatusCode::CREATED, Json(schedule)))
 }
 
@@ -317,7 +327,7 @@ pub async fn get_schedule(
     Path(id): Path<i64>,
 ) -> Result<Json<ScheduleRow>, ApiError> {
     let mut schedule = db::get_schedule_by_id(&state.pool, id).await?;
-    schedule.is_running = state.running_schedules.read().await.contains(&id);
+    apply_running_status(&state, &mut schedule).await;
     Ok(Json(schedule))
 }
 
@@ -511,6 +521,9 @@ pub async fn update_schedule(
     }
 
     config_assembler::push_config_to_all_schedule_targets(&state, schedule.id).await;
+
+    let mut schedule = schedule;
+    apply_running_status(&state, &mut schedule).await;
 
     Ok(Json(schedule))
 }

@@ -217,17 +217,14 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     }
 
     state.registry.unregister(&hostname).await;
-    match db::get_schedule_ids_for_hostname(&state.pool, &hostname).await {
-        Ok(ids) => {
-            let mut running = state.running_schedules.write().await;
-            for id in ids {
-                running.remove(&id);
-            }
-        }
-        Err(e) => {
-            tracing::warn!(hostname = %hostname, error = %e, "failed to clear running schedules on disconnect");
-        }
+    if let Err(e) = db::get_schedule_ids_for_hostname(&state.pool, &hostname).await {
+        tracing::warn!(
+            hostname = %hostname,
+            error = %e,
+            "failed to clear running schedules on disconnect"
+        );
     }
+    clear_running_schedules_for_hostname(&state, &hostname).await;
     state.ui_broadcast.send(ServerToUi::AgentDisconnected {
         hostname: hostname.clone(),
     });
@@ -242,6 +239,35 @@ async fn ping_loop(sender: mpsc::Sender<ServerToAgent>) {
             break;
         }
     }
+}
+
+async fn mark_schedule_running(state: &AppState, schedule_id: i64, hostname: &str) {
+    let mut running = state.running_schedules.write().await;
+    running
+        .entry(schedule_id)
+        .or_default()
+        .insert(hostname.to_owned());
+}
+
+async fn unmark_schedule_running(state: &AppState, schedule_id: i64, hostname: &str) {
+    let mut running = state.running_schedules.write().await;
+    let should_remove = if let Some(hosts) = running.get_mut(&schedule_id) {
+        hosts.remove(hostname);
+        hosts.is_empty()
+    } else {
+        false
+    };
+    if should_remove {
+        running.remove(&schedule_id);
+    }
+}
+
+async fn clear_running_schedules_for_hostname(state: &AppState, hostname: &str) {
+    let mut running = state.running_schedules.write().await;
+    running.retain(|_, hosts| {
+        hosts.remove(hostname);
+        !hosts.is_empty()
+    });
 }
 
 async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state: &AppState) {
@@ -283,14 +309,23 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
             {
                 tracing::error!(hostname = %hostname, error = %e, "failed to insert backup started row");
             }
-            match db::get_backup_schedule_for_hostname_repo(&state.pool, hostname, repo_id.0).await
-            {
-                Ok(Some(schedule)) => {
-                    state.running_schedules.write().await.insert(schedule.id);
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    tracing::warn!(hostname = %hostname, error = %e, "failed to look up schedule for BackupStarted");
+            if let Some(schedule_id) = schedule_id {
+                mark_schedule_running(state, schedule_id, hostname).await;
+            } else {
+                match db::get_backup_schedule_for_hostname_repo(&state.pool, hostname, repo_id.0)
+                    .await
+                {
+                    Ok(Some(schedule)) => {
+                        mark_schedule_running(state, schedule.id, hostname).await;
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        tracing::warn!(
+                            hostname = %hostname,
+                            error = %e,
+                            "failed to look up schedule for BackupStarted"
+                        );
+                    }
                 }
             }
             state.ui_broadcast.send(ServerToUi::DataChanged);
@@ -302,15 +337,27 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 status = ?report.status,
                 "backup completed"
             );
-            match db::get_backup_schedule_for_hostname_repo(&state.pool, hostname, report.repo_id.0)
+            if let Some(schedule_id) = report.schedule_id {
+                unmark_schedule_running(state, schedule_id, hostname).await;
+            } else {
+                match db::get_backup_schedule_for_hostname_repo(
+                    &state.pool,
+                    hostname,
+                    report.repo_id.0,
+                )
                 .await
-            {
-                Ok(Some(schedule)) => {
-                    state.running_schedules.write().await.remove(&schedule.id);
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    tracing::warn!(hostname = %hostname, error = %e, "failed to look up schedule for BackupCompleted");
+                {
+                    Ok(Some(schedule)) => {
+                        unmark_schedule_running(state, schedule.id, hostname).await;
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        tracing::warn!(
+                            hostname = %hostname,
+                            error = %e,
+                            "failed to look up schedule for BackupCompleted"
+                        );
+                    }
                 }
             }
             let status = match report.status {
@@ -341,7 +388,11 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 borg_command: report.borg_command,
             };
             if let Err(e) = db::insert_backup_report(&state.pool, &params).await {
-                tracing::error!(hostname = %hostname, error = %e, "failed to persist backup report");
+                tracing::error!(
+                    hostname = %hostname,
+                    error = %e,
+                    "failed to persist backup report"
+                );
             }
 
             if matches!(
@@ -535,16 +586,6 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 reason = %reason,
                 "backup rejected by agent"
             );
-            match db::get_backup_schedule_for_hostname_repo(&state.pool, hostname, repo_id.0).await
-            {
-                Ok(Some(schedule)) => {
-                    state.running_schedules.write().await.remove(&schedule.id);
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    tracing::warn!(hostname = %hostname, error = %e, "failed to look up schedule for BackupRejected");
-                }
-            }
         }
         AgentToServer::CheckCompleted {
             repo_id,
@@ -811,11 +852,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::{HashMap, HashSet},
-        net::SocketAddr,
-        sync::Arc,
-    };
+    use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
     use chrono::Utc;
     use shared::{
@@ -849,7 +886,7 @@ mod tests {
             pending_restores: Arc::new(Mutex::new(HashMap::new())),
             pending_migrations: Arc::new(Mutex::new(HashMap::new())),
             pending_deletes: Arc::new(Mutex::new(HashMap::new())),
-            running_schedules: Arc::new(RwLock::new(HashSet::new())),
+            running_schedules: Arc::new(RwLock::new(HashMap::new())),
             pool,
         }
     }
@@ -885,6 +922,7 @@ mod tests {
                 canary_enabled: false,
                 exclude_patterns_raw: "",
                 ignore_global_excludes: false,
+                keep_hourly: 24,
                 keep_daily: 7,
                 keep_weekly: 4,
                 keep_monthly: 6,
@@ -913,20 +951,34 @@ mod tests {
 
         let msg = serde_json::to_string(&AgentToServer::BackupStarted {
             repo_id: RepoId(repo_id),
+            schedule_id: Some(schedule_id),
             started_at: Utc::now(),
+            borg_command: None,
         })
         .unwrap();
         super::handle_agent_message(&msg, "handler-host", client_id, &state).await;
 
-        assert!(state.running_schedules.read().await.contains(&schedule_id));
+        assert!(
+            state
+                .running_schedules
+                .read()
+                .await
+                .contains_key(&schedule_id)
+        );
     }
 
     #[sqlx::test(migrations = "./migrations")]
-    async fn backup_rejected_clears_running_schedule(pool: PgPool) {
+    async fn backup_rejected_does_not_clear_running_schedule(pool: PgPool) {
         let state = build_test_state(pool.clone());
         let (client_id, repo_id, schedule_id) = create_handler_test_data(&pool).await;
 
-        state.running_schedules.write().await.insert(schedule_id);
+        state
+            .running_schedules
+            .write()
+            .await
+            .entry(schedule_id)
+            .or_default()
+            .insert("handler-host".to_string());
 
         let msg = serde_json::to_string(&AgentToServer::BackupRejected {
             repo_id: RepoId(repo_id),
@@ -935,7 +987,13 @@ mod tests {
         .unwrap();
         super::handle_agent_message(&msg, "handler-host", client_id, &state).await;
 
-        assert!(!state.running_schedules.read().await.contains(&schedule_id));
+        assert!(
+            state
+                .running_schedules
+                .read()
+                .await
+                .contains_key(&schedule_id)
+        );
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -943,12 +1001,19 @@ mod tests {
         let state = build_test_state(pool.clone());
         let (client_id, repo_id, schedule_id) = create_handler_test_data(&pool).await;
 
-        state.running_schedules.write().await.insert(schedule_id);
+        state
+            .running_schedules
+            .write()
+            .await
+            .entry(schedule_id)
+            .or_default()
+            .insert("handler-host".to_string());
 
         let report = BackupReport {
             id: ReportId(0),
             client_id: ClientId(client_id),
             repo_id: RepoId(repo_id),
+            schedule_id: Some(schedule_id),
             started_at: Utc::now(),
             finished_at: Utc::now(),
             status: BackupStatus::Success,
@@ -962,10 +1027,127 @@ mod tests {
             warnings: Vec::new(),
             borg_version: None,
             archive_name: Some("handler-host-2026-01-01".to_string()),
+            borg_command: None,
         };
         let msg = serde_json::to_string(&AgentToServer::BackupCompleted { report }).unwrap();
         super::handle_agent_message(&msg, "handler-host", client_id, &state).await;
 
-        assert!(!state.running_schedules.read().await.contains(&schedule_id));
+        assert!(
+            !state
+                .running_schedules
+                .read()
+                .await
+                .contains_key(&schedule_id)
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn backup_completed_keeps_running_schedule_for_other_host(pool: PgPool) {
+        let state = build_test_state(pool.clone());
+        let client_a = db::insert_client(&pool, "handler-host-a", None, "hash-a", None)
+            .await
+            .unwrap();
+        let client_b = db::insert_client(&pool, "handler-host-b", None, "hash-b", None)
+            .await
+            .unwrap();
+        let repo = db::insert_repo(
+            &pool,
+            &InsertRepoParams {
+                name: "handler-repo",
+                repo_path: "/backups/handler",
+                ssh_user: "user",
+                ssh_host: "host.local",
+                ssh_port: 22,
+                passphrase_encrypted: b"enc",
+                compression: "none",
+                encryption: "none",
+                owner_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        let schedule = db::insert_schedule(
+            &pool,
+            repo.id,
+            &ScheduleParams {
+                name: "handler-schedule",
+                schedule_type: "backup",
+                cron_expression: "0 3 * * *",
+                enabled: true,
+                canary_enabled: false,
+                exclude_patterns_raw: "",
+                ignore_global_excludes: false,
+                keep_hourly: 24,
+                keep_daily: 7,
+                keep_weekly: 4,
+                keep_monthly: 6,
+                keep_yearly: 1,
+                compact_enabled: true,
+                rate_limit_kbps: None,
+                pre_backup_commands: "[]",
+                post_backup_commands: "[]",
+                execution_mode: "parallel",
+                on_failure: "stop",
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        db::insert_schedule_targets(&pool, schedule.id, &[(client_a.id, 0), (client_b.id, 1)])
+            .await
+            .unwrap();
+
+        let start_a = serde_json::to_string(&AgentToServer::BackupStarted {
+            repo_id: RepoId(repo.id),
+            schedule_id: Some(schedule.id),
+            started_at: Utc::now(),
+            borg_command: None,
+        })
+        .unwrap();
+        super::handle_agent_message(&start_a, "handler-host-a", client_a.id, &state).await;
+
+        let start_b = serde_json::to_string(&AgentToServer::BackupStarted {
+            repo_id: RepoId(repo.id),
+            schedule_id: Some(schedule.id),
+            started_at: Utc::now(),
+            borg_command: None,
+        })
+        .unwrap();
+        super::handle_agent_message(&start_b, "handler-host-b", client_b.id, &state).await;
+
+        {
+            let running = state.running_schedules.read().await;
+            let hosts = running.get(&schedule.id).unwrap();
+            assert!(hosts.contains("handler-host-a"));
+            assert!(hosts.contains("handler-host-b"));
+        }
+
+        let report = BackupReport {
+            id: ReportId(0),
+            client_id: ClientId(client_a.id),
+            repo_id: RepoId(repo.id),
+            schedule_id: Some(schedule.id),
+            started_at: Utc::now(),
+            finished_at: Utc::now(),
+            status: BackupStatus::Success,
+            original_size: 1000,
+            compressed_size: 500,
+            deduplicated_size: 250,
+            repo_unique_csize: 250,
+            files_processed: 10,
+            duration_secs: 5,
+            error_message: None,
+            warnings: Vec::new(),
+            borg_version: None,
+            archive_name: Some("handler-host-a-2026-01-01".to_string()),
+            borg_command: None,
+        };
+        let complete = serde_json::to_string(&AgentToServer::BackupCompleted { report }).unwrap();
+        super::handle_agent_message(&complete, "handler-host-a", client_a.id, &state).await;
+
+        let running = state.running_schedules.read().await;
+        let hosts = running.get(&schedule.id).unwrap();
+        assert!(!hosts.contains("handler-host-a"));
+        assert!(hosts.contains("handler-host-b"));
     }
 }

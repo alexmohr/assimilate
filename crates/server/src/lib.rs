@@ -58,5 +58,5 @@ pub struct AppState {
     pub pending_restores: PendingRestores,
     pub pending_migrations: PendingMigrations,
     pub pending_deletes: PendingDeletes,
-    pub running_schedules: Arc<RwLock<HashSet<i64>>>,
+    pub running_schedules: Arc<RwLock<HashMap<i64, HashSet<String>>>>,
 }

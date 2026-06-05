@@ -115,7 +115,7 @@ async fn main() -> Result<(), StartupError> {
             std::collections::HashMap::new(),
         )),
         running_schedules: std::sync::Arc::new(tokio::sync::RwLock::new(
-            std::collections::HashSet::new(),
+            std::collections::HashMap::new(),
         )),
     };
 

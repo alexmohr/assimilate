@@ -108,6 +108,8 @@ Each schedule row in the UI shows:
 | **Last run** | UTC timestamp of the most recent execution |
 | **Last result** | `success`, `warning`, or `error` from the last run |
 
+When a backup is actively running, the schedule card also shows a **Running** badge so you can distinguish an in-flight backup from one that simply has a recent result.
+
 Disabling a schedule clears the next-run time. Re-enabling it recalculates the next occurrence from the current time.
 
 ## Manual Trigger

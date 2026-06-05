@@ -60,7 +60,7 @@ async fn build_test_app(pool: PgPool) -> Router {
             std::collections::HashMap::new(),
         )),
         running_schedules: std::sync::Arc::new(tokio::sync::RwLock::new(
-            std::collections::HashSet::new(),
+            std::collections::HashMap::new(),
         )),
     };
 

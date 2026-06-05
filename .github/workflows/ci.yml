@@ -38,7 +38,7 @@ jobs:
       - name: Tests
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
-        run: cargo test --workspace --lib --bins
+        run: cargo test --workspace
   frontend:
     name: Frontend (fmt + lint + test + build)
     runs-on: ubuntu-latest

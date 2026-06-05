@@ -181,6 +181,7 @@ const filteredSchedules = computed(() => {
     const q = filterText.value.toLowerCase()
     list = list.filter(
       (s) =>
+        s.name.toLowerCase().includes(q) ||
         (s.machine?.hostname.toLowerCase().includes(q) ?? false) ||
         (s.machine?.display_name?.toLowerCase().includes(q) ?? false) ||
         (s.repo?.name.toLowerCase().includes(q) ?? false),
@@ -325,7 +326,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
       <input
         v-model="filterText"
         class="input search-input"
-        placeholder="Filter by client or repo..."
+        placeholder="Filter by name, client, or repo..."
       />
       <button
         v-if="isMobile"

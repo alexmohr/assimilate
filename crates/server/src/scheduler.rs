@@ -1,21 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use chrono::{DateTime, Utc};
 use shared::{
     protocol::{ServerToAgent, ServerToUi},
     schedule::calculate_next_run,
-    types::{RepoId, ScheduleType},
+    types::{ExecutionMode, OnFailure, RepoId, ScheduleType},
 };
 use sqlx::PgPool;
+use tokio::sync::broadcast;
 
 use crate::{
     api::repos::sync_new_archives,
     config_assembler, db,
+    db::DueScheduleRow,
     tunnel::TunnelManager,
-    ws::{registry::AgentRegistry, ui_broadcast::UiBroadcast},
+    ws::{completion_bus::CompletionBus, registry::AgentRegistry, ui_broadcast::UiBroadcast},
 };
 
 const TICK_INTERVAL: Duration = Duration::from_secs(30);
@@ -23,6 +25,7 @@ const RETENTION_INTERVAL: Duration = Duration::from_secs(3600);
 const SYNC_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 const SYNC_WARN_DURATION: Duration = Duration::from_secs(300);
 const DEFAULT_RETENTION_DAYS: i64 = 7;
+const SEQUENTIAL_TIMEOUT: Duration = Duration::from_secs(4 * 3600);
 
 pub async fn run(
     pool: PgPool,
@@ -30,6 +33,7 @@ pub async fn run(
     encryption_key: [u8; 32],
     ui_broadcast: UiBroadcast,
     tunnel_manager: TunnelManager,
+    completion_bus: CompletionBus,
 ) {
     let schedule_pool = pool.clone();
     let retention_pool = pool.clone();
@@ -39,7 +43,14 @@ pub async fn run(
         let mut interval = tokio::time::interval(TICK_INTERVAL);
         loop {
             interval.tick().await;
-            if let Err(e) = tick(&schedule_pool, &registry, &encryption_key, &tunnel_manager).await
+            if let Err(e) = tick(
+                &schedule_pool,
+                &registry,
+                &encryption_key,
+                &tunnel_manager,
+                &completion_bus,
+            )
+            .await
             {
                 tracing::error!(error = %e, "scheduler tick failed");
             }
@@ -247,6 +258,7 @@ async fn tick(
     registry: &AgentRegistry,
     encryption_key: &[u8; 32],
     tunnel_manager: &TunnelManager,
+    completion_bus: &CompletionBus,
 ) -> Result<(), crate::error::ApiError> {
     let now = Utc::now();
     let due = db::list_due_schedules(pool, now).await?;
@@ -257,106 +269,335 @@ async fn tick(
 
     let tz = db::get_schedule_timezone(pool).await?;
 
-    let mut triggered_schedules = std::collections::HashSet::new();
-
-    for schedule in &due {
-        let repo_id = RepoId(schedule.repo_id);
-
-        let Ok(schedule_type) = schedule.schedule_type.parse::<ScheduleType>() else {
-            tracing::error!(
-                schedule_id = schedule.schedule_id,
-                schedule_type = %schedule.schedule_type,
-                "invalid schedule type in database, skipping"
-            );
-            continue;
-        };
-
-        let msg = match schedule_type {
-            ScheduleType::Check => ServerToAgent::RunCheckNow {
-                repo_id,
-                request_id: None,
-            },
-            ScheduleType::Verify => ServerToAgent::RunVerifyNow {
-                repo_id,
-                request_id: None,
-            },
-            ScheduleType::Backup => ServerToAgent::RunBackupNow {
-                repo_id,
-                schedule_id: Some(schedule.schedule_id),
-                request_id: None,
-            },
-        };
-
-        let action = match schedule_type {
-            ScheduleType::Check => "check",
-            ScheduleType::Verify => "verify",
-            ScheduleType::Backup => "backup",
-        };
-
-        tunnel_manager
-            .ensure_client_tunnel_connected(schedule.client_id)
-            .await;
-
-        // Push the current config before triggering so the agent always runs
-        // with the latest global excludes, not a potentially stale cached version.
-        match config_assembler::assemble_config(pool, encryption_key, &schedule.hostname).await {
-            Ok(config) => {
-                let config_msg = ServerToAgent::ConfigUpdate(config);
-                if let Err(e) = registry.send_to(&schedule.hostname, config_msg).await {
-                    tracing::warn!(
-                        hostname = %schedule.hostname,
-                        error = %e,
-                        "agent not connected for pre-run config push, skipping trigger"
-                    );
-                    continue;
-                }
+    // Group rows by schedule_id, preserving ORDER BY s.id, st.execution_order from the query.
+    let mut schedule_groups: Vec<(i64, String, Vec<DueScheduleRow>)> = Vec::new();
+    for row in due {
+        match schedule_groups.last_mut() {
+            Some((id, _, targets)) if *id == row.schedule_id => {
+                targets.push(row);
             }
-            Err(e) => {
-                tracing::warn!(
-                    hostname = %schedule.hostname,
-                    error = %e,
-                    "failed to assemble config before scheduled run, skipping trigger"
-                );
-                continue;
+            _ => {
+                let cron = row.cron_expression.clone();
+                schedule_groups.push((row.schedule_id, cron, vec![row]));
             }
         }
-
-        match registry.send_to(&schedule.hostname, msg).await {
-            Ok(()) => {
-                tracing::info!(
-                    hostname = %schedule.hostname,
-                    repo_id = schedule.repo_id,
-                    action,
-                    "triggered schedule"
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    hostname = %schedule.hostname,
-                    repo_id = schedule.repo_id,
-                    action,
-                    error = %e,
-                    "agent not connected, skipping trigger"
-                );
-                continue;
-            }
-        }
-
-        triggered_schedules.insert(schedule.schedule_id);
     }
 
-    for schedule_id in &triggered_schedules {
-        let cron = due
-            .iter()
-            .find(|s| s.schedule_id == *schedule_id)
-            .map(|s| s.cron_expression.as_str())
+    // schedule_id -> cron, populated for parallel schedules that were successfully triggered.
+    let mut triggered: HashMap<i64, String> = HashMap::new();
+
+    for (schedule_id, cron, targets) in schedule_groups {
+        let first = &targets[0];
+        let execution_mode = first
+            .execution_mode
+            .parse::<ExecutionMode>()
             .unwrap_or_default();
+        let on_failure = first.on_failure.parse::<OnFailure>().unwrap_or_default();
+
+        match execution_mode {
+            ExecutionMode::Parallel => {
+                for target in &targets {
+                    let Ok(schedule_type) = target.schedule_type.parse::<ScheduleType>() else {
+                        tracing::error!(
+                            schedule_id,
+                            schedule_type = %target.schedule_type,
+                            "invalid schedule type in database, skipping"
+                        );
+                        continue;
+                    };
+
+                    let msg = build_trigger_msg(schedule_type, RepoId(target.repo_id), schedule_id);
+                    let action = schedule_type_label(schedule_type);
+
+                    tunnel_manager
+                        .ensure_client_tunnel_connected(target.client_id)
+                        .await;
+
+                    match config_assembler::assemble_config(pool, encryption_key, &target.hostname)
+                        .await
+                    {
+                        Ok(config) => {
+                            let config_msg = ServerToAgent::ConfigUpdate(config);
+                            if let Err(e) = registry.send_to(&target.hostname, config_msg).await {
+                                tracing::warn!(
+                                    hostname = %target.hostname,
+                                    error = %e,
+                                    "agent not connected for pre-run config push, skipping trigger"
+                                );
+                                continue;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                hostname = %target.hostname,
+                                error = %e,
+                                "failed to assemble config before scheduled run, skipping trigger"
+                            );
+                            continue;
+                        }
+                    }
+
+                    match registry.send_to(&target.hostname, msg).await {
+                        Ok(()) => {
+                            tracing::info!(
+                                hostname = %target.hostname,
+                                repo_id = target.repo_id,
+                                action,
+                                "triggered schedule"
+                            );
+                            triggered.entry(schedule_id).or_insert_with(|| cron.clone());
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                hostname = %target.hostname,
+                                repo_id = target.repo_id,
+                                action,
+                                error = %e,
+                                "agent not connected, skipping trigger"
+                            );
+                        }
+                    }
+                }
+            }
+            ExecutionMode::Sequential => {
+                let ctx = SequentialExecution {
+                    pool: pool.clone(),
+                    registry: registry.clone(),
+                    encryption_key: *encryption_key,
+                    tunnel_manager: tunnel_manager.clone(),
+                    completion_bus: completion_bus.clone(),
+                    schedule_id,
+                    cron,
+                    targets,
+                    on_failure,
+                    triggered_at: now,
+                    tz,
+                };
+                tokio::spawn(async move {
+                    run_sequential_schedule(ctx).await;
+                });
+            }
+        }
+    }
+
+    for (schedule_id, cron) in &triggered {
         let next = calculate_next_run(cron, now, tz)
             .map_err(|e| crate::error::ApiError::Internal(format!("cron error: {e}")))?;
         db::mark_schedule_triggered(pool, *schedule_id, now, next).await?;
     }
 
     Ok(())
+}
+
+fn build_trigger_msg(
+    schedule_type: ScheduleType,
+    repo_id: RepoId,
+    schedule_id: i64,
+) -> ServerToAgent {
+    match schedule_type {
+        ScheduleType::Check => ServerToAgent::RunCheckNow {
+            repo_id,
+            request_id: None,
+        },
+        ScheduleType::Verify => ServerToAgent::RunVerifyNow {
+            repo_id,
+            request_id: None,
+        },
+        ScheduleType::Backup => ServerToAgent::RunBackupNow {
+            repo_id,
+            schedule_id: Some(schedule_id),
+            request_id: None,
+        },
+    }
+}
+
+fn schedule_type_label(schedule_type: ScheduleType) -> &'static str {
+    match schedule_type {
+        ScheduleType::Check => "check",
+        ScheduleType::Verify => "verify",
+        ScheduleType::Backup => "backup",
+    }
+}
+
+struct SequentialExecution {
+    pool: PgPool,
+    registry: AgentRegistry,
+    encryption_key: [u8; 32],
+    tunnel_manager: TunnelManager,
+    completion_bus: CompletionBus,
+    schedule_id: i64,
+    cron: String,
+    targets: Vec<DueScheduleRow>,
+    on_failure: OnFailure,
+    triggered_at: DateTime<Utc>,
+    tz: chrono_tz::Tz,
+}
+
+async fn run_sequential_schedule(ctx: SequentialExecution) {
+    let SequentialExecution {
+        pool,
+        registry,
+        encryption_key,
+        tunnel_manager,
+        completion_bus,
+        schedule_id,
+        cron,
+        targets,
+        on_failure,
+        triggered_at: now,
+        tz,
+    } = ctx;
+    let mut marked_triggered = false;
+
+    'targets: for target in &targets {
+        let Ok(schedule_type) = target.schedule_type.parse::<ScheduleType>() else {
+            tracing::error!(
+                schedule_id,
+                schedule_type = %target.schedule_type,
+                "sequential: invalid schedule type in database, skipping target"
+            );
+            match on_failure {
+                OnFailure::Stop => break 'targets,
+                OnFailure::Continue => continue 'targets,
+            }
+        };
+
+        // Subscribe before sending so we don't miss the completion event.
+        let mut rx = completion_bus.subscribe();
+
+        tunnel_manager
+            .ensure_client_tunnel_connected(target.client_id)
+            .await;
+
+        match config_assembler::assemble_config(&pool, &encryption_key, &target.hostname).await {
+            Ok(config) => {
+                let config_msg = ServerToAgent::ConfigUpdate(config);
+                if let Err(e) = registry.send_to(&target.hostname, config_msg).await {
+                    tracing::warn!(
+                        hostname = %target.hostname,
+                        schedule_id,
+                        error = %e,
+                        "sequential: agent not connected for pre-run config push, skipping target"
+                    );
+                    match on_failure {
+                        OnFailure::Stop => break 'targets,
+                        OnFailure::Continue => continue 'targets,
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    hostname = %target.hostname,
+                    schedule_id,
+                    error = %e,
+                    "sequential: failed to assemble config, skipping target"
+                );
+                match on_failure {
+                    OnFailure::Stop => break 'targets,
+                    OnFailure::Continue => continue 'targets,
+                }
+            }
+        }
+
+        let repo_id = RepoId(target.repo_id);
+        let msg = build_trigger_msg(schedule_type, repo_id, schedule_id);
+        let action = schedule_type_label(schedule_type);
+
+        match registry.send_to(&target.hostname, msg).await {
+            Ok(()) => {
+                tracing::info!(
+                    hostname = %target.hostname,
+                    repo_id = target.repo_id,
+                    action,
+                    schedule_id,
+                    "sequential: triggered"
+                );
+                if !marked_triggered {
+                    match calculate_next_run(&cron, now, tz) {
+                        Ok(next) => {
+                            if let Err(e) =
+                                db::mark_schedule_triggered(&pool, schedule_id, now, next).await
+                            {
+                                tracing::error!(
+                                    schedule_id,
+                                    error = %e,
+                                    "sequential: failed to mark schedule triggered"
+                                );
+                            } else {
+                                marked_triggered = true;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                schedule_id,
+                                cron = %cron,
+                                error = %e,
+                                "sequential: invalid cron expression"
+                            );
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    hostname = %target.hostname,
+                    repo_id = target.repo_id,
+                    action,
+                    schedule_id,
+                    error = %e,
+                    "sequential: agent not connected, skipping target"
+                );
+                match on_failure {
+                    OnFailure::Stop => break 'targets,
+                    OnFailure::Continue => continue 'targets,
+                }
+            }
+        }
+
+        let hostname = target.hostname.clone();
+        let repo_id_val = target.repo_id;
+
+        let result = tokio::time::timeout(SEQUENTIAL_TIMEOUT, async {
+            loop {
+                match rx.recv().await {
+                    Ok(o) if o.hostname == hostname && o.repo_id == repo_id_val => {
+                        break o.success;
+                    }
+                    Ok(_) => {}
+                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => break false,
+                }
+            }
+        })
+        .await;
+
+        let success = match result {
+            Ok(s) => s,
+            Err(_) => {
+                tracing::error!(
+                    schedule_id,
+                    hostname = %target.hostname,
+                    repo_id = target.repo_id,
+                    "sequential: timed out waiting for operation to complete"
+                );
+                false
+            }
+        };
+
+        if !success {
+            match on_failure {
+                OnFailure::Stop => {
+                    tracing::warn!(
+                        schedule_id,
+                        hostname = %target.hostname,
+                        "sequential: stopping remaining targets due to failure"
+                    );
+                    break 'targets;
+                }
+                OnFailure::Continue => {}
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -368,7 +609,7 @@ mod tests {
     use crate::{
         db::{self, InsertRepoParams, ScheduleParams},
         tunnel::TunnelManager,
-        ws::{registry::AgentRegistry, ui_broadcast::UiBroadcast},
+        ws::{completion_bus::CompletionBus, registry::AgentRegistry, ui_broadcast::UiBroadcast},
     };
 
     #[test]
@@ -497,8 +738,9 @@ mod tests {
         let registry = AgentRegistry::new();
         let mut rx = register_fake_agent(&registry).await;
         let tunnel = dummy_tunnel(pool.clone());
+        let bus = CompletionBus::new();
 
-        tick(&pool, &registry, &key, &tunnel).await.unwrap();
+        tick(&pool, &registry, &key, &tunnel, &bus).await.unwrap();
 
         let first = rx
             .try_recv()
@@ -533,8 +775,9 @@ mod tests {
         let registry = AgentRegistry::new();
         let mut rx = register_fake_agent(&registry).await;
         let tunnel = dummy_tunnel(pool.clone());
+        let bus = CompletionBus::new();
 
-        tick(&pool, &registry, &key, &tunnel).await.unwrap();
+        tick(&pool, &registry, &key, &tunnel, &bus).await.unwrap();
 
         let msg = rx.try_recv().expect("expected ConfigUpdate");
         match msg {
@@ -568,8 +811,9 @@ mod tests {
 
         let registry = AgentRegistry::new(); // no agent registered
         let tunnel = dummy_tunnel(pool.clone());
+        let bus = CompletionBus::new();
 
-        tick(&pool, &registry, &key, &tunnel).await.unwrap();
+        tick(&pool, &registry, &key, &tunnel, &bus).await.unwrap();
 
         let due = db::list_due_schedules(&pool, Utc::now()).await.unwrap();
         assert!(

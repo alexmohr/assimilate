@@ -102,6 +102,7 @@ async fn main() -> Result<(), StartupError> {
         tunnel_manager: tunnel_manager.clone(),
         log_buffer,
         notification_service,
+        completion_bus: server::ws::completion_bus::CompletionBus::new(),
         pending_dryruns: std::sync::Arc::new(tokio::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),
@@ -122,6 +123,7 @@ async fn main() -> Result<(), StartupError> {
         state.encryption_key,
         state.ui_broadcast.clone(),
         state.tunnel_manager.clone(),
+        state.completion_bus.clone(),
     ));
 
     let tm = tunnel_manager.clone();

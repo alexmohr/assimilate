@@ -17,7 +17,7 @@ use tokio::sync::mpsc;
 use crate::{
     AppState,
     api::repos::sync_new_archives,
-    config_assembler, db,
+    archive_index, config_assembler, db,
     notifications::{self, EventType, NotificationEvent},
 };
 
@@ -185,7 +185,11 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             }
         }
         Err(e) => {
-            tracing::error!(hostname = %hostname, error = %e, "failed to assemble config on connect");
+            tracing::error!(
+                hostname = %hostname,
+                error = %e,
+                "failed to assemble config on connect"
+            );
         }
     }
 
@@ -245,7 +249,11 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
     match msg {
         AgentToServer::Pong => {
             if let Err(e) = db::update_last_seen_by_hostname(&state.pool, hostname).await {
-                tracing::error!(hostname = %hostname, error = %e, "failed to update last_seen_at");
+                tracing::error!(
+                    hostname = %hostname,
+                    error = %e,
+                    "failed to update last_seen_at"
+                );
             }
         }
         AgentToServer::BackupStarted {
@@ -270,7 +278,11 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
             )
             .await
             {
-                tracing::error!(hostname = %hostname, error = %e, "failed to insert backup started row");
+                tracing::error!(
+                    hostname = %hostname,
+                    error = %e,
+                    "failed to insert backup started row"
+                );
             }
             state.ui_broadcast.send(ServerToUi::DataChanged);
         }
@@ -288,6 +300,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
             };
             let notification_error_message = report.error_message.clone();
             let notification_archive_name = report.archive_name.clone();
+            let index_archive_name = notification_archive_name.clone();
             let params = db::InsertReportParams {
                 client_id,
                 repo_id: report.repo_id.0,
@@ -308,8 +321,55 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 archive_name: report.archive_name,
                 borg_command: report.borg_command,
             };
-            if let Err(e) = db::insert_backup_report(&state.pool, &params).await {
-                tracing::error!(hostname = %hostname, error = %e, "failed to persist backup report");
+            let report_persisted = match db::insert_backup_report(&state.pool, &params).await {
+                Ok(()) => true,
+                Err(e) => {
+                    tracing::error!(
+                        hostname = %hostname,
+                        error = %e,
+                        "failed to persist backup report"
+                    );
+                    false
+                }
+            };
+
+            if report_persisted
+                && matches!(
+                    report.status,
+                    shared::types::BackupStatus::Success | shared::types::BackupStatus::Warning
+                )
+                && let Some(archive_name) = index_archive_name
+            {
+                let index_pool = state.pool.clone();
+                let index_key = state.encryption_key;
+                let index_repo_id = report.repo_id.0;
+                tokio::spawn(async move {
+                    match archive_index::ensure_indexed(
+                        index_pool,
+                        index_key,
+                        index_repo_id,
+                        archive_name.clone(),
+                    )
+                    .await
+                    {
+                        Ok(status) => {
+                            tracing::debug!(
+                                repo_id = index_repo_id,
+                                archive_name = %archive_name,
+                                status = ?status,
+                                "queued archive indexing after backup"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                repo_id = index_repo_id,
+                                archive_name = %archive_name,
+                                error = %e,
+                                "failed to queue archive indexing after backup"
+                            );
+                        }
+                    }
+                });
             }
 
             if matches!(
@@ -764,5 +824,242 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
             }
             state.ui_broadcast.send(ServerToUi::DataChanged);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        os::unix::fs::PermissionsExt,
+        path::PathBuf,
+        sync::atomic::{AtomicU64, Ordering},
+        time::Duration,
+    };
+
+    use chrono::{TimeZone, Utc};
+    use shared::{
+        crypto::{derive_key, encrypt_passphrase},
+        protocol::AgentToServer,
+        types::{BackupReport, BackupStatus, ClientId, RepoId, ReportId},
+    };
+    use sqlx::PgPool;
+    use tokio::time::timeout;
+
+    use super::*;
+
+    static TEST_BORG_BINARY_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn build_test_state(pool: PgPool) -> AppState {
+        let ui_broadcast = crate::ws::ui_broadcast::UiBroadcast::new();
+        let tunnel_manager = crate::tunnel::TunnelManager::new(
+            pool.clone(),
+            ui_broadcast.clone(),
+            "127.0.0.1:0".parse().expect("valid socket address"),
+        );
+
+        AppState {
+            pool: pool.clone(),
+            encryption_key: derive_key(b"handler-test-secret-key"),
+            registry: crate::ws::registry::AgentRegistry::new(),
+            ui_broadcast,
+            tunnel_manager,
+            log_buffer: crate::log_buffer::LogBuffer::default(),
+            notification_service: crate::notifications::NotificationService::new(
+                pool,
+                reqwest::Client::new(),
+            ),
+            pending_dryruns: std::sync::Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+            pending_restores: std::sync::Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+            pending_migrations: std::sync::Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+            pending_deletes: std::sync::Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+        }
+    }
+
+    async fn write_fake_borg_binary() -> PathBuf {
+        let counter = TEST_BORG_BINARY_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "borg-fake-handler-{pid}-{counter}",
+            pid = std::process::id()
+        ));
+        tokio::fs::create_dir_all(&dir)
+            .await
+            .expect("create fake borg dir");
+
+        let binary = dir.join("borg");
+        let script = r#"#!/usr/bin/env bash
+set -eu
+
+for arg in "$@"; do
+  case "$arg" in
+    --json-lines)
+      cat <<'JSON'
+{
+  "type": "file",
+  "path": "dir/file.txt",
+  "size": 123,
+  "mtime": "2026-06-05T12:00:00",
+  "mode": "100644"
+}
+JSON
+      exit 0
+      ;;
+    --glob-archives)
+      cat <<'JSON'
+{
+  "archives": [
+    {
+      "name": "archive-1",
+      "hostname": "agent-1",
+      "start": "2026-06-05T12:00:00+00:00",
+      "end": "2026-06-05T12:05:00+00:00",
+      "duration": 5.0,
+      "stats": {
+        "original_size": 1000,
+        "compressed_size": 500,
+        "deduplicated_size": 250,
+        "nfiles": 3
+      }
+    }
+  ]
+}
+JSON
+      exit 0
+      ;;
+  esac
+done
+
+if [ "${1:-}" = "info" ]; then
+  cat <<'JSON'
+{
+  "cache": {
+    "stats": {
+      "total_size": 1000,
+      "total_csize": 500,
+      "unique_csize": 250,
+      "total_chunks": 10,
+      "total_unique_chunks": 5
+    }
+  },
+  "encryption": {
+    "mode": "repokey"
+  }
+}
+JSON
+  exit 0
+fi
+
+if [ "${1:-}" = "list" ]; then
+  cat <<'JSON'
+{
+  "archives": [
+    {
+      "name": "archive-1",
+      "hostname": "agent-1",
+      "start": "2026-06-05T12:00:00+00:00",
+      "end": "2026-06-05T12:05:00+00:00"
+    }
+  ]
+}
+JSON
+  exit 0
+fi
+
+exit 0
+"#;
+
+        tokio::fs::write(&binary, script)
+            .await
+            .expect("write fake borg binary");
+        let mut permissions = tokio::fs::metadata(&binary)
+            .await
+            .expect("read fake borg metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        tokio::fs::set_permissions(&binary, permissions)
+            .await
+            .expect("mark fake borg executable");
+        binary
+    }
+
+    #[ignore]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn backup_completed_queues_archive_indexing(pool: PgPool) {
+        let client = crate::db::insert_client(&pool, "agent-1", None, "token-hash", None)
+            .await
+            .expect("insert client");
+        let passphrase_encrypted =
+            encrypt_passphrase("test-passphrase", &derive_key(b"handler-test-secret-key"))
+                .expect("encrypt passphrase");
+        let repo = crate::db::insert_repo(
+            &pool,
+            &crate::db::InsertRepoParams {
+                name: "handler-repo",
+                repo_path: "/backups/handler",
+                ssh_user: "backup",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+            },
+        )
+        .await
+        .expect("insert repo");
+
+        let borg_binary = write_fake_borg_binary().await;
+        let _borg_guard = crate::borg::override_binary_for_tests(borg_binary);
+        let state = build_test_state(pool.clone());
+
+        let started_at = Utc
+            .with_ymd_and_hms(2026, 6, 5, 12, 0, 0)
+            .single()
+            .expect("valid timestamp");
+        let report = BackupReport {
+            id: ReportId(1),
+            client_id: ClientId(client.id),
+            repo_id: RepoId(repo.id),
+            schedule_id: None,
+            started_at,
+            finished_at: started_at + chrono::Duration::minutes(5),
+            status: BackupStatus::Success,
+            original_size: 1_000,
+            compressed_size: 500,
+            deduplicated_size: 250,
+            repo_unique_csize: 250,
+            files_processed: 3,
+            duration_secs: 300,
+            error_message: None,
+            warnings: vec![],
+            borg_version: Some("1.0.0".to_string()),
+            archive_name: Some("archive-2".to_string()),
+            borg_command: Some("borg create".to_string()),
+        };
+        let msg = serde_json::to_string(&AgentToServer::BackupCompleted { report })
+            .expect("serialize message");
+
+        handle_agent_message(&msg, &client.hostname, client.id, &state).await;
+
+        timeout(Duration::from_secs(5), async {
+            loop {
+                let archive_2 = crate::archive_index::get_index_status(&pool, repo.id, "archive-2")
+                    .await
+                    .expect("archive-2 status query");
+                if matches!(archive_2, Some(crate::archive_index::IndexStatus::Done)) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("timed out waiting for archive indexing");
     }
 }

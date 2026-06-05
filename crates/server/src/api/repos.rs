@@ -9,6 +9,7 @@ use axum::{
     http::StatusCode,
 };
 use chrono::DateTime;
+use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use shared::{
     crypto::encrypt_passphrase,
@@ -24,7 +25,7 @@ use super::{
     permissions::is_visible_to_user,
 };
 use crate::{
-    AppState,
+    AppState, archive_index,
     borg::Borg,
     config_assembler,
     db::{self, InsertRepoParams, RepoRow, RepoWithStatsRow, UpdateRepoParams},
@@ -1664,7 +1665,28 @@ pub async fn sync_new_archives(
     }
 
     let added = report_params.len() as u64;
+    let archive_names: Vec<String> = report_params
+        .iter()
+        .filter_map(|params| params.archive_name.clone())
+        .collect();
     db::bulk_insert_backup_reports(pool, &report_params).await?;
+    join_all(archive_names.into_iter().map(|archive_name| {
+        let pool = pool.clone();
+        async move {
+            if let Err(e) =
+                archive_index::ensure_indexed(pool, *encryption_key, repo_id, archive_name.clone())
+                    .await
+            {
+                warn!(
+                    repo_id,
+                    archive = %archive_name,
+                    error = %e,
+                    "failed to queue archive indexing after incremental sync"
+                );
+            }
+        }
+    }))
+    .await;
     refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, borg_names.len() as i64).await;
     info!(repo_id, added, removed, total, "incremental sync complete");
     Ok((added, removed))

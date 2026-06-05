@@ -333,6 +333,8 @@ async fn main() -> Result<(), StartupError> {
             "/api/schedules/{id}/sources",
             get(api::schedules::list_schedule_backup_sources),
         )
+        .route("/api/config/export", get(api::config_io::export_config))
+        .route("/api/config/import", post(api::config_io::import_config))
         .route(
             "/api/clients/{hostname}/reports",
             get(api::reports::list_reports),

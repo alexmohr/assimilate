@@ -263,6 +263,7 @@ const {
   selectedArchive,
   contentsLoading,
   contentsError,
+  indexing,
   breadcrumbs,
   dirs,
   files,
@@ -1381,6 +1382,13 @@ async function resetImport(): Promise<void> {
               v-if="contentsLoading"
               size="sm"
             />
+            <div
+              v-else-if="indexing"
+              class="state-msg state-msg-sm"
+            >
+              <BaseSpinner size="sm" />
+              Indexing archive contents — this only happens once…
+            </div>
             <div
               v-else-if="contentsError"
               class="state-msg state-msg-sm state-error"

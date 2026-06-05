@@ -389,6 +389,10 @@ async fn main() -> Result<(), StartupError> {
             get(api::archives::list_contents),
         )
         .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/index-status",
+            get(api::archives::get_archive_index_status),
+        )
+        .route(
             "/api/repos/{repo_id}/archives/{archive_name}/extract",
             get(api::archives::extract_file),
         )

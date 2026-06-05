@@ -5,7 +5,7 @@ use utoipa::OpenApi;
 
 use crate::{
     api::{
-        archives::{ArchiveEntry, ArchiveInfo, ContentEntry},
+        archives::{ArchiveEntry, ArchiveIndexStatus, ArchiveInfo, ContentEntry, ContentsResponse},
         auth::{ChangePasswordRequest, LoginRequest, LoginResponse, MeResponse},
         clients::{ClientResponse, CreateClientRequest, CreateClientResponse, UpdateClientRequest},
         deploy::{DeployAgentRequest, DeployAgentResponse},
@@ -76,6 +76,7 @@ use crate::{
         crate::api::archives::list_archives,
         crate::api::archives::archive_info,
         crate::api::archives::list_contents,
+        crate::api::archives::get_archive_index_status,
         crate::api::archives::extract_file,
         crate::api::dryrun::dry_run,
         crate::api::search::search_archive,
@@ -161,6 +162,9 @@ use crate::{
         ArchiveEntry,
         ArchiveInfo,
         ContentEntry,
+        ContentsResponse,
+        ArchiveIndexStatus,
+        crate::archive_index::IndexStatus,
         DeployAgentRequest,
         DeployAgentResponse,
         CreateScheduleRequest,

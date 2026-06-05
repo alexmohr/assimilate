@@ -185,6 +185,19 @@ pub struct ContentEntry {
     pub mode: String,
 }
 
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ContentsResponse {
+    pub index_status: crate::archive_index::IndexStatus,
+    pub entries: Vec<ContentEntry>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ArchiveIndexStatus {
+    pub status: crate::archive_index::IndexStatus,
+    pub file_count: Option<i64>,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ContentsQuery {
     pub path: Option<String>,
@@ -337,7 +350,7 @@ pub async fn archive_info(
 // Strip the leading "./" or bare "." that borg emits when archives are
 // created with "borg create repo::name ." so the API always returns
 // clean relative paths (e.g. "var/www" instead of "./var/www").
-fn normalize_path(p: &str) -> String {
+pub(crate) fn normalize_path(p: &str) -> String {
     if p == "." {
         String::new()
     } else {
@@ -452,7 +465,7 @@ fn fold_immediate_children(prefix: &str, entries: Vec<ContentEntry>) -> Vec<Cont
             description = "Max entries to return (default: 100)"),
     ),
     responses(
-        (status = 200, description = "Directory contents", body = Vec<ContentEntry>),
+        (status = 200, description = "Directory contents", body = ContentsResponse),
         (status = 400, description = "Invalid path"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden"),
@@ -464,7 +477,9 @@ pub async fn list_contents(
     auth: AuthUser,
     AxumPath((repo_id, archive_name)): AxumPath<(i64, String)>,
     Query(query): Query<ContentsQuery>,
-) -> Result<Json<Vec<ContentEntry>>, ApiError> {
+) -> Result<Json<ContentsResponse>, ApiError> {
+    use crate::archive_index::{self, IndexStatus};
+
     check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_view).await?;
     let path = query.path.as_deref();
     let limit = query.limit.unwrap_or(100);
@@ -473,10 +488,55 @@ pub async fn list_contents(
         validate_path(p)?;
     }
 
+    let status = archive_index::get_index_status(&state.pool, repo_id, &archive_name).await?;
+
+    match status {
+        Some(IndexStatus::Done) => {
+            let parent_path = path
+                .map(|p| p.trim_end_matches('/'))
+                .unwrap_or("")
+                .to_string();
+            let entries = archive_index::query_dir(
+                &state.pool,
+                repo_id,
+                &archive_name,
+                &parent_path,
+                i64::try_from(limit).unwrap_or(100),
+            )
+            .await?;
+            return Ok(Json(ContentsResponse {
+                index_status: IndexStatus::Done,
+                entries,
+            }));
+        }
+        Some(IndexStatus::Failed) => {
+            // Fall through to the borg-based path below so browsing still works.
+        }
+        Some(IndexStatus::Pending | IndexStatus::Indexing) => {
+            return Ok(Json(ContentsResponse {
+                index_status: status.unwrap(),
+                entries: vec![],
+            }));
+        }
+        None => {
+            // Not yet started — claim and launch background indexing.
+            let triggered = archive_index::ensure_indexed(
+                state.pool.clone(),
+                state.encryption_key,
+                repo_id,
+                archive_name.clone(),
+            )
+            .await?;
+            return Ok(Json(ContentsResponse {
+                index_status: triggered,
+                entries: vec![],
+            }));
+        }
+    }
+
+    // Fallback: borg-based listing (used when index is in 'failed' state).
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
-
     let repo_archive = format!("{borg_repo}::{archive_name}");
-
     let patterns = list_patterns(path);
 
     let mut args: Vec<&str> = vec!["list", "--json-lines", "--lock-wait", LOCK_WAIT_SECS];
@@ -518,7 +578,6 @@ pub async fn list_contents(
         });
     }
 
-    // All output consumed - verify exit status.
     let status = child
         .wait()
         .await
@@ -538,7 +597,71 @@ pub async fn list_contents(
     let children = fold_immediate_children(&prefix, raw_entries);
     let limited: Vec<ContentEntry> = children.into_iter().take(limit).collect();
 
-    Ok(Json(limited))
+    Ok(Json(ContentsResponse {
+        index_status: IndexStatus::Failed,
+        entries: limited,
+    }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/repos/{repo_id}/archives/{archive_name}/index-status",
+    tag = "Archives",
+    operation_id = "getArchiveIndexStatus",
+    summary = "Get the index status for an archive",
+    params(
+        ("repo_id" = i64, Path, description = "Repository ID"),
+        ("archive_name" = String, Path, description = "Archive name"),
+    ),
+    responses(
+        (status = 200, description = "Index status", body = ArchiveIndexStatus),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+    )
+)]
+pub async fn get_archive_index_status(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    AxumPath((repo_id, archive_name)): AxumPath<(i64, String)>,
+) -> Result<Json<ArchiveIndexStatus>, ApiError> {
+    use crate::archive_index::{self, IndexStatus};
+
+    check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_view).await?;
+
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        status: String,
+        file_count: Option<i64>,
+        error_message: Option<String>,
+    }
+
+    let row = sqlx::query_as::<_, Row>(
+        "SELECT status, file_count, error_message FROM archive_index_jobs WHERE repo_id = $1 AND \
+         archive_name = $2",
+    )
+    .bind(repo_id)
+    .bind(&archive_name)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    let response = row.map_or(
+        ArchiveIndexStatus {
+            status: IndexStatus::Pending,
+            file_count: None,
+            error: None,
+        },
+        |r| {
+            let status = archive_index::get_index_status_from_str(&r.status);
+            ArchiveIndexStatus {
+                status,
+                file_count: r.file_count,
+                error: r.error_message,
+            }
+        },
+    );
+
+    Ok(Json(response))
 }
 
 #[utoipa::path(

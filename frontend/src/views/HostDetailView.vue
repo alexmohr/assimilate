@@ -1399,8 +1399,8 @@ watch(wsStatus, (newStatus, oldStatus) => {
         >
           <div
             v-for="r in filteredSortedReports"
-            :key="r.id"
             :id="`report-${r.id}`"
+            :key="r.id"
             class="result-card"
             :class="[
               `result-${r.status}`,

@@ -510,7 +510,6 @@ watch(activeTab, (tab) => {
   }
 })
 
-const { onMessage } = useWebSocket()
 onMessage('DataChanged', async () => {
   if (!isCreate.value && schedule.value) {
     try {

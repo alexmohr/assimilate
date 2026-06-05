@@ -655,6 +655,7 @@ pub struct InsertRepoParams<'a> {
 
 pub struct UpdateRepoParams<'a> {
     pub repo_id: i64,
+    pub name: &'a str,
     pub repo_path: &'a str,
     pub ssh_user: &'a str,
     pub ssh_host: &'a str,
@@ -853,12 +854,13 @@ pub async fn update_repo(
     params: &UpdateRepoParams<'_>,
 ) -> Result<RepoRow, ApiError> {
     sqlx::query_as::<_, RepoRow>(
-        "UPDATE repos SET repo_path = $2, ssh_user = $3, ssh_host = $4, ssh_port = $5, \
-         compression = $6, encryption = $7, enabled = $8, sync_schedule = $9 WHERE id = $1 \
+        "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = $6, \
+         compression = $7, encryption = $8, enabled = $9, sync_schedule = $10 WHERE id = $1 \
          RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, \
          enabled, owner_id, visibility, sync_schedule, last_synced_at",
     )
     .bind(params.repo_id)
+    .bind(params.name)
     .bind(params.repo_path)
     .bind(params.ssh_user)
     .bind(params.ssh_host)

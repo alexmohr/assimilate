@@ -5,7 +5,7 @@ use std::{collections::HashMap, process::Output, time::Duration};
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
 use chrono::DateTime;
@@ -240,7 +240,8 @@ pub async fn create_repo(
             }
         }
 
-        if let Err(e) = sync_existing_archives(&pool, &encryption_key, repo_id, &ui_broadcast).await
+        if let Err(e) =
+            sync_existing_archives(&pool, &encryption_key, repo_id, &ui_broadcast, false).await
         {
             warn!(repo_id, error = %e, "failed to sync existing archives on import");
             let _ = db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await;
@@ -1309,6 +1310,7 @@ pub async fn sync_existing_archives(
     encryption_key: &[u8; 32],
     repo_id: i64,
     ui_broadcast: &UiBroadcast,
+    build_index: bool,
 ) -> Result<(u64, u64), ApiError> {
     let (borg_repo, env) = super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
 
@@ -1340,7 +1342,7 @@ pub async fn sync_existing_archives(
 
     let known_names = db::list_archive_names_for_repo(pool, repo_id).await?;
     let stale: Vec<String> = known_names.difference(&borg_names).cloned().collect();
-    let removed = db::delete_archive_reports_by_names(pool, repo_id, &stale).await?;
+    let removed = db::delete_archive_records_by_names(pool, repo_id, &stale).await?;
     if removed > 0 {
         info!(repo_id, removed, "removed stale archives during full sync");
     }
@@ -1476,6 +1478,13 @@ pub async fn sync_existing_archives(
 
     let imported = report_params.len() as u64;
     db::bulk_insert_backup_reports(pool, &report_params).await?;
+    if build_index {
+        let archive_names: Vec<String> = report_params
+            .iter()
+            .filter_map(|params| params.archive_name.clone())
+            .collect();
+        queue_archive_indexing(pool, encryption_key, repo_id, &archive_names, "full sync").await;
+    }
     refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, borg_names.len() as i64).await;
     info!(repo_id, imported, total, "synced existing archives");
     Ok((imported, removed))
@@ -1517,15 +1526,6 @@ pub async fn sync_new_archives(
 
     let known_names = db::list_archive_names_for_repo(pool, repo_id).await?;
 
-    let stale: Vec<String> = known_names.difference(&borg_names).cloned().collect();
-    let removed = db::delete_archive_reports_by_names(pool, repo_id, &stale).await?;
-    if removed > 0 {
-        info!(
-            repo_id,
-            removed, "removed stale archives during incremental sync"
-        );
-    }
-
     let new_archives: Vec<&serde_json::Value> = archives
         .iter()
         .filter(|a| {
@@ -1537,7 +1537,7 @@ pub async fn sync_new_archives(
 
     if new_archives.is_empty() {
         refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, borg_names.len() as i64).await;
-        return Ok((0, removed));
+        return Ok((0, 0));
     }
 
     let total = new_archives.len();
@@ -1670,7 +1670,27 @@ pub async fn sync_new_archives(
         .filter_map(|params| params.archive_name.clone())
         .collect();
     db::bulk_insert_backup_reports(pool, &report_params).await?;
-    join_all(archive_names.into_iter().map(|archive_name| {
+    queue_archive_indexing(
+        pool,
+        encryption_key,
+        repo_id,
+        &archive_names,
+        "incremental sync",
+    )
+    .await;
+    refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, borg_names.len() as i64).await;
+    info!(repo_id, added, total, "incremental sync complete");
+    Ok((added, 0))
+}
+
+async fn queue_archive_indexing(
+    pool: &PgPool,
+    encryption_key: &[u8; 32],
+    repo_id: i64,
+    archive_names: &[String],
+    sync_kind: &str,
+) {
+    join_all(archive_names.iter().cloned().map(|archive_name| {
         let pool = pool.clone();
         async move {
             if let Err(e) =
@@ -1680,16 +1700,14 @@ pub async fn sync_new_archives(
                 warn!(
                     repo_id,
                     archive = %archive_name,
+                    sync_kind,
                     error = %e,
-                    "failed to queue archive indexing after incremental sync"
+                    "failed to queue archive indexing"
                 );
             }
         }
     }))
     .await;
-    refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, borg_names.len() as i64).await;
-    info!(repo_id, added, removed, total, "incremental sync complete");
-    Ok((added, removed))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -1781,6 +1799,12 @@ pub struct SyncResponse {
     pub duration_secs: u64,
 }
 
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct SyncQuery {
+    #[serde(default)]
+    pub build_index: bool,
+}
+
 const SYNC_WARN_DURATION: Duration = Duration::from_secs(300);
 
 #[utoipa::path(
@@ -1791,6 +1815,7 @@ const SYNC_WARN_DURATION: Duration = Duration::from_secs(300);
     summary = "Full repository sync - re-reads all archives from borg",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
+        ("build_index" = bool, Query, description = "Also build archive indexes while syncing"),
     ),
     responses(
         (status = 200, description = "Sync results", body = SyncResponse),
@@ -1802,6 +1827,7 @@ const SYNC_WARN_DURATION: Duration = Duration::from_secs(300);
 pub async fn sync_repo(
     State(state): State<AppState>,
     _admin: RequireAdmin,
+    Query(query): Query<SyncQuery>,
     Path(repo_id): Path<i64>,
 ) -> Result<Json<SyncResponse>, ApiError> {
     let repo = db::get_repo_with_stats(&state.pool, repo_id).await?;
@@ -1817,6 +1843,7 @@ pub async fn sync_repo(
         &state.encryption_key,
         repo_id,
         &state.ui_broadcast,
+        query.build_index,
     )
     .await;
     let elapsed = start.elapsed();

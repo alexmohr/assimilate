@@ -65,7 +65,42 @@ const currentPath = ref('/')
 const contents = ref<ContentEntry[]>([])
 const contentsLoading = ref(false)
 const contentsError = ref<string | null>(null)
+const indexing = ref(false)
 const showPassphraseDialog = ref(false)
+
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
+function stopPolling(): void {
+  if (pollTimer !== null) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+function startPolling(archiveName: string, pendingPath: string): void {
+  stopPolling()
+  pollTimer = setInterval(async () => {
+    if (selectedRepoId.value === null) return
+    try {
+      const res = await apiClient.get<{ status: string; error?: string }>(
+        `/repos/${selectedRepoId.value}/archives/${encodeURIComponent(archiveName)}/index-status`,
+      )
+      if (res.data.status === 'done') {
+        stopPolling()
+        indexing.value = false
+        await loadContents(pendingPath)
+      } else if (res.data.status === 'failed') {
+        stopPolling()
+        indexing.value = false
+        contentsError.value = res.data.error ?? 'Archive indexing failed'
+      }
+    } catch (e: unknown) {
+      stopPolling()
+      indexing.value = false
+      contentsError.value = extractError(e)
+    }
+  }, 2000)
+}
 
 const sortedArchives = computed(() =>
   [...archives.value].sort((a, b) => b.start.localeCompare(a.start)),
@@ -194,11 +229,18 @@ async function loadArchives(): Promise<void> {
 }
 
 async function selectArchive(archive: ArchiveEntry): Promise<void> {
+  stopPolling()
+  indexing.value = false
   selectedArchive.value = archive
   currentPath.value = '/'
   contents.value = []
   contentsError.value = null
   await loadContents('/')
+}
+
+interface ContentsResponse {
+  index_status: 'pending' | 'indexing' | 'done' | 'failed'
+  entries: ContentEntry[]
 }
 
 async function loadContents(path: string): Promise<void> {
@@ -209,11 +251,19 @@ async function loadContents(path: string): Promise<void> {
   currentPath.value = normalizedPath
   try {
     const apiPath = normalizedPath === '/' ? undefined : normalizedPath.replace(/^\//, '')
-    const res = await apiClient.get<ContentEntry[]>(
+    const res = await apiClient.get<ContentsResponse>(
       `/repos/${selectedRepoId.value}/archives/${encodeURIComponent(selectedArchive.value.name)}/contents`,
       { params: apiPath ? { path: apiPath } : {} },
     )
-    contents.value = res.data.filter((e) => e.path !== '.' && e.path !== '..')
+    const { index_status, entries } = res.data
+    if (index_status === 'done' || index_status === 'failed') {
+      indexing.value = false
+      contents.value = entries.filter((e) => e.path !== '.' && e.path !== '..')
+    } else {
+      indexing.value = true
+      contents.value = []
+      startPolling(selectedArchive.value.name, path)
+    }
   } catch (e: unknown) {
     contentsError.value = extractError(e)
   } finally {
@@ -543,6 +593,13 @@ onMounted(loadRepos)
             v-if="contentsLoading"
             size="sm"
           />
+          <div
+            v-else-if="indexing"
+            class="state-msg"
+          >
+            <BaseSpinner size="sm" />
+            Indexing archive contents — this only happens once…
+          </div>
           <div
             v-else-if="contentsError"
             class="state-msg state-error"

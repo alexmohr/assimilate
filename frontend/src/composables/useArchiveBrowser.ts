@@ -24,6 +24,11 @@ export interface ContentEntry {
   mode: string
 }
 
+interface ContentsResponse {
+  index_status: 'pending' | 'indexing' | 'done' | 'failed'
+  entries: ContentEntry[]
+}
+
 export interface BreadcrumbSegment {
   label: string
   path: string
@@ -43,6 +48,7 @@ interface UseArchiveBrowserReturn {
   contents: Ref<ContentEntry[]>
   contentsLoading: Ref<boolean>
   contentsError: Ref<string | null>
+  indexing: Ref<boolean>
   breadcrumbs: ComputedRef<BreadcrumbSegment[]>
   dirs: ComputedRef<DirDisplayEntry[]>
   files: ComputedRef<ContentEntry[]>
@@ -64,6 +70,40 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
   const contents = ref<ContentEntry[]>([])
   const contentsLoading = ref(false)
   const contentsError = ref<string | null>(null)
+  const indexing = ref(false)
+
+  let pollTimer: ReturnType<typeof setInterval> | null = null
+
+  function stopPolling(): void {
+    if (pollTimer !== null) {
+      clearInterval(pollTimer)
+      pollTimer = null
+    }
+  }
+
+  function startPolling(archiveName: string, pendingPath: string): void {
+    stopPolling()
+    pollTimer = setInterval(async () => {
+      try {
+        const res = await apiClient.get<{ status: string; file_count?: number; error?: string }>(
+          `/repos/${repoId.value}/archives/${encodeURIComponent(archiveName)}/index-status`,
+        )
+        if (res.data.status === 'done') {
+          stopPolling()
+          indexing.value = false
+          await loadContents(pendingPath)
+        } else if (res.data.status === 'failed') {
+          stopPolling()
+          indexing.value = false
+          contentsError.value = res.data.error ?? 'Archive indexing failed'
+        }
+      } catch (e: unknown) {
+        stopPolling()
+        indexing.value = false
+        contentsError.value = extractError(e)
+      }
+    }, 2000)
+  }
 
   const sortedArchives = computed<ArchiveEntry[]>(() =>
     [...archives.value].sort((a, b) => b.start.localeCompare(a.start)),
@@ -143,6 +183,8 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
   }
 
   async function selectArchive(archive: ArchiveEntry): Promise<void> {
+    stopPolling()
+    indexing.value = false
     selectedArchive.value = archive
     currentPath.value = '/'
     contents.value = []
@@ -158,11 +200,20 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     currentPath.value = normalizedPath
     try {
       const apiPath = normalizedPath === '/' ? undefined : normalizedPath.replace(/^\//, '')
-      const res = await apiClient.get<ContentEntry[]>(
+      const res = await apiClient.get<ContentsResponse>(
         `/repos/${repoId.value}/archives/${encodeURIComponent(selectedArchive.value.name)}/contents`,
         { params: apiPath ? { path: apiPath } : {} },
       )
-      contents.value = res.data.filter((e) => e.path !== '.' && e.path !== '..')
+      const { index_status, entries } = res.data
+      if (index_status === 'done' || index_status === 'failed') {
+        indexing.value = false
+        contents.value = entries.filter((e) => e.path !== '.' && e.path !== '..')
+      } else {
+        // pending or indexing — show spinner and poll
+        indexing.value = true
+        contents.value = []
+        startPolling(selectedArchive.value.name, path)
+      }
     } catch (e: unknown) {
       contentsError.value = extractError(e)
     } finally {
@@ -204,6 +255,7 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     contents,
     contentsLoading,
     contentsError,
+    indexing,
     breadcrumbs,
     dirs,
     files,

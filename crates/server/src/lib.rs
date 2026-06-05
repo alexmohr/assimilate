@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 pub mod api;
+pub mod archive_index;
 pub mod borg;
 pub mod config_assembler;
 pub mod db;

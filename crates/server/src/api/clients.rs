@@ -20,7 +20,7 @@ use super::{
 };
 use crate::{
     AppState, config_assembler,
-    db::{self, ClientRow, patterns::HostnamePatternRow},
+    db::{self, ClientRow, ScheduleRow, patterns::HostnamePatternRow},
     error::{ApiError, ApiJson},
 };
 
@@ -181,6 +181,46 @@ pub async fn get_client(
         supports_restart,
         restart_unavailable_reason,
     }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/clients/{hostname}/schedules",
+    tag = "Hosts",
+    operation_id = "listClientSchedules",
+    summary = "List schedules assigned to a host/client",
+    params(
+        ("hostname" = String, Path, description = "Client hostname"),
+    ),
+    responses(
+        (status = 200, description = "Client schedules", body = Vec<ScheduleRow>),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Not found"),
+    )
+)]
+pub async fn list_client_schedules(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(hostname): Path<String>,
+) -> Result<Json<Vec<ScheduleRow>>, ApiError> {
+    let client = db::get_client_by_hostname(&state.pool, &hostname).await?;
+    let schedules = db::list_schedules_for_client(&state.pool, client.id).await?;
+    let is_admin = auth.role == Role::Admin;
+    let mut visible = Vec::with_capacity(schedules.len());
+    for schedule in schedules {
+        if is_visible_to_user(
+            &state.pool,
+            auth.user_id,
+            schedule.owner_id,
+            &schedule.visibility,
+            is_admin,
+        )
+        .await?
+        {
+            visible.push(schedule);
+        }
+    }
+    Ok(Json(visible))
 }
 
 #[utoipa::path(

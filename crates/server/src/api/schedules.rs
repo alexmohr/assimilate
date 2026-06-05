@@ -31,6 +31,12 @@ pub struct HostBackupSources {
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct HostCanaryPaths {
+    pub client_id: i64,
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct HostExcludePatterns {
     pub client_id: i64,
     pub raw_text: String,
@@ -59,6 +65,8 @@ pub struct CreateScheduleRequest {
     pub post_backup_commands: Option<Vec<String>>,
     pub backup_sources: Option<Vec<String>>,
     pub backup_sources_per_host: Option<Vec<HostBackupSources>>,
+    pub canary_paths: Option<Vec<String>>,
+    pub canary_paths_per_host: Option<Vec<HostCanaryPaths>>,
     pub exclude_patterns_per_host: Option<Vec<HostExcludePatterns>>,
     #[schema(value_type = Option<String>)]
     pub execution_mode: Option<ExecutionMode>,
@@ -86,6 +94,8 @@ pub struct UpdateScheduleRequest {
     pub post_backup_commands: Option<Vec<String>>,
     pub backup_sources: Option<Vec<String>>,
     pub backup_sources_per_host: Option<Vec<HostBackupSources>>,
+    pub canary_paths: Option<Vec<String>>,
+    pub canary_paths_per_host: Option<Vec<HostCanaryPaths>>,
     pub exclude_patterns_per_host: Option<Vec<HostExcludePatterns>>,
     pub client_ids: Option<Vec<i64>>,
     #[schema(value_type = Option<String>)]
@@ -260,6 +270,31 @@ pub async fn create_schedule(
                 let sort_order = i32::try_from(i)
                     .map_err(|_| ApiError::BadRequest("too many sources".into()))?;
                 db::insert_backup_source_for_schedule_client(
+                    &state.pool,
+                    schedule.id,
+                    entry.client_id,
+                    path,
+                    sort_order,
+                )
+                .await?;
+            }
+        }
+    }
+
+    if let Some(paths) = &req.canary_paths {
+        for (i, path) in paths.iter().enumerate() {
+            let sort_order = i32::try_from(i)
+                .map_err(|_| ApiError::BadRequest("too many canary paths".into()))?;
+            db::insert_canary_path_for_schedule(&state.pool, schedule.id, path, sort_order).await?;
+        }
+    }
+
+    if let Some(per_host) = &req.canary_paths_per_host {
+        for entry in per_host {
+            for (i, path) in entry.paths.iter().enumerate() {
+                let sort_order = i32::try_from(i)
+                    .map_err(|_| ApiError::BadRequest("too many canary paths".into()))?;
+                db::insert_canary_path_for_schedule_client(
                     &state.pool,
                     schedule.id,
                     entry.client_id,
@@ -473,6 +508,33 @@ pub async fn update_schedule(
                 let sort_order = i32::try_from(i)
                     .map_err(|_| ApiError::BadRequest("too many sources".into()))?;
                 db::insert_backup_source_for_schedule_client(
+                    &state.pool,
+                    schedule.id,
+                    entry.client_id,
+                    path,
+                    sort_order,
+                )
+                .await?;
+            }
+        }
+    }
+
+    if let Some(paths) = &req.canary_paths {
+        db::delete_canary_paths_for_schedule(&state.pool, schedule.id).await?;
+        for (i, path) in paths.iter().enumerate() {
+            let sort_order = i32::try_from(i)
+                .map_err(|_| ApiError::BadRequest("too many canary paths".into()))?;
+            db::insert_canary_path_for_schedule(&state.pool, schedule.id, path, sort_order).await?;
+        }
+    }
+
+    if let Some(per_host) = &req.canary_paths_per_host {
+        db::delete_per_host_canary_paths_for_schedule(&state.pool, schedule.id).await?;
+        for entry in per_host {
+            for (i, path) in entry.paths.iter().enumerate() {
+                let sort_order = i32::try_from(i)
+                    .map_err(|_| ApiError::BadRequest("too many canary paths".into()))?;
+                db::insert_canary_path_for_schedule_client(
                     &state.pool,
                     schedule.id,
                     entry.client_id,
@@ -759,6 +821,8 @@ pub async fn list_schedule_targets(
 pub struct ScheduleBackupSourcesResponse {
     pub backup_sources: Vec<String>,
     pub backup_sources_per_host: Vec<db::PerHostBackupSources>,
+    pub canary_paths: Vec<String>,
+    pub canary_paths_per_host: Vec<db::PerHostCanaryPaths>,
     pub exclude_patterns_per_host: Vec<db::PerHostExcludePatterns>,
 }
 
@@ -784,11 +848,16 @@ pub async fn list_schedule_backup_sources(
     let backup_sources = db::list_backup_sources_for_schedule(&state.pool, id).await?;
     let backup_sources_per_host =
         db::list_all_per_host_backup_sources_for_schedule(&state.pool, id).await?;
+    let canary_paths = db::list_canary_paths_for_schedule(&state.pool, id).await?;
+    let canary_paths_per_host =
+        db::list_all_per_host_canary_paths_for_schedule(&state.pool, id).await?;
     let exclude_patterns_per_host =
         db::list_all_per_host_excludes_for_schedule(&state.pool, id).await?;
     Ok(Json(ScheduleBackupSourcesResponse {
         backup_sources,
         backup_sources_per_host,
+        canary_paths,
+        canary_paths_per_host,
         exclude_patterns_per_host,
     }))
 }

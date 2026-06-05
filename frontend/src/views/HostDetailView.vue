@@ -20,6 +20,7 @@ import BaseSpinner from '../components/BaseSpinner.vue'
 import MergeClientDialog from '../components/MergeClientDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import SshKeyDeployPanel from '../components/SshKeyDeployPanel.vue'
+import PathRowEditor from '../components/PathRowEditor.vue'
 
 type TabId = 'overview' | 'schedules' | 'backups'
 
@@ -197,12 +198,12 @@ function deployButtonLabel(): string | null {
 
 // Default backup paths
 const editingPaths = ref(false)
-const pathsText = ref('')
+const pathsDraft = ref<string[]>([])
 const pathsSaving = ref(false)
 const pathsError = ref<string | null>(null)
 
 function startEditPaths(): void {
-  pathsText.value = (client.value?.default_backup_paths ?? []).join('\n')
+  pathsDraft.value = [...(client.value?.default_backup_paths ?? [])]
   pathsError.value = null
   editingPaths.value = true
 }
@@ -218,7 +219,9 @@ async function savePaths(): Promise<void> {
   try {
     const res = await apiClient.put<ClientRow>(`/clients/${client.value.hostname}`, {
       display_name: client.value.display_name,
-      default_backup_paths: parseLines(pathsText.value),
+      default_backup_paths: pathsDraft.value
+        .map((path) => path.trim())
+        .filter((path) => path.length > 0),
       default_exclude_patterns: client.value.default_exclude_patterns,
     })
     client.value = { ...client.value, ...res.data }
@@ -525,7 +528,7 @@ async function loadTabData(): Promise<void> {
   try {
     const [repoRes, schedRes, reportRes] = await Promise.all([
       apiClient.get<RepoRow[]>(`/clients/${hostname}/repos`),
-      apiClient.get<ScheduleRow[]>('/schedules'),
+      apiClient.get<ScheduleRow[]>(`/clients/${hostname}/schedules`),
       apiClient.get<ReportRow[]>(`/clients/${hostname}/reports`),
     ])
     repos.value = repoRes.data
@@ -553,8 +556,7 @@ watch(
 )
 
 const clientSchedules = computed(() => {
-  const repoIds = new Set(repos.value.map((r) => r.id))
-  return schedules.value.filter((s) => s.repo_id != null && repoIds.has(s.repo_id))
+  return schedules.value
 })
 
 function repoNameForSchedule(s: ScheduleRow): string {
@@ -1063,11 +1065,10 @@ watch(wsStatus, (newStatus, oldStatus) => {
             </div>
           </template>
           <template v-else>
-            <textarea
-              v-model="pathsText"
-              class="input exclude-area"
-              placeholder="Directories to back up, one per line"
-              spellcheck="false"
+            <PathRowEditor
+              v-model="pathsDraft"
+              placeholder="Directory to back up"
+              add-label="Add Path"
             />
             <div
               v-if="pathsError"
@@ -1399,8 +1400,8 @@ watch(wsStatus, (newStatus, oldStatus) => {
         >
           <div
             v-for="r in filteredSortedReports"
-            :key="r.id"
             :id="`report-${r.id}`"
+            :key="r.id"
             class="result-card"
             :class="[
               `result-${r.status}`,

@@ -31,6 +31,8 @@ pub struct ScheduleTargetExport {
     pub hostname: String,
     pub execution_order: i32,
     pub backup_sources: Vec<String>,
+    #[serde(default)]
+    pub canary_paths: Vec<String>,
     pub exclude_patterns: String,
 }
 
@@ -56,6 +58,8 @@ pub struct ScheduleExport {
     pub post_backup_commands: Vec<String>,
     pub repo_name: Option<String>,
     pub backup_sources: Vec<String>,
+    #[serde(default)]
+    pub canary_paths: Vec<String>,
     pub targets: Vec<ScheduleTargetExport>,
 }
 
@@ -128,6 +132,9 @@ pub async fn export_config(
         let backup_sources = db::list_backup_sources_for_schedule(&state.pool, sched.id).await?;
         let per_host_sources =
             db::list_all_per_host_backup_sources_for_schedule(&state.pool, sched.id).await?;
+        let canary_paths = db::list_canary_paths_for_schedule(&state.pool, sched.id).await?;
+        let per_host_canary_paths =
+            db::list_all_per_host_canary_paths_for_schedule(&state.pool, sched.id).await?;
         let per_host_excludes =
             db::list_all_per_host_excludes_for_schedule(&state.pool, sched.id).await?;
 
@@ -139,6 +146,10 @@ pub async fn export_config(
             .iter()
             .map(|e| (e.client_id, e.raw_text.as_str()))
             .collect();
+        let per_host_canary_paths_map: HashMap<i64, &Vec<String>> = per_host_canary_paths
+            .iter()
+            .map(|s| (s.client_id, &s.paths))
+            .collect();
 
         let targets = target_rows
             .iter()
@@ -148,6 +159,10 @@ pub async fn export_config(
                     hostname,
                     execution_order: t.execution_order,
                     backup_sources: per_host_sources_map
+                        .get(&t.client_id)
+                        .map(|v| (*v).clone())
+                        .unwrap_or_default(),
+                    canary_paths: per_host_canary_paths_map
                         .get(&t.client_id)
                         .map(|v| (*v).clone())
                         .unwrap_or_default(),
@@ -186,6 +201,7 @@ pub async fn export_config(
             post_backup_commands,
             repo_name,
             backup_sources,
+            canary_paths,
             targets,
         });
     }
@@ -361,6 +377,12 @@ pub async fn import_config(
                 .await?;
         }
 
+        for (i, path) in sched.canary_paths.iter().enumerate() {
+            let sort_order = i32::try_from(i).unwrap_or(0);
+            db::insert_canary_path_for_schedule(&state.pool, new_sched.id, path, sort_order)
+                .await?;
+        }
+
         for target in &sched.targets {
             let Some(&client_id) = hostname_to_id.get(&target.hostname) else {
                 continue;
@@ -368,6 +390,17 @@ pub async fn import_config(
             for (i, path) in target.backup_sources.iter().enumerate() {
                 let sort_order = i32::try_from(i).unwrap_or(0);
                 db::insert_backup_source_for_schedule_client(
+                    &state.pool,
+                    new_sched.id,
+                    client_id,
+                    path,
+                    sort_order,
+                )
+                .await?;
+            }
+            for (i, path) in target.canary_paths.iter().enumerate() {
+                let sort_order = i32::try_from(i).unwrap_or(0);
+                db::insert_canary_path_for_schedule_client(
                     &state.pool,
                     new_sched.id,
                     client_id,

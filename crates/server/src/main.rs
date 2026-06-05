@@ -212,6 +212,10 @@ async fn main() -> Result<(), StartupError> {
             post(api::clients::regenerate_token),
         )
         .route(
+            "/api/clients/{hostname}/schedules",
+            get(api::clients::list_client_schedules),
+        )
+        .route(
             "/api/clients/{hostname}/restart",
             post(api::clients::restart_agent),
         )

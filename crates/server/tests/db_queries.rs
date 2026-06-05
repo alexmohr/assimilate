@@ -849,6 +849,85 @@ async fn backup_sources_per_host_crud(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn canary_paths_per_host_crud(pool: PgPool) {
+    let (client, _, schedule) = create_test_schedule(&pool).await;
+
+    let client2 = db::insert_client(&pool, "host-two-canary", None, "hash2canary", None)
+        .await
+        .unwrap();
+
+    db::insert_canary_path_for_schedule(&pool, schedule.id, "/shared-canary", 0)
+        .await
+        .unwrap();
+    db::insert_canary_path_for_schedule_client(
+        &pool,
+        schedule.id,
+        client.id,
+        "/home/one-canary",
+        0,
+    )
+    .await
+    .unwrap();
+    db::insert_canary_path_for_schedule_client(&pool, schedule.id, client.id, "/var/one-canary", 1)
+        .await
+        .unwrap();
+    db::insert_canary_path_for_schedule_client(
+        &pool,
+        schedule.id,
+        client2.id,
+        "/data/two-canary",
+        0,
+    )
+    .await
+    .unwrap();
+
+    let schedule_level = db::list_canary_paths_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(schedule_level, vec!["/shared-canary"]);
+
+    let client1_paths = db::list_canary_paths_for_schedule_client(&pool, schedule.id, client.id)
+        .await
+        .unwrap();
+    assert_eq!(client1_paths, vec!["/home/one-canary", "/var/one-canary"]);
+
+    let client2_paths = db::list_canary_paths_for_schedule_client(&pool, schedule.id, client2.id)
+        .await
+        .unwrap();
+    assert_eq!(client2_paths, vec!["/data/two-canary"]);
+
+    let all_per_host = db::list_all_per_host_canary_paths_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert_eq!(all_per_host.len(), 2);
+    assert_eq!(all_per_host[0].client_id, client.id);
+    assert_eq!(
+        all_per_host[0].paths,
+        vec!["/home/one-canary", "/var/one-canary"]
+    );
+    assert_eq!(all_per_host[1].client_id, client2.id);
+    assert_eq!(all_per_host[1].paths, vec!["/data/two-canary"]);
+
+    db::delete_per_host_canary_paths_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+
+    let all_per_host = db::list_all_per_host_canary_paths_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert!(all_per_host.is_empty());
+
+    db::delete_canary_paths_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+
+    let schedule_level = db::list_canary_paths_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+    assert!(schedule_level.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn excludes_per_host_crud(pool: PgPool) {
     let (client, _, schedule) = create_test_schedule(&pool).await;
 

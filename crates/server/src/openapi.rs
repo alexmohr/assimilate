@@ -94,6 +94,7 @@ use crate::{
         crate::api::schedules::list_schedule_reports,
         crate::api::schedules::list_schedule_targets,
         crate::api::schedules::list_schedule_backup_sources,
+        crate::api::clients::list_client_schedules,
         crate::api::excludes::get_excludes,
         crate::api::excludes::set_excludes,
         crate::api::permissions::list_for_repo,

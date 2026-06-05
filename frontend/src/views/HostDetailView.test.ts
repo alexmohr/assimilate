@@ -36,6 +36,10 @@ vi.mock('../utils/error', () => ({
   extractError: (_e: unknown, fallback?: string) => fallback ?? 'Unknown error',
 }))
 
+vi.mock('../composables/useTimezone', () => ({
+  getConfiguredTimezone: (): string | undefined => undefined,
+}))
+
 vi.mock('../components/MergeClientDialog.vue', () => ({
   default: {
     name: 'MergeClientDialog',
@@ -130,7 +134,7 @@ function setupApi(reports = mockReports): void {
   vi.mocked(apiClient.get).mockImplementation((url: string) => {
     if (url === '/clients') return Promise.resolve({ data: [mockClient] })
     if (url === '/clients/test-host/repos') return Promise.resolve({ data: [] })
-    if (url === '/schedules') return Promise.resolve({ data: [] })
+    if (url === '/clients/test-host/schedules') return Promise.resolve({ data: [] })
     if (url === '/clients/test-host/reports') return Promise.resolve({ data: reports })
     if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
     if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })

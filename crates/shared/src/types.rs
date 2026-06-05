@@ -370,6 +370,8 @@ pub struct ScheduleConfig {
     #[serde(default)]
     pub canary_enabled: bool,
     #[serde(default)]
+    pub canary_paths: Vec<String>,
+    #[serde(default)]
     pub exclude_patterns: Vec<String>,
     #[serde(default)]
     pub ignore_global_excludes: bool,

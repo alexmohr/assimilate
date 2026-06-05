@@ -151,6 +151,14 @@ async fn build_test_app(pool: PgPool) -> Router {
                 .put(server::api::tunnels::update_tunnel)
                 .delete(server::api::tunnels::delete_tunnel),
         )
+        .route(
+            "/api/config/export",
+            get(server::api::config_io::export_config),
+        )
+        .route(
+            "/api/config/import",
+            post(server::api::config_io::import_config),
+        )
         .with_state(state)
 }
 
@@ -780,4 +788,329 @@ async fn test_per_host_excludes_roundtrip_preserves_raw_text(pool: sqlx::PgPool)
     assert_eq!(per_host.len(), 1);
     assert_eq!(per_host[0]["client_id"], client_id);
     assert_eq!(per_host[0]["raw_text"], raw);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_export_config_empty(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    let resp = oneshot(&mut app, get_request("/api/config/export")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["version"], 1);
+    assert!(body["exported_at"].is_string());
+    assert_eq!(body["hosts"].as_array().unwrap().len(), 0);
+    assert_eq!(body["schedules"].as_array().unwrap().len(), 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_export_config_with_hosts(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    sqlx::query(
+        "INSERT INTO clients (hostname, display_name, agent_token_hash, default_backup_paths, \
+         default_exclude_patterns) VALUES ('export-host', 'Export Host', 'real-token', \
+         ARRAY['/etc','/home'], ARRAY['*.log'])",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let resp = oneshot(&mut app, get_request("/api/config/export")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let hosts = body["hosts"].as_array().unwrap();
+    assert_eq!(hosts.len(), 1);
+    assert_eq!(hosts[0]["hostname"], "export-host");
+    assert_eq!(hosts[0]["display_name"], "Export Host");
+    assert_eq!(hosts[0]["default_backup_paths"][0], "/etc");
+    assert_eq!(hosts[0]["default_backup_paths"][1], "/home");
+    assert_eq!(hosts[0]["default_exclude_patterns"][0], "*.log");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_export_config_skips_imported_token_hosts(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    sqlx::query(
+        "INSERT INTO clients (hostname, agent_token_hash) VALUES ('real-host', 'real-token'), \
+         ('imported-host', 'imported:no-auth')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let resp = oneshot(&mut app, get_request("/api/config/export")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let hosts = body["hosts"].as_array().unwrap();
+    assert_eq!(hosts.len(), 1);
+    assert_eq!(hosts[0]["hostname"], "real-host");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_import_config_creates_hosts(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    let payload = json!({
+        "version": 1,
+        "exported_at": "2026-01-01T00:00:00Z",
+        "hosts": [
+            {
+                "hostname": "new-host-1",
+                "display_name": "New Host 1",
+                "default_backup_paths": ["/etc", "/home"],
+                "default_exclude_patterns": ["*.log"],
+                "hostname_patterns": []
+            }
+        ],
+        "schedules": []
+    });
+
+    let resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/config/import", Some(payload)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["hosts_created"], 1);
+    assert_eq!(body["hosts_updated"], 0);
+    assert_eq!(body["schedules_created"], 0);
+
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM clients WHERE hostname = 'new-host-1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_import_config_updates_existing_host(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    sqlx::query(
+        "INSERT INTO clients (hostname, agent_token_hash) VALUES ('existing-host', 'real-token')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let payload = json!({
+        "version": 1,
+        "exported_at": "2026-01-01T00:00:00Z",
+        "hosts": [
+            {
+                "hostname": "existing-host",
+                "display_name": "Updated Name",
+                "default_backup_paths": ["/var"],
+                "default_exclude_patterns": [],
+                "hostname_patterns": []
+            }
+        ],
+        "schedules": []
+    });
+
+    let resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/config/import", Some(payload)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["hosts_created"], 0);
+    assert_eq!(body["hosts_updated"], 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_import_config_rejects_wrong_version(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    let payload = json!({
+        "version": 999,
+        "exported_at": "2026-01-01T00:00:00Z",
+        "hosts": [],
+        "schedules": []
+    });
+
+    let resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/config/import", Some(payload)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_import_config_warns_on_missing_repo(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    sqlx::query(
+        "INSERT INTO clients (hostname, agent_token_hash) VALUES ('sched-host', 'real-token')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let payload = json!({
+        "version": 1,
+        "exported_at": "2026-01-01T00:00:00Z",
+        "hosts": [],
+        "schedules": [
+            {
+                "name": "orphan-schedule",
+                "schedule_type": "backup",
+                "cron_expression": "0 3 * * *",
+                "enabled": true,
+                "canary_enabled": false,
+                "execution_mode": "parallel",
+                "on_failure": "stop",
+                "exclude_patterns_raw": "",
+                "ignore_global_excludes": false,
+                "keep_hourly": 0,
+                "keep_daily": 7,
+                "keep_weekly": 4,
+                "keep_monthly": 6,
+                "keep_yearly": 0,
+                "compact_enabled": true,
+                "rate_limit_kbps": null,
+                "pre_backup_commands": [],
+                "post_backup_commands": [],
+                "repo_name": "nonexistent-repo",
+                "backup_sources": [],
+                "targets": [
+                    {
+                        "hostname": "sched-host",
+                        "execution_order": 0,
+                        "backup_sources": [],
+                        "exclude_patterns": ""
+                    }
+                ]
+            }
+        ]
+    });
+
+    let resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/config/import", Some(payload)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["schedules_created"], 0);
+    let warnings = body["warnings"].as_array().unwrap();
+    assert!(!warnings.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_import_config_creates_schedule_with_matching_repo(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    let repo_id = insert_test_repo(&pool, "import-repo").await;
+    let _ = repo_id;
+
+    sqlx::query(
+        "INSERT INTO clients (hostname, agent_token_hash) VALUES ('import-target', 'real-token')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let payload = json!({
+        "version": 1,
+        "exported_at": "2026-01-01T00:00:00Z",
+        "hosts": [],
+        "schedules": [
+            {
+                "name": "import-schedule",
+                "schedule_type": "backup",
+                "cron_expression": "0 3 * * *",
+                "enabled": true,
+                "canary_enabled": false,
+                "execution_mode": "parallel",
+                "on_failure": "stop",
+                "exclude_patterns_raw": "",
+                "ignore_global_excludes": false,
+                "keep_hourly": 0,
+                "keep_daily": 7,
+                "keep_weekly": 4,
+                "keep_monthly": 6,
+                "keep_yearly": 0,
+                "compact_enabled": true,
+                "rate_limit_kbps": null,
+                "pre_backup_commands": ["/usr/bin/pre.sh"],
+                "post_backup_commands": [],
+                "repo_name": "import-repo",
+                "backup_sources": ["/home"],
+                "targets": [
+                    {
+                        "hostname": "import-target",
+                        "execution_order": 0,
+                        "backup_sources": ["/etc"],
+                        "exclude_patterns": "*.tmp"
+                    }
+                ]
+            }
+        ]
+    });
+
+    let resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/config/import", Some(payload)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["schedules_created"], 1);
+    assert_eq!(body["warnings"].as_array().unwrap().len(), 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_export_then_import_roundtrip(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    sqlx::query(
+        "INSERT INTO clients (hostname, display_name, agent_token_hash, default_backup_paths, \
+         default_exclude_patterns) VALUES ('roundtrip-host', 'RT Host', 'real-token', \
+         ARRAY['/etc'], ARRAY['*.swp'])",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let resp = oneshot(&mut app, get_request("/api/config/export")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let export = body_json(resp).await;
+
+    sqlx::query("DELETE FROM clients WHERE hostname = 'roundtrip-host'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/config/import", Some(export)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["hosts_created"], 1);
+
+    let paths: Vec<String> = sqlx::query_scalar(
+        "SELECT default_backup_paths FROM clients WHERE hostname = 'roundtrip-host'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(paths, vec!["/etc"]);
 }

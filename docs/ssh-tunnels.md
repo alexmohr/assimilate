@@ -47,7 +47,9 @@ Tunnel management requires admin privileges. Navigate to the **Tunnels** page in
 Once created, the server connects to the agent machine over SSH and requests remote port forwarding.
 Install or update the agent from the host's **Deploy** dialog. Assimilate detects the enabled tunnel
 and writes `ws://127.0.0.1:<tunnel_port>` and a generated token into the systemd service
-automatically. No agent configuration is required outside the UI.
+automatically. Redeploying refreshes these values even when the custom systemd unit already
+contains `BORG_SERVER_URL` and `BORG_AGENT_TOKEN` entries. No agent configuration is required
+outside the UI.
 
 The tunnel forwards connections to the address configured by `ASSIMILATE_BIND_ADDR`. Wildcard
 binds such as `0.0.0.0:8080` and `[::]:8080` are reached through the corresponding loopback
@@ -88,6 +90,9 @@ Each tunnel has one of the following statuses:
 ### Auto-reconnect
 
 When a connected tunnel's SSH session drops, the server automatically attempts to reconnect. The retry delay starts at 1 second and doubles on each failure, capping at 120 seconds. The server sends keepalive packets every 15 seconds (up to 3 missed keepalives before treating the session as dead).
+
+Manual reconnects and configuration changes wait for the previous SSH session to close and release
+the remote forwarding port before opening a replacement session.
 
 Tunnels in an **Error** state (e.g., public key authentication rejected) do **not** auto-reconnect — the error must be resolved and the tunnel re-enabled manually.
 

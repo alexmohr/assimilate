@@ -1,195 +1,71 @@
 # Dashboard
 
-The Dashboard is the landing page after login. It provides a comprehensive overview of the backup fleet's health, storage usage, trends, and recent activity — all updated in real time via WebSocket.
+The Dashboard is an operational summary of current backup risk, fleet protection, upcoming work, and repository capacity. It intentionally does not repeat every schedule-target assignment; use the Schedules and Activity pages for target-level history.
 
 ![Dashboard](assets/screenshots/dashboard.png)
 
-The dashboard is organized into sections that scroll vertically. Each section focuses on a different aspect of your backup infrastructure.
+## Summary
 
-## System Status Banner
+The top row uses explicit entity counts:
 
-The top row shows eight summary statistics at a glance:
+| Counter | Definition |
+|---------|------------|
+| **Protected Hosts** | Eligible visible hosts with at least one enabled backup assignment and at least one successful run for an enabled assignment. |
+| **Needs Attention** | Current actionable findings after target-level symptom deduplication. |
+| **Running Operations** | Persisted backup operations that are currently running. |
+| **Storage** | Current deduplicated size summed once per enabled repository from authoritative Borg repository statistics. |
 
-| Stat | Description |
-|------|-------------|
-| **Online Clients** | Number of currently connected agents out of total registered hosts (e.g. "3/5"). |
-| **Repositories** | Total number of registered repositories. |
-| **Overdue** | Number of schedules that missed their expected run window. Highlighted when > 0. |
-| **Last Backup** | Relative time since the most recent completed backup across all hosts. |
-| **Next Backup** | Relative time until the next scheduled backup fires. |
-| **Total Storage** | Sum of deduplicated storage across all repositories. |
-| **Last Failure** | Relative time since the most recent failed backup. Click to open a detail popup showing the error message, with links to the affected repository and schedule. |
-| **Last Warning** | Relative time since the most recent backup warning. Click to open a detail popup showing the warning message, with links to the affected repository and schedule. |
+Eligible hosts are registered clients that are not hidden and are not imported placeholder clients. Hidden and imported clients do not affect the coverage denominator.
 
-## Success Rate
+## Needs Attention
 
-A donut ring showing the percentage of successful backups. The ring colour reflects overall health:
+Needs Attention contains only actionable findings. Critical findings appear before warnings. For one schedule target, overlapping failed, warning, overdue, never-succeeded, and offline-due-soon symptoms collapse to the highest-priority finding.
 
-| Rate | Colour |
-|------|--------|
-| ≥ 90% | Green |
-| 70–89% | Yellow |
-| < 70% | Red |
+Findings include the affected host, schedule, or repository, the reason, an age or deadline when available, and a direct link to the relevant detail or activity record. Current finding types cover:
 
-Below the ring, a legend shows the absolute count of passed and failed runs (e.g. "125/128 OK").
+- Latest failed or warning backup for an enabled schedule target.
+- Overdue enabled schedule targets based on the schedule cron expression and a 30-minute grace window.
+- Enabled targets that have run but have never succeeded.
+- Offline hosts with an enabled schedule due within two hours.
+- Eligible hosts with no enabled backup assignment.
+- Enabled repositories with no enabled backup schedule.
+- Repository quota warning and critical states.
+- Repository import failures with reliable persisted error state.
 
-**Controls:**
+An empty list displays **No active problems**.
 
-- **Repository filter** — dropdown to view success rate for a specific repository or all repos.
-- **Time range** — toggle between 7D, 14D, 30D, and 90D windows.
+## Protection Coverage
 
-## Storage Breakdown
+Protection Coverage compares protected hosts with all eligible visible hosts. It separately reports hosts with no enabled assignment, enabled schedule targets that have never succeeded, and hosts whose assignments are all disabled.
 
-A donut chart showing how total storage is distributed. Each segment shows the name, percentage, and absolute size.
+Disabled schedules do not protect a host. An imported placeholder or intentionally hidden host is excluded rather than silently reducing fleet coverage.
 
-**Toggle buttons** change the grouping:
+## Upcoming Work
 
-| View | Groups by |
-|------|-----------|
-| **Repo** | Individual repositories |
-| **Client** | Host machines |
-| **Server** | Borg repository servers |
+Upcoming Work combines persisted running backups with the next enabled schedule runs. Upcoming entries are grouped once per schedule and show the number of assigned targets and how many of those agents are currently offline.
 
-The total deduplicated size and repository count are shown above the chart.
+Select an entry to open its activity record or schedule configuration.
 
-## Repository Health (Cards)
+## Repository Capacity
 
-A grid of status cards — one per repository-host combination. Each card shows:
+Repository Capacity shows one row per enabled repository with current deduplicated size and configured quota utilization. Quota state is displayed as unconfigured, healthy, warning, or critical.
 
-- **Hostname** — the agent machine
-- **Repository name** — the backup target
-- **Overdue badge** — shown in red when the schedule has missed its expected window
-- **Last backup time** — relative timestamp (e.g. "just now", "1m ago", or "Never")
+The current repository schema does not provide enough authoritative historical samples for defensible growth and exhaustion estimates. The dashboard therefore displays **Insufficient history** instead of extrapolating from incomplete data.
 
-Cards with "Never" for last backup indicate hosts assigned to a repository that haven't run a backup yet. Use this section to spot hosts that need attention at a glance.
+## Other Visualizations
 
-## Activity Timeline
-
-A scatter plot showing backup activity over a configurable time window. Each dot represents one backup run:
-
-- **X-axis** — date
-- **Y-axis** — time of day (0h–24h)
-- **Colour** — green (success), yellow (warning), red (failed)
-
-**Controls:**
-
-- **Repository filter** — dropdown to filter by specific repository.
-- **Time range** — toggle between 7D, 14D, 30D, and 90D.
-
-This visualization helps identify patterns: regular schedules appear as horizontal bands, failures cluster visibly, and gaps indicate missed runs.
-
-## Detailed Status
-
-A detailed list view showing every repository-host combination with:
-
-- **Client / Repository** — combined label (e.g. "db-server-01 / database-hourly")
-- **Last backup time** — relative timestamp
-- **Overdue badge** — shown when the schedule has missed its window
-
-This supplements the card view above with a more compact, scannable format.
-
-## Backup Stats
-
-Summary statistics for backup activity across a selectable time range:
-
-| Stat | Description |
-|------|-------------|
-| **Total** | Total number of backup runs in the selected period |
-| **Success** | Percentage of successful runs |
-| **Failed** | Number of failed runs |
-| **Avg Duration** | Average time per backup run |
-
-**Controls:**
-
-- **Repository filter** — dropdown to filter by specific repository.
-- **Time range** — toggle between 7D, 14D, 30D, and 90D.
-
-## Storage Trend
-
-A line chart showing how deduplicated repository storage has changed over time. Use it to project future storage needs and detect unexpected growth.
-
-- **X-axis** — date
-- **Y-axis** — total deduplicated storage
-- **Current size** and **change over period** are displayed as summary stats.
-
-**Controls:**
-
-- **Repository filter** — dropdown to view trends for a specific repository or all.
-- **View mode** — toggle between **Total** (single line) and **Stacked** (area chart per repository).
-- **Time range** — toggle between 14D, 30D, 90D, and 1Y.
-
-## Backup Size Trends (Deduplicated)
-
-A chart showing how individual backup sizes (deduplicated) change over time. This helps identify backups that are growing unexpectedly or repositories with poor deduplication ratios.
-
-**Controls:**
-
-- **Repository filter** — dropdown to filter by specific repository.
-- **Time range** — toggle between 14D, 30D, 90D, and 1Y.
-- **Dedup Ratio** — shown as a summary metric.
-
-## Backup Calendar
-
-The calendar view shows backup activity for the current month. Each day cell is coloured based on the worst backup result for that day:
-
-| Colour | Meaning |
-|--------|---------|
-| Green | All backups succeeded |
-| Yellow | At least one backup produced a warning |
-| Red | At least one backup failed |
-| Empty | No backups scheduled or run |
-
-Days with multiple backups show a count badge (e.g. "+5", "+22") indicating the number of backup runs on that day. Click any day to see a list of backup runs for that date with their result, duration, and archive size.
-
-**Controls:**
-
-- **Repository filter** — dropdown to filter by specific repository.
-- **Navigation arrows** — move between months.
-
-When clicking a failed or warning event, a popup appears showing the full error or warning message with links to the affected repository and schedule.
-
-!!! tip
-    Use the calendar to quickly identify days when backups failed or were skipped, especially after holidays or maintenance windows.
-
-## Recent Activity
-
-A table showing the most recent backup runs across all hosts:
-
-| Column | Description |
-|--------|-------------|
-| **Client** | Hostname of the agent |
-| **Repository** | Target repository name |
-| **Time** | Relative timestamp |
-| **Duration** | How long the backup took |
-
-Rows are colour-coded by status: green for success, yellow for warning, red for failure.
-
-## Next Scheduled
-
-A list of upcoming scheduled backup runs showing:
-
-- **Repository name** — which schedule will fire
-- **Absolute time** — when the backup is scheduled
-- **Relative time** — countdown (e.g. "in 47m")
-
-This section shows the next 5 scheduled runs, giving you visibility into what's coming up.
+Success rate, storage breakdown, activity timeline, backup statistics, storage trends, backup size trends, calendar, recent activity, and next scheduled visualizations remain available below the operational sections. These support historical analysis without replacing the Schedules, Hosts, Repositories, or Activity pages.
 
 ## Real-Time Updates
 
-The dashboard refreshes automatically via WebSocket when:
-
-- A backup starts or completes
-- An agent connects or disconnects
-- The WebSocket connection is re-established after a drop
-
-No manual page refresh is needed to see current status.
+The dashboard refreshes when a backup starts or completes, an agent connects or disconnects, or the WebSocket reconnects.
 
 ## Related Pages
 
-- [Activity Log](activity.md) — detailed backup history and server logs
-- [Scheduling & Retention](scheduling.md) — configure backup schedules
-- [Host & Agent Management](hosts.md) — manage registered hosts
-- [Repository Management](repositories.md) — manage backup repositories
+- [Activity Log](activity.md) for complete backup history and server logs.
+- [Scheduling & Retention](scheduling.md) for schedule-target configuration.
+- [Host & Agent Management](hosts.md) for registered host details.
+- [Repository Management](repositories.md) for repository and quota configuration.
 
 <!--
 SPDX-License-Identifier: Apache-2.0

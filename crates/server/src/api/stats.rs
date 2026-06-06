@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+use std::collections::HashSet;
+
 use axum::{
     Json,
     extract::{Query, State},
@@ -79,6 +81,528 @@ pub struct StorageRepoEntry {
     pub compressed_size: i64,
     pub deduplicated_size: i64,
     pub percentage: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DashboardSeverity {
+    Critical,
+    Warning,
+    Info,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DashboardStatus {
+    Healthy,
+    Warning,
+    Failed,
+    Overdue,
+    NeverSucceeded,
+    Running,
+    Disabled,
+    OfflineDueSoon,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DashboardFindingKind {
+    BackupFailed,
+    BackupWarning,
+    ScheduleTargetOverdue,
+    ScheduleTargetNeverSucceeded,
+    HostOfflineDueSoon,
+    HostUnassigned,
+    RepositoryUnscheduled,
+    RepositoryQuotaWarning,
+    RepositoryQuotaCritical,
+    RepositoryImportFailed,
+}
+
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DashboardDestination {
+    Host { hostname: String },
+    Schedule { schedule_id: i64 },
+    Repository { repo_id: i64 },
+    Activity { report_id: i64 },
+}
+
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct DashboardFinding {
+    pub id: String,
+    pub kind: DashboardFindingKind,
+    pub severity: DashboardSeverity,
+    pub status: DashboardStatus,
+    pub hostname: Option<String>,
+    pub schedule_id: Option<i64>,
+    pub schedule_name: Option<String>,
+    pub repo_id: Option<i64>,
+    pub repo_name: Option<String>,
+    pub reason: String,
+    pub occurred_at: Option<chrono::DateTime<Utc>>,
+    pub deadline: Option<chrono::DateTime<Utc>>,
+    pub destination: DashboardDestination,
+}
+
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct DashboardSummaryCounters {
+    pub protected_hosts: i64,
+    pub eligible_hosts: i64,
+    pub needs_attention: usize,
+    pub running_operations: usize,
+    pub total_storage_bytes: i64,
+}
+
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct DashboardHostLink {
+    pub client_id: i64,
+    pub hostname: String,
+}
+
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct DashboardProtectionCoverage {
+    pub protected_hosts: i64,
+    pub eligible_hosts: i64,
+    pub unassigned_hosts: Vec<DashboardHostLink>,
+    pub never_succeeded_targets: i64,
+    pub disabled_only_hosts: Vec<DashboardHostLink>,
+}
+
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct DashboardOperation {
+    pub report_id: i64,
+    pub status: DashboardStatus,
+    pub hostname: String,
+    pub schedule_id: i64,
+    pub schedule_name: String,
+    pub repo_id: i64,
+    pub repo_name: String,
+    pub started_at: chrono::DateTime<Utc>,
+    pub destination: DashboardDestination,
+}
+
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct DashboardUpcomingSchedule {
+    pub schedule_id: i64,
+    pub schedule_name: String,
+    pub repo_id: i64,
+    pub repo_name: String,
+    pub next_run_at: chrono::DateTime<Utc>,
+    pub target_count: i64,
+    pub offline_target_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DashboardQuotaStatus {
+    Unconfigured,
+    Healthy,
+    Warning,
+    Critical,
+}
+
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct DashboardRepositoryCapacity {
+    pub repo_id: i64,
+    pub repo_name: String,
+    pub deduplicated_size: i64,
+    pub quota_bytes: Option<i64>,
+    pub quota_utilization_percent: Option<f64>,
+    pub quota_status: DashboardQuotaStatus,
+    pub storage_change_bytes: Option<i64>,
+    pub threshold_estimate: Option<chrono::DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct DashboardOverviewResponse {
+    pub summary: DashboardSummaryCounters,
+    pub findings: Vec<DashboardFinding>,
+    pub protection: DashboardProtectionCoverage,
+    pub running_operations: Vec<DashboardOperation>,
+    pub upcoming_schedules: Vec<DashboardUpcomingSchedule>,
+    pub repository_capacity: Vec<DashboardRepositoryCapacity>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/stats/dashboard-overview",
+    tag = "Statistics",
+    operation_id = "getDashboardOverview",
+    summary = "Get actionable dashboard state",
+    responses(
+        (status = 200, description = "Dashboard overview", body = DashboardOverviewResponse),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
+pub async fn dashboard_overview(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+) -> Result<Json<DashboardOverviewResponse>, ApiError> {
+    let (targets, hosts, upcoming, repositories) = tokio::try_join!(
+        db::dashboard::targets(&state.pool),
+        db::dashboard::eligible_hosts(&state.pool),
+        db::dashboard::upcoming_schedules(&state.pool),
+        db::dashboard::repositories(&state.pool),
+    )?;
+    let connected: HashSet<String> = state
+        .registry
+        .connected_agents()
+        .await
+        .into_iter()
+        .collect();
+    let timezone = db::get_schedule_timezone(&state.pool).await?;
+    let now = Utc::now();
+    let due_soon = now + chrono::Duration::hours(2);
+
+    let mut findings = targets
+        .iter()
+        .filter(|target| target.schedule_enabled)
+        .filter_map(|target| target_finding(target, &connected, now, due_soon, timezone))
+        .collect::<Vec<_>>();
+
+    findings.extend(
+        hosts
+            .iter()
+            .filter(|host| host.enabled_assignment_count == 0)
+            .map(|host| DashboardFinding {
+                id: format!("host:{}:unassigned", host.client_id),
+                kind: DashboardFindingKind::HostUnassigned,
+                severity: DashboardSeverity::Warning,
+                status: DashboardStatus::Warning,
+                hostname: Some(host.hostname.clone()),
+                schedule_id: None,
+                schedule_name: None,
+                repo_id: None,
+                repo_name: None,
+                reason: "No enabled backup schedule is assigned".to_owned(),
+                occurred_at: None,
+                deadline: None,
+                destination: DashboardDestination::Host {
+                    hostname: host.hostname.clone(),
+                },
+            }),
+    );
+
+    repositories.iter().for_each(|repo| {
+        if repo.enabled_schedule_count == 0 {
+            findings.push(repository_finding(
+                repo,
+                DashboardFindingKind::RepositoryUnscheduled,
+                DashboardSeverity::Warning,
+                DashboardStatus::Warning,
+                "No enabled backup schedule uses this repository",
+            ));
+        }
+        match repository_quota_status(repo) {
+            DashboardQuotaStatus::Critical => findings.push(repository_finding(
+                repo,
+                DashboardFindingKind::RepositoryQuotaCritical,
+                DashboardSeverity::Critical,
+                DashboardStatus::Failed,
+                "Repository storage is at or above its critical quota",
+            )),
+            DashboardQuotaStatus::Warning => findings.push(repository_finding(
+                repo,
+                DashboardFindingKind::RepositoryQuotaWarning,
+                DashboardSeverity::Warning,
+                DashboardStatus::Warning,
+                "Repository storage is at or above its warning quota",
+            )),
+            DashboardQuotaStatus::Unconfigured | DashboardQuotaStatus::Healthy => {}
+        }
+        if repo.import_error.is_some() {
+            findings.push(repository_finding(
+                repo,
+                DashboardFindingKind::RepositoryImportFailed,
+                DashboardSeverity::Critical,
+                DashboardStatus::Failed,
+                repo.import_error
+                    .as_deref()
+                    .unwrap_or("Repository import failed"),
+            ));
+        }
+    });
+    findings.sort_by_key(|finding| severity_rank(finding.severity));
+
+    let running_operations = targets
+        .iter()
+        .filter_map(|target| {
+            let (Some(report_id), Some(started_at), Some(true)) = (
+                target.latest_report_id,
+                target.latest_started_at,
+                target.latest_started,
+            ) else {
+                return None;
+            };
+            Some(DashboardOperation {
+                report_id,
+                status: DashboardStatus::Running,
+                hostname: target.hostname.clone(),
+                schedule_id: target.schedule_id,
+                schedule_name: target.schedule_name.clone(),
+                repo_id: target.repo_id,
+                repo_name: target.repo_name.clone(),
+                started_at,
+                destination: DashboardDestination::Activity { report_id },
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let protected_hosts = hosts
+        .iter()
+        .filter(|host| host.successful_enabled_assignment_count > 0)
+        .count();
+    let protected_hosts = i64::try_from(protected_hosts).unwrap_or(i64::MAX);
+    let eligible_hosts = i64::try_from(hosts.len()).unwrap_or(i64::MAX);
+    let unassigned_hosts = hosts
+        .iter()
+        .filter(|host| host.enabled_assignment_count == 0)
+        .map(host_link)
+        .collect();
+    let disabled_only_hosts = hosts
+        .iter()
+        .filter(|host| host.enabled_assignment_count == 0 && host.disabled_assignment_count > 0)
+        .map(host_link)
+        .collect();
+    let never_succeeded_targets = targets
+        .iter()
+        .filter(|target| target.schedule_enabled && target.last_success_at.is_none())
+        .count();
+    let never_succeeded_targets = i64::try_from(never_succeeded_targets).unwrap_or(i64::MAX);
+
+    let upcoming_schedules = upcoming
+        .into_iter()
+        .map(|schedule| {
+            let offline_target_count = targets
+                .iter()
+                .filter(|target| target.schedule_id == schedule.schedule_id)
+                .filter(|target| !connected.contains(&target.hostname))
+                .count();
+            DashboardUpcomingSchedule {
+                schedule_id: schedule.schedule_id,
+                schedule_name: schedule.schedule_name,
+                repo_id: schedule.repo_id,
+                repo_name: schedule.repo_name,
+                next_run_at: schedule.next_run_at,
+                target_count: schedule.target_count,
+                offline_target_count,
+            }
+        })
+        .collect();
+
+    let total_storage_bytes = repositories.iter().map(|repo| repo.deduplicated_size).sum();
+    let repository_capacity = repositories.iter().map(repository_capacity).collect();
+
+    Ok(Json(DashboardOverviewResponse {
+        summary: DashboardSummaryCounters {
+            protected_hosts,
+            eligible_hosts,
+            needs_attention: findings.len(),
+            running_operations: running_operations.len(),
+            total_storage_bytes,
+        },
+        findings,
+        protection: DashboardProtectionCoverage {
+            protected_hosts,
+            eligible_hosts,
+            unassigned_hosts,
+            never_succeeded_targets,
+            disabled_only_hosts,
+        },
+        running_operations,
+        upcoming_schedules,
+        repository_capacity,
+    }))
+}
+
+fn target_finding(
+    target: &db::dashboard::TargetRow,
+    connected: &HashSet<String>,
+    now: chrono::DateTime<Utc>,
+    due_soon: chrono::DateTime<Utc>,
+    timezone: chrono_tz::Tz,
+) -> Option<DashboardFinding> {
+    if target.latest_started == Some(true) {
+        return None;
+    }
+
+    let overdue_at = target.last_success_at.and_then(|last_success| {
+        shared::schedule::calculate_next_run(&target.cron_expression, last_success, timezone)
+            .ok()
+            .map(|expected| expected + chrono::Duration::minutes(30))
+    });
+
+    let (kind, severity, status, reason, occurred_at, deadline, destination) =
+        if target.latest_failed == Some(true) {
+            (
+                DashboardFindingKind::BackupFailed,
+                DashboardSeverity::Critical,
+                DashboardStatus::Failed,
+                target
+                    .latest_message
+                    .clone()
+                    .unwrap_or_else(|| "Latest backup failed".to_owned()),
+                target.latest_finished_at,
+                None,
+                DashboardDestination::Activity {
+                    report_id: target.latest_report_id?,
+                },
+            )
+        } else if overdue_at.is_some_and(|deadline| now > deadline) {
+            (
+                DashboardFindingKind::ScheduleTargetOverdue,
+                DashboardSeverity::Critical,
+                DashboardStatus::Overdue,
+                "No successful backup completed in the expected cron window".to_owned(),
+                target.last_success_at,
+                overdue_at,
+                DashboardDestination::Schedule {
+                    schedule_id: target.schedule_id,
+                },
+            )
+        } else if target.latest_warning == Some(true) {
+            (
+                DashboardFindingKind::BackupWarning,
+                DashboardSeverity::Warning,
+                DashboardStatus::Warning,
+                target
+                    .latest_message
+                    .clone()
+                    .unwrap_or_else(|| "Latest backup completed with warnings".to_owned()),
+                target.latest_finished_at,
+                None,
+                DashboardDestination::Activity {
+                    report_id: target.latest_report_id?,
+                },
+            )
+        } else if target.last_success_at.is_none() && target.schedule_last_run_at.is_some() {
+            (
+                DashboardFindingKind::ScheduleTargetNeverSucceeded,
+                DashboardSeverity::Critical,
+                DashboardStatus::NeverSucceeded,
+                "This enabled schedule target has run but never succeeded".to_owned(),
+                target.latest_finished_at,
+                target.next_run_at,
+                DashboardDestination::Schedule {
+                    schedule_id: target.schedule_id,
+                },
+            )
+        } else if target
+            .next_run_at
+            .is_some_and(|deadline| deadline >= now && deadline <= due_soon)
+            && !connected.contains(&target.hostname)
+        {
+            (
+                DashboardFindingKind::HostOfflineDueSoon,
+                DashboardSeverity::Warning,
+                DashboardStatus::OfflineDueSoon,
+                "Agent is offline and this schedule is due within two hours".to_owned(),
+                None,
+                target.next_run_at,
+                DashboardDestination::Host {
+                    hostname: target.hostname.clone(),
+                },
+            )
+        } else {
+            return None;
+        };
+
+    Some(DashboardFinding {
+        id: format!(
+            "target:{}:{}:{kind:?}",
+            target.schedule_id, target.client_id
+        ),
+        kind,
+        severity,
+        status,
+        hostname: Some(target.hostname.clone()),
+        schedule_id: Some(target.schedule_id),
+        schedule_name: Some(target.schedule_name.clone()),
+        repo_id: Some(target.repo_id),
+        repo_name: Some(target.repo_name.clone()),
+        reason,
+        occurred_at,
+        deadline,
+        destination,
+    })
+}
+
+fn host_link(host: &db::dashboard::EligibleHostRow) -> DashboardHostLink {
+    DashboardHostLink {
+        client_id: host.client_id,
+        hostname: host.hostname.clone(),
+    }
+}
+
+fn repository_finding(
+    repo: &db::dashboard::RepositoryRow,
+    kind: DashboardFindingKind,
+    severity: DashboardSeverity,
+    status: DashboardStatus,
+    reason: &str,
+) -> DashboardFinding {
+    DashboardFinding {
+        id: format!("repository:{}:{kind:?}", repo.repo_id),
+        kind,
+        severity,
+        status,
+        hostname: None,
+        schedule_id: None,
+        schedule_name: None,
+        repo_id: Some(repo.repo_id),
+        repo_name: Some(repo.repo_name.clone()),
+        reason: reason.to_owned(),
+        occurred_at: repo.last_synced_at,
+        deadline: None,
+        destination: DashboardDestination::Repository {
+            repo_id: repo.repo_id,
+        },
+    }
+}
+
+const fn severity_rank(severity: DashboardSeverity) -> u8 {
+    match severity {
+        DashboardSeverity::Critical => 0,
+        DashboardSeverity::Warning => 1,
+        DashboardSeverity::Info => 2,
+    }
+}
+
+fn repository_quota_status(repo: &db::dashboard::RepositoryRow) -> DashboardQuotaStatus {
+    if repo.quota_enabled != Some(true) {
+        return DashboardQuotaStatus::Unconfigured;
+    }
+    if repo
+        .critical_bytes
+        .is_some_and(|limit| repo.deduplicated_size >= limit)
+    {
+        return DashboardQuotaStatus::Critical;
+    }
+    if repo
+        .warn_bytes
+        .is_some_and(|limit| repo.deduplicated_size >= limit)
+    {
+        return DashboardQuotaStatus::Warning;
+    }
+    DashboardQuotaStatus::Healthy
+}
+
+fn repository_capacity(repo: &db::dashboard::RepositoryRow) -> DashboardRepositoryCapacity {
+    let quota_bytes = repo.critical_bytes.or(repo.warn_bytes);
+    let quota_utilization_percent = quota_bytes
+        .filter(|limit| *limit > 0)
+        .map(|limit| percentage_of(repo.deduplicated_size, limit));
+    DashboardRepositoryCapacity {
+        repo_id: repo.repo_id,
+        repo_name: repo.repo_name.clone(),
+        deduplicated_size: repo.deduplicated_size,
+        quota_bytes,
+        quota_utilization_percent,
+        quota_status: repository_quota_status(repo),
+        storage_change_bytes: None,
+        threshold_estimate: None,
+    }
 }
 
 #[utoipa::path(

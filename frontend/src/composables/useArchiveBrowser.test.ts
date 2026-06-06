@@ -90,6 +90,7 @@ describe('useArchiveBrowser', () => {
   })
 
   it('deletes the whole archive from the root entry', async () => {
+    const confirm = vi.mocked(window.confirm)
     vi.mocked(apiClient.delete).mockResolvedValue({
       data: { success: true, archive_name: ARCHIVE.name },
     })
@@ -105,5 +106,6 @@ describe('useArchiveBrowser', () => {
     )
     expect(browser.selectedArchive.value).toBeNull()
     expect(browser.archives.value).toHaveLength(0)
+    expect(confirm).not.toHaveBeenCalled()
   })
 })

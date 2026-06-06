@@ -25,6 +25,7 @@ import { Folder, File, Download, RotateCcw, Trash2 } from '@lucide/vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import QuotaPanel from '../components/QuotaPanel.vue'
+import BaseModal from '../components/BaseModal.vue'
 
 type TabId = 'overview' | 'archives'
 type CompressionType = 'lz4' | 'zstd' | 'zlib' | 'none'
@@ -282,6 +283,19 @@ const {
   deleteArchive,
 } = useArchiveBrowser(repoIdRef)
 
+const archivePendingDeletion = ref<ContentEntry | null>(null)
+const archiveDeleteLoading = ref(false)
+
+function requestArchiveDeletion(entry: ContentEntry): void {
+  archivePendingDeletion.value = entry
+}
+
+function closeArchiveDeleteDialog(): void {
+  if (!archiveDeleteLoading.value) {
+    archivePendingDeletion.value = null
+  }
+}
+
 async function restoreArchiveEntry(entry: ContentEntry): Promise<void> {
   try {
     const restored = await restoreEntry(entry)
@@ -292,14 +306,20 @@ async function restoreArchiveEntry(entry: ContentEntry): Promise<void> {
   }
 }
 
-async function deleteArchiveEntry(entry: ContentEntry): Promise<void> {
+async function confirmArchiveDeletion(): Promise<void> {
+  const entry = archivePendingDeletion.value
+  if (!entry) return
+  archiveDeleteLoading.value = true
   try {
     const deleted = await deleteArchive(entry)
     if (!deleted) return
+    archivePendingDeletion.value = null
     await refreshRepo()
     toastSuccess('Archive deleted.')
   } catch (e: unknown) {
     toastError(extractError(e))
+  } finally {
+    archiveDeleteLoading.value = false
   }
 }
 
@@ -1489,7 +1509,7 @@ async function resetImport(): Promise<void> {
                         v-if="isAdmin && entry.path.length === 0"
                         class="btn btn-sm btn-ghost"
                         title="Delete whole archive"
-                        @click.stop="deleteArchiveEntry(entry)"
+                        @click.stop="requestArchiveDeletion(entry)"
                       >
                         <Trash2 :size="14" />
                       </button>
@@ -1542,6 +1562,43 @@ async function resetImport(): Promise<void> {
         </div>
       </div>
     </template>
+
+    <BaseModal
+      :open="archivePendingDeletion !== null"
+      title="Delete Archive"
+      size="sm"
+      @close="closeArchiveDeleteDialog"
+    >
+      <div class="archive-delete-message">
+        <div class="archive-delete-icon">
+          <Trash2 :size="22" />
+        </div>
+        <div>
+          <p>
+            Permanently delete <strong>{{ selectedArchive?.name }}</strong> from
+            <strong>{{ repo?.name }}</strong
+            >?
+          </p>
+          <p class="muted">This archive and its stored backup data cannot be recovered.</p>
+        </div>
+      </div>
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          :disabled="archiveDeleteLoading"
+          @click="closeArchiveDeleteDialog"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          :disabled="archiveDeleteLoading"
+          @click="confirmArchiveDeletion"
+        >
+          {{ archiveDeleteLoading ? 'Deleting...' : 'Delete Archive' }}
+        </button>
+      </template>
+    </BaseModal>
 
     <!-- Passphrase Dialog -->
     <Teleport to="body">
@@ -2789,5 +2846,28 @@ async function resetImport(): Promise<void> {
 
 .unmatched-host-link:hover {
   text-decoration-color: var(--warning);
+}
+
+.archive-delete-message {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.archive-delete-message p {
+  margin: 0 0 0.5rem;
+  line-height: 1.5;
+}
+
+.archive-delete-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  color: var(--danger);
+  background: var(--danger-subtle);
 }
 </style>

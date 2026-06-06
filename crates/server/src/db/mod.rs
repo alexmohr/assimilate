@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 pub mod audit;
+pub mod dashboard;
 pub mod patterns;
 pub mod quota;
 pub mod tags;

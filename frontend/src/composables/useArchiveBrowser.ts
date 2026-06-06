@@ -277,8 +277,6 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     const archive = selectedArchive.value
     if (!archive || entry.type !== 'd' || entry.path.length > 0) return false
 
-    if (!window.confirm(`Delete archive ${archive.name}? This cannot be undone.`)) return false
-
     const response = await apiClient.delete<{ success: boolean; archive_name: string }>(
       `/repos/${repoId.value}/archives/${encodeURIComponent(archive.name)}`,
     )

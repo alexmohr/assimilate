@@ -113,6 +113,8 @@ Add the public key to `~/.ssh/authorized_keys` on the borg repository host to au
 
 The agent uses the same `BORG_SERVER_URL` and `BORG_AGENT_TOKEN` environment variables it already needs to connect to the server. Before each backup it attempts to establish the SSH relay. If the relay succeeds, `SSH_AUTH_SOCK` is injected into the borg subprocess environment. If it fails for any reason the backup continues without forwarding and borg falls back to whatever SSH keys are available locally on the agent machine.
 
+For borg-managed SSH connections, Assimilate uses `StrictHostKeyChecking=accept-new` with a transient user `known_hosts` file. That keeps first-use host key prompts non-interactive and prevents a rotated repository host key from leaving stale entries behind on every agent machine.
+
 ## Borg Repository Authorization
 
 The borg repository host must trust the server's SSH public key. Retrieve the public key and add it to the authorised keys file on the repository host.
@@ -180,6 +182,12 @@ Test the connection manually from the server:
 ```bash
 ssh -i /path/to/borg_key borg@repo-host echo ok
 ```
+
+### Repository host key rotated
+
+If the repository host was reprovisioned or its SSH host key was intentionally replaced, current Assimilate agents do not require manual `known_hosts` cleanup. The next borg connection accepts the new host key automatically using the transient borg-specific `known_hosts` file.
+
+If the failure persists after the rotation, verify you are reaching the intended repository host and that no jump host or DNS override is pointing agents at the wrong machine.
 
 ### WebSocket connection refused or firewall blocking
 

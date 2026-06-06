@@ -12,7 +12,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use shared::types::build_repo_url;
+use shared::{ssh::borg_rsh, types::build_repo_url};
 use sqlx::PgPool;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio_util::io::ReaderStream;
@@ -85,10 +85,7 @@ pub async fn get_repo_env(
 
     let mut env = HashMap::new();
     env.insert("BORG_PASSPHRASE".to_string(), passphrase);
-    env.insert(
-        "BORG_RSH".to_string(),
-        "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new".to_string(),
-    );
+    env.insert("BORG_RSH".to_string(), borg_rsh());
 
     if repo.relocation_pending {
         env.insert(

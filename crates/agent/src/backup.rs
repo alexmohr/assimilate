@@ -8,7 +8,10 @@ use std::{
 };
 
 use chrono::Utc;
-use shared::types::{BackupStatus, Compression, build_repo_url};
+use shared::{
+    ssh::borg_rsh,
+    types::{BackupStatus, Compression, build_repo_url},
+};
 use tokio::process::Command;
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -188,10 +191,7 @@ impl BackupEngine {
             ("BORG_REPO".to_owned(), repo_url),
             ("BORG_PASSPHRASE".to_owned(), target.passphrase.clone()),
             ("BORG_HOST_ID".to_owned(), target.hostname.clone()),
-            (
-                "BORG_RSH".to_owned(),
-                "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new".to_owned(),
-            ),
+            ("BORG_RSH".to_owned(), borg_rsh()),
             ("LANG".to_owned(), "en_US.UTF-8".to_owned()),
             ("LC_CTYPE".to_owned(), "en_US.UTF-8".to_owned()),
         ];
@@ -900,6 +900,18 @@ mod tests {
         );
 
         assert!(!args.iter().any(|arg| arg == "--remote-ratelimit"));
+    }
+
+    #[test]
+    fn borg_env_uses_transient_known_hosts_file() {
+        let env = BackupEngine::borg_env(&test_target());
+        let borg_rsh = env
+            .iter()
+            .find(|(key, _value)| key == "BORG_RSH")
+            .map(|(_key, value)| value.as_str());
+        let expected = shared::ssh::borg_rsh();
+
+        assert_eq!(borg_rsh, Some(expected.as_str()));
     }
 
     #[tokio::test]

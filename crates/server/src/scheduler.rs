@@ -35,6 +35,7 @@ pub async fn run(
     tunnel_manager: TunnelManager,
     completion_bus: CompletionBus,
 ) {
+    let _receiver = completion_bus.subscribe();
     let schedule_pool = pool.clone();
     let retention_pool = pool.clone();
     let sync_pool = pool;

@@ -396,6 +396,10 @@ async fn main() -> Result<(), StartupError> {
             get(api::archives::archive_info),
         )
         .route(
+            "/api/repos/{repo_id}/archives/{archive_name}",
+            delete(api::archives::delete_archive),
+        )
+        .route(
             "/api/repos/{repo_id}/archives/{archive_name}/contents",
             get(api::archives::list_contents),
         )

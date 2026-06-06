@@ -10,14 +10,18 @@ import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useClipboard } from '../composables/useClipboard'
-import { useArchiveBrowser, type ArchiveEntry } from '../composables/useArchiveBrowser'
+import {
+  useArchiveBrowser,
+  type ArchiveEntry,
+  type ContentEntry,
+} from '../composables/useArchiveBrowser'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useToast } from '../composables/useToast'
 import { formatBytes, formatDate } from '../utils/format'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
-import { Folder, File, Download } from '@lucide/vue'
+import { Folder, File, Download, RotateCcw, Trash2 } from '@lucide/vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import QuotaPanel from '../components/QuotaPanel.vue'
@@ -274,7 +278,30 @@ const {
   navigateTo: archiveNavigateTo,
   entryName,
   downloadEntry,
+  restoreEntry,
+  deleteArchive,
 } = useArchiveBrowser(repoIdRef)
+
+async function restoreArchiveEntry(entry: ContentEntry): Promise<void> {
+  try {
+    const restored = await restoreEntry(entry)
+    if (!restored) return
+    toastSuccess(entry.path.length > 0 ? `Restored ${entry.path}.` : 'Restored the whole archive.')
+  } catch (e: unknown) {
+    toastError(extractError(e))
+  }
+}
+
+async function deleteArchiveEntry(entry: ContentEntry): Promise<void> {
+  try {
+    const deleted = await deleteArchive(entry)
+    if (!deleted) return
+    await refreshRepo()
+    toastSuccess('Archive deleted.')
+  } catch (e: unknown) {
+    toastError(extractError(e))
+  }
+}
 
 const unmatchedCount = computed(() => sortedArchives.value.filter((a) => a.matched !== true).length)
 
@@ -1442,13 +1469,31 @@ async function resetImport(): Promise<void> {
                   <td class="td-size muted">&mdash;</td>
                   <td class="td-date">{{ formatDate(entry.mtime) }}</td>
                   <td class="td-action">
-                    <button
-                      class="btn btn-sm btn-ghost"
-                      title="Download as .tar.lz4"
-                      @click.stop="downloadEntry(entry)"
-                    >
-                      <Download :size="14" />
-                    </button>
+                    <span class="entry-actions">
+                      <button
+                        class="btn btn-sm btn-ghost"
+                        :title="entry.path ? 'Download as .tar.lz4' : 'Download whole archive'"
+                        @click.stop="downloadEntry(entry)"
+                      >
+                        <Download :size="14" />
+                      </button>
+                      <button
+                        v-if="isAdmin"
+                        class="btn btn-sm btn-ghost"
+                        :title="entry.path ? 'Restore to host' : 'Restore whole archive to host'"
+                        @click.stop="restoreArchiveEntry(entry)"
+                      >
+                        <RotateCcw :size="14" />
+                      </button>
+                      <button
+                        v-if="isAdmin && entry.path.length === 0"
+                        class="btn btn-sm btn-ghost"
+                        title="Delete whole archive"
+                        @click.stop="deleteArchiveEntry(entry)"
+                      >
+                        <Trash2 :size="14" />
+                      </button>
+                    </span>
                   </td>
                 </tr>
                 <tr
@@ -1465,13 +1510,23 @@ async function resetImport(): Promise<void> {
                   <td class="td-size">{{ formatBytes(entry.size) }}</td>
                   <td class="td-date">{{ formatDate(entry.mtime) }}</td>
                   <td class="td-action">
-                    <button
-                      class="btn btn-sm btn-ghost"
-                      title="Download"
-                      @click.stop="downloadEntry(entry)"
-                    >
-                      <Download :size="14" />
-                    </button>
+                    <span class="entry-actions">
+                      <button
+                        class="btn btn-sm btn-ghost"
+                        title="Download"
+                        @click.stop="downloadEntry(entry)"
+                      >
+                        <Download :size="14" />
+                      </button>
+                      <button
+                        v-if="isAdmin"
+                        class="btn btn-sm btn-ghost"
+                        title="Restore to host"
+                        @click.stop="restoreArchiveEntry(entry)"
+                      >
+                        <RotateCcw :size="14" />
+                      </button>
+                    </span>
                   </td>
                 </tr>
               </tbody>
@@ -2490,6 +2545,11 @@ async function resetImport(): Promise<void> {
 
 .td-action {
   text-align: right;
+}
+
+.entry-actions {
+  display: inline-flex;
+  gap: 0.25rem;
 }
 
 .entry-icon {

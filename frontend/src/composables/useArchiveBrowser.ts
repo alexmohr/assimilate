@@ -58,6 +58,8 @@ interface UseArchiveBrowserReturn {
   navigateTo: (path: string) => void
   entryName: (entry: ContentEntry) => string
   downloadEntry: (entry: ContentEntry) => void
+  restoreEntry: (entry: ContentEntry) => Promise<boolean>
+  deleteArchive: (entry: ContentEntry) => Promise<boolean>
 }
 
 export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn {
@@ -235,14 +237,68 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     const encodedPath = encodeURIComponent(entry.path)
     const isDir = entry.type === 'd'
     const url = isDir
-      ? `/api/repos/${repoId.value}/archives/${archiveName}/export?path=${encodedPath}`
+      ? entry.path.length > 0
+        ? `/api/repos/${repoId.value}/archives/${archiveName}/export?path=${encodeURIComponent(entry.path)}`
+        : `/api/repos/${repoId.value}/archives/${archiveName}/export`
       : `/api/repos/${repoId.value}/archives/${archiveName}/extract?path=${encodedPath}`
     const a = document.createElement('a')
     a.href = url
-    a.download = isDir ? `${entryName(entry)}.tar.lz4` : entryName(entry)
+    a.download = isDir
+      ? `${entry.path.length > 0 ? entryName(entry) : selectedArchive.value.name}.tar.lz4`
+      : entryName(entry)
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
+  }
+
+  async function restoreEntry(entry: ContentEntry): Promise<boolean> {
+    const archive = selectedArchive.value
+    if (!archive) return false
+
+    const hostname = archive.client_hostname ?? archive.hostname
+    const name = entry.path.length > 0 ? entry.path : 'the whole archive'
+    if (!window.confirm(`Restore ${name} to its original location on ${hostname}?`)) return false
+
+    const response = await apiClient.post<{ success: boolean; error_message?: string }>(
+      `/repos/${repoId.value}/archives/${encodeURIComponent(archive.name)}/restore`,
+      {
+        paths: entry.path.length > 0 ? [entry.path] : [],
+        target_path: '/',
+        hostname,
+      },
+    )
+    if (!response.data.success) {
+      throw new Error(response.data.error_message ?? 'Restore failed')
+    }
+    return true
+  }
+
+  async function deleteArchive(entry: ContentEntry): Promise<boolean> {
+    const archive = selectedArchive.value
+    if (!archive || entry.type !== 'd' || entry.path.length > 0) return false
+
+    if (!window.confirm(`Delete archive ${archive.name}? This cannot be undone.`)) return false
+
+    const response = await apiClient.delete<{ success: boolean; archive_name: string }>(
+      `/repos/${repoId.value}/archives/${encodeURIComponent(archive.name)}`,
+    )
+
+    if (!response.data.success) {
+      throw new Error('Archive delete failed')
+    }
+
+    archives.value = archives.value.filter((item) => item.name !== archive.name)
+
+    if (selectedArchive.value?.name === archive.name) {
+      stopPolling()
+      selectedArchive.value = null
+      currentPath.value = '/'
+      contents.value = []
+      contentsError.value = null
+      indexing.value = false
+    }
+
+    return true
   }
 
   return {
@@ -265,5 +321,7 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     navigateTo,
     entryName,
     downloadEntry,
+    restoreEntry,
+    deleteArchive,
   }
 }

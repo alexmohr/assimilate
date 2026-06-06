@@ -153,6 +153,7 @@ for i in $(seq 1 30); do
     mkdir -p "$ARCHIVE_DIR/var/www/html" "$ARCHIVE_DIR/etc/nginx/conf.d"
     echo "<html><body>Version $i</body></html>" > "$ARCHIVE_DIR/var/www/html/index.html"
     echo "server { listen 80; }" > "$ARCHIVE_DIR/etc/nginx/conf.d/default.conf"
+    echo "Restore this file from the archive browser." > "$ARCHIVE_DIR/restore-example.txt"
     dd if=/dev/urandom of="$ARCHIVE_DIR/var/www/html/app.js" bs=1024 count=$((50 + i * 10)) 2>/dev/null
     borg_create_as "web-server-01" "/backup/repos/server-daily::web-server-01-backup-$ARCHIVE_DATE" "$ARCHIVE_DIR" "$ARCHIVE_DATE"
     rm -rf "$ARCHIVE_DIR"

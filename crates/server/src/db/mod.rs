@@ -3824,6 +3824,13 @@ pub async fn delete_archive_records_by_names(
         .await
         .map_err(ApiError::Database)?;
 
+    sqlx::query("DELETE FROM archive_tags WHERE repo_id = $1 AND archive_name = ANY($2)")
+        .bind(repo_id)
+        .bind(names)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
+
     tx.commit().await.map_err(ApiError::Database)?;
     Ok(result.rows_affected())
 }

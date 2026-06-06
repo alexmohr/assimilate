@@ -68,7 +68,6 @@ async fn build_test_app(pool: PgPool) -> Router {
             pool,
             reqwest::Client::new(),
         ),
-        completion_bus: server::ws::completion_bus::CompletionBus::new(),
         pending_dryruns: std::sync::Arc::new(tokio::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),
@@ -81,6 +80,7 @@ async fn build_test_app(pool: PgPool) -> Router {
         pending_deletes: std::sync::Arc::new(tokio::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),
+        completion_bus: server::ws::completion_bus::CompletionBus::new(),
     };
 
     Router::new()

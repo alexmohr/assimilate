@@ -45,6 +45,40 @@ function setupSuccessMocks(): void {
     if (url === '/system/settings') {
       return Promise.resolve({ data: { timezone: 'Europe/Berlin', retention_days: 30 } })
     }
+    if (url === '/system/version') {
+      return Promise.resolve({
+        data: {
+          server_version: '0.1.0',
+          server_git_sha: '',
+          build_timestamp: '2026-06-06T10:00:00Z',
+          agent_version: '0.1.0',
+        },
+      })
+    }
+    if (url === '/system/database-storage') {
+      return Promise.resolve({
+        data: {
+          database_bytes: 1073741824,
+          other_bytes: 268435456,
+          relations: [
+            {
+              table_name: 'archive_files',
+              table_bytes: 536870912,
+              index_bytes: 134217728,
+              toast_bytes: 0,
+              total_bytes: 671088640,
+            },
+            {
+              table_name: 'backup_reports',
+              table_bytes: 67108864,
+              index_bytes: 67108864,
+              toast_bytes: 0,
+              total_bytes: 134217728,
+            },
+          ],
+        },
+      })
+    }
     return Promise.reject(new Error(`Unexpected GET ${url}`))
   })
 }
@@ -120,6 +154,18 @@ describe('SystemView', () => {
     expect(saveBtn).toBeDefined()
   })
 
+  it('renders database storage ordered by backend usage', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Database Storage')
+    expect(wrapper.text()).toContain('1.0 GB')
+    expect(wrapper.text()).toContain('archive_files')
+    expect(wrapper.text()).toContain('640.0 MB')
+    expect(wrapper.text()).toContain('backup_reports')
+  })
+
   it('shows error message when SSH key API fails', async () => {
     mockGet.mockImplementation((url: string) => {
       if (url === '/system/ssh-public-key') {
@@ -127,6 +173,19 @@ describe('SystemView', () => {
       }
       if (url === '/system/settings') {
         return Promise.resolve({ data: { timezone: 'UTC', retention_days: 7 } })
+      }
+      if (url === '/system/version') {
+        return Promise.resolve({
+          data: {
+            server_version: '0.1.0',
+            server_git_sha: '',
+            build_timestamp: 'unknown',
+            agent_version: null,
+          },
+        })
+      }
+      if (url === '/system/database-storage') {
+        return Promise.resolve({ data: { database_bytes: 0, other_bytes: 0, relations: [] } })
       }
       return Promise.reject(new Error(`Unexpected GET ${url}`))
     })

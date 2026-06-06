@@ -88,6 +88,9 @@ const mockSchedules = [
     compact_enabled: true,
     pre_backup_commands: '',
     post_backup_commands: '',
+    execution_mode: 'parallel',
+    on_failure: 'continue',
+    target_hostnames: ['web-server-01', 'db-server-01'],
   },
   {
     id: 2,
@@ -108,6 +111,9 @@ const mockSchedules = [
     compact_enabled: false,
     pre_backup_commands: '',
     post_backup_commands: '',
+    execution_mode: 'sequential',
+    on_failure: 'stop',
+    target_hostnames: ['db-server-01'],
   },
   {
     id: 3,
@@ -128,6 +134,9 @@ const mockSchedules = [
     compact_enabled: true,
     pre_backup_commands: '',
     post_backup_commands: '',
+    execution_mode: 'parallel',
+    on_failure: 'continue',
+    target_hostnames: ['media-store-01'],
   },
 ]
 
@@ -196,6 +205,16 @@ describe('SchedulesView', () => {
     expect(wrapper.text()).toContain('server-daily')
     expect(wrapper.text()).toContain('database-hourly')
     expect(wrapper.text()).toContain('media-weekly')
+  })
+
+  it('shows target hosts on the schedule card', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Web Server (web-server-01), db-server-01')
+    expect(wrapper.text()).toContain('1 host')
+    expect(wrapper.text()).toContain('2 hosts')
   })
 
   it('shows enabled/disabled badge', async () => {

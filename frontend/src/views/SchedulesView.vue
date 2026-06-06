@@ -48,6 +48,7 @@ interface ScheduleRow {
   post_backup_commands: string
   execution_mode: string
   on_failure: string
+  target_hostnames: string[]
 }
 
 interface ClientRow {
@@ -127,10 +128,16 @@ const repoMap = computed(() => {
 })
 
 interface EnrichedSchedule extends ScheduleRow {
-  machine: ClientRow | null
+  hostLabels: string[]
   repo: RepoRow | null
   health: HealthEntry | null
 }
+
+const clientMap = computed(() => {
+  const map = new Map<string, ClientRow>()
+  clients.value.forEach((client) => map.set(client.hostname, client))
+  return map
+})
 
 const healthBySchedule = computed(() => {
   const m = new Map<number, HealthEntry[]>()
@@ -144,7 +151,10 @@ const healthBySchedule = computed(() => {
 
 const enrichedSchedules = computed<EnrichedSchedule[]>(() =>
   schedules.value.map((s) => {
-    const machine: ClientRow | null = null
+    const hostLabels = s.target_hostnames.map((hostname) => {
+      const client = clientMap.value.get(hostname)
+      return client?.display_name ? `${client.display_name} (${hostname})` : hostname
+    })
     const repo: RepoRow | null = s.repo_id != null ? (repoMap.value.get(s.repo_id) ?? null) : null
     const entries = healthBySchedule.value.get(s.id) ?? []
     const healthEntry: HealthEntry | null =
@@ -152,7 +162,7 @@ const enrichedSchedules = computed<EnrichedSchedule[]>(() =>
       entries.find((h) => h.last_status === 'failed') ??
       entries[0] ??
       null
-    return { ...s, machine, repo, health: healthEntry }
+    return { ...s, hostLabels, repo, health: healthEntry }
   }),
 )
 
@@ -182,8 +192,7 @@ const filteredSchedules = computed(() => {
     list = list.filter(
       (s) =>
         (s.name?.toLowerCase().includes(q) ?? false) ||
-        (s.machine?.hostname.toLowerCase().includes(q) ?? false) ||
-        (s.machine?.display_name?.toLowerCase().includes(q) ?? false) ||
+        s.hostLabels.some((label) => label.toLowerCase().includes(q)) ||
         (s.repo?.name.toLowerCase().includes(q) ?? false),
     )
   }
@@ -192,7 +201,7 @@ const filteredSchedules = computed(() => {
     let cmp = 0
     switch (sortField.value) {
       case 'client':
-        cmp = (a.machine?.hostname ?? '').localeCompare(b.machine?.hostname ?? '')
+        cmp = (a.hostLabels[0] ?? '').localeCompare(b.hostLabels[0] ?? '')
         break
       case 'next_run':
         cmp = (a.next_run_at ?? '').localeCompare(b.next_run_at ?? '')
@@ -436,7 +445,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
               s.name || s.repo?.name || (s.repo_id != null ? `repo #${s.repo_id}` : 'no repository')
             }}</span>
             <span class="card-repo">
-              {{ s.execution_mode === 'sequential' ? 'Sequential' : 'Parallel' }}
+              {{ s.hostLabels.join(', ') || 'No hosts assigned' }}
             </span>
           </div>
           <div class="card-badges">
@@ -468,11 +477,17 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
           </div>
         </div>
         <div class="card-meta">
+          <span class="host-count">
+            {{ s.target_hostnames.length }} host{{ s.target_hostnames.length === 1 ? '' : 's' }}
+          </span>
           <span
             class="type-badge"
             :class="`type-${s.schedule_type ?? 'backup'}`"
           >
             {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
+          </span>
+          <span class="execution-badge">
+            {{ s.execution_mode === 'sequential' ? 'Sequential' : 'Parallel' }}
           </span>
         </div>
         <div
@@ -765,14 +780,37 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
   font-size: 0.78rem;
   color: var(--text-muted);
   font-family: var(--mono);
-  white-space: nowrap;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .card-meta {
   display: flex;
   gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.host-count,
+.execution-badge {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.host-count {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.execution-badge {
+  background: var(--info-subtle);
+  color: var(--info);
 }
 
 .type-badge {

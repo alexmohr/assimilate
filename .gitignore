@@ -27,3 +27,6 @@ docs_html/
 
 # oh my opencode
 .sisyphus
+
+# Git worktrees
+.worktrees/

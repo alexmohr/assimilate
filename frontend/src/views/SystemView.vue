@@ -9,6 +9,7 @@ import { apiClient } from '../api/client'
 import { useClipboard } from '../composables/useClipboard'
 import { useTimezone } from '../composables/useTimezone'
 import { extractError } from '../utils/error'
+import { formatBytes } from '../utils/format'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import TimezoneSelect from '../components/TimezoneSelect.vue'
 
@@ -31,6 +32,20 @@ interface VersionInfo {
   agent_version: string | null
 }
 
+interface DatabaseRelationSize {
+  table_name: string
+  table_bytes: number
+  index_bytes: number
+  toast_bytes: number
+  total_bytes: number
+}
+
+interface DatabaseStorageResponse {
+  database_bytes: number
+  other_bytes: number
+  relations: DatabaseRelationSize[]
+}
+
 const publicKey = ref('')
 const loading = ref(true)
 const error = ref('')
@@ -49,6 +64,10 @@ const settingsForm = reactive({ timezone: '', retention_days: 7 })
 const versionInfo = ref<VersionInfo | null>(null)
 const versionLoading = ref(true)
 const versionError = ref('')
+
+const databaseStorage = ref<DatabaseStorageResponse | null>(null)
+const databaseStorageLoading = ref(true)
+const databaseStorageError = ref('')
 
 onMounted(async () => {
   try {
@@ -78,7 +97,27 @@ onMounted(async () => {
   } finally {
     versionLoading.value = false
   }
+
+  await loadDatabaseStorage()
 })
+
+async function loadDatabaseStorage(): Promise<void> {
+  databaseStorageLoading.value = true
+  databaseStorageError.value = ''
+  try {
+    const res = await apiClient.get<DatabaseStorageResponse>('/system/database-storage')
+    databaseStorage.value = res.data
+  } catch (e: unknown) {
+    databaseStorageError.value = extractError(e, 'Failed to load database storage')
+  } finally {
+    databaseStorageLoading.value = false
+  }
+}
+
+function storagePercent(bytes: number): number {
+  const total = databaseStorage.value?.database_bytes ?? 0
+  return total > 0 ? (bytes / total) * 100 : 0
+}
 
 async function regenerateKey(): Promise<void> {
   regenerating.value = true
@@ -332,6 +371,92 @@ async function saveSettings(): Promise<void> {
               Settings saved
             </span>
           </div>
+        </div>
+      </template>
+    </div>
+
+    <div class="info-card">
+      <div class="card-header">
+        <h3 class="info-title">Database Storage</h3>
+        <button
+          class="btn btn-sm btn-ghost"
+          :disabled="databaseStorageLoading"
+          @click="loadDatabaseStorage"
+        >
+          {{ databaseStorageLoading ? 'Loading...' : 'Refresh' }}
+        </button>
+      </div>
+      <p class="info-description">
+        PostgreSQL allocation by application table, including table data, indexes, and TOAST data.
+      </p>
+
+      <BaseSpinner
+        v-if="databaseStorageLoading"
+        size="lg"
+      />
+      <div
+        v-else-if="databaseStorageError"
+        class="state-msg error"
+      >
+        {{ databaseStorageError }}
+      </div>
+      <template v-else-if="databaseStorage">
+        <div class="database-total">
+          <span>Total database size</span>
+          <strong>{{ formatBytes(databaseStorage.database_bytes) }}</strong>
+        </div>
+        <div class="storage-table-wrap">
+          <table class="storage-table">
+            <thead>
+              <tr>
+                <th>Table</th>
+                <th>Table data</th>
+                <th>Indexes</th>
+                <th>TOAST</th>
+                <th>Total</th>
+                <th>Share</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="relation in databaseStorage.relations"
+                :key="relation.table_name"
+              >
+                <td class="storage-name">{{ relation.table_name }}</td>
+                <td>{{ formatBytes(relation.table_bytes) }}</td>
+                <td>{{ formatBytes(relation.index_bytes) }}</td>
+                <td>{{ formatBytes(relation.toast_bytes) }}</td>
+                <td class="storage-total">{{ formatBytes(relation.total_bytes) }}</td>
+                <td class="storage-share">
+                  <div class="storage-share-value">
+                    {{ storagePercent(relation.total_bytes).toFixed(1) }}%
+                  </div>
+                  <div class="storage-bar">
+                    <div
+                      class="storage-bar-fill"
+                      :style="{ width: `${storagePercent(relation.total_bytes)}%` }"
+                    ></div>
+                  </div>
+                </td>
+              </tr>
+              <tr v-if="databaseStorage.other_bytes > 0">
+                <td class="storage-name">Other PostgreSQL storage</td>
+                <td colspan="3">System catalogs and database overhead</td>
+                <td class="storage-total">{{ formatBytes(databaseStorage.other_bytes) }}</td>
+                <td class="storage-share">
+                  <div class="storage-share-value">
+                    {{ storagePercent(databaseStorage.other_bytes).toFixed(1) }}%
+                  </div>
+                  <div class="storage-bar">
+                    <div
+                      class="storage-bar-fill storage-bar-fill-muted"
+                      :style="{ width: `${storagePercent(databaseStorage.other_bytes)}%` }"
+                    ></div>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </template>
     </div>
@@ -625,6 +750,88 @@ async function saveSettings(): Promise<void> {
   font-size: 0.875rem;
   color: var(--success);
   font-weight: 500;
+}
+
+.database-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+.database-total strong {
+  color: var(--text-primary);
+  font-size: 1.25rem;
+}
+
+.storage-table-wrap {
+  overflow-x: auto;
+}
+
+.storage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.storage-table th,
+.storage-table td {
+  padding: 0.625rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+}
+
+.storage-table th {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.storage-table th:first-child,
+.storage-table td:first-child {
+  text-align: left;
+}
+
+.storage-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.storage-name {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
+.storage-total {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.storage-share {
+  min-width: 90px;
+}
+
+.storage-share-value {
+  margin-bottom: 0.25rem;
+}
+
+.storage-bar {
+  height: 4px;
+  overflow: hidden;
+  background: var(--bg-hover);
+  border-radius: 999px;
+}
+
+.storage-bar-fill {
+  height: 100%;
+  background: var(--primary);
+  border-radius: inherit;
+}
+
+.storage-bar-fill-muted {
+  background: var(--text-muted);
 }
 
 .version-grid {

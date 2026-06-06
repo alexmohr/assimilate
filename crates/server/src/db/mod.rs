@@ -2751,6 +2751,38 @@ pub async fn set_setting(pool: &PgPool, key: &str, value: &str) -> Result<(), Ap
     Ok(())
 }
 
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+pub struct DatabaseRelationSizeRow {
+    pub table_name: String,
+    pub table_bytes: i64,
+    pub index_bytes: i64,
+    pub toast_bytes: i64,
+    pub total_bytes: i64,
+}
+
+pub async fn get_database_storage(
+    pool: &PgPool,
+) -> Result<(i64, Vec<DatabaseRelationSizeRow>), ApiError> {
+    let total_bytes =
+        sqlx::query_scalar::<_, i64>("SELECT pg_database_size(current_database())::BIGINT")
+            .fetch_one(pool)
+            .await
+            .map_err(ApiError::Database)?;
+
+    let relations = sqlx::query_as::<_, DatabaseRelationSizeRow>(
+        "SELECT relname::TEXT AS table_name, pg_relation_size(relid)::BIGINT AS table_bytes, \
+         pg_indexes_size(relid)::BIGINT AS index_bytes, (pg_total_relation_size(relid) - \
+         pg_relation_size(relid) - pg_indexes_size(relid))::BIGINT AS toast_bytes, \
+         pg_total_relation_size(relid)::BIGINT AS total_bytes FROM \
+         pg_catalog.pg_statio_user_tables ORDER BY total_bytes DESC, table_name ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    Ok((total_bytes, relations))
+}
+
 pub async fn get_schedule_timezone(pool: &PgPool) -> Result<chrono_tz::Tz, ApiError> {
     let tz_str = get_setting(pool, "timezone").await?.unwrap_or_default();
     shared::schedule::parse_timezone(&tz_str)

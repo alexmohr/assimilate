@@ -402,4 +402,7 @@ echo "export AGENT_TOKEN_1='$WEB01_TOKEN'" > /tmp/agent-tokens.env
 echo "export AGENT_TOKEN_2='$DB01_TOKEN'" >> /tmp/agent-tokens.env
 echo "export AGENT_TOKEN_3='$MEDIA_TOKEN'" >> /tmp/agent-tokens.env
 
+echo "==> Updating database storage statistics..."
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -c 'ANALYZE;' > /dev/null
+
 echo "==> Demo data seeded successfully."

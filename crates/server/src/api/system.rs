@@ -220,6 +220,43 @@ pub async fn update_settings(
         timezone: effective_tz.name().to_owned(),
     }))
 }
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct DatabaseStorageResponse {
+    pub database_bytes: i64,
+    pub other_bytes: i64,
+    pub relations: Vec<db::DatabaseRelationSizeRow>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/system/database-storage",
+    tag = "System",
+    operation_id = "getDatabaseStorage",
+    summary = "Get PostgreSQL storage usage by application table",
+    responses(
+        (status = 200, description = "Database storage breakdown", body = DatabaseStorageResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden -- admin only"),
+    )
+)]
+pub async fn get_database_storage(
+    _admin: RequireAdmin,
+    State(state): State<AppState>,
+) -> Result<Json<DatabaseStorageResponse>, ApiError> {
+    let (database_bytes, relations) = db::get_database_storage(&state.pool).await?;
+    let relation_bytes = relations
+        .iter()
+        .map(|relation| relation.total_bytes)
+        .sum::<i64>();
+
+    Ok(Json(DatabaseStorageResponse {
+        database_bytes,
+        other_bytes: database_bytes.saturating_sub(relation_bytes),
+        relations,
+    }))
+}
+
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct VersionResponse {
     pub server_version: String,

@@ -353,6 +353,10 @@ async fn main() -> Result<(), StartupError> {
             "/api/system/settings",
             get(api::system::get_settings).put(api::system::update_settings),
         )
+        .route(
+            "/api/system/database-storage",
+            get(api::system::get_database_storage),
+        )
         .route("/api/system/version", get(api::system::get_version))
         .route("/api/ssh/test-connection", post(api::ssh::test_connection))
         .route("/api/ssh/deploy-key", post(api::ssh::deploy_key))

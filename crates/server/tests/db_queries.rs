@@ -36,6 +36,27 @@ async fn client_insert_and_get(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn database_storage_lists_application_tables(pool: PgPool) {
+    let (database_bytes, relations) = db::get_database_storage(&pool).await.unwrap();
+
+    assert!(database_bytes > 0);
+    assert!(
+        relations
+            .iter()
+            .any(|relation| relation.table_name == "archive_files")
+    );
+    assert!(relations.iter().all(|relation| relation.table_bytes >= 0));
+    assert!(relations.iter().all(|relation| relation.index_bytes >= 0));
+    assert!(relations.iter().all(|relation| relation.toast_bytes >= 0));
+    assert!(relations.iter().all(|relation| relation.total_bytes >= 0));
+    assert!(
+        relations
+            .windows(2)
+            .all(|rows| rows[0].total_bytes >= rows[1].total_bytes)
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn client_not_found(pool: PgPool) {
     let result = db::get_client_by_hostname(&pool, "nonexistent").await;
     assert!(result.is_err());

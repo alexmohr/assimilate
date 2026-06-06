@@ -38,6 +38,12 @@ System settings are stored in the database and managed through the UI or the `/a
 | `retention_days` | `7` | Number of days to retain backup reports and system event log entries. Set to `0` to disable automatic cleanup. |
 | `timezone` | `UTC` | Timezone used for displaying timestamps in the UI and for scheduling cron-based backups (e.g., `Europe/Berlin`, `America/New_York`). |
 
+## Database Storage
+
+Open **System → Database Storage** to inspect PostgreSQL disk allocation. The table lists every application table in descending size order and separates table data, indexes, and TOAST data. Use this view to identify growth in archive indexes, backup reports, audit records, and other persisted data.
+
+The total includes PostgreSQL system catalogs and database overhead. The **Other PostgreSQL storage** row accounts for allocation not owned by an application table. Deleted rows remain reusable inside PostgreSQL and do not necessarily reduce the database files on disk.
+
 ## Schedule Configuration
 
 Each schedule is associated with a repository and controls when and how backups run. Managed via the [Scheduling](scheduling.md) UI or the `/api/schedules` endpoint.

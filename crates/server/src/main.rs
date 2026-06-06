@@ -85,7 +85,7 @@ async fn main() -> Result<(), StartupError> {
         )
     })?;
 
-    let server_addr = SocketAddr::from(([127, 0, 0, 1], addr.port()));
+    let server_addr = server::tunnel::tunnel_target_addr(addr);
     let ui_broadcast = server::ws::ui_broadcast::UiBroadcast::new();
     let tunnel_manager = TunnelManager::new(pool.clone(), ui_broadcast.clone(), server_addr);
 

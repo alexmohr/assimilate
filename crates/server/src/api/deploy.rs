@@ -41,6 +41,12 @@ pub struct DeployAgentResponse {
     pub error: Option<String>,
 }
 
+fn tunnel_server_url(tunnel: &db::SshTunnel) -> Option<String> {
+    tunnel
+        .enabled
+        .then(|| format!("ws://127.0.0.1:{}", tunnel.tunnel_port))
+}
+
 pub fn agent_binary_dir() -> PathBuf {
     if let Ok(path) = std::env::var("AGENT_BINARY_DIR") {
         return PathBuf::from(path);
@@ -128,10 +134,17 @@ pub async fn deploy_agent(
     let binary_dir = agent_binary_dir();
 
     let client = db::get_client_by_hostname(&state.pool, &hostname).await?;
+    let tunnel_server_url = db::get_tunnel_by_client_id(&state.pool, client.id)
+        .await
+        .ok()
+        .and_then(|tunnel| tunnel_server_url(&tunnel));
+    let uses_tunnel = tunnel_server_url.is_some();
+    let server_url = tunnel_server_url.unwrap_or(req.server_url);
 
     let available_version = query_available_agent_version(&binary_dir).await;
 
-    if let Some(ref available) = available_version
+    if !uses_tunnel
+        && let Some(ref available) = available_version
         && let Some(ref deployed) = client.agent_version
         && available == deployed
     {
@@ -167,7 +180,7 @@ pub async fn deploy_agent(
         port,
         binary_dir: &binary_dir,
         remote_path: install_path,
-        server_url: &req.server_url,
+        server_url: &server_url,
         token: &token_hex,
         use_sudo: req.use_sudo,
         sudo_password: req.sudo_password.as_deref(),
@@ -203,6 +216,41 @@ pub async fn deploy_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enabled_tunnel_uses_loopback_server_url() {
+        let tunnel = db::SshTunnel {
+            id: 1,
+            client_id: 2,
+            ssh_host: "agent.example.com".to_string(),
+            ssh_user: "root".to_string(),
+            ssh_port: 22,
+            tunnel_port: 18080,
+            enabled: true,
+            created_at: chrono::Utc::now(),
+        };
+
+        assert_eq!(
+            tunnel_server_url(&tunnel),
+            Some("ws://127.0.0.1:18080".to_string())
+        );
+    }
+
+    #[test]
+    fn disabled_tunnel_does_not_override_server_url() {
+        let tunnel = db::SshTunnel {
+            id: 1,
+            client_id: 2,
+            ssh_host: "agent.example.com".to_string(),
+            ssh_user: "root".to_string(),
+            ssh_port: 22,
+            tunnel_port: 18080,
+            enabled: false,
+            created_at: chrono::Utc::now(),
+        };
+
+        assert_eq!(tunnel_server_url(&tunnel), None);
+    }
 
     // Tests combined into one: both mutate AGENT_BINARY_DIR env var, causing races when parallel.
     #[test]

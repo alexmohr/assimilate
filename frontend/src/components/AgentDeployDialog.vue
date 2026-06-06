@@ -195,6 +195,9 @@ async function submitDeploy(): Promise<void> {
                 placeholder="http://your-server:8080"
               />
               <span class="field-hint">The URL the agent will connect to</span>
+              <span class="field-hint">
+                Hosts with an enabled SSH tunnel automatically use that tunnel instead.
+              </span>
             </div>
             <div class="field">
               <label class="field-label">Install Path</label>

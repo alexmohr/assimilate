@@ -27,7 +27,7 @@ use crate::{
     log_buffer::LogBuffer,
     notifications::NotificationService,
     tunnel::TunnelManager,
-    ws::{registry::AgentRegistry, ui_broadcast::UiBroadcast},
+    ws::{completion_bus::CompletionBus, registry::AgentRegistry, ui_broadcast::UiBroadcast},
 };
 
 pub type PendingDryRuns =
@@ -51,6 +51,7 @@ pub struct AppState {
     pub tunnel_manager: TunnelManager,
     pub log_buffer: LogBuffer,
     pub notification_service: NotificationService,
+    pub completion_bus: CompletionBus,
     pub pending_dryruns: PendingDryRuns,
     pub pending_restores: PendingRestores,
     pub pending_migrations: PendingMigrations,

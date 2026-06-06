@@ -15,7 +15,7 @@ use crate::{
     api::repos::sync_new_archives,
     config_assembler, db,
     tunnel::TunnelManager,
-    ws::{registry::AgentRegistry, ui_broadcast::UiBroadcast},
+    ws::{completion_bus::CompletionBus, registry::AgentRegistry, ui_broadcast::UiBroadcast},
 };
 
 const TICK_INTERVAL: Duration = Duration::from_secs(30);
@@ -30,7 +30,9 @@ pub async fn run(
     encryption_key: [u8; 32],
     ui_broadcast: UiBroadcast,
     tunnel_manager: TunnelManager,
+    completion_bus: CompletionBus,
 ) {
+    let _receiver = completion_bus.subscribe();
     let schedule_pool = pool.clone();
     let retention_pool = pool.clone();
     let sync_pool = pool;

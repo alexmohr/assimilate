@@ -18,9 +18,9 @@ Use browser download to retrieve individual files or a directory tree directly t
 
 1. Navigate to **Repos**, select a repository, and open the **Archives** tab.
 2. Click the archive you want to restore from.
-3. Click **Browse** to open the file tree.
-4. Navigate to the file or directory you want.
-5. Click the **Download** icon next to a file to download it, or click **Export** on the archive detail view to download an entire subtree as `tar.lz4`.
+3. Navigate to the file or directory you want.
+4. Click **Download** to save it locally, or **Restore to host** to restore it directly to its original location.
+5. Use the actions on the root `.` row to download or restore the whole archive.
 
 The server streams data live from the borg repository. For details on the export format, see [Exporting as tar.lz4](archives.md#exporting-as-tarlz4).
 
@@ -33,21 +33,7 @@ The server streams data live from the borg repository. For details on the export
 
 Agent-side restore extracts files directly on the agent machine — no data passes through the Assimilate server or your browser. This is the right approach for large restores or when the destination is the agent's own filesystem.
 
-### How to Trigger
-
-1. Navigate to **Repos**, select a repository, and open the **Archives** tab.
-2. Open the archive detail view.
-3. Click **Restore to Agent**.
-4. Configure the restore options:
-
-| Option | Description |
-|--------|-------------|
-| **Archive** | Pre-selected archive to restore from |
-| **Target path** | Absolute path on the agent machine to extract files into |
-| **Sub-path** | Optional path prefix inside the archive to limit what is extracted (e.g. `/home/user/documents`) |
-| **Strip components** | Number of leading path components to strip from extracted paths |
-
-1. Click **Start Restore**. The server sends a `RestoreArchive` message to the connected agent.
+Navigate to the archive browser and click **Restore to host** beside a file or directory. Confirm the operation to extract it to its original location. Use the root `.` row to restore the whole archive.
 
 ### Restore Status
 

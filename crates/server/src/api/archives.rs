@@ -209,6 +209,12 @@ pub struct ExtractQuery {
     pub path: String,
 }
 
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct DeleteArchiveResponse {
+    pub success: bool,
+    pub archive_name: String,
+}
+
 #[utoipa::path(
     get,
     path = "/api/repos/{repo_id}/archives",
@@ -345,6 +351,77 @@ pub async fn archive_info(
     };
 
     Ok(Json(info))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/repos/{repo_id}/archives/{archive_name}",
+    tag = "Archives",
+    operation_id = "deleteArchive",
+    summary = "Delete a single archive from a repository",
+    params(
+        ("repo_id" = i64, Path, description = "Repository ID"),
+        ("archive_name" = String, Path, description = "Archive name"),
+    ),
+    responses(
+        (status = 200, description = "Archive deleted", body = DeleteArchiveResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Archive not found"),
+        (status = 502, description = "Borg command failed"),
+    )
+)]
+pub async fn delete_archive(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    AxumPath((repo_id, archive_name)): AxumPath<(i64, String)>,
+) -> Result<Json<DeleteArchiveResponse>, ApiError> {
+    check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_delete).await?;
+    let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
+    let repo_archive = format!("{borg_repo}::{archive_name}");
+
+    let output = Borg::new()
+        .run(
+            &[
+                "delete",
+                "--lock-wait",
+                LOCK_WAIT_SECS,
+                repo_archive.as_str(),
+            ],
+            &env,
+        )
+        .await
+        .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
+
+    let exit_code = output.status.code().unwrap_or(-1);
+    if exit_code != 0 && exit_code != 1 {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(classify_borg_error(exit_code, &stderr));
+    }
+
+    db::delete_archive_records_by_names(&state.pool, repo_id, &[archive_name.clone()]).await?;
+
+    if let Err(e) = db::audit::insert_audit_entry(
+        &state.pool,
+        &db::audit::NewAuditEntry {
+            user_id: Some(auth.user_id),
+            username: &auth.username,
+            action: "delete_archive",
+            target_type: Some("archive"),
+            target_id: Some(repo_id),
+            details: Some(serde_json::json!({ "archive": archive_name })),
+            ip_address: None,
+        },
+    )
+    .await
+    {
+        tracing::warn!("failed to write audit log: {e}");
+    }
+
+    Ok(Json(DeleteArchiveResponse {
+        success: true,
+        archive_name,
+    }))
 }
 
 // Strip the leading "./" or bare "." that borg emits when archives are

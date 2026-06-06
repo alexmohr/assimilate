@@ -149,6 +149,7 @@ pub async fn download_files(
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct RestoreFilesRequest {
+    /// Paths within the archive. An empty list restores the whole archive.
     pub paths: Vec<String>,
     pub target_path: String,
     pub hostname: String,
@@ -188,12 +189,6 @@ pub async fn restore_files(
     AxumPath((repo_id, archive_name)): AxumPath<(i64, String)>,
     Json(body): Json<RestoreFilesRequest>,
 ) -> Result<Json<RestoreFilesResponse>, ApiError> {
-    if body.paths.is_empty() {
-        return Err(ApiError::BadRequest(
-            "paths array must not be empty".to_owned(),
-        ));
-    }
-
     if body.target_path.is_empty() {
         return Err(ApiError::BadRequest(
             "target_path must not be empty".to_owned(),

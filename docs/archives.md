@@ -52,6 +52,8 @@ The browser starts at the repository root (`/`). Each entry shows:
 
 Click a directory to navigate into it. Use the breadcrumb path at the top to jump back up the tree. The browser loads up to 100 entries per directory by default; very large directories may be truncated.
 
+Each row has **Download** and, for administrators, **Restore to host** actions. Restore writes the selected file or directory back to its original path on the archive's host. The root `.` row downloads, restores, or deletes the whole archive.
+
 New archives from successful backup runs are recorded and indexed in the background immediately after the backup report is saved. Archives discovered later through repository sync are also queued for indexing. Older archives that have not been indexed yet are indexed on first browse.
 
 ## Extracting Files
@@ -61,6 +63,13 @@ To download a file from an archive:
 1. Browse to the file in the archive contents view.
 2. Click the **Download** icon next to the file.
 3. The server streams the file directly from borg and your browser saves it with the original filename.
+
+To download the whole archive as `tar.lz4`, click **Download** on the root `.` row. To restore a file, directory, or the whole archive in place, click **Restore to host** on the corresponding row and confirm the operation.
+
+Administrators can also click **Delete whole archive** on the root `.` row to permanently remove the archive from the repository. This deletes the borg archive itself, the imported report, and any archive tags.
+
+!!! warning "Restores overwrite files"
+    Restoring writes directly to the original filesystem location on the matched host. Existing files may be overwritten without another prompt from borg.
 
 The download uses the correct `Content-Type` for common file types (text, images, JSON, etc.) and falls back to `application/octet-stream` for unknown extensions.
 

@@ -25,9 +25,6 @@ pub struct ExportQuery {
 }
 
 fn validate_export_path(path: &str) -> Result<(), ApiError> {
-    if path.is_empty() {
-        return Err(ApiError::BadRequest("path must not be empty".to_string()));
-    }
     if path.starts_with('/') {
         return Err(ApiError::BadRequest(
             "absolute paths not allowed".to_string(),
@@ -87,7 +84,8 @@ pub async fn export_archive(
 ) -> Result<Response, ApiError> {
     check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_extract).await?;
 
-    if let Some(ref p) = query.path {
+    let export_path = query.path.filter(|path| !path.is_empty());
+    if let Some(ref p) = export_path {
         validate_export_path(p)?;
     }
 
@@ -101,7 +99,7 @@ pub async fn export_archive(
         repo_archive,
         "-".to_owned(),
     ];
-    if let Some(ref p) = query.path {
+    if let Some(ref p) = export_path {
         args.push(p.clone());
     }
 
@@ -148,4 +146,22 @@ pub async fn export_archive(
         body,
     )
         .into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_path_selects_the_whole_archive() {
+        assert!(validate_export_path("").is_ok());
+    }
+
+    #[test]
+    fn path_validation_rejects_unsafe_paths() {
+        assert!(validate_export_path("/etc/passwd").is_err());
+        assert!(validate_export_path("../etc/passwd").is_err());
+        assert!(validate_export_path("etc/../passwd").is_err());
+        assert!(validate_export_path("etc\0passwd").is_err());
+    }
 }

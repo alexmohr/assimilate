@@ -1035,4 +1035,29 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn content_type_matches_supported_download_extensions() {
+        let cases = [
+            ("notes.txt", "text/plain"),
+            ("index.html", "text/html"),
+            ("styles.css", "text/css"),
+            ("app.js", "application/javascript"),
+            ("data.json", "application/json"),
+            ("feed.xml", "application/xml"),
+            ("manual.pdf", "application/pdf"),
+            ("files.zip", "application/zip"),
+            ("backup.gz", "application/gzip"),
+            ("archive.tar", "application/x-tar"),
+            ("image.png", "image/png"),
+            ("photo.jpeg", "image/jpeg"),
+            ("animation.gif", "image/gif"),
+            ("diagram.svg", "image/svg+xml"),
+            ("binary", "application/octet-stream"),
+        ];
+
+        cases.iter().for_each(|(filename, expected)| {
+            assert_eq!(content_type_for_extension(filename), *expected);
+        });
+    }
 }

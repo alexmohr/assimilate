@@ -19,6 +19,7 @@ use crate::{
     api::repos::sync_new_archives,
     archive_index, config_assembler, db,
     notifications::{self, EventType, NotificationEvent},
+    ws::completion_bus::OperationOutcome,
 };
 
 const PING_INTERVAL: Duration = Duration::from_secs(30);
@@ -293,11 +294,17 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 status = ?report.status,
                 "backup completed"
             );
+            let outcome_success = !matches!(&report.status, shared::types::BackupStatus::Failed);
             let status = match report.status {
                 shared::types::BackupStatus::Success => "success",
                 shared::types::BackupStatus::Warning => "warning",
                 shared::types::BackupStatus::Failed => "failed",
             };
+            state.completion_bus.publish(OperationOutcome {
+                hostname: hostname.to_owned(),
+                repo_id: report.repo_id.0,
+                success: outcome_success,
+            });
             let notification_error_message = report.error_message.clone();
             let notification_archive_name = report.archive_name.clone();
             let index_archive_name = notification_archive_name.clone();
@@ -563,6 +570,11 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 reason = %reason,
                 "backup rejected by agent"
             );
+            state.completion_bus.publish(OperationOutcome {
+                hostname: hostname.to_owned(),
+                repo_id: repo_id.0,
+                success: false,
+            });
         }
         AgentToServer::CheckCompleted {
             repo_id,
@@ -577,6 +589,11 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 duration_secs,
                 "check completed"
             );
+            state.completion_bus.publish(OperationOutcome {
+                hostname: hostname.to_owned(),
+                repo_id: repo_id.0,
+                success,
+            });
             if let Ok(target_name) = db::get_repo_name(&state.pool, repo_id.0).await {
                 state.ui_broadcast.send(ServerToUi::CheckCompleted {
                     hostname: hostname.to_owned(),
@@ -627,6 +644,11 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 files_verified,
                 "verify completed"
             );
+            state.completion_bus.publish(OperationOutcome {
+                hostname: hostname.to_owned(),
+                repo_id: repo_id.0,
+                success,
+            });
             if let Ok(target_name) = db::get_repo_name(&state.pool, repo_id.0).await {
                 state.ui_broadcast.send(ServerToUi::VerifyCompleted {
                     hostname: hostname.to_owned(),
@@ -814,6 +836,11 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 repo_id = ?repo_id,
                 "backup cancelled by agent"
             );
+            state.completion_bus.publish(OperationOutcome {
+                hostname: hostname.to_owned(),
+                repo_id: repo_id.0,
+                success: false,
+            });
             if let Err(e) = db::cancel_backup_report(&state.pool, client_id, repo_id.0).await {
                 tracing::error!(
                     hostname = %hostname,

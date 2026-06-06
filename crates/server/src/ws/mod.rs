@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+pub mod completion_bus;
 pub mod handler;
 pub mod registry;
 pub mod ssh_relay;

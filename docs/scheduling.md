@@ -23,13 +23,13 @@ When set, the bandwidth cap is passed to Borg as `--remote-ratelimit` in kB/s.
 
 The Schedules list page shows all configured backup schedules with:
 
-- **Text filter** — search by client or repository name
+- **Text filter** — search by schedule name, host, or repository name
 - **Status filter** — show All, Enabled only, or Disabled only
 - **Type filter** — filter by Backup, Check, or Verify
 - **Health filter** — filter by Passed only, Failed only, or Overdue only
 - **Sort buttons** — sort by Client, Next Run, Last Run, or Type
 
-Each schedule card shows the repository name, execution mode (Parallel/Sequential), health status, enabled state, schedule type, cron description, next run time, last run time, and a **Run** button for manual triggering.
+Each schedule card shows the repository or schedule name, the hosts included in the schedule, host count, execution mode (Parallel/Sequential), health status, enabled state, schedule type, cron description, next run time, last run time, and a **Run** button for manual triggering.
 
 ![Schedule Detail](assets/screenshots/schedule-detail.png)
 

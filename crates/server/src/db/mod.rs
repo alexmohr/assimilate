@@ -226,6 +226,9 @@ pub struct ScheduleRow {
     pub on_failure: String,
     pub owner_id: Option<i64>,
     pub visibility: String,
+    #[serde(default)]
+    #[sqlx(default)]
+    pub target_hostnames: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
@@ -1097,11 +1100,14 @@ pub async fn set_global_excludes_raw(pool: &PgPool, raw_text: &str) -> Result<()
 
 pub async fn list_schedules(pool: &PgPool) -> Result<Vec<ScheduleRow>, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
-        "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
-         last_run_at, next_run_at, exclude_patterns_raw, ignore_global_excludes, keep_hourly, \
-         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
-         pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, \
-         visibility FROM schedules ORDER BY id",
+        "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
+         s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
+         s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, \
+         s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands, \
+         s.post_backup_commands, s.execution_mode, s.on_failure, s.owner_id, s.visibility, \
+         ARRAY(SELECT c.hostname FROM schedule_targets st JOIN clients c ON c.id = st.client_id \
+         WHERE st.schedule_id = s.id ORDER BY st.execution_order, c.hostname) AS target_hostnames \
+         FROM schedules s ORDER BY s.id",
     )
     .fetch_all(pool)
     .await

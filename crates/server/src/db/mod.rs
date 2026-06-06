@@ -2100,6 +2100,38 @@ pub async fn bulk_insert_backup_reports(
     Ok(result.rows_affected())
 }
 
+pub struct ArchiveStats {
+    pub original_size: i64,
+    pub compressed_size: i64,
+    pub deduplicated_size: i64,
+    pub files_processed: i64,
+    pub duration_secs: i64,
+}
+
+pub async fn update_backup_report_stats(
+    pool: &PgPool,
+    repo_id: i64,
+    archive_name: &str,
+    stats: &ArchiveStats,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE backup_reports SET original_size = $3, compressed_size = $4, deduplicated_size = \
+         $5, files_processed = $6, duration_secs = $7 WHERE repo_id = $1 AND archive_name = $2 \
+         AND original_size = 0 AND compressed_size = 0 AND deduplicated_size = 0",
+    )
+    .bind(repo_id)
+    .bind(archive_name)
+    .bind(stats.original_size)
+    .bind(stats.compressed_size)
+    .bind(stats.deduplicated_size)
+    .bind(stats.files_processed)
+    .bind(stats.duration_secs)
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
 pub async fn list_reports_for_client(
     pool: &PgPool,
     client_id: i64,

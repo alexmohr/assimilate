@@ -13,6 +13,7 @@ use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use shared::{
     crypto::encrypt_passphrase,
+    ssh::borg_rsh,
     types::{BorgEncryption, build_repo_url},
 };
 use sqlx::PgPool;
@@ -734,10 +735,7 @@ pub async fn exec_borg(
     let mut env = HashMap::from([
         ("BORG_PASSPHRASE".to_owned(), passphrase),
         ("BORG_REPO".to_owned(), repo_url),
-        (
-            "BORG_RSH".to_owned(),
-            "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new".to_owned(),
-        ),
+        ("BORG_RSH".to_owned(), borg_rsh()),
     ]);
     if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
         env.insert("SSH_AUTH_SOCK".to_owned(), sock);
@@ -970,10 +968,7 @@ async fn run_borg_info_with_retry(
 async fn run_borg_info_once(repo_url: &str, passphrase: &str) -> Result<BorgInfoResult, ApiError> {
     let mut env = HashMap::from([
         ("BORG_PASSPHRASE".to_owned(), passphrase.to_owned()),
-        (
-            "BORG_RSH".to_owned(),
-            "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new".to_owned(),
-        ),
+        ("BORG_RSH".to_owned(), borg_rsh()),
     ]);
     if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
         env.insert("SSH_AUTH_SOCK".to_owned(), sock);
@@ -1033,10 +1028,7 @@ async fn run_borg_info_once(repo_url: &str, passphrase: &str) -> Result<BorgInfo
 async fn run_borg_break_lock(repo_url: &str, passphrase: &str) -> Result<String, ApiError> {
     let mut env = HashMap::from([
         ("BORG_PASSPHRASE".to_owned(), passphrase.to_owned()),
-        (
-            "BORG_RSH".to_owned(),
-            "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new".to_owned(),
-        ),
+        ("BORG_RSH".to_owned(), borg_rsh()),
     ]);
     if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
         env.insert("SSH_AUTH_SOCK".to_owned(), sock);
@@ -1075,10 +1067,7 @@ async fn run_borg_init(
 ) -> Result<String, ApiError> {
     let mut env = HashMap::from([
         ("BORG_PASSPHRASE".to_owned(), passphrase.to_owned()),
-        (
-            "BORG_RSH".to_owned(),
-            "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new".to_owned(),
-        ),
+        ("BORG_RSH".to_owned(), borg_rsh()),
     ]);
     if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
         env.insert("SSH_AUTH_SOCK".to_owned(), sock);

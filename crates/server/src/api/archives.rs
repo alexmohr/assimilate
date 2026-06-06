@@ -399,7 +399,8 @@ pub async fn delete_archive(
         return Err(classify_borg_error(exit_code, &stderr));
     }
 
-    db::delete_archive_records_by_names(&state.pool, repo_id, &[archive_name.clone()]).await?;
+    db::delete_archive_records_by_names(&state.pool, repo_id, std::slice::from_ref(&archive_name))
+        .await?;
 
     if let Err(e) = db::audit::insert_audit_entry(
         &state.pool,
@@ -1017,5 +1018,21 @@ mod tests {
     #[test]
     fn normalize_path_empty_unchanged() {
         assert_eq!(normalize_path(""), "");
+    }
+
+    #[test]
+    fn delete_archive_response_serializes_api_contract() {
+        let response = DeleteArchiveResponse {
+            success: true,
+            archive_name: "daily-2026-06-06".to_owned(),
+        };
+
+        assert_eq!(
+            serde_json::to_value(response).unwrap(),
+            serde_json::json!({
+                "success": true,
+                "archive_name": "daily-2026-06-06",
+            })
+        );
     }
 }

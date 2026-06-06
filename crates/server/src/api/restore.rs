@@ -260,3 +260,69 @@ pub async fn restore_files(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restore_request_deserializes_selected_paths() {
+        let request: RestoreFilesRequest = serde_json::from_value(serde_json::json!({
+            "paths": ["etc/hosts", "var/lib/app"],
+            "target_path": "/tmp/restore",
+            "hostname": "web-server-01",
+        }))
+        .unwrap();
+
+        assert_eq!(request.paths, ["etc/hosts", "var/lib/app"]);
+        assert_eq!(request.target_path, "/tmp/restore");
+        assert_eq!(request.hostname, "web-server-01");
+    }
+
+    #[test]
+    fn restore_request_deserializes_empty_paths_for_whole_archive() {
+        let request: RestoreFilesRequest = serde_json::from_value(serde_json::json!({
+            "paths": [],
+            "target_path": "/tmp/restore",
+            "hostname": "web-server-01",
+        }))
+        .unwrap();
+
+        assert!(request.paths.is_empty());
+    }
+
+    #[test]
+    fn restore_response_omits_missing_error_message() {
+        let response = RestoreFilesResponse {
+            success: true,
+            files_restored: 2,
+            error_message: None,
+        };
+
+        assert_eq!(
+            serde_json::to_value(response).unwrap(),
+            serde_json::json!({
+                "success": true,
+                "files_restored": 2,
+            })
+        );
+    }
+
+    #[test]
+    fn restore_response_includes_error_message() {
+        let response = RestoreFilesResponse {
+            success: false,
+            files_restored: 0,
+            error_message: Some("restore failed".to_owned()),
+        };
+
+        assert_eq!(
+            serde_json::to_value(response).unwrap(),
+            serde_json::json!({
+                "success": false,
+                "files_restored": 0,
+                "error_message": "restore failed",
+            })
+        );
+    }
+}

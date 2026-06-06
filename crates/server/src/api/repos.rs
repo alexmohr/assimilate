@@ -1690,7 +1690,7 @@ async fn queue_archive_indexing(
     archive_names: &[String],
     sync_kind: &str,
 ) {
-    join_all(archive_names.iter().cloned().map(|archive_name| {
+    join_all(archive_names.iter().map(|archive_name| {
         let pool = pool.clone();
         async move {
             if let Err(e) =

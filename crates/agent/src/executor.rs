@@ -1122,43 +1122,49 @@ async fn run_restore_task(
 
     let env_vars = build_borg_env(&target);
 
-    let mut args = vec![
-        "extract".to_owned(),
-        "--log-json".to_owned(),
-        format!("::{archive_name}"),
-        "--destination".to_owned(),
-        target_path,
-    ];
-    for path in &paths {
-        args.push(path.clone());
+    let args = restore_args(&archive_name, &paths);
+    let target_path = std::path::PathBuf::from(target_path);
+    if let Err(e) = tokio::fs::create_dir_all(&target_path).await {
+        let msg = AgentToServer::OperationFailed {
+            request_id,
+            error: format!("failed to create restore directory: {e}"),
+        };
+        if let Err(send_err) = outbound_tx.send(msg).await {
+            tracing::debug!(error = %send_err, "outbound send failed");
+        }
+        return;
     }
 
     info!(repo_id = ?repo_id, archive = %archive_name, "running borg extract");
 
-    let output =
-        match tokio::time::timeout(Duration::from_mins(30), borg.run(&args, &env_vars)).await {
-            Ok(Ok(out)) => out,
-            Ok(Err(e)) => {
-                let msg = AgentToServer::OperationFailed {
-                    request_id,
-                    error: format!("failed to execute borg: {e}"),
-                };
-                if let Err(send_err) = outbound_tx.send(msg).await {
-                    tracing::debug!(error = %send_err, "outbound send failed");
-                }
-                return;
+    let output = match tokio::time::timeout(
+        Duration::from_mins(30),
+        borg.run_in_dir(&args, &env_vars, &target_path),
+    )
+    .await
+    {
+        Ok(Ok(out)) => out,
+        Ok(Err(e)) => {
+            let msg = AgentToServer::OperationFailed {
+                request_id,
+                error: format!("failed to execute borg: {e}"),
+            };
+            if let Err(send_err) = outbound_tx.send(msg).await {
+                tracing::debug!(error = %send_err, "outbound send failed");
             }
-            Err(_) => {
-                let msg = AgentToServer::OperationFailed {
-                    request_id,
-                    error: "borg extract timed out".to_owned(),
-                };
-                if let Err(send_err) = outbound_tx.send(msg).await {
-                    tracing::debug!(error = %send_err, "outbound send failed");
-                }
-                return;
+            return;
+        }
+        Err(_) => {
+            let msg = AgentToServer::OperationFailed {
+                request_id,
+                error: "borg extract timed out".to_owned(),
+            };
+            if let Err(send_err) = outbound_tx.send(msg).await {
+                tracing::debug!(error = %send_err, "outbound send failed");
             }
-        };
+            return;
+        }
+    };
 
     let exit_code = output.status.code().unwrap_or(-1);
     if exit_code != 0 && exit_code != 1 {
@@ -1197,6 +1203,16 @@ async fn run_restore_task(
     if let Err(e) = outbound_tx.send(msg).await {
         tracing::debug!(error = %e, "outbound send failed");
     }
+}
+
+fn restore_args(archive_name: &str, paths: &[String]) -> Vec<String> {
+    let mut args = vec![
+        "extract".to_owned(),
+        "--log-json".to_owned(),
+        format!("::{archive_name}"),
+    ];
+    args.extend(paths.iter().cloned());
+    args
 }
 
 async fn run_delete_archives_task(
@@ -1375,6 +1391,31 @@ fn build_borg_env(target: &BackupTarget) -> Vec<(String, String)> {
 #[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restore_args_select_the_whole_archive_when_paths_are_empty() {
+        assert_eq!(
+            restore_args("archive-1", &[]),
+            vec!["extract", "--log-json", "::archive-1"]
+        );
+    }
+
+    #[test]
+    fn restore_args_append_selected_paths() {
+        assert_eq!(
+            restore_args(
+                "archive-1",
+                &["etc/hosts".to_owned(), "var/lib/app".to_owned()]
+            ),
+            vec![
+                "extract",
+                "--log-json",
+                "::archive-1",
+                "etc/hosts",
+                "var/lib/app"
+            ]
+        );
+    }
 
     #[test]
     fn parse_dry_run_file_status_and_archive_progress() {

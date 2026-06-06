@@ -49,7 +49,9 @@ vi.mock('../composables/useArchiveBrowser', () => ({
     selectArchive: vi.fn(),
     navigateTo: vi.fn(),
     entryName: vi.fn((e: { path: string }) => e.path.split('/').pop() ?? ''),
-    downloadFile: vi.fn(),
+    downloadEntry: vi.fn(),
+    restoreEntry: vi.fn(),
+    deleteArchive: vi.fn(),
   }),
 }))
 

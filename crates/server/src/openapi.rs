@@ -78,6 +78,7 @@ use crate::{
         crate::api::repos::reset_import,
         crate::api::archives::list_archives,
         crate::api::archives::archive_info,
+        crate::api::archives::delete_archive,
         crate::api::archives::list_contents,
         crate::api::archives::get_archive_index_status,
         crate::api::archives::extract_file,

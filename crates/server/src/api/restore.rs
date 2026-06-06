@@ -149,6 +149,7 @@ pub async fn download_files(
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct RestoreFilesRequest {
+    /// Paths within the archive. An empty list restores the whole archive.
     pub paths: Vec<String>,
     pub target_path: String,
     pub hostname: String,
@@ -188,12 +189,6 @@ pub async fn restore_files(
     AxumPath((repo_id, archive_name)): AxumPath<(i64, String)>,
     Json(body): Json<RestoreFilesRequest>,
 ) -> Result<Json<RestoreFilesResponse>, ApiError> {
-    if body.paths.is_empty() {
-        return Err(ApiError::BadRequest(
-            "paths array must not be empty".to_owned(),
-        ));
-    }
-
     if body.target_path.is_empty() {
         return Err(ApiError::BadRequest(
             "target_path must not be empty".to_owned(),
@@ -263,5 +258,71 @@ pub async fn restore_files(
                 "restore timed out after 30 seconds".to_owned(),
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restore_request_deserializes_selected_paths() {
+        let request: RestoreFilesRequest = serde_json::from_value(serde_json::json!({
+            "paths": ["etc/hosts", "var/lib/app"],
+            "target_path": "/tmp/restore",
+            "hostname": "web-server-01",
+        }))
+        .unwrap();
+
+        assert_eq!(request.paths, ["etc/hosts", "var/lib/app"]);
+        assert_eq!(request.target_path, "/tmp/restore");
+        assert_eq!(request.hostname, "web-server-01");
+    }
+
+    #[test]
+    fn restore_request_deserializes_empty_paths_for_whole_archive() {
+        let request: RestoreFilesRequest = serde_json::from_value(serde_json::json!({
+            "paths": [],
+            "target_path": "/tmp/restore",
+            "hostname": "web-server-01",
+        }))
+        .unwrap();
+
+        assert!(request.paths.is_empty());
+    }
+
+    #[test]
+    fn restore_response_omits_missing_error_message() {
+        let response = RestoreFilesResponse {
+            success: true,
+            files_restored: 2,
+            error_message: None,
+        };
+
+        assert_eq!(
+            serde_json::to_value(response).unwrap(),
+            serde_json::json!({
+                "success": true,
+                "files_restored": 2,
+            })
+        );
+    }
+
+    #[test]
+    fn restore_response_includes_error_message() {
+        let response = RestoreFilesResponse {
+            success: false,
+            files_restored: 0,
+            error_message: Some("restore failed".to_owned()),
+        };
+
+        assert_eq!(
+            serde_json::to_value(response).unwrap(),
+            serde_json::json!({
+                "success": false,
+                "files_restored": 0,
+                "error_message": "restore failed",
+            })
+        );
     }
 }

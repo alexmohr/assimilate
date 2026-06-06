@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    sync::Arc,
+    time::Duration,
+};
 
 use russh::{
     Channel, client,
@@ -14,6 +19,19 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, warn};
 
 use crate::{db, ws::ui_broadcast::UiBroadcast};
+
+#[must_use]
+pub fn tunnel_target_addr(bind_addr: SocketAddr) -> SocketAddr {
+    if !bind_addr.ip().is_unspecified() {
+        return bind_addr;
+    }
+
+    let ip = match bind_addr.ip() {
+        IpAddr::V4(_) => IpAddr::V4(Ipv4Addr::LOCALHOST),
+        IpAddr::V6(_) => IpAddr::V6(Ipv6Addr::LOCALHOST),
+    };
+    SocketAddr::new(ip, bind_addr.port())
+}
 
 pub struct TunnelSshHandler {
     pub server_addr: SocketAddr,
@@ -423,7 +441,7 @@ impl TunnelManager {
 mod tests {
     use std::{net::SocketAddr, time::Duration};
 
-    use super::{TunnelManager, tunnel_ssh_config};
+    use super::{TunnelManager, tunnel_ssh_config, tunnel_target_addr};
     use crate::ws::ui_broadcast::UiBroadcast;
 
     fn dummy_manager() -> TunnelManager {
@@ -449,6 +467,29 @@ mod tests {
     fn tunnel_ssh_config_keepalive_max() {
         let config = tunnel_ssh_config();
         assert_eq!(config.keepalive_max, 3);
+    }
+
+    #[test]
+    fn tunnel_target_uses_ipv4_loopback_for_wildcard_bind() {
+        let bind_addr: SocketAddr = "0.0.0.0:8080".parse().unwrap();
+        let expected: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+
+        assert_eq!(tunnel_target_addr(bind_addr), expected);
+    }
+
+    #[test]
+    fn tunnel_target_uses_ipv6_loopback_for_wildcard_bind() {
+        let bind_addr: SocketAddr = "[::]:8080".parse().unwrap();
+        let expected: SocketAddr = "[::1]:8080".parse().unwrap();
+
+        assert_eq!(tunnel_target_addr(bind_addr), expected);
+    }
+
+    #[test]
+    fn tunnel_target_preserves_specific_bind_address() {
+        let bind_addr: SocketAddr = "192.0.2.10:8080".parse().unwrap();
+
+        assert_eq!(tunnel_target_addr(bind_addr), bind_addr);
     }
 
     #[tokio::test]

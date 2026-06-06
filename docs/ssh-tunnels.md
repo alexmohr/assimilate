@@ -44,14 +44,14 @@ Tunnel management requires admin privileges. Navigate to the **Tunnels** page in
 4. Leave **Enabled** checked to activate the tunnel immediately after saving.
 5. Click **Save**.
 
-Once created, the server connects to the agent machine over SSH and requests remote port forwarding. On the agent machine, set:
+Once created, the server connects to the agent machine over SSH and requests remote port forwarding.
+Install or update the agent from the host's **Deploy** dialog. Assimilate detects the enabled tunnel
+and writes `ws://127.0.0.1:<tunnel_port>` and a generated token into the systemd service
+automatically. No agent configuration is required outside the UI.
 
-```bash
-BORG_SERVER_URL=ws://localhost:<tunnel_port>
-BORG_AGENT_TOKEN=<token from server UI>
-```
-
-No other agent configuration is needed. The agent connects through the tunnel exactly as it would connect to the server directly.
+The tunnel forwards connections to the address configured by `ASSIMILATE_BIND_ADDR`. Wildcard
+binds such as `0.0.0.0:8080` and `[::]:8080` are reached through the corresponding loopback
+address inside the server process.
 
 ### sshd requirement
 
@@ -90,6 +90,10 @@ Each tunnel has one of the following statuses:
 When a connected tunnel's SSH session drops, the server automatically attempts to reconnect. The retry delay starts at 1 second and doubles on each failure, capping at 120 seconds. The server sends keepalive packets every 15 seconds (up to 3 missed keepalives before treating the session as dead).
 
 Tunnels in an **Error** state (e.g., public key authentication rejected) do **not** auto-reconnect — the error must be resolved and the tunnel re-enabled manually.
+
+If the tunnel is **Connected** but the agent cannot connect, redeploy the agent from the host's
+**Deploy** dialog and verify that `ASSIMILATE_BIND_ADDR` identifies an address assigned to the
+server host or container.
 
 ### Server startup
 

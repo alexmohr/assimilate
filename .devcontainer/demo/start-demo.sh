@@ -55,7 +55,7 @@ echo "==> Seeding demo data..."
 echo "==> Starting 3 agents..."
 BORG_SERVER_URL=http://localhost:8080 BORG_AGENT_TOKEN="$AGENT_TOKEN_1" BORG_HOSTNAME=web-server-01 /app/agent &
 BORG_SERVER_URL=http://localhost:8080 BORG_AGENT_TOKEN="$AGENT_TOKEN_2" BORG_HOSTNAME=db-server-01 /app/agent &
-BORG_SERVER_URL=http://localhost:8080 BORG_AGENT_TOKEN="$AGENT_TOKEN_3" BORG_HOSTNAME=media-store-01 /app/agent &
+BORG_SERVER_URL=ws://127.0.0.1:18080 BORG_AGENT_TOKEN="$AGENT_TOKEN_3" BORG_HOSTNAME=media-store-01 /app/agent &
 
 echo ""
 echo "Demo ready: http://localhost:8080"

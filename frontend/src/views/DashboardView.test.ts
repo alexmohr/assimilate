@@ -37,6 +37,30 @@ vi.mock('../api/client', () => ({
           },
         })
       }
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({
+          data: {
+            summary: {
+              protected_hosts: 0,
+              eligible_hosts: 0,
+              needs_attention: 0,
+              running_operations: 0,
+              total_storage_bytes: 0,
+            },
+            findings: [],
+            protection: {
+              protected_hosts: 0,
+              eligible_hosts: 0,
+              unassigned_hosts: [],
+              never_succeeded_targets: 0,
+              disabled_only_hosts: [],
+            },
+            running_operations: [],
+            upcoming_schedules: [],
+            repository_capacity: [],
+          },
+        })
+      }
       return Promise.resolve({ data: [] })
     }),
   },

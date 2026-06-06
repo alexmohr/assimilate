@@ -50,6 +50,7 @@ interface ScheduleRow {
   id: number
   repo_id: number | null
   name: string
+  target_hostnames: string[]
   schedule_type: string
   cron_expression: string
   enabled: boolean
@@ -553,8 +554,8 @@ watch(
 )
 
 const clientSchedules = computed(() => {
-  const repoIds = new Set(repos.value.map((r) => r.id))
-  return schedules.value.filter((s) => s.repo_id != null && repoIds.has(s.repo_id))
+  const hostname = client.value?.hostname
+  return hostname ? schedules.value.filter((s) => s.target_hostnames.includes(hostname)) : []
 })
 
 function repoNameForSchedule(s: ScheduleRow): string {
@@ -1399,8 +1400,8 @@ watch(wsStatus, (newStatus, oldStatus) => {
         >
           <div
             v-for="r in filteredSortedReports"
-            :key="r.id"
             :id="`report-${r.id}`"
+            :key="r.id"
             class="result-card"
             :class="[
               `result-${r.status}`,

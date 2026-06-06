@@ -14,7 +14,11 @@ use russh::{
 };
 use shared::protocol::{ServerToUi, TunnelStatus};
 use sqlx::PgPool;
-use tokio::{io::copy_bidirectional, net::TcpStream, sync::RwLock};
+use tokio::{
+    io::copy_bidirectional,
+    net::TcpStream,
+    sync::{Notify, RwLock},
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, warn};
 
@@ -104,6 +108,15 @@ struct TunnelState {
     client_id: i64,
     status: TunnelStatus,
     cancel: CancellationToken,
+    completion: Arc<Notify>,
+}
+
+struct TunnelTaskCompletion(Arc<Notify>);
+
+impl Drop for TunnelTaskCompletion {
+    fn drop(&mut self) {
+        self.0.notify_one();
+    }
 }
 
 impl TunnelManager {
@@ -138,6 +151,8 @@ impl TunnelManager {
     }
 
     pub async fn start_tunnel(&self, tunnel_id: i64) {
+        self.stop_tunnel(tunnel_id).await;
+
         let tunnel = match db::get_tunnel_by_id(&self.pool, tunnel_id).await {
             Ok(t) => t,
             Err(e) => {
@@ -147,6 +162,7 @@ impl TunnelManager {
         };
 
         let cancel = CancellationToken::new();
+        let completion = Arc::new(Notify::new());
         let hostname = tunnel.ssh_host.clone();
 
         {
@@ -157,15 +173,21 @@ impl TunnelManager {
                     client_id: tunnel.client_id,
                     status: TunnelStatus::Disconnected,
                     cancel: cancel.clone(),
+                    completion: completion.clone(),
                 },
             );
         }
 
         let manager = self.clone();
         tokio::spawn(async move {
+            let _completion = TunnelTaskCompletion(completion);
             let mut backoff = Duration::from_secs(1);
             loop {
-                let current = match db::get_tunnel_by_id(&manager.pool, tunnel_id).await {
+                let current = tokio::select! {
+                    () = cancel.cancelled() => return,
+                    result = db::get_tunnel_by_id(&manager.pool, tunnel_id) => result,
+                };
+                let current = match current {
                     Ok(t) => t,
                     Err(e) => {
                         error!(tunnel_id, "tunnel DB lookup failed: {e}");
@@ -237,13 +259,15 @@ impl TunnelManager {
                     client_id: current.client_id,
                 };
 
-                let mut session = match client::connect(
-                    tunnel_ssh_config(),
-                    (current.ssh_host.as_str(), ssh_port),
-                    handler,
-                )
-                .await
-                {
+                let session = tokio::select! {
+                    () = cancel.cancelled() => return,
+                    result = client::connect(
+                        tunnel_ssh_config(),
+                        (current.ssh_host.as_str(), ssh_port),
+                        handler,
+                    ) => result,
+                };
+                let mut session = match session {
                     Ok(s) => s,
                     Err(e) => {
                         warn!(tunnel_id, "tunnel connect failed: {e}");
@@ -260,10 +284,13 @@ impl TunnelManager {
                 };
 
                 let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), None);
-                let auth = match session
-                    .authenticate_publickey(&current.ssh_user, key_with_alg)
-                    .await
-                {
+                let auth = tokio::select! {
+                    () = cancel.cancelled() => return,
+                    result = session.authenticate_publickey(&current.ssh_user, key_with_alg) => {
+                        result
+                    }
+                };
+                let auth = match auth {
                     Ok(a) => a,
                     Err(e) => {
                         warn!(tunnel_id, "tunnel auth error: {e}");
@@ -293,7 +320,11 @@ impl TunnelManager {
                     return;
                 }
 
-                match session.tcpip_forward("127.0.0.1", tunnel_port).await {
+                let forward = tokio::select! {
+                    () = cancel.cancelled() => return,
+                    result = session.tcpip_forward("127.0.0.1", tunnel_port) => result,
+                };
+                match forward {
                     Ok(_bound_port) => {
                         manager
                             .set_status(tunnel_id, &hostname, TunnelStatus::Connected)
@@ -317,9 +348,11 @@ impl TunnelManager {
                 loop {
                     tokio::select! {
                         () = cancel.cancelled() => {
-                            if let Err(e) = session
-                                .disconnect(russh::Disconnect::ByApplication, "", "en")
-                                .await
+                            if let Ok(Err(e)) = tokio::time::timeout(
+                                Duration::from_secs(2),
+                                session.disconnect(russh::Disconnect::ByApplication, "", "en"),
+                            )
+                            .await
                             {
                                 tracing::debug!(error = %e, "tunnel disconnect failed");
                             }
@@ -357,6 +390,7 @@ impl TunnelManager {
     pub async fn stop_tunnel(&self, tunnel_id: i64) {
         if let Some(state) = self.tunnels.write().await.remove(&tunnel_id) {
             state.cancel.cancel();
+            state.completion.notified().await;
         }
     }
 
@@ -439,9 +473,21 @@ impl TunnelManager {
 
 #[cfg(test)]
 mod tests {
-    use std::{net::SocketAddr, time::Duration};
+    use std::{
+        net::SocketAddr,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        time::Duration,
+    };
 
-    use super::{TunnelManager, tunnel_ssh_config, tunnel_target_addr};
+    use tokio::sync::Notify;
+    use tokio_util::sync::CancellationToken;
+
+    use super::{
+        TunnelManager, TunnelState, TunnelTaskCompletion, tunnel_ssh_config, tunnel_target_addr,
+    };
     use crate::ws::ui_broadcast::UiBroadcast;
 
     fn dummy_manager() -> TunnelManager {
@@ -505,5 +551,38 @@ mod tests {
         mgr.stop_tunnel(999).await;
         let statuses = mgr.all_statuses().await;
         assert!(statuses.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stop_tunnel_waits_for_task_completion() {
+        let mgr = dummy_manager();
+        let cancel = CancellationToken::new();
+        let completion = Arc::new(Notify::new());
+        let task_finished = Arc::new(AtomicBool::new(false));
+
+        mgr.tunnels.write().await.insert(
+            1,
+            TunnelState {
+                client_id: 2,
+                status: shared::protocol::TunnelStatus::Connected,
+                cancel: cancel.clone(),
+                completion: completion.clone(),
+            },
+        );
+
+        tokio::spawn({
+            let task_finished = task_finished.clone();
+            async move {
+                let _completion = TunnelTaskCompletion(completion);
+                cancel.cancelled().await;
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                task_finished.store(true, Ordering::SeqCst);
+            }
+        });
+
+        mgr.stop_tunnel(1).await;
+
+        assert!(task_finished.load(Ordering::SeqCst));
+        assert!(mgr.tunnel_status(1).await.is_none());
     }
 }

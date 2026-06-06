@@ -633,29 +633,40 @@ fn shell_escape(s: &str) -> String {
 }
 
 fn inject_env_vars(content: &str, server_url: &str, token: &str) -> String {
-    let mut result = content.to_string();
+    let result = replace_or_insert_environment(content, "BORG_SERVER_URL", server_url);
+    replace_or_insert_environment(&result, "BORG_AGENT_TOKEN", token)
+}
 
-    let url_placeholder = "BORG_SERVER_URL=<will be set automatically>";
-    let token_placeholder = "BORG_AGENT_TOKEN=<will be set automatically>";
+fn replace_or_insert_environment(content: &str, key: &str, value: &str) -> String {
+    let assignment = format!("{key}=");
+    let mut replaced = false;
+    let mut lines = content
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim();
+            let environment = trimmed
+                .strip_prefix("Environment=")
+                .map_or(trimmed, |value| value.trim_matches('"'));
 
-    if result.contains(url_placeholder) {
-        result = result.replace(url_placeholder, &format!("BORG_SERVER_URL={server_url}"));
-    } else if !result.contains("BORG_SERVER_URL=") {
-        result = result.replace(
-            "[Service]\n",
-            &format!("[Service]\nEnvironment=BORG_SERVER_URL={server_url}\n"),
-        );
+            if environment.starts_with(&assignment) {
+                replaced = true;
+                format!("Environment={key}={value}")
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if !replaced
+        && let Some(service_index) = lines.iter().position(|line| line.trim() == "[Service]")
+    {
+        lines.insert(service_index + 1, format!("Environment={key}={value}"));
     }
 
-    if result.contains(token_placeholder) {
-        result = result.replace(token_placeholder, &format!("BORG_AGENT_TOKEN={token}"));
-    } else if !result.contains("BORG_AGENT_TOKEN=") {
-        result = result.replace(
-            "[Service]\n",
-            &format!("[Service]\nEnvironment=BORG_AGENT_TOKEN={token}\n"),
-        );
+    let mut result = lines.join("\n");
+    if content.ends_with('\n') {
+        result.push('\n');
     }
-
     result
 }
 
@@ -862,17 +873,17 @@ mod tests {
     }
 
     #[test]
-    fn inject_env_vars_leaves_existing_vars_intact() {
+    fn inject_env_vars_refreshes_existing_vars() {
         let content = concat!(
             "[Service]\n",
             "Environment=BORG_SERVER_URL=https://other.com\n",
-            "Environment=BORG_AGENT_TOKEN=othertoken\n",
+            "Environment=\"BORG_AGENT_TOKEN=othertoken\"\n",
         );
         let result = inject_env_vars(content, "https://example.com", "mytoken");
-        assert!(result.contains("BORG_SERVER_URL=https://other.com"));
-        assert!(result.contains("BORG_AGENT_TOKEN=othertoken"));
-        assert!(!result.contains("https://example.com"));
-        assert!(!result.contains("mytoken"));
+        assert!(result.contains("Environment=BORG_SERVER_URL=https://example.com"));
+        assert!(result.contains("Environment=BORG_AGENT_TOKEN=mytoken"));
+        assert!(!result.contains("https://other.com"));
+        assert!(!result.contains("othertoken"));
     }
 
     #[test]

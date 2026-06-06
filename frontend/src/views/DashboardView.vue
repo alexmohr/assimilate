@@ -9,16 +9,18 @@ import { useRouter } from 'vue-router'
 import { apiClient } from '../api/client'
 import { useWebSocket } from '../composables/useWebSocket'
 import { formatBytes, relativeTime } from '../utils/format'
-import { cronToHuman } from '../utils/cron'
 import { logger } from '../utils/logger'
 import BaseSkeleton from '../components/BaseSkeleton.vue'
 import TrendsChart from '../components/TrendsChart.vue'
 import BackupCalendar from '../components/BackupCalendar.vue'
 import RecentActivityWidget from '../components/RecentActivityWidget.vue'
-import NextScheduledWidget from '../components/NextScheduledWidget.vue'
 import BackupStatsWidget from '../components/BackupStatsWidget.vue'
-import RepoHealthWidget from '../components/RepoHealthWidget.vue'
 import StorageTrendWidget from '../components/StorageTrendWidget.vue'
+import NeedsAttention from '../components/NeedsAttention.vue'
+import ProtectionCoverage from '../components/ProtectionCoverage.vue'
+import UpcomingWork from '../components/UpcomingWork.vue'
+import RepositoryCapacity from '../components/RepositoryCapacity.vue'
+import type { DashboardOverview } from '../types/dashboard'
 
 interface StorageRepoEntry {
   name: string
@@ -94,6 +96,7 @@ interface RepoOption {
 }
 
 const summary = ref<DashboardSummary | null>(null)
+const overview = ref<DashboardOverview | null>(null)
 const health = ref<HealthEntry[]>([])
 const activity = ref<ActivityEntry[]>([])
 const repoOptions = ref<RepoOption[]>([])
@@ -147,13 +150,15 @@ async function fetchSuccessActivity(): Promise<void> {
 
 async function fetchAll(): Promise<void> {
   try {
-    const [s, h, r] = await Promise.all([
+    const [s, h, o, r] = await Promise.all([
       apiClient.get<DashboardSummary>('/stats/summary'),
       apiClient.get<HealthEntry[]>('/stats/health'),
+      apiClient.get<DashboardOverview>('/stats/dashboard-overview'),
       apiClient.get<RepoOption[]>('/repos'),
     ])
     summary.value = s.data
     health.value = h.data
+    overview.value = o.data
     repoOptions.value = r.data.map((repo) => ({ id: repo.id, name: repo.name }))
     storageBreakdown.value = s.data.storage_by_repo
     await Promise.all([fetchActivity(), fetchSuccessActivity()])
@@ -381,13 +386,6 @@ const activityDots = computed((): Array<{ x: number; y: number; color: string; k
   })
 })
 
-function healthStatusColor(entry: HealthEntry): string {
-  if (entry.is_overdue) return 'var(--danger)'
-  if (entry.last_status === 'success') return 'var(--success)'
-  if (entry.last_status === 'warning') return 'var(--warning)'
-  return 'var(--danger)'
-}
-
 function navigateToLastBackup(): void {
   if (!summary.value?.last_backup_repo_id) return
   const query: Record<string, string> = { tab: 'archives' }
@@ -439,13 +437,6 @@ function closeStatusPopup(): void {
   statusPopup.value = null
 }
 
-function navigateToRepo(repoId: number | null): void {
-  if (repoId) {
-    router.push(`/repos/${repoId}`)
-  }
-  closeStatusPopup()
-}
-
 function navigateToSchedule(scheduleId: number | null): void {
   if (scheduleId) {
     router.push(`/schedules/${scheduleId}`)
@@ -484,7 +475,6 @@ function navigateToSchedule(scheduleId: number | null): void {
     </template>
 
     <template v-else>
-      <!-- Section 1: System Status Banner -->
       <section class="status-banner">
         <div
           class="stat-card stat-card-link"
@@ -596,6 +586,14 @@ function navigateToSchedule(scheduleId: number | null): void {
           </div>
         </div>
       </section>
+
+      <div class="attention-row">
+        <NeedsAttention :findings="overview?.findings ?? []" />
+        <UpcomingWork
+          :operations="overview?.running_operations ?? []"
+          :schedules="overview?.upcoming_schedules ?? []"
+        />
+      </div>
 
       <!-- Main Grid: 2 columns -->
       <div class="main-grid">
@@ -770,48 +768,22 @@ function navigateToSchedule(scheduleId: number | null): void {
           </section>
         </div>
 
-        <!-- Right Column: Health Cards -->
         <div class="right-col">
-          <!-- Section 4: Repository Health -->
-          <section class="panel panel-full">
-            <h2 class="panel-title">Repository Health</h2>
-            <div
-              v-if="health.length === 0 && !loading"
-              class="state-msg"
-            >
-              No repositories configured yet.
-            </div>
-            <div class="health-grid">
-              <div
-                v-for="entry in health"
-                :key="`${entry.hostname}-${entry.target_name}`"
-                class="health-card health-card-link"
-                @click="router.push(`/repos/${entry.repo_id}`)"
-              >
-                <div class="hc-header">
-                  <span
-                    class="hc-dot"
-                    :style="{ background: healthStatusColor(entry) }"
-                  />
-                  <span class="hc-host">{{ entry.hostname }}</span>
-                  <span
-                    v-if="entry.is_overdue"
-                    class="overdue-badge"
-                  >
-                    OVERDUE
-                  </span>
-                </div>
-                <span class="hc-target">{{ entry.target_name }}</span>
-                <span class="hc-time">
-                  {{ entry.last_backup_at ? relativeTime(entry.last_backup_at) : 'Never' }}
-                </span>
-              </div>
-            </div>
-          </section>
+          <ProtectionCoverage
+            :protection="
+              overview?.protection ?? {
+                protected_hosts: 0,
+                eligible_hosts: 0,
+                unassigned_hosts: [],
+                never_succeeded_targets: 0,
+                disabled_only_hosts: [],
+              }
+            "
+          />
+          <RepositoryCapacity :repositories="overview?.repository_capacity ?? []" />
         </div>
       </div>
 
-      <!-- Section 5: Activity Timeline + Repo Health -->
       <div class="activity-row">
         <section class="panel panel-timeline">
           <div class="panel-header">
@@ -924,7 +896,6 @@ function navigateToSchedule(scheduleId: number | null): void {
             </svg>
           </div>
         </section>
-        <RepoHealthWidget :health="health" />
       </div>
 
       <!-- Section 5b: Widget Row -->
@@ -941,68 +912,9 @@ function navigateToSchedule(scheduleId: number | null): void {
         <BackupCalendar :repos="repoOptions" />
         <div class="calendar-sidebar">
           <RecentActivityWidget />
-          <NextScheduledWidget />
         </div>
       </div>
     </template>
-
-    <!-- Status Popup (Last Failure / Last Warning) -->
-    <div
-      v-if="statusPopup"
-      class="status-popup-overlay"
-      @click="closeStatusPopup"
-    >
-      <div
-        class="status-popup"
-        @click.stop
-      >
-        <div class="status-popup-header">
-          <span
-            class="status-popup-title"
-            :class="{
-              'status-popup-title-danger': statusPopup.type === 'failure',
-              'status-popup-title-warning': statusPopup.type === 'warning',
-            }"
-          >
-            {{ statusPopup.type === 'failure' ? 'Backup Failed' : 'Backup Warning' }}
-          </span>
-          <button
-            class="status-popup-close"
-            @click="closeStatusPopup"
-          >
-            &times;
-          </button>
-        </div>
-        <div class="status-popup-meta">
-          <span v-if="statusPopup.at">{{ relativeTime(statusPopup.at) }}</span>
-          <template v-if="statusPopup.repo_name">
-            &middot;
-            <a
-              v-if="statusPopup.repo_id"
-              class="status-popup-link"
-              @click="navigateToRepo(statusPopup!.repo_id)"
-            >
-              {{ statusPopup.repo_name }}
-            </a>
-            <span v-else>{{ statusPopup.repo_name }}</span>
-          </template>
-          <template v-if="statusPopup.schedule_name">
-            &middot;
-            <a
-              v-if="statusPopup.schedule_id"
-              class="status-popup-link"
-              @click="navigateToSchedule(statusPopup!.schedule_id)"
-            >
-              {{ cronToHuman(statusPopup.schedule_name) || statusPopup.schedule_name }}
-            </a>
-            <span v-else>{{
-              cronToHuman(statusPopup.schedule_name) || statusPopup.schedule_name
-            }}</span>
-          </template>
-        </div>
-        <pre class="status-popup-msg">{{ statusPopup.message }}</pre>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -1011,6 +923,19 @@ function navigateToSchedule(scheduleId: number | null): void {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+}
+
+.attention-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .attention-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Section 1: Status Banner */

@@ -239,7 +239,8 @@ api POST "/api/schedules" "{
     \"keep_daily\": 7,
     \"keep_weekly\": 4,
     \"keep_monthly\": 6,
-    \"backup_sources\": [\"/var/www\", \"/etc/nginx\"]
+    \"backup_sources\": [\"/var/www\", \"/etc/nginx\"],
+    \"canary_paths\": [\"/var/www/.assimilate-canary.json\"]
 }" > /dev/null
 
 api POST "/api/schedules" "{
@@ -285,6 +286,11 @@ api POST "/api/schedules" "{
         {\"client_id\": $WEB01_ID, \"paths\": [\"/var/www\", \"/etc/nginx\", \"/var/log/nginx\"]},
         {\"client_id\": $DB01_ID, \"paths\": [\"/var/lib/postgresql\", \"/etc/postgresql\"]},
         {\"client_id\": $MEDIA_ID, \"paths\": [\"/mnt/media/photos\", \"/mnt/media/videos\"]}
+    ],
+    \"canary_paths_per_host\": [
+        {\"client_id\": $WEB01_ID, \"paths\": [\"/var/www/.assimilate-canary.json\"]},
+        {\"client_id\": $DB01_ID, \"paths\": [\"/var/lib/postgresql/.assimilate-canary.json\"]},
+        {\"client_id\": $MEDIA_ID, \"paths\": [\"/mnt/media/.assimilate-canary.json\"]}
     ]
 }" > /dev/null
 

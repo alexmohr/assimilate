@@ -157,7 +157,7 @@ The host detail page shows:
 - **Hostname Aliases** — glob patterns for archive matching (see below)
 - **Repositories** associated with this host — see [Repositories](repositories.md)
 - **Backup reports** — recent backup run history and warnings
-- **Schedules** — active backup schedules for this host — see [Scheduling](scheduling.md)
+- **Schedules** — schedules that include this host/client as a target — see [Scheduling](scheduling.md)
 
 ![Host Detail](assets/screenshots/host-detail.png)
 

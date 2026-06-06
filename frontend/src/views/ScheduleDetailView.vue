@@ -16,6 +16,7 @@ import { parseLines } from '../utils/validation'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import CronBuilder from '../components/CronBuilder.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
+import PathRowEditor from '../components/PathRowEditor.vue'
 
 type ScheduleType = 'backup' | 'check' | 'verify'
 
@@ -61,6 +62,8 @@ interface PerHostExcludePatterns {
 interface ScheduleBackupSourcesResponse {
   backup_sources: string[]
   backup_sources_per_host: PerHostBackupSources[]
+  canary_paths: string[]
+  canary_paths_per_host: PerHostBackupSources[]
   exclude_patterns_per_host: PerHostExcludePatterns[]
 }
 
@@ -128,7 +131,9 @@ const selectedType = ref<ScheduleType>('backup')
 const executionMode = ref<'parallel' | 'sequential'>('parallel')
 const onFailure = ref<'stop' | 'continue'>('stop')
 const usePerHostPaths = ref(false)
-const perHostSources = ref<Record<number, string>>({})
+const perHostSources = ref<Record<number, string[]>>({})
+const usePerHostCanaryPaths = ref(false)
+const perHostCanaryPaths = ref<Record<number, string[]>>({})
 const usePerHostExcludes = ref(false)
 const perHostExcludes = ref<Record<number, string>>({})
 
@@ -183,8 +188,13 @@ const form = ref({
   compact_enabled: true,
   pre_backup_commands: '',
   post_backup_commands: '',
-  backup_sources: '',
+  backup_sources: [] as string[],
+  canary_paths: [] as string[],
 })
+
+function cleanPaths(paths: string[]): string[] {
+  return paths.map((path) => path.trim()).filter((path) => path.length > 0)
+}
 
 function clientLabel(id: number): string {
   const c = clients.value.find((x) => x.id === id)
@@ -254,7 +264,8 @@ function populateForm(s: ScheduleRow): void {
     compact_enabled: s.compact_enabled,
     pre_backup_commands: (JSON.parse(s.pre_backup_commands || '[]') as string[]).join('\n'),
     post_backup_commands: (JSON.parse(s.post_backup_commands || '[]') as string[]).join('\n'),
-    backup_sources: '',
+    backup_sources: [],
+    canary_paths: [],
   }
   selectedRepoId.value = s.repo_id ?? null
   executionMode.value = (s.execution_mode as 'parallel' | 'sequential') ?? 'parallel'
@@ -312,14 +323,23 @@ async function loadData(): Promise<void> {
       populateForm(schedRes.data)
 
       const sources = sourcesRes.data
-      form.value.backup_sources = sources.backup_sources.join('\n')
+      form.value.backup_sources = sources.backup_sources
+      form.value.canary_paths = sources.canary_paths
       if (sources.backup_sources_per_host.length > 0) {
         usePerHostPaths.value = true
-        const map: Record<number, string> = {}
+        const map: Record<number, string[]> = {}
         for (const entry of sources.backup_sources_per_host) {
-          map[entry.client_id] = entry.paths.join('\n')
+          map[entry.client_id] = entry.paths
         }
         perHostSources.value = map
+      }
+      if (sources.canary_paths_per_host.length > 0) {
+        usePerHostCanaryPaths.value = true
+        const map: Record<number, string[]> = {}
+        for (const entry of sources.canary_paths_per_host) {
+          map[entry.client_id] = entry.paths
+        }
+        perHostCanaryPaths.value = map
       }
       if (sources.exclude_patterns_per_host.length > 0) {
         usePerHostExcludes.value = true
@@ -357,19 +377,34 @@ async function save(): Promise<void> {
       compact_enabled: form.value.compact_enabled,
       pre_backup_commands: parseLines(form.value.pre_backup_commands),
       post_backup_commands: parseLines(form.value.post_backup_commands),
-      backup_sources: usePerHostPaths.value ? [] : parseLines(form.value.backup_sources),
+      backup_sources: usePerHostPaths.value ? [] : cleanPaths(form.value.backup_sources),
+      canary_paths: usePerHostCanaryPaths.value ? [] : cleanPaths(form.value.canary_paths),
     }
 
     if (usePerHostPaths.value) {
       const perHost: { client_id: number; paths: string[] }[] = []
       for (const id of selectedClientIds.value) {
-        const text = perHostSources.value[id] ?? ''
-        const paths = parseLines(text)
+        const paths = cleanPaths(perHostSources.value[id] ?? [])
         if (paths.length > 0) {
           perHost.push({ client_id: id, paths })
         }
       }
       payload.backup_sources_per_host = perHost
+    } else {
+      payload.backup_sources_per_host = []
+    }
+
+    if (usePerHostCanaryPaths.value) {
+      const perHost: { client_id: number; paths: string[] }[] = []
+      for (const id of selectedClientIds.value) {
+        const paths = cleanPaths(perHostCanaryPaths.value[id] ?? [])
+        if (paths.length > 0) {
+          perHost.push({ client_id: id, paths })
+        }
+      }
+      payload.canary_paths_per_host = perHost
+    } else {
+      payload.canary_paths_per_host = []
     }
 
     if (usePerHostExcludes.value) {
@@ -998,11 +1033,10 @@ watch(activeTab, (tab) => {
                 v-if="!usePerHostPaths"
                 class="form-group"
               >
-                <textarea
+                <PathRowEditor
                   v-model="form.backup_sources"
-                  class="form-input area-input"
                   placeholder="Directories to back up, one per line"
-                  spellcheck="false"
+                  add-label="Add Path"
                 />
                 <span class="field-hint">
                   Leave empty to use the default paths configured for this host.
@@ -1019,15 +1053,11 @@ watch(activeTab, (tab) => {
                   class="per-host-entry"
                 >
                   <label class="form-label">{{ clientLabel(clientId) }}</label>
-                  <textarea
-                    :value="perHostSources[clientId] ?? ''"
-                    class="form-input area-input area-input-sm"
+                  <PathRowEditor
+                    :model-value="perHostSources[clientId] ?? []"
                     placeholder="Directories to back up, one per line"
-                    spellcheck="false"
-                    @input="
-                      ($event) =>
-                        (perHostSources[clientId] = ($event.target as HTMLTextAreaElement).value)
-                    "
+                    add-label="Add Path"
+                    @update:model-value="perHostSources[clientId] = $event"
                   />
                 </div>
                 <span class="field-hint">
@@ -1102,6 +1132,51 @@ watch(activeTab, (tab) => {
               <label class="form-label">Canary Verification</label>
               <ToggleSwitch v-model="form.canary_enabled" />
             </div>
+            <template v-if="form.canary_enabled">
+              <div
+                v-if="selectedClientIds.length > 1"
+                class="form-group form-group-inline"
+              >
+                <label class="form-label">Canary paths per host</label>
+                <ToggleSwitch v-model="usePerHostCanaryPaths" />
+              </div>
+              <div
+                v-if="!usePerHostCanaryPaths"
+                class="form-group"
+              >
+                <label class="form-label">Canary Files</label>
+                <PathRowEditor
+                  v-model="form.canary_paths"
+                  placeholder="File to change before backup"
+                  add-label="Add Canary File"
+                />
+                <span class="field-hint">
+                  Leave empty to write a generated canary file in the first backup path.
+                </span>
+              </div>
+              <div
+                v-else
+                class="form-group per-host-paths"
+              >
+                <div
+                  v-for="clientId in selectedClientIds"
+                  :key="clientId"
+                  class="per-host-entry"
+                >
+                  <label class="form-label">{{ clientLabel(clientId) }}</label>
+                  <PathRowEditor
+                    :model-value="perHostCanaryPaths[clientId] ?? []"
+                    placeholder="File to change before backup"
+                    add-label="Add Canary File"
+                    @update:model-value="perHostCanaryPaths[clientId] = $event"
+                  />
+                </div>
+                <span class="field-hint">
+                  Leave a host empty to use the schedule-level canary files, or the generated canary
+                  when none are configured.
+                </span>
+              </div>
+            </template>
             <div class="form-group form-group-inline">
               <label class="form-label">Ignore Global Excludes</label>
               <ToggleSwitch v-model="form.ignore_global_excludes" />

@@ -94,6 +94,13 @@ pub async fn assemble_config(
             backup_sources.extend(client.default_backup_paths.iter().cloned());
         }
 
+        let mut canary_paths =
+            db::list_canary_paths_for_schedule_client(pool, schedule.id, client.id).await?;
+
+        if canary_paths.is_empty() {
+            canary_paths = db::list_canary_paths_for_schedule(pool, schedule.id).await?;
+        }
+
         let mut exclude_patterns: Vec<String> = Vec::new();
         if !schedule.ignore_global_excludes {
             exclude_patterns.extend(global_excludes.iter().cloned());
@@ -112,6 +119,7 @@ pub async fn assemble_config(
             backup_sources,
             rate_limit_kbps,
             canary_enabled: schedule.canary_enabled,
+            canary_paths,
             exclude_patterns,
             ignore_global_excludes: schedule.ignore_global_excludes,
             keep_hourly,

@@ -629,6 +629,7 @@ async fn run_init_repo_task(
         exclude_patterns: Vec::new(),
         ssh_auth_sock: None,
         canary_enabled: false,
+        canary_paths: Vec::new(),
         accept_relocation: false,
     };
 
@@ -725,7 +726,7 @@ async fn run_backup_task(
     let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
 
     let canary = if target.canary_enabled {
-        match BackupEngine::write_canary(&target.backup_sources) {
+        match BackupEngine::write_canary(&target.backup_sources, &target.canary_paths) {
             Ok(c) => Some(c),
             Err(e) => {
                 warn!(repo_id = ?repo_id, error = %e, "canary write failed, proceeding without");
@@ -875,6 +876,7 @@ pub fn backup_target_from_repo(
         exclude_patterns: schedule.map_or_else(Vec::new, |s| s.exclude_patterns.clone()),
         ssh_auth_sock: None,
         canary_enabled: schedule.is_some_and(|s| s.canary_enabled),
+        canary_paths: schedule.map_or_else(Vec::new, |s| s.canary_paths.clone()),
         accept_relocation: repo.accept_relocation,
     }
 }
@@ -913,6 +915,7 @@ async fn run_check_task(
         exclude_patterns: Vec::new(),
         ssh_auth_sock: None,
         canary_enabled: false,
+        canary_paths: Vec::new(),
         accept_relocation: target.accept_relocation,
     };
 
@@ -974,6 +977,7 @@ async fn run_verify_task(
         exclude_patterns: Vec::new(),
         ssh_auth_sock: None,
         canary_enabled: false,
+        canary_paths: Vec::new(),
         accept_relocation: target.accept_relocation,
     };
 
@@ -1468,6 +1472,7 @@ mod tests {
             backup_sources: sources.into_iter().map(str::to_owned).collect(),
             rate_limit_kbps: None,
             canary_enabled: false,
+            canary_paths: Vec::new(),
             exclude_patterns: Vec::new(),
             ignore_global_excludes: false,
             keep_hourly: 24,

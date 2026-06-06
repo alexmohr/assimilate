@@ -86,16 +86,24 @@ Backup paths determine which directories borg includes when creating an archive.
 
 ### Schedule-Level Paths
 
-When all hosts in a schedule back up the same directories, enter the paths in the **Backup Paths** textarea. These apply to every target host unless overridden by per-host paths.
+When all hosts in a schedule back up the same directories, add each path as its own row in **Backup Paths**. These apply to every target host unless overridden by per-host paths.
 
 ### Per-Host Paths
 
-When a schedule targets multiple hosts and each host needs different directories, enable **Configure per host** in the Backup Paths section. This reveals a textarea for each selected host where you can specify host-specific paths.
+When a schedule targets multiple hosts and each host needs different directories, enable **Configure per host** in the Backup Paths section. This reveals a path row editor for each selected host where you can specify host-specific paths.
 
 Per-host paths completely override schedule-level paths for that host. If a host's per-host paths field is left empty, the system falls back to schedule-level paths, then to the host's default paths.
 
 !!! tip
     Use per-host paths when a single schedule targets hosts with different roles (e.g., a web server backing up `/var/www` and a database server backing up `/var/lib/postgresql`). This avoids creating separate schedules for each host while still customizing what gets backed up.
+
+## Canary Files
+
+Canary verification writes a known marker before a backup and then checks that marker in the created archive. By default, the agent creates a generated canary file in the first usable backup path.
+
+To use your own files, enable **Canary Verification** and add one or more paths under **Canary Files**. The agent updates those files before the backup, verifies their changed contents in the archive, and restores their previous contents afterward.
+
+For schedules with multiple hosts, enable **Canary paths per host** to configure a separate file list for each host. Host-specific canary paths override schedule-level canary paths for that host; empty host-specific lists fall back to the schedule-level list, then to the generated canary file.
 
 ## Schedule Status
 

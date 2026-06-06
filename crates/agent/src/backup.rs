@@ -53,6 +53,7 @@ pub struct BackupTarget {
     pub rate_limit_kbps: Option<u32>,
     pub ssh_auth_sock: Option<PathBuf>,
     pub canary_enabled: bool,
+    pub canary_paths: Vec<String>,
     pub accept_relocation: bool,
 }
 
@@ -567,28 +568,50 @@ impl BackupEngine {
         Ok(1)
     }
 
-    pub fn write_canary(backup_sources: &[String]) -> Result<CanaryToken, BackupError> {
-        let source_dir = backup_sources
-            .iter()
-            .find(|s| !s.starts_with('!') && Path::new(s).is_dir())
-            .ok_or_else(|| {
-                BackupError::BorgFailed(
-                    "no usable backup source directory for canary file".to_owned(),
-                )
-            })?;
-
+    pub fn write_canary(
+        backup_sources: &[String],
+        configured_paths: &[String],
+    ) -> Result<CanaryToken, BackupError> {
         let nonce = Uuid::new_v4().to_string();
-        let canary_path = Path::new(source_dir).join(".assimilate-canary");
         let content = format!("{{\"nonce\":\"{nonce}\"}}");
+        let entries = if configured_paths.is_empty() {
+            let source_dir = backup_sources
+                .iter()
+                .find(|s| !s.starts_with('!') && Path::new(s).is_dir())
+                .ok_or_else(|| {
+                    BackupError::BorgFailed(
+                        "no usable backup source directory for canary file".to_owned(),
+                    )
+                })?;
 
-        std::fs::write(&canary_path, &content)?;
-        info!(path = %canary_path.display(), "canary file written");
+            let canary_path = Path::new(source_dir).join(".assimilate-canary");
+            std::fs::write(&canary_path, &content)?;
+            info!(path = %canary_path.display(), "canary file written");
+            vec![CanaryEntry {
+                canary_path,
+                expected_content: content.clone(),
+                original_content: None,
+                cleanup: true,
+            }]
+        } else {
+            configured_paths
+                .iter()
+                .map(|path| {
+                    let canary_path = PathBuf::from(path);
+                    let original_content = std::fs::read_to_string(&canary_path).ok();
+                    std::fs::write(&canary_path, &content)?;
+                    info!(path = %canary_path.display(), "configured canary file written");
+                    Ok(CanaryEntry {
+                        canary_path,
+                        expected_content: content.clone(),
+                        cleanup: original_content.is_none(),
+                        original_content,
+                    })
+                })
+                .collect::<Result<Vec<_>, BackupError>>()?
+        };
 
-        Ok(CanaryToken {
-            nonce,
-            canary_path,
-            expected_content: content,
-        })
+        Ok(CanaryToken { nonce, entries })
     }
 
     pub async fn verify_canary(
@@ -633,20 +656,21 @@ impl BackupEngine {
         let extract_dir = tempfile::tempdir()?;
         let archive_ref = format!("::{archive_name}");
 
-        let canary_relative = canary
-            .canary_path
-            .strip_prefix("/")
-            .unwrap_or(&canary.canary_path)
-            .to_string_lossy()
-            .into_owned();
+        let canary_paths = canary
+            .entries
+            .iter()
+            .map(|entry| {
+                entry
+                    .canary_path
+                    .strip_prefix("/")
+                    .unwrap_or(&entry.canary_path)
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>();
 
-        let extract_args = [
-            "extract",
-            "--lock-wait",
-            "600",
-            archive_ref.as_str(),
-            canary_relative.as_str(),
-        ];
+        let mut extract_args = vec!["extract", "--lock-wait", "600", archive_ref.as_str()];
+        extract_args.extend(canary_paths.iter().map(String::as_str));
         let output = tokio::time::timeout(
             Duration::from_mins(5),
             self.borg
@@ -663,18 +687,21 @@ impl BackupEngine {
             )));
         }
 
-        let extracted_path = extract_dir.path().join(&canary_relative);
-        let extracted_content = tokio::fs::read_to_string(&extracted_path)
-            .await
-            .map_err(|e| {
-                BackupError::BorgFailed(format!("failed to read extracted canary: {e}"))
-            })?;
+        for (entry, canary_relative) in canary.entries.iter().zip(canary_paths.iter()) {
+            let extracted_path = extract_dir.path().join(canary_relative);
+            let extracted_content =
+                tokio::fs::read_to_string(&extracted_path)
+                    .await
+                    .map_err(|e| {
+                        BackupError::BorgFailed(format!("failed to read extracted canary: {e}"))
+                    })?;
 
-        if extracted_content.trim() != canary.expected_content.trim() {
-            return Err(BackupError::BorgFailed(format!(
-                "canary mismatch: expected nonce '{}', got content '{extracted_content}'",
-                canary.nonce
-            )));
+            if extracted_content.trim() != entry.expected_content.trim() {
+                return Err(BackupError::BorgFailed(format!(
+                    "canary mismatch: expected nonce '{}', got content '{extracted_content}'",
+                    canary.nonce
+                )));
+            }
         }
 
         info!(archive = %archive_name, "canary verification passed");
@@ -682,16 +709,35 @@ impl BackupEngine {
     }
 
     pub fn cleanup_canary(canary: &CanaryToken) {
-        if let Err(e) = std::fs::remove_file(&canary.canary_path) {
-            warn!(path = %canary.canary_path.display(), error = %e, "failed to remove canary file");
-        }
+        canary.entries.iter().for_each(|entry| {
+            let result = if entry.cleanup {
+                std::fs::remove_file(&entry.canary_path)
+            } else if let Some(content) = &entry.original_content {
+                std::fs::write(&entry.canary_path, content)
+            } else {
+                Ok(())
+            };
+            if let Err(e) = result {
+                warn!(
+                    path = %entry.canary_path.display(),
+                    error = %e,
+                    "failed to restore canary file"
+                );
+            }
+        });
     }
 }
 
 pub struct CanaryToken {
     pub nonce: String,
+    pub entries: Vec<CanaryEntry>,
+}
+
+pub struct CanaryEntry {
     pub canary_path: PathBuf,
     pub expected_content: String,
+    original_content: Option<String>,
+    cleanup: bool,
 }
 
 struct CreateResult {
@@ -868,6 +914,7 @@ mod tests {
             rate_limit_kbps: None,
             ssh_auth_sock: None,
             canary_enabled: false,
+            canary_paths: Vec::new(),
             accept_relocation: false,
         }
     }

@@ -1382,6 +1382,12 @@ pub struct PerHostBackupSources {
     pub paths: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct PerHostCanaryPaths {
+    pub client_id: i64,
+    pub paths: Vec<String>,
+}
+
 pub async fn list_all_per_host_backup_sources_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
@@ -1470,6 +1476,144 @@ pub async fn delete_per_host_backup_sources_for_schedule(
         .execute(pool)
         .await
         .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+pub async fn list_canary_paths_for_schedule(
+    pool: &PgPool,
+    schedule_id: i64,
+) -> Result<Vec<String>, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct PathRow {
+        path: String,
+    }
+
+    let rows = sqlx::query_as::<_, PathRow>(
+        "SELECT path FROM schedule_canary_paths WHERE schedule_id = $1 AND client_id IS NULL \
+         ORDER BY sort_order, id",
+    )
+    .bind(schedule_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    Ok(rows.into_iter().map(|r| r.path).collect())
+}
+
+pub async fn list_canary_paths_for_schedule_client(
+    pool: &PgPool,
+    schedule_id: i64,
+    client_id: i64,
+) -> Result<Vec<String>, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct PathRow {
+        path: String,
+    }
+
+    let rows = sqlx::query_as::<_, PathRow>(
+        "SELECT path FROM schedule_canary_paths WHERE schedule_id = $1 AND client_id = $2 ORDER \
+         BY sort_order, id",
+    )
+    .bind(schedule_id)
+    .bind(client_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    Ok(rows.into_iter().map(|r| r.path).collect())
+}
+
+pub async fn list_all_per_host_canary_paths_for_schedule(
+    pool: &PgPool,
+    schedule_id: i64,
+) -> Result<Vec<PerHostCanaryPaths>, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        client_id: i64,
+        path: String,
+    }
+
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT client_id, path FROM schedule_canary_paths WHERE schedule_id = $1 AND client_id \
+         IS NOT NULL ORDER BY client_id, sort_order, id",
+    )
+    .bind(schedule_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    let mut map: std::collections::BTreeMap<i64, Vec<String>> = std::collections::BTreeMap::new();
+    rows.into_iter()
+        .for_each(|row| map.entry(row.client_id).or_default().push(row.path));
+
+    Ok(map
+        .into_iter()
+        .map(|(client_id, paths)| PerHostCanaryPaths { client_id, paths })
+        .collect())
+}
+
+pub async fn insert_canary_path_for_schedule(
+    pool: &PgPool,
+    schedule_id: i64,
+    path: &str,
+    sort_order: i32,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "INSERT INTO schedule_canary_paths (schedule_id, path, sort_order) VALUES ($1, $2, $3)",
+    )
+    .bind(schedule_id)
+    .bind(path)
+    .bind(sort_order)
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+pub async fn insert_canary_path_for_schedule_client(
+    pool: &PgPool,
+    schedule_id: i64,
+    client_id: i64,
+    path: &str,
+    sort_order: i32,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "INSERT INTO schedule_canary_paths (schedule_id, client_id, path, sort_order) VALUES ($1, \
+         $2, $3, $4)",
+    )
+    .bind(schedule_id)
+    .bind(client_id)
+    .bind(path)
+    .bind(sort_order)
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+pub async fn delete_canary_paths_for_schedule(
+    pool: &PgPool,
+    schedule_id: i64,
+) -> Result<(), ApiError> {
+    sqlx::query("DELETE FROM schedule_canary_paths WHERE schedule_id = $1 AND client_id IS NULL")
+        .bind(schedule_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+pub async fn delete_per_host_canary_paths_for_schedule(
+    pool: &PgPool,
+    schedule_id: i64,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "DELETE FROM schedule_canary_paths WHERE schedule_id = $1 AND client_id IS NOT NULL",
+    )
+    .bind(schedule_id)
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
     Ok(())
 }
 

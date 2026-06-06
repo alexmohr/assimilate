@@ -365,6 +365,10 @@ async fn main() -> Result<(), StartupError> {
         .route("/api/ssh/list-dir", post(api::ssh::list_dir))
         .route("/api/ssh/mkdir", post(api::ssh::mkdir))
         .route("/api/stats/summary", get(api::stats::summary))
+        .route(
+            "/api/stats/dashboard-overview",
+            get(api::stats::dashboard_overview),
+        )
         .route("/api/stats/storage", get(api::stats::storage))
         .route(
             "/api/stats/storage-breakdown",

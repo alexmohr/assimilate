@@ -1418,6 +1418,156 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholders(pool: PgPool) {
+    let (client, repo, schedule_a) = create_test_schedule(&pool).await;
+    let schedule_b = db::insert_schedule(
+        &pool,
+        repo.id,
+        &ScheduleParams {
+            name: "second-dashboard-schedule",
+            schedule_type: "backup",
+            cron_expression: "0 4 * * *",
+            enabled: true,
+            canary_enabled: false,
+            exclude_patterns_raw: "",
+            ignore_global_excludes: false,
+            keep_hourly: 24,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 1,
+            compact_enabled: true,
+            rate_limit_kbps: None,
+            pre_backup_commands: "",
+            post_backup_commands: "",
+            execution_mode: "parallel",
+            on_failure: "stop",
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    db::insert_schedule_targets(&pool, schedule_b.id, &[(client.id, 0)])
+        .await
+        .unwrap();
+
+    let disabled_client = db::insert_client(&pool, "disabled-only", None, "hash", None)
+        .await
+        .unwrap();
+    let disabled_schedule = db::insert_schedule(
+        &pool,
+        repo.id,
+        &ScheduleParams {
+            name: "disabled-dashboard-schedule",
+            schedule_type: "backup",
+            cron_expression: "0 5 * * *",
+            enabled: false,
+            canary_enabled: false,
+            exclude_patterns_raw: "",
+            ignore_global_excludes: false,
+            keep_hourly: 24,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 1,
+            compact_enabled: true,
+            rate_limit_kbps: None,
+            pre_backup_commands: "",
+            post_backup_commands: "",
+            execution_mode: "parallel",
+            on_failure: "stop",
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    db::insert_schedule_targets(&pool, disabled_schedule.id, &[(disabled_client.id, 0)])
+        .await
+        .unwrap();
+
+    let unassigned = db::insert_client(&pool, "unassigned", None, "hash", None)
+        .await
+        .unwrap();
+    let hidden = db::insert_client(&pool, "hidden", None, "hash", None)
+        .await
+        .unwrap();
+    db::set_client_hidden(&pool, &hidden.hostname, true)
+        .await
+        .unwrap();
+    db::get_or_create_client_by_hostname(&pool, "imported-placeholder")
+        .await
+        .unwrap();
+
+    insert_test_report_for_schedule(&pool, client.id, repo.id, schedule_a.id, "success").await;
+    sqlx::query("UPDATE schedules SET next_run_at = NOW() + INTERVAL '1 hour' WHERE id = $1")
+        .bind(schedule_a.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let targets = db::dashboard::targets(&pool).await.unwrap();
+    assert_eq!(targets.len(), 3);
+    assert_eq!(
+        targets
+            .iter()
+            .filter(|target| target.client_id == client.id)
+            .count(),
+        2
+    );
+    assert!(
+        targets
+            .iter()
+            .any(|target| target.schedule_id == schedule_a.id && target.last_success_at.is_some())
+    );
+    assert!(
+        targets
+            .iter()
+            .any(|target| target.schedule_id == schedule_b.id && target.last_success_at.is_none())
+    );
+
+    let hosts = db::dashboard::eligible_hosts(&pool).await.unwrap();
+    assert_eq!(hosts.len(), 3);
+    assert!(!hosts.iter().any(|host| host.hostname == hidden.hostname));
+    assert!(
+        !hosts
+            .iter()
+            .any(|host| host.hostname == "imported-placeholder")
+    );
+    let disabled = hosts
+        .iter()
+        .find(|host| host.client_id == disabled_client.id)
+        .unwrap();
+    assert_eq!(disabled.enabled_assignment_count, 0);
+    assert_eq!(disabled.disabled_assignment_count, 1);
+    let unassigned = hosts
+        .iter()
+        .find(|host| host.client_id == unassigned.id)
+        .unwrap();
+    assert_eq!(unassigned.enabled_assignment_count, 0);
+
+    let upcoming = db::dashboard::upcoming_schedules(&pool).await.unwrap();
+    assert_eq!(upcoming.len(), 1);
+    assert_eq!(upcoming[0].schedule_id, schedule_a.id);
+    assert_eq!(upcoming[0].target_count, 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn dashboard_repository_capacity_uses_repo_stats_and_quota(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    set_test_repo_info_stats(&pool, repo.id, 1).await;
+    db::quota::upsert_quota(&pool, repo.id, Some(200_000), Some(300_000), true)
+        .await
+        .unwrap();
+
+    let repositories = db::dashboard::repositories(&pool).await.unwrap();
+    assert_eq!(repositories.len(), 1);
+    assert_eq!(repositories[0].deduplicated_size, 250_000);
+    assert_eq!(repositories[0].warn_bytes, Some(200_000));
+    assert_eq!(repositories[0].critical_bytes, Some(300_000));
+    assert_eq!(repositories[0].enabled_schedule_count, 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn repos_with_stats(pool: PgPool) {
     let client = db::insert_client(&pool, "rws-host", None, "hash", None)
         .await

@@ -36,7 +36,7 @@ DELETE FROM backup_reports WHERE client_id IN (SELECT id FROM clients WHERE host
 DELETE FROM schedules WHERE id IN (SELECT st.schedule_id FROM schedule_targets st JOIN clients c ON c.id = st.client_id WHERE c.hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM ssh_tunnels WHERE client_id IN (SELECT id FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM client_hostname_patterns WHERE client_id IN (SELECT id FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
-DELETE FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod');
+DELETE FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod','unassigned-01','offline-due-01','disabled-only-01');
 DELETE FROM repo_quotas WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly'));
 DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly'));
 DELETE FROM notification_rules;
@@ -63,6 +63,9 @@ echo "==> Registering hosts..."
 WEB01_TOKEN=$(api POST "/api/clients" '{"hostname":"web-server-01","display_name":"Production Web Server"}' | jq -r '.token')
 DB01_TOKEN=$(api POST "/api/clients" '{"hostname":"db-server-01","display_name":"Primary Database"}' | jq -r '.token')
 MEDIA_TOKEN=$(api POST "/api/clients" '{"hostname":"media-store-01","display_name":"Media Storage NAS"}' | jq -r '.token')
+api POST "/api/clients" '{"hostname":"unassigned-01","display_name":"Unassigned Demo Host"}' > /dev/null
+api POST "/api/clients" '{"hostname":"offline-due-01","display_name":"Offline Due Soon"}' > /dev/null
+api POST "/api/clients" '{"hostname":"disabled-only-01","display_name":"Disabled Schedule Host"}' > /dev/null
 
 export AGENT_TOKEN_1="$WEB01_TOKEN"
 export AGENT_TOKEN_2="$DB01_TOKEN"
@@ -226,6 +229,8 @@ echo "==> Fetching IDs..."
 WEB01_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM clients WHERE hostname='web-server-01'")
 DB01_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM clients WHERE hostname='db-server-01'")
 MEDIA_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM clients WHERE hostname='media-store-01'")
+OFFLINE_DUE_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM clients WHERE hostname='offline-due-01'")
+DISABLED_ONLY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM clients WHERE hostname='disabled-only-01'")
 REPO_DAILY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM repos WHERE name='server-daily'")
 REPO_HOURLY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM repos WHERE name='database-hourly'")
 REPO_WEEKLY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM repos WHERE name='media-weekly'")
@@ -242,6 +247,40 @@ api POST "/api/schedules" "{
     \"keep_monthly\": 6,
     \"backup_sources\": [\"/var/www\", \"/etc/nginx\"]
 }" > /dev/null
+
+api POST "/api/schedules" "{
+    \"name\": \"Offline host due soon\",
+    \"client_ids\": [$OFFLINE_DUE_ID],
+    \"repo_id\": $REPO_DAILY_ID,
+    \"cron_expression\": \"*/30 * * * *\",
+    \"enabled\": true,
+    \"keep_hourly\": 24,
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6,
+    \"backup_sources\": [\"/etc\"]
+}" > /dev/null
+
+api POST "/api/schedules" "{
+    \"name\": \"Disabled only coverage\",
+    \"client_ids\": [$DISABLED_ONLY_ID],
+    \"repo_id\": $REPO_DAILY_ID,
+    \"cron_expression\": \"0 1 * * *\",
+    \"enabled\": false,
+    \"keep_hourly\": 0,
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6,
+    \"backup_sources\": [\"/srv\"]
+}" > /dev/null
+
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
+UPDATE schedules
+SET last_run_at = NOW() - interval '45 minutes',
+    next_run_at = NOW() + interval '30 minutes'
+WHERE name = 'Offline host due soon';
+
+SQL
 
 api POST "/api/schedules" "{
     \"client_ids\": [$DB01_ID],
@@ -289,6 +328,18 @@ api POST "/api/schedules" "{
     ]
 }" > /dev/null
 
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
+UPDATE backup_reports br
+SET schedule_id = s.id
+FROM schedules s
+JOIN schedule_targets st ON st.schedule_id = s.id
+WHERE br.schedule_id IS NULL
+  AND br.repo_id = s.repo_id
+  AND br.client_id = st.client_id
+  AND s.enabled = true
+  AND s.name <> 'Offline host due soon';
+SQL
+
 echo "==> Adding global excludes..."
 for PATTERN in "pp:__pycache__" "pp:.cache" "pp:node_modules" "*.pyc" "*.swp" "*~" "/proc" "/sys" "/tmp"; do
     api POST "/api/excludes" "{\"pattern\": \"$PATTERN\"}" > /dev/null 2>&1 || true
@@ -325,7 +376,8 @@ echo "==> Setting up repo quotas..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
 INSERT INTO repo_quotas (repo_id, warn_bytes, critical_bytes, enabled) VALUES
     ($REPO_DAILY_ID, 10737418240, 16106127360, true),
-    ($REPO_HOURLY_ID, 5368709120, 8589934592, true)
+    ($REPO_HOURLY_ID, 5368709120, 8589934592, true),
+    ($REPO_WEEKLY_ID, 1, 1099511627776, true)
 ON CONFLICT (repo_id) DO NOTHING;
 SQL
 
@@ -376,7 +428,7 @@ FROM notification_channels c,
 WHERE c.name = 'Admin Email';
 SQL
 
-echo "==> Adding SSH tunnel entry..."
+echo "==> Adding SSH tunnel entry for loopback agent communication..."
 api POST "/api/tunnels" "{\"client_id\":$MEDIA_ID,\"ssh_host\":\"127.0.0.1\",\"ssh_user\":\"borg\",\"ssh_port\":22,\"tunnel_port\":18080,\"enabled\":true}" > /dev/null
 
 echo "==> Adding archive tags..."

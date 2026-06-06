@@ -126,11 +126,11 @@ const mockReports = [
   },
 ]
 
-function setupApi(reports = mockReports): void {
+function setupApi(reports = mockReports, repos: unknown[] = [], schedules: unknown[] = []): void {
   vi.mocked(apiClient.get).mockImplementation((url: string) => {
     if (url === '/clients') return Promise.resolve({ data: [mockClient] })
-    if (url === '/clients/test-host/repos') return Promise.resolve({ data: [] })
-    if (url === '/schedules') return Promise.resolve({ data: [] })
+    if (url === '/clients/test-host/repos') return Promise.resolve({ data: repos })
+    if (url === '/schedules') return Promise.resolve({ data: schedules })
     if (url === '/clients/test-host/reports') return Promise.resolve({ data: reports })
     if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
     if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
@@ -305,5 +305,47 @@ describe('HostDetailView — backups tab', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('some file changed during backup')
+  })
+})
+
+describe('HostDetailView — schedules tab', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('shows only schedules that explicitly target the client', async () => {
+    const schedules = [
+      {
+        id: 1,
+        repo_id: 10,
+        name: 'Test host schedule',
+        target_hostnames: ['test-host'],
+        schedule_type: 'backup',
+        cron_expression: '0 2 * * *',
+        enabled: true,
+        execution_mode: 'parallel',
+      },
+      {
+        id: 2,
+        repo_id: 10,
+        name: 'Other host schedule',
+        target_hostnames: ['other-host'],
+        schedule_type: 'backup',
+        cron_expression: '0 3 * * *',
+        enabled: true,
+        execution_mode: 'parallel',
+      },
+    ]
+    setupApi(mockReports, [{ id: 10, target_name: 'shared-repo' }], schedules)
+    const wrapper = renderWithPlugins(HostDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const clientSchedules = (
+      wrapper.vm as unknown as { clientSchedules: Array<{ id: number; name: string }> }
+    ).clientSchedules
+    expect(clientSchedules).toEqual([{ ...schedules[0] }])
   })
 })

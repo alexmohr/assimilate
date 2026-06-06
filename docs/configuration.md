@@ -32,6 +32,7 @@
 System settings are stored in the database and managed through the UI or the `/api/system/settings` endpoint.
 
 ![System Settings](assets/screenshots/system.png)
+![System Settings (Database storage)](assets/screenshots/system-db.png)
 
 | Setting | Default | Description |
 |---------|---------|-------------|

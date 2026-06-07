@@ -2,7 +2,7 @@
 
 The Dashboard is an operational summary of current backup risk, fleet protection, upcoming work, and repository capacity. It intentionally does not repeat every schedule-target assignment; use the Schedules and Activity pages for target-level history.
 
-![Dashboard](assets/screenshots/dashboard.png)
+![Dashboard](assets/screenshots/dashboard-full.png)
 
 ## Summary
 

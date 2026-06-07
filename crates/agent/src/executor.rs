@@ -3,6 +3,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    io::Write,
     sync::Arc,
     time::Duration,
 };
@@ -10,7 +11,7 @@ use std::{
 use chrono::Utc;
 use shared::{
     protocol::AgentToServer,
-    ssh::borg_rsh,
+    ssh::{borg_rsh, borg_rsh_with_known_hosts, known_hosts_host},
     types::{
         AgentConfig, BorgEncryption, Compression, DryRunFile, RepoConfig, RepoId, build_repo_url,
     },
@@ -613,6 +614,8 @@ async fn run_init_repo_task(
         ssh_user: String::new(),
         ssh_host: String::new(),
         ssh_port: 22,
+        ssh_host_key: String::new(),
+        known_hosts_path: None,
         passphrase: String::new(),
         hostname: hostname.to_owned(),
         compression: Compression::Lz4,
@@ -639,7 +642,10 @@ async fn run_init_repo_task(
     let mut env = vec![
         ("BORG_PASSPHRASE".to_owned(), passphrase.to_owned()),
         ("BORG_DISPLAY_PASSPHRASE".to_owned(), "no".to_owned()),
-        ("BORG_RSH".to_owned(), borg_rsh()),
+        (
+            "BORG_RSH".to_owned(),
+            borg_rsh_for_target(&ssh_forward_target),
+        ),
         ("LANG".to_owned(), "en_US.UTF-8".to_owned()),
         ("LC_CTYPE".to_owned(), "en_US.UTF-8".to_owned()),
     ];
@@ -667,6 +673,19 @@ async fn run_init_repo_task(
 
     info!(repo_url = %repo_url, "repository initialized successfully");
     Ok(())
+}
+
+fn borg_rsh_for_target(target: &BackupTarget) -> String {
+    target.known_hosts_path.as_ref().map_or_else(
+        || {
+            if target.ssh_host_key.is_empty() {
+                borg_rsh()
+            } else {
+                "false".to_owned()
+            }
+        },
+        |path| borg_rsh_with_known_hosts(path),
+    )
 }
 
 fn make_failed_report(
@@ -788,17 +807,33 @@ async fn run_backup_task(
     }
 }
 
+struct RepoTransport {
+    _ssh_forward: Option<SshForwardSocket>,
+    _known_hosts: Option<tempfile::NamedTempFile>,
+}
+
 async fn setup_ssh_forward(
     target: &mut BackupTarget,
     hostname: &str,
     server_url: &str,
     token: &str,
-) -> Option<SshForwardSocket> {
+) -> RepoTransport {
+    let known_hosts = match write_known_hosts(target) {
+        Ok(known_hosts) => known_hosts,
+        Err(e) => {
+            error!(error = %e, "failed to create pinned SSH known_hosts file");
+            None
+        }
+    };
+
     let socket = match SshForwardSocket::create() {
         Ok(s) => s,
         Err(e) => {
             warn!(error = %e, "ssh forward: failed to create socket, proceeding without");
-            return None;
+            return RepoTransport {
+                _ssh_forward: None,
+                _known_hosts: known_hosts,
+            };
         }
     };
 
@@ -807,11 +842,36 @@ async fn setup_ssh_forward(
             SshForwardError::Url(msg) => warn!(error = %msg, "ssh forward: bad relay url"),
             other => warn!(error = %other, "ssh forward: setup failed, proceeding without"),
         }
-        return None;
+        return RepoTransport {
+            _ssh_forward: None,
+            _known_hosts: known_hosts,
+        };
     }
 
     target.ssh_auth_sock = Some(socket.socket_path.clone());
-    Some(socket)
+    RepoTransport {
+        _ssh_forward: Some(socket),
+        _known_hosts: known_hosts,
+    }
+}
+
+fn write_known_hosts(
+    target: &mut BackupTarget,
+) -> Result<Option<tempfile::NamedTempFile>, std::io::Error> {
+    if target.ssh_host_key.is_empty() {
+        return Ok(None);
+    }
+
+    let mut file = tempfile::NamedTempFile::new()?;
+    writeln!(
+        file,
+        "{} {}",
+        known_hosts_host(&target.ssh_host, target.ssh_port),
+        target.ssh_host_key
+    )?;
+    file.flush()?;
+    target.known_hosts_path = Some(file.path().to_path_buf());
+    Ok(Some(file))
 }
 
 async fn run_canary_verification(
@@ -856,6 +916,8 @@ pub fn backup_target_from_repo(
         ssh_user: repo.ssh_user.clone(),
         ssh_host: repo.ssh_host.clone(),
         ssh_port: repo.ssh_port,
+        ssh_host_key: repo.ssh_host_key.clone(),
+        known_hosts_path: None,
         passphrase: repo.passphrase.clone(),
         hostname: hostname.to_owned(),
         compression: repo.compression.clone(),
@@ -894,6 +956,8 @@ async fn run_check_task(
         ssh_user: target.ssh_user.clone(),
         ssh_host: target.ssh_host.clone(),
         ssh_port: target.ssh_port,
+        ssh_host_key: target.ssh_host_key.clone(),
+        known_hosts_path: None,
         passphrase: target.passphrase.clone(),
         hostname: hostname.to_owned(),
         compression: target.compression.clone(),
@@ -955,6 +1019,8 @@ async fn run_verify_task(
         ssh_user: target.ssh_user.clone(),
         ssh_host: target.ssh_host.clone(),
         ssh_port: target.ssh_port,
+        ssh_host_key: target.ssh_host_key.clone(),
+        known_hosts_path: None,
         passphrase: target.passphrase.clone(),
         hostname: hostname.to_owned(),
         compression: target.compression.clone(),
@@ -1360,7 +1426,7 @@ fn build_borg_env(target: &BackupTarget) -> Vec<(String, String)> {
         ("BORG_REPO".to_owned(), repo_url),
         ("BORG_PASSPHRASE".to_owned(), target.passphrase.clone()),
         ("BORG_HOST_ID".to_owned(), target.hostname.clone()),
-        ("BORG_RSH".to_owned(), borg_rsh()),
+        ("BORG_RSH".to_owned(), borg_rsh_for_target(target)),
         ("LANG".to_owned(), "en_US.UTF-8".to_owned()),
         ("LC_CTYPE".to_owned(), "en_US.UTF-8".to_owned()),
     ];
@@ -1525,6 +1591,7 @@ mod tests {
             ssh_user: "borg".to_owned(),
             ssh_host: "backup.example.com".to_owned(),
             ssh_port: 22,
+            ssh_host_key: "ssh-ed25519 AAAATEST".to_owned(),
             passphrase: "secret".to_owned(),
             compression: shared::types::Compression::Lz4,
             enabled: true,
@@ -1564,20 +1631,36 @@ mod tests {
     }
 
     #[test]
-    fn build_borg_env_uses_transient_known_hosts_file() {
-        let target = backup_target_from_repo(
+    fn build_borg_env_uses_pinned_known_hosts_file() {
+        let mut target = backup_target_from_repo(
             &make_repo(vec![make_schedule(10, vec!["/var"])]),
             "hostname",
             None,
         );
+        let known_hosts = write_known_hosts(&mut target).unwrap().unwrap();
         let env = build_borg_env(&target);
         let borg_rsh = env
             .iter()
             .find(|(key, _value)| key == "BORG_RSH")
             .map(|(_key, value)| value.as_str());
-        let expected = shared::ssh::borg_rsh();
+        let expected = shared::ssh::borg_rsh_with_known_hosts(known_hosts.path());
 
         assert_eq!(borg_rsh, Some(expected.as_str()));
+    }
+
+    #[test]
+    fn write_known_hosts_pins_the_repository_endpoint() {
+        let mut target = backup_target_from_repo(
+            &make_repo(vec![make_schedule(10, vec!["/var"])]),
+            "hostname",
+            None,
+        );
+        target.ssh_port = 2222;
+
+        let known_hosts = write_known_hosts(&mut target).unwrap().unwrap();
+        let contents = std::fs::read_to_string(known_hosts.path()).unwrap();
+
+        assert_eq!(contents, "[backup.example.com]:2222 ssh-ed25519 AAAATEST\n");
     }
 
     #[tokio::test]

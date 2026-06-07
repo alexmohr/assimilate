@@ -240,7 +240,7 @@ Open `http://localhost:8080` in your browser.
 
 After changing the password, the dashboard loads and shows no hosts yet.
 
-![Dashboard](assets/screenshots/dashboard.png)
+![Dashboard](assets/screenshots/dashboard-full.png)
 
 ## Adding Your First Host
 

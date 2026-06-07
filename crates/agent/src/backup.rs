@@ -9,7 +9,7 @@ use std::{
 
 use chrono::Utc;
 use shared::{
-    ssh::borg_rsh,
+    ssh::{borg_rsh, borg_rsh_with_known_hosts},
     types::{BackupStatus, Compression, build_repo_url},
 };
 use tokio::process::Command;
@@ -39,6 +39,8 @@ pub struct BackupTarget {
     pub ssh_user: String,
     pub ssh_host: String,
     pub ssh_port: u16,
+    pub ssh_host_key: String,
+    pub known_hosts_path: Option<PathBuf>,
     pub passphrase: String,
     pub hostname: String,
     pub compression: Compression,
@@ -191,7 +193,7 @@ impl BackupEngine {
             ("BORG_REPO".to_owned(), repo_url),
             ("BORG_PASSPHRASE".to_owned(), target.passphrase.clone()),
             ("BORG_HOST_ID".to_owned(), target.hostname.clone()),
-            ("BORG_RSH".to_owned(), borg_rsh()),
+            ("BORG_RSH".to_owned(), borg_rsh_for_target(target)),
             ("LANG".to_owned(), "en_US.UTF-8".to_owned()),
             ("LC_CTYPE".to_owned(), "en_US.UTF-8".to_owned()),
         ];
@@ -688,6 +690,19 @@ impl BackupEngine {
     }
 }
 
+fn borg_rsh_for_target(target: &BackupTarget) -> String {
+    target.known_hosts_path.as_ref().map_or_else(
+        || {
+            if target.ssh_host_key.is_empty() {
+                borg_rsh()
+            } else {
+                "false".to_owned()
+            }
+        },
+        |path| borg_rsh_with_known_hosts(path),
+    )
+}
+
 pub struct CanaryToken {
     pub nonce: String,
     pub canary_path: PathBuf,
@@ -851,6 +866,8 @@ mod tests {
             ssh_user: "borg".to_owned(),
             ssh_host: "backup-server".to_owned(),
             ssh_port: 22,
+            ssh_host_key: "ssh-ed25519 AAAATEST".to_owned(),
+            known_hosts_path: None,
             passphrase: "test-passphrase".to_owned(),
             hostname: "test-host".to_owned(),
             compression: Compression::Lz4,
@@ -903,13 +920,16 @@ mod tests {
     }
 
     #[test]
-    fn borg_env_uses_transient_known_hosts_file() {
-        let env = BackupEngine::borg_env(&test_target());
+    fn borg_env_uses_pinned_known_hosts_file() {
+        let known_hosts = tempfile::NamedTempFile::new().unwrap();
+        let mut target = test_target();
+        target.known_hosts_path = Some(known_hosts.path().to_path_buf());
+        let env = BackupEngine::borg_env(&target);
         let borg_rsh = env
             .iter()
             .find(|(key, _value)| key == "BORG_RSH")
             .map(|(_key, value)| value.as_str());
-        let expected = shared::ssh::borg_rsh();
+        let expected = shared::ssh::borg_rsh_with_known_hosts(known_hosts.path());
 
         assert_eq!(borg_rsh, Some(expected.as_str()));
     }

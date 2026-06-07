@@ -3,11 +3,12 @@
 
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
+import { readStorage, writeStorage } from '../utils/storage'
 
 const STORAGE_KEY = 'assimilate-sidebar-collapsed'
 
 export const useUiStore = defineStore('ui', () => {
-  const sidebarCollapsed = ref(localStorage.getItem(STORAGE_KEY) === 'true')
+  const sidebarCollapsed = ref(readStorage(STORAGE_KEY) === 'true')
   const sidebarMobileOpen = ref(false)
 
   watch(sidebarMobileOpen, (open) => {
@@ -16,7 +17,7 @@ export const useUiStore = defineStore('ui', () => {
 
   function toggleSidebar(): void {
     sidebarCollapsed.value = !sidebarCollapsed.value
-    localStorage.setItem(STORAGE_KEY, String(sidebarCollapsed.value))
+    writeStorage(STORAGE_KEY, String(sidebarCollapsed.value))
   }
 
   function openMobileSidebar(): void {

@@ -4,10 +4,11 @@
 import { ref } from 'vue'
 import { apiClient } from '../api/client'
 import { logger } from '../utils/logger'
+import { readStorage, removeStorage, writeStorage } from '../utils/storage'
 
 const STORAGE_KEY = 'assimilate-timezone'
 
-const timezone = ref<string | undefined>(localStorage.getItem(STORAGE_KEY) ?? undefined)
+const timezone = ref<string | undefined>(readStorage(STORAGE_KEY))
 
 export function getConfiguredTimezone(): string | undefined {
   return timezone.value || Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -21,9 +22,9 @@ export function useTimezone(): {
   function setTimezone(tz: string | undefined): void {
     timezone.value = tz
     if (tz) {
-      localStorage.setItem(STORAGE_KEY, tz)
+      writeStorage(STORAGE_KEY, tz)
     } else {
-      localStorage.removeItem(STORAGE_KEY)
+      removeStorage(STORAGE_KEY)
     }
   }
 

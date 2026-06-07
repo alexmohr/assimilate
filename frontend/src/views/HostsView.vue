@@ -20,6 +20,7 @@ import EmptyState from '../components/EmptyState.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import MergeClientDialog from '../components/MergeClientDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
+import type { DashboardOverview } from '../types/dashboard'
 
 interface ClientRow {
   id: number
@@ -73,6 +74,15 @@ interface HostHealth {
 type SortField = 'hostname' | 'status' | 'last_seen' | 'version'
 type SortDir = 'asc' | 'desc'
 type FilterStatus = 'all' | 'online' | 'offline'
+type CoverageFilter = 'all' | 'protected' | 'unassigned' | 'never-succeeded' | 'disabled-only'
+
+function coverageFilterFromQuery(value: unknown): CoverageFilter {
+  if (value === 'protected') return 'protected'
+  if (value === 'unassigned') return 'unassigned'
+  if (value === 'never-succeeded') return 'never-succeeded'
+  if (value === 'disabled-only') return 'disabled-only'
+  return 'all'
+}
 
 const router = useRouter()
 const route = useRoute()
@@ -95,6 +105,13 @@ const filterStatus = ref<FilterStatus>(
 )
 const filterText = ref('')
 const filterTagIds = ref<number[]>([])
+const filterCoverage = ref<CoverageFilter>(coverageFilterFromQuery(route.query.coverage))
+const coverageHostIds = ref<Record<Exclude<CoverageFilter, 'all'>, Set<number>>>({
+  protected: new Set(),
+  unassigned: new Set(),
+  'never-succeeded': new Set(),
+  'disabled-only': new Set(),
+})
 const showTagDropdown = ref(false)
 
 const { isMobile } = useMobile()
@@ -110,6 +127,11 @@ const filteredClients = computed(() => {
     list = list.filter((m) => m.is_connected)
   } else if (filterStatus.value === 'offline') {
     list = list.filter((m) => !m.is_connected)
+  }
+
+  if (filterCoverage.value !== 'all') {
+    const hostIds = coverageHostIds.value[filterCoverage.value]
+    list = list.filter((client) => hostIds.has(client.id))
   }
 
   if (filterText.value.trim()) {
@@ -245,7 +267,7 @@ async function loadClients(): Promise<void> {
   loading.value = true
   error.value = null
   try {
-    const [clientsRes, hostTagAssocRes, hostTagsRes, healthRes, scheduleCountsRes] =
+    const [clientsRes, hostTagAssocRes, hostTagsRes, healthRes, scheduleCountsRes, overviewRes] =
       await Promise.all([
         apiClient.get<ClientRow[]>('/clients', {
           params: showHidden.value ? { include_hidden: true } : undefined,
@@ -256,6 +278,7 @@ async function loadClients(): Promise<void> {
           .catch(() => ({ data: [] as TagRow[] })),
         apiClient.get<HealthEntry[]>('/stats/health'),
         apiClient.get<{ client_id: number; count: number }[]>('/stats/schedule-counts'),
+        apiClient.get<DashboardOverview>('/stats/dashboard-overview'),
       ])
     clients.value = clientsRes.data
     machineScheduleCount.value = {}
@@ -282,6 +305,20 @@ async function loadClients(): Promise<void> {
       if (entry.is_overdue) hMap[entry.hostname].overdue++
     })
     healthByHost.value = hMap
+    coverageHostIds.value = {
+      protected: new Set(
+        overviewRes.data.protection.protected_host_links.map((host) => host.client_id),
+      ),
+      unassigned: new Set(
+        overviewRes.data.protection.unassigned_hosts.map((host) => host.client_id),
+      ),
+      'never-succeeded': new Set(
+        overviewRes.data.protection.never_succeeded_hosts.map((host) => host.client_id),
+      ),
+      'disabled-only': new Set(
+        overviewRes.data.protection.disabled_only_hosts.map((host) => host.client_id),
+      ),
+    }
   } catch (e: unknown) {
     error.value = extractError(e)
   } finally {
@@ -448,6 +485,14 @@ watch(wsStatus, (newStatus, oldStatus) => {
 watch(showHidden, () => {
   loadClients().catch(logger.error)
 })
+
+watch(
+  () => route.query.coverage,
+  (coverage) => {
+    filterCoverage.value = coverageFilterFromQuery(coverage)
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -474,12 +519,14 @@ watch(showHidden, () => {
       <button
         v-if="isMobile"
         class="btn-filter-toggle"
-        :class="{ active: filterStatus !== 'all' || filterTagIds.length > 0 }"
+        :class="{
+          active: filterStatus !== 'all' || filterCoverage !== 'all' || filterTagIds.length > 0,
+        }"
         @click="showMobileFilters = !showMobileFilters"
       >
         <SlidersHorizontal :size="14" />
         <span
-          v-if="filterStatus !== 'all' || filterTagIds.length > 0"
+          v-if="filterStatus !== 'all' || filterCoverage !== 'all' || filterTagIds.length > 0"
           class="filter-badge"
         ></span>
       </button>
@@ -491,6 +538,17 @@ watch(showHidden, () => {
           <option value="all">All</option>
           <option value="online">Online</option>
           <option value="offline">Offline</option>
+        </select>
+        <select
+          v-model="filterCoverage"
+          class="input select-input"
+          aria-label="Coverage"
+        >
+          <option value="all">All coverage</option>
+          <option value="protected">Protected</option>
+          <option value="unassigned">Unassigned</option>
+          <option value="never-succeeded">Never succeeded</option>
+          <option value="disabled-only">Disabled schedules only</option>
         </select>
         <div
           v-if="isAdmin"

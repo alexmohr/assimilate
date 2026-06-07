@@ -99,8 +99,10 @@ export interface DashboardOverview {
   protection: {
     protected_hosts: number
     eligible_hosts: number
+    protected_host_links: DashboardHostLink[]
     unassigned_hosts: DashboardHostLink[]
     never_succeeded_targets: number
+    never_succeeded_hosts: DashboardHostLink[]
     disabled_only_hosts: DashboardHostLink[]
   }
   running_operations: DashboardOperation[]

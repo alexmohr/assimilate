@@ -683,6 +683,9 @@ mod tests {
         )
         .await
         .unwrap();
+        db::update_repo_ssh_host_key(pool, repo.id, "ssh-ed25519 AAAATICKTEST")
+            .await
+            .unwrap();
         let schedule = db::insert_schedule(
             pool,
             repo.id,

@@ -306,10 +306,6 @@ pub async fn update_repo(
     let sync_schedule = req.sync_schedule.unwrap_or(existing.sync_schedule);
     let name = req.name.unwrap_or(existing.name);
     let ssh_port = req.ssh_port.unwrap_or(22);
-    let ssh_host_key =
-        crate::ssh::scan_host_key(&req.ssh_host, u16::try_from(ssh_port).unwrap_or(22))
-            .await
-            .map_err(|e| ApiError::BadGateway(e.to_string()))?;
 
     let repo = db::update_repo(
         &state.pool,
@@ -327,8 +323,6 @@ pub async fn update_repo(
         },
     )
     .await?;
-
-    db::update_repo_ssh_host_key(&state.pool, repo_id, &ssh_host_key).await?;
 
     if location_changed {
         db::set_relocation_pending(&state.pool, repo_id).await?;
@@ -443,6 +437,90 @@ pub async fn get_passphrase(
     let encrypted = db::get_repo_passphrase(&state.pool, repo_id).await?;
     let passphrase = shared::crypto::decrypt_passphrase(&encrypted, &state.encryption_key)?;
     Ok(Json(PassphraseResponse { passphrase }))
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RepoHostKeyResponse {
+    pub ssh_host_key: String,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct AcceptRepoHostKeyRequest {
+    pub ssh_host_key: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/repos/{repo_id}/ssh-host-key/scan",
+    tag = "Repositories",
+    operation_id = "scanRepoHostKey",
+    summary = "Scan the repository host key without saving it",
+    params(
+        ("repo_id" = i64, Path, description = "Repository ID"),
+    ),
+    responses(
+        (status = 200, description = "Scanned SSH host key", body = RepoHostKeyResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Not found"),
+        (status = 502, description = "SSH host key scan failed"),
+    )
+)]
+pub async fn scan_repo_host_key(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(repo_id): Path<i64>,
+) -> Result<Json<RepoHostKeyResponse>, ApiError> {
+    let repo = db::get_repo_with_passphrase(&state.pool, repo_id).await?;
+    let ssh_port = u16::try_from(repo.ssh_port).unwrap_or(22);
+    let ssh_host_key = crate::ssh::scan_host_key(&repo.ssh_host, ssh_port)
+        .await
+        .map_err(|e| ApiError::BadGateway(e.to_string()))?;
+    Ok(Json(RepoHostKeyResponse { ssh_host_key }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/repos/{repo_id}/ssh-host-key",
+    tag = "Repositories",
+    operation_id = "acceptRepoHostKey",
+    summary = "Accept a scanned SSH host key and push updated config",
+    params(
+        ("repo_id" = i64, Path, description = "Repository ID"),
+    ),
+    request_body = AcceptRepoHostKeyRequest,
+    responses(
+        (status = 200, description = "SSH host key accepted", body = RepoHostKeyResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Not found"),
+    )
+)]
+pub async fn accept_repo_host_key(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(repo_id): Path<i64>,
+    ApiJson(req): ApiJson<AcceptRepoHostKeyRequest>,
+) -> Result<Json<RepoHostKeyResponse>, ApiError> {
+    helpers::validate_non_empty(&req.ssh_host_key, "ssh_host_key")?;
+
+    let repo = db::get_repo_with_passphrase(&state.pool, repo_id).await?;
+    db::update_repo_ssh_host_key(&state.pool, repo_id, &req.ssh_host_key).await?;
+
+    let hostnames = db::get_schedule_target_hostnames_for_repo(&state.pool, repo_id).await?;
+    for hostname in &hostnames {
+        config_assembler::push_config_to_agent(&state, hostname).await;
+    }
+
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::DataChanged);
+
+    info!(repo_id, name = %repo.name, "repository SSH host key accepted");
+
+    Ok(Json(RepoHostKeyResponse {
+        ssh_host_key: req.ssh_host_key,
+    }))
 }
 
 #[utoipa::path(

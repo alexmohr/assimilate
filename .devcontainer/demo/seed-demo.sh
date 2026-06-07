@@ -59,7 +59,7 @@ login
 echo "==> Setting timezone to Europe/Berlin..."
 api PUT /api/system/settings '{"timezone":"Europe/Berlin","retention_days":7}'
 
-echo "==> Registering hosts..."
+echo "==> Registering hosts for protected, unassigned, never-succeeded, and disabled-only coverage filters..."
 WEB01_TOKEN=$(api POST "/api/clients" '{"hostname":"web-server-01","display_name":"Production Web Server"}' | jq -r '.token')
 DB01_TOKEN=$(api POST "/api/clients" '{"hostname":"db-server-01","display_name":"Primary Database"}' | jq -r '.token')
 MEDIA_TOKEN=$(api POST "/api/clients" '{"hostname":"media-store-01","display_name":"Media Storage NAS"}' | jq -r '.token')

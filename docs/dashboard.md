@@ -38,6 +38,8 @@ An empty list displays **No active problems**.
 
 Protection Coverage compares protected hosts with all eligible visible hosts. It separately reports hosts with no enabled assignment, enabled schedule targets that have never succeeded, and hosts whose assignments are all disabled.
 
+Select the coverage score or any reported condition to open the Clients page with the corresponding coverage filter applied.
+
 Disabled schedules do not protect a host. An imported placeholder or intentionally hidden host is excluded rather than silently reducing fleet coverage.
 
 ## Upcoming Work

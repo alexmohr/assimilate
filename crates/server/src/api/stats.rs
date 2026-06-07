@@ -164,8 +164,10 @@ pub struct DashboardHostLink {
 pub struct DashboardProtectionCoverage {
     pub protected_hosts: i64,
     pub eligible_hosts: i64,
+    pub protected_host_links: Vec<DashboardHostLink>,
     pub unassigned_hosts: Vec<DashboardHostLink>,
     pub never_succeeded_targets: i64,
+    pub never_succeeded_hosts: Vec<DashboardHostLink>,
     pub disabled_only_hosts: Vec<DashboardHostLink>,
 }
 
@@ -355,6 +357,11 @@ pub async fn dashboard_overview(
         .count();
     let protected_hosts = i64::try_from(protected_hosts).unwrap_or(i64::MAX);
     let eligible_hosts = i64::try_from(hosts.len()).unwrap_or(i64::MAX);
+    let protected_host_links = hosts
+        .iter()
+        .filter(|host| host.successful_enabled_assignment_count > 0)
+        .map(host_link)
+        .collect();
     let unassigned_hosts = hosts
         .iter()
         .filter(|host| host.enabled_assignment_count == 0)
@@ -370,6 +377,16 @@ pub async fn dashboard_overview(
         .filter(|target| target.schedule_enabled && target.last_success_at.is_none())
         .count();
     let never_succeeded_targets = i64::try_from(never_succeeded_targets).unwrap_or(i64::MAX);
+    let never_succeeded_client_ids = targets
+        .iter()
+        .filter(|target| target.schedule_enabled && target.last_success_at.is_none())
+        .map(|target| target.client_id)
+        .collect::<HashSet<_>>();
+    let never_succeeded_hosts = hosts
+        .iter()
+        .filter(|host| never_succeeded_client_ids.contains(&host.client_id))
+        .map(host_link)
+        .collect();
 
     let upcoming_schedules = upcoming
         .into_iter()
@@ -406,8 +423,10 @@ pub async fn dashboard_overview(
         protection: DashboardProtectionCoverage {
             protected_hosts,
             eligible_hosts,
+            protected_host_links,
             unassigned_hosts,
             never_succeeded_targets,
+            never_succeeded_hosts,
             disabled_only_hosts,
         },
         running_operations,

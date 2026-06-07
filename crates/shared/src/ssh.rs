@@ -4,8 +4,7 @@
 use std::path::Path;
 
 pub fn borg_rsh() -> String {
-    "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null"
-        .to_owned()
+    "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new".to_owned()
 }
 
 pub fn borg_rsh_with_known_hosts(path: &Path) -> String {
@@ -28,12 +27,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn borg_rsh_uses_transient_known_hosts_file() {
+    fn borg_rsh_uses_default_known_hosts_file() {
         let ssh = borg_rsh();
 
         assert!(ssh.contains("BatchMode=yes"));
         assert!(ssh.contains("StrictHostKeyChecking=accept-new"));
-        assert!(ssh.contains("UserKnownHostsFile=/dev/null"));
+        assert!(!ssh.contains("UserKnownHostsFile"));
     }
 
     #[test]

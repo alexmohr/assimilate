@@ -26,6 +26,8 @@ command="borg serve --append-only --restrict-to-path /backup/repos",restrict ssh
 
 Once the key is in place, use the **Test Connection** button in the repository form to verify SSH connectivity and confirm that `borg` is installed on the remote host.
 
+On the first successful borg connection, SSH may add the repository host key to the running user's default `known_hosts` file. A one-time "Permanently added ..." warning from OpenSSH is expected then; subsequent borg commands reuse the stored key and should not repeat it.
+
 For the full SSH agent forwarding setup — including Docker and systemd configurations — see [SSH Agent Forwarding](ssh-agent-forwarding.md).
 
 ## Creating a Repository

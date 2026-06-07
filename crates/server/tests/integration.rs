@@ -112,6 +112,14 @@ async fn build_test_app(pool: PgPool) -> Router {
                 .delete(server::api::repos::delete_repo),
         )
         .route(
+            "/api/repos/{repo_id}/ssh-host-key/scan",
+            post(server::api::repos::scan_repo_host_key),
+        )
+        .route(
+            "/api/repos/{repo_id}/ssh-host-key",
+            post(server::api::repos::accept_repo_host_key),
+        )
+        .route(
             "/api/repos/{repo_id}/sync",
             post(server::api::repos::sync_repo),
         )
@@ -556,6 +564,35 @@ async fn test_repo_update() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
     assert_eq!(body["compression"], "zstd,3");
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_repo_accept_ssh_host_key() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    let repo_id = insert_test_repo(&pool, "accept-host-key-repo").await;
+    let ssh_host_key = "ssh-ed25519 AAAAACCEPTED";
+
+    let req = json_request(
+        "POST",
+        &format!("/api/repos/{repo_id}/ssh-host-key"),
+        Some(json!({ "ssh_host_key": ssh_host_key })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["ssh_host_key"], ssh_host_key);
+
+    let stored: Option<String> = sqlx::query_scalar("SELECT ssh_host_key FROM repos WHERE id = $1")
+        .bind(repo_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored.as_deref(), Some(ssh_host_key));
 }
 
 #[tokio::test]

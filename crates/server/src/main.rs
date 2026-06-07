@@ -283,6 +283,14 @@ async fn main() -> Result<(), StartupError> {
             get(api::repos::get_passphrase),
         )
         .route(
+            "/api/repos/{repo_id}/ssh-host-key/scan",
+            post(api::repos::scan_repo_host_key),
+        )
+        .route(
+            "/api/repos/{repo_id}/ssh-host-key",
+            post(api::repos::accept_repo_host_key),
+        )
+        .route(
             "/api/repos/{repo_id}/confirm-relocation",
             post(api::repos::confirm_relocation),
         )

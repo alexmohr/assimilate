@@ -45,6 +45,7 @@ interface RepoWithStats {
   ssh_user: string
   ssh_host: string
   ssh_port: number
+  ssh_host_key: string | null
   compression: string
   encryption: string
   enabled: boolean
@@ -205,6 +206,18 @@ useEscapeKey(showConfirmRelocationDialog, () => {
   showConfirmRelocationDialog.value = false
 })
 
+// SSH Host Key
+const showAcceptHostKeyDialog = ref(false)
+const hostKeyCheckLoading = ref(false)
+const hostKeyMismatch = ref(false)
+const acceptHostKeyLoading = ref(false)
+const acceptHostKeyError = ref<string | null>(null)
+const expectedHostKey = ref<string | null>(null)
+
+useEscapeKey(showAcceptHostKeyDialog, () => {
+  showAcceptHostKeyDialog.value = false
+})
+
 async function doConfirmRelocation(): Promise<void> {
   confirmRelocationLoading.value = true
   confirmRelocationError.value = null
@@ -221,6 +234,45 @@ async function doConfirmRelocation(): Promise<void> {
     confirmRelocationError.value = extractError(e)
   } finally {
     confirmRelocationLoading.value = false
+  }
+}
+
+async function checkHostKeyMismatch(): Promise<void> {
+  hostKeyCheckLoading.value = true
+  expectedHostKey.value = null
+  hostKeyMismatch.value = false
+  try {
+    const res = await apiClient.post<{ ssh_host_key: string }>(
+      `/repos/${repoId.value}/ssh-host-key/scan`,
+    )
+    const sshHostKey = res.data.ssh_host_key
+    if (repo.value?.ssh_host_key !== sshHostKey) {
+      expectedHostKey.value = sshHostKey
+      hostKeyMismatch.value = true
+    }
+  } catch (e: unknown) {
+    logger.debug('host key scan failed', e)
+  } finally {
+    hostKeyCheckLoading.value = false
+  }
+}
+
+async function acceptHostKey(): Promise<void> {
+  if (!expectedHostKey.value) return
+  acceptHostKeyLoading.value = true
+  acceptHostKeyError.value = null
+  try {
+    await apiClient.post(`/repos/${repoId.value}/ssh-host-key`, {
+      ssh_host_key: expectedHostKey.value,
+    })
+    showAcceptHostKeyDialog.value = false
+    await loadRepo()
+    await checkHostKeyMismatch()
+    toastSuccess('SSH host key accepted.')
+  } catch (e: unknown) {
+    acceptHostKeyError.value = extractError(e)
+  } finally {
+    acceptHostKeyLoading.value = false
   }
 }
 
@@ -633,7 +685,7 @@ watch(
     selectedArchive.value = null
     await loadRepo()
     if (repo.value) {
-      await Promise.all([loadTags(), loadArchives()])
+      await Promise.all([loadTags(), loadArchives(), checkHostKeyMismatch()])
       await selectArchiveFromQuery()
     }
   },
@@ -642,7 +694,7 @@ watch(
 onMounted(async () => {
   await loadRepo()
   if (repo.value) {
-    await Promise.all([loadTags(), loadArchives()])
+    await Promise.all([loadTags(), loadArchives(), checkHostKeyMismatch()])
     await selectArchiveFromQuery()
   }
 })
@@ -779,6 +831,14 @@ async function resetImport(): Promise<void> {
                   {{ passphraseLoading ? 'Loading...' : 'Show Passphrase' }}
                 </button>
                 <button
+                  v-if="hostKeyMismatch"
+                  class="btn btn-sm btn-ghost btn-warning-text"
+                  :disabled="hostKeyCheckLoading"
+                  @click="showAcceptHostKeyDialog = true"
+                >
+                  {{ hostKeyCheckLoading ? 'Checking...' : 'Accept SSH Key' }}
+                </button>
+                <button
                   class="btn btn-sm btn-ghost"
                   @click="startEdit"
                 >
@@ -794,6 +854,10 @@ async function resetImport(): Promise<void> {
               <dd class="mono">{{ repo.name }}</dd>
               <dt>SSH Target</dt>
               <dd class="mono">{{ repo.ssh_user }}@{{ repo.ssh_host }}:{{ repo.ssh_port }}</dd>
+              <dt>SSH Host Key</dt>
+              <dd class="mono ssh-host-key">
+                {{ repo.ssh_host_key ?? 'Not set' }}
+              </dd>
               <dt>Repo Path</dt>
               <dd class="mono">{{ repo.repo_path }}</dd>
               <dt>Compression</dt>
@@ -1804,6 +1868,61 @@ async function resetImport(): Promise<void> {
       </div>
     </Teleport>
 
+    <!-- SSH Host Key Dialog -->
+    <Teleport to="body">
+      <div
+        v-if="showAcceptHostKeyDialog"
+        class="overlay"
+        @click.self="showAcceptHostKeyDialog = false"
+      >
+        <div class="dialog">
+          <div class="dialog-header">
+            <h2 class="dialog-title">Accept SSH Host Key</h2>
+            <button
+              class="close-btn"
+              @click="showAcceptHostKeyDialog = false"
+            >
+              &times;
+            </button>
+          </div>
+          <div class="dialog-body">
+            <p class="break-lock-warning">
+              A different SSH host key was detected for <code>{{ repo?.ssh_host }}</code
+              >. Verify the key below before accepting it.
+            </p>
+            <div
+              v-if="expectedHostKey"
+              class="ssh-key-box mono"
+            >
+              {{ expectedHostKey }}
+            </div>
+            <div
+              v-if="acceptHostKeyError"
+              class="form-error"
+            >
+              {{ acceptHostKeyError }}
+            </div>
+          </div>
+          <div class="dialog-footer">
+            <button
+              class="btn btn-ghost"
+              @click="showAcceptHostKeyDialog = false"
+            >
+              Cancel
+            </button>
+            <button
+              v-if="expectedHostKey"
+              class="btn btn-primary"
+              :disabled="acceptHostKeyLoading"
+              @click="acceptHostKey"
+            >
+              {{ acceptHostKeyLoading ? 'Accepting...' : 'Accept Key' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
     <!-- Break Lock Confirmation Dialog -->
     <Teleport to="body">
       <div
@@ -2360,6 +2479,10 @@ async function resetImport(): Promise<void> {
   max-width: 180px;
 }
 
+.ssh-host-key {
+  word-break: break-all;
+}
+
 .break-lock-warning {
   color: var(--danger);
   font-size: 0.875rem;
@@ -2373,6 +2496,17 @@ async function resetImport(): Promise<void> {
   border-radius: var(--radius-sm);
   font-size: 0.85rem;
   color: var(--success);
+}
+
+.ssh-key-box {
+  margin-top: 0.75rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  word-break: break-all;
 }
 
 /* Archives layout */

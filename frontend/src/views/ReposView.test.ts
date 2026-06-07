@@ -37,6 +37,7 @@ interface RepoWithStats {
   ssh_user: string
   ssh_host: string
   ssh_port: number
+  ssh_host_key: string | null
   compression: string
   encryption: string
   enabled: boolean
@@ -56,6 +57,7 @@ const mockRepos: RepoWithStats[] = [
     ssh_user: 'borg',
     ssh_host: 'backup.example.com',
     ssh_port: 22,
+    ssh_host_key: 'ssh-ed25519 AAAA',
     compression: 'lz4',
     encryption: 'repokey-blake2',
     enabled: true,
@@ -73,6 +75,7 @@ const mockRepos: RepoWithStats[] = [
     ssh_user: 'borg',
     ssh_host: 'backup.example.com',
     ssh_port: 22,
+    ssh_host_key: 'ssh-ed25519 AAAA',
     compression: 'zstd',
     encryption: 'repokey-blake2',
     enabled: true,
@@ -90,6 +93,7 @@ const mockRepos: RepoWithStats[] = [
     ssh_user: 'borg',
     ssh_host: 'backup.example.com',
     ssh_port: 22,
+    ssh_host_key: 'ssh-ed25519 AAAA',
     compression: 'zstd',
     encryption: 'repokey-blake2',
     enabled: false,

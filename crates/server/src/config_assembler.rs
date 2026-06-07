@@ -157,6 +157,22 @@ pub async fn assemble_config(
             ApiError::Internal(format!("ssh_port {} out of u16 range", repo.ssh_port))
         })?;
 
+        let ssh_host_key = match repo.ssh_host_key {
+            Some(ssh_host_key) => ssh_host_key,
+            None => {
+                let ssh_host_key = crate::ssh::scan_host_key(&repo.ssh_host, ssh_port)
+                    .await
+                    .map_err(|e| {
+                        ApiError::BadGateway(format!(
+                            "failed to obtain SSH host key for {}:{}: {e}",
+                            repo.ssh_host, ssh_port
+                        ))
+                    })?;
+                db::update_repo_ssh_host_key(pool, repo.id, &ssh_host_key).await?;
+                ssh_host_key
+            }
+        };
+
         repos.push(RepoConfig {
             repo_id: RepoId(repo.id),
             name: repo.name,
@@ -164,6 +180,7 @@ pub async fn assemble_config(
             ssh_user: repo.ssh_user,
             ssh_host: repo.ssh_host,
             ssh_port,
+            ssh_host_key,
             passphrase,
             compression,
             enabled: repo.enabled,

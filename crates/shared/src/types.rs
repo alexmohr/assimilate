@@ -348,6 +348,8 @@ pub struct RepoConfig {
     pub ssh_user: String,
     pub ssh_host: String,
     pub ssh_port: u16,
+    #[serde(default)]
+    pub ssh_host_key: String,
     pub passphrase: String,
     pub compression: Compression,
     pub enabled: bool,

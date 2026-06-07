@@ -4,6 +4,7 @@
 import { ref, watch } from 'vue'
 import { apiClient } from '../api/client'
 import { logger } from '../utils/logger'
+import { readStorage, writeStorage } from '../utils/storage'
 
 export type Theme = 'light' | 'dark' | 'auto'
 type ResolvedTheme = 'light' | 'dark'
@@ -18,7 +19,7 @@ function getSystemPreference(): ResolvedTheme {
 }
 
 function getStoredTheme(): Theme | null {
-  const stored = localStorage.getItem(STORAGE_KEY)
+  const stored = readStorage(STORAGE_KEY)
   if (stored === 'light' || stored === 'dark' || stored === 'auto') {
     return stored
   }
@@ -74,7 +75,7 @@ export function useTheme(): {
 } {
   function setTheme(t: Theme): void {
     theme.value = t
-    localStorage.setItem(STORAGE_KEY, t)
+    writeStorage(STORAGE_KEY, t)
     applyTheme(resolveTheme(t))
   }
 
@@ -85,7 +86,7 @@ export function useTheme(): {
       if (backendTheme === 'light' || backendTheme === 'dark' || backendTheme === 'auto') {
         syncing = true
         theme.value = backendTheme
-        localStorage.setItem(STORAGE_KEY, backendTheme)
+        writeStorage(STORAGE_KEY, backendTheme)
         applyTheme(resolveTheme(backendTheme))
         syncing = false
       }

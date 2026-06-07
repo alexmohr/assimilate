@@ -1848,7 +1848,7 @@ mod tests {
         let repo_key =
             RepoOperationKey::from_backup_target(&backup_target_from_repo(&repo, "hostname", None));
         let repo_queue = executor.repo_operation_queue(&repo_key).await;
-        let permit = repo_queue.clone().acquire_owned().await.unwrap();
+        let permit = Arc::clone(&repo_queue).acquire_owned().await.unwrap();
 
         executor.handle_run_now(repo.repo_id, None, &tx).await;
 
@@ -1870,7 +1870,7 @@ mod tests {
         let repo_key =
             RepoOperationKey::from_backup_target(&backup_target_from_repo(&repo, "hostname", None));
         let repo_queue = executor.repo_operation_queue(&repo_key).await;
-        let permit = repo_queue.clone().acquire_owned().await.unwrap();
+        let permit = Arc::clone(&repo_queue).acquire_owned().await.unwrap();
         let (tx, mut rx) = mpsc::channel(1);
         let queue = executor.repo_operation_queue(&repo_key).await;
 
@@ -1894,7 +1894,7 @@ mod tests {
         assert!(
             tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
                 .await
-                .map_or(false, |msg| msg.is_some())
+                .is_ok_and(|msg| msg.is_some())
         );
         handle.await.unwrap();
     }

@@ -2,9 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     io::Write,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -17,7 +20,7 @@ use shared::{
     },
 };
 use tokio::{
-    sync::{Mutex, mpsc},
+    sync::{Mutex, Semaphore, mpsc},
     task::JoinHandle,
 };
 use tracing::{error, info, warn};
@@ -73,8 +76,9 @@ pub enum ExecutorCommand {
 pub struct Executor {
     server_url: String,
     token: String,
-    active_repos: Arc<Mutex<HashSet<RepoId>>>,
-    active_task_handles: Arc<Mutex<HashMap<RepoId, JoinHandle<()>>>>,
+    repo_operation_queues: Arc<Mutex<HashMap<RepoOperationKey, Arc<Semaphore>>>>,
+    active_backup_tasks: Arc<Mutex<HashMap<RepoId, Vec<ActiveBackupTask>>>>,
+    next_task_id: AtomicU64,
     current_config: Arc<Mutex<Option<AgentConfig>>>,
     engine: Arc<BackupEngine>,
 }
@@ -84,8 +88,9 @@ impl Executor {
         Self {
             server_url: server_url.to_owned(),
             token: token.to_owned(),
-            active_repos: Arc::new(Mutex::new(HashSet::new())),
-            active_task_handles: Arc::new(Mutex::new(HashMap::new())),
+            repo_operation_queues: Arc::new(Mutex::new(HashMap::new())),
+            active_backup_tasks: Arc::new(Mutex::new(HashMap::new())),
+            next_task_id: AtomicU64::new(0),
             current_config: Arc::new(Mutex::new(None)),
             engine: Arc::new(BackupEngine::new()),
         }
@@ -184,25 +189,9 @@ impl Executor {
         schedule_id: Option<i64>,
         outbound_tx: &mpsc::Sender<AgentToServer>,
     ) {
-        {
-            let mut active = self.active_repos.lock().await;
-            if !active.insert(repo_id) {
-                warn!(repo_id = ?repo_id, "backup already in progress, rejecting");
-                let msg = AgentToServer::BackupRejected {
-                    repo_id,
-                    reason: "backup already in progress for this repo".to_owned(),
-                };
-                if let Err(e) = outbound_tx.send(msg).await {
-                    tracing::debug!(error = %e, "outbound send failed");
-                }
-                return;
-            }
-        }
-
         let config_guard = self.current_config.lock().await;
         let Some(config) = config_guard.as_ref() else {
             warn!(repo_id = ?repo_id, "no config available, rejecting backup");
-            self.active_repos.lock().await.remove(&repo_id);
             let msg = AgentToServer::BackupRejected {
                 repo_id,
                 reason: "agent has no config yet".to_owned(),
@@ -215,7 +204,6 @@ impl Executor {
 
         let Some(repo) = config.repos.iter().find(|r| r.repo_id == repo_id) else {
             warn!(repo_id = ?repo_id, "repo not found in config, rejecting");
-            self.active_repos.lock().await.remove(&repo_id);
             let msg = AgentToServer::BackupRejected {
                 repo_id,
                 reason: "repo not found in agent config".to_owned(),
@@ -227,17 +215,31 @@ impl Executor {
         };
 
         let target = backup_target_from_repo(repo, &config.client_hostname, schedule_id);
+        let repo_key = RepoOperationKey::from_backup_target(&target);
         let hostname = config.client_hostname.clone();
         drop(config_guard);
 
-        let active_repos = Arc::clone(&self.active_repos);
-        let active_task_handles = Arc::clone(&self.active_task_handles);
+        let repo_queue = self.repo_operation_queue(&repo_key).await;
+        let task_id = self.next_task_id();
         let engine = Arc::clone(&self.engine);
         let outbound = outbound_tx.clone();
         let server_url = self.server_url.clone();
         let token = self.token.clone();
+        let active_backup_tasks = Arc::clone(&self.active_backup_tasks);
+        let active_backup_tasks_for_spawn = Arc::clone(&active_backup_tasks);
+
+        info!(repo_id = ?repo_id, repo = %repo_key.repo_url(), "queued borg backup");
 
         let handle = tokio::spawn(async move {
+            let Ok(_permit) = repo_queue.acquire_owned().await else {
+                error!(
+                    repo_id = ?repo_id,
+                    repo = %repo_key.repo_url(),
+                    "failed to acquire repo queue"
+                );
+                return;
+            };
+
             run_backup_task(
                 repo_id,
                 target,
@@ -248,13 +250,15 @@ impl Executor {
                 &outbound,
             )
             .await;
-            active_repos.lock().await.remove(&repo_id);
-            active_task_handles.lock().await.remove(&repo_id);
+            Self::remove_backup_task(&active_backup_tasks_for_spawn, repo_id, task_id).await;
         });
-        self.active_task_handles
-            .lock()
-            .await
-            .insert(repo_id, handle);
+
+        Self::push_backup_task(
+            &active_backup_tasks,
+            repo_id,
+            ActiveBackupTask { task_id, handle },
+        )
+        .await;
     }
 
     async fn handle_cancel_backup(
@@ -262,18 +266,18 @@ impl Executor {
         repo_id: RepoId,
         outbound_tx: &mpsc::Sender<AgentToServer>,
     ) {
-        let handle = self.active_task_handles.lock().await.remove(&repo_id);
-        let Some(handle) = handle else {
+        let tasks = Self::take_backup_tasks(&self.active_backup_tasks, repo_id).await;
+        let Some(tasks) = tasks else {
             warn!(repo_id = ?repo_id, "cancel requested but no active backup task found");
             return;
         };
-        if handle.is_finished() {
-            warn!(repo_id = ?repo_id, "cancel requested but backup already completed");
-            return;
+
+        let task_count = tasks.len();
+        for task in tasks {
+            task.handle.abort();
         }
-        handle.abort();
-        self.active_repos.lock().await.remove(&repo_id);
-        info!(repo_id = ?repo_id, "backup cancelled");
+
+        info!(repo_id = ?repo_id, task_count, "backup cancelled");
         let msg = AgentToServer::BackupCancelled { repo_id };
         if let Err(e) = outbound_tx.send(msg).await {
             tracing::debug!(error = %e, "outbound send failed");
@@ -293,15 +297,28 @@ impl Executor {
         };
 
         let target = backup_target_from_repo(repo, &config.client_hostname, None);
+        let repo_key = RepoOperationKey::from_backup_target(&target);
         let hostname = config.client_hostname.clone();
         drop(config_guard);
 
+        let repo_queue = self.repo_operation_queue(&repo_key).await;
         let engine = Arc::clone(&self.engine);
         let outbound = outbound_tx.clone();
         let server_url = self.server_url.clone();
         let token = self.token.clone();
 
+        info!(repo_id = ?repo_id, repo = %repo_key.repo_url(), "queued borg check");
+
         tokio::spawn(async move {
+            let Ok(_permit) = repo_queue.acquire_owned().await else {
+                error!(
+                    repo_id = ?repo_id,
+                    repo = %repo_key.repo_url(),
+                    "failed to acquire repo queue"
+                );
+                return;
+            };
+
             run_check_task(
                 repo_id,
                 &target,
@@ -328,15 +345,28 @@ impl Executor {
         };
 
         let target = backup_target_from_repo(repo, &config.client_hostname, None);
+        let repo_key = RepoOperationKey::from_backup_target(&target);
         let hostname = config.client_hostname.clone();
         drop(config_guard);
 
+        let repo_queue = self.repo_operation_queue(&repo_key).await;
         let engine = Arc::clone(&self.engine);
         let outbound = outbound_tx.clone();
         let server_url = self.server_url.clone();
         let token = self.token.clone();
 
+        info!(repo_id = ?repo_id, repo = %repo_key.repo_url(), "queued borg verify");
+
         tokio::spawn(async move {
+            let Ok(_permit) = repo_queue.acquire_owned().await else {
+                error!(
+                    repo_id = ?repo_id,
+                    repo = %repo_key.repo_url(),
+                    "failed to acquire repo queue"
+                );
+                return;
+            };
+
             run_verify_task(
                 repo_id,
                 &target,
@@ -457,15 +487,28 @@ impl Executor {
         let backup_sources = schedule.backup_sources.clone();
         let exclude_patterns = schedule.exclude_patterns.clone();
         let target = backup_target_from_repo(repo, &config.client_hostname, Some(schedule_id));
+        let repo_key = RepoOperationKey::from_backup_target(&target);
         let hostname = config.client_hostname.clone();
         drop(config_guard);
 
+        let repo_queue = self.repo_operation_queue(&repo_key).await;
         let outbound = outbound_tx.clone();
         let server_url = self.server_url.clone();
         let token = self.token.clone();
         let borg = Borg::new();
 
+        info!(repo_id = ?repo_id, repo = %repo_key.repo_url(), "queued borg dry-run");
+
         tokio::spawn(async move {
+            let Ok(_permit) = repo_queue.acquire_owned().await else {
+                error!(
+                    repo_id = ?repo_id,
+                    repo = %repo_key.repo_url(),
+                    "failed to acquire repo queue"
+                );
+                return;
+            };
+
             run_dry_run_task(
                 repo_id,
                 target,
@@ -518,15 +561,28 @@ impl Executor {
         };
 
         let target = backup_target_from_repo(repo, &config.client_hostname, None);
+        let repo_key = RepoOperationKey::from_backup_target(&target);
         let hostname = config.client_hostname.clone();
         drop(config_guard);
 
+        let repo_queue = self.repo_operation_queue(&repo_key).await;
         let outbound = outbound_tx.clone();
         let server_url = self.server_url.clone();
         let token = self.token.clone();
         let borg = Borg::new();
 
+        info!(repo_id = ?repo_id, repo = %repo_key.repo_url(), "queued borg restore");
+
         tokio::spawn(async move {
+            let Ok(_permit) = repo_queue.acquire_owned().await else {
+                error!(
+                    repo_id = ?repo_id,
+                    repo = %repo_key.repo_url(),
+                    "failed to acquire repo queue"
+                );
+                return;
+            };
+
             run_restore_task(
                 repo_id,
                 target,
@@ -577,15 +633,28 @@ impl Executor {
         };
 
         let target = backup_target_from_repo(repo, &config.client_hostname, None);
+        let repo_key = RepoOperationKey::from_backup_target(&target);
         let hostname = config.client_hostname.clone();
         drop(config_guard);
 
+        let repo_queue = self.repo_operation_queue(&repo_key).await;
         let outbound = outbound_tx.clone();
         let server_url = self.server_url.clone();
         let token = self.token.clone();
         let borg = Borg::new();
 
+        info!(repo_id = ?repo_id, repo = %repo_key.repo_url(), "queued borg delete");
+
         tokio::spawn(async move {
+            let Ok(_permit) = repo_queue.acquire_owned().await else {
+                error!(
+                    repo_id = ?repo_id,
+                    repo = %repo_key.repo_url(),
+                    "failed to acquire repo queue"
+                );
+                return;
+            };
+
             run_delete_archives_task(
                 target,
                 archive_names,
@@ -597,6 +666,84 @@ impl Executor {
             .await;
         });
     }
+
+    async fn repo_operation_queue(&self, repo_key: &RepoOperationKey) -> Arc<Semaphore> {
+        let mut repo_operation_queues = self.repo_operation_queues.lock().await;
+        Arc::clone(
+            repo_operation_queues
+                .entry(repo_key.clone())
+                .or_insert_with(|| Arc::new(Semaphore::new(1))),
+        )
+    }
+
+    fn next_task_id(&self) -> u64 {
+        self.next_task_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    async fn push_backup_task(
+        active_backup_tasks: &Arc<Mutex<HashMap<RepoId, Vec<ActiveBackupTask>>>>,
+        repo_id: RepoId,
+        task: ActiveBackupTask,
+    ) {
+        let mut active_backup_tasks = active_backup_tasks.lock().await;
+        active_backup_tasks.entry(repo_id).or_default().push(task);
+    }
+
+    async fn take_backup_tasks(
+        active_backup_tasks: &Arc<Mutex<HashMap<RepoId, Vec<ActiveBackupTask>>>>,
+        repo_id: RepoId,
+    ) -> Option<Vec<ActiveBackupTask>> {
+        active_backup_tasks.lock().await.remove(&repo_id)
+    }
+
+    async fn remove_backup_task(
+        active_backup_tasks: &Arc<Mutex<HashMap<RepoId, Vec<ActiveBackupTask>>>>,
+        repo_id: RepoId,
+        task_id: u64,
+    ) {
+        let mut active_backup_tasks = active_backup_tasks.lock().await;
+        let Some(tasks) = active_backup_tasks.get_mut(&repo_id) else {
+            return;
+        };
+
+        tasks.retain(|task| task.task_id != task_id);
+        if tasks.is_empty() {
+            active_backup_tasks.remove(&repo_id);
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RepoOperationKey {
+    ssh_user: String,
+    ssh_host: String,
+    ssh_port: u16,
+    repo_path: String,
+}
+
+impl RepoOperationKey {
+    fn from_backup_target(target: &BackupTarget) -> Self {
+        Self {
+            ssh_user: target.ssh_user.clone(),
+            ssh_host: target.ssh_host.clone(),
+            ssh_port: target.ssh_port,
+            repo_path: target.repo_path.clone(),
+        }
+    }
+
+    fn repo_url(&self) -> String {
+        build_repo_url(
+            &self.ssh_user,
+            &self.ssh_host,
+            self.ssh_port,
+            &self.repo_path,
+        )
+    }
+}
+
+struct ActiveBackupTask {
+    task_id: u64,
+    handle: JoinHandle<()>,
 }
 
 async fn run_init_repo_task(
@@ -1663,6 +1810,18 @@ mod tests {
         assert_eq!(contents, "[backup.example.com]:2222 ssh-ed25519 AAAATEST\n");
     }
 
+    #[test]
+    fn repo_operation_key_is_based_on_physical_repo_location() {
+        let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
+        let first = backup_target_from_repo(&repo, "hostname", None);
+        let second = backup_target_from_repo(&repo, "hostname", Some(10));
+
+        assert_eq!(
+            RepoOperationKey::from_backup_target(&first),
+            RepoOperationKey::from_backup_target(&second)
+        );
+    }
+
     #[tokio::test]
     async fn cancel_backup_with_no_active_task_sends_nothing() {
         let executor = Executor::new("ws://localhost", "token");
@@ -1675,52 +1834,68 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancel_backup_with_finished_task_sends_nothing() {
+    async fn cancel_backup_aborts_queued_task_and_sends_cancelled() {
         let executor = Executor::new("ws://localhost", "token");
         let (tx, mut rx) = mpsc::channel(8);
-        let repo_id = shared::types::RepoId(2);
+        let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
+        let config = shared::types::AgentConfig {
+            client_hostname: "hostname".to_owned(),
+            skip_targets: Vec::new(),
+            repos: vec![repo.clone()],
+        };
+        *executor.current_config.lock().await = Some(config);
 
-        let handle = tokio::spawn(async {});
-        handle.await.unwrap();
-        executor
-            .active_task_handles
-            .lock()
-            .await
-            .insert(repo_id, tokio::spawn(async {}));
-        tokio::task::yield_now().await;
+        let repo_key =
+            RepoOperationKey::from_backup_target(&backup_target_from_repo(&repo, "hostname", None));
+        let repo_queue = executor.repo_operation_queue(&repo_key).await;
+        let permit = repo_queue.clone().acquire_owned().await.unwrap();
 
-        executor.handle_cancel_backup(repo_id, &tx).await;
+        executor.handle_run_now(repo.repo_id, None, &tx).await;
 
         assert!(rx.try_recv().is_err());
+        assert_eq!(executor.active_backup_tasks.lock().await.len(), 1);
+
+        executor.handle_cancel_backup(repo.repo_id, &tx).await;
+
+        let msg = rx.try_recv().unwrap();
+        assert!(matches!(msg, AgentToServer::BackupCancelled { repo_id: r } if r == repo.repo_id));
+        assert!(executor.active_backup_tasks.lock().await.is_empty());
+        drop(permit);
     }
 
     #[tokio::test]
-    async fn cancel_backup_aborts_running_task_and_sends_cancelled() {
+    async fn repo_operation_queue_serializes_tasks() {
         let executor = Executor::new("ws://localhost", "token");
-        let (tx, mut rx) = mpsc::channel(8);
-        let repo_id = shared::types::RepoId(3);
+        let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
+        let repo_key =
+            RepoOperationKey::from_backup_target(&backup_target_from_repo(&repo, "hostname", None));
+        let repo_queue = executor.repo_operation_queue(&repo_key).await;
+        let permit = repo_queue.clone().acquire_owned().await.unwrap();
+        let (tx, mut rx) = mpsc::channel(1);
+        let queue = executor.repo_operation_queue(&repo_key).await;
 
-        executor.active_repos.lock().await.insert(repo_id);
-        let handle = tokio::spawn(async {
-            tokio::time::sleep(std::time::Duration::from_mins(1)).await;
+        let handle = tokio::spawn(async move {
+            let Ok(_permit) = queue.acquire_owned().await else {
+                return;
+            };
+
+            if let Err(e) = tx.send(()).await {
+                tracing::debug!(error = %e, "test send failed");
+            }
         });
-        executor
-            .active_task_handles
-            .lock()
-            .await
-            .insert(repo_id, handle);
 
-        executor.handle_cancel_backup(repo_id, &tx).await;
-
-        let msg = rx.try_recv().unwrap();
-        assert!(matches!(msg, AgentToServer::BackupCancelled { repo_id: r } if r == repo_id));
-        assert!(!executor.active_repos.lock().await.contains(&repo_id));
         assert!(
-            !executor
-                .active_task_handles
-                .lock()
+            tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv())
                 .await
-                .contains_key(&repo_id)
+                .is_err()
         );
+
+        drop(permit);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+                .await
+                .map_or(false, |msg| msg.is_some())
+        );
+        handle.await.unwrap();
     }
 }

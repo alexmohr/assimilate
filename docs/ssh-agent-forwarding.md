@@ -113,7 +113,7 @@ Add the public key to `~/.ssh/authorized_keys` on the borg repository host to au
 
 The agent uses the same `BORG_SERVER_URL` and `BORG_AGENT_TOKEN` environment variables it already needs to connect to the server. Before each backup it attempts to establish the SSH relay. If the relay succeeds, `SSH_AUTH_SOCK` is injected into the borg subprocess environment. If it fails for any reason the backup continues without forwarding and borg falls back to whatever SSH keys are available locally on the agent machine.
 
-For borg-managed SSH connections, Assimilate uses `StrictHostKeyChecking=accept-new` with a transient user `known_hosts` file. That keeps first-use host key prompts non-interactive and prevents a rotated repository host key from leaving stale entries behind on every agent machine.
+Assimilate records each repository server's SSH host key and sends that pin to assigned agents. Before running borg, the agent writes the pin to a private temporary `known_hosts` file and uses `StrictHostKeyChecking=yes`. The connection fails if the repository server presents a different key, and the temporary file is removed after the operation.
 
 ## Borg Repository Authorization
 
@@ -185,7 +185,7 @@ ssh -i /path/to/borg_key borg@repo-host echo ok
 
 ### Repository host key rotated
 
-If the repository host was reprovisioned or its SSH host key was intentionally replaced, current Assimilate agents do not require manual `known_hosts` cleanup. The next borg connection accepts the new host key automatically using the transient borg-specific `known_hosts` file.
+If the repository host was reprovisioned or its SSH host key was intentionally replaced, backups fail until Assimilate refreshes the repository configuration. Save the repository again after verifying the new host-key fingerprint through a trusted channel; Assimilate records the currently presented key and distributes the new pin to assigned agents.
 
 If the failure persists after the rotation, verify you are reaching the intended repository host and that no jump host or DNS override is pointing agents at the wrong machine.
 

@@ -121,6 +121,20 @@ api PUT "/api/repos/3" "{
     \"sync_schedule\": null
 }" > /dev/null
 
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<'SQL' > /dev/null
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM repos
+        WHERE name IN ('server-daily', 'database-hourly', 'media-weekly')
+          AND ssh_host_key IS NULL
+    ) THEN
+        RAISE EXCEPTION 'demo repositories must have pinned SSH host keys';
+    END IF;
+END
+$$;
+SQL
+
 echo "==> Creating sample borg archives for browsing/diff..."
 
 # Helper: create borg archive with spoofed hostname metadata and a back-dated

@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use base64::Engine;
 use russh::{
@@ -85,11 +89,46 @@ impl client::Handler for SshClientHandler {
     }
 }
 
+struct HostKeyCaptureHandler {
+    host_key: Arc<Mutex<Option<String>>>,
+}
+
+impl client::Handler for HostKeyCaptureHandler {
+    type Error = russh::Error;
+
+    async fn check_server_key(
+        &mut self,
+        server_public_key: &PublicKey,
+    ) -> Result<bool, Self::Error> {
+        if let Ok(mut host_key) = self.host_key.lock() {
+            *host_key = server_public_key.to_openssh().ok();
+        }
+        Ok(true)
+    }
+}
+
 fn ssh_config() -> Arc<client::Config> {
     Arc::new(client::Config {
         inactivity_timeout: Some(Duration::from_secs(30)),
         ..client::Config::default()
     })
+}
+
+pub async fn scan_host_key(host: &str, port: u16) -> Result<String, SshError> {
+    let host_key = Arc::new(Mutex::new(None));
+    let handler = HostKeyCaptureHandler {
+        host_key: Arc::clone(&host_key),
+    };
+    let session = client::connect(ssh_config(), (host, port), handler)
+        .await
+        .map_err(|e| SshError::Connection(format!("{host}:{port}: {e}")))?;
+    drop(session);
+
+    host_key
+        .lock()
+        .map_err(|_| SshError::Connection("SSH host key capture lock poisoned".to_owned()))?
+        .clone()
+        .ok_or_else(|| SshError::Connection(format!("{host}:{port}: no SSH host key received")))
 }
 
 pub fn read_server_public_key() -> Result<String, SshError> {

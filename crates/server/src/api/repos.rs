@@ -166,13 +166,12 @@ pub async fn create_repo(
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
 
     let ssh_port = req.ssh_port.unwrap_or(22);
-    helpers::validate_path_exists(
-        &req.ssh_host,
-        &req.ssh_user,
-        u16::try_from(ssh_port).unwrap_or(22),
-        &req.repo_path,
-    )
-    .await?;
+    let ssh_port_u16 = u16::try_from(ssh_port).unwrap_or(22);
+    helpers::validate_path_exists(&req.ssh_host, &req.ssh_user, ssh_port_u16, &req.repo_path)
+        .await?;
+    let ssh_host_key = crate::ssh::scan_host_key(&req.ssh_host, ssh_port_u16)
+        .await
+        .map_err(|e| ApiError::BadGateway(e.to_string()))?;
 
     let repo_url = build_repo_url(
         &req.ssh_user,
@@ -212,6 +211,7 @@ pub async fn create_repo(
         },
     )
     .await?;
+    db::update_repo_ssh_host_key(&state.pool, repo.id, &ssh_host_key).await?;
 
     let repo_id = repo.id;
     let pool = state.pool.clone();
@@ -232,11 +232,19 @@ pub async fn create_repo(
                         db::update_repo_encryption(&pool, repo_id, &info.encryption.to_string())
                             .await
                     {
-                        warn!(repo_id, error = %e, "failed to update encryption after deferred borg info");
+                        warn!(
+                            repo_id,
+                            error = %e,
+                            "failed to update encryption after deferred borg info"
+                        );
                     }
                 }
                 Err(e) => {
-                    warn!(repo_id, error = %e, "deferred borg info failed, continuing to archive sync");
+                    warn!(
+                        repo_id,
+                        error = %e,
+                        "deferred borg info failed, continuing to archive sync"
+                    );
                 }
             }
         }
@@ -297,6 +305,11 @@ pub async fn update_repo(
 
     let sync_schedule = req.sync_schedule.unwrap_or(existing.sync_schedule);
     let name = req.name.unwrap_or(existing.name);
+    let ssh_port = req.ssh_port.unwrap_or(22);
+    let ssh_host_key =
+        crate::ssh::scan_host_key(&req.ssh_host, u16::try_from(ssh_port).unwrap_or(22))
+            .await
+            .map_err(|e| ApiError::BadGateway(e.to_string()))?;
 
     let repo = db::update_repo(
         &state.pool,
@@ -306,7 +319,7 @@ pub async fn update_repo(
             repo_path: &req.repo_path,
             ssh_user: &req.ssh_user,
             ssh_host: &req.ssh_host,
-            ssh_port: req.ssh_port.unwrap_or(22),
+            ssh_port,
             compression: &compression,
             encryption: &encryption,
             enabled: req.enabled.unwrap_or(true),
@@ -314,6 +327,8 @@ pub async fn update_repo(
         },
     )
     .await?;
+
+    db::update_repo_ssh_host_key(&state.pool, repo_id, &ssh_host_key).await?;
 
     if location_changed {
         db::set_relocation_pending(&state.pool, repo_id).await?;
@@ -533,12 +548,11 @@ pub async fn init_repo(
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
 
     let ssh_port = req.ssh_port.unwrap_or(22);
-    let repo_url = build_repo_url(
-        &req.ssh_user,
-        &req.ssh_host,
-        u16::try_from(ssh_port).unwrap_or(22),
-        &req.repo_path,
-    );
+    let ssh_port_u16 = u16::try_from(ssh_port).unwrap_or(22);
+    let ssh_host_key = crate::ssh::scan_host_key(&req.ssh_host, ssh_port_u16)
+        .await
+        .map_err(|e| ApiError::BadGateway(e.to_string()))?;
+    let repo_url = build_repo_url(&req.ssh_user, &req.ssh_host, ssh_port_u16, &req.repo_path);
 
     let borg_output = run_borg_init(&repo_url, &req.passphrase, req.encryption).await?;
 
@@ -562,6 +576,7 @@ pub async fn init_repo(
         },
     )
     .await?;
+    db::update_repo_ssh_host_key(&state.pool, repo.id, &ssh_host_key).await?;
 
     info!(repo_id = repo.id, name = %req.name, "repository initialized");
 
@@ -1545,14 +1560,25 @@ fn enrich_archive_stats_background(
                     let repo_archive = format!("{borg_repo}::{archive_name}");
                     let output = match Borg::new()
                         .run(
-                            &["info", "--json", "--lock-wait", LOCK_WAIT_SECS, &repo_archive],
+                            &[
+                                "info",
+                                "--json",
+                                "--lock-wait",
+                                LOCK_WAIT_SECS,
+                                &repo_archive,
+                            ],
                             &env,
                         )
                         .await
                     {
                         Ok(o) => o,
                         Err(e) => {
-                            warn!(repo_id, archive = %archive_name, error = %e, "stat enrichment: failed to run borg info");
+                            warn!(
+                                repo_id,
+                                archive = %archive_name,
+                                error = %e,
+                                "stat enrichment: failed to run borg info"
+                            );
                             return;
                         }
                     };
@@ -1570,7 +1596,12 @@ fn enrich_archive_stats_background(
                     let json: serde_json::Value = match serde_json::from_slice(&output.stdout) {
                         Ok(v) => v,
                         Err(e) => {
-                            warn!(repo_id, archive = %archive_name, error = %e, "stat enrichment: failed to parse borg info output");
+                            warn!(
+                                repo_id,
+                                archive = %archive_name,
+                                error = %e,
+                                "stat enrichment: failed to parse borg info output"
+                            );
                             return;
                         }
                     };
@@ -1578,7 +1609,11 @@ fn enrich_archive_stats_background(
                     let info = match json["archives"].as_array().and_then(|a| a.first()) {
                         Some(v) => v.clone(),
                         None => {
-                            warn!(repo_id, archive = %archive_name, "stat enrichment: borg info returned no archive entry");
+                            warn!(
+                                repo_id,
+                                archive = %archive_name,
+                                "stat enrichment: borg info returned no archive entry"
+                            );
                             return;
                         }
                     };
@@ -1601,9 +1636,19 @@ fn enrich_archive_stats_background(
                     )
                     .await
                     {
-                        warn!(repo_id, archive = %archive_name, error = %e, "stat enrichment: failed to update stats");
+                        warn!(
+                            repo_id,
+                            archive = %archive_name,
+                            error = %e,
+                            "stat enrichment: failed to update stats"
+                        );
                     } else {
-                        info!(repo_id, archive = %archive_name, original_size = archive_stats.original_size, "stat enrichment: updated archive stats");
+                        info!(
+                            repo_id,
+                            archive = %archive_name,
+                            original_size = archive_stats.original_size,
+                            "stat enrichment: updated archive stats"
+                        );
                     }
                 }
             })

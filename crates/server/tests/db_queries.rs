@@ -1046,8 +1046,9 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
     // Store a properly encrypted passphrase so assemble_config can decrypt it
     let passphrase_encrypted =
         shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
-    sqlx::query("UPDATE repos SET passphrase_encrypted = $1 WHERE id = $2")
+    sqlx::query("UPDATE repos SET passphrase_encrypted = $1, ssh_host_key = $2 WHERE id = $3")
         .bind(passphrase_encrypted.as_slice())
+        .bind("ssh-ed25519 AAAATEST")
         .bind(repo.id)
         .execute(&pool)
         .await
@@ -1069,6 +1070,8 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
         server::config_assembler::assemble_config(&pool, &encryption_key, &client.hostname)
             .await
             .unwrap();
+
+    assert_eq!(config.repos[0].ssh_host_key, "ssh-ed25519 AAAATEST");
 
     let patterns: Vec<&str> = config.repos[0].schedules[0]
         .exclude_patterns

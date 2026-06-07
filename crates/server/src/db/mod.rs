@@ -1065,9 +1065,9 @@ pub async fn get_repo_with_passphrase(
     repo_id: i64,
 ) -> Result<RepoWithPassphraseRow, ApiError> {
     sqlx::query_as::<_, RepoWithPassphraseRow>(
-        "SELECT id, name, repo_path, ssh_user, ssh_host, ssh_port, passphrase_encrypted, \
-         compression, encryption, enabled, relocation_pending, sync_schedule FROM repos WHERE id \
-         = $1",
+        "SELECT id, name, repo_path, ssh_user, ssh_host, ssh_port, ssh_host_key, \
+         passphrase_encrypted, compression, encryption, enabled, relocation_pending, \
+         sync_schedule FROM repos WHERE id = $1",
     )
     .bind(repo_id)
     .fetch_one(pool)
@@ -1076,6 +1076,20 @@ pub async fn get_repo_with_passphrase(
         sqlx::Error::RowNotFound => ApiError::NotFound(format!("repo {repo_id} not found")),
         other => ApiError::Database(other),
     })
+}
+
+pub async fn update_repo_ssh_host_key(
+    pool: &PgPool,
+    repo_id: i64,
+    ssh_host_key: &str,
+) -> Result<(), ApiError> {
+    sqlx::query("UPDATE repos SET ssh_host_key = $2 WHERE id = $1")
+        .bind(repo_id)
+        .bind(ssh_host_key)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(())
 }
 
 pub async fn get_global_excludes_raw(pool: &PgPool) -> Result<String, ApiError> {
@@ -1269,6 +1283,7 @@ pub struct RepoWithPassphraseRow {
     pub ssh_user: String,
     pub ssh_host: String,
     pub ssh_port: i32,
+    pub ssh_host_key: Option<String>,
     pub passphrase_encrypted: Vec<u8>,
     pub compression: String,
     pub encryption: String,
@@ -1293,9 +1308,9 @@ pub async fn list_repos_for_client(
 ) -> Result<Vec<RepoWithPassphraseRow>, ApiError> {
     sqlx::query_as::<_, RepoWithPassphraseRow>(
         "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, \
-         r.passphrase_encrypted, r.compression, r.encryption, r.enabled, r.relocation_pending, \
-         r.sync_schedule FROM repos r JOIN schedules s ON s.repo_id = r.id JOIN schedule_targets \
-         st ON st.schedule_id = s.id WHERE st.client_id = $1 ORDER BY r.id",
+         r.ssh_host_key, r.passphrase_encrypted, r.compression, r.encryption, r.enabled, \
+         r.relocation_pending, r.sync_schedule FROM repos r JOIN schedules s ON s.repo_id = r.id \
+         JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.client_id = $1 ORDER BY r.id",
     )
     .bind(client_id)
     .fetch_all(pool)

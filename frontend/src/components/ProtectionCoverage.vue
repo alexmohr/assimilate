@@ -16,10 +16,13 @@ defineProps<{ protection: DashboardOverview['protection'] }>()
     class="panel"
   >
     <h2 class="panel-title">Protection Coverage</h2>
-    <div class="coverage-score">
+    <RouterLink
+      class="coverage-score"
+      to="/clients?coverage=protected"
+    >
       <strong>{{ protection.protected_hosts }}/{{ protection.eligible_hosts }}</strong>
       <span>eligible hosts protected</span>
-    </div>
+    </RouterLink>
     <p
       v-if="protection.unassigned_hosts.length === 0 && protection.never_succeeded_targets === 0"
       class="coverage-ok"
@@ -28,16 +31,22 @@ defineProps<{ protection: DashboardOverview['protection'] }>()
     </p>
     <dl class="coverage-facts">
       <div>
-        <dt>Unassigned hosts</dt>
-        <dd>{{ protection.unassigned_hosts.length }}</dd>
+        <RouterLink to="/clients?coverage=unassigned">
+          <dt>Unassigned hosts</dt>
+          <dd>{{ protection.unassigned_hosts.length }}</dd>
+        </RouterLink>
       </div>
       <div>
-        <dt>Targets never succeeded</dt>
-        <dd>{{ protection.never_succeeded_targets }}</dd>
+        <RouterLink to="/clients?coverage=never-succeeded">
+          <dt>Targets never succeeded</dt>
+          <dd>{{ protection.never_succeeded_targets }}</dd>
+        </RouterLink>
       </div>
       <div>
-        <dt>Hosts covered only by disabled schedules</dt>
-        <dd>{{ protection.disabled_only_hosts.length }}</dd>
+        <RouterLink to="/clients?coverage=disabled-only">
+          <dt>Hosts covered only by disabled schedules</dt>
+          <dd>{{ protection.disabled_only_hosts.length }}</dd>
+        </RouterLink>
       </div>
     </dl>
     <div
@@ -61,6 +70,13 @@ defineProps<{ protection: DashboardOverview['protection'] }>()
   align-items: baseline;
   gap: 0.6rem;
   margin-bottom: 1rem;
+  color: inherit;
+  text-decoration: none;
+}
+
+.coverage-score:hover strong,
+.coverage-facts a:hover dt {
+  color: var(--accent);
 }
 
 .coverage-score strong {
@@ -84,11 +100,16 @@ defineProps<{ protection: DashboardOverview['protection'] }>()
 }
 
 .coverage-facts div {
+  border-top: 1px solid var(--border);
+}
+
+.coverage-facts a {
   display: flex;
   justify-content: space-between;
   gap: 1rem;
   padding-top: 0.6rem;
-  border-top: 1px solid var(--border);
+  color: inherit;
+  text-decoration: none;
 }
 
 dt,

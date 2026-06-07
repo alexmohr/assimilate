@@ -67,8 +67,13 @@ describe('dashboard operational components', () => {
         protection: {
           protected_hosts: 2,
           eligible_hosts: 3,
+          protected_host_links: [
+            { client_id: 5, hostname: 'protected-host' },
+            { client_id: 6, hostname: 'protected-host-2' },
+          ],
           unassigned_hosts: [{ client_id: 7, hostname: 'unassigned-host' }],
           never_succeeded_targets: 1,
+          never_succeeded_hosts: [{ client_id: 9, hostname: 'never-succeeded-host' }],
           disabled_only_hosts: [{ client_id: 8, hostname: 'disabled-host' }],
         },
       },
@@ -77,6 +82,12 @@ describe('dashboard operational components', () => {
     expect(wrapper.text()).toContain('2/3')
     expect(wrapper.text()).toContain('unassigned-host')
     expect(wrapper.find('.host-links a').attributes('href')).toBe('/clients/unassigned-host')
+    expect(wrapper.find('.coverage-score').attributes('href')).toBe('/clients?coverage=protected')
+    expect(wrapper.findAll('.coverage-facts a').map((link) => link.attributes('href'))).toEqual([
+      '/clients?coverage=unassigned',
+      '/clients?coverage=never-succeeded',
+      '/clients?coverage=disabled-only',
+    ])
   })
 
   it('groups running and upcoming work by operation and schedule', () => {

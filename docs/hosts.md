@@ -25,6 +25,7 @@ The Clients list page provides:
 
 - **Text filter** — search by hostname or tag
 - **Status filter** — show All, Online only, or Offline only
+- **Coverage filter** — show protected, unassigned, never-succeeded, or disabled-only hosts; dashboard coverage links set this filter automatically
 - **Show hidden toggle** — reveal hidden imported clients (admin-only)
 - **Tag filter** — filter by one or more tags
 - **Sort buttons** — sort by Name, Status, Last Seen, or Agent Version

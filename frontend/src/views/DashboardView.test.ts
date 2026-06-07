@@ -51,8 +51,10 @@ vi.mock('../api/client', () => ({
             protection: {
               protected_hosts: 0,
               eligible_hosts: 0,
+              protected_host_links: [],
               unassigned_hosts: [],
               never_succeeded_targets: 0,
+              never_succeeded_hosts: [],
               disabled_only_hosts: [],
             },
             running_operations: [],

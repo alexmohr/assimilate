@@ -52,7 +52,7 @@ Each repository card shows the name, SSH target, enabled state, encryption type,
 
 ![Repository Detail](assets/screenshots/repo-detail.png)
 
-The repository detail page shows full connection information, storage statistics (original, compressed, deduplicated sizes), storage quota status with a progress bar, tags, and danger zone actions (Break Lock, Remove Repository, Delete Repository).
+The repository detail page shows full connection information, storage statistics (original, compressed, deduplicated sizes), storage quota status with a progress bar, tags, and danger zone actions (Refresh SSH Key, Break Lock, Remove Repository, Delete Repository).
 
 ## Init New Repository
 

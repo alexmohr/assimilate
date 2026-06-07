@@ -60,6 +60,7 @@ interface RepoWithStats {
   ssh_user: string
   ssh_host: string
   ssh_port: number
+  ssh_host_key: string | null
   compression: string
   encryption: string
   enabled: boolean
@@ -576,6 +577,7 @@ async function submitRepo(): Promise<void> {
             ssh_user: res.data.ssh_user,
             ssh_host: res.data.ssh_host,
             ssh_port: res.data.ssh_port,
+            ssh_host_key: null,
             compression: res.data.compression,
             encryption: res.data.encryption,
             enabled: res.data.enabled,

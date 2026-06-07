@@ -72,6 +72,7 @@ interface RepoWithStats {
   ssh_user: string
   ssh_host: string
   ssh_port: number
+  ssh_host_key: string | null
   compression: string
   encryption: string
   enabled: boolean
@@ -90,6 +91,7 @@ const mockRepo: RepoWithStats = {
   ssh_user: 'borg',
   ssh_host: 'backup.example.com',
   ssh_port: 22,
+  ssh_host_key: 'ssh-ed25519 AAAAOLD',
   compression: 'lz4',
   encryption: 'repokey-blake2',
   enabled: true,
@@ -101,12 +103,31 @@ const mockRepo: RepoWithStats = {
   client_count: 2,
 }
 
-function setupApiSuccess(repo: RepoWithStats = mockRepo): void {
+const refreshedHostKey = 'ssh-ed25519 AAAANEW'
+
+let repoState: RepoWithStats
+
+function setupApiSuccess(repo: RepoWithStats = mockRepo, scanHostKey = refreshedHostKey): void {
+  repoState = { ...repo }
   vi.mocked(apiClient.get).mockImplementation((url: string) => {
-    if (url === `/repos/${repo.id}`) return Promise.resolve({ data: repo })
+    if (url === `/repos/${repo.id}`) return Promise.resolve({ data: repoState })
     if (String(url).startsWith('/tags')) return Promise.resolve({ data: [] })
     if (String(url).endsWith('/tags')) return Promise.resolve({ data: [] })
     return Promise.resolve({ data: [] })
+  })
+  vi.mocked(apiClient.post).mockImplementation((url: string, body?: unknown) => {
+    if (url === `/repos/${repo.id}/ssh-host-key/scan`) {
+      return Promise.resolve({ data: { ssh_host_key: scanHostKey } })
+    }
+    if (url === `/repos/${repo.id}/ssh-host-key`) {
+      const payload = body as { ssh_host_key?: string } | undefined
+      repoState = {
+        ...repoState,
+        ssh_host_key: payload?.ssh_host_key ?? repoState.ssh_host_key,
+      }
+      return Promise.resolve({ data: { ssh_host_key: repoState.ssh_host_key } })
+    }
+    return Promise.resolve({ data: {} })
   })
 }
 
@@ -148,6 +169,51 @@ describe('RepoDetailView', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('borg@backup.example.com:22')
+  })
+
+  it('shows accept key only when the host key mismatches', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(RepoDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.findAll('button').some((button) => button.text() === 'Accept SSH Key')).toBe(
+      true,
+    )
+    expect(wrapper.text()).toContain('ssh-ed25519 AAAAOLD')
+  })
+
+  it('hides the accept key button when the host key matches', async () => {
+    setupApiSuccess({ ...mockRepo, ssh_host_key: refreshedHostKey }, refreshedHostKey)
+    const wrapper = renderWithPlugins(RepoDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.findAll('button').some((button) => button.text() === 'Accept SSH Key')).toBe(
+      false,
+    )
+  })
+
+  it('accepts a refreshed SSH host key', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(RepoDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const acceptButton = wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('Accept SSH Key'))
+    expect(acceptButton).toBeDefined()
+    await acceptButton!.trigger('click')
+    await flushPromises()
+
+    expect(document.body.textContent).toContain(refreshedHostKey)
   })
 
   it('shows repo path in info grid', async () => {

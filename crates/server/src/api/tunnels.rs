@@ -92,6 +92,21 @@ pub async fn get_tunnel(
     Ok(Json(TunnelResponse { tunnel, status }))
 }
 
+pub async fn get_client_tunnel(
+    State(state): State<AppState>,
+    _admin: RequireAdmin,
+    Path(hostname): Path<String>,
+) -> Result<Json<TunnelResponse>, ApiError> {
+    let client = db::get_client_by_hostname(&state.pool, &hostname).await?;
+    let tunnel = db::get_tunnel_by_client_id(&state.pool, client.id).await?;
+    let status = state
+        .tunnel_manager
+        .tunnel_status(tunnel.id)
+        .await
+        .unwrap_or(TunnelStatus::Disconnected);
+    Ok(Json(TunnelResponse { tunnel, status }))
+}
+
 pub async fn create_tunnel(
     State(state): State<AppState>,
     _admin: RequireAdmin,

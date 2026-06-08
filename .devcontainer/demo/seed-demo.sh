@@ -163,6 +163,8 @@ sys.exit(main())
 }
 
 # server-daily: 30 days of daily web-server-01 backups.
+# Archive contents intentionally vary in both timestamp and payload size so the
+# archive browser's date/size sort modes have meaningful demo data.
 for i in $(seq 1 30); do
     ARCHIVE_DATE=$(date -u -d "$i days ago" +%Y-%m-%dT02:00:00 2>/dev/null || date -u -v-"${i}"d +%Y-%m-%dT02:00:00)
     ARCHIVE_DIR=$(mktemp -d)

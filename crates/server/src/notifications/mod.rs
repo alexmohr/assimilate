@@ -344,21 +344,16 @@ pub async fn deliver_to_channel(
             .fetch_all(pool)
             .await?;
 
-            let title = payload
+            let event_type_str = payload
                 .get("event_type")
                 .and_then(serde_json::Value::as_str)
-                .map_or_else(|| "Assimilate".to_owned(), |t| t.replace('_', " "));
-            let body = format!(
-                "{} - {}",
-                payload
-                    .get("hostname")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("unknown"),
-                payload
-                    .get("status")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("")
-            );
+                .unwrap_or("");
+            let title = if event_type_str.is_empty() {
+                "Assimilate".to_owned()
+            } else {
+                event_type_str.replace('_', " ")
+            };
+            let body = build_push_body(payload);
             let push_url = build_push_url(payload);
 
             let push_payload = serde_json::json!({
@@ -397,6 +392,42 @@ pub async fn deliver_to_channel(
             }
             Ok(())
         }
+    }
+}
+
+pub(crate) fn build_push_body(payload: &serde_json::Value) -> String {
+    let event_type_str = payload
+        .get("event_type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let hostname = payload
+        .get("hostname")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    let status = payload
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    match payload
+        .get("error_message")
+        .and_then(serde_json::Value::as_str)
+        .filter(|_| {
+            matches!(
+                event_type_str,
+                "backup_warning" | "backup_failed" | "check_failed"
+            )
+        }) {
+        Some(msg) => {
+            let mut chars = msg.chars();
+            let short: String = chars.by_ref().take(100).collect();
+            let short = if chars.next().is_some() {
+                format!("{short}...")
+            } else {
+                short
+            };
+            format!("{hostname} - {status}: {short}")
+        }
+        None => format!("{hostname} - {status}"),
     }
 }
 
@@ -531,5 +562,85 @@ mod tests {
             build_push_url(&p),
             "/clients/myhost?tab=backups&archive=my%20host%20archive"
         );
+    }
+
+    #[test]
+    fn push_body_backup_failed_includes_error_message() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_failed",
+            "hostname": "myhost",
+            "status": "failed",
+            "error_message": "repository is locked",
+        }));
+        assert_eq!(build_push_body(&p), "myhost - failed: repository is locked");
+    }
+
+    #[test]
+    fn push_body_backup_warning_includes_error_message() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_warning",
+            "hostname": "myhost",
+            "status": "warning",
+            "error_message": "quota exceeded",
+        }));
+        assert_eq!(build_push_body(&p), "myhost - warning: quota exceeded");
+    }
+
+    #[test]
+    fn push_body_check_failed_includes_error_message() {
+        let p = payload(serde_json::json!({
+            "event_type": "check_failed",
+            "hostname": "myhost",
+            "status": "failed",
+            "error_message": "integrity check failed",
+        }));
+        assert_eq!(
+            build_push_body(&p),
+            "myhost - failed: integrity check failed"
+        );
+    }
+
+    #[test]
+    fn push_body_success_omits_error_message() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_success",
+            "hostname": "myhost",
+            "status": "success",
+            "error_message": "should be ignored",
+        }));
+        assert_eq!(build_push_body(&p), "myhost - success");
+    }
+
+    #[test]
+    fn push_body_long_error_message_truncated() {
+        let long_msg = "x".repeat(150);
+        let p = payload(serde_json::json!({
+            "event_type": "backup_failed",
+            "hostname": "myhost",
+            "status": "failed",
+            "error_message": long_msg,
+        }));
+        let body = build_push_body(&p);
+        assert!(body.ends_with("..."));
+        assert_eq!(body, format!("myhost - failed: {}...", "x".repeat(100)));
+    }
+
+    #[test]
+    fn push_body_no_error_message_omits_colon() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_failed",
+            "hostname": "myhost",
+            "status": "failed",
+        }));
+        assert_eq!(build_push_body(&p), "myhost - failed");
+    }
+
+    #[test]
+    fn push_body_missing_hostname_uses_unknown() {
+        let p = payload(serde_json::json!({
+            "event_type": "backup_failed",
+            "status": "failed",
+        }));
+        assert_eq!(build_push_body(&p), "unknown - failed");
     }
 }

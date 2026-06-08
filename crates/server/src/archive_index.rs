@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 use sqlx::PgPool;
@@ -48,6 +48,50 @@ pub async fn get_index_status(
     .map_err(ApiError::Database)?;
 
     Ok(row.map(|(s,)| get_index_status_from_str(&s)))
+}
+
+async fn ensure_archive_paths(
+    pool: &PgPool,
+    repo_id: i64,
+    archive_name: &str,
+    paths: &[String],
+) -> Result<HashMap<String, i64>, ApiError> {
+    let mut unique_paths = paths.to_vec();
+    unique_paths.sort_unstable();
+    unique_paths.dedup();
+
+    sqlx::query(
+        "INSERT INTO archive_paths (repo_id, archive_name, path) SELECT $1, $2, \
+         unnest($3::text[]) ON CONFLICT DO NOTHING",
+    )
+    .bind(repo_id)
+    .bind(archive_name)
+    .bind(&unique_paths)
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        id: i64,
+        path: String,
+    }
+
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT id, path FROM archive_paths WHERE repo_id = $1 AND archive_name = $2 AND path = \
+         ANY($3::text[])",
+    )
+    .bind(repo_id)
+    .bind(archive_name)
+    .bind(&unique_paths)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| (row.path, row.id))
+        .collect::<HashMap<_, _>>())
 }
 
 /// Atomically claim the indexing job and spawn a background task if we won the race.
@@ -211,9 +255,13 @@ async fn index_archive(
     let mut modes: Vec<String> = Vec::new();
 
     let mut seen: HashSet<String> = HashSet::new();
+    let mut path_values: HashSet<String> = HashSet::new();
 
     let mut add =
         |path: String, parent: String, etype: String, size: i64, mtime: String, mode: String| {
+            path_values.insert(path.clone());
+            path_values.insert(parent.clone());
+
             if seen.insert(path.clone()) {
                 paths.push(path);
                 parent_paths.push(parent);
@@ -263,17 +311,35 @@ async fn index_archive(
     }
 
     let file_count = i64::try_from(paths.len()).unwrap_or(i64::MAX);
+    let path_values = path_values.into_iter().collect::<Vec<_>>();
+    let path_id_map = ensure_archive_paths(pool, repo_id, archive_name, &path_values).await?;
+    let path_id = |path: &str| -> Result<i64, ApiError> {
+        path_id_map
+            .get(path)
+            .copied()
+            .ok_or_else(|| ApiError::Internal(format!("missing archive path id for {path}")))
+    };
+
+    let path_ids: Vec<i64> = paths
+        .iter()
+        .map(|path| path_id(path))
+        .collect::<Result<_, _>>()?;
+    let parent_path_ids: Vec<i64> = parent_paths
+        .iter()
+        .map(|path| path_id(path))
+        .collect::<Result<_, _>>()?;
 
     // Bulk insert using unnest arrays - one round-trip regardless of archive size.
     sqlx::query(
-        "INSERT INTO archive_files (repo_id, archive_name, path, parent_path, entry_type, size, \
-         mtime, mode) SELECT $1, $2, unnest($3::text[]), unnest($4::text[]), unnest($5::text[]), \
-         unnest($6::bigint[]), unnest($7::text[]), unnest($8::text[]) ON CONFLICT DO NOTHING",
+        "INSERT INTO archive_files (repo_id, archive_name, path_id, parent_path_id, entry_type, \
+         size, mtime, mode) SELECT $1, $2, unnest($3::bigint[]), unnest($4::bigint[]), \
+         unnest($5::text[]), unnest($6::bigint[]), unnest($7::text[]), unnest($8::text[]) ON \
+         CONFLICT DO NOTHING",
     )
     .bind(repo_id)
     .bind(archive_name)
-    .bind(&paths)
-    .bind(&parent_paths)
+    .bind(&path_ids)
+    .bind(&parent_path_ids)
     .bind(&entry_types)
     .bind(&sizes)
     .bind(&mtimes)
@@ -301,13 +367,28 @@ pub async fn query_dir(
         mode: String,
     }
 
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT path, entry_type, size, mtime, mode FROM archive_files WHERE repo_id = $1 AND \
-         archive_name = $2 AND parent_path = $3 ORDER BY entry_type DESC, path ASC LIMIT $4",
+    let parent_path_id = sqlx::query_scalar::<_, i64>(
+        "SELECT id FROM archive_paths WHERE repo_id = $1 AND archive_name = $2 AND path = $3",
     )
     .bind(repo_id)
     .bind(archive_name)
     .bind(parent_path)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    let Some(parent_path_id) = parent_path_id else {
+        return Ok(Vec::new());
+    };
+
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT p.path, f.entry_type, f.size, f.mtime, f.mode FROM archive_files f JOIN \
+         archive_paths p ON p.id = f.path_id WHERE f.repo_id = $1 AND f.archive_name = $2 AND \
+         f.parent_path_id = $3 ORDER BY f.entry_type DESC, p.path ASC LIMIT $4",
+    )
+    .bind(repo_id)
+    .bind(archive_name)
+    .bind(parent_path_id)
     .bind(limit)
     .fetch_all(pool)
     .await

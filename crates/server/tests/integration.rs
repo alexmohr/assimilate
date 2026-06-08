@@ -765,8 +765,21 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO archive_files (repo_id, archive_name, path, parent_path, entry_type, size, \
-         mtime, mode) VALUES ($1, $2, $3, $4, 'f', 1, '', '')",
+        "INSERT INTO archive_paths (repo_id, archive_name, path) VALUES ($1, $2, $3), ($1, $2, $4)",
+    )
+    .bind(repo_id)
+    .bind("stale-archive")
+    .bind("")
+    .bind("stale.txt")
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO archive_files (repo_id, archive_name, path_id, parent_path_id, entry_type, \
+         size, mtime, mode) SELECT $1, $2, child.id, parent.id, 'f', 1, '', '' FROM archive_paths \
+         child JOIN archive_paths parent ON parent.repo_id = child.repo_id AND \
+         parent.archive_name = child.archive_name AND parent.path = $4 WHERE child.repo_id = $1 \
+         AND child.archive_name = $2 AND child.path = $3",
     )
     .bind(repo_id)
     .bind("stale-archive")

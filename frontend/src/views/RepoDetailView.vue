@@ -439,6 +439,8 @@ const orderedArchives = computed<ArchiveEntry[]>(() => {
       return [...filteredArchives.value].sort((a, b) => compareByDedup(b, a))
     case 'dedup-asc':
       return [...filteredArchives.value].sort(compareByDedup)
+    default:
+      return filteredArchives.value
   }
 })
 

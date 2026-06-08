@@ -349,10 +349,13 @@ describe('RepoDetailView', () => {
 
     const select = wrapper.find('.archive-sort-select')
     expect(select.exists()).toBe(true)
-    expect(select.text()).toContain('Host groups')
     expect(select.text()).toContain('Date newest first')
     expect(select.text()).toContain('Size largest first')
     expect(select.text()).toContain('Dedup smallest first')
+
+    const groupToggle = wrapper.find('.archive-group-toggle')
+    expect(groupToggle.exists()).toBe(true)
+    expect(groupToggle.text()).toContain('Grouped by host')
   })
 
   it('shows danger zone for admin users', async () => {

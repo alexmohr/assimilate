@@ -112,6 +112,10 @@ async fn build_test_app(pool: PgPool) -> Router {
                 .delete(server::api::repos::delete_repo),
         )
         .route(
+            "/api/repos/{repo_id}/archives",
+            get(server::api::archives::list_archives),
+        )
+        .route(
             "/api/repos/{repo_id}/ssh-host-key/scan",
             post(server::api::repos::scan_repo_host_key),
         )
@@ -612,6 +616,78 @@ async fn test_repo_delete() {
     let req = get_request(&format!("/api/repos/{repo_id}"));
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_list_archives_deduplicates_archive_names() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    let repo_id = insert_test_repo(&pool, "archive-list-repo").await;
+    let client_id: i64 = sqlx::query_scalar(
+        "INSERT INTO clients (hostname, agent_token_hash) VALUES ('archive-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    for (started_at, finished_at, original_size, archive_name) in [
+        (
+            "2026-06-01T10:00:00Z",
+            "2026-06-01T10:05:00Z",
+            100_i64,
+            "dup-archive",
+        ),
+        (
+            "2026-06-02T10:00:00Z",
+            "2026-06-02T10:05:00Z",
+            200_i64,
+            "dup-archive",
+        ),
+        (
+            "2026-06-03T10:00:00Z",
+            "2026-06-03T10:05:00Z",
+            300_i64,
+            "unique-archive",
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, \
+             original_size, compressed_size, deduplicated_size, repo_unique_csize, \
+             files_processed, duration_secs, error_message, warnings, borg_version, matched, \
+             archive_name, borg_command) VALUES ($1, $2, $3, $4, 'success', $5, $6, $7, $8, $9, \
+             $10, NULL, ARRAY[]::text[], NULL, true, $11, NULL)",
+        )
+        .bind(client_id)
+        .bind(repo_id)
+        .bind(chrono::DateTime::parse_from_rfc3339(started_at).unwrap())
+        .bind(chrono::DateTime::parse_from_rfc3339(finished_at).unwrap())
+        .bind(original_size)
+        .bind(original_size - 10)
+        .bind(original_size - 20)
+        .bind(original_size - 30)
+        .bind(original_size - 40)
+        .bind(original_size - 50)
+        .bind(archive_name)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let req = get_request(&format!("/api/repos/{repo_id}/archives"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let archives = body.as_array().unwrap();
+    assert_eq!(archives.len(), 2);
+    assert_eq!(archives[0]["name"], "unique-archive");
+    assert_eq!(archives[0]["start"], "2026-06-03T10:00:00.000000Z");
+    assert_eq!(archives[1]["name"], "dup-archive");
+    assert_eq!(archives[1]["start"], "2026-06-02T10:00:00.000000Z");
 }
 
 #[tokio::test]

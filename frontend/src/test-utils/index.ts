@@ -34,8 +34,10 @@ const routerLinkStub = defineComponent({
       default: null,
     },
   },
-  setup(_, { slots }) {
-    return (): ReturnType<typeof h> => h('a', slots.default?.())
+  setup(props, { slots }) {
+    const href =
+      typeof props.to === 'string' ? props.to : ((props.to as { path?: string })?.path ?? '')
+    return (): ReturnType<typeof h> => h('a', { href }, slots.default?.())
   },
 })
 

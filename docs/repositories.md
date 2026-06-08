@@ -87,7 +87,7 @@ After saving, the server runs `borg info` and `borg list` in the background to s
 - The repository detail page shows an importing indicator.
 - If the import fails (e.g. SSH timeout, wrong passphrase), the error is displayed on the repository card and detail page.
 
-During a full repository sync, Assimilate also prunes archives that no longer exist in borg from the database. The full sync endpoint can optionally rebuild archive indexes in the same run when requested by the API.
+During a full repository sync, Assimilate also prunes archives that no longer exist in borg from the database. The scheduled disk sync uses the same full reimport path, so it refreshes the complete archive list instead of only adding new entries. The full sync endpoint can optionally rebuild archive indexes in the same run when requested by the API.
 
 For large repositories with many archives, the initial import may take several minutes. You can navigate away — the import continues in the background and the UI updates automatically via WebSocket.
 

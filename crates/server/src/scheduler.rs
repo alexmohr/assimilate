@@ -13,7 +13,7 @@ use sqlx::PgPool;
 use tokio::sync::broadcast;
 
 use crate::{
-    api::repos::sync_new_archives,
+    api::repos::sync_existing_archives,
     config_assembler, db,
     db::DueScheduleRow,
     tunnel::TunnelManager,
@@ -143,7 +143,7 @@ async fn run_repo_sync(pool: &PgPool, encryption_key: &[u8; 32], ui_broadcast: &
         }
 
         let start = std::time::Instant::now();
-        match sync_new_archives(pool, encryption_key, repo.id, ui_broadcast).await {
+        match sync_existing_archives(pool, encryption_key, repo.id, ui_broadcast, false).await {
             Ok((added, removed)) => {
                 let elapsed = start.elapsed();
                 let duration_secs = elapsed.as_secs();
@@ -603,8 +603,11 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
 
 #[cfg(test)]
 mod tests {
+    use std::{os::unix::fs::PermissionsExt, sync::OnceLock};
+
     use chrono::TimeZone;
-    use tokio::sync::mpsc;
+    use tempfile::TempDir;
+    use tokio::sync::{Mutex, mpsc};
 
     use super::*;
     use crate::{
@@ -612,6 +615,81 @@ mod tests {
         tunnel::TunnelManager,
         ws::{completion_bus::CompletionBus, registry::AgentRegistry, ui_broadcast::UiBroadcast},
     };
+
+    static BORG_BINARY_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    struct BorgBinaryGuard {
+        previous: Option<String>,
+    }
+
+    impl Drop for BorgBinaryGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.clone() {
+                // SAFETY: tests serialize BORG_BINARY changes with a process-local lock.
+                unsafe { std::env::set_var("BORG_BINARY", previous) };
+            } else {
+                // SAFETY: tests serialize BORG_BINARY changes with a process-local lock.
+                unsafe { std::env::remove_var("BORG_BINARY") };
+            }
+        }
+    }
+
+    async fn borg_binary_lock() -> tokio::sync::MutexGuard<'static, ()> {
+        BORG_BINARY_LOCK.get_or_init(|| Mutex::new(())).lock().await
+    }
+
+    async fn install_fake_borg(
+        list_json: &str,
+        info_all_json: &str,
+        info_repo_json: &str,
+    ) -> (TempDir, BorgBinaryGuard) {
+        let tempdir = tempfile::tempdir().unwrap();
+        let script = format!(
+            r#"#!/bin/sh
+set -eu
+case "$1" in
+  list)
+    case " $* " in
+      *" --json-lines "*) exit 1 ;;
+      *) cat <<'EOF'
+{list_json}
+EOF
+        ;;
+    esac
+    ;;
+  info)
+    case " $* " in
+      *" --glob-archives "*) cat <<'EOF'
+{info_all_json}
+EOF
+        ;;
+      *) cat <<'EOF'
+{info_repo_json}
+EOF
+        ;;
+    esac
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+"#
+        );
+
+        let borg_path = tempdir.path().join("borg");
+        tokio::fs::write(&borg_path, script).await.unwrap();
+        let mut permissions = tokio::fs::metadata(&borg_path).await.unwrap().permissions();
+        permissions.set_mode(0o755);
+        tokio::fs::set_permissions(&borg_path, permissions)
+            .await
+            .unwrap();
+
+        let previous = std::env::var("BORG_BINARY").ok();
+        // SAFETY: tests serialize BORG_BINARY changes with a process-local lock.
+        unsafe { std::env::set_var("BORG_BINARY", &borg_path) };
+
+        (tempdir, BorgBinaryGuard { previous })
+    }
 
     #[test]
     fn sync_due_when_next_run_in_past() {
@@ -644,6 +722,111 @@ mod tests {
 
         let next = calculate_next_run(cron_expr, last_synced, tz).unwrap();
         assert!(next <= now);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn run_repo_sync_full_reimports_and_prunes_stale_archives(pool: sqlx::PgPool) {
+        let _borg_lock = borg_binary_lock().await;
+        let list_json = r#"{
+  "archives": [
+    {
+      "name": "fresh-archive",
+      "hostname": "scheduler-test-host",
+      "start": "2026-06-05T10:00:00Z",
+      "end": "2026-06-05T10:05:00Z",
+      "duration": 300.0,
+      "stats": {
+        "original_size": 1000,
+        "compressed_size": 500,
+        "deduplicated_size": 250,
+        "nfiles": 2
+      }
+    }
+  ]
+}"#;
+        let info_repo_json = r#"{
+  "cache": {
+    "stats": {
+      "total_size": 1000,
+      "total_csize": 600,
+      "unique_csize": 500,
+      "total_chunks": 10,
+      "unique_chunks": 8
+    }
+  }
+}"#;
+
+        let (_borg_dir, _borg_guard) =
+            install_fake_borg(list_json, list_json, info_repo_json).await;
+        let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-scheduler");
+        let passphrase_encrypted =
+            shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
+        let client = db::insert_client(
+            &pool,
+            "scheduler-test-host",
+            Some("Scheduler Test Host"),
+            "hash",
+            None,
+        )
+        .await
+        .unwrap();
+        let repo = db::insert_repo(
+            &pool,
+            &InsertRepoParams {
+                name: "scheduler-test-repo",
+                repo_path: "/backup/test",
+                ssh_user: "borg",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let stale_started_at = Utc::now() - chrono::Duration::days(1);
+        let stale_finished_at = stale_started_at + chrono::Duration::minutes(5);
+        sqlx::query(
+            "INSERT INTO backup_reports (client_id, repo_id, schedule_id, started_at, \
+             finished_at, status, original_size, compressed_size, deduplicated_size, \
+             repo_unique_csize, files_processed, duration_secs, error_message, warnings, \
+             borg_version, matched, archive_name, borg_command) VALUES ($1, $2, NULL, $3, $4, \
+             'success', 10, 5, 5, 5, 1, 300, NULL, '{}'::text[], NULL, true, $5, NULL)",
+        )
+        .bind(client.id)
+        .bind(repo.id)
+        .bind(stale_started_at)
+        .bind(stale_finished_at)
+        .bind("stale-archive")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        run_repo_sync(&pool, &encryption_key, &UiBroadcast::new()).await;
+
+        let stale_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",
+        )
+        .bind(repo.id)
+        .bind("stale-archive")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(stale_count, 0);
+
+        let fresh_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",
+        )
+        .bind(repo.id)
+        .bind("fresh-archive")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(fresh_count, 1);
     }
 
     // tick() integration tests

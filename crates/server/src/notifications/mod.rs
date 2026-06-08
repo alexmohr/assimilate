@@ -344,21 +344,44 @@ pub async fn deliver_to_channel(
             .fetch_all(pool)
             .await?;
 
-            let title = payload
+            let event_type_str = payload
                 .get("event_type")
                 .and_then(serde_json::Value::as_str)
-                .map_or_else(|| "Assimilate".to_owned(), |t| t.replace('_', " "));
-            let body = format!(
-                "{} - {}",
-                payload
-                    .get("hostname")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("unknown"),
-                payload
-                    .get("status")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("")
-            );
+                .unwrap_or("");
+            let title = if event_type_str.is_empty() {
+                "Assimilate".to_owned()
+            } else {
+                event_type_str.replace('_', " ")
+            };
+            let hostname = payload
+                .get("hostname")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown");
+            let status = payload
+                .get("status")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let body = match payload
+                .get("error_message")
+                .and_then(serde_json::Value::as_str)
+                .filter(|_| {
+                    matches!(
+                        event_type_str,
+                        "backup_warning" | "backup_failed" | "check_failed"
+                    )
+                }) {
+                Some(msg) => {
+                    let mut chars = msg.chars();
+                    let short: String = chars.by_ref().take(100).collect();
+                    let short = if chars.next().is_some() {
+                        format!("{short}...")
+                    } else {
+                        short
+                    };
+                    format!("{hostname} - {status}: {short}")
+                }
+                None => format!("{hostname} - {status}"),
+            };
             let push_url = build_push_url(payload);
 
             let push_payload = serde_json::json!({

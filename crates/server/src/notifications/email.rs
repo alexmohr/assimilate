@@ -55,13 +55,46 @@ pub async fn send(
         .parse()
         .map_err(|e| NotificationError::Config(format!("invalid from address: {e}")))?;
 
-    let subject = payload
+    let event_type_str = payload
         .get("event_type")
         .and_then(serde_json::Value::as_str)
-        .map_or_else(
-            || "Assimilate Notification".to_owned(),
-            |t| format!("Assimilate: {t}"),
-        );
+        .unwrap_or("");
+    let hostname = payload
+        .get("hostname")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let event_label = if event_type_str.is_empty() {
+        "Notification".to_owned()
+    } else {
+        event_type_str.replace('_', " ")
+    };
+    let base = if hostname.is_empty() {
+        format!("Assimilate: {event_label}")
+    } else {
+        format!("Assimilate: {event_label} - {hostname}")
+    };
+    let subject = if matches!(
+        event_type_str,
+        "backup_warning" | "backup_failed" | "check_failed"
+    ) {
+        if let Some(msg) = payload
+            .get("error_message")
+            .and_then(serde_json::Value::as_str)
+        {
+            let mut chars = msg.chars();
+            let short: String = chars.by_ref().take(60).collect();
+            let short = if chars.next().is_some() {
+                format!("{short}...")
+            } else {
+                short
+            };
+            format!("{base}: {short}")
+        } else {
+            base
+        }
+    } else {
+        base
+    };
 
     let body = serde_json::to_string_pretty(payload)?;
 

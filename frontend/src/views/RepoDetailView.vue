@@ -28,6 +28,13 @@ import QuotaPanel from '../components/QuotaPanel.vue'
 import BaseModal from '../components/BaseModal.vue'
 
 type TabId = 'overview' | 'archives'
+type ArchiveSortMode =
+  | 'date-desc'
+  | 'date-asc'
+  | 'size-desc'
+  | 'size-asc'
+  | 'dedup-desc'
+  | 'dedup-asc'
 type CompressionType = 'lz4' | 'zstd' | 'zlib' | 'none'
 type EncryptionType =
   | 'repokey'
@@ -383,6 +390,17 @@ const unmatchedHostnames = computed(() => [
 
 const archiveFilter = ref('')
 const collapsedGroups = ref<Set<string>>(new Set())
+const groupArchivesByHost = ref(true)
+const archiveSortMode = ref<ArchiveSortMode>('date-desc')
+
+const archiveSortModeOptions: { value: ArchiveSortMode; label: string }[] = [
+  { value: 'date-desc', label: 'Date newest first' },
+  { value: 'date-asc', label: 'Date oldest first' },
+  { value: 'size-desc', label: 'Size largest first' },
+  { value: 'size-asc', label: 'Size smallest first' },
+  { value: 'dedup-desc', label: 'Dedup largest first' },
+  { value: 'dedup-asc', label: 'Dedup smallest first' },
+]
 
 interface ArchiveGroup {
   hostname: string
@@ -391,16 +409,42 @@ interface ArchiveGroup {
   archives: ArchiveEntry[]
 }
 
-const groupedArchives = computed<ArchiveGroup[]>(() => {
+const filteredArchives = computed<ArchiveEntry[]>(() => {
   const filter = archiveFilter.value.toLowerCase()
-  const filtered = filter
+  return filter
     ? sortedArchives.value.filter(
         (a) => a.name.toLowerCase().includes(filter) || a.hostname.toLowerCase().includes(filter),
       )
     : sortedArchives.value
+})
 
+const orderedArchives = computed<ArchiveEntry[]>(() => {
+  const compareByDate = (left: ArchiveEntry, right: ArchiveEntry): number =>
+    left.start.localeCompare(right.start)
+  const compareBySize = (left: ArchiveEntry, right: ArchiveEntry): number =>
+    left.original_size - right.original_size
+  const compareByDedup = (left: ArchiveEntry, right: ArchiveEntry): number =>
+    left.deduplicated_size - right.deduplicated_size
+
+  switch (archiveSortMode.value) {
+    case 'date-desc':
+      return [...filteredArchives.value].sort((a, b) => compareByDate(b, a))
+    case 'date-asc':
+      return [...filteredArchives.value].sort(compareByDate)
+    case 'size-desc':
+      return [...filteredArchives.value].sort((a, b) => compareBySize(b, a))
+    case 'size-asc':
+      return [...filteredArchives.value].sort(compareBySize)
+    case 'dedup-desc':
+      return [...filteredArchives.value].sort((a, b) => compareByDedup(b, a))
+    case 'dedup-asc':
+      return [...filteredArchives.value].sort(compareByDedup)
+  }
+})
+
+const groupedArchives = computed<ArchiveGroup[]>(() => {
   const groups = new Map<string, ArchiveGroup>()
-  for (const archive of filtered) {
+  for (const archive of orderedArchives.value) {
     const isMatched = archive.matched === true
     const key = isMatched ? (archive.client_hostname ?? archive.hostname) : archive.hostname
     if (!groups.has(key)) {
@@ -1395,15 +1439,43 @@ async function resetImport(): Promise<void> {
               No archives found.
             </div>
             <template v-else>
-              <div class="archive-filter">
+              <div class="archive-controls">
                 <input
                   v-model="archiveFilter"
                   class="filter-input"
                   type="text"
                   placeholder="Filter archives..."
                 />
+                <select
+                  v-model="archiveSortMode"
+                  class="select-input archive-sort-select"
+                >
+                  <option
+                    v-for="option in archiveSortModeOptions"
+                    :key="option.value"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
+                  </option>
+                </select>
+                <button
+                  class="btn btn-sm btn-ghost archive-group-toggle"
+                  :class="{ active: groupArchivesByHost }"
+                  @click="groupArchivesByHost = !groupArchivesByHost"
+                >
+                  {{ groupArchivesByHost ? 'Grouped by host' : 'Flat list' }}
+                </button>
               </div>
-              <div class="archive-groups">
+              <div
+                v-if="orderedArchives.length === 0"
+                class="state-msg state-msg-sm"
+              >
+                No matching archives.
+              </div>
+              <div
+                v-else-if="groupArchivesByHost"
+                class="archive-groups"
+              >
                 <div
                   v-for="group in groupedArchives"
                   :key="group.hostname"
@@ -1455,6 +1527,26 @@ async function resetImport(): Promise<void> {
                     </button>
                   </div>
                 </div>
+              </div>
+              <div
+                v-else
+                class="archive-flat-list"
+              >
+                <button
+                  v-for="archive in orderedArchives"
+                  :key="archive.name"
+                  class="archive-row archive-row-detailed"
+                  :class="{ selected: selectedArchive?.name === archive.name }"
+                  @click="selectArchive(archive)"
+                >
+                  <span class="archive-name">{{ archive.name }}</span>
+                  <span class="archive-host">{{
+                    archive.client_hostname ?? archive.hostname
+                  }}</span>
+                  <span class="archive-date">{{ formatDate(archive.start) }}</span>
+                  <span class="archive-size">{{ formatBytes(archive.original_size) }}</span>
+                  <span class="archive-size">{{ formatBytes(archive.deduplicated_size) }}</span>
+                </button>
               </div>
             </template>
           </div>
@@ -2540,6 +2632,21 @@ async function resetImport(): Promise<void> {
   color: var(--text-muted);
 }
 
+.archive-controls {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.archive-controls .filter-input {
+  flex: 1;
+}
+
+.archive-sort-select {
+  min-width: 13rem;
+}
+
 .archive-filter {
   padding: 0.5rem 0.75rem;
   border-bottom: 1px solid var(--border);
@@ -2549,7 +2656,8 @@ async function resetImport(): Promise<void> {
   width: 100%;
 }
 
-.archive-groups {
+.archive-groups,
+.archive-flat-list {
   max-height: 500px;
   overflow-y: auto;
 }
@@ -2655,6 +2763,26 @@ async function resetImport(): Promise<void> {
   font-family: var(--mono);
   font-size: 0.75rem;
   color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.archive-row-detailed {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) auto auto auto;
+  gap: 0.75rem;
+  padding-left: 0.75rem;
+}
+
+.archive-host,
+.archive-size {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.archive-host {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

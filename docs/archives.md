@@ -4,7 +4,9 @@ Archives are point-in-time snapshots created by each backup run. Assimilate lets
 
 ## Viewing Archives
 
-Navigate to **Repos** in the sidebar, select a repository, then open the **Archives** tab. The list shows every archive stored in that repository, ordered by creation time (newest first).
+Navigate to **Repos** in the sidebar, select a repository, then open the **Archives** tab. The list shows every archive stored in that repository.
+
+Use the list mode selector to switch between **Host groups** and flat archive ordering by **date**, **original size**, or **deduplicated size**, each in ascending or descending order.
 
 The table supports **sorting** (click any column header) and **inline filtering** (type in the filter row below headers to narrow results).
 

@@ -5,6 +5,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 
+const mockBrowserArchives = ref<
+  Array<{
+    name: string
+    start: string
+    hostname: string
+    comment: string
+    original_size: number
+    deduplicated_size: number
+    matched: boolean | null
+    client_hostname: string | null
+  }>
+>([])
+const mockSortedArchives = ref<typeof mockBrowserArchives.value>([])
+
 vi.mock('../composables/useTimezone', () => ({
   getConfiguredTimezone: (): string | undefined => undefined,
 }))
@@ -35,8 +49,8 @@ vi.mock('../composables/useWebSocket', () => ({
 
 vi.mock('../composables/useArchiveBrowser', () => ({
   useArchiveBrowser: () => ({
-    archives: ref([]),
-    sortedArchives: ref([]),
+    archives: mockBrowserArchives,
+    sortedArchives: mockSortedArchives,
     archivesLoading: ref(false),
     archivesError: ref(null),
     selectedArchive: ref(null),
@@ -134,6 +148,8 @@ function setupApiSuccess(repo: RepoWithStats = mockRepo, scanHostKey = refreshed
 describe('RepoDetailView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockBrowserArchives.value = []
+    mockSortedArchives.value = []
   })
 
   it('renders repo name in breadcrumb and info grid', async () => {
@@ -302,6 +318,41 @@ describe('RepoDetailView', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('No archives found')
+  })
+
+  it('shows archive list mode options when archives exist', async () => {
+    mockBrowserArchives.value = [
+      {
+        name: 'web-server-01-2026-06-08T01:00:00',
+        start: '2026-06-08T01:00:00',
+        hostname: 'web-server-01',
+        comment: '',
+        original_size: 1_000,
+        deduplicated_size: 500,
+        matched: true,
+        client_hostname: 'web-server-01',
+      },
+    ]
+    mockSortedArchives.value = [...mockBrowserArchives.value]
+    setupApiSuccess()
+
+    const wrapper = renderWithPlugins(RepoDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')
+    expect(archivesTab).toBeDefined()
+    await archivesTab!.trigger('click')
+    await flushPromises()
+
+    const select = wrapper.find('.archive-sort-select')
+    expect(select.exists()).toBe(true)
+    expect(select.text()).toContain('Host groups')
+    expect(select.text()).toContain('Date newest first')
+    expect(select.text()).toContain('Size largest first')
+    expect(select.text()).toContain('Dedup smallest first')
   })
 
   it('shows danger zone for admin users', async () => {

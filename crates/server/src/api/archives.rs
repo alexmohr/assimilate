@@ -247,10 +247,13 @@ pub async fn list_archives(
     }
 
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT br.archive_name, br.started_at, br.original_size, br.deduplicated_size, \
-         br.matched, c.hostname AS client_hostname FROM backup_reports br JOIN clients c ON c.id \
-         = br.client_id WHERE br.repo_id = $1 AND br.archive_name IS NOT NULL AND br.status IN \
-         ('success', 'warning') ORDER BY br.started_at DESC",
+        "WITH latest_archives AS (SELECT DISTINCT ON (br.archive_name) br.archive_name, \
+         br.started_at, br.original_size, br.deduplicated_size, br.matched, c.hostname AS \
+         client_hostname FROM backup_reports br JOIN clients c ON c.id = br.client_id WHERE \
+         br.repo_id = $1 AND br.archive_name IS NOT NULL AND br.status IN ('success', 'warning') \
+         ORDER BY br.archive_name, br.started_at DESC, br.id DESC) SELECT archive_name, \
+         started_at, original_size, deduplicated_size, matched, client_hostname FROM \
+         latest_archives ORDER BY started_at DESC",
     )
     .bind(repo_id)
     .fetch_all(&state.pool)

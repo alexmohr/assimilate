@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { defineComponent, type ComponentPublicInstance } from 'vue'
+import { defineComponent, h, type ComponentPublicInstance } from 'vue'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import {
   createRouter,
@@ -24,6 +24,19 @@ export interface RenderWithPluginsOptions {
 const routeStub = defineComponent({
   name: 'RouteStub',
   render: (): null => null,
+})
+
+const routerLinkStub = defineComponent({
+  name: 'RouterLinkStub',
+  props: {
+    to: {
+      type: [String, Object],
+      default: null,
+    },
+  },
+  setup(_, { slots }) {
+    return (): ReturnType<typeof h> => h('a', slots.default?.())
+  },
 })
 
 function createTestingPinia(storeState: RenderWithPluginsOptions['storeState']): Pinia {
@@ -49,6 +62,15 @@ function createTestingPinia(storeState: RenderWithPluginsOptions['storeState']):
 
 function createRoutes(): RouteRecordRaw[] {
   return [
+    ...appRouter.getRoutes().map(
+      (route) =>
+        ({
+          path: route.path,
+          name: route.name,
+          component: routeStub,
+          meta: route.meta,
+        }) as RouteRecordRaw,
+    ),
     {
       path: '/:pathMatch(.*)*',
       name: 'test-catch-all',
@@ -92,6 +114,9 @@ export function renderWithPlugins(
     slots: options.slots,
     global: {
       plugins: [pinia, router],
+      stubs: {
+        RouterLink: routerLinkStub,
+      },
     },
   })
 }

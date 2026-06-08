@@ -55,46 +55,7 @@ pub async fn send(
         .parse()
         .map_err(|e| NotificationError::Config(format!("invalid from address: {e}")))?;
 
-    let event_type_str = payload
-        .get("event_type")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("");
-    let hostname = payload
-        .get("hostname")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("");
-    let event_label = if event_type_str.is_empty() {
-        "Notification".to_owned()
-    } else {
-        event_type_str.replace('_', " ")
-    };
-    let base = if hostname.is_empty() {
-        format!("Assimilate: {event_label}")
-    } else {
-        format!("Assimilate: {event_label} - {hostname}")
-    };
-    let subject = if matches!(
-        event_type_str,
-        "backup_warning" | "backup_failed" | "check_failed"
-    ) {
-        if let Some(msg) = payload
-            .get("error_message")
-            .and_then(serde_json::Value::as_str)
-        {
-            let mut chars = msg.chars();
-            let short: String = chars.by_ref().take(60).collect();
-            let short = if chars.next().is_some() {
-                format!("{short}...")
-            } else {
-                short
-            };
-            format!("{base}: {short}")
-        } else {
-            base
-        }
-    } else {
-        base
-    };
+    let subject = build_email_subject(payload);
 
     let body = serde_json::to_string_pretty(payload)?;
 
@@ -142,6 +103,49 @@ pub async fn validate_credentials(
     Ok(())
 }
 
+pub(crate) fn build_email_subject(payload: &serde_json::Value) -> String {
+    let event_type_str = payload
+        .get("event_type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let hostname = payload
+        .get("hostname")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let event_label = if event_type_str.is_empty() {
+        "Notification".to_owned()
+    } else {
+        event_type_str.replace('_', " ")
+    };
+    let base = if hostname.is_empty() {
+        format!("Assimilate: {event_label}")
+    } else {
+        format!("Assimilate: {event_label} - {hostname}")
+    };
+    if matches!(
+        event_type_str,
+        "backup_warning" | "backup_failed" | "check_failed"
+    ) {
+        if let Some(msg) = payload
+            .get("error_message")
+            .and_then(serde_json::Value::as_str)
+        {
+            let mut chars = msg.chars();
+            let short: String = chars.by_ref().take(60).collect();
+            let short = if chars.next().is_some() {
+                format!("{short}...")
+            } else {
+                short
+            };
+            format!("{base}: {short}")
+        } else {
+            base
+        }
+    } else {
+        base
+    }
+}
+
 fn build_transport(
     host: &str,
     port: u16,
@@ -165,4 +169,109 @@ fn build_transport(
             .build(),
     };
     Ok(transport)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subject_backup_failed_includes_hostname_and_error() {
+        let p = serde_json::json!({
+            "event_type": "backup_failed",
+            "hostname": "web-server-01",
+            "status": "failed",
+            "error_message": "repository is locked",
+        });
+        assert_eq!(
+            build_email_subject(&p),
+            "Assimilate: backup failed - web-server-01: repository is locked"
+        );
+    }
+
+    #[test]
+    fn subject_backup_warning_includes_hostname_and_error() {
+        let p = serde_json::json!({
+            "event_type": "backup_warning",
+            "hostname": "db-server-01",
+            "status": "warning",
+            "error_message": "quota exceeded",
+        });
+        assert_eq!(
+            build_email_subject(&p),
+            "Assimilate: backup warning - db-server-01: quota exceeded"
+        );
+    }
+
+    #[test]
+    fn subject_check_failed_includes_hostname_and_error() {
+        let p = serde_json::json!({
+            "event_type": "check_failed",
+            "hostname": "myhost",
+            "error_message": "integrity check failed",
+        });
+        assert_eq!(
+            build_email_subject(&p),
+            "Assimilate: check failed - myhost: integrity check failed"
+        );
+    }
+
+    #[test]
+    fn subject_backup_success_omits_error() {
+        let p = serde_json::json!({
+            "event_type": "backup_success",
+            "hostname": "myhost",
+            "error_message": "should be ignored",
+        });
+        assert_eq!(
+            build_email_subject(&p),
+            "Assimilate: backup success - myhost"
+        );
+    }
+
+    #[test]
+    fn subject_long_error_truncated() {
+        let long_msg = "e".repeat(100);
+        let p = serde_json::json!({
+            "event_type": "backup_failed",
+            "hostname": "myhost",
+            "error_message": long_msg,
+        });
+        let subject = build_email_subject(&p);
+        assert!(subject.ends_with("..."));
+        assert_eq!(
+            subject,
+            format!("Assimilate: backup failed - myhost: {}...", "e".repeat(60))
+        );
+    }
+
+    #[test]
+    fn subject_no_hostname_omits_dash() {
+        let p = serde_json::json!({
+            "event_type": "backup_failed",
+            "error_message": "something went wrong",
+        });
+        assert_eq!(
+            build_email_subject(&p),
+            "Assimilate: backup failed: something went wrong"
+        );
+    }
+
+    #[test]
+    fn subject_empty_event_type_uses_notification() {
+        let p = serde_json::json!({});
+        assert_eq!(build_email_subject(&p), "Assimilate: Notification");
+    }
+
+    #[test]
+    fn subject_no_error_message_for_failed_event() {
+        let p = serde_json::json!({
+            "event_type": "backup_failed",
+            "hostname": "myhost",
+        });
+        assert_eq!(
+            build_email_subject(&p),
+            "Assimilate: backup failed - myhost"
+        );
+    }
 }

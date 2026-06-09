@@ -1433,6 +1433,7 @@ pub async fn sync_existing_archives(
             matched,
             archive_name: Some(name.to_string()),
             borg_command: None,
+            run_id: None,
         });
     }
 
@@ -1588,6 +1589,7 @@ pub async fn sync_new_archives(
             matched,
             archive_name: Some(name.to_string()),
             borg_command: None,
+            run_id: None,
         });
     }
 

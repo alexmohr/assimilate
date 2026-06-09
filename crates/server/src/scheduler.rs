@@ -17,6 +17,7 @@ use crate::{
     api::repos::sync_existing_archives,
     config_assembler, db,
     db::DueScheduleRow,
+    repo_op_tracker::RepoOpTracker,
     tunnel::TunnelManager,
     ws::{completion_bus::CompletionBus, registry::AgentRegistry, ui_broadcast::UiBroadcast},
 };
@@ -53,6 +54,7 @@ pub async fn run(
     ui_broadcast: UiBroadcast,
     tunnel_manager: TunnelManager,
     completion_bus: CompletionBus,
+    repo_op_tracker: RepoOpTracker,
 ) {
     let _receiver = completion_bus.subscribe();
     let schedule_pool = pool.clone();
@@ -93,14 +95,19 @@ pub async fn run(
         let mut interval = tokio::time::interval(SYNC_CHECK_INTERVAL);
         loop {
             interval.tick().await;
-            run_repo_sync(&sync_pool, &encryption_key, &ui_broadcast).await;
+            run_repo_sync(&sync_pool, &encryption_key, &ui_broadcast, &repo_op_tracker).await;
         }
     };
 
     tokio::join!(schedule_task, retention_task, sync_task);
 }
 
-async fn run_repo_sync(pool: &PgPool, encryption_key: &[u8; 32], ui_broadcast: &UiBroadcast) {
+async fn run_repo_sync(
+    pool: &PgPool,
+    encryption_key: &[u8; 32],
+    ui_broadcast: &UiBroadcast,
+    repo_op_tracker: &RepoOpTracker,
+) {
     let repos = match db::list_all_repos(pool).await {
         Ok(r) => r,
         Err(e) => {
@@ -163,14 +170,41 @@ async fn run_repo_sync(pool: &PgPool, encryption_key: &[u8; 32], ui_broadcast: &
             continue;
         }
 
+        repo_op_tracker
+            .set(
+                repo.id,
+                shared::protocol::RepoOpKind::ServerSync,
+                "server".to_owned(),
+            )
+            .await;
+        ui_broadcast.send(ServerToUi::RepoOpChanged {
+            repo_id: repo.id,
+            op: repo_op_tracker.get(repo.id).await,
+        });
+
         let start = std::time::Instant::now();
-        match sync_existing_archives(pool, encryption_key, repo.id, ui_broadcast, false).await {
+        let sync_result =
+            sync_existing_archives(pool, encryption_key, repo.id, ui_broadcast, false).await;
+
+        repo_op_tracker.clear(repo.id).await;
+        ui_broadcast.send(ServerToUi::RepoOpChanged {
+            repo_id: repo.id,
+            op: None,
+        });
+
+        match sync_result {
             Ok((added, removed)) => {
                 let elapsed = start.elapsed();
                 let duration_secs = elapsed.as_secs();
 
                 if let Err(e) = db::update_repo_last_synced(pool, repo.id).await {
                     tracing::error!(repo_id = repo.id, error = %e, "failed to update last_synced_at");
+                }
+                if let Err(e) =
+                    db::update_repo_last_op(pool, repo.id, "server_sync", Utc::now(), "server")
+                        .await
+                {
+                    tracing::error!(repo_id = repo.id, error = %e, "failed to update last_op after sync");
                 }
 
                 if let Err(e) = db::set_repo_importing(pool, repo.id, false).await {

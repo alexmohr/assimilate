@@ -108,4 +108,36 @@ describe('useArchiveBrowser', () => {
     expect(browser.archives.value).toHaveLength(0)
     expect(confirm).not.toHaveBeenCalled()
   })
+
+  it('deleteArchiveByName deletes by archive name without requiring selectedArchive', async () => {
+    vi.mocked(apiClient.delete).mockResolvedValue({
+      data: { success: true, archive_name: ARCHIVE.name },
+    })
+
+    const SECOND: ArchiveEntry = { ...ARCHIVE, name: 'web-server-01-backup-2026-06-06T02:00:00' }
+    const browser = useArchiveBrowser(ref(5))
+    browser.archives.value = [ARCHIVE, SECOND]
+
+    await browser.deleteArchiveByName(ARCHIVE)
+
+    expect(apiClient.delete).toHaveBeenCalledWith(
+      '/repos/5/archives/web-server-01-backup-2026-06-05T02%3A00%3A00',
+    )
+    expect(browser.archives.value).toEqual([SECOND])
+  })
+
+  it('deleteArchiveByName clears selectedArchive when it matches the deleted archive', async () => {
+    vi.mocked(apiClient.delete).mockResolvedValue({
+      data: { success: true, archive_name: ARCHIVE.name },
+    })
+
+    const browser = useArchiveBrowser(ref(5))
+    browser.archives.value = [ARCHIVE]
+    browser.selectedArchive.value = ARCHIVE
+
+    await browser.deleteArchiveByName(ARCHIVE)
+
+    expect(browser.selectedArchive.value).toBeNull()
+    expect(browser.archives.value).toHaveLength(0)
+  })
 })

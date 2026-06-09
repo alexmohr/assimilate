@@ -1128,7 +1128,10 @@ async fn run_borg_break_lock(repo_url: &str, passphrase: &str) -> Result<String,
     }
 
     let output = Borg::new()
-        .run(&["break-lock", repo_url], &env)
+        .run(
+            &["break-lock", "--lock-wait", LOCK_WAIT_SECS, repo_url],
+            &env,
+        )
         .await
         .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
 

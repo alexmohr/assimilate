@@ -88,7 +88,7 @@ const mockSchedules = [
     compact_enabled: true,
     pre_backup_commands: '',
     post_backup_commands: '',
-    execution_mode: 'parallel',
+
     on_failure: 'continue',
     target_hostnames: ['web-server-01', 'db-server-01'],
   },
@@ -111,7 +111,7 @@ const mockSchedules = [
     compact_enabled: false,
     pre_backup_commands: '',
     post_backup_commands: '',
-    execution_mode: 'sequential',
+
     on_failure: 'stop',
     target_hostnames: ['db-server-01'],
   },
@@ -134,7 +134,7 @@ const mockSchedules = [
     compact_enabled: true,
     pre_backup_commands: '',
     post_backup_commands: '',
-    execution_mode: 'parallel',
+
     on_failure: 'continue',
     target_hostnames: ['media-store-01'],
   },

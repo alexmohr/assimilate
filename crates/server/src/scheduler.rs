@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
 use shared::{
     protocol::{ServerToAgent, ServerToUi},
     schedule::calculate_next_run,
-    types::{ExecutionMode, OnFailure, RepoId, ScheduleType},
+    types::{OnFailure, RepoId, ScheduleType},
 };
 use sqlx::PgPool;
 use tokio::sync::broadcast;
+use uuid::Uuid;
 
 use crate::{
     api::repos::sync_existing_archives,
@@ -19,6 +20,24 @@ use crate::{
     tunnel::TunnelManager,
     ws::{completion_bus::CompletionBus, registry::AgentRegistry, ui_broadcast::UiBroadcast},
 };
+
+#[derive(Clone, Default)]
+struct RepoLock {
+    locks: Arc<tokio::sync::Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>>,
+}
+
+impl RepoLock {
+    async fn acquire(&self, repo_id: i64) -> tokio::sync::OwnedMutexGuard<()> {
+        let mutex = {
+            let mut map = self.locks.lock().await;
+            Arc::clone(
+                map.entry(repo_id)
+                    .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+            )
+        };
+        mutex.lock_owned().await
+    }
+}
 
 const TICK_INTERVAL: Duration = Duration::from_secs(30);
 const RETENTION_INTERVAL: Duration = Duration::from_secs(3600);
@@ -40,6 +59,7 @@ pub async fn run(
     let retention_pool = pool.clone();
     let sync_pool = pool;
 
+    let repo_lock = RepoLock::default();
     let schedule_task = async move {
         let mut interval = tokio::time::interval(TICK_INTERVAL);
         loop {
@@ -50,6 +70,7 @@ pub async fn run(
                 &encryption_key,
                 &tunnel_manager,
                 &completion_bus,
+                &repo_lock,
             )
             .await
             {
@@ -260,6 +281,7 @@ async fn tick(
     encryption_key: &[u8; 32],
     tunnel_manager: &TunnelManager,
     completion_bus: &CompletionBus,
+    repo_lock: &RepoLock,
 ) -> Result<(), crate::error::ApiError> {
     let now = Utc::now();
     let due = db::list_due_schedules(pool, now).await?;
@@ -284,107 +306,55 @@ async fn tick(
         }
     }
 
-    // schedule_id -> cron, populated for parallel schedules that were successfully triggered.
-    let mut triggered: HashMap<i64, String> = HashMap::new();
-
     for (schedule_id, cron, targets) in schedule_groups {
         let first = &targets[0];
-        let execution_mode = first
-            .execution_mode
-            .parse::<ExecutionMode>()
-            .unwrap_or_default();
         let on_failure = first.on_failure.parse::<OnFailure>().unwrap_or_default();
 
-        match execution_mode {
-            ExecutionMode::Parallel => {
-                for target in &targets {
-                    let Ok(schedule_type) = target.schedule_type.parse::<ScheduleType>() else {
-                        tracing::error!(
-                            schedule_id,
-                            schedule_type = %target.schedule_type,
-                            "invalid schedule type in database, skipping"
-                        );
-                        continue;
-                    };
+        let run_id = Uuid::new_v4().to_string();
 
-                    let msg = build_trigger_msg(schedule_type, RepoId(target.repo_id), schedule_id);
-                    let action = schedule_type_label(schedule_type);
-
-                    tunnel_manager
-                        .ensure_client_tunnel_connected(target.client_id)
-                        .await;
-
-                    match config_assembler::assemble_config(pool, encryption_key, &target.hostname)
-                        .await
-                    {
-                        Ok(config) => {
-                            let config_msg = ServerToAgent::ConfigUpdate(config);
-                            if let Err(e) = registry.send_to(&target.hostname, config_msg).await {
-                                tracing::warn!(
-                                    hostname = %target.hostname,
-                                    error = %e,
-                                    "agent not connected for pre-run config push, skipping trigger"
-                                );
-                                continue;
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                hostname = %target.hostname,
-                                error = %e,
-                                "failed to assemble config before scheduled run, skipping trigger"
-                            );
-                            continue;
-                        }
-                    }
-
-                    match registry.send_to(&target.hostname, msg).await {
-                        Ok(()) => {
-                            tracing::info!(
-                                hostname = %target.hostname,
-                                repo_id = target.repo_id,
-                                action,
-                                "triggered schedule"
-                            );
-                            triggered.entry(schedule_id).or_insert_with(|| cron.clone());
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                hostname = %target.hostname,
-                                repo_id = target.repo_id,
-                                action,
-                                error = %e,
-                                "agent not connected, skipping trigger"
-                            );
-                        }
-                    }
-                }
-            }
-            ExecutionMode::Sequential => {
-                let ctx = SequentialExecution {
-                    pool: pool.clone(),
-                    registry: registry.clone(),
-                    encryption_key: *encryption_key,
-                    tunnel_manager: tunnel_manager.clone(),
-                    completion_bus: completion_bus.clone(),
+        for target in &targets {
+            if let Err(e) = db::insert_backup_pending(
+                pool,
+                target.client_id,
+                target.repo_id,
+                Some(schedule_id),
+                &run_id,
+                now,
+            )
+            .await
+            {
+                tracing::warn!(
                     schedule_id,
-                    cron,
-                    targets,
-                    on_failure,
-                    triggered_at: now,
-                    tz,
-                };
-                tokio::spawn(async move {
-                    run_sequential_schedule(ctx).await;
-                });
+                    hostname = %target.hostname,
+                    error = %e,
+                    "failed to insert pending record"
+                );
             }
         }
-    }
 
-    for (schedule_id, cron) in &triggered {
-        let next = calculate_next_run(cron, now, tz)
-            .map_err(|e| crate::error::ApiError::Internal(format!("cron error: {e}")))?;
-        db::mark_schedule_triggered(pool, *schedule_id, now, next).await?;
+        let (triggered_tx, triggered_rx) = tokio::sync::oneshot::channel();
+        let ctx = SequentialExecution {
+            pool: pool.clone(),
+            registry: registry.clone(),
+            encryption_key: *encryption_key,
+            tunnel_manager: tunnel_manager.clone(),
+            completion_bus: completion_bus.clone(),
+            repo_lock: repo_lock.clone(),
+            schedule_id,
+            cron,
+            targets,
+            on_failure,
+            triggered_at: now,
+            tz,
+            run_id,
+            triggered_tx,
+        };
+        tokio::spawn(async move {
+            run_sequential_schedule(ctx).await;
+        });
+        // Yield so the spawned task can run and send the initial messages before tick returns.
+        // This ensures callers can observe messages immediately after tick() completes.
+        let _ = triggered_rx.await;
     }
 
     Ok(())
@@ -394,6 +364,7 @@ fn build_trigger_msg(
     schedule_type: ScheduleType,
     repo_id: RepoId,
     schedule_id: i64,
+    run_id: &str,
 ) -> ServerToAgent {
     match schedule_type {
         ScheduleType::Check => ServerToAgent::RunCheckNow {
@@ -408,6 +379,7 @@ fn build_trigger_msg(
             repo_id,
             schedule_id: Some(schedule_id),
             request_id: None,
+            run_id: Some(run_id.to_string()),
         },
     }
 }
@@ -426,12 +398,17 @@ struct SequentialExecution {
     encryption_key: [u8; 32],
     tunnel_manager: TunnelManager,
     completion_bus: CompletionBus,
+    repo_lock: RepoLock,
     schedule_id: i64,
     cron: String,
     targets: Vec<DueScheduleRow>,
     on_failure: OnFailure,
     triggered_at: DateTime<Utc>,
     tz: chrono_tz::Tz,
+    run_id: String,
+    /// Signalled once the first target's messages have been sent (or skipped).
+    /// Allows tick() to wait briefly so callers using try_recv() see messages.
+    triggered_tx: tokio::sync::oneshot::Sender<()>,
 }
 
 async fn run_sequential_schedule(ctx: SequentialExecution) {
@@ -441,14 +418,18 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         encryption_key,
         tunnel_manager,
         completion_bus,
+        repo_lock,
         schedule_id,
         cron,
         targets,
         on_failure,
         triggered_at: now,
         tz,
+        run_id,
+        triggered_tx,
     } = ctx;
     let mut marked_triggered = false;
+    let mut triggered_tx = Some(triggered_tx);
 
     'targets: for target in &targets {
         let Ok(schedule_type) = target.schedule_type.parse::<ScheduleType>() else {
@@ -466,6 +447,9 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         // Subscribe before sending so we don't miss the completion event.
         let mut rx = completion_bus.subscribe();
 
+        // Acquire the per-repo lock to prevent concurrent backups across schedules.
+        let _repo_guard = repo_lock.acquire(target.repo_id).await;
+
         tunnel_manager
             .ensure_client_tunnel_connected(target.client_id)
             .await;
@@ -480,6 +464,10 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
                         error = %e,
                         "sequential: agent not connected for pre-run config push, skipping target"
                     );
+                    // Signal tick() that we've attempted the first target
+                    if let Some(tx) = triggered_tx.take() {
+                        let _ = tx.send(());
+                    }
                     match on_failure {
                         OnFailure::Stop => break 'targets,
                         OnFailure::Continue => continue 'targets,
@@ -493,6 +481,10 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
                     error = %e,
                     "sequential: failed to assemble config, skipping target"
                 );
+                // Signal tick() that we've attempted the first target
+                if let Some(tx) = triggered_tx.take() {
+                    let _ = tx.send(());
+                }
                 match on_failure {
                     OnFailure::Stop => break 'targets,
                     OnFailure::Continue => continue 'targets,
@@ -501,7 +493,7 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         }
 
         let repo_id = RepoId(target.repo_id);
-        let msg = build_trigger_msg(schedule_type, repo_id, schedule_id);
+        let msg = build_trigger_msg(schedule_type, repo_id, schedule_id, &run_id);
         let action = schedule_type_label(schedule_type);
 
         match registry.send_to(&target.hostname, msg).await {
@@ -513,6 +505,10 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
                     schedule_id,
                     "sequential: triggered"
                 );
+                // Signal tick() that the first target's messages are now in the channel.
+                if let Some(tx) = triggered_tx.take() {
+                    let _ = tx.send(());
+                }
                 if !marked_triggered {
                     match calculate_next_run(&cron, now, tz) {
                         Ok(next) => {
@@ -548,6 +544,10 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
                     error = %e,
                     "sequential: agent not connected, skipping target"
                 );
+                // Signal tick() that we've attempted the first target
+                if let Some(tx) = triggered_tx.take() {
+                    let _ = tx.send(());
+                }
                 match on_failure {
                     OnFailure::Stop => break 'targets,
                     OnFailure::Continue => continue 'targets,
@@ -889,7 +889,6 @@ esac
                 rate_limit_kbps: None,
                 pre_backup_commands: "[]",
                 post_backup_commands: "[]",
-                execution_mode: "parallel",
                 on_failure: "stop",
             },
             None,
@@ -927,7 +926,9 @@ esac
         let tunnel = dummy_tunnel(pool.clone());
         let bus = CompletionBus::new();
 
-        tick(&pool, &registry, &key, &tunnel, &bus).await.unwrap();
+        tick(&pool, &registry, &key, &tunnel, &bus, &RepoLock::default())
+            .await
+            .unwrap();
 
         let first = rx
             .try_recv()
@@ -964,7 +965,9 @@ esac
         let tunnel = dummy_tunnel(pool.clone());
         let bus = CompletionBus::new();
 
-        tick(&pool, &registry, &key, &tunnel, &bus).await.unwrap();
+        tick(&pool, &registry, &key, &tunnel, &bus, &RepoLock::default())
+            .await
+            .unwrap();
 
         let msg = rx.try_recv().expect("expected ConfigUpdate");
         match msg {
@@ -1000,7 +1003,9 @@ esac
         let tunnel = dummy_tunnel(pool.clone());
         let bus = CompletionBus::new();
 
-        tick(&pool, &registry, &key, &tunnel, &bus).await.unwrap();
+        tick(&pool, &registry, &key, &tunnel, &bus, &RepoLock::default())
+            .await
+            .unwrap();
 
         let due = db::list_due_schedules(&pool, Utc::now()).await.unwrap();
         assert!(

@@ -1146,7 +1146,6 @@ pub struct ScheduleParams<'a> {
     pub rate_limit_kbps: Option<i32>,
     pub pre_backup_commands: &'a str,
     pub post_backup_commands: &'a str,
-    pub execution_mode: &'a str,
     pub on_failure: &'a str,
 }
 
@@ -1161,12 +1160,12 @@ pub async fn insert_schedule(
          canary_enabled, exclude_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, \
          keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
          pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id) VALUES \
-         ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, \
-         $20) RETURNING id, repo_id, name, schedule_type, cron_expression, enabled, \
-         canary_enabled, last_run_at, next_run_at, exclude_patterns_raw, ignore_global_excludes, \
-         keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, \
-         rate_limit_kbps, pre_backup_commands, post_backup_commands, execution_mode, on_failure, \
-         owner_id, visibility",
+         ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, \
+         'sequential', $18, $19) RETURNING id, repo_id, name, schedule_type, cron_expression, \
+         enabled, canary_enabled, last_run_at, next_run_at, exclude_patterns_raw, \
+         ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
+         compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, \
+         execution_mode, on_failure, owner_id, visibility",
     )
     .bind(repo_id)
     .bind(params.name)
@@ -1185,7 +1184,6 @@ pub async fn insert_schedule(
     .bind(params.rate_limit_kbps)
     .bind(params.pre_backup_commands)
     .bind(params.post_backup_commands)
-    .bind(params.execution_mode)
     .bind(params.on_failure)
     .bind(owner_id)
     .fetch_one(pool)
@@ -1203,8 +1201,8 @@ pub async fn update_schedule(
          exclude_patterns_raw = $6, ignore_global_excludes = $7, keep_hourly = $8, keep_daily = \
          $9, keep_weekly = $10, keep_monthly = $11, keep_yearly = $12, compact_enabled = $13, \
          rate_limit_kbps = $14, pre_backup_commands = $15, post_backup_commands = $16, \
-         execution_mode = $17, on_failure = $18 WHERE id = $1 RETURNING id, repo_id, name, \
-         schedule_type, cron_expression, enabled, canary_enabled, last_run_at, next_run_at, \
+         execution_mode = 'sequential', on_failure = $17 WHERE id = $1 RETURNING id, repo_id, \
+         name, schedule_type, cron_expression, enabled, canary_enabled, last_run_at, next_run_at, \
          exclude_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, \
          keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands, \
          post_backup_commands, execution_mode, on_failure, owner_id, visibility",
@@ -1225,7 +1223,6 @@ pub async fn update_schedule(
     .bind(params.rate_limit_kbps)
     .bind(params.pre_backup_commands)
     .bind(params.post_backup_commands)
-    .bind(params.execution_mode)
     .bind(params.on_failure)
     .fetch_one(pool)
     .await
@@ -1656,7 +1653,6 @@ pub struct DueScheduleRow {
     pub hostname: String,
     pub schedule_type: String,
     pub cron_expression: String,
-    pub execution_mode: String,
     pub on_failure: String,
     pub execution_order: i32,
 }
@@ -1667,11 +1663,10 @@ pub async fn list_due_schedules(
 ) -> Result<Vec<DueScheduleRow>, ApiError> {
     sqlx::query_as::<_, DueScheduleRow>(
         "SELECT s.id AS schedule_id, s.repo_id, st.client_id, c.hostname, s.schedule_type, \
-         s.cron_expression, s.execution_mode, s.on_failure, st.execution_order FROM schedules s \
-         JOIN repos r ON r.id = s.repo_id JOIN schedule_targets st ON st.schedule_id = s.id JOIN \
-         clients c ON c.id = st.client_id WHERE s.enabled = true AND r.enabled = true AND \
-         c.is_hidden = false AND s.next_run_at IS NOT NULL AND s.next_run_at <= $1 ORDER BY s.id, \
-         st.execution_order",
+         s.cron_expression, s.on_failure, st.execution_order FROM schedules s JOIN repos r ON \
+         r.id = s.repo_id JOIN schedule_targets st ON st.schedule_id = s.id JOIN clients c ON \
+         c.id = st.client_id WHERE s.enabled = true AND r.enabled = true AND c.is_hidden = false \
+         AND s.next_run_at IS NOT NULL AND s.next_run_at <= $1 ORDER BY s.id, st.execution_order",
     )
     .bind(now)
     .fetch_all(pool)
@@ -1914,6 +1909,12 @@ pub struct ActivityRow {
     pub repo_id: Option<i64>,
     pub archive_name: Option<String>,
     pub error_message: Option<String>,
+    #[serde(default)]
+    pub schedule_id: Option<i64>,
+    #[serde(default)]
+    pub schedule_name: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -1948,6 +1949,31 @@ pub struct InsertReportParams {
     pub matched: bool,
     pub archive_name: Option<String>,
     pub borg_command: Option<String>,
+    pub run_id: Option<String>,
+}
+
+pub async fn insert_backup_pending(
+    pool: &PgPool,
+    client_id: i64,
+    repo_id: i64,
+    schedule_id: Option<i64>,
+    run_id: &str,
+    triggered_at: DateTime<Utc>,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "INSERT INTO backup_reports (client_id, repo_id, schedule_id, started_at, finished_at, \
+         status, run_id) VALUES ($1, $2, $3, $4, $4, 'pending', $5) ON CONFLICT (repo_id, \
+         client_id, started_at) DO NOTHING",
+    )
+    .bind(client_id)
+    .bind(repo_id)
+    .bind(schedule_id)
+    .bind(triggered_at)
+    .bind(run_id)
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
 }
 
 pub async fn insert_backup_started(
@@ -1957,20 +1983,34 @@ pub async fn insert_backup_started(
     schedule_id: Option<i64>,
     started_at: DateTime<Utc>,
     borg_command: Option<&str>,
+    run_id: Option<&str>,
 ) -> Result<(), ApiError> {
-    sqlx::query(
-        "INSERT INTO backup_reports (client_id, repo_id, schedule_id, started_at, finished_at, \
-         status, borg_command) VALUES ($1, $2, $3, $4, $4, 'started', $5) ON CONFLICT (repo_id, \
-         client_id, started_at) DO NOTHING",
-    )
-    .bind(client_id)
-    .bind(repo_id)
-    .bind(schedule_id)
-    .bind(started_at)
-    .bind(borg_command)
-    .execute(pool)
-    .await
-    .map_err(ApiError::Database)?;
+    if let Some(rid) = run_id {
+        sqlx::query(
+            "UPDATE backup_reports SET started_at = $1, status = 'started', borg_command = $2 \
+             WHERE run_id = $3 AND status = 'pending'",
+        )
+        .bind(started_at)
+        .bind(borg_command)
+        .bind(rid)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    } else {
+        sqlx::query(
+            "INSERT INTO backup_reports (client_id, repo_id, schedule_id, started_at, \
+             finished_at, status, borg_command) VALUES ($1, $2, $3, $4, $4, 'started', $5) ON \
+             CONFLICT (repo_id, client_id, started_at) DO NOTHING",
+        )
+        .bind(client_id)
+        .bind(repo_id)
+        .bind(schedule_id)
+        .bind(started_at)
+        .bind(borg_command)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    }
     Ok(())
 }
 
@@ -1995,42 +2035,74 @@ pub async fn insert_backup_report(
     pool: &PgPool,
     params: &InsertReportParams,
 ) -> Result<(), ApiError> {
-    sqlx::query(
-        "INSERT INTO backup_reports (client_id, repo_id, schedule_id, started_at, finished_at, \
-         status, original_size, compressed_size, deduplicated_size, repo_unique_csize, \
-         files_processed, duration_secs, error_message, warnings, borg_version, matched, \
-         archive_name, borg_command) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, \
-         $13, $14, $15, $16, $17, $18) ON CONFLICT (repo_id, client_id, started_at) DO UPDATE SET \
-         schedule_id = COALESCE(EXCLUDED.schedule_id, backup_reports.schedule_id), finished_at = \
-         EXCLUDED.finished_at, status = EXCLUDED.status, original_size = EXCLUDED.original_size, \
-         compressed_size = EXCLUDED.compressed_size, deduplicated_size = \
-         EXCLUDED.deduplicated_size, repo_unique_csize = EXCLUDED.repo_unique_csize, \
-         files_processed = EXCLUDED.files_processed, duration_secs = EXCLUDED.duration_secs, \
-         error_message = EXCLUDED.error_message, warnings = EXCLUDED.warnings, borg_version = \
-         EXCLUDED.borg_version, matched = EXCLUDED.matched, archive_name = EXCLUDED.archive_name, \
-         borg_command = EXCLUDED.borg_command",
-    )
-    .bind(params.client_id)
-    .bind(params.repo_id)
-    .bind(params.schedule_id)
-    .bind(params.started_at)
-    .bind(params.finished_at)
-    .bind(&params.status)
-    .bind(params.original_size)
-    .bind(params.compressed_size)
-    .bind(params.deduplicated_size)
-    .bind(params.repo_unique_csize)
-    .bind(params.files_processed)
-    .bind(params.duration_secs)
-    .bind(&params.error_message)
-    .bind(&params.warnings)
-    .bind(&params.borg_version)
-    .bind(params.matched)
-    .bind(&params.archive_name)
-    .bind(&params.borg_command)
-    .execute(pool)
-    .await
-    .map_err(ApiError::Database)?;
+    if let Some(ref run_id) = params.run_id {
+        sqlx::query(
+            "UPDATE backup_reports SET schedule_id = COALESCE($1, schedule_id), finished_at = $2, \
+             status = $3, original_size = $4, compressed_size = $5, deduplicated_size = $6, \
+             repo_unique_csize = $7, files_processed = $8, duration_secs = $9, error_message = \
+             $10, warnings = $11, borg_version = $12, matched = $13, archive_name = $14, \
+             borg_command = $15, started_at = $16 WHERE run_id = $17 AND status IN ('pending', \
+             'started')",
+        )
+        .bind(params.schedule_id)
+        .bind(params.finished_at)
+        .bind(&params.status)
+        .bind(params.original_size)
+        .bind(params.compressed_size)
+        .bind(params.deduplicated_size)
+        .bind(params.repo_unique_csize)
+        .bind(params.files_processed)
+        .bind(params.duration_secs)
+        .bind(&params.error_message)
+        .bind(&params.warnings)
+        .bind(&params.borg_version)
+        .bind(params.matched)
+        .bind(&params.archive_name)
+        .bind(&params.borg_command)
+        .bind(params.started_at)
+        .bind(run_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    } else {
+        sqlx::query(
+            "INSERT INTO backup_reports (client_id, repo_id, schedule_id, started_at, \
+             finished_at, status, original_size, compressed_size, deduplicated_size, \
+             repo_unique_csize, files_processed, duration_secs, error_message, warnings, \
+             borg_version, matched, archive_name, borg_command) VALUES ($1, $2, $3, $4, $5, $6, \
+             $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) ON CONFLICT (repo_id, \
+             client_id, started_at) DO UPDATE SET schedule_id = COALESCE(EXCLUDED.schedule_id, \
+             backup_reports.schedule_id), finished_at = EXCLUDED.finished_at, status = \
+             EXCLUDED.status, original_size = EXCLUDED.original_size, compressed_size = \
+             EXCLUDED.compressed_size, deduplicated_size = EXCLUDED.deduplicated_size, \
+             repo_unique_csize = EXCLUDED.repo_unique_csize, files_processed = \
+             EXCLUDED.files_processed, duration_secs = EXCLUDED.duration_secs, error_message = \
+             EXCLUDED.error_message, warnings = EXCLUDED.warnings, borg_version = \
+             EXCLUDED.borg_version, matched = EXCLUDED.matched, archive_name = \
+             EXCLUDED.archive_name, borg_command = EXCLUDED.borg_command",
+        )
+        .bind(params.client_id)
+        .bind(params.repo_id)
+        .bind(params.schedule_id)
+        .bind(params.started_at)
+        .bind(params.finished_at)
+        .bind(&params.status)
+        .bind(params.original_size)
+        .bind(params.compressed_size)
+        .bind(params.deduplicated_size)
+        .bind(params.repo_unique_csize)
+        .bind(params.files_processed)
+        .bind(params.duration_secs)
+        .bind(&params.error_message)
+        .bind(&params.warnings)
+        .bind(&params.borg_version)
+        .bind(params.matched)
+        .bind(&params.archive_name)
+        .bind(&params.borg_command)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    }
     Ok(())
 }
 
@@ -2220,12 +2292,15 @@ pub async fn get_activity_feed(
     limit: i64,
     repo_id: Option<i64>,
     hostname: Option<&str>,
+    schedule_id: Option<i64>,
+    run_id: Option<&str>,
 ) -> Result<Vec<ActivityRow>, ApiError> {
     let mut sql = String::from(
         "SELECT br.id, c.hostname, r.name AS target_name, br.started_at, br.finished_at, \
-         br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message FROM \
-         backup_reports br JOIN clients c ON c.id = br.client_id JOIN repos r ON r.id = \
-         br.repo_id WHERE c.is_hidden = false AND c.visibility <> 'hidden' AND \
+         br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message, \
+         br.schedule_id, s.name AS schedule_name, br.run_id FROM backup_reports br JOIN clients c \
+         ON c.id = br.client_id JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = \
+         br.schedule_id WHERE c.is_hidden = false AND c.visibility <> 'hidden' AND \
          COALESCE(c.display_name, '') NOT ILIKE '%(imported)%'",
     );
     let mut param_idx = 1u32;
@@ -2237,6 +2312,14 @@ pub async fn get_activity_feed(
         sql.push_str(&format!(" AND c.hostname = ${param_idx}"));
         param_idx += 1;
     }
+    if schedule_id.is_some() {
+        sql.push_str(&format!(" AND br.schedule_id = ${param_idx}"));
+        param_idx += 1;
+    }
+    if run_id.is_some() {
+        sql.push_str(&format!(" AND br.run_id = ${param_idx}"));
+        param_idx += 1;
+    }
     sql.push_str(&format!(" ORDER BY br.started_at DESC LIMIT ${param_idx}"));
 
     let mut query = sqlx::query_as::<_, ActivityRow>(&sql);
@@ -2245,6 +2328,12 @@ pub async fn get_activity_feed(
     }
     if let Some(host) = hostname {
         query = query.bind(host.to_owned());
+    }
+    if let Some(sid) = schedule_id {
+        query = query.bind(sid);
+    }
+    if let Some(rid) = run_id {
+        query = query.bind(rid.to_owned());
     }
     query = query.bind(limit);
     query.fetch_all(pool).await.map_err(ApiError::Database)
@@ -3218,12 +3307,15 @@ pub async fn get_activity_feed_days(
     days: i64,
     repo_id: Option<i64>,
     hostname: Option<&str>,
+    schedule_id: Option<i64>,
+    run_id: Option<&str>,
 ) -> Result<Vec<ActivityRow>, ApiError> {
     let mut sql = String::from(
         "SELECT br.id, c.hostname, r.name AS target_name, br.started_at, br.finished_at, \
-         br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message FROM \
-         backup_reports br JOIN clients c ON c.id = br.client_id JOIN repos r ON r.id = \
-         br.repo_id WHERE c.is_hidden = false AND c.visibility <> 'hidden' AND \
+         br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message, \
+         br.schedule_id, s.name AS schedule_name, br.run_id FROM backup_reports br JOIN clients c \
+         ON c.id = br.client_id JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = \
+         br.schedule_id WHERE c.is_hidden = false AND c.visibility <> 'hidden' AND \
          COALESCE(c.display_name, '') NOT ILIKE '%(imported)%' AND br.started_at > NOW() - \
          make_interval(days => $1::int)",
     );
@@ -3234,6 +3326,14 @@ pub async fn get_activity_feed_days(
     }
     if hostname.is_some() {
         sql.push_str(&format!(" AND c.hostname = ${param_idx}"));
+        param_idx += 1;
+    }
+    if schedule_id.is_some() {
+        sql.push_str(&format!(" AND br.schedule_id = ${param_idx}"));
+        param_idx += 1;
+    }
+    if run_id.is_some() {
+        sql.push_str(&format!(" AND br.run_id = ${param_idx}"));
     }
     sql.push_str(" ORDER BY br.started_at DESC");
 
@@ -3244,6 +3344,12 @@ pub async fn get_activity_feed_days(
     }
     if let Some(host) = hostname {
         query = query.bind(host.to_owned());
+    }
+    if let Some(sid) = schedule_id {
+        query = query.bind(sid);
+    }
+    if let Some(rid) = run_id {
+        query = query.bind(rid.to_owned());
     }
     query.fetch_all(pool).await.map_err(ApiError::Database)
 }

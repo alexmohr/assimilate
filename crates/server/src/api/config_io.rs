@@ -348,7 +348,6 @@ pub async fn import_config(
             rate_limit_kbps: sched.rate_limit_kbps,
             pre_backup_commands: &pre_cmds_json,
             post_backup_commands: &post_cmds_json,
-            execution_mode: &sched.execution_mode,
             on_failure: &sched.on_failure,
         };
 

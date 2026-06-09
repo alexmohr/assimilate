@@ -10,7 +10,7 @@ use serde::Deserialize;
 use shared::{
     protocol::ServerToAgent,
     schedule::{calculate_next_run, validate_cron},
-    types::{ExecutionMode, OnFailure, RepoId, ScheduleType},
+    types::{OnFailure, RepoId, ScheduleType},
 };
 
 use super::{
@@ -61,8 +61,6 @@ pub struct CreateScheduleRequest {
     pub backup_sources_per_host: Option<Vec<HostBackupSources>>,
     pub exclude_patterns_per_host: Option<Vec<HostExcludePatterns>>,
     #[schema(value_type = Option<String>)]
-    pub execution_mode: Option<ExecutionMode>,
-    #[schema(value_type = Option<String>)]
     pub on_failure: Option<OnFailure>,
 }
 
@@ -88,8 +86,6 @@ pub struct UpdateScheduleRequest {
     pub backup_sources_per_host: Option<Vec<HostBackupSources>>,
     pub exclude_patterns_per_host: Option<Vec<HostExcludePatterns>>,
     pub client_ids: Option<Vec<i64>>,
-    #[schema(value_type = Option<String>)]
-    pub execution_mode: Option<ExecutionMode>,
     #[schema(value_type = Option<String>)]
     pub on_failure: Option<OnFailure>,
 }
@@ -197,9 +193,7 @@ pub async fn create_schedule(
         }
     }
 
-    let execution_mode = req.execution_mode.unwrap_or_default();
     let on_failure = req.on_failure.unwrap_or_default();
-    let execution_mode_str = execution_mode.to_string();
     let on_failure_str = on_failure.to_string();
 
     let params = ScheduleParams {
@@ -227,7 +221,6 @@ pub async fn create_schedule(
             .unwrap_or_else(|_| "[]".to_owned()),
         post_backup_commands: &serde_json::to_string(&req.post_backup_commands.unwrap_or_default())
             .unwrap_or_else(|_| "[]".to_owned()),
-        execution_mode: &execution_mode_str,
         on_failure: &on_failure_str,
     };
 
@@ -395,9 +388,6 @@ pub async fn update_schedule(
         |cmds| serde_json::to_string(&cmds).unwrap_or_else(|_| "[]".to_owned()),
     );
 
-    let execution_mode = req
-        .execution_mode
-        .map_or_else(|| existing.execution_mode.clone(), |m| m.to_string());
     let on_failure = req
         .on_failure
         .map_or_else(|| existing.on_failure.clone(), |f| f.to_string());
@@ -427,7 +417,6 @@ pub async fn update_schedule(
         },
         pre_backup_commands: &pre_cmds_json,
         post_backup_commands: &post_cmds_json,
-        execution_mode: &execution_mode,
         on_failure: &on_failure,
     };
 
@@ -637,6 +626,7 @@ pub async fn run_schedule_now(
                 repo_id,
                 schedule_id: Some(id),
                 request_id: None,
+                run_id: None,
             },
         };
 

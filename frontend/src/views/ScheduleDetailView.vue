@@ -125,7 +125,6 @@ const { onMessage } = useWebSocket()
 const selectedClientIds = ref<number[]>([])
 const selectedRepoId = ref<number | null>(null)
 const selectedType = ref<ScheduleType>('backup')
-const executionMode = ref<'parallel' | 'sequential'>('parallel')
 const onFailure = ref<'stop' | 'continue'>('stop')
 const usePerHostPaths = ref(false)
 const perHostSources = ref<Record<number, string>>({})
@@ -149,11 +148,9 @@ const activeTab = computed<TabId>({
 })
 
 function goToLogs(): void {
-  const target = repo.value?.name
+  const id = schedule.value?.id
   router.push(
-    target
-      ? `/activity?category=backup&target=${encodeURIComponent(target)}`
-      : '/activity?category=backup',
+    id != null ? `/activity?category=backup&schedule_id=${id}` : '/activity?category=backup',
   )
 }
 
@@ -257,7 +254,6 @@ function populateForm(s: ScheduleRow): void {
     backup_sources: '',
   }
   selectedRepoId.value = s.repo_id ?? null
-  executionMode.value = (s.execution_mode as 'parallel' | 'sequential') ?? 'parallel'
   onFailure.value = (s.on_failure as 'stop' | 'continue') ?? 'stop'
 }
 
@@ -392,7 +388,6 @@ async function save(): Promise<void> {
         client_ids: selectedClientIds.value,
         repo_id: selectedRepoId.value,
         schedule_type: selectedType.value,
-        execution_mode: executionMode.value,
         on_failure: onFailure.value,
       })
       router.push(`/schedules/${res.data.id}`)
@@ -401,7 +396,6 @@ async function save(): Promise<void> {
         ...payload,
         client_ids: selectedClientIds.value,
         repo_id: selectedRepoId.value,
-        execution_mode: executionMode.value,
         on_failure: onFailure.value,
       })
       schedule.value = res.data
@@ -662,37 +656,8 @@ watch(activeTab, (tab) => {
               <span class="field-hint">The agent clients that will execute this schedule</span>
             </div>
 
-            <!-- Execution Mode -->
+            <!-- On Failure -->
             <div class="form-group">
-              <label class="form-label">Execution Mode</label>
-              <div class="segmented-control">
-                <button
-                  type="button"
-                  class="seg-btn"
-                  :class="{ active: executionMode === 'parallel' }"
-                  @click="executionMode = 'parallel'"
-                >
-                  Parallel
-                </button>
-                <button
-                  type="button"
-                  class="seg-btn"
-                  :class="{ active: executionMode === 'sequential' }"
-                  @click="executionMode = 'sequential'"
-                >
-                  Sequential
-                </button>
-              </div>
-              <span class="field-hint">
-                Parallel runs all hosts simultaneously; Sequential runs them one by one.
-              </span>
-            </div>
-
-            <!-- On Failure (sequential only) -->
-            <div
-              v-if="executionMode === 'sequential'"
-              class="form-group"
-            >
               <label class="form-label">On Failure</label>
               <select
                 v-model="onFailure"
@@ -706,9 +671,9 @@ watch(activeTab, (tab) => {
               </span>
             </div>
 
-            <!-- Ordering (sequential, 2+ hosts) -->
+            <!-- Ordering (2+ hosts) -->
             <div
-              v-if="executionMode === 'sequential' && selectedClientIds.length > 1"
+              v-if="selectedClientIds.length > 1"
               class="form-group"
             >
               <label class="form-label">Execution Order</label>
@@ -794,15 +759,6 @@ watch(activeTab, (tab) => {
               <span class="info-value">{{ targetHostnames() || '—' }}</span>
             </div>
             <div class="info-row">
-              <span class="info-label">Execution Mode</span>
-              <span class="info-value">
-                {{ schedule.execution_mode === 'sequential' ? 'Sequential' : 'Parallel' }}
-              </span>
-            </div>
-            <div
-              v-if="schedule.execution_mode === 'sequential'"
-              class="info-row"
-            >
               <span class="info-label">On Failure</span>
               <span class="info-value">
                 {{ schedule.on_failure === 'continue' ? 'Continue' : 'Stop' }}
@@ -894,34 +850,8 @@ watch(activeTab, (tab) => {
               </select>
             </div>
 
-            <!-- Execution Mode -->
+            <!-- On Failure -->
             <div class="form-group">
-              <label class="form-label">Execution Mode</label>
-              <div class="segmented-control">
-                <button
-                  type="button"
-                  class="seg-btn"
-                  :class="{ active: executionMode === 'parallel' }"
-                  @click="executionMode = 'parallel'"
-                >
-                  Parallel
-                </button>
-                <button
-                  type="button"
-                  class="seg-btn"
-                  :class="{ active: executionMode === 'sequential' }"
-                  @click="executionMode = 'sequential'"
-                >
-                  Sequential
-                </button>
-              </div>
-            </div>
-
-            <!-- On Failure (sequential only) -->
-            <div
-              v-if="executionMode === 'sequential'"
-              class="form-group"
-            >
               <label class="form-label">On Failure</label>
               <select
                 v-model="onFailure"
@@ -932,9 +862,9 @@ watch(activeTab, (tab) => {
               </select>
             </div>
 
-            <!-- Ordering (sequential, 2+ hosts) -->
+            <!-- Ordering (2+ hosts) -->
             <div
-              v-if="executionMode === 'sequential' && selectedClientIds.length > 1"
+              v-if="selectedClientIds.length > 1"
               class="form-group"
             >
               <label class="form-label">Execution Order</label>

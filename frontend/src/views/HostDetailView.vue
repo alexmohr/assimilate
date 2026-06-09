@@ -582,6 +582,10 @@ function navigateToSchedule(s: ScheduleRow): void {
   router.push(`/schedules/${s.id}`)
 }
 
+function goToActivityLog(): void {
+  router.push(`/activity?category=backup&hostname=${encodeURIComponent(props.hostname)}`)
+}
+
 // Token regeneration
 async function regenerateToken(): Promise<void> {
   regenLoading.value = true
@@ -825,6 +829,13 @@ watch(wsStatus, (newStatus, oldStatus) => {
               @click="adoptHost"
             >
               Adopt
+            </button>
+            <button
+              v-if="!isImported"
+              class="btn btn-sm btn-ghost"
+              @click="goToActivityLog"
+            >
+              Activity Log
             </button>
             <button
               v-if="!isImported"
@@ -1316,9 +1327,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
             <div class="card-top">
               <div class="card-info">
                 <span class="card-hostname">{{ s.name || repoNameForSchedule(s) }}</span>
-                <span class="card-repo">
-                  {{ s.execution_mode === 'sequential' ? 'Sequential' : 'Parallel' }}
-                </span>
+                <span class="card-repo">Sequential</span>
               </div>
               <div class="card-badges">
                 <span

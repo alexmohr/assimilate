@@ -18,6 +18,8 @@ pub enum ServerToAgent {
         schedule_id: Option<i64>,
         #[serde(default)]
         request_id: Option<String>,
+        #[serde(default)]
+        run_id: Option<String>,
     },
     RunCheckNow {
         repo_id: RepoId,
@@ -114,6 +116,8 @@ pub enum AgentToServer {
         started_at: DateTime<Utc>,
         #[serde(default)]
         borg_command: Option<String>,
+        #[serde(default)]
+        run_id: Option<String>,
     },
     BackupCompleted {
         report: BackupReport,
@@ -404,6 +408,7 @@ mod tests {
             repo_id: RepoId(1),
             schedule_id: Some(42),
             request_id: Some("req-8".into()),
+            run_id: Some("run-abc".into()),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();
@@ -427,6 +432,7 @@ mod tests {
             repo_id: RepoId(1),
             schedule_id: Some(7),
             request_id: None,
+            run_id: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let msg2: ServerToAgent = serde_json::from_str(&json).unwrap();

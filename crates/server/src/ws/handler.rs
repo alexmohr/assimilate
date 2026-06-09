@@ -262,6 +262,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
             schedule_id,
             started_at,
             borg_command,
+            run_id,
         } => {
             tracing::info!(
                 hostname = %hostname,
@@ -276,6 +277,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 schedule_id,
                 started_at,
                 borg_command.as_deref(),
+                run_id.as_deref(),
             )
             .await
             {
@@ -327,6 +329,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 matched: true,
                 archive_name: report.archive_name,
                 borg_command: report.borg_command,
+                run_id: report.run_id.clone(),
             };
             let report_persisted = match db::insert_backup_report(&state.pool, &params).await {
                 Ok(()) => true,
@@ -1070,6 +1073,7 @@ exit 0
             borg_version: Some("1.0.0".to_string()),
             archive_name: Some("archive-2".to_string()),
             borg_command: Some("borg create".to_string()),
+            run_id: None,
         };
         let msg = serde_json::to_string(&AgentToServer::BackupCompleted { report })
             .expect("serialize message");

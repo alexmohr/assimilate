@@ -1742,6 +1742,27 @@ pub async fn get_schedule_target_hostnames(
     Ok(rows.into_iter().map(|r| r.hostname).collect())
 }
 
+#[derive(Debug, sqlx::FromRow)]
+pub struct ScheduleRunTarget {
+    pub client_id: i64,
+    pub hostname: String,
+}
+
+pub async fn get_schedule_targets_for_run(
+    pool: &PgPool,
+    schedule_id: i64,
+) -> Result<Vec<ScheduleRunTarget>, ApiError> {
+    sqlx::query_as::<_, ScheduleRunTarget>(
+        "SELECT c.id AS client_id, c.hostname FROM clients c JOIN schedule_targets st ON \
+         st.client_id = c.id WHERE st.schedule_id = $1 AND c.is_hidden = false ORDER BY \
+         st.execution_order",
+    )
+    .bind(schedule_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
 pub async fn insert_schedule_targets(
     pool: &PgPool,
     schedule_id: i64,
@@ -1988,11 +2009,12 @@ pub async fn insert_backup_started(
     if let Some(rid) = run_id {
         sqlx::query(
             "UPDATE backup_reports SET started_at = $1, status = 'started', borg_command = $2 \
-             WHERE run_id = $3 AND status = 'pending'",
+             WHERE run_id = $3 AND client_id = $4 AND status = 'pending'",
         )
         .bind(started_at)
         .bind(borg_command)
         .bind(rid)
+        .bind(client_id)
         .execute(pool)
         .await
         .map_err(ApiError::Database)?;
@@ -2041,8 +2063,8 @@ pub async fn insert_backup_report(
              status = $3, original_size = $4, compressed_size = $5, deduplicated_size = $6, \
              repo_unique_csize = $7, files_processed = $8, duration_secs = $9, error_message = \
              $10, warnings = $11, borg_version = $12, matched = $13, archive_name = $14, \
-             borg_command = $15, started_at = $16 WHERE run_id = $17 AND status IN ('pending', \
-             'started')",
+             borg_command = $15, started_at = $16 WHERE run_id = $17 AND client_id = $18 AND \
+             status IN ('pending', 'started')",
         )
         .bind(params.schedule_id)
         .bind(params.finished_at)
@@ -2061,6 +2083,7 @@ pub async fn insert_backup_report(
         .bind(&params.borg_command)
         .bind(params.started_at)
         .bind(run_id)
+        .bind(params.client_id)
         .execute(pool)
         .await
         .map_err(ApiError::Database)?;

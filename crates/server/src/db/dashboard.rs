@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+use std::collections::HashSet;
+
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
@@ -202,4 +204,50 @@ pub async fn repositories(pool: &PgPool) -> Result<Vec<RepositoryRow>, ApiError>
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)
+}
+
+pub async fn dismissed_finding_ids(
+    pool: &PgPool,
+    user_id: i64,
+) -> Result<HashSet<String>, ApiError> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT finding_id FROM dismissed_dashboard_findings WHERE user_id = $1",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map(HashSet::from_iter)
+    .map_err(ApiError::Database)
+}
+
+pub async fn dismiss_finding(
+    pool: &PgPool,
+    user_id: i64,
+    finding_id: &str,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "INSERT INTO dismissed_dashboard_findings (user_id, finding_id)
+         VALUES ($1, $2)
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(finding_id)
+    .execute(pool)
+    .await
+    .map(|_| ())
+    .map_err(ApiError::Database)
+}
+
+pub async fn undismiss_finding(
+    pool: &PgPool,
+    user_id: i64,
+    finding_id: &str,
+) -> Result<(), ApiError> {
+    sqlx::query("DELETE FROM dismissed_dashboard_findings WHERE user_id = $1 AND finding_id = $2")
+        .bind(user_id)
+        .bind(finding_id)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(ApiError::Database)
 }

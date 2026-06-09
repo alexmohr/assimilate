@@ -82,6 +82,7 @@ async fn build_test_app(pool: PgPool) -> Router {
         )),
         completion_bus: server::ws::completion_bus::CompletionBus::new(),
         repo_op_tracker: server::repo_op_tracker::RepoOpTracker::default(),
+        repo_lock: server::RepoLock::default(),
     };
 
     Router::new()

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use shared::{
@@ -14,6 +14,7 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::{
+    AppState, RepoLock,
     api::repos::sync_existing_archives,
     config_assembler, db,
     db::DueScheduleRow,
@@ -22,24 +23,6 @@ use crate::{
     ws::{completion_bus::CompletionBus, registry::AgentRegistry, ui_broadcast::UiBroadcast},
 };
 
-#[derive(Clone, Default)]
-struct RepoLock {
-    locks: Arc<tokio::sync::Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>>,
-}
-
-impl RepoLock {
-    async fn acquire(&self, repo_id: i64) -> tokio::sync::OwnedMutexGuard<()> {
-        let mutex = {
-            let mut map = self.locks.lock().await;
-            Arc::clone(
-                map.entry(repo_id)
-                    .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
-            )
-        };
-        mutex.lock_owned().await
-    }
-}
-
 const TICK_INTERVAL: Duration = Duration::from_secs(30);
 const RETENTION_INTERVAL: Duration = Duration::from_secs(3600);
 const SYNC_CHECK_INTERVAL: Duration = Duration::from_secs(60);
@@ -47,32 +30,23 @@ const SYNC_WARN_DURATION: Duration = Duration::from_secs(300);
 const DEFAULT_RETENTION_DAYS: i64 = 7;
 const SEQUENTIAL_TIMEOUT: Duration = Duration::from_secs(4 * 3600);
 
-pub async fn run(
-    pool: PgPool,
-    registry: AgentRegistry,
-    encryption_key: [u8; 32],
-    ui_broadcast: UiBroadcast,
-    tunnel_manager: TunnelManager,
-    completion_bus: CompletionBus,
-    repo_op_tracker: RepoOpTracker,
-) {
-    let _receiver = completion_bus.subscribe();
-    let schedule_pool = pool.clone();
-    let retention_pool = pool.clone();
-    let sync_pool = pool;
+pub async fn run(state: AppState) {
+    let _receiver = state.completion_bus.subscribe();
+    let schedule_state = state.clone();
+    let retention_pool = state.pool.clone();
+    let sync_state = state.clone();
 
-    let repo_lock = RepoLock::default();
     let schedule_task = async move {
         let mut interval = tokio::time::interval(TICK_INTERVAL);
         loop {
             interval.tick().await;
             if let Err(e) = tick(
-                &schedule_pool,
-                &registry,
-                &encryption_key,
-                &tunnel_manager,
-                &completion_bus,
-                &repo_lock,
+                &schedule_state.pool,
+                &schedule_state.registry,
+                &schedule_state.encryption_key,
+                &schedule_state.tunnel_manager,
+                &schedule_state.completion_bus,
+                &schedule_state.repo_lock,
             )
             .await
             {
@@ -91,11 +65,17 @@ pub async fn run(
         }
     };
 
-    let sync_task = async {
+    let sync_task = async move {
         let mut interval = tokio::time::interval(SYNC_CHECK_INTERVAL);
         loop {
             interval.tick().await;
-            run_repo_sync(&sync_pool, &encryption_key, &ui_broadcast, &repo_op_tracker).await;
+            run_repo_sync(
+                &sync_state.pool,
+                &sync_state.encryption_key,
+                &sync_state.ui_broadcast,
+                &sync_state.repo_op_tracker,
+            )
+            .await;
         }
     };
 

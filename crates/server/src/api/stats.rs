@@ -5,7 +5,8 @@ use std::collections::HashSet;
 
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{Path, Query, State},
+    http::StatusCode,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -241,13 +242,14 @@ pub struct DashboardOverviewResponse {
 )]
 pub async fn dashboard_overview(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
 ) -> Result<Json<DashboardOverviewResponse>, ApiError> {
-    let (targets, hosts, upcoming, repositories) = tokio::try_join!(
+    let (targets, hosts, upcoming, repositories, dismissed) = tokio::try_join!(
         db::dashboard::targets(&state.pool),
         db::dashboard::eligible_hosts(&state.pool),
         db::dashboard::upcoming_schedules(&state.pool),
         db::dashboard::repositories(&state.pool),
+        db::dashboard::dismissed_finding_ids(&state.pool, auth.user_id),
     )?;
     let connected: HashSet<String> = state
         .registry
@@ -328,6 +330,7 @@ pub async fn dashboard_overview(
         }
     });
     findings.sort_by_key(|finding| severity_rank(finding.severity));
+    findings.retain(|finding| !dismissed.contains(&finding.id));
 
     let running_operations = targets
         .iter()
@@ -1255,4 +1258,22 @@ pub async fn calendar(
         .collect();
 
     Ok(Json(result))
+}
+
+pub async fn dismiss_finding(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(finding_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    db::dashboard::dismiss_finding(&state.pool, auth.user_id, &finding_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn undismiss_finding(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(finding_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    db::dashboard::undismiss_finding(&state.pool, auth.user_id, &finding_id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }

@@ -345,14 +345,14 @@ const {
   entryName,
   downloadEntry,
   restoreEntry,
-  deleteArchive,
+  deleteArchiveByName,
 } = useArchiveBrowser(repoIdRef)
 
-const archivePendingDeletion = ref<ContentEntry | null>(null)
+const archivePendingDeletion = ref<ArchiveEntry | null>(null)
 const archiveDeleteLoading = ref(false)
 
-function requestArchiveDeletion(entry: ContentEntry): void {
-  archivePendingDeletion.value = entry
+function requestArchiveDeletion(archive: ArchiveEntry): void {
+  archivePendingDeletion.value = archive
 }
 
 function closeArchiveDeleteDialog(): void {
@@ -372,12 +372,11 @@ async function restoreArchiveEntry(entry: ContentEntry): Promise<void> {
 }
 
 async function confirmArchiveDeletion(): Promise<void> {
-  const entry = archivePendingDeletion.value
-  if (!entry) return
+  const archive = archivePendingDeletion.value
+  if (!archive) return
   archiveDeleteLoading.value = true
   try {
-    const deleted = await deleteArchive(entry)
-    if (!deleted) return
+    await deleteArchiveByName(archive)
     archivePendingDeletion.value = null
     await refreshRepo()
     toastSuccess('Archive deleted.')
@@ -1537,7 +1536,7 @@ async function resetImport(): Promise<void> {
                     <RouterLink
                       v-if="group.matched && group.clientHostname"
                       :to="{ name: 'client-detail', params: { hostname: group.clientHostname } }"
-                      class="host-link"
+                      class="host-link group-hostname"
                       @click.stop
                     >
                       {{ group.hostname }}
@@ -1545,7 +1544,7 @@ async function resetImport(): Promise<void> {
                     <RouterLink
                       v-else
                       :to="{ name: 'client-detail', params: { hostname: group.hostname } }"
-                      class="host-link group-unmatched"
+                      class="host-link group-hostname group-unmatched"
                       @click.stop
                     >
                       {{ group.hostname }}
@@ -1562,7 +1561,7 @@ async function resetImport(): Promise<void> {
                     v-show="!isGroupCollapsed(group.hostname)"
                     class="group-archives"
                   >
-                    <button
+                    <div
                       v-for="archive in group.archives"
                       :key="archive.name"
                       class="archive-row"
@@ -1571,7 +1570,15 @@ async function resetImport(): Promise<void> {
                     >
                       <span class="archive-date">{{ formatDate(archive.start) }}</span>
                       <span class="archive-name">{{ archive.name }}</span>
-                    </button>
+                      <button
+                        v-if="isAdmin"
+                        class="btn btn-sm btn-ghost archive-row-delete"
+                        title="Delete archive"
+                        @click.stop="requestArchiveDeletion(archive)"
+                      >
+                        <Trash2 :size="12" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1579,7 +1586,7 @@ async function resetImport(): Promise<void> {
                 v-else
                 class="archive-flat-list"
               >
-                <button
+                <div
                   v-for="archive in orderedArchives"
                   :key="archive.name"
                   class="archive-row archive-row-detailed"
@@ -1593,7 +1600,15 @@ async function resetImport(): Promise<void> {
                   <span class="archive-date">{{ formatDate(archive.start) }}</span>
                   <span class="archive-size">{{ formatBytes(archive.original_size) }}</span>
                   <span class="archive-size">{{ formatBytes(archive.deduplicated_size) }}</span>
-                </button>
+                  <button
+                    v-if="isAdmin"
+                    class="btn btn-sm btn-ghost archive-row-delete"
+                    title="Delete archive"
+                    @click.stop="requestArchiveDeletion(archive)"
+                  >
+                    <Trash2 :size="12" />
+                  </button>
+                </div>
               </div>
             </template>
           </div>
@@ -1709,10 +1724,10 @@ async function resetImport(): Promise<void> {
                         <RotateCcw :size="14" />
                       </button>
                       <button
-                        v-if="isAdmin && entry.path.length === 0"
+                        v-if="isAdmin && entry.path.length === 0 && selectedArchive"
                         class="btn btn-sm btn-ghost"
                         title="Delete whole archive"
-                        @click.stop="requestArchiveDeletion(entry)"
+                        @click.stop="requestArchiveDeletion(selectedArchive)"
                       >
                         <Trash2 :size="14" />
                       </button>
@@ -1778,7 +1793,7 @@ async function resetImport(): Promise<void> {
         </div>
         <div>
           <p>
-            Permanently delete <strong>{{ selectedArchive?.name }}</strong> from
+            Permanently delete <strong>{{ archivePendingDeletion?.name }}</strong> from
             <strong>{{ repo?.name }}</strong
             >?
           </p>
@@ -2686,7 +2701,8 @@ async function resetImport(): Promise<void> {
 
 .archive-controls {
   display: flex;
-  gap: 0.75rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
   padding: 0.5rem 0.75rem;
   border-bottom: 1px solid var(--border);
 }
@@ -2760,9 +2776,6 @@ async function resetImport(): Promise<void> {
 
 .group-hostname {
   flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .group-unmatched {
@@ -2827,9 +2840,21 @@ async function resetImport(): Promise<void> {
 
 .archive-row-detailed {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) auto auto auto;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) auto auto auto auto;
   gap: 0.75rem;
   padding-left: 0.75rem;
+}
+
+.archive-row-delete {
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.1s;
+  flex-shrink: 0;
+}
+
+.archive-row:hover .archive-row-delete,
+.archive-row.selected .archive-row-delete {
+  opacity: 1;
 }
 
 .archive-host,

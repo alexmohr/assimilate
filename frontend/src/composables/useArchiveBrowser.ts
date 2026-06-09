@@ -60,6 +60,7 @@ interface UseArchiveBrowserReturn {
   downloadEntry: (entry: ContentEntry) => void
   restoreEntry: (entry: ContentEntry) => Promise<boolean>
   deleteArchive: (entry: ContentEntry) => Promise<boolean>
+  deleteArchiveByName: (archive: ArchiveEntry) => Promise<boolean>
 }
 
 export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn {
@@ -276,7 +277,10 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
   async function deleteArchive(entry: ContentEntry): Promise<boolean> {
     const archive = selectedArchive.value
     if (!archive || entry.type !== 'd' || entry.path.length > 0) return false
+    return deleteArchiveByName(archive)
+  }
 
+  async function deleteArchiveByName(archive: ArchiveEntry): Promise<boolean> {
     const response = await apiClient.delete<{ success: boolean; archive_name: string }>(
       `/repos/${repoId.value}/archives/${encodeURIComponent(archive.name)}`,
     )
@@ -321,5 +325,6 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     downloadEntry,
     restoreEntry,
     deleteArchive,
+    deleteArchiveByName,
   }
 }

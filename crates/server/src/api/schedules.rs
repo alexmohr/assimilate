@@ -12,6 +12,8 @@ use shared::{
     schedule::{calculate_next_run, validate_cron},
     types::{OnFailure, RepoId, ScheduleType},
 };
+use tokio::sync::broadcast;
+use uuid::Uuid;
 
 use super::{
     auth::{AuthUser, Role},
@@ -22,6 +24,7 @@ use crate::{
     db::{self, ScheduleParams, ScheduleRow},
     error::{ApiError, ApiJson},
     ssh::{self, TestConnectionRequest},
+    ws::completion_bus::OperationOutcome,
 };
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -582,62 +585,42 @@ pub async fn run_schedule_now(
     })
     .await?;
 
-    let hostnames = db::get_schedule_target_hostnames(&state.pool, id).await?;
+    let targets = db::get_schedule_targets_for_run(&state.pool, id).await?;
     let repo_id = RepoId(schedule_repo_id);
     let schedule_type = schedule
         .schedule_type
         .parse::<ScheduleType>()
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let run_id = Uuid::new_v4().to_string();
+    let now = chrono::Utc::now();
 
-    for hostname in &hostnames {
-        match config_assembler::assemble_config(&state.pool, &state.encryption_key, hostname).await
+    for target in &targets {
+        if let Err(e) = db::insert_backup_pending(
+            &state.pool,
+            target.client_id,
+            schedule_repo_id,
+            Some(id),
+            &run_id,
+            now,
+        )
+        .await
         {
-            Ok(config) => {
-                let config_msg = ServerToAgent::ConfigUpdate(config);
-                if let Err(e) = state.registry.send_to(hostname, config_msg).await {
-                    tracing::warn!(
-                        hostname = %hostname,
-                        error = %e,
-                        "agent not connected for pre-run config push, skipping trigger"
-                    );
-                    continue;
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    hostname = %hostname,
-                    error = %e,
-                    "failed to assemble config before manual run, skipping trigger"
-                );
-                continue;
-            }
-        }
-
-        let msg = match schedule_type {
-            ScheduleType::Check => ServerToAgent::RunCheckNow {
-                repo_id,
-                request_id: None,
-            },
-            ScheduleType::Verify => ServerToAgent::RunVerifyNow {
-                repo_id,
-                request_id: None,
-            },
-            ScheduleType::Backup => ServerToAgent::RunBackupNow {
-                repo_id,
-                schedule_id: Some(id),
-                request_id: None,
-                run_id: None,
-            },
-        };
-
-        if let Err(e) = state.registry.send_to(hostname, msg).await {
             tracing::warn!(
-                hostname = %hostname,
+                hostname = %target.hostname,
                 error = %e,
-                "agent not connected for run_schedule_now"
+                "manual run: failed to insert pending record"
             );
         }
     }
+
+    tokio::spawn(run_manual_sequential(
+        state,
+        targets,
+        repo_id,
+        schedule_type,
+        id,
+        run_id,
+    ));
 
     Ok(StatusCode::ACCEPTED)
 }
@@ -781,4 +764,102 @@ pub async fn list_schedule_backup_sources(
         backup_sources_per_host,
         exclude_patterns_per_host,
     }))
+}
+
+const MANUAL_RUN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4 * 3600);
+
+async fn run_manual_sequential(
+    state: AppState,
+    targets: Vec<db::ScheduleRunTarget>,
+    repo_id: RepoId,
+    schedule_type: ScheduleType,
+    schedule_id: i64,
+    run_id: String,
+) {
+    for target in &targets {
+        let mut rx = state.completion_bus.subscribe();
+
+        let _repo_guard = state.repo_lock.acquire(repo_id.0).await;
+
+        match config_assembler::assemble_config(
+            &state.pool,
+            &state.encryption_key,
+            &target.hostname,
+        )
+        .await
+        {
+            Ok(config) => {
+                if let Err(e) = state
+                    .registry
+                    .send_to(&target.hostname, ServerToAgent::ConfigUpdate(config))
+                    .await
+                {
+                    tracing::warn!(
+                        hostname = %target.hostname,
+                        error = %e,
+                        "manual run: agent not connected for config push, skipping"
+                    );
+                    continue;
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    hostname = %target.hostname,
+                    error = %e,
+                    "manual run: failed to assemble config, skipping"
+                );
+                continue;
+            }
+        }
+
+        let msg = match schedule_type {
+            ScheduleType::Check => ServerToAgent::RunCheckNow {
+                repo_id,
+                request_id: None,
+            },
+            ScheduleType::Verify => ServerToAgent::RunVerifyNow {
+                repo_id,
+                request_id: None,
+            },
+            ScheduleType::Backup => ServerToAgent::RunBackupNow {
+                repo_id,
+                schedule_id: Some(schedule_id),
+                request_id: None,
+                run_id: Some(run_id.clone()),
+            },
+        };
+
+        if let Err(e) = state.registry.send_to(&target.hostname, msg).await {
+            tracing::warn!(
+                hostname = %target.hostname,
+                error = %e,
+                "manual run: agent not connected, skipping"
+            );
+            continue;
+        }
+
+        tracing::info!(
+            hostname = %target.hostname,
+            schedule_id,
+            "manual run: triggered"
+        );
+
+        let hostname = target.hostname.clone();
+        let repo_id_val = repo_id.0;
+        let _ = tokio::time::timeout(MANUAL_RUN_TIMEOUT, async {
+            loop {
+                match rx.recv().await {
+                    Ok(OperationOutcome {
+                        hostname: h,
+                        repo_id: r,
+                        ..
+                    }) if h == hostname && r == repo_id_val => break,
+                    Ok(_) => {}
+                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        })
+        .await;
+    }
 }

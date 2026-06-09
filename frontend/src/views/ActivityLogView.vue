@@ -25,6 +25,14 @@ interface ActivityRow {
   finished_at: string
   status: string
   duration_secs: number
+  schedule_id: number | null
+  schedule_name: string | null
+  run_id: string | null
+}
+
+interface ScheduleOption {
+  id: number
+  name: string
 }
 
 interface SystemEvent {
@@ -65,12 +73,13 @@ interface LogEntry {
 }
 
 type CategoryFilter = 'all' | 'backup' | 'system' | 'logs'
-type StatusFilter = 'all' | 'success' | 'warning' | 'failed' | 'started'
+type StatusFilter = 'all' | 'success' | 'warning' | 'failed' | 'started' | 'pending'
 type LogLevel = '' | 'error' | 'warn' | 'info' | 'debug' | 'trace'
 
 const rows = ref<ActivityRow[]>([])
 const systemEvents = ref<SystemEvent[]>([])
 const clients = ref<Client[]>([])
+const schedules = ref<ScheduleOption[]>([])
 const loading = ref(false)
 const loadingMore = ref(false)
 const expandedId = ref<number | null>(null)
@@ -87,6 +96,8 @@ const filterTarget = ref('all')
 const filterStatus = ref<StatusFilter>('all')
 const filterFrom = ref('')
 const filterTo = ref('')
+const filterScheduleId = ref<number | null>(null)
+const filterRunId = ref<string | null>(null)
 
 const logEntries = ref<LogEntry[]>([])
 const logLevel = ref<LogLevel>('')
@@ -113,7 +124,9 @@ const hasActiveFilters = computed((): boolean => {
     filterTarget.value !== 'all' ||
     filterStatus.value !== 'all' ||
     filterFrom.value !== '' ||
-    filterTo.value !== ''
+    filterTo.value !== '' ||
+    filterScheduleId.value !== null ||
+    filterRunId.value !== null
   )
 })
 
@@ -145,7 +158,20 @@ onMounted(async () => {
       filterFrom.value = from.toISOString().slice(0, 10)
     }
   }
-  await Promise.all([fetchMachines(), fetchData(true)])
+  const scheduleIdParam = route.query.schedule_id as string | undefined
+  if (scheduleIdParam) {
+    const id = Number(scheduleIdParam)
+    if (id > 0) {
+      filterScheduleId.value = id
+      activeCategory.value = 'backup'
+    }
+  }
+  const runIdParam = route.query.run_id as string | undefined
+  if (runIdParam) {
+    filterRunId.value = runIdParam
+    activeCategory.value = 'backup'
+  }
+  await Promise.all([fetchMachines(), fetchSchedules(), fetchData(true)])
 })
 
 const { onMessage } = useWebSocket()
@@ -173,9 +199,22 @@ watch(logSearch, () => {
   }, 300)
 })
 
+watch(filterScheduleId, () => {
+  if (activeCategory.value !== 'logs') fetchData(true).catch(logger.error)
+})
+
+watch(filterRunId, () => {
+  if (activeCategory.value !== 'logs') fetchData(true).catch(logger.error)
+})
+
 async function fetchMachines(): Promise<void> {
   const res = await apiClient.get<Client[]>('/clients')
   clients.value = res.data
+}
+
+async function fetchSchedules(): Promise<void> {
+  const res = await apiClient.get<ScheduleOption[]>('/schedules')
+  schedules.value = res.data
 }
 
 async function fetchLogs(): Promise<void> {
@@ -214,8 +253,11 @@ async function fetchData(reset: boolean): Promise<void> {
     const cat = activeCategory.value
 
     if (cat === 'backup' || cat === 'all') {
+      const activityParams: Record<string, string | number> = { limit }
+      if (filterScheduleId.value !== null) activityParams.schedule_id = filterScheduleId.value
+      if (filterRunId.value !== null) activityParams.run_id = filterRunId.value
       const res = await apiClient.get<ActivityRow[]>('/stats/activity', {
-        params: { limit },
+        params: activityParams,
       })
       rows.value = res.data
     }
@@ -285,6 +327,7 @@ const filtered = computed(() => {
       if (filterStatus.value === 'warning' && s !== 'warning') return false
       if (filterStatus.value === 'failed' && s !== 'failed' && s !== 'error') return false
       if (filterStatus.value === 'started' && s !== 'started') return false
+      if (filterStatus.value === 'pending' && s !== 'pending') return false
     }
     if (filterFrom.value) {
       if (new Date(r.started_at) < new Date(filterFrom.value)) return false
@@ -354,6 +397,7 @@ function statusClass(status: string): string {
   if (s === 'success') return 'badge-success'
   if (s === 'warning') return 'badge-warning'
   if (s === 'started') return 'badge-started'
+  if (s === 'pending') return 'badge-pending'
   return 'badge-failed'
 }
 
@@ -388,8 +432,17 @@ function clearFilters(): void {
   filterStatus.value = 'all'
   filterFrom.value = ''
   filterTo.value = ''
+  filterScheduleId.value = null
+  filterRunId.value = null
   logLevel.value = ''
   logSearch.value = ''
+}
+
+function filterByRun(runId: string): void {
+  filterRunId.value = runId
+  filterScheduleId.value = null
+  activeCategory.value = 'backup'
+  fetchData(true).catch(logger.error)
 }
 </script>
 
@@ -476,6 +529,40 @@ function clearFilters(): void {
             </div>
 
             <div class="filter-group">
+              <label class="filter-label">Schedule</label>
+              <select
+                v-model="filterScheduleId"
+                class="select-input"
+              >
+                <option :value="null">All Schedules</option>
+                <option
+                  v-for="s in schedules"
+                  :key="s.id"
+                  :value="s.id"
+                >
+                  {{ s.name }}
+                </option>
+              </select>
+            </div>
+
+            <div
+              v-if="filterRunId !== null"
+              class="filter-group"
+            >
+              <label class="filter-label">Run</label>
+              <div class="run-id-filter">
+                <span class="run-id-label">{{ filterRunId.slice(0, 8) }}...</span>
+                <button
+                  class="btn-clear-run"
+                  title="Clear run filter"
+                  @click="filterRunId = null"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            <div class="filter-group">
               <label class="filter-label">Target</label>
               <select
                 v-model="filterTarget"
@@ -503,6 +590,7 @@ function clearFilters(): void {
                 <option value="warning">Warning</option>
                 <option value="failed">Failed</option>
                 <option value="started">Started</option>
+                <option value="pending">Pending</option>
               </select>
             </div>
 
@@ -669,7 +757,12 @@ function clearFilters(): void {
                   {{ row.backup.hostname }}
                 </td>
                 <td class="cell-target">
-                  {{ row.backup.target_name }}
+                  <span>{{ row.backup.target_name }}</span>
+                  <span
+                    v-if="row.backup.schedule_name"
+                    class="schedule-label"
+                    >{{ row.backup.schedule_name }}</span
+                  >
                 </td>
                 <td>
                   <span
@@ -679,7 +772,15 @@ function clearFilters(): void {
                   >
                 </td>
                 <td class="cell-dur">
-                  {{ formatDuration(row.backup.duration_secs) }}
+                  <span>{{ formatDuration(row.backup.duration_secs) }}</span>
+                  <button
+                    v-if="row.backup.run_id && filterRunId !== row.backup.run_id"
+                    class="btn-run-filter"
+                    title="View all events for this run"
+                    @click.stop="filterByRun(row.backup.run_id)"
+                  >
+                    View run
+                  </button>
                 </td>
               </tr>
               <tr
@@ -1063,6 +1164,11 @@ function clearFilters(): void {
   color: var(--info);
 }
 
+.badge-pending {
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+  color: var(--text-muted);
+}
+
 .detail-row td {
   padding: 0;
   background: var(--bg-base);
@@ -1328,5 +1434,59 @@ function clearFilters(): void {
   background: color-mix(in srgb, var(--text-muted) 10%, transparent);
   color: var(--text-muted);
   opacity: 0.7;
+}
+
+.schedule-label {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 0.1rem;
+}
+
+.btn-run-filter {
+  display: block;
+  margin-top: 0.2rem;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-run-filter:hover {
+  background: var(--bg-hover);
+}
+
+.run-id-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.run-id-label {
+  font-family: monospace;
+}
+
+.btn-clear-run {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
+.btn-clear-run:hover {
+  color: var(--text-primary);
 }
 </style>

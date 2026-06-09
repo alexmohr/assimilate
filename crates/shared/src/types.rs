@@ -196,14 +196,12 @@ pub enum ScheduleType {
 #[serde(rename_all = "lowercase")]
 pub enum ExecutionMode {
     #[default]
-    Parallel,
     Sequential,
 }
 
 impl fmt::Display for ExecutionMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Parallel => write!(f, "parallel"),
             Self::Sequential => write!(f, "sequential"),
         }
     }
@@ -214,8 +212,7 @@ impl FromStr for ExecutionMode {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "parallel" => Ok(Self::Parallel),
-            "sequential" => Ok(Self::Sequential),
+            "sequential" | "parallel" => Ok(Self::Sequential),
             other => Err(format!("unknown execution mode: {other}")),
         }
     }
@@ -330,6 +327,8 @@ pub struct BackupReport {
     pub archive_name: Option<String>,
     #[serde(default)]
     pub borg_command: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -394,22 +393,22 @@ mod tests {
 
     #[test]
     fn execution_mode_display_roundtrip() {
-        assert_eq!(ExecutionMode::Parallel.to_string(), "parallel");
         assert_eq!(ExecutionMode::Sequential.to_string(), "sequential");
         assert_eq!(
-            "parallel".parse::<ExecutionMode>().unwrap(),
-            ExecutionMode::Parallel
-        );
-        assert_eq!(
             "sequential".parse::<ExecutionMode>().unwrap(),
+            ExecutionMode::Sequential
+        );
+        // "parallel" maps to Sequential for backward compatibility
+        assert_eq!(
+            "parallel".parse::<ExecutionMode>().unwrap(),
             ExecutionMode::Sequential
         );
         assert!("invalid".parse::<ExecutionMode>().is_err());
     }
 
     #[test]
-    fn execution_mode_default_is_parallel() {
-        assert_eq!(ExecutionMode::default(), ExecutionMode::Parallel);
+    fn execution_mode_default_is_sequential() {
+        assert_eq!(ExecutionMode::default(), ExecutionMode::Sequential);
     }
 
     #[test]
@@ -480,13 +479,10 @@ mod tests {
 
     #[test]
     fn execution_mode_serde_roundtrip() {
-        let json = serde_json::to_string(&ExecutionMode::Parallel).unwrap();
-        assert_eq!(json, "\"parallel\"");
-        let parsed: ExecutionMode = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, ExecutionMode::Parallel);
-
         let json = serde_json::to_string(&ExecutionMode::Sequential).unwrap();
         assert_eq!(json, "\"sequential\"");
+        let parsed: ExecutionMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, ExecutionMode::Sequential);
     }
 
     #[test]

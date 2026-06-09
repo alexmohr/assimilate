@@ -36,6 +36,7 @@ pub enum ExecutorCommand {
     RunNow {
         repo_id: RepoId,
         schedule_id: Option<i64>,
+        run_id: Option<String>,
     },
     CancelBackup {
         repo_id: RepoId,
@@ -114,8 +115,9 @@ impl Executor {
                 ExecutorCommand::RunNow {
                     repo_id,
                     schedule_id,
+                    run_id,
                 } => {
-                    self.handle_run_now(repo_id, schedule_id, &outbound_tx)
+                    self.handle_run_now(repo_id, schedule_id, run_id, &outbound_tx)
                         .await;
                 }
                 ExecutorCommand::RunCheckNow { repo_id } => {
@@ -187,6 +189,7 @@ impl Executor {
         &self,
         repo_id: RepoId,
         schedule_id: Option<i64>,
+        run_id: Option<String>,
         outbound_tx: &mpsc::Sender<AgentToServer>,
     ) {
         let config_guard = self.current_config.lock().await;
@@ -243,9 +246,12 @@ impl Executor {
             run_backup_task(
                 repo_id,
                 target,
-                &hostname,
-                &server_url,
-                &token,
+                BackupTaskContext {
+                    hostname,
+                    server_url,
+                    token,
+                    run_id,
+                },
                 &engine,
                 &outbound,
             )
@@ -840,6 +846,7 @@ fn make_failed_report(
     schedule_id: Option<i64>,
     started_at: chrono::DateTime<Utc>,
     error_message: String,
+    run_id: Option<String>,
 ) -> shared::types::BackupReport {
     let finished_at = Utc::now();
     shared::types::BackupReport {
@@ -861,18 +868,30 @@ fn make_failed_report(
         borg_version: None,
         archive_name: None,
         borg_command: None,
+        run_id,
     }
+}
+
+struct BackupTaskContext {
+    hostname: String,
+    server_url: String,
+    token: String,
+    run_id: Option<String>,
 }
 
 async fn run_backup_task(
     repo_id: RepoId,
     mut target: BackupTarget,
-    hostname: &str,
-    server_url: &str,
-    token: &str,
+    ctx: BackupTaskContext,
     engine: &BackupEngine,
     outbound_tx: &mpsc::Sender<AgentToServer>,
 ) {
+    let BackupTaskContext {
+        hostname,
+        server_url,
+        token,
+        run_id,
+    } = ctx;
     let started_at = Utc::now();
     let schedule_id = target.schedule_id;
     let borg_command = BackupEngine::preview_create_command(&target);
@@ -881,12 +900,13 @@ async fn run_backup_task(
         schedule_id,
         started_at,
         borg_command: Some(borg_command),
+        run_id: run_id.clone(),
     };
     if let Err(e) = outbound_tx.send(started_msg).await {
         tracing::debug!(error = %e, "outbound send failed");
     }
 
-    let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
+    let _ssh_forward = setup_ssh_forward(&mut target, &hostname, &server_url, &token).await;
 
     let canary = if target.canary_enabled {
         match BackupEngine::write_canary(&target.backup_sources) {
@@ -922,20 +942,27 @@ async fn run_backup_task(
                 borg_version: None,
                 archive_name: result.archive_name,
                 borg_command: result.borg_command,
+                run_id: run_id.clone(),
             };
             (report, true)
         }
         Err(BackupError::Skipped(reason)) => {
             error!(repo_id = ?repo_id, reason = %reason, "backup skipped, treating as failure");
             (
-                make_failed_report(repo_id, schedule_id, started_at, reason),
+                make_failed_report(repo_id, schedule_id, started_at, reason, run_id.clone()),
                 false,
             )
         }
         Err(e) => {
             error!(repo_id = ?repo_id, error = %e, "backup failed");
             (
-                make_failed_report(repo_id, schedule_id, started_at, e.to_string()),
+                make_failed_report(
+                    repo_id,
+                    schedule_id,
+                    started_at,
+                    e.to_string(),
+                    run_id.clone(),
+                ),
                 false,
             )
         }
@@ -1850,7 +1877,7 @@ mod tests {
         let repo_queue = executor.repo_operation_queue(&repo_key).await;
         let permit = Arc::clone(&repo_queue).acquire_owned().await.unwrap();
 
-        executor.handle_run_now(repo.repo_id, None, &tx).await;
+        executor.handle_run_now(repo.repo_id, None, None, &tx).await;
 
         assert!(rx.try_recv().is_err());
         assert_eq!(executor.active_backup_tasks.lock().await.len(), 1);

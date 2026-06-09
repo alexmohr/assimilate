@@ -168,6 +168,7 @@ async fn handle_text_message(
         ServerToAgent::RunBackupNow {
             repo_id,
             schedule_id,
+            run_id,
             ..
         } => {
             info!("Received RunBackupNow for repo {repo_id:?}");
@@ -175,6 +176,7 @@ async fn handle_text_message(
                 .send(ExecutorCommand::RunNow {
                     repo_id,
                     schedule_id,
+                    run_id,
                 })
                 .await
                 .is_err()

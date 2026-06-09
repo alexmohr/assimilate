@@ -486,9 +486,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
           >
             {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
           </span>
-          <span class="execution-badge">
-            {{ s.execution_mode === 'sequential' ? 'Sequential' : 'Parallel' }}
-          </span>
+          <span class="execution-badge">Sequential</span>
         </div>
         <div
           v-if="s.health?.last_error_message"

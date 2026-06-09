@@ -618,7 +618,6 @@ async fn create_test_schedule(pool: &PgPool) -> (ClientRow, RepoRow, ScheduleRow
             rate_limit_kbps: Some(5000),
             pre_backup_commands: "",
             post_backup_commands: "",
-            execution_mode: "parallel",
             on_failure: "stop",
         },
         None,
@@ -669,7 +668,6 @@ async fn schedule_update(pool: PgPool) {
             rate_limit_kbps: None,
             pre_backup_commands: "echo pre",
             post_backup_commands: "echo post",
-            execution_mode: "sequential",
             on_failure: "continue",
         },
     )
@@ -958,7 +956,6 @@ async fn schedule_excludes_raw_text_round_trip(pool: PgPool) {
             rate_limit_kbps: None,
             pre_backup_commands: "",
             post_backup_commands: "",
-            execution_mode: "parallel",
             on_failure: "stop",
         },
     )
@@ -1036,7 +1033,6 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
             rate_limit_kbps: None,
             pre_backup_commands: "",
             post_backup_commands: "",
-            execution_mode: "parallel",
             on_failure: "stop",
         },
     )
@@ -1156,6 +1152,7 @@ async fn insert_test_report(pool: &PgPool, client_id: i64, repo_id: i64) {
             matched: true,
             archive_name: None,
             borg_command: None,
+            run_id: None,
         },
     )
     .await
@@ -1191,6 +1188,7 @@ async fn insert_test_report_for_schedule(
             matched: true,
             archive_name: None,
             borg_command: None,
+            run_id: None,
         },
     )
     .await
@@ -1268,6 +1266,7 @@ async fn backup_report_with_warnings(pool: PgPool) {
             matched: true,
             archive_name: Some("test-archive".to_string()),
             borg_command: None,
+            run_id: None,
         },
     )
     .await
@@ -1330,7 +1329,9 @@ async fn activity_feed(pool: PgPool) {
 
     insert_test_report(&pool, client.id, repo.id).await;
 
-    let activity = db::get_activity_feed(&pool, 10, None, None).await.unwrap();
+    let activity = db::get_activity_feed(&pool, 10, None, None, None, None)
+        .await
+        .unwrap();
     assert_eq!(activity.len(), 1);
     assert_eq!(activity[0].hostname, "act-host");
     assert_eq!(activity[0].target_name, "test-repo");
@@ -1345,7 +1346,7 @@ async fn activity_feed_days(pool: PgPool) {
 
     insert_test_report(&pool, client.id, repo.id).await;
 
-    let activity = db::get_activity_feed_days(&pool, 7, None, None)
+    let activity = db::get_activity_feed_days(&pool, 7, None, None, None, None)
         .await
         .unwrap();
     assert_eq!(activity.len(), 1);
@@ -1389,7 +1390,6 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
             rate_limit_kbps: None,
             pre_backup_commands: "",
             post_backup_commands: "",
-            execution_mode: "parallel",
             on_failure: "stop",
         },
         None,
@@ -1443,7 +1443,6 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             rate_limit_kbps: None,
             pre_backup_commands: "",
             post_backup_commands: "",
-            execution_mode: "parallel",
             on_failure: "stop",
         },
         None,
@@ -1477,7 +1476,6 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             rate_limit_kbps: None,
             pre_backup_commands: "",
             post_backup_commands: "",
-            execution_mode: "parallel",
             on_failure: "stop",
         },
         None,
@@ -3069,6 +3067,7 @@ async fn test_mark_client_reports_matched(pool: PgPool) {
             matched: false,
             archive_name: None,
             borg_command: None,
+            run_id: None,
         },
     )
     .await
@@ -3156,6 +3155,7 @@ async fn get_archives_for_client_across_multiple_repos(pool: PgPool) {
             matched: true,
             archive_name: Some("primary-host-2026-01-01T10:00:00".to_string()),
             borg_command: None,
+            run_id: None,
         },
     )
     .await
@@ -3181,6 +3181,7 @@ async fn get_archives_for_client_across_multiple_repos(pool: PgPool) {
             matched: true,
             archive_name: Some("primary-host-2026-01-02T10:00:00".to_string()),
             borg_command: None,
+            run_id: None,
         },
     )
     .await
@@ -3207,6 +3208,7 @@ async fn get_archives_for_client_across_multiple_repos(pool: PgPool) {
             matched: true,
             archive_name: Some("primary-host-2026-01-03T10:00:00".to_string()),
             borg_command: None,
+            run_id: None,
         },
     )
     .await
@@ -3233,6 +3235,7 @@ async fn get_archives_for_client_across_multiple_repos(pool: PgPool) {
             matched: true,
             archive_name: None,
             borg_command: None,
+            run_id: None,
         },
     )
     .await
@@ -3296,6 +3299,7 @@ async fn get_archives_for_client_includes_pattern_matched_archives(pool: PgPool)
             matched: true,
             archive_name: Some("web-server-01-2026-01-01T10:00:00".to_string()),
             borg_command: None,
+            run_id: None,
         },
     )
     .await
@@ -3322,6 +3326,7 @@ async fn get_archives_for_client_includes_pattern_matched_archives(pool: PgPool)
             matched: true,
             archive_name: Some("web-server-02-2026-01-01T10:00:00".to_string()),
             borg_command: None,
+            run_id: None,
         },
     )
     .await
@@ -3357,6 +3362,7 @@ async fn get_archives_for_client_includes_pattern_matched_archives(pool: PgPool)
             matched: false,
             archive_name: Some("web-server-legacy-2026-01-01T10:00:00".to_string()),
             borg_command: None,
+            run_id: None,
         },
     )
     .await
@@ -3452,6 +3458,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
             matched: true,
             archive_name: Some("db-server-01-daily-2026-01-01".to_string()),
             borg_command: None,
+            run_id: None,
         },
     )
     .await
@@ -3477,6 +3484,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
             matched: true,
             archive_name: Some("db-server-01-weekly-2026-01-01".to_string()),
             borg_command: None,
+            run_id: None,
         },
     )
     .await
@@ -3512,6 +3520,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
             matched: false,
             archive_name: Some("db-server-02-daily-2026-01-01".to_string()),
             borg_command: None,
+            run_id: None,
         },
     )
     .await
@@ -3547,6 +3556,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
             matched: false,
             archive_name: Some("db-server-staging-weekly-2026-01-01".to_string()),
             borg_command: None,
+            run_id: None,
         },
     )
     .await
@@ -3582,6 +3592,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
             matched: false,
             archive_name: Some("app-server-01-daily-2026-01-01".to_string()),
             borg_command: None,
+            run_id: None,
         },
     )
     .await
@@ -3771,6 +3782,7 @@ async fn bulk_insert_backup_reports_basic(pool: PgPool) {
             matched: true,
             archive_name: Some("bulk-archive-1".to_string()),
             borg_command: None,
+            run_id: None,
         },
         InsertReportParams {
             client_id: client.id,
@@ -3791,6 +3803,7 @@ async fn bulk_insert_backup_reports_basic(pool: PgPool) {
             matched: false,
             archive_name: Some("bulk-archive-2".to_string()),
             borg_command: None,
+            run_id: None,
         },
     ];
 
@@ -3833,6 +3846,7 @@ async fn bulk_insert_backup_reports_conflict_skipped(pool: PgPool) {
         matched: true,
         archive_name: Some("dup-archive".to_string()),
         borg_command: None,
+        run_id: None,
     };
 
     db::bulk_insert_backup_reports(&pool, std::slice::from_ref(&param))
@@ -4162,15 +4176,17 @@ async fn activity_feed_repo_filter(pool: PgPool) {
 
     insert_test_report(&pool, client.id, repo.id).await;
 
-    let all = db::get_activity_feed(&pool, 10, None, None).await.unwrap();
+    let all = db::get_activity_feed(&pool, 10, None, None, None, None)
+        .await
+        .unwrap();
     assert!(!all.is_empty());
 
-    let filtered = db::get_activity_feed(&pool, 10, Some(repo.id), None)
+    let filtered = db::get_activity_feed(&pool, 10, Some(repo.id), None, None, None)
         .await
         .unwrap();
     assert_eq!(filtered.len(), 1);
 
-    let empty = db::get_activity_feed(&pool, 10, Some(repo.id + 999), None)
+    let empty = db::get_activity_feed(&pool, 10, Some(repo.id + 999), None, None, None)
         .await
         .unwrap();
     assert!(empty.is_empty());
@@ -4185,12 +4201,12 @@ async fn activity_feed_hostname_filter(pool: PgPool) {
 
     insert_test_report(&pool, client.id, repo.id).await;
 
-    let filtered = db::get_activity_feed(&pool, 10, None, Some("hostname-filter-host"))
+    let filtered = db::get_activity_feed(&pool, 10, None, Some("hostname-filter-host"), None, None)
         .await
         .unwrap();
     assert_eq!(filtered.len(), 1);
 
-    let empty = db::get_activity_feed(&pool, 10, None, Some("nonexistent-host"))
+    let empty = db::get_activity_feed(&pool, 10, None, Some("nonexistent-host"), None, None)
         .await
         .unwrap();
     assert!(empty.is_empty());
@@ -4205,22 +4221,22 @@ async fn activity_feed_days_test(pool: PgPool) {
 
     insert_test_report(&pool, client.id, repo.id).await;
 
-    let all = db::get_activity_feed_days(&pool, 7, None, None)
+    let all = db::get_activity_feed_days(&pool, 7, None, None, None, None)
         .await
         .unwrap();
     assert!(!all.is_empty());
 
-    let with_repo = db::get_activity_feed_days(&pool, 7, Some(repo.id), None)
+    let with_repo = db::get_activity_feed_days(&pool, 7, Some(repo.id), None, None, None)
         .await
         .unwrap();
     assert_eq!(with_repo.len(), 1);
 
-    let with_host = db::get_activity_feed_days(&pool, 7, None, Some("days-feed-host"))
+    let with_host = db::get_activity_feed_days(&pool, 7, None, Some("days-feed-host"), None, None)
         .await
         .unwrap();
     assert_eq!(with_host.len(), 1);
 
-    let no_match = db::get_activity_feed_days(&pool, 7, None, Some("wrong-host"))
+    let no_match = db::get_activity_feed_days(&pool, 7, None, Some("wrong-host"), None, None)
         .await
         .unwrap();
     assert!(no_match.is_empty());
@@ -4319,6 +4335,7 @@ async fn archive_names_and_delete_test(pool: PgPool) {
             matched: true,
             archive_name: Some("archive-2026-01-01".to_string()),
             borg_command: None,
+            run_id: None,
         },
     )
     .await
@@ -4345,6 +4362,7 @@ async fn archive_names_and_delete_test(pool: PgPool) {
             matched: true,
             archive_name: Some("archive-2026-01-02".to_string()),
             borg_command: None,
+            run_id: None,
         },
     )
     .await
@@ -4404,6 +4422,7 @@ async fn delete_backup_reports_before_test(pool: PgPool) {
             matched: true,
             archive_name: None,
             borg_command: None,
+            run_id: None,
         },
     )
     .await
@@ -4559,7 +4578,7 @@ async fn cancel_backup_report_updates_started_row(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
 
     let started_at = Utc::now();
-    db::insert_backup_started(&pool, client.id, repo.id, None, started_at, None)
+    db::insert_backup_started(&pool, client.id, repo.id, None, started_at, None, None)
         .await
         .unwrap();
 
@@ -4603,6 +4622,7 @@ async fn cancel_backup_report_ignores_already_completed(pool: PgPool) {
             matched: true,
             archive_name: None,
             borg_command: None,
+            run_id: None,
         },
     )
     .await

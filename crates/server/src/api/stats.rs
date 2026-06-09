@@ -27,6 +27,8 @@ pub struct ActivityQuery {
     pub category: Option<String>,
     pub repo_id: Option<i64>,
     pub hostname: Option<String>,
+    pub schedule_id: Option<i64>,
+    pub run_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -784,6 +786,8 @@ pub async fn storage_breakdown(
         ("days" = Option<i64>, Query, description = "Return entries from last N days"),
         ("repo_id" = Option<i64>, Query, description = "Filter by repository ID"),
         ("hostname" = Option<String>, Query, description = "Filter by client hostname"),
+        ("schedule_id" = Option<i64>, Query, description = "Filter by schedule ID"),
+        ("run_id" = Option<String>, Query, description = "Filter by run ID"),
     ),
     responses(
         (status = 200, description = "Activity feed", body = Vec<crate::db::ActivityRow>),
@@ -796,11 +800,26 @@ pub async fn activity(
     Query(query): Query<ActivityQuery>,
 ) -> Result<Json<Vec<db::ActivityRow>>, ApiError> {
     let rows = if let Some(days) = query.days {
-        db::get_activity_feed_days(&state.pool, days, query.repo_id, query.hostname.as_deref())
-            .await?
+        db::get_activity_feed_days(
+            &state.pool,
+            days,
+            query.repo_id,
+            query.hostname.as_deref(),
+            query.schedule_id,
+            query.run_id.as_deref(),
+        )
+        .await?
     } else {
         let limit = query.limit.unwrap_or(20);
-        db::get_activity_feed(&state.pool, limit, query.repo_id, query.hostname.as_deref()).await?
+        db::get_activity_feed(
+            &state.pool,
+            limit,
+            query.repo_id,
+            query.hostname.as_deref(),
+            query.schedule_id,
+            query.run_id.as_deref(),
+        )
+        .await?
     };
     Ok(Json(rows))
 }

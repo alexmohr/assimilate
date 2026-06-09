@@ -287,6 +287,18 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                     "failed to insert backup started row"
                 );
             }
+            state
+                .repo_op_tracker
+                .set(
+                    repo_id.0,
+                    shared::protocol::RepoOpKind::AgentBackup,
+                    hostname.to_owned(),
+                )
+                .await;
+            state.ui_broadcast.send(ServerToUi::RepoOpChanged {
+                repo_id: repo_id.0,
+                op: state.repo_op_tracker.get(repo_id.0).await,
+            });
             state.ui_broadcast.send(ServerToUi::DataChanged);
         }
         AgentToServer::BackupCompleted { report } => {
@@ -556,6 +568,23 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 });
             }
 
+            let finished_repo_id = report.repo_id.0;
+            state.repo_op_tracker.clear(finished_repo_id).await;
+            if let Err(e) = db::update_repo_last_op(
+                &state.pool,
+                finished_repo_id,
+                "agent_backup",
+                chrono::Utc::now(),
+                hostname,
+            )
+            .await
+            {
+                tracing::warn!(repo_id = finished_repo_id, error = %e, "failed to persist last_op for backup");
+            }
+            state.ui_broadcast.send(ServerToUi::RepoOpChanged {
+                repo_id: finished_repo_id,
+                op: None,
+            });
             state.ui_broadcast.send(ServerToUi::DataChanged);
         }
         AgentToServer::StatusUpdate { repo_id, status } => {
@@ -899,6 +928,7 @@ mod tests {
                 reqwest::Client::new(),
             ),
             completion_bus: crate::ws::completion_bus::CompletionBus::new(),
+            repo_op_tracker: crate::repo_op_tracker::RepoOpTracker::default(),
             pending_dryruns: std::sync::Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),

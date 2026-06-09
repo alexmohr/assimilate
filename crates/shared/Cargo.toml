@@ -13,6 +13,7 @@ authors = ["Alexander Mohr"]
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+utoipa = { version = "5", features = ["chrono"] }
 thiserror = { workspace = true }
 aes-gcm = { workspace = true }
 rand = { workspace = true }

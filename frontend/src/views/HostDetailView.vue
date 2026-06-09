@@ -65,7 +65,6 @@ interface ScheduleRow {
   compact_enabled: boolean
   pre_backup_commands: string
   post_backup_commands: string
-  execution_mode: string
 }
 
 interface ReportRow {

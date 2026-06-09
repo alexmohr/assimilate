@@ -3010,6 +3010,9 @@ pub struct RepoWithStatsRow {
     pub total_deduplicated_size: i64,
     pub client_count: i64,
     pub unmatched_count: i64,
+    pub last_op_kind: Option<String>,
+    pub last_op_at: Option<DateTime<Utc>>,
+    pub last_op_by: Option<String>,
 }
 
 pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow>, ApiError> {
@@ -3021,11 +3024,12 @@ pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow
          r.info_original_size AS total_original_size, r.info_compressed_size AS \
          total_compressed_size, r.info_deduplicated_size AS total_deduplicated_size, \
          COALESCE(agg.client_count, 0) AS client_count, COALESCE(agg.unmatched_count, 0) AS \
-         unmatched_count FROM repos r LEFT JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > \
-         '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT \
-         br.client_id) AS client_count, COUNT(DISTINCT br.client_id) FILTER (WHERE br.matched = \
-         false) AS unmatched_count FROM backup_reports br WHERE br.repo_id = r.id AND br.status = \
-         'success') agg ON true ORDER BY r.name",
+         unmatched_count, r.last_op_kind, r.last_op_at, r.last_op_by FROM repos r LEFT JOIN \
+         LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' THEN \
+         br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.client_id) AS client_count, \
+         COUNT(DISTINCT br.client_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM \
+         backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true ORDER \
+         BY r.name",
     )
     .fetch_all(pool)
     .await
@@ -3044,11 +3048,12 @@ pub async fn get_repo_with_stats(
          r.info_original_size AS total_original_size, r.info_compressed_size AS \
          total_compressed_size, r.info_deduplicated_size AS total_deduplicated_size, \
          COALESCE(agg.client_count, 0) AS client_count, COALESCE(agg.unmatched_count, 0) AS \
-         unmatched_count FROM repos r LEFT JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > \
-         '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT \
-         br.client_id) AS client_count, COUNT(DISTINCT br.client_id) FILTER (WHERE br.matched = \
-         false) AS unmatched_count FROM backup_reports br WHERE br.repo_id = r.id AND br.status = \
-         'success') agg ON true WHERE r.id = $1",
+         unmatched_count, r.last_op_kind, r.last_op_at, r.last_op_by FROM repos r LEFT JOIN \
+         LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' THEN \
+         br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.client_id) AS client_count, \
+         COUNT(DISTINCT br.client_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM \
+         backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true WHERE \
+         r.id = $1",
     )
     .bind(repo_id)
     .fetch_one(pool)
@@ -3057,6 +3062,26 @@ pub async fn get_repo_with_stats(
         sqlx::Error::RowNotFound => ApiError::NotFound(format!("repo {repo_id} not found")),
         other => ApiError::Database(other),
     })
+}
+
+pub async fn update_repo_last_op(
+    pool: &PgPool,
+    repo_id: i64,
+    kind: &str,
+    at: chrono::DateTime<chrono::Utc>,
+    by: &str,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE repos SET last_op_kind = $1, last_op_at = $2, last_op_by = $3 WHERE id = $4",
+    )
+    .bind(kind)
+    .bind(at)
+    .bind(by)
+    .bind(repo_id)
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, utoipa::ToSchema)]

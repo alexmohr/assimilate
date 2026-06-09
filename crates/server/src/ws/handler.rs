@@ -929,6 +929,7 @@ mod tests {
             ),
             completion_bus: crate::ws::completion_bus::CompletionBus::new(),
             repo_op_tracker: crate::repo_op_tracker::RepoOpTracker::default(),
+            repo_lock: crate::RepoLock::default(),
             pending_dryruns: std::sync::Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),

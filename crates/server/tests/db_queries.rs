@@ -4659,3 +4659,170 @@ async fn client_insert_with_paths(pool: PgPool) {
     assert_eq!(client.default_backup_paths, paths);
     assert_eq!(client.default_exclude_patterns, excludes);
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn run_id_update_scoped_to_client(pool: PgPool) {
+    let client_a = db::insert_client(&pool, "run-host-a", None, "hash-a", None)
+        .await
+        .unwrap();
+    let client_b = db::insert_client(&pool, "run-host-b", None, "hash-b", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+    let run_id = "shared-run-id";
+
+    db::insert_backup_pending(&pool, client_a.id, repo.id, None, run_id, now)
+        .await
+        .unwrap();
+    db::insert_backup_pending(&pool, client_b.id, repo.id, None, run_id, now)
+        .await
+        .unwrap();
+
+    // Only client_a sends BackupStarted.
+    db::insert_backup_started(&pool, client_a.id, repo.id, None, now, None, Some(run_id))
+        .await
+        .unwrap();
+
+    // client_b's record must still be 'pending'.
+    let b_reports = db::list_reports_for_client(&pool, client_b.id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(b_reports.len(), 1);
+    assert_eq!(b_reports[0].status, "pending");
+
+    // Only client_a sends BackupCompleted.
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            client_id: client_a.id,
+            repo_id: repo.id,
+            schedule_id: None,
+            started_at: now,
+            finished_at: now + Duration::minutes(10),
+            status: "failed".to_string(),
+            original_size: 0,
+            compressed_size: 0,
+            deduplicated_size: 0,
+            repo_unique_csize: 0,
+            files_processed: 0,
+            duration_secs: 600,
+            error_message: Some("lock wait timed out".to_string()),
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: None,
+            borg_command: None,
+            run_id: Some(run_id.to_string()),
+        },
+    )
+    .await
+    .unwrap();
+
+    // client_b's record must still be 'pending' - not bulk-failed by client_a's report.
+    let b_reports = db::list_reports_for_client(&pool, client_b.id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(b_reports.len(), 1);
+    assert_eq!(b_reports[0].status, "pending");
+
+    let a_reports = db::list_reports_for_client(&pool, client_a.id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(a_reports.len(), 1);
+    assert_eq!(a_reports[0].status, "failed");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn dismiss_finding_roundtrip(pool: PgPool) {
+    let user = db::insert_user(&pool, "dismiss-user", "hash", "admin")
+        .await
+        .unwrap();
+
+    let ids = db::dashboard::dismissed_finding_ids(&pool, user.id)
+        .await
+        .unwrap();
+    assert!(ids.is_empty());
+
+    db::dashboard::dismiss_finding(&pool, user.id, "target:1:2:BackupFailed")
+        .await
+        .unwrap();
+    db::dashboard::dismiss_finding(&pool, user.id, "repository:3:RepositoryQuotaWarning")
+        .await
+        .unwrap();
+
+    let ids = db::dashboard::dismissed_finding_ids(&pool, user.id)
+        .await
+        .unwrap();
+    assert_eq!(ids.len(), 2);
+    assert!(ids.contains("target:1:2:BackupFailed"));
+    assert!(ids.contains("repository:3:RepositoryQuotaWarning"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn dismiss_finding_idempotent(pool: PgPool) {
+    let user = db::insert_user(&pool, "dismiss-idem-user", "hash", "admin")
+        .await
+        .unwrap();
+
+    db::dashboard::dismiss_finding(&pool, user.id, "host:5:unassigned")
+        .await
+        .unwrap();
+    db::dashboard::dismiss_finding(&pool, user.id, "host:5:unassigned")
+        .await
+        .unwrap();
+
+    let ids = db::dashboard::dismissed_finding_ids(&pool, user.id)
+        .await
+        .unwrap();
+    assert_eq!(ids.len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn undismiss_finding_removes_entry(pool: PgPool) {
+    let user = db::insert_user(&pool, "undismiss-user", "hash", "admin")
+        .await
+        .unwrap();
+
+    db::dashboard::dismiss_finding(&pool, user.id, "host:5:unassigned")
+        .await
+        .unwrap();
+    db::dashboard::dismiss_finding(&pool, user.id, "host:6:unassigned")
+        .await
+        .unwrap();
+
+    db::dashboard::undismiss_finding(&pool, user.id, "host:5:unassigned")
+        .await
+        .unwrap();
+
+    let ids = db::dashboard::dismissed_finding_ids(&pool, user.id)
+        .await
+        .unwrap();
+    assert_eq!(ids.len(), 1);
+    assert!(!ids.contains("host:5:unassigned"));
+    assert!(ids.contains("host:6:unassigned"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn dismissed_findings_are_per_user(pool: PgPool) {
+    let user_a = db::insert_user(&pool, "dismiss-user-a", "hash", "admin")
+        .await
+        .unwrap();
+    let user_b = db::insert_user(&pool, "dismiss-user-b", "hash", "admin")
+        .await
+        .unwrap();
+
+    db::dashboard::dismiss_finding(&pool, user_a.id, "host:1:unassigned")
+        .await
+        .unwrap();
+
+    let a_ids = db::dashboard::dismissed_finding_ids(&pool, user_a.id)
+        .await
+        .unwrap();
+    let b_ids = db::dashboard::dismissed_finding_ids(&pool, user_b.id)
+        .await
+        .unwrap();
+
+    assert_eq!(a_ids.len(), 1);
+    assert!(b_ids.is_empty());
+}

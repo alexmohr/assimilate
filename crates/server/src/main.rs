@@ -103,6 +103,7 @@ async fn main() -> Result<(), StartupError> {
         notification_service,
         completion_bus: server::ws::completion_bus::CompletionBus::new(),
         repo_op_tracker: server::repo_op_tracker::RepoOpTracker::default(),
+        repo_lock: server::RepoLock::default(),
         pending_dryruns: std::sync::Arc::new(tokio::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),
@@ -117,15 +118,7 @@ async fn main() -> Result<(), StartupError> {
         )),
     };
 
-    tokio::spawn(server::scheduler::run(
-        state.pool.clone(),
-        state.registry.clone(),
-        state.encryption_key,
-        state.ui_broadcast.clone(),
-        state.tunnel_manager.clone(),
-        state.completion_bus.clone(),
-        state.repo_op_tracker.clone(),
-    ));
+    tokio::spawn(server::scheduler::run(state.clone()));
 
     let tm = tunnel_manager.clone();
     tokio::spawn(async move { tm.run().await });
@@ -400,6 +393,10 @@ async fn main() -> Result<(), StartupError> {
         .route(
             "/api/stats/schedule-counts",
             get(api::stats::schedule_counts),
+        )
+        .route(
+            "/api/stats/findings/{finding_id}/dismiss",
+            axum::routing::post(api::stats::dismiss_finding).delete(api::stats::undismiss_finding),
         )
         .route("/api/logs", get(api::logs::get_logs))
         .route(

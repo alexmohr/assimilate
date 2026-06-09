@@ -32,6 +32,24 @@ use crate::{
     ws::{completion_bus::CompletionBus, registry::AgentRegistry, ui_broadcast::UiBroadcast},
 };
 
+#[derive(Clone, Default)]
+pub struct RepoLock {
+    locks: Arc<Mutex<HashMap<i64, Arc<Mutex<()>>>>>,
+}
+
+impl RepoLock {
+    pub async fn acquire(&self, repo_id: i64) -> tokio::sync::OwnedMutexGuard<()> {
+        let mutex = {
+            let mut map = self.locks.lock().await;
+            Arc::clone(
+                map.entry(repo_id)
+                    .or_insert_with(|| Arc::new(Mutex::new(()))),
+            )
+        };
+        mutex.lock_owned().await
+    }
+}
+
 pub type PendingDryRuns =
     Arc<Mutex<HashMap<String, oneshot::Sender<(Vec<DryRunFile>, i64, Option<String>)>>>>;
 
@@ -55,6 +73,7 @@ pub struct AppState {
     pub notification_service: NotificationService,
     pub completion_bus: CompletionBus,
     pub repo_op_tracker: RepoOpTracker,
+    pub repo_lock: RepoLock,
     pub pending_dryruns: PendingDryRuns,
     pub pending_restores: PendingRestores,
     pub pending_migrations: PendingMigrations,

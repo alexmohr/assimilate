@@ -34,6 +34,13 @@ use crate::{
     ws::ui_broadcast::UiBroadcast,
 };
 
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RepoDetailResponse {
+    #[serde(flatten)]
+    pub stats: RepoWithStatsRow,
+    pub current_op: Option<shared::protocol::ActiveRepoOp>,
+}
+
 /// Extracts a concise, user-facing error message from borg stderr.
 ///
 /// Borg sometimes outputs a full Python traceback; in that case the actual
@@ -567,7 +574,7 @@ pub async fn list_repos_with_stats(
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),
     responses(
-        (status = 200, description = "Repository with stats", body = RepoWithStatsRow),
+        (status = 200, description = "Repository with stats", body = RepoDetailResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
     )
@@ -576,9 +583,10 @@ pub async fn get_repo(
     State(state): State<AppState>,
     _auth: AuthUser,
     Path(repo_id): Path<i64>,
-) -> Result<Json<RepoWithStatsRow>, ApiError> {
-    let repo = db::get_repo_with_stats(&state.pool, repo_id).await?;
-    Ok(Json(repo))
+) -> Result<Json<RepoDetailResponse>, ApiError> {
+    let stats = db::get_repo_with_stats(&state.pool, repo_id).await?;
+    let current_op = state.repo_op_tracker.get(repo_id).await;
+    Ok(Json(RepoDetailResponse { stats, current_op }))
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -747,7 +755,35 @@ pub async fn break_lock(
         &repo.repo_path,
     );
 
-    let borg_output = run_borg_break_lock(&repo_url, &passphrase).await?;
+    state
+        .repo_op_tracker
+        .set(
+            repo_id,
+            shared::protocol::RepoOpKind::BreakLock,
+            "server".to_owned(),
+        )
+        .await;
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::RepoOpChanged {
+            repo_id,
+            op: state.repo_op_tracker.get(repo_id).await,
+        });
+
+    let result = run_borg_break_lock(&repo_url, &passphrase).await;
+
+    state.repo_op_tracker.clear(repo_id).await;
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::RepoOpChanged { repo_id, op: None });
+
+    let borg_output = result?;
+
+    let now = chrono::Utc::now();
+    if let Err(e) = db::update_repo_last_op(&state.pool, repo_id, "break_lock", now, "server").await
+    {
+        warn!(repo_id, error = %e, "failed to persist last_op for break_lock");
+    }
 
     info!(repo_id, name = %repo.name, "repository lock broken");
 
@@ -1128,7 +1164,10 @@ async fn run_borg_break_lock(repo_url: &str, passphrase: &str) -> Result<String,
     }
 
     let output = Borg::new()
-        .run(&["break-lock", repo_url], &env)
+        .run(
+            &["break-lock", "--lock-wait", LOCK_WAIT_SECS, repo_url],
+            &env,
+        )
         .await
         .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
 

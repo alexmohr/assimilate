@@ -45,6 +45,14 @@ type EncryptionType =
   | 'authenticated-blake2'
   | 'none'
 
+type RepoOpKind = 'agent_backup' | 'server_sync' | 'break_lock'
+
+interface ActiveRepoOp {
+  kind: RepoOpKind
+  actor: string
+  started_at: string
+}
+
 interface RepoWithStats {
   id: number
   name: string
@@ -70,6 +78,10 @@ interface RepoWithStats {
   total_deduplicated_size: number
   client_count: number
   relocation_pending: boolean
+  last_op_kind: string | null
+  last_op_at: string | null
+  last_op_by: string | null
+  current_op: ActiveRepoOp | null
 }
 
 interface TagRow {
@@ -175,7 +187,7 @@ const showBreakLockDialog = ref(false)
 const breakLockLoading = ref(false)
 const breakLockError = ref<string | null>(null)
 const breakLockResult = ref<string | null>(null)
-const activeBackupClient = ref<string | null>(null)
+const currentOp = ref<ActiveRepoOp | null>(null)
 
 // Borg console
 interface BorgExecResult {
@@ -283,9 +295,9 @@ async function acceptHostKey(): Promise<void> {
   }
 }
 
-interface BackupStartedPayload {
-  hostname: string
-  target_name: string
+interface RepoOpChangedPayload {
+  repo_id: number
+  op: ActiveRepoOp | null
 }
 
 interface ImportProgressPayload {
@@ -309,15 +321,9 @@ onMessage<ImportProgressPayload>('ImportProgress', (payload) => {
   }
 })
 
-onMessage<BackupStartedPayload>('BackupStarted', (payload) => {
-  if (repo.value && payload.target_name === repo.value.name) {
-    activeBackupClient.value = payload.hostname
-  }
-})
-
-onMessage<BackupStartedPayload>('BackupCompleted', (payload) => {
-  if (repo.value && payload.target_name === repo.value.name) {
-    activeBackupClient.value = null
+onMessage<RepoOpChangedPayload>('RepoOpChanged', (payload) => {
+  if (repo.value && payload.repo_id === repo.value.id) {
+    currentOp.value = payload.op
   }
 })
 
@@ -498,12 +504,37 @@ function formatLastBackup(iso: string | null): string {
   return `${days}d ago`
 }
 
+function repoOpLabel(op: ActiveRepoOp): string {
+  switch (op.kind) {
+    case 'agent_backup':
+      return `Agent backup in progress by ${op.actor}`
+    case 'server_sync':
+      return 'Server sync in progress'
+    case 'break_lock':
+      return 'Break-lock in progress'
+  }
+}
+
+function lastOpLabel(kind: string | null): string {
+  switch (kind) {
+    case 'agent_backup':
+      return 'Agent backup'
+    case 'server_sync':
+      return 'Server sync'
+    case 'break_lock':
+      return 'Break lock'
+    default:
+      return kind ?? 'Unknown'
+  }
+}
+
 async function loadRepo(): Promise<void> {
   loading.value = true
   error.value = null
   try {
     const res = await apiClient.get<RepoWithStats>(`/repos/${repoId.value}`)
     repo.value = res.data
+    currentOp.value = res.data.current_op ?? null
   } catch (e: unknown) {
     error.value = extractError(e)
   } finally {
@@ -515,6 +546,7 @@ async function refreshRepo(): Promise<void> {
   try {
     const res = await apiClient.get<RepoWithStats>(`/repos/${repoId.value}`)
     repo.value = res.data
+    currentOp.value = res.data.current_op ?? null
   } catch (e: unknown) {
     logger.error('background repo refresh failed', e)
   }
@@ -979,6 +1011,23 @@ async function resetImport(): Promise<void> {
               </dd>
               <dt>Last Synced</dt>
               <dd>{{ repo.last_synced_at ? formatDate(repo.last_synced_at) : 'Never' }}</dd>
+              <dt>Last Operation</dt>
+              <dd>
+                <template v-if="repo.last_op_kind">
+                  {{ lastOpLabel(repo.last_op_kind) }}
+                  <template v-if="repo.last_op_by && repo.last_op_by !== 'server'">
+                    by {{ repo.last_op_by }}
+                  </template>
+                  <template v-if="repo.last_op_at">
+                    — {{ formatLastBackup(repo.last_op_at) }}
+                  </template>
+                </template>
+                <template v-else>Never</template>
+              </dd>
+              <template v-if="currentOp">
+                <dt>Current Operation</dt>
+                <dd class="current-op-running">{{ repoOpLabel(currentOp) }}</dd>
+              </template>
               <dt>Clients</dt>
               <dd>{{ repo.client_count }}</dd>
             </dl>
@@ -1318,21 +1367,17 @@ async function resetImport(): Promise<void> {
             <div class="danger-action-wrap">
               <button
                 class="btn btn-sm btn-danger"
-                :disabled="!!activeBackupClient || breakLockLoading"
-                :title="
-                  activeBackupClient
-                    ? `Client '${activeBackupClient}' is currently using this repository`
-                    : undefined
-                "
+                :disabled="!!currentOp || breakLockLoading"
+                :title="currentOp ? repoOpLabel(currentOp) : undefined"
                 @click="showBreakLockDialog = true"
               >
                 {{ breakLockLoading ? 'Breaking...' : 'Break Lock' }}
               </button>
               <span
-                v-if="activeBackupClient"
+                v-if="currentOp"
                 class="danger-hint"
               >
-                Client <strong>{{ activeBackupClient }}</strong> is using this repository.
+                {{ repoOpLabel(currentOp) }}
               </span>
             </div>
           </div>
@@ -2592,6 +2637,11 @@ async function resetImport(): Promise<void> {
   color: var(--success);
 }
 
+.current-op-running {
+  color: var(--warning, oklch(0.7 0.15 80));
+  font-weight: 500;
+}
+
 .ssh-key-box {
   margin-top: 0.75rem;
   padding: 0.85rem;
@@ -2647,6 +2697,11 @@ async function resetImport(): Promise<void> {
 
 .archive-sort-select {
   min-width: 13rem;
+}
+
+.archive-group-toggle {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .archive-filter {

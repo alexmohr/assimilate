@@ -12,6 +12,7 @@ pub mod middleware;
 pub mod notifications;
 pub mod openapi;
 pub mod rate_limit;
+pub mod repo_op_tracker;
 pub mod scheduler;
 pub mod ssh;
 pub mod tunnel;
@@ -26,6 +27,7 @@ use tokio::sync::{Mutex, oneshot};
 use crate::{
     log_buffer::LogBuffer,
     notifications::NotificationService,
+    repo_op_tracker::RepoOpTracker,
     tunnel::TunnelManager,
     ws::{completion_bus::CompletionBus, registry::AgentRegistry, ui_broadcast::UiBroadcast},
 };
@@ -52,6 +54,7 @@ pub struct AppState {
     pub log_buffer: LogBuffer,
     pub notification_service: NotificationService,
     pub completion_bus: CompletionBus,
+    pub repo_op_tracker: RepoOpTracker,
     pub pending_dryruns: PendingDryRuns,
     pub pending_restores: PendingRestores,
     pub pending_migrations: PendingMigrations,

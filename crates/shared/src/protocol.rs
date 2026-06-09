@@ -8,6 +8,21 @@ use crate::types::{
     AgentConfig, AgentStatus, BackupReport, BorgEncryption, DryRunFile, RepoId, SearchEntry,
 };
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RepoOpKind {
+    AgentBackup,
+    ServerSync,
+    BreakLock,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ActiveRepoOp {
+    pub kind: RepoOpKind,
+    pub actor: String,
+    pub started_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum ServerToAgent {
@@ -280,6 +295,10 @@ pub enum ServerToUi {
         client_id: i64,
         hostname: String,
         status: TunnelStatus,
+    },
+    RepoOpChanged {
+        repo_id: i64,
+        op: Option<ActiveRepoOp>,
     },
 }
 

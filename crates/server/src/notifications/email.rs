@@ -56,8 +56,7 @@ pub async fn send(
         .map_err(|e| NotificationError::Config(format!("invalid from address: {e}")))?;
 
     let subject = build_email_subject(payload);
-
-    let body = serde_json::to_string_pretty(payload)?;
+    let body = build_email_body(payload);
 
     let creds = Credentials::new(config.smtp_user.clone(), config.smtp_password.clone());
 
@@ -144,6 +143,68 @@ pub(crate) fn build_email_subject(payload: &serde_json::Value) -> String {
     } else {
         base
     }
+}
+
+pub(crate) fn build_email_body(payload: &serde_json::Value) -> String {
+    let event_type = payload
+        .get("event_type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let hostname = payload
+        .get("hostname")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let repo_name = payload
+        .get("repo_name")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let status = payload
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let timestamp = payload
+        .get("timestamp")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let error_message = payload
+        .get("error_message")
+        .and_then(serde_json::Value::as_str);
+    let archive_name = payload
+        .get("archive_name")
+        .and_then(serde_json::Value::as_str);
+
+    let event_label = if event_type.is_empty() {
+        "Notification".to_owned()
+    } else {
+        let label = event_type.replace('_', " ");
+        let mut chars = label.chars();
+        chars.next().map_or_else(String::new, |c| {
+            c.to_uppercase().to_string() + chars.as_str()
+        })
+    };
+
+    let mut parts = vec![format!("Event:      {event_label}")];
+    if !hostname.is_empty() {
+        parts.push(format!("Host:       {hostname}"));
+    }
+    if !repo_name.is_empty() {
+        parts.push(format!("Repository: {repo_name}"));
+    }
+    if let Some(name) = archive_name {
+        parts.push(format!("Archive:    {name}"));
+    }
+    if !status.is_empty() {
+        parts.push(format!("Status:     {status}"));
+    }
+    if !timestamp.is_empty() {
+        parts.push(format!("Time:       {timestamp}"));
+    }
+    if let Some(msg) = error_message {
+        parts.push(String::new());
+        parts.push(format!("Error:\n{msg}"));
+    }
+
+    parts.join("\n")
 }
 
 fn build_transport(
@@ -273,5 +334,49 @@ mod tests {
             build_email_subject(&p),
             "Assimilate: backup failed - myhost"
         );
+    }
+
+    #[test]
+    fn body_backup_failed_includes_all_fields() {
+        let p = serde_json::json!({
+            "event_type": "backup_failed",
+            "hostname": "web-server-01",
+            "repo_name": "server-daily",
+            "archive_name": "web-server-01-2026-06-09T10:00:00.000000",
+            "status": "failed",
+            "timestamp": "2026-06-09T10:00:00Z",
+            "error_message": "repository is locked",
+        });
+        let body = build_email_body(&p);
+        assert!(body.contains("Event:      Backup failed"));
+        assert!(body.contains("Host:       web-server-01"));
+        assert!(body.contains("Repository: server-daily"));
+        assert!(body.contains("Archive:    web-server-01-2026-06-09T10:00:00.000000"));
+        assert!(body.contains("Status:     failed"));
+        assert!(body.contains("Error:\nrepository is locked"));
+        assert!(!body.contains('{'));
+    }
+
+    #[test]
+    fn body_agent_connected_omits_empty_fields() {
+        let p = serde_json::json!({
+            "event_type": "agent_connected",
+            "hostname": "web-server-01",
+            "repo_name": "",
+            "status": "",
+            "timestamp": "2026-06-09T10:00:00Z",
+        });
+        let body = build_email_body(&p);
+        assert!(body.contains("Event:      Agent connected"));
+        assert!(body.contains("Host:       web-server-01"));
+        assert!(!body.contains("Repository:"));
+        assert!(!body.contains("Status:"));
+        assert!(!body.contains("Error:"));
+    }
+
+    #[test]
+    fn body_empty_payload_returns_notification_label() {
+        let body = build_email_body(&serde_json::json!({}));
+        assert_eq!(body, "Event:      Notification");
     }
 }

@@ -332,6 +332,7 @@ async fn tick(
             }
         }
 
+        let (triggered_tx, triggered_rx) = tokio::sync::oneshot::channel();
         let ctx = SequentialExecution {
             pool: pool.clone(),
             registry: registry.clone(),
@@ -346,10 +347,14 @@ async fn tick(
             triggered_at: now,
             tz,
             run_id,
+            triggered_tx,
         };
         tokio::spawn(async move {
             run_sequential_schedule(ctx).await;
         });
+        // Yield so the spawned task can run and send the initial messages before tick returns.
+        // This ensures callers can observe messages immediately after tick() completes.
+        let _ = triggered_rx.await;
     }
 
     Ok(())
@@ -401,6 +406,9 @@ struct SequentialExecution {
     triggered_at: DateTime<Utc>,
     tz: chrono_tz::Tz,
     run_id: String,
+    /// Signalled once the first target's messages have been sent (or skipped).
+    /// Allows tick() to wait briefly so callers using try_recv() see messages.
+    triggered_tx: tokio::sync::oneshot::Sender<()>,
 }
 
 async fn run_sequential_schedule(ctx: SequentialExecution) {
@@ -418,8 +426,10 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         triggered_at: now,
         tz,
         run_id,
+        triggered_tx,
     } = ctx;
     let mut marked_triggered = false;
+    let mut triggered_tx = Some(triggered_tx);
 
     'targets: for target in &targets {
         let Ok(schedule_type) = target.schedule_type.parse::<ScheduleType>() else {
@@ -454,6 +464,10 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
                         error = %e,
                         "sequential: agent not connected for pre-run config push, skipping target"
                     );
+                    // Signal tick() that we've attempted the first target
+                    if let Some(tx) = triggered_tx.take() {
+                        let _ = tx.send(());
+                    }
                     match on_failure {
                         OnFailure::Stop => break 'targets,
                         OnFailure::Continue => continue 'targets,
@@ -467,6 +481,10 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
                     error = %e,
                     "sequential: failed to assemble config, skipping target"
                 );
+                // Signal tick() that we've attempted the first target
+                if let Some(tx) = triggered_tx.take() {
+                    let _ = tx.send(());
+                }
                 match on_failure {
                     OnFailure::Stop => break 'targets,
                     OnFailure::Continue => continue 'targets,
@@ -487,6 +505,10 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
                     schedule_id,
                     "sequential: triggered"
                 );
+                // Signal tick() that the first target's messages are now in the channel.
+                if let Some(tx) = triggered_tx.take() {
+                    let _ = tx.send(());
+                }
                 if !marked_triggered {
                     match calculate_next_run(&cron, now, tz) {
                         Ok(next) => {
@@ -522,6 +544,10 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
                     error = %e,
                     "sequential: agent not connected, skipping target"
                 );
+                // Signal tick() that we've attempted the first target
+                if let Some(tx) = triggered_tx.take() {
+                    let _ = tx.send(());
+                }
                 match on_failure {
                     OnFailure::Stop => break 'targets,
                     OnFailure::Continue => continue 'targets,

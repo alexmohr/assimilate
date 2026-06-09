@@ -2699,6 +2699,11 @@ async function resetImport(): Promise<void> {
   min-width: 13rem;
 }
 
+.archive-group-toggle {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .archive-filter {
   padding: 0.5rem 0.75rem;
   border-bottom: 1px solid var(--border);

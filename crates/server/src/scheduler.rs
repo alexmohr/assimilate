@@ -646,6 +646,7 @@ mod tests {
     use super::*;
     use crate::{
         db::{self, InsertRepoParams, ScheduleParams},
+        repo_op_tracker::RepoOpTracker,
         tunnel::TunnelManager,
         ws::{completion_bus::CompletionBus, registry::AgentRegistry, ui_broadcast::UiBroadcast},
     };
@@ -840,7 +841,13 @@ esac
         .await
         .unwrap();
 
-        run_repo_sync(&pool, &encryption_key, &UiBroadcast::new()).await;
+        run_repo_sync(
+            &pool,
+            &encryption_key,
+            &UiBroadcast::new(),
+            &RepoOpTracker::default(),
+        )
+        .await;
 
         let stale_count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",

@@ -4503,6 +4503,67 @@ async fn delete_backup_reports_before_test(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn delete_backup_reports_before_keeps_archive_rows(pool: PgPool) {
+    // Imported/synced archives keep their original (old) borg start timestamp.
+    // Age-based report retention must not delete them, or archives vanish from
+    // the UI even though they still exist in borg.
+    let client = db::insert_client(&pool, "retain-archive-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let old = Utc::now() - Duration::days(365);
+
+    let base = InsertReportParams {
+        client_id: client.id,
+        repo_id: repo.id,
+        schedule_id: None,
+        started_at: old,
+        finished_at: old,
+        status: "success".to_string(),
+        original_size: 0,
+        compressed_size: 0,
+        deduplicated_size: 0,
+        repo_unique_csize: 0,
+        files_processed: 0,
+        duration_secs: 0,
+        error_message: None,
+        warnings: vec![],
+        borg_version: None,
+        matched: true,
+        archive_name: Some("imported-archive-2025".to_string()),
+        borg_command: None,
+        run_id: None,
+    };
+    db::insert_backup_report(&pool, &base).await.unwrap();
+
+    // A pure run-history row with no archive should still be pruned.
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            started_at: old + Duration::seconds(1),
+            finished_at: old + Duration::seconds(1),
+            status: "failed".to_string(),
+            archive_name: None,
+            ..base.clone()
+        },
+    )
+    .await
+    .unwrap();
+
+    let cutoff = Utc::now() - Duration::days(7);
+    let deleted = db::delete_backup_reports_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 1);
+
+    let names = db::list_archive_names_for_repo(&pool, repo.id)
+        .await
+        .unwrap();
+    assert!(names.contains("imported-archive-2025"));
+    assert_eq!(names.len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn audit_filter_by_target_type(pool: PgPool) {
     db::audit::insert_audit_entry(
         &pool,

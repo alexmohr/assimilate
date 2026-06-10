@@ -36,7 +36,7 @@ System settings are stored in the database and managed through the UI or the `/a
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `retention_days` | `7` | Number of days to retain backup reports and system event log entries. Set to `0` to disable automatic cleanup. |
+| `retention_days` | `7` | Number of days to retain backup-run *history* (failed/cancelled runs without an archive) and system event log entries. Reports that represent an actual archive are never pruned by age — their lifecycle follows borg and repository sync — so imported archives with old timestamps are not affected. Set to `0` to disable automatic cleanup. |
 | `timezone` | `UTC` | Timezone used for displaying timestamps in the UI and for scheduling cron-based backups (e.g., `Europe/Berlin`, `America/New_York`). |
 
 ## Database Storage

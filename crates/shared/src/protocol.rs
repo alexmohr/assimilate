@@ -14,6 +14,7 @@ pub enum RepoOpKind {
     AgentBackup,
     ServerSync,
     BreakLock,
+    DeleteArchive,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]

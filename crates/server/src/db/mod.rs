@@ -16,19 +16,19 @@ use crate::error::ApiError;
 
 #[derive(Debug, Clone, Serialize)]
 pub enum ResolveResult {
-    ExactMatch(ClientRow),
-    PatternMatch(ClientRow),
+    ExactMatch(AgentRow),
+    PatternMatch(AgentRow),
     Unmatched,
 }
 
-pub async fn resolve_client_for_hostname(
+pub async fn resolve_agent_for_hostname(
     pool: &PgPool,
     hostname: &str,
 ) -> Result<ResolveResult, ApiError> {
-    let exact = sqlx::query_as::<_, ClientRow>(
+    let exact = sqlx::query_as::<_, AgentRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM clients \
+         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM agents \
          WHERE hostname = $1 AND agent_token_hash != 'imported:no-auth'",
     )
     .bind(hostname)
@@ -36,24 +36,24 @@ pub async fn resolve_client_for_hostname(
     .await
     .map_err(ApiError::Database)?;
 
-    if let Some(client) = exact {
-        return Ok(ResolveResult::ExactMatch(client));
+    if let Some(agent) = exact {
+        return Ok(ResolveResult::ExactMatch(agent));
     }
 
-    if let Some(client) = patterns::find_client_by_pattern(pool, hostname).await? {
-        return Ok(ResolveResult::PatternMatch(client));
+    if let Some(agent) = patterns::find_agent_by_pattern(pool, hostname).await? {
+        return Ok(ResolveResult::PatternMatch(agent));
     }
 
     Ok(ResolveResult::Unmatched)
 }
 
-pub async fn merge_client(pool: &PgPool, source_id: i64, target_id: i64) -> Result<(), ApiError> {
+pub async fn merge_agent(pool: &PgPool, source_id: i64, target_id: i64) -> Result<(), ApiError> {
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
 
-    let source = sqlx::query_as::<_, ClientRow>(
+    let source = sqlx::query_as::<_, AgentRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM clients \
+         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM agents \
          WHERE id = $1",
     )
     .bind(source_id)
@@ -63,12 +63,12 @@ pub async fn merge_client(pool: &PgPool, source_id: i64, target_id: i64) -> Resu
 
     let Some(source) = source else {
         return Err(ApiError::NotFound(format!(
-            "source client {source_id} not found"
+            "source agent {source_id} not found"
         )));
     };
 
     let has_imported_token =
-        sqlx::query_scalar::<_, String>("SELECT agent_token_hash FROM clients WHERE id = $1")
+        sqlx::query_scalar::<_, String>("SELECT agent_token_hash FROM agents WHERE id = $1")
             .bind(source.id)
             .fetch_one(&mut *tx)
             .await
@@ -76,18 +76,18 @@ pub async fn merge_client(pool: &PgPool, source_id: i64, target_id: i64) -> Resu
 
     if has_imported_token != "imported:no-auth" {
         return Err(ApiError::BadRequest(
-            "source client does not have imported:no-auth token".to_string(),
+            "source agent does not have imported:no-auth token".to_string(),
         ));
     }
 
-    sqlx::query("UPDATE backup_reports SET client_id = $1, matched = true WHERE client_id = $2")
+    sqlx::query("UPDATE backup_reports SET agent_id = $1, matched = true WHERE agent_id = $2")
         .bind(target_id)
         .bind(source_id)
         .execute(&mut *tx)
         .await
         .map_err(ApiError::Database)?;
 
-    sqlx::query("UPDATE schedule_targets SET client_id = $1 WHERE client_id = $2")
+    sqlx::query("UPDATE schedule_targets SET agent_id = $1 WHERE agent_id = $2")
         .bind(target_id)
         .bind(source_id)
         .execute(&mut *tx)
@@ -95,8 +95,8 @@ pub async fn merge_client(pool: &PgPool, source_id: i64, target_id: i64) -> Resu
         .map_err(ApiError::Database)?;
 
     sqlx::query(
-        "INSERT INTO host_tags (client_id, tag_id) SELECT $1, tag_id FROM host_tags WHERE \
-         client_id = $2 ON CONFLICT DO NOTHING",
+        "INSERT INTO agent_tags (agent_id, tag_id) SELECT $1, tag_id FROM agent_tags WHERE \
+         agent_id = $2 ON CONFLICT DO NOTHING",
     )
     .bind(target_id)
     .bind(source_id)
@@ -104,13 +104,13 @@ pub async fn merge_client(pool: &PgPool, source_id: i64, target_id: i64) -> Resu
     .await
     .map_err(ApiError::Database)?;
 
-    sqlx::query("DELETE FROM host_tags WHERE client_id = $1")
+    sqlx::query("DELETE FROM agent_tags WHERE agent_id = $1")
         .bind(source_id)
         .execute(&mut *tx)
         .await
         .map_err(ApiError::Database)?;
 
-    sqlx::query("DELETE FROM clients WHERE id = $1")
+    sqlx::query("DELETE FROM agents WHERE id = $1")
         .bind(source_id)
         .execute(&mut *tx)
         .await
@@ -121,7 +121,7 @@ pub async fn merge_client(pool: &PgPool, source_id: i64, target_id: i64) -> Resu
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
-pub struct ClientRow {
+pub struct AgentRow {
     pub id: i64,
     pub hostname: String,
     pub display_name: Option<String>,
@@ -241,52 +241,52 @@ pub struct ScheduleTargetRow {
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
-pub struct ScheduleCountByClient {
-    pub client_id: i64,
+pub struct ScheduleCountByAgent {
+    pub agent_id: i64,
     pub count: i64,
 }
 
-pub async fn get_schedule_counts_by_client(
+pub async fn get_schedule_counts_by_agent(
     pool: &PgPool,
-) -> Result<Vec<ScheduleCountByClient>, ApiError> {
-    sqlx::query_as::<_, ScheduleCountByClient>(
-        "SELECT client_id, COUNT(DISTINCT schedule_id)::bigint AS count FROM schedule_targets \
-         GROUP BY client_id",
+) -> Result<Vec<ScheduleCountByAgent>, ApiError> {
+    sqlx::query_as::<_, ScheduleCountByAgent>(
+        "SELECT agent_id, COUNT(DISTINCT schedule_id)::bigint AS count FROM schedule_targets \
+         GROUP BY agent_id",
     )
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)
 }
 
-pub async fn get_client_by_hostname(pool: &PgPool, hostname: &str) -> Result<ClientRow, ApiError> {
-    sqlx::query_as::<_, ClientRow>(
+pub async fn get_agent_by_hostname(pool: &PgPool, hostname: &str) -> Result<AgentRow, ApiError> {
+    sqlx::query_as::<_, AgentRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM clients \
+         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM agents \
          WHERE hostname = $1",
     )
     .bind(hostname)
     .fetch_one(pool)
     .await
     .map_err(|e| match e {
-        sqlx::Error::RowNotFound => ApiError::NotFound(format!("client '{hostname}' not found")),
+        sqlx::Error::RowNotFound => ApiError::NotFound(format!("agent '{hostname}' not found")),
         other => ApiError::Database(other),
     })
 }
 
-pub async fn get_client_by_id(pool: &PgPool, client_id: i64) -> Result<ClientRow, ApiError> {
-    sqlx::query_as::<_, ClientRow>(
+pub async fn get_agent_by_id(pool: &PgPool, agent_id: i64) -> Result<AgentRow, ApiError> {
+    sqlx::query_as::<_, AgentRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM clients \
+         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM agents \
          WHERE id = $1",
     )
-    .bind(client_id)
+    .bind(agent_id)
     .fetch_one(pool)
     .await
     .map_err(|e| match e {
         sqlx::Error::RowNotFound => {
-            ApiError::NotFound(format!("client id '{client_id}' not found"))
+            ApiError::NotFound(format!("agent id '{agent_id}' not found"))
         }
         other => ApiError::Database(other),
     })
@@ -303,13 +303,13 @@ pub async fn get_client_token_hash(
     }
 
     let row =
-        sqlx::query_as::<_, Row>("SELECT id, agent_token_hash FROM clients WHERE hostname = $1")
+        sqlx::query_as::<_, Row>("SELECT id, agent_token_hash FROM agents WHERE hostname = $1")
             .bind(hostname)
             .fetch_one(pool)
             .await
             .map_err(|e| match e {
                 sqlx::Error::RowNotFound => {
-                    ApiError::NotFound(format!("client '{hostname}' not found"))
+                    ApiError::NotFound(format!("agent '{hostname}' not found"))
                 }
                 other => ApiError::Database(other),
             })?;

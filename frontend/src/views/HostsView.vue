@@ -22,7 +22,7 @@ import MergeClientDialog from '../components/MergeClientDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import type { DashboardOverview } from '../types/dashboard'
 
-interface ClientRow {
+interface AgentRow {
   id: number
   hostname: string
   display_name: string | null
@@ -38,8 +38,8 @@ interface ClientRow {
   default_backup_paths: string[]
 }
 
-interface CreateClientResponse {
-  client: ClientRow
+interface CreateAgentResponse {
+  client: AgentRow
   token: string
 }
 
@@ -50,7 +50,7 @@ interface TagRow {
   scope: string
 }
 
-interface HostTagRow {
+interface AgentTagRow {
   client_id: number
   tag_name: string
   tag_color: string
@@ -65,7 +65,7 @@ interface HealthEntry {
   last_error_message: string | null
 }
 
-interface HostHealth {
+interface AgentHealth {
   failed: number
   overdue: number
   warning: number
@@ -89,10 +89,10 @@ const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 const isAdmin = computed(() => authStore.user?.role === 'admin')
-const clients = ref<ClientRow[]>([])
+const agents = ref<AgentRow[]>([])
 const showHidden = ref(false)
 const machineScheduleCount = ref<Record<number, number>>({})
-const healthByHost = ref<Record<string, HostHealth>>({})
+const healthByHost = ref<Record<string, AgentHealth>>({})
 const loading = ref(false)
 const error = ref<string | null>(null)
 
@@ -118,11 +118,11 @@ const showTagDropdown = ref(false)
 const { isMobile } = useMobile()
 const showMobileFilters = ref(false)
 
-const allHostTags = ref<TagRow[]>([])
-const hostTagsMap = ref<Record<number, { name: string; color: string }[]>>({})
+const allAgentTags = ref<TagRow[]>([])
+const agentTagsMap = ref<Record<number, { name: string; color: string }[]>>({})
 
-const filteredClients = computed(() => {
-  let list = [...clients.value]
+const filteredAgents = computed(() => {
+  let list = [...agents.value]
 
   if (filterStatus.value === 'online') {
     list = list.filter((m) => m.is_connected)
@@ -132,7 +132,7 @@ const filteredClients = computed(() => {
 
   if (filterCoverage.value !== 'all') {
     const hostIds = coverageHostIds.value[filterCoverage.value]
-    list = list.filter((client) => hostIds.has(client.id))
+    list = list.filter((agent) => hostIds.has(agent.id))
   }
 
   if (filterText.value.trim()) {
@@ -141,16 +141,16 @@ const filteredClients = computed(() => {
       (m) =>
         m.hostname.toLowerCase().includes(q) ||
         (m.display_name?.toLowerCase().includes(q) ?? false) ||
-        (hostTagsMap.value[m.id] ?? []).some((t) => t.name.toLowerCase().includes(q)),
+        (agentTagsMap.value[m.id] ?? []).some((t) => t.name.toLowerCase().includes(q)),
     )
   }
 
   if (filterTagIds.value.length > 0) {
     const selectedNames = new Set(
-      allHostTags.value.filter((t) => filterTagIds.value.includes(t.id)).map((t) => t.name),
+      allAgentTags.value.filter((t) => filterTagIds.value.includes(t.id)).map((t) => t.name),
     )
     list = list.filter((m) =>
-      (hostTagsMap.value[m.id] ?? []).some((t) => selectedNames.has(t.name)),
+      (agentTagsMap.value[m.id] ?? []).some((t) => selectedNames.has(t.name)),
     )
   }
 
@@ -192,17 +192,17 @@ const addError = ref<string | null>(null)
 const newToken = ref<string | null>(null)
 const { copied: tokenCopied, copy: copyToClipboard } = useClipboard()
 
-// Adopt imported client
+// Adopt imported agent
 const showAdoptDialog = ref(false)
 const adoptToken = ref<string | null>(null)
 const adoptHostname = ref('')
 
 const showDeployDialog = ref(false)
-const deployTarget = ref<ClientRow | null>(null)
+const deployTarget = ref<AgentRow | null>(null)
 
-// Merge imported client
+// Merge imported agent
 const showMergeDialog = ref(false)
-const mergeSource = ref<ClientRow | null>(null)
+const mergeSource = ref<AgentRow | null>(null)
 
 useEscapeKey(showMergeDialog, () => {
   showMergeDialog.value = false
@@ -210,12 +210,12 @@ useEscapeKey(showMergeDialog, () => {
 
 useEscapeKey(showAddDialog, closeAddDialog)
 
-function isOnline(client: ClientRow): boolean {
-  return client.is_connected
+function isOnline(agent: AgentRow): boolean {
+  return agent.is_connected
 }
 
-function isImported(client: ClientRow): boolean {
-  return client.is_imported
+function isImported(agent: AgentRow): boolean {
+  return agent.is_imported
 }
 
 function formatLastSeen(iso: string | null): string {
@@ -237,20 +237,20 @@ function formatVersion(v: string | null): string {
   return v
 }
 
-function scheduleCount(client: ClientRow): number {
-  return machineScheduleCount.value[client.id] ?? 0
+function scheduleCount(agent: AgentRow): number {
+  return machineScheduleCount.value[agent.id] ?? 0
 }
 
-function clientTags(client: ClientRow): { name: string; color: string }[] {
-  return hostTagsMap.value[client.id] ?? []
+function agentTags(agent: AgentRow): { name: string; color: string }[] {
+  return agentTagsMap.value[agent.id] ?? []
 }
 
-function hostHealthStatus(client: ClientRow): HostHealth | null {
-  return healthByHost.value[client.hostname] ?? null
+function agentHealthStatus(agent: AgentRow): AgentHealth | null {
+  return healthByHost.value[agent.hostname] ?? null
 }
 
-function hostHasIssues(client: ClientRow): boolean {
-  const h = hostHealthStatus(client)
+function agentHasIssues(agent: AgentRow): boolean {
+  const h = agentHealthStatus(agent)
   if (!h) return false
   return h.failed > 0 || h.overdue > 0
 }
@@ -264,16 +264,16 @@ function toggleTagFilter(tagId: number): void {
   }
 }
 
-async function loadClients(): Promise<void> {
+async function loadAgents(): Promise<void> {
   loading.value = true
   error.value = null
   try {
-    const [clientsRes, hostTagAssocRes, hostTagsRes, healthRes, scheduleCountsRes, overviewRes] =
+    const [agentsRes, agentTagAssocRes, agentTagsRes, healthRes, scheduleCountsRes, overviewRes] =
       await Promise.all([
-        apiClient.get<ClientRow[]>('/clients', {
+        apiClient.get<AgentRow[]>('/agents', {
           params: showHidden.value ? { include_hidden: true } : undefined,
         }),
-        apiClient.get<HostTagRow[]>('/host-tags').catch(() => ({ data: [] as HostTagRow[] })),
+        apiClient.get<AgentTagRow[]>('/agent-tags').catch(() => ({ data: [] as AgentTagRow[] })),
         apiClient
           .get<TagRow[]>('/tags', { params: { scope: 'host' } })
           .catch(() => ({ data: [] as TagRow[] })),
@@ -281,21 +281,21 @@ async function loadClients(): Promise<void> {
         apiClient.get<{ client_id: number; count: number }[]>('/stats/schedule-counts'),
         apiClient.get<DashboardOverview>('/stats/dashboard-overview'),
       ])
-    clients.value = clientsRes.data
+    agents.value = agentsRes.data
     machineScheduleCount.value = {}
     scheduleCountsRes.data.forEach((entry) => {
       machineScheduleCount.value[entry.client_id] = entry.count
     })
 
-    allHostTags.value = hostTagsRes.data
+    allAgentTags.value = agentTagsRes.data
     const tagMap: Record<number, { name: string; color: string }[]> = {}
-    hostTagAssocRes.data.forEach((ht) => {
+    agentTagAssocRes.data.forEach((ht) => {
       if (!tagMap[ht.client_id]) tagMap[ht.client_id] = []
       tagMap[ht.client_id].push({ name: ht.tag_name, color: ht.tag_color })
     })
-    hostTagsMap.value = tagMap
+    agentTagsMap.value = tagMap
 
-    const hMap: Record<string, HostHealth> = {}
+    const hMap: Record<string, AgentHealth> = {}
     healthRes.data.forEach((entry) => {
       if (!hMap[entry.hostname]) {
         hMap[entry.hostname] = { failed: 0, overdue: 0, warning: 0, total: 0 }
@@ -345,11 +345,11 @@ async function submitAdd(): Promise<void> {
   addLoading.value = true
   addError.value = null
   try {
-    const res = await apiClient.post<CreateClientResponse>('/clients', {
+    const res = await apiClient.post<CreateAgentResponse>('/agents', {
       hostname,
       display_name: addForm.display_name.trim() || null,
     })
-    clients.value.push(res.data.client)
+    agents.value.push(res.data.client)
     newToken.value = res.data.token
   } catch (e: unknown) {
     addError.value = extractError(e)
@@ -363,63 +363,63 @@ function closeAddDialog(): void {
   newToken.value = null
 }
 
-function navigateToHost(client: ClientRow): void {
-  router.push(`/clients/${client.hostname}`)
+function navigateToAgent(agent: AgentRow): void {
+  router.push(`/agents/${agent.hostname}`)
 }
 
-async function adoptClient(client: ClientRow): Promise<void> {
+async function adoptAgent(agent: AgentRow): Promise<void> {
   try {
-    const cleanDisplayName = client.display_name?.replace(/\s*\(imported\)$/, '').trim() || null
-    await apiClient.put(`/clients/${client.hostname}`, {
+    const cleanDisplayName = agent.display_name?.replace(/\s*\(imported\)$/, '').trim() || null
+    await apiClient.put(`/agents/${agent.hostname}`, {
       display_name: cleanDisplayName,
     })
-    const res = await apiClient.post<CreateClientResponse>(
-      `/clients/${client.hostname}/regenerate-token`,
+    const res = await apiClient.post<CreateAgentResponse>(
+      `/agents/${agent.hostname}/regenerate-token`,
     )
-    const idx = clients.value.findIndex((m) => m.id === client.id)
+    const idx = agents.value.findIndex((m) => m.id === agent.id)
     if (idx !== -1) {
-      clients.value[idx] = {
-        ...clients.value[idx],
+      agents.value[idx] = {
+        ...agents.value[idx],
         ...res.data.client,
         is_imported: false,
         display_name: cleanDisplayName,
       }
     }
-    adoptHostname.value = client.hostname
+    adoptHostname.value = agent.hostname
     adoptToken.value = res.data.token
     tokenCopied.value = false
     showAdoptDialog.value = true
   } catch (e: unknown) {
-    logger.error('Failed to adopt client', e)
+    logger.error('Failed to adopt agent', e)
   }
 }
 
-function openDeployDialog(client: ClientRow): void {
-  deployTarget.value = client
+function openDeployDialog(agent: AgentRow): void {
+  deployTarget.value = agent
   showDeployDialog.value = true
 }
 
-function openMergeDialog(client: ClientRow): void {
-  mergeSource.value = client
+function openMergeDialog(agent: AgentRow): void {
+  mergeSource.value = agent
   showMergeDialog.value = true
 }
 
-async function unhideClient(client: ClientRow): Promise<void> {
+async function unhideAgent(agent: AgentRow): Promise<void> {
   try {
-    await apiClient.put(`/clients/${client.hostname}/unhide`)
-    await loadClients()
+    await apiClient.put(`/agents/${agent.hostname}/unhide`)
+    await loadAgents()
   } catch (e: unknown) {
-    logger.error('Failed to unhide client', e)
+    logger.error('Failed to unhide agent', e)
   }
 }
 
 function onMerged(): void {
   showMergeDialog.value = false
-  loadClients().catch(logger.error)
+  loadAgents().catch(logger.error)
 }
 
 onMounted(() => {
-  loadClients().catch(logger.error)
+  loadAgents().catch(logger.error)
   apiClient
     .get<{ agent_version: string | null; server_commit_count: number | null }>('/system/version')
     .then((res) => {
@@ -430,9 +430,9 @@ onMounted(() => {
 })
 
 const { onMessage, status: wsStatus } = useWebSocket()
-onMessage('AgentConnected', () => loadClients().catch(logger.error))
-onMessage('AgentDisconnected', () => loadClients().catch(logger.error))
-onMessage('DataChanged', () => loadClients().catch(logger.error))
+onMessage('AgentConnected', () => loadAgents().catch(logger.error))
+onMessage('AgentDisconnected', () => loadAgents().catch(logger.error))
+onMessage('DataChanged', () => loadAgents().catch(logger.error))
 
 interface BackupPayload {
   hostname: string

@@ -18,7 +18,7 @@ pub fn build_repo_url(ssh_user: &str, ssh_host: &str, ssh_port: u16, repo_path: 
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ClientId(pub i64);
+pub struct AgentId(pub i64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RepoId(pub i64);
@@ -50,7 +50,7 @@ pub struct DryRunFile {
     pub size: i64,
 }
 
-impl From<i64> for ClientId {
+impl From<i64> for AgentId {
     fn from(value: i64) -> Self {
         Self(value)
     }
@@ -261,8 +261,8 @@ pub enum AgentStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Client {
-    pub id: ClientId,
+pub struct Agent {
+    pub id: AgentId,
     pub hostname: String,
     pub display_name: Option<String>,
     pub agent_token_hash: String,
@@ -303,7 +303,7 @@ pub struct Schedule {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackupReport {
     pub id: ReportId,
-    pub client_id: ClientId,
+    pub agent_id: AgentId,
     pub repo_id: RepoId,
     #[serde(default)]
     pub schedule_id: Option<i64>,
@@ -333,7 +333,7 @@ pub struct BackupReport {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
-    pub client_hostname: String,
+    pub agent_hostname: String,
     #[serde(default)]
     pub skip_targets: Vec<String>,
     pub repos: Vec<RepoConfig>,

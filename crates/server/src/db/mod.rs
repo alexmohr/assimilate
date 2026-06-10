@@ -2978,15 +2978,24 @@ pub async fn delete_system_events_before(
     Ok(result.rows_affected())
 }
 
+/// Prunes old backup-run history by age.
+///
+/// Reports that carry an `archive_name` represent an actual borg archive and
+/// double as the archive list, so they must never be aged out here: imported
+/// and synced archives keep their original (often very old) borg `start`
+/// timestamp, and their lifecycle is governed by borg plus the sync stale
+/// removal, not by the report-retention window. Only run history without an
+/// archive (pending/started/failed/cancelled) is pruned.
 pub async fn delete_backup_reports_before(
     pool: &PgPool,
     before: DateTime<Utc>,
 ) -> Result<u64, ApiError> {
-    let result = sqlx::query("DELETE FROM backup_reports WHERE started_at < $1")
-        .bind(before)
-        .execute(pool)
-        .await
-        .map_err(ApiError::Database)?;
+    let result =
+        sqlx::query("DELETE FROM backup_reports WHERE started_at < $1 AND archive_name IS NULL")
+            .bind(before)
+            .execute(pool)
+            .await
+            .map_err(ApiError::Database)?;
     Ok(result.rows_affected())
 }
 

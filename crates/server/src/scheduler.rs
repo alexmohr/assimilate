@@ -193,6 +193,8 @@ async fn run_repo_sync(
                 if let Err(e) = db::set_repo_import_error(pool, repo.id, None).await {
                     tracing::error!(repo_id = repo.id, error = %e, "failed to clear import_error after sync");
                 }
+                crate::api::repos::clear_import_progress_state(pool, ui_broadcast, repo.id).await;
+                ui_broadcast.send(ServerToUi::DataChanged);
 
                 if added > 0 || removed > 0 {
                     let msg = format!(
@@ -204,7 +206,6 @@ async fn run_repo_sync(
                     if let Err(e) = db::insert_system_event(pool, "repo_sync", None, &msg).await {
                         tracing::error!(error = %e, "failed to log sync event");
                     }
-                    ui_broadcast.send(ServerToUi::DataChanged);
                 }
 
                 if elapsed > SYNC_WARN_DURATION {
@@ -231,6 +232,8 @@ async fn run_repo_sync(
                 if let Err(e) = db::set_repo_importing(pool, repo.id, false).await {
                     tracing::error!(repo_id = repo.id, error = %e, "failed to clear importing flag after NotFound");
                 }
+                crate::api::repos::clear_import_progress_state(pool, ui_broadcast, repo.id).await;
+                ui_broadcast.send(ServerToUi::DataChanged);
             }
             Err(e) => {
                 let elapsed = start.elapsed();
@@ -253,6 +256,8 @@ async fn run_repo_sync(
                 {
                     tracing::error!(repo_id = repo.id, error = %e2, "failed to set import_error");
                 }
+                crate::api::repos::clear_import_progress_state(pool, ui_broadcast, repo.id).await;
+                ui_broadcast.send(ServerToUi::DataChanged);
             }
         }
     }

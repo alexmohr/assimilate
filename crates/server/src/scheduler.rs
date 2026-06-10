@@ -163,8 +163,7 @@ async fn run_repo_sync(
         });
 
         let start = std::time::Instant::now();
-        let sync_result =
-            sync_existing_archives(pool, encryption_key, repo.id, ui_broadcast, false).await;
+        let sync_result = sync_existing_archives(pool, encryption_key, repo.id, ui_broadcast).await;
 
         repo_op_tracker.clear(repo.id).await;
         ui_broadcast.send(ServerToUi::RepoOpChanged {

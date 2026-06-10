@@ -4196,6 +4196,39 @@ async fn schedule_target_hostnames_for_repo_test(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn get_schedule_targets_for_run_returns_ordered_and_excludes_hidden(pool: PgPool) {
+    let (client_a, _, schedule) = create_test_schedule(&pool).await;
+    let client_b = db::insert_client(&pool, "run-target-b", None, "hash-rtb", None)
+        .await
+        .unwrap();
+    let client_hidden = db::insert_client(&pool, "run-target-hidden", None, "hash-rth", None)
+        .await
+        .unwrap();
+    db::set_client_hidden(&pool, "run-target-hidden", true)
+        .await
+        .unwrap();
+
+    // Add client_b at order 1 (after client_a at order 0) and the hidden client at order 2.
+    db::insert_schedule_targets(
+        &pool,
+        schedule.id,
+        &[(client_b.id, 1), (client_hidden.id, 2)],
+    )
+    .await
+    .unwrap();
+
+    let targets = db::get_schedule_targets_for_run(&pool, schedule.id)
+        .await
+        .unwrap();
+
+    assert_eq!(targets.len(), 2);
+    assert_eq!(targets[0].client_id, client_a.id);
+    assert_eq!(targets[0].hostname, "sched-host");
+    assert_eq!(targets[1].client_id, client_b.id);
+    assert_eq!(targets[1].hostname, "run-target-b");
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn schedule_timezone_default(pool: PgPool) {
     let tz = db::get_schedule_timezone(&pool).await.unwrap();
     assert!(!tz.name().is_empty());
@@ -4453,6 +4486,85 @@ async fn archive_names_and_delete_test(pool: PgPool) {
         .unwrap();
     assert_eq!(remaining.len(), 1);
     assert!(remaining.contains("archive-2026-01-02"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn list_archive_names_needing_stats_filters_enriched(pool: PgPool) {
+    let client = db::insert_client(&pool, "stats-needing-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+
+    let base = InsertReportParams {
+        client_id: client.id,
+        repo_id: repo.id,
+        schedule_id: None,
+        started_at: now - Duration::minutes(10),
+        finished_at: now,
+        status: "success".to_string(),
+        original_size: 0,
+        compressed_size: 0,
+        deduplicated_size: 0,
+        repo_unique_csize: 0,
+        files_processed: 0,
+        duration_secs: 0,
+        error_message: None,
+        warnings: vec![],
+        borg_version: None,
+        matched: true,
+        archive_name: Some("needs-stats".to_string()),
+        borg_command: None,
+        run_id: None,
+    };
+    db::insert_backup_report(&pool, &base).await.unwrap();
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            started_at: now - Duration::minutes(20),
+            original_size: 1_000,
+            compressed_size: 500,
+            deduplicated_size: 250,
+            archive_name: Some("already-enriched".to_string()),
+            ..base.clone()
+        },
+    )
+    .await
+    .unwrap();
+
+    let needing = db::list_archive_names_needing_stats(&pool, repo.id)
+        .await
+        .unwrap();
+    assert_eq!(needing.len(), 1);
+    assert!(needing.contains("needs-stats"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn list_indexed_archive_names_returns_only_done(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    for (name, status) in [
+        ("done-archive", "done"),
+        ("indexing-archive", "indexing"),
+        ("pending-archive", "pending"),
+        ("failed-archive", "failed"),
+    ] {
+        sqlx::query(
+            "INSERT INTO archive_index_jobs (repo_id, archive_name, status) VALUES ($1, $2, $3)",
+        )
+        .bind(repo.id)
+        .bind(name)
+        .bind(status)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let done = server::archive_index::list_indexed_archive_names(&pool, repo.id)
+        .await
+        .unwrap();
+    assert_eq!(done.len(), 1);
+    assert!(done.contains("done-archive"));
 }
 
 #[sqlx::test(migrations = "./migrations")]

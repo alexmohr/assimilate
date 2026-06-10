@@ -411,7 +411,7 @@ describe('RepoDetailView', () => {
     expect(wrapper.findAll('button').find((b) => b.text() === 'Full Resync')).toBeDefined()
     expect(wrapper.findAll('button').find((b) => b.text() === 'Syncing...')).toBeUndefined()
 
-    expect(vi.mocked(apiClient.post)).toHaveBeenCalledWith('/repos/1/sync')
+    expect(vi.mocked(apiClient.post)).toHaveBeenCalledWith('/repos/1/sync?build_index=true')
   })
 
   it('shows error toast when sync request fails', async () => {
@@ -434,7 +434,7 @@ describe('RepoDetailView', () => {
     expect(wrapper.findAll('button').find((b) => b.text() === 'Syncing...')).toBeUndefined()
 
     // Error message visible in the page (toast container is teleported so check apiClient call)
-    expect(vi.mocked(apiClient.post)).toHaveBeenCalledWith('/repos/1/sync')
+    expect(vi.mocked(apiClient.post)).toHaveBeenCalledWith('/repos/1/sync?build_index=true')
   })
 
   it('reloads data when id prop changes', async () => {

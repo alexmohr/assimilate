@@ -117,7 +117,14 @@ pub async fn ensure_indexed(
         let pool_bg = pool.clone();
         let archive_name_bg = archive_name.clone();
         tokio::spawn(async move {
-            if let Err(e) = run_indexing(&pool_bg, &encryption_key, repo_id, &archive_name_bg).await
+            if let Err(e) = run_indexing(
+                &pool_bg,
+                &encryption_key,
+                repo_id,
+                &archive_name_bg,
+                &mut |_, _| {},
+            )
+            .await
             {
                 tracing::error!(
                     repo_id,
@@ -136,11 +143,47 @@ pub async fn ensure_indexed(
         .map(|s| s.unwrap_or(IndexStatus::Pending))
 }
 
-pub async fn run_indexing(
+/// Archive names in this repository whose content index is already complete.
+/// A full resync skips these: borg archives are immutable, so a finished
+/// index never needs to be rebuilt.
+pub async fn list_indexed_archive_names(
+    pool: &PgPool,
+    repo_id: i64,
+) -> Result<HashSet<String>, ApiError> {
+    let names = sqlx::query_scalar::<_, String>(
+        "SELECT archive_name FROM archive_index_jobs WHERE repo_id = $1 AND status = 'done'",
+    )
+    .bind(repo_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(names.into_iter().collect())
+}
+
+/// Ensure an index job row exists so `run_indexing` can transition it.
+pub async fn ensure_index_job(
+    pool: &PgPool,
+    repo_id: i64,
+    archive_name: &str,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "INSERT INTO archive_index_jobs (repo_id, archive_name, status) VALUES ($1, $2, \
+         'pending') ON CONFLICT DO NOTHING",
+    )
+    .bind(repo_id)
+    .bind(archive_name)
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+pub async fn run_indexing<F: FnMut(u64, Option<&str>)>(
     pool: &PgPool,
     encryption_key: &[u8; 32],
     repo_id: i64,
     archive_name: &str,
+    on_progress: &mut F,
 ) -> Result<(), ApiError> {
     sqlx::query(
         "UPDATE archive_index_jobs SET status = 'indexing', started_at = NOW() WHERE repo_id = $1 \
@@ -152,7 +195,7 @@ pub async fn run_indexing(
     .await
     .map_err(ApiError::Database)?;
 
-    match index_archive(pool, encryption_key, repo_id, archive_name).await {
+    match index_archive(pool, encryption_key, repo_id, archive_name, on_progress).await {
         Ok(file_count) => {
             sqlx::query(
                 "UPDATE archive_index_jobs SET status = 'done', finished_at = NOW(), file_count = \
@@ -183,11 +226,12 @@ pub async fn run_indexing(
     }
 }
 
-async fn index_archive(
+async fn index_archive<F: FnMut(u64, Option<&str>)>(
     pool: &PgPool,
     encryption_key: &[u8; 32],
     repo_id: i64,
     archive_name: &str,
+    on_progress: &mut F,
 ) -> Result<i64, ApiError> {
     let (borg_repo, env) = get_repo_env(pool, encryption_key, repo_id).await?;
     let repo_archive = format!("{borg_repo}::{archive_name}");
@@ -211,6 +255,7 @@ async fn index_archive(
 
     let mut raw: Vec<ContentEntry> = Vec::new();
     let mut lines = BufReader::new(stdout).lines();
+    let mut last_emit = std::time::Instant::now();
     while let Some(line) = lines
         .next_line()
         .await
@@ -231,7 +276,16 @@ async fn index_archive(
             mtime: v["mtime"].as_str().unwrap_or("").to_string(),
             mode: v["mode"].as_str().unwrap_or("").to_string(),
         });
+        if last_emit.elapsed() >= std::time::Duration::from_millis(300) {
+            let current = raw.last().map(|entry| entry.path.as_str());
+            on_progress(u64::try_from(raw.len()).unwrap_or(u64::MAX), current);
+            last_emit = std::time::Instant::now();
+        }
     }
+    on_progress(
+        u64::try_from(raw.len()).unwrap_or(u64::MAX),
+        raw.last().map(|entry| entry.path.as_str()),
+    );
 
     let status = child
         .wait()

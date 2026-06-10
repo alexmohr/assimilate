@@ -87,9 +87,18 @@ After saving, the server runs `borg info` and `borg list` in the background to s
 - The repository detail page shows an importing indicator.
 - If the import fails (e.g. SSH timeout, wrong passphrase), the error is displayed on the repository card and detail page.
 
-During a full repository sync, Assimilate also prunes archives that no longer exist in borg from the database. The scheduled disk sync uses the same full reimport path, so it refreshes the complete archive list instead of only adding new entries. The full sync endpoint can optionally rebuild archive indexes in the same run when requested by the API.
+During a full repository sync, Assimilate also prunes archives that no longer exist in borg from the database. The scheduled disk sync uses the same full reimport path, so it refreshes the complete archive list instead of only adding new entries.
 
-For large repositories with many archives, the initial import may take several minutes. You can navigate away — the import continues in the background and the UI updates automatically via WebSocket.
+### Full resync and content indexing
+
+The **Full Resync** action on the repository detail page re-reads every archive from borg and then builds the browsable **content index** (the file tree used for archive browsing, search, diff, and restore). Because borg archives are immutable:
+
+- Archives whose content index is already complete are **skipped** — a resync never re-scans an archive it has already indexed.
+- Stats are only re-fetched for archives that don't have them yet.
+
+Indexing runs in the background and the repository badge shows live progress: the **bar advances as each archive finishes** (so it never sits at 100% while work remains), and the status line shows the archive currently being scanned together with a running file count and the file being processed, e.g. *Indexing 'host-2026-06-10T02:00:00' (3/84) — 12,345 files · home/user/project/main.rs*. You can navigate away — indexing continues and the UI updates automatically via WebSocket.
+
+For large repositories with many archives, the initial import and first full index may take several minutes.
 
 ### Archive-to-Host Matching
 

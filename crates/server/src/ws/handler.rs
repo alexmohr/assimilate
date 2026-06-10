@@ -525,8 +525,20 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                                     "post-backup sync: failed to clear import_error"
                                 );
                             }
+                            crate::api::repos::clear_import_progress_state(
+                                &sync_pool,
+                                &sync_broadcast,
+                                sync_repo_id,
+                            )
+                            .await;
+                            sync_broadcast.send(ServerToUi::DataChanged);
                             if added > 0 || removed > 0 {
-                                sync_broadcast.send(ServerToUi::DataChanged);
+                                tracing::debug!(
+                                    repo_id = sync_repo_id,
+                                    added,
+                                    removed,
+                                    "post-backup sync changed repo contents"
+                                );
                             }
                             tracing::debug!(
                                 repo_id = sync_repo_id,
@@ -563,6 +575,13 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                                     "post-backup sync: failed to set import_error"
                                 );
                             }
+                            crate::api::repos::clear_import_progress_state(
+                                &sync_pool,
+                                &sync_broadcast,
+                                sync_repo_id,
+                            )
+                            .await;
+                            sync_broadcast.send(ServerToUi::DataChanged);
                         }
                     }
                 });

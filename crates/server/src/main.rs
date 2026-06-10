@@ -151,7 +151,8 @@ async fn main() -> Result<(), StartupError> {
                             db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await;
                     }
                     let _ = db::set_repo_importing(&pool, repo_id, false).await;
-                    broadcast.clear_import_progress(repo_id);
+                    server::api::repos::clear_import_progress_state(&pool, &broadcast, repo_id)
+                        .await;
                     broadcast.send(shared::protocol::ServerToUi::DataChanged);
                 });
             }

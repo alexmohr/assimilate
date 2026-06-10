@@ -40,6 +40,22 @@ impl UiBroadcast {
     }
 
     pub fn send(&self, event: ServerToUi) {
+        if let ServerToUi::ImportProgress {
+            repo_id,
+            progress,
+            total,
+            message,
+        } = &event
+        {
+            self.set_import_progress(
+                *repo_id,
+                ImportProgressSnapshot {
+                    progress: *progress,
+                    total: *total,
+                    message: message.clone(),
+                },
+            );
+        }
         if let Err(e) = self.sender.send(event) {
             tracing::trace!(error = %e, "ui broadcast: no receivers");
         }
@@ -70,5 +86,31 @@ impl UiBroadcast {
                     .collect()
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn import_progress_events_update_snapshots() {
+        let broadcast = UiBroadcast::new();
+        broadcast.send(ServerToUi::ImportProgress {
+            repo_id: 7,
+            progress: 3,
+            total: 5,
+            message: Some("Finalizing import\u{2026}".to_string()),
+        });
+
+        let snapshots = broadcast.current_import_snapshots();
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].0, 7);
+        assert_eq!(snapshots[0].1.progress, 3);
+        assert_eq!(snapshots[0].1.total, 5);
+        assert_eq!(
+            snapshots[0].1.message.as_deref(),
+            Some("Finalizing import\u{2026}")
+        );
     }
 }

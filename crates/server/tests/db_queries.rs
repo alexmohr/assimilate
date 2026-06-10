@@ -3864,6 +3864,68 @@ async fn bulk_insert_backup_reports_conflict_skipped(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn bulk_insert_keeps_distinct_archives_sharing_start_second(pool: PgPool) {
+    // Borg reports archive `start` at whole-second precision, so two distinct
+    // archives of the same host can share (client_id, started_at). They must not
+    // collapse into a single row on import.
+    let client = db::insert_client(&pool, "same-second-host", None, "hash-ss", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let started = Utc::now() - Duration::minutes(10);
+    let finished = started + Duration::minutes(1);
+
+    let base = InsertReportParams {
+        client_id: client.id,
+        repo_id: repo.id,
+        schedule_id: None,
+        started_at: started,
+        finished_at: finished,
+        status: "success".to_string(),
+        original_size: 0,
+        compressed_size: 0,
+        deduplicated_size: 0,
+        repo_unique_csize: 0,
+        files_processed: 0,
+        duration_secs: 60,
+        error_message: None,
+        warnings: vec![],
+        borg_version: None,
+        matched: true,
+        archive_name: None,
+        borg_command: None,
+        run_id: None,
+    };
+
+    let params = vec![
+        InsertReportParams {
+            archive_name: Some("host-2026-06-10T12:00:00".to_string()),
+            ..base.clone()
+        },
+        InsertReportParams {
+            archive_name: Some("host-2026-06-10T12:00:00-extra".to_string()),
+            ..base.clone()
+        },
+    ];
+
+    let affected = db::bulk_insert_backup_reports(&pool, &params)
+        .await
+        .unwrap();
+    assert_eq!(affected, 2);
+
+    let names = db::list_archive_names_for_repo(&pool, repo.id)
+        .await
+        .unwrap();
+    assert_eq!(names.len(), 2);
+
+    // Re-importing the same archives stays idempotent.
+    let affected = db::bulk_insert_backup_reports(&pool, &params)
+        .await
+        .unwrap();
+    assert_eq!(affected, 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn repo_last_synced_at_updates(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
     assert!(repo.last_synced_at.is_none());

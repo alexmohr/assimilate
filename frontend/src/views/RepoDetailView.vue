@@ -390,6 +390,13 @@ async function confirmArchiveDeletion(): Promise<void> {
   }
 }
 
+// During a full resync the same import progress channel carries the content
+// indexing phase; surface it with its own label rather than "Importing".
+const isIndexingPhase = computed(() =>
+  (repo.value?.import_status_message ?? '').startsWith('Indexing'),
+)
+const importPhaseVerb = computed(() => (isIndexingPhase.value ? 'Indexing' : 'Importing'))
+
 const unmatchedCount = computed(() => sortedArchives.value.filter((a) => a.matched !== true).length)
 
 const unmatchedHostnames = computed(() => [
@@ -820,8 +827,8 @@ async function rescanArchives(): Promise<void> {
 async function syncRepo(): Promise<void> {
   syncLoading.value = true
   try {
-    await apiClient.post(`/repos/${repoId.value}/sync`)
-    toastSuccess('Full resync started.')
+    await apiClient.post(`/repos/${repoId.value}/sync?build_index=true`)
+    toastSuccess('Full resync started. Archive contents are being indexed in the background.')
   } catch (e: unknown) {
     toastError(extractError(e))
   } finally {
@@ -968,8 +975,8 @@ async function resetImport(): Promise<void> {
                       ? 'Import Failed'
                       : repo.importing
                         ? repo.import_total > 0
-                          ? `Importing ${repo.import_progress}/${repo.import_total}`
-                          : 'Importing\u2026'
+                          ? `${importPhaseVerb} ${repo.import_progress}/${repo.import_total}`
+                          : `${importPhaseVerb}\u2026`
                         : repo.enabled
                           ? 'Enabled'
                           : 'Disabled'

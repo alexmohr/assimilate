@@ -256,8 +256,7 @@ pub async fn create_repo(
             }
         }
 
-        if let Err(e) =
-            sync_existing_archives(&pool, &encryption_key, repo_id, &ui_broadcast, false).await
+        if let Err(e) = sync_existing_archives(&pool, &encryption_key, repo_id, &ui_broadcast).await
         {
             warn!(repo_id, error = %e, "failed to sync existing archives on import");
             let _ = db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await;
@@ -1375,7 +1374,6 @@ pub async fn sync_existing_archives(
     encryption_key: &[u8; 32],
     repo_id: i64,
     ui_broadcast: &UiBroadcast,
-    build_index: bool,
 ) -> Result<(u64, u64), ApiError> {
     let (borg_repo, env) = super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
 
@@ -1518,9 +1516,6 @@ pub async fn sync_existing_archives(
         repo_id,
         archive_names.clone(),
     );
-    if build_index {
-        queue_archive_indexing(pool, encryption_key, repo_id, &archive_names, "full sync").await;
-    }
     refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, borg_names.len() as i64).await;
     info!(repo_id, imported, total, "synced existing archives");
     Ok((imported, removed))
@@ -1698,6 +1693,22 @@ fn enrich_archive_stats_background(
     archive_names: Vec<String>,
 ) {
     tokio::spawn(async move {
+        // Immutable archives that already have stats never change, so only query
+        // borg for the ones still missing them.
+        let needing = match db::list_archive_names_needing_stats(&pool, repo_id).await {
+            Ok(names) => names,
+            Err(e) => {
+                warn!(repo_id, error = %e, "stat enrichment: failed to list archives needing stats");
+                return;
+            }
+        };
+        let archive_names: Vec<String> = archive_names
+            .into_iter()
+            .filter(|name| needing.contains(name))
+            .collect();
+        if archive_names.is_empty() {
+            return;
+        }
         let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
         let futures: Vec<_> = archive_names
             .into_iter()
@@ -1836,6 +1847,117 @@ async fn queue_archive_indexing(
     .await;
 }
 
+/// Builds the content index for every archive in the repository that is not
+/// already fully indexed, one archive at a time, broadcasting progress so the
+/// UI can show which archive (and how many files) is currently being processed.
+/// Already-indexed archives are skipped: borg archives are immutable, so a
+/// finished index never needs rebuilding.
+async fn index_archives_with_progress(
+    pool: PgPool,
+    encryption_key: [u8; 32],
+    repo_id: i64,
+    ui_broadcast: UiBroadcast,
+) {
+    let all = match db::list_archive_names_for_repo(&pool, repo_id).await {
+        Ok(names) => names,
+        Err(e) => {
+            warn!(repo_id, error = %e, "content indexing: failed to list archives");
+            return;
+        }
+    };
+    let done = match archive_index::list_indexed_archive_names(&pool, repo_id).await {
+        Ok(names) => names,
+        Err(e) => {
+            warn!(repo_id, error = %e, "content indexing: failed to list indexed archives");
+            return;
+        }
+    };
+
+    let mut pending: Vec<String> = all.difference(&done).cloned().collect();
+    pending.sort_unstable();
+    let total = pending.len();
+    if total == 0 {
+        return;
+    }
+    let total_i32 = i32::try_from(total).unwrap_or(i32::MAX);
+    info!(
+        repo_id,
+        total, "content indexing: starting full resync index"
+    );
+
+    for (index, archive_name) in pending.iter().enumerate() {
+        // The progress bar tracks *completed* archives, so it never reaches 100%
+        // while an archive (including the last one) is still being scanned.
+        let completed = i32::try_from(index).unwrap_or(i32::MAX);
+        let human_position = index + 1;
+        let archive_msg = format!(
+            "Indexing contents of \u{2018}{archive_name}\u{2019} ({human_position}/{total})"
+        );
+        publish_import_progress(
+            &pool,
+            &ui_broadcast,
+            repo_id,
+            completed,
+            total_i32,
+            Some(&archive_msg),
+        )
+        .await;
+
+        if let Err(e) = archive_index::ensure_index_job(&pool, repo_id, archive_name).await {
+            warn!(repo_id, archive = %archive_name, error = %e, "content indexing: failed to create job");
+            continue;
+        }
+
+        // The live file count and current path keep the badge visibly moving even
+        // while a single large archive is being scanned.
+        let mut on_progress = |file_count: u64, current: Option<&str>| {
+            let message = current.map_or_else(
+                || {
+                    format!(
+                        "Indexing \u{2018}{archive_name}\u{2019} ({human_position}/{total}) \
+                         \u{2014} {file_count} files"
+                    )
+                },
+                |path| {
+                    format!(
+                        "Indexing \u{2018}{archive_name}\u{2019} ({human_position}/{total}) \
+                         \u{2014} {file_count} files \u{00b7} {path}"
+                    )
+                },
+            );
+            ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
+                repo_id,
+                progress: completed,
+                total: total_i32,
+                message: Some(message),
+            });
+        };
+
+        if let Err(e) = archive_index::run_indexing(
+            &pool,
+            &encryption_key,
+            repo_id,
+            archive_name,
+            &mut on_progress,
+        )
+        .await
+        {
+            warn!(repo_id, archive = %archive_name, error = %e, "content indexing: archive failed");
+        }
+    }
+
+    publish_import_progress(
+        &pool,
+        &ui_broadcast,
+        repo_id,
+        total_i32,
+        total_i32,
+        Some("Indexing complete"),
+    )
+    .await;
+    info!(repo_id, total, "content indexing: completed");
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RescanResponse {
     pub matched: u64,
@@ -1969,17 +2091,16 @@ pub async fn sync_repo(
         &state.encryption_key,
         repo_id,
         &state.ui_broadcast,
-        query.build_index,
     )
     .await;
     let elapsed = start.elapsed();
 
-    db::set_repo_importing(&state.pool, repo_id, false).await?;
     db::update_repo_last_synced(&state.pool, repo_id).await?;
 
     let (imported, removed) = match result {
         Ok(counts) => counts,
         Err(e) => {
+            db::set_repo_importing(&state.pool, repo_id, false).await?;
             clear_import_progress_state(&state.pool, &state.ui_broadcast, repo_id).await;
             let msg = format!(
                 "repo sync failed for '{}' after {:.1}s: {e}",
@@ -2027,10 +2148,28 @@ pub async fn sync_repo(
         error!(error = %log_err, "failed to log sync event");
     }
 
-    clear_import_progress_state(&state.pool, &state.ui_broadcast, repo_id).await;
-    state
-        .ui_broadcast
-        .send(shared::protocol::ServerToUi::DataChanged);
+    if query.build_index {
+        // Index the archive contents in the background, keeping the repository
+        // flagged as importing so the UI shows live per-archive progress. The
+        // importing flag and progress state are cleared once indexing finishes.
+        let pool = state.pool.clone();
+        let key = state.encryption_key;
+        let ui_broadcast = state.ui_broadcast.clone();
+        tokio::spawn(async move {
+            index_archives_with_progress(pool.clone(), key, repo_id, ui_broadcast.clone()).await;
+            if let Err(e) = db::set_repo_importing(&pool, repo_id, false).await {
+                error!(repo_id, error = %e, "failed to clear importing flag after indexing");
+            }
+            clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
+            ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
+        });
+    } else {
+        db::set_repo_importing(&state.pool, repo_id, false).await?;
+        clear_import_progress_state(&state.pool, &state.ui_broadcast, repo_id).await;
+        state
+            .ui_broadcast
+            .send(shared::protocol::ServerToUi::DataChanged);
+    }
 
     Ok(Json(SyncResponse {
         imported,

@@ -141,10 +141,9 @@ async fn main() -> Result<(), StartupError> {
                 let key = recovery_key;
                 let broadcast = recovery_broadcast.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = server::api::repos::sync_existing_archives(
-                        &pool, &key, repo_id, &broadcast, false,
-                    )
-                    .await
+                    if let Err(e) =
+                        server::api::repos::sync_existing_archives(&pool, &key, repo_id, &broadcast)
+                            .await
                     {
                         tracing::warn!(repo_id, error = %e, "failed to resume import");
                         let _ =

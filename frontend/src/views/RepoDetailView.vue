@@ -45,7 +45,7 @@ type EncryptionType =
   | 'authenticated-blake2'
   | 'none'
 
-type RepoOpKind = 'agent_backup' | 'server_sync' | 'break_lock'
+type RepoOpKind = 'agent_backup' | 'server_sync' | 'break_lock' | 'delete_archive'
 
 interface ActiveRepoOp {
   kind: RepoOpKind
@@ -309,7 +309,10 @@ interface ImportProgressPayload {
 
 const { onMessage } = useWebSocket()
 
-onMessage('DataChanged', () => refreshRepo().catch(logger.error))
+onMessage('DataChanged', () => {
+  refreshRepo().catch(logger.error)
+  loadArchives().catch(logger.error)
+})
 
 onMessage<ImportProgressPayload>('ImportProgress', (payload) => {
   if (repo.value && repo.value.id === payload.repo_id) {
@@ -379,7 +382,7 @@ async function confirmArchiveDeletion(): Promise<void> {
     await deleteArchiveByName(archive)
     archivePendingDeletion.value = null
     await refreshRepo()
-    toastSuccess('Archive deleted.')
+    toastSuccess('Archive deletion started. It will disappear once borg finishes.')
   } catch (e: unknown) {
     toastError(extractError(e))
   } finally {
@@ -511,6 +514,8 @@ function repoOpLabel(op: ActiveRepoOp): string {
       return 'Server sync in progress'
     case 'break_lock':
       return 'Break-lock in progress'
+    case 'delete_archive':
+      return `Deleting archive (started by ${op.actor})`
   }
 }
 
@@ -522,6 +527,8 @@ function lastOpLabel(kind: string | null): string {
       return 'Server sync'
     case 'break_lock':
       return 'Break lock'
+    case 'delete_archive':
+      return 'Delete archive'
     default:
       return kind ?? 'Unknown'
   }

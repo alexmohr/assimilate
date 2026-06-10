@@ -289,7 +289,10 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
       throw new Error('Archive delete failed')
     }
 
-    archives.value = archives.value.filter((item) => item.name !== archive.name)
+    // Deletion runs in the background on the server (borg delete can be slow).
+    // The archive is removed from the list once a DataChanged event confirms the
+    // borg delete finished and the DB record was removed, so we do not drop it
+    // from the list optimistically here.
 
     if (selectedArchive.value?.name === archive.name) {
       stopPolling()

@@ -104,12 +104,14 @@ describe('useArchiveBrowser', () => {
     expect(apiClient.delete).toHaveBeenCalledWith(
       '/repos/5/archives/web-server-01-backup-2026-06-05T02%3A00%3A00',
     )
+    // Deletion runs in the background; the archive stays in the list until a
+    // DataChanged event confirms borg finished. Only the open detail pane closes.
     expect(browser.selectedArchive.value).toBeNull()
-    expect(browser.archives.value).toHaveLength(0)
+    expect(browser.archives.value).toHaveLength(1)
     expect(confirm).not.toHaveBeenCalled()
   })
 
-  it('deleteArchiveByName deletes by archive name without requiring selectedArchive', async () => {
+  it('deleteArchiveByName keeps the list until DataChanged and does not require selectedArchive', async () => {
     vi.mocked(apiClient.delete).mockResolvedValue({
       data: { success: true, archive_name: ARCHIVE.name },
     })
@@ -123,7 +125,7 @@ describe('useArchiveBrowser', () => {
     expect(apiClient.delete).toHaveBeenCalledWith(
       '/repos/5/archives/web-server-01-backup-2026-06-05T02%3A00%3A00',
     )
-    expect(browser.archives.value).toEqual([SECOND])
+    expect(browser.archives.value).toEqual([ARCHIVE, SECOND])
   })
 
   it('deleteArchiveByName clears selectedArchive when it matches the deleted archive', async () => {
@@ -138,6 +140,6 @@ describe('useArchiveBrowser', () => {
     await browser.deleteArchiveByName(ARCHIVE)
 
     expect(browser.selectedArchive.value).toBeNull()
-    expect(browser.archives.value).toHaveLength(0)
+    expect(browser.archives.value).toHaveLength(1)
   })
 })

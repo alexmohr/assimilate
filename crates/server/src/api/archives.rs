@@ -7,7 +7,7 @@ use axum::{
     Json,
     body::Body,
     extract::{Path as AxumPath, Query, State},
-    http::header,
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
 use chrono::{DateTime, Utc};
@@ -364,23 +364,75 @@ pub async fn archive_info(
         ("archive_name" = String, Path, description = "Archive name"),
     ),
     responses(
-        (status = 200, description = "Archive deleted", body = DeleteArchiveResponse),
+        (status = 202, description = "Archive deletion started", body = DeleteArchiveResponse),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden"),
         (status = 404, description = "Archive not found"),
-        (status = 502, description = "Borg command failed"),
+        (status = 409, description = "Another repository operation is in progress"),
     )
 )]
 pub async fn delete_archive(
     State(state): State<AppState>,
     auth: AuthUser,
     AxumPath((repo_id, archive_name)): AxumPath<(i64, String)>,
-) -> Result<Json<DeleteArchiveResponse>, ApiError> {
+) -> Result<(StatusCode, Json<DeleteArchiveResponse>), ApiError> {
     check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_delete).await?;
+    // Resolve credentials up front so authorisation/borg-config errors surface
+    // synchronously; the slow `borg delete` itself runs in the background so the
+    // UI is never blocked waiting for it.
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
-    let repo_archive = format!("{borg_repo}::{archive_name}");
 
-    let output = Borg::new()
+    if state.repo_op_tracker.get(repo_id).await.is_some() {
+        return Err(ApiError::Conflict(
+            "another repository operation is in progress".to_string(),
+        ));
+    }
+
+    state
+        .repo_op_tracker
+        .set(
+            repo_id,
+            shared::protocol::RepoOpKind::DeleteArchive,
+            auth.username.clone(),
+        )
+        .await;
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::RepoOpChanged {
+            repo_id,
+            op: state.repo_op_tracker.get(repo_id).await,
+        });
+
+    tokio::spawn(run_archive_deletion(
+        state,
+        repo_id,
+        archive_name.clone(),
+        borg_repo,
+        env,
+        auth.user_id,
+        auth.username,
+    ));
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(DeleteArchiveResponse {
+            success: true,
+            archive_name,
+        }),
+    ))
+}
+
+async fn run_archive_deletion(
+    state: AppState,
+    repo_id: i64,
+    archive_name: String,
+    borg_repo: String,
+    env: HashMap<String, String>,
+    user_id: i64,
+    username: String,
+) {
+    let repo_archive = format!("{borg_repo}::{archive_name}");
+    let result = Borg::new()
         .run(
             &[
                 "delete",
@@ -390,23 +442,63 @@ pub async fn delete_archive(
             ],
             &env,
         )
-        .await
-        .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
+        .await;
 
-    let exit_code = output.status.code().unwrap_or(-1);
-    if exit_code != 0 && exit_code != 1 {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(classify_borg_error(exit_code, &stderr));
+    state.repo_op_tracker.clear(repo_id).await;
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::RepoOpChanged { repo_id, op: None });
+
+    match result {
+        Ok(output) => {
+            let exit_code = output.status.code().unwrap_or(-1);
+            if exit_code != 0 && exit_code != 1 {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let err = classify_borg_error(exit_code, &stderr);
+                tracing::error!(repo_id, archive = %archive_name, error = %err, "archive deletion failed");
+                let msg =
+                    format!("failed to delete archive '{archive_name}' (repo {repo_id}): {err}");
+                if let Err(e) =
+                    db::insert_system_event(&state.pool, "archive_delete_failed", None, &msg).await
+                {
+                    tracing::warn!(error = %e, "failed to log archive delete failure");
+                }
+                state
+                    .ui_broadcast
+                    .send(shared::protocol::ServerToUi::DataChanged);
+                return;
+            }
+        }
+        Err(e) => {
+            tracing::error!(repo_id, archive = %archive_name, error = %e, "failed to execute borg delete");
+            let msg = format!("failed to delete archive '{archive_name}' (repo {repo_id}): {e}");
+            if let Err(log_err) =
+                db::insert_system_event(&state.pool, "archive_delete_failed", None, &msg).await
+            {
+                tracing::warn!(error = %log_err, "failed to log archive delete failure");
+            }
+            state
+                .ui_broadcast
+                .send(shared::protocol::ServerToUi::DataChanged);
+            return;
+        }
     }
 
-    db::delete_archive_records_by_names(&state.pool, repo_id, std::slice::from_ref(&archive_name))
-        .await?;
+    if let Err(e) = db::delete_archive_records_by_names(
+        &state.pool,
+        repo_id,
+        std::slice::from_ref(&archive_name),
+    )
+    .await
+    {
+        tracing::error!(repo_id, archive = %archive_name, error = %e, "failed to delete archive records");
+    }
 
     if let Err(e) = db::audit::insert_audit_entry(
         &state.pool,
         &db::audit::NewAuditEntry {
-            user_id: Some(auth.user_id),
-            username: &auth.username,
+            user_id: Some(user_id),
+            username: &username,
             action: "delete_archive",
             target_type: Some("archive"),
             target_id: Some(repo_id),
@@ -419,10 +511,9 @@ pub async fn delete_archive(
         tracing::warn!("failed to write audit log: {e}");
     }
 
-    Ok(Json(DeleteArchiveResponse {
-        success: true,
-        archive_name,
-    }))
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::DataChanged);
 }
 
 // Strip the leading "./" or bare "." that borg emits when archives are

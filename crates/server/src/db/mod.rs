@@ -4003,6 +4003,24 @@ pub async fn list_archive_names_for_repo(
     Ok(names.into_iter().collect())
 }
 
+/// Archive names whose stats have not been filled in yet (all sizes still zero).
+/// A resync only re-runs `borg info` for these: immutable archives that already
+/// carry stats never need to be queried again.
+pub async fn list_archive_names_needing_stats(
+    pool: &PgPool,
+    repo_id: i64,
+) -> Result<std::collections::HashSet<String>, ApiError> {
+    let names = sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT archive_name FROM backup_reports WHERE repo_id = $1 AND archive_name IS \
+         NOT NULL AND original_size = 0 AND compressed_size = 0 AND deduplicated_size = 0",
+    )
+    .bind(repo_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(names.into_iter().collect())
+}
+
 pub async fn delete_archive_reports_by_names(
     pool: &PgPool,
     repo_id: i64,

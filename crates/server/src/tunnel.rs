@@ -40,7 +40,7 @@ pub fn tunnel_target_addr(bind_addr: SocketAddr) -> SocketAddr {
 pub struct TunnelSshHandler {
     pub server_addr: SocketAddr,
     pub ui_broadcast: UiBroadcast,
-    pub client_id: i64,
+    pub agent_id: i64,
     pub expected_host_key: Option<String>,
 }
 
@@ -115,7 +115,7 @@ pub struct TunnelManager {
 
 #[derive(Clone)]
 struct TunnelState {
-    client_id: i64,
+    agent_id: i64,
     status: TunnelStatus,
     cancel: CancellationToken,
     completion: Arc<Notify>,
@@ -180,7 +180,7 @@ impl TunnelManager {
             map.insert(
                 tunnel_id,
                 TunnelState {
-                    client_id: tunnel.client_id,
+                    agent_id: tunnel.agent_id,
                     status: TunnelStatus::Disconnected,
                     cancel: cancel.clone(),
                     completion: completion.clone(),
@@ -266,7 +266,7 @@ impl TunnelManager {
                 let handler = TunnelSshHandler {
                     server_addr: manager.server_addr,
                     ui_broadcast: manager.ui_broadcast.clone(),
-                    client_id: current.client_id,
+                    agent_id: current.agent_id,
                     expected_host_key: None,
                 };
 
@@ -432,8 +432,8 @@ impl TunnelManager {
     /// Ensures the tunnel for the given client is started and not in a disconnected/error state.
     /// If it's not running or disconnected, restarts it. Returns `true` if the tunnel is
     /// connected or was just restarted (best-effort).
-    pub async fn ensure_client_tunnel_connected(&self, client_id: i64) -> bool {
-        let tunnel = match db::get_tunnel_by_client_id(&self.pool, client_id).await {
+    pub async fn ensure_agent_tunnel_connected(&self, agent_id: i64) -> bool {
+        let tunnel = match db::get_tunnel_by_agent_id(&self.pool, agent_id).await {
             Ok(t) => t,
             Err(_) => return true,
         };
@@ -462,19 +462,19 @@ impl TunnelManager {
     }
 
     async fn set_status(&self, tunnel_id: i64, hostname: &str, status: TunnelStatus) {
-        let client_id = {
+        let agent_id = {
             let mut map = self.tunnels.write().await;
             if let Some(state) = map.get_mut(&tunnel_id) {
                 state.status = status.clone();
-                Some(state.client_id)
+                Some(state.agent_id)
             } else {
                 None
             }
         };
 
-        if let Some(cid) = client_id {
+        if let Some(cid) = agent_id {
             self.ui_broadcast.send(ServerToUi::TunnelStatusChanged {
-                client_id: cid,
+                agent_id: cid,
                 hostname: hostname.to_string(),
                 status,
             });
@@ -574,7 +574,7 @@ mod tests {
         mgr.tunnels.write().await.insert(
             1,
             TunnelState {
-                client_id: 2,
+                agent_id: 2,
                 status: shared::protocol::TunnelStatus::Connected,
                 cancel: cancel.clone(),
                 completion: completion.clone(),

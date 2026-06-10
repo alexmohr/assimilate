@@ -104,7 +104,7 @@ function setupEditMode(schedule = mockSchedule): void {
       return Promise.resolve({ data: [{ client_id: schedule.client_id, execution_order: 0 }] })
     if (url === `/schedules/${schedule.id}/sources`)
       return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_host: [] } })
-    if (url === '/clients') return Promise.resolve({ data: mockClients })
+    if (url === '/agents') return Promise.resolve({ data: mockClients })
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
     return Promise.resolve({ data: [] })
   })
@@ -112,7 +112,7 @@ function setupEditMode(schedule = mockSchedule): void {
 
 function setupCreateMode(): void {
   mockApiClient.get.mockImplementation((url: string) => {
-    if (url === '/clients') return Promise.resolve({ data: mockClients })
+    if (url === '/agents') return Promise.resolve({ data: mockClients })
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
     return Promise.resolve({ data: [] })
   })

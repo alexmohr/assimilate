@@ -81,12 +81,12 @@ describe('dashboard operational components', () => {
 
     expect(wrapper.text()).toContain('2/3')
     expect(wrapper.text()).toContain('unassigned-host')
-    expect(wrapper.find('.host-links a').attributes('href')).toBe('/clients/unassigned-host')
-    expect(wrapper.find('.coverage-score').attributes('href')).toBe('/clients?coverage=protected')
+    expect(wrapper.find('.host-links a').attributes('href')).toBe('/agents/unassigned-host')
+    expect(wrapper.find('.coverage-score').attributes('href')).toBe('/agents?coverage=protected')
     expect(wrapper.findAll('.coverage-facts a').map((link) => link.attributes('href'))).toEqual([
-      '/clients?coverage=unassigned',
-      '/clients?coverage=never-succeeded',
-      '/clients?coverage=disabled-only',
+      '/agents?coverage=unassigned',
+      '/agents?coverage=never-succeeded',
+      '/agents?coverage=disabled-only',
     ])
   })
 

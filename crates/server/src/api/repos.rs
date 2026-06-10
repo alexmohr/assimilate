@@ -100,7 +100,7 @@ pub async fn list_repos(
 
 #[utoipa::path(
     get,
-    path = "/api/clients/{hostname}/repos",
+    path = "/api/agents/{hostname}/repos",
     tag = "Repositories",
     operation_id = "getClientRepos",
     summary = "List repositories for a specific host",
@@ -113,13 +113,13 @@ pub async fn list_repos(
         (status = 404, description = "Not found"),
     )
 )]
-pub async fn get_client_repos(
+pub async fn get_agent_repos(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
 ) -> Result<Json<Vec<RepoRow>>, ApiError> {
-    let client = db::get_client_by_hostname(&state.pool, &hostname).await?;
-    let repos = db::list_repos_for_client_public(&state.pool, client.id).await?;
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    let repos = db::list_repos_for_agent_public(&state.pool, agent.id).await?;
     Ok(Json(repos))
 }
 
@@ -1470,18 +1470,18 @@ pub async fn sync_existing_archives(
             continue;
         }
 
-        let (client_id, matched) = if let Some(&cached) = hostname_cache.get(hostname) {
+        let (agent_id, matched) = if let Some(&cached) = hostname_cache.get(hostname) {
             cached
         } else {
-            let (client, matched) = match db::resolve_client_for_hostname(pool, hostname).await? {
+            let (agent, matched) = match db::resolve_agent_for_hostname(pool, hostname).await? {
                 db::ResolveResult::ExactMatch(c) => (c, true),
                 db::ResolveResult::PatternMatch(c) => (c, true),
                 db::ResolveResult::Unmatched => {
-                    let c = db::get_or_create_client_by_hostname(pool, hostname).await?;
+                    let c = db::get_or_create_agent_by_hostname(pool, hostname).await?;
                     (c, false)
                 }
             };
-            let entry = (client.id, matched);
+            let entry = (agent.id, matched);
             hostname_cache.insert(hostname.to_string(), entry);
             entry
         };
@@ -1512,7 +1512,7 @@ pub async fn sync_existing_archives(
         .await;
 
         report_params.push(db::InsertReportParams {
-            client_id,
+            agent_id,
             repo_id,
             schedule_id: None,
             started_at,
@@ -1627,18 +1627,18 @@ pub async fn sync_new_archives(
             continue;
         }
 
-        let (client_id, matched) = if let Some(&cached) = hostname_cache.get(hostname) {
+        let (agent_id, matched) = if let Some(&cached) = hostname_cache.get(hostname) {
             cached
         } else {
-            let (client, matched) = match db::resolve_client_for_hostname(pool, hostname).await? {
+            let (agent, matched) = match db::resolve_agent_for_hostname(pool, hostname).await? {
                 db::ResolveResult::ExactMatch(c) => (c, true),
                 db::ResolveResult::PatternMatch(c) => (c, true),
                 db::ResolveResult::Unmatched => {
-                    let c = db::get_or_create_client_by_hostname(pool, hostname).await?;
+                    let c = db::get_or_create_agent_by_hostname(pool, hostname).await?;
                     (c, false)
                 }
             };
-            let entry = (client.id, matched);
+            let entry = (agent.id, matched);
             hostname_cache.insert(hostname.to_string(), entry);
             entry
         };
@@ -1669,7 +1669,7 @@ pub async fn sync_new_archives(
         .await;
 
         report_params.push(db::InsertReportParams {
-            client_id,
+            agent_id,
             repo_id,
             schedule_id: None,
             started_at,
@@ -2045,8 +2045,8 @@ pub async fn rescan_repo(
     }
 
     let unmatched_rows = sqlx::query_as::<_, UnmatchedRow>(
-        "SELECT br.id AS report_id, c.hostname FROM backup_reports br JOIN clients c ON c.id = \
-         br.client_id WHERE br.repo_id = $1 AND br.matched = false",
+        "SELECT br.id AS report_id, c.hostname FROM backup_reports br JOIN agents c ON c.id = \
+         br.agent_id WHERE br.repo_id = $1 AND br.matched = false",
     )
     .bind(repo_id)
     .fetch_all(&state.pool)
@@ -2056,16 +2056,16 @@ pub async fn rescan_repo(
     let mut matched_count = 0u64;
 
     for row in &unmatched_rows {
-        let result = db::resolve_client_for_hostname(&state.pool, &row.hostname).await?;
-        let new_client_id = match result {
+        let result = db::resolve_agent_for_hostname(&state.pool, &row.hostname).await?;
+        let new_agent_id = match result {
             db::ResolveResult::ExactMatch(c) => Some(c.id),
             db::ResolveResult::PatternMatch(c) => Some(c.id),
             db::ResolveResult::Unmatched => None,
         };
 
-        if let Some(client_id) = new_client_id {
-            sqlx::query("UPDATE backup_reports SET client_id = $1, matched = true WHERE id = $2")
-                .bind(client_id)
+        if let Some(agent_id) = new_agent_id {
+            sqlx::query("UPDATE backup_reports SET agent_id = $1, matched = true WHERE id = $2")
+                .bind(agent_id)
                 .bind(row.report_id)
                 .execute(&state.pool)
                 .await
@@ -2075,8 +2075,8 @@ pub async fn rescan_repo(
     }
 
     sqlx::query(
-        "DELETE FROM clients WHERE agent_token_hash = 'imported:no-auth' AND NOT EXISTS (SELECT 1 \
-         FROM backup_reports WHERE client_id = clients.id)",
+        "DELETE FROM agents WHERE agent_token_hash = 'imported:no-auth' AND NOT EXISTS (SELECT 1 \
+         FROM backup_reports WHERE agent_id = agents.id)",
     )
     .execute(&state.pool)
     .await

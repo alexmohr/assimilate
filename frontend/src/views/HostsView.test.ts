@@ -65,7 +65,7 @@ describe('HostsView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/clients') return Promise.resolve({ data: clients })
+      if (url === '/agents') return Promise.resolve({ data: clients })
       if (url === '/stats/dashboard-overview') {
         return Promise.resolve({
           data: {
@@ -95,7 +95,7 @@ describe('HostsView', () => {
         },
       ],
     })
-    await router.push('/clients?coverage=never-succeeded')
+    await router.push('/agents?coverage=never-succeeded')
     await router.isReady()
     const wrapper = mount(HostsView, {
       global: { plugins: [createPinia(), router] },

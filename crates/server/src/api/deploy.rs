@@ -105,7 +105,7 @@ pub async fn query_available_agent_version(binary_dir: &std::path::Path) -> Opti
 
 #[utoipa::path(
     post,
-    path = "/api/clients/{hostname}/deploy",
+    path = "/api/agents/{hostname}/deploy",
     tag = "Deployment",
     operation_id = "deployAgent",
     summary = "Deploy the agent binary to a host via SSH (admin only)",
@@ -133,8 +133,8 @@ pub async fn deploy_agent(
 
     let binary_dir = agent_binary_dir();
 
-    let client = db::get_client_by_hostname(&state.pool, &hostname).await?;
-    let tunnel_server_url = db::get_tunnel_by_client_id(&state.pool, client.id)
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    let tunnel_server_url = db::get_tunnel_by_agent_id(&state.pool, agent.id)
         .await
         .ok()
         .and_then(|tunnel| tunnel_server_url(&tunnel));
@@ -147,13 +147,13 @@ pub async fn deploy_agent(
         .filter(|&n| n > 0);
 
     let already_current = if let (Some(server_count), Some(agent_count)) =
-        (server_commit_count, client.agent_commit_count)
+        (server_commit_count, agent.agent_commit_count)
     {
         agent_count >= server_count
     } else {
         available_version
             .as_deref()
-            .zip(client.agent_version.as_deref())
+            .zip(agent.agent_version.as_deref())
             .is_some_and(|(av, dv)| av == dv)
     };
 
@@ -177,7 +177,7 @@ pub async fn deploy_agent(
     let token_hex = helpers::generate_random_hex(32);
     let token_hash = bcrypt::hash(&token_hex, bcrypt::DEFAULT_COST)?;
 
-    db::regenerate_client_token(&state.pool, &hostname, &token_hash).await?;
+    db::regenerate_agent_token(&state.pool, &hostname, &token_hash).await?;
 
     let install_path = req
         .install_path
@@ -206,7 +206,7 @@ pub async fn deploy_agent(
             if let Some(ref version) = available_version {
                 db::update_last_seen_and_version(
                     &state.pool,
-                    client.id,
+                    agent.id,
                     version,
                     None,
                     None,
@@ -240,7 +240,7 @@ mod tests {
     fn enabled_tunnel_uses_loopback_server_url() {
         let tunnel = db::SshTunnel {
             id: 1,
-            client_id: 2,
+            agent_id: 2,
             ssh_host: "agent.example.com".to_string(),
             ssh_user: "root".to_string(),
             ssh_port: 22,
@@ -259,7 +259,7 @@ mod tests {
     fn disabled_tunnel_does_not_override_server_url() {
         let tunnel = db::SshTunnel {
             id: 1,
-            client_id: 2,
+            agent_id: 2,
             ssh_host: "agent.example.com".to_string(),
             ssh_user: "root".to_string(),
             ssh_port: 22,

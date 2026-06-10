@@ -63,7 +63,7 @@ interface ScheduleBackupSourcesResponse {
   exclude_patterns_per_host: PerHostExcludePatterns[]
 }
 
-interface ClientRow {
+interface AgentRow {
   id: number
   hostname: string
   display_name: string | null
@@ -100,7 +100,7 @@ const router = useRouter()
 const isCreate = computed(() => props.id === 'new')
 
 const schedule = ref<ScheduleRow | null>(null)
-const clients = ref<ClientRow[]>([])
+const clients = ref<AgentRow[]>([])
 const repos = ref<RepoRow[]>([])
 const repo = computed(() => repos.value.find((r) => r.id === selectedRepoId.value) ?? null)
 const scheduleTargets = ref<ScheduleTarget[]>([])
@@ -159,7 +159,7 @@ const scheduleType = computed(() =>
 const isBackup = computed(() => scheduleType.value === 'backup')
 
 const clientMap = computed(() => {
-  const m = new Map<number, ClientRow>()
+  const m = new Map<number, AgentRow>()
   clients.value.forEach((c) => m.set(c.id, c))
   return m
 })
@@ -279,7 +279,7 @@ async function loadData(): Promise<void> {
   try {
     if (isCreate.value) {
       const [clientsRes, reposRes] = await Promise.all([
-        apiClient.get<ClientRow[]>('/clients'),
+        apiClient.get<AgentRow[]>('/agents'),
         apiClient.get<RepoRow[]>('/repos'),
       ])
       clients.value = clientsRes.data
@@ -292,7 +292,7 @@ async function loadData(): Promise<void> {
     } else {
       const [schedRes, clientsRes, reposRes, targetsRes, sourcesRes] = await Promise.all([
         apiClient.get<ScheduleRow>(`/schedules/${props.id}`),
-        apiClient.get<ClientRow[]>('/clients'),
+        apiClient.get<AgentRow[]>('/agents'),
         apiClient.get<RepoRow[]>('/repos'),
         apiClient.get<ScheduleTarget[]>(`/schedules/${props.id}/targets`),
         apiClient.get<ScheduleBackupSourcesResponse>(`/schedules/${props.id}/sources`),

@@ -23,7 +23,7 @@ import SshKeyDeployPanel from '../components/SshKeyDeployPanel.vue'
 
 type TabId = 'overview' | 'schedules' | 'backups'
 
-interface ClientRow {
+interface AgentRow {
   id: number
   hostname: string
   display_name: string | null
@@ -115,7 +115,7 @@ const tabs: { id: TabId; label: string }[] = [
   { id: 'backups', label: 'Backups' },
 ]
 
-const client = ref<ClientRow | null>(null)
+const client = ref<AgentRow | null>(null)
 const repos = ref<RepoRow[]>([])
 const schedules = ref<ScheduleRow[]>([])
 const reports = ref<ReportRow[]>([])
@@ -144,8 +144,8 @@ const filteredSortedReports = computed(() => {
 })
 
 // Tags
-const allHostTags = ref<TagRow[]>([])
-const hostTagIds = ref<number[]>([])
+const allAgentTags = ref<TagRow[]>([])
+const agentTagIds = ref<number[]>([])
 const tagsLoading = ref(false)
 const newTagName = ref('')
 const newTagColor = ref('#6b7280')
@@ -155,15 +155,15 @@ const isAdmin = computed(() => authStore.user?.role === 'admin')
 const isImported = computed(() => client.value?.is_imported ?? false)
 
 const hostTags = computed<TagRow[]>(() =>
-  allHostTags.value.filter((t) => hostTagIds.value.includes(t.id)),
+  allAgentTags.value.filter((t) => agentTagIds.value.includes(t.id)),
 )
 
 const availableTags = computed<TagRow[]>(() =>
-  allHostTags.value.filter((t) => !hostTagIds.value.includes(t.id)),
+  allAgentTags.value.filter((t) => !agentTagIds.value.includes(t.id)),
 )
 
 // Merge dialog
-const allClients = ref<ClientRow[]>([])
+const allAgents = ref<AgentRow[]>([])
 const showMergeDialog = ref(false)
 
 useEscapeKey(showMergeDialog, () => {
@@ -221,7 +221,7 @@ async function savePaths(): Promise<void> {
   pathsSaving.value = true
   pathsError.value = null
   try {
-    const res = await apiClient.put<ClientRow>(`/clients/${client.value.hostname}`, {
+    const res = await apiClient.put<AgentRow>(`/agents/${client.value.hostname}`, {
       display_name: client.value.display_name,
       default_backup_paths: parseLines(pathsText.value),
       default_exclude_patterns: client.value.default_exclude_patterns,
@@ -241,14 +241,14 @@ const excludesSaving = ref(false)
 const excludesError = ref<string | null>(null)
 
 // Hostname Aliases (patterns)
-interface HostnamePattern {
+interface AgentHostnamePattern {
   id: number
   client_id: number
   pattern: string
   created_at: string
 }
 
-const hostnamePatterns = ref<HostnamePattern[]>([])
+const hostnamePatterns = ref<AgentHostnamePattern[]>([])
 const newPattern = ref('')
 const patternAddLoading = ref(false)
 const patternError = ref<string | null>(null)
@@ -280,7 +280,7 @@ async function saveIdentity(): Promise<void> {
     const oldHostname = client.value.hostname
     const newHostname = identityHostname.value.trim()
     const hostnameChanged = newHostname !== oldHostname && newHostname.length > 0
-    const res = await apiClient.put<ClientRow>(`/clients/${oldHostname}`, {
+    const res = await apiClient.put<AgentRow>(`/agents/${oldHostname}`, {
       hostname: hostnameChanged ? newHostname : undefined,
       display_name: identityDisplayName.value.trim() || null,
       default_backup_paths: client.value.default_backup_paths,
@@ -290,7 +290,7 @@ async function saveIdentity(): Promise<void> {
       pendingAliasOldHostname.value = oldHostname
       pendingAliasNewHostname.value = newHostname
       showAliasConfirm.value = true
-      router.replace(`/clients/${newHostname}`)
+      router.replace(`/agents/${newHostname}`)
     }
     client.value = { ...client.value, ...res.data }
     editingIdentity.value = false
@@ -311,7 +311,7 @@ useEscapeKey(showAliasConfirm, () => {
 })
 
 async function confirmAddAlias(): Promise<void> {
-  await apiClient.post(`/clients/${pendingAliasNewHostname.value}/hostname-patterns`, {
+  await apiClient.post(`/agents/${pendingAliasNewHostname.value}/hostname-patterns`, {
     pattern: pendingAliasOldHostname.value,
   })
   await loadHostnamePatterns(pendingAliasNewHostname.value)
@@ -332,8 +332,8 @@ async function confirmDeleteHost(): Promise<void> {
   if (!client.value) return
   deleteLoading.value = true
   try {
-    await apiClient.delete(`/clients/${client.value.hostname}`)
-    router.push('/clients')
+    await apiClient.delete(`/agents/${client.value.hostname}`)
+    router.push('/agents')
   } catch (e: unknown) {
     logger.error('Failed to delete host', e)
   } finally {
@@ -341,15 +341,15 @@ async function confirmDeleteHost(): Promise<void> {
   }
 }
 
-// Hide imported client
+// Hide imported agent
 const hideLoading = ref(false)
 
 async function hideClient(): Promise<void> {
   if (!client.value) return
   hideLoading.value = true
   try {
-    await apiClient.put(`/clients/${client.value.hostname}/hide`)
-    router.push('/clients')
+    await apiClient.put(`/agents/${client.value.hostname}/hide`)
+    router.push('/agents')
   } catch (e: unknown) {
     logger.error('Failed to hide client', e)
   } finally {
@@ -369,8 +369,8 @@ async function confirmDeleteArchives(): Promise<void> {
   if (!client.value) return
   deleteArchivesLoading.value = true
   try {
-    await apiClient.post(`/clients/${client.value.hostname}/delete-archives`)
-    router.push('/clients')
+    await apiClient.post(`/agents/${client.value.hostname}/delete-archives`)
+    router.push('/agents')
   } catch (e: unknown) {
     logger.error('Failed to delete archives', e)
   } finally {
@@ -378,8 +378,8 @@ async function confirmDeleteArchives(): Promise<void> {
   }
 }
 
-interface CreateClientResponse {
-  client: ClientRow
+interface CreateAgentResponse {
+  client: AgentRow
   token: string
 }
 
@@ -388,11 +388,11 @@ async function adoptHost(): Promise<void> {
   try {
     const cleanDisplayName =
       client.value.display_name?.replace(/\s*\(imported\)$/, '').trim() || null
-    await apiClient.put(`/clients/${client.value.hostname}`, {
+    await apiClient.put(`/agents/${client.value.hostname}`, {
       display_name: cleanDisplayName,
     })
-    const res = await apiClient.post<CreateClientResponse>(
-      `/clients/${client.value.hostname}/regenerate-token`,
+    const res = await apiClient.post<CreateAgentResponse>(
+      `/agents/${client.value.hostname}/regenerate-token`,
     )
     client.value = {
       ...client.value,
@@ -414,7 +414,7 @@ function openMergeDialog(): void {
 
 function onMerged(): void {
   showMergeDialog.value = false
-  router.push('/clients')
+  router.push('/agents')
 }
 
 function startEditExcludes(): void {
@@ -432,7 +432,7 @@ async function saveExcludes(): Promise<void> {
   excludesSaving.value = true
   excludesError.value = null
   try {
-    const res = await apiClient.put<ClientRow>(`/clients/${client.value.hostname}`, {
+    const res = await apiClient.put<AgentRow>(`/agents/${client.value.hostname}`, {
       display_name: client.value.display_name,
       default_backup_paths: client.value.default_backup_paths,
       default_exclude_patterns: parseLines(excludesText.value),
@@ -454,7 +454,7 @@ async function loadHostnamePatterns(hostname?: string): Promise<void> {
   const h = hostname ?? client.value?.hostname
   if (!h) return
   try {
-    const res = await apiClient.get<HostnamePattern[]>(`/clients/${h}/hostname-patterns`)
+    const res = await apiClient.get<AgentHostnamePattern[]>(`/agents/${h}/hostname-patterns`)
     hostnamePatterns.value = res.data
   } catch (e: unknown) {
     logger.error('loadHostnamePatterns failed', e)
@@ -466,8 +466,8 @@ async function addHostnamePattern(): Promise<void> {
   patternAddLoading.value = true
   patternError.value = null
   try {
-    const res = await apiClient.post<HostnamePattern>(
-      `/clients/${client.value.hostname}/hostname-patterns`,
+    const res = await apiClient.post<AgentHostnamePattern>(
+      `/agents/${client.value.hostname}/hostname-patterns`,
       { pattern: newPattern.value.trim() },
     )
     hostnamePatterns.value = [...hostnamePatterns.value, res.data]
@@ -482,14 +482,14 @@ async function addHostnamePattern(): Promise<void> {
 async function deleteHostnamePattern(id: number): Promise<void> {
   if (!client.value) return
   try {
-    await apiClient.delete(`/clients/${client.value.hostname}/hostname-patterns/${id}`)
+    await apiClient.delete(`/agents/${client.value.hostname}/hostname-patterns/${id}`)
     hostnamePatterns.value = hostnamePatterns.value.filter((p) => p.id !== id)
   } catch (e: unknown) {
     patternError.value = extractError(e)
   }
 }
 
-function isOnline(client: ClientRow): boolean {
+function isOnline(client: AgentRow): boolean {
   return client.is_connected
 }
 
@@ -509,11 +509,11 @@ async function loadClient(): Promise<void> {
   loading.value = true
   error.value = null
   try {
-    const res = await apiClient.get<ClientRow[]>('/clients')
-    allClients.value = res.data
+    const res = await apiClient.get<AgentRow[]>('/agents')
+    allAgents.value = res.data
     client.value = res.data.find((m) => m.hostname === props.hostname) ?? null
     if (!client.value) {
-      error.value = `Client "${props.hostname}" not found`
+      error.value = `Agent "${props.hostname}" not found`
       return
     }
     await Promise.all([loadTabData(), loadTags(), loadHostnamePatterns()])
@@ -529,9 +529,9 @@ async function loadTabData(): Promise<void> {
   const hostname = client.value.hostname
   try {
     const [repoRes, schedRes, reportRes] = await Promise.all([
-      apiClient.get<RepoRow[]>(`/clients/${hostname}/repos`),
+      apiClient.get<RepoRow[]>(`/agents/${hostname}/repos`),
       apiClient.get<ScheduleRow[]>('/schedules'),
-      apiClient.get<ReportRow[]>(`/clients/${hostname}/reports`),
+      apiClient.get<ReportRow[]>(`/agents/${hostname}/reports`),
     ])
     repos.value = repoRes.data
     schedules.value = schedRes.data
@@ -597,8 +597,8 @@ async function regenerateToken(): Promise<void> {
   regenToken.value = null
   tokenCopied.value = false
   try {
-    const res = await apiClient.post<{ client: ClientRow; token: string }>(
-      `/clients/${props.hostname}/regenerate-token`,
+    const res = await apiClient.post<{ client: AgentRow; token: string }>(
+      `/agents/${props.hostname}/regenerate-token`,
     )
     regenToken.value = res.data.token
     client.value = res.data.client
@@ -615,7 +615,7 @@ async function restartAgent(): Promise<void> {
   restartLoading.value = true
   restartError.value = null
   try {
-    await apiClient.post(`/clients/${props.hostname}/restart`)
+    await apiClient.post(`/agents/${props.hostname}/restart`)
   } catch (e: unknown) {
     restartError.value = extractError(e)
   } finally {
@@ -626,15 +626,15 @@ async function restartAgent(): Promise<void> {
 async function loadTags(): Promise<void> {
   tagsLoading.value = true
   try {
-    const [tagsRes, hostTagsRes] = await Promise.all([
+    const [tagsRes, agentTagsRes] = await Promise.all([
       apiClient.get<TagRow[]>('/tags', { params: { scope: 'host' } }),
-      apiClient.get<TagRow[]>(`/clients/${props.hostname}/tags`).catch((e: unknown) => {
-        logger.error('load host tags failed', e)
+      apiClient.get<TagRow[]>(`/agents/${props.hostname}/tags`).catch((e: unknown) => {
+        logger.error('load agent tags failed', e)
         return { data: [] as TagRow[] }
       }),
     ])
-    allHostTags.value = tagsRes.data
-    hostTagIds.value = hostTagsRes.data.map((t) => t.id)
+    allAgentTags.value = tagsRes.data
+    agentTagIds.value = agentTagsRes.data.map((t) => t.id)
   } catch (e: unknown) {
     logger.error('loadTags failed', e)
   } finally {
@@ -643,20 +643,20 @@ async function loadTags(): Promise<void> {
 }
 
 async function addTag(tagId: number): Promise<void> {
-  const updated = [...hostTagIds.value, tagId]
+  const updated = [...agentTagIds.value, tagId]
   try {
-    await apiClient.put(`/clients/${props.hostname}/tags`, { tag_ids: updated })
-    hostTagIds.value = updated
+    await apiClient.put(`/agents/${props.hostname}/tags`, { tag_ids: updated })
+    agentTagIds.value = updated
   } catch (e: unknown) {
     logger.error('addTag failed', e)
   }
 }
 
 async function removeTag(tagId: number): Promise<void> {
-  const updated = hostTagIds.value.filter((id) => id !== tagId)
+  const updated = agentTagIds.value.filter((id) => id !== tagId)
   try {
-    await apiClient.put(`/clients/${props.hostname}/tags`, { tag_ids: updated })
-    hostTagIds.value = updated
+    await apiClient.put(`/agents/${props.hostname}/tags`, { tag_ids: updated })
+    agentTagIds.value = updated
   } catch (e: unknown) {
     logger.error('removeTag failed', e)
   }
@@ -671,7 +671,7 @@ async function createAndAddTag(): Promise<void> {
       color: newTagColor.value,
       scope: 'host',
     })
-    allHostTags.value.push(res.data)
+    allAgentTags.value.push(res.data)
     await addTag(res.data.id)
     newTagName.value = ''
     newTagColor.value = '#6b7280'
@@ -736,10 +736,10 @@ watch(wsStatus, (newStatus, oldStatus) => {
     <!-- Breadcrumb -->
     <nav class="breadcrumb">
       <RouterLink
-        to="/clients"
+        to="/agents"
         class="crumb-link"
       >
-        Clients
+        Agents
       </RouterLink>
       <span class="crumb-sep">/</span>
       <span class="crumb-current">{{ props.hostname }}</span>
@@ -776,7 +776,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
         class="tab-content"
       >
         <div class="info-card">
-          <h3 class="info-title">Client Information</h3>
+          <h3 class="info-title">Agent Information</h3>
           <dl class="info-grid">
             <dt>Hostname</dt>
             <dd class="mono">
@@ -919,7 +919,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
           v-if="editingIdentity"
           class="info-card"
         >
-          <h3 class="info-title">Edit Host Identity</h3>
+          <h3 class="info-title">Edit Agent Identity</h3>
           <div class="field">
             <label class="field-label">Hostname</label>
             <input
@@ -1181,9 +1181,9 @@ watch(wsStatus, (newStatus, oldStatus) => {
         <div class="info-card">
           <h3 class="info-title">Hostname Aliases</h3>
           <p class="field-hint">
-            Glob patterns that match archive hostnames to this client during repository import. Only
-            affects future discoveries — existing imported clients are not retroactively reassigned.
-            Use "Merge into" on an imported client to move its historical archives.
+            Glob patterns that match archive hostnames to this agent during repository import. Only
+            affects future discoveries — existing imported agents are not retroactively reassigned.
+            Use "Merge into" on an imported agent to move its historical archives.
           </p>
           <div
             v-if="hostnamePatterns.length > 0"
@@ -1248,9 +1248,9 @@ watch(wsStatus, (newStatus, oldStatus) => {
           <template v-if="isImported">
             <div class="danger-body">
               <div class="danger-info">
-                <span class="danger-heading">Hide Client</span>
+                <span class="danger-heading">Hide Agent</span>
                 <span class="danger-desc">
-                  Hide this imported client from the default list view.
+                  Hide this imported agent from the default list view.
                 </span>
               </div>
               <button
@@ -1265,7 +1265,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
               <div class="danger-info">
                 <span class="danger-heading">Delete Archives &amp; Remove</span>
                 <span class="danger-desc">
-                  Permanently delete all borg archives and remove this client. This is irreversible.
+                  Permanently delete all borg archives and remove this agent. This is irreversible.
                 </span>
               </div>
               <button
@@ -1280,9 +1280,9 @@ watch(wsStatus, (newStatus, oldStatus) => {
           <template v-else>
             <div class="danger-body">
               <div class="danger-info">
-                <span class="danger-heading">Delete Host</span>
+                <span class="danger-heading">Delete Agent</span>
                 <span class="danger-desc">
-                  Permanently remove this host and all associated data. This action cannot be
+                  Permanently remove this agent and all associated data. This action cannot be
                   undone.
                 </span>
               </div>
@@ -1291,7 +1291,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
                 :disabled="deleteLoading"
                 @click="showDeleteDialog = true"
               >
-                {{ deleteLoading ? 'Deleting...' : 'Delete Host' }}
+                {{ deleteLoading ? 'Deleting...' : 'Delete Agent' }}
               </button>
             </div>
           </template>
@@ -1316,7 +1316,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
           v-if="clientSchedules.length === 0"
           class="state-msg"
         >
-          No schedules for this client.
+          No schedules for this agent.
         </div>
         <div
           v-else
@@ -1518,7 +1518,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
       </div>
     </Teleport>
 
-    <!-- Delete Host Confirmation Dialog -->
+    <!-- Delete Agent Confirmation Dialog -->
     <Teleport to="body">
       <div
         v-if="showDeleteDialog"
@@ -1527,7 +1527,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
       >
         <div class="dialog">
           <div class="dialog-header">
-            <h2 class="dialog-title">Delete Host</h2>
+            <h2 class="dialog-title">Delete Agent</h2>
             <button
               class="close-btn"
               @click="showDeleteDialog = false"
@@ -1554,7 +1554,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
               :disabled="deleteLoading"
               @click="confirmDeleteHost"
             >
-              {{ deleteLoading ? 'Deleting...' : 'Delete Host' }}
+              {{ deleteLoading ? 'Deleting...' : 'Delete Agent' }}
             </button>
           </div>
         </div>
@@ -1570,7 +1570,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
       >
         <div class="dialog">
           <div class="dialog-header">
-            <h2 class="dialog-title">Delete Archives &amp; Remove Client</h2>
+            <h2 class="dialog-title">Delete Archives &amp; Remove Agent</h2>
             <button
               class="close-btn"
               @click="showDeleteArchivesDialog = false"
@@ -1581,7 +1581,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
           <div class="dialog-body">
             <p class="danger-warning-text">
               This will <strong>permanently destroy all borg archives</strong> belonging to
-              <strong>{{ client?.hostname }}</strong> and remove the client from the system.
+              <strong>{{ client?.hostname }}</strong> and remove the agent from the system.
             </p>
             <p class="danger-warning-text">
               This operation is <strong>irreversible</strong>. Backup data will be permanently lost
@@ -1653,12 +1653,12 @@ watch(wsStatus, (newStatus, oldStatus) => {
       </div>
     </Teleport>
 
-    <!-- Merge Client Dialog -->
+    <!-- Merge Agent Dialog -->
     <Teleport to="body">
       <MergeClientDialog
         v-if="showMergeDialog && client"
         :source="client"
-        :all-clients="allClients"
+        :all-agents="allAgents"
         @merged="onMerged"
         @cancel="showMergeDialog = false"
       />

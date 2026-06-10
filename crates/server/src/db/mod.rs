@@ -170,7 +170,7 @@ pub struct RepoConnectionRow {
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct SshTunnel {
     pub id: i64,
-    pub client_id: i64,
+    pub agent_id: i64,
     pub ssh_host: String,
     pub ssh_user: String,
     pub ssh_port: i32,
@@ -181,7 +181,7 @@ pub struct SshTunnel {
 
 #[derive(Debug, Deserialize)]
 pub struct NewSshTunnel {
-    pub client_id: i64,
+    pub agent_id: i64,
     pub ssh_host: String,
     pub ssh_user: String,
     pub ssh_port: Option<i32>,
@@ -236,7 +236,7 @@ pub struct ScheduleRow {
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ScheduleTargetRow {
-    pub client_id: i64,
+    pub agent_id: i64,
     pub execution_order: i32,
 }
 
@@ -285,14 +285,12 @@ pub async fn get_agent_by_id(pool: &PgPool, agent_id: i64) -> Result<AgentRow, A
     .fetch_one(pool)
     .await
     .map_err(|e| match e {
-        sqlx::Error::RowNotFound => {
-            ApiError::NotFound(format!("agent id '{agent_id}' not found"))
-        }
+        sqlx::Error::RowNotFound => ApiError::NotFound(format!("agent id '{agent_id}' not found")),
         other => ApiError::Database(other),
     })
 }
 
-pub async fn get_client_token_hash(
+pub async fn get_agent_token_hash(
     pool: &PgPool,
     hostname: &str,
 ) -> Result<(i64, String), ApiError> {
@@ -317,9 +315,9 @@ pub async fn get_client_token_hash(
     Ok((row.id, row.agent_token_hash))
 }
 
-pub async fn update_last_seen(pool: &PgPool, client_id: i64) -> Result<(), ApiError> {
-    sqlx::query("UPDATE clients SET last_seen_at = NOW() WHERE id = $1")
-        .bind(client_id)
+pub async fn update_last_seen(pool: &PgPool, agent_id: i64) -> Result<(), ApiError> {
+    sqlx::query("UPDATE agents SET last_seen_at = NOW() WHERE id = $1")
+        .bind(agent_id)
         .execute(pool)
         .await
         .map_err(ApiError::Database)?;
@@ -328,17 +326,17 @@ pub async fn update_last_seen(pool: &PgPool, client_id: i64) -> Result<(), ApiEr
 
 pub async fn update_last_seen_and_version(
     pool: &PgPool,
-    client_id: i64,
+    agent_id: i64,
     agent_version: &str,
     agent_git_sha: Option<&str>,
     agent_build_time: Option<&str>,
     agent_commit_count: Option<i32>,
 ) -> Result<(), ApiError> {
     sqlx::query(
-        "UPDATE clients SET last_seen_at = NOW(), agent_version = $2, agent_git_sha = $3, \
+        "UPDATE agents SET last_seen_at = NOW(), agent_version = $2, agent_git_sha = $3, \
          agent_build_time = $4, agent_commit_count = $5 WHERE id = $1",
     )
-    .bind(client_id)
+    .bind(agent_id)
     .bind(agent_version)
     .bind(agent_git_sha)
     .bind(agent_build_time)
@@ -350,7 +348,7 @@ pub async fn update_last_seen_and_version(
 }
 
 pub async fn update_last_seen_by_hostname(pool: &PgPool, hostname: &str) -> Result<(), ApiError> {
-    sqlx::query("UPDATE clients SET last_seen_at = NOW() WHERE hostname = $1")
+    sqlx::query("UPDATE agents SET last_seen_at = NOW() WHERE hostname = $1")
         .bind(hostname)
         .execute(pool)
         .await
@@ -358,30 +356,30 @@ pub async fn update_last_seen_by_hostname(pool: &PgPool, hostname: &str) -> Resu
     Ok(())
 }
 
-pub async fn list_clients(pool: &PgPool, include_hidden: bool) -> Result<Vec<ClientRow>, ApiError> {
+pub async fn list_agents(pool: &PgPool, include_hidden: bool) -> Result<Vec<AgentRow>, ApiError> {
     let sql = if include_hidden {
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, agent_token_hash, is_hidden FROM clients ORDER BY hostname"
+         default_exclude_patterns, agent_token_hash, is_hidden FROM agents ORDER BY hostname"
     } else {
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, agent_token_hash, is_hidden FROM clients WHERE is_hidden = \
-         false ORDER BY hostname"
+         default_exclude_patterns, agent_token_hash, is_hidden FROM agents WHERE is_hidden = false \
+         ORDER BY hostname"
     };
-    sqlx::query_as::<_, ClientRow>(sql)
+    sqlx::query_as::<_, AgentRow>(sql)
         .fetch_all(pool)
         .await
         .map_err(ApiError::Database)
 }
 
-pub async fn set_client_hidden(
+pub async fn set_agent_hidden(
     pool: &PgPool,
     hostname: &str,
     hidden: bool,
-) -> Result<ClientRow, ApiError> {
-    sqlx::query_as::<_, ClientRow>(
-        "UPDATE clients SET is_hidden = $2 WHERE hostname = $1 RETURNING id, hostname, \
+) -> Result<AgentRow, ApiError> {
+    sqlx::query_as::<_, AgentRow>(
+        "UPDATE agents SET is_hidden = $2 WHERE hostname = $1 RETURNING id, hostname, \
          display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
          default_exclude_patterns, agent_token_hash, is_hidden",
@@ -391,21 +389,21 @@ pub async fn set_client_hidden(
     .fetch_optional(pool)
     .await
     .map_err(ApiError::Database)?
-    .ok_or_else(|| ApiError::NotFound(format!("Client {hostname} not found")))
+    .ok_or_else(|| ApiError::NotFound(format!("Agent {hostname} not found")))
 }
 
-/// Finds a client by hostname, or creates a placeholder client for archive imports.
+/// Finds an agent by hostname, or creates a placeholder agent for archive imports.
 ///
-/// Placeholder clients have a dummy token hash and cannot authenticate. They serve
+/// Placeholder agents have a dummy token hash and cannot authenticate. They serve
 /// only as a foreign key target for imported `backup_reports`.
-pub async fn get_or_create_client_by_hostname(
+pub async fn get_or_create_agent_by_hostname(
     pool: &PgPool,
     hostname: &str,
-) -> Result<ClientRow, ApiError> {
-    let existing = sqlx::query_as::<_, ClientRow>(
+) -> Result<AgentRow, ApiError> {
+    let existing = sqlx::query_as::<_, AgentRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM clients \
+         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM agents \
          WHERE hostname = $1",
     )
     .bind(hostname)
@@ -413,12 +411,12 @@ pub async fn get_or_create_client_by_hostname(
     .await
     .map_err(ApiError::Database)?;
 
-    if let Some(client) = existing {
-        return Ok(client);
+    if let Some(agent) = existing {
+        return Ok(agent);
     }
 
-    sqlx::query_as::<_, ClientRow>(
-        "INSERT INTO clients (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, \
+    sqlx::query_as::<_, AgentRow>(
+        "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, \
          $3, NULL) RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
          agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
          default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden",
@@ -431,15 +429,15 @@ pub async fn get_or_create_client_by_hostname(
     .map_err(ApiError::Database)
 }
 
-pub async fn insert_client(
+pub async fn insert_agent(
     pool: &PgPool,
     hostname: &str,
     display_name: Option<&str>,
     token_hash: &str,
     owner_id: Option<i64>,
-) -> Result<ClientRow, ApiError> {
-    sqlx::query_as::<_, ClientRow>(
-        "INSERT INTO clients (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, \
+) -> Result<AgentRow, ApiError> {
+    sqlx::query_as::<_, AgentRow>(
+        "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, \
          $3, $4) RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
          agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
          default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden",
@@ -453,16 +451,16 @@ pub async fn insert_client(
     .map_err(ApiError::Database)
 }
 
-pub async fn insert_client_with_paths(
+pub async fn insert_agent_with_paths(
     pool: &PgPool,
     hostname: &str,
     display_name: Option<&str>,
     token_hash: &str,
     default_backup_paths: &[String],
     default_exclude_patterns: &[String],
-) -> Result<ClientRow, ApiError> {
-    sqlx::query_as::<_, ClientRow>(
-        "INSERT INTO clients (hostname, display_name, agent_token_hash, default_backup_paths, \
+) -> Result<AgentRow, ApiError> {
+    sqlx::query_as::<_, AgentRow>(
+        "INSERT INTO agents (hostname, display_name, agent_token_hash, default_backup_paths, \
          default_exclude_patterns) VALUES ($1, $2, $3, $4, $5) RETURNING id, hostname, \
          display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
@@ -478,16 +476,16 @@ pub async fn insert_client_with_paths(
     .map_err(ApiError::Database)
 }
 
-pub async fn update_client(
+pub async fn update_agent(
     pool: &PgPool,
     hostname: &str,
     new_hostname: &str,
     display_name: Option<&str>,
     default_backup_paths: &[String],
     default_exclude_patterns: &[String],
-) -> Result<ClientRow, ApiError> {
-    sqlx::query_as::<_, ClientRow>(
-        "UPDATE clients SET hostname = $2, display_name = $3, default_backup_paths = $4, \
+) -> Result<AgentRow, ApiError> {
+    sqlx::query_as::<_, AgentRow>(
+        "UPDATE agents SET hostname = $2, display_name = $3, default_backup_paths = $4, \
          default_exclude_patterns = $5 WHERE hostname = $1 RETURNING id, hostname, display_name, \
          agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, \
          last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, \
@@ -501,18 +499,18 @@ pub async fn update_client(
     .fetch_one(pool)
     .await
     .map_err(|e| match e {
-        sqlx::Error::RowNotFound => ApiError::NotFound(format!("client '{hostname}' not found")),
+        sqlx::Error::RowNotFound => ApiError::NotFound(format!("agent '{hostname}' not found")),
         other => ApiError::Database(other),
     })
 }
 
-pub async fn regenerate_client_token(
+pub async fn regenerate_agent_token(
     pool: &PgPool,
     hostname: &str,
     token_hash: &str,
-) -> Result<ClientRow, ApiError> {
-    sqlx::query_as::<_, ClientRow>(
-        "UPDATE clients SET agent_token_hash = $2 WHERE hostname = $1 RETURNING id, hostname, \
+) -> Result<AgentRow, ApiError> {
+    sqlx::query_as::<_, AgentRow>(
+        "UPDATE agents SET agent_token_hash = $2 WHERE hostname = $1 RETURNING id, hostname, \
          display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
          default_exclude_patterns, agent_token_hash, is_hidden",
@@ -522,38 +520,36 @@ pub async fn regenerate_client_token(
     .fetch_one(pool)
     .await
     .map_err(|e| match e {
-        sqlx::Error::RowNotFound => ApiError::NotFound(format!("client '{hostname}' not found")),
+        sqlx::Error::RowNotFound => ApiError::NotFound(format!("agent '{hostname}' not found")),
         other => ApiError::Database(other),
     })
 }
 
-pub async fn mark_client_reports_matched(pool: &PgPool, client_id: i64) -> Result<(), ApiError> {
-    sqlx::query(
-        "UPDATE backup_reports SET matched = true WHERE client_id = $1 AND matched = false",
-    )
-    .bind(client_id)
-    .execute(pool)
-    .await
-    .map_err(ApiError::Database)?;
+pub async fn mark_agent_reports_matched(pool: &PgPool, agent_id: i64) -> Result<(), ApiError> {
+    sqlx::query("UPDATE backup_reports SET matched = true WHERE agent_id = $1 AND matched = false")
+        .bind(agent_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
     Ok(())
 }
 
-pub async fn delete_client(pool: &PgPool, hostname: &str) -> Result<(), ApiError> {
-    let result = sqlx::query("DELETE FROM clients WHERE hostname = $1")
+pub async fn delete_agent(pool: &PgPool, hostname: &str) -> Result<(), ApiError> {
+    let result = sqlx::query("DELETE FROM agents WHERE hostname = $1")
         .bind(hostname)
         .execute(pool)
         .await
         .map_err(ApiError::Database)?;
 
     if result.rows_affected() == 0 {
-        return Err(ApiError::NotFound(format!("client '{hostname}' not found")));
+        return Err(ApiError::NotFound(format!("agent '{hostname}' not found")));
     }
     Ok(())
 }
 
-pub async fn get_archives_for_client(
+pub async fn get_archives_for_agent(
     pool: &PgPool,
-    client_id: i64,
+    agent_id: i64,
 ) -> Result<Vec<(shared::types::RepoId, Vec<String>)>, ApiError> {
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -562,10 +558,10 @@ pub async fn get_archives_for_client(
     }
 
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT repo_id, archive_name FROM backup_reports WHERE client_id = $1 AND archive_name \
-         IS NOT NULL",
+        "SELECT repo_id, archive_name FROM backup_reports WHERE agent_id = $1 AND archive_name IS \
+         NOT NULL",
     )
-    .bind(client_id)
+    .bind(agent_id)
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)?;
@@ -583,13 +579,13 @@ pub async fn get_archives_for_client(
         .collect())
 }
 
-pub async fn get_archives_for_client_with_patterns(
+pub async fn get_archives_for_agent_with_patterns(
     pool: &PgPool,
-    client_id: i64,
+    agent_id: i64,
 ) -> Result<Vec<(shared::types::RepoId, Vec<String>)>, ApiError> {
-    let patterns = patterns::list_patterns_for_client(pool, client_id).await?;
+    let patterns = patterns::list_patterns_for_agent(pool, agent_id).await?;
 
-    let mut client_ids = vec![client_id];
+    let mut agent_ids = vec![agent_id];
 
     if !patterns.is_empty() {
         #[derive(sqlx::FromRow)]
@@ -598,23 +594,23 @@ pub async fn get_archives_for_client_with_patterns(
             hostname: String,
         }
 
-        let all_clients =
-            sqlx::query_as::<_, IdHostname>("SELECT id, hostname FROM clients WHERE id != $1")
-                .bind(client_id)
+        let all_agents =
+            sqlx::query_as::<_, IdHostname>("SELECT id, hostname FROM agents WHERE id != $1")
+                .bind(agent_id)
                 .fetch_all(pool)
                 .await
                 .map_err(ApiError::Database)?;
 
-        for c in &all_clients {
-            let hostname_base = c
+        for a in &all_agents {
+            let hostname_base = a
                 .hostname
                 .strip_suffix(" (imported)")
-                .unwrap_or(&c.hostname);
+                .unwrap_or(&a.hostname);
             if patterns
                 .iter()
                 .any(|p| glob_match::glob_match(&p.pattern, hostname_base))
             {
-                client_ids.push(c.id);
+                agent_ids.push(a.id);
             }
         }
     }
@@ -625,7 +621,7 @@ pub async fn get_archives_for_client_with_patterns(
         archive_name: Option<String>,
     }
 
-    let placeholders: String = client_ids
+    let placeholders: String = agent_ids
         .iter()
         .enumerate()
         .map(|(i, _)| format!("${}", i + 1))
@@ -633,12 +629,12 @@ pub async fn get_archives_for_client_with_patterns(
         .join(", ");
 
     let query_str = format!(
-        "SELECT repo_id, archive_name FROM backup_reports WHERE client_id IN ({placeholders}) AND \
+        "SELECT repo_id, archive_name FROM backup_reports WHERE agent_id IN ({placeholders}) AND \
          archive_name IS NOT NULL"
     );
 
     let mut query = sqlx::query_as::<_, Row>(&query_str);
-    for id in &client_ids {
+    for id in &agent_ids {
         query = query.bind(id);
     }
 
@@ -667,8 +663,8 @@ pub async fn get_schedule_target_hostnames_for_repo(
     }
 
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT DISTINCT c.hostname FROM clients c JOIN schedule_targets st ON st.client_id = \
-         c.id JOIN schedules s ON s.id = st.schedule_id WHERE s.repo_id = $1",
+        "SELECT DISTINCT a.hostname FROM agents a JOIN schedule_targets st ON st.agent_id = a.id \
+         JOIN schedules s ON s.id = st.schedule_id WHERE s.repo_id = $1",
     )
     .bind(repo_id)
     .fetch_all(pool)
@@ -936,8 +932,8 @@ pub async fn delete_repo(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
 
 pub async fn list_enabled_tunnels(pool: &PgPool) -> Result<Vec<SshTunnel>, ApiError> {
     sqlx::query_as::<_, SshTunnel>(
-        "SELECT id, client_id, ssh_host, ssh_user, ssh_port, tunnel_port, enabled, created_at \
-         FROM ssh_tunnels WHERE enabled = true ORDER BY id",
+        "SELECT id, agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, enabled, created_at FROM \
+         ssh_tunnels WHERE enabled = true ORDER BY id",
     )
     .fetch_all(pool)
     .await
@@ -946,8 +942,8 @@ pub async fn list_enabled_tunnels(pool: &PgPool) -> Result<Vec<SshTunnel>, ApiEr
 
 pub async fn list_all_tunnels(pool: &PgPool) -> Result<Vec<SshTunnel>, ApiError> {
     sqlx::query_as::<_, SshTunnel>(
-        "SELECT id, client_id, ssh_host, ssh_user, ssh_port, tunnel_port, enabled, created_at \
-         FROM ssh_tunnels ORDER BY id",
+        "SELECT id, agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, enabled, created_at FROM \
+         ssh_tunnels ORDER BY id",
     )
     .fetch_all(pool)
     .await
@@ -956,8 +952,8 @@ pub async fn list_all_tunnels(pool: &PgPool) -> Result<Vec<SshTunnel>, ApiError>
 
 pub async fn get_tunnel_by_id(pool: &PgPool, id: i64) -> Result<SshTunnel, ApiError> {
     sqlx::query_as::<_, SshTunnel>(
-        "SELECT id, client_id, ssh_host, ssh_user, ssh_port, tunnel_port, enabled, created_at \
-         FROM ssh_tunnels WHERE id = $1",
+        "SELECT id, agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, enabled, created_at FROM \
+         ssh_tunnels WHERE id = $1",
     )
     .bind(id)
     .fetch_one(pool)
@@ -968,17 +964,17 @@ pub async fn get_tunnel_by_id(pool: &PgPool, id: i64) -> Result<SshTunnel, ApiEr
     })
 }
 
-pub async fn get_tunnel_by_client_id(pool: &PgPool, client_id: i64) -> Result<SshTunnel, ApiError> {
+pub async fn get_tunnel_by_agent_id(pool: &PgPool, agent_id: i64) -> Result<SshTunnel, ApiError> {
     sqlx::query_as::<_, SshTunnel>(
-        "SELECT id, client_id, ssh_host, ssh_user, ssh_port, tunnel_port, enabled, created_at \
-         FROM ssh_tunnels WHERE client_id = $1",
+        "SELECT id, agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, enabled, created_at FROM \
+         ssh_tunnels WHERE agent_id = $1",
     )
-    .bind(client_id)
+    .bind(agent_id)
     .fetch_one(pool)
     .await
     .map_err(|e| match e {
         sqlx::Error::RowNotFound => {
-            ApiError::NotFound(format!("ssh tunnel for client {client_id} not found"))
+            ApiError::NotFound(format!("ssh tunnel for agent {agent_id} not found"))
         }
         other => ApiError::Database(other),
     })
@@ -986,11 +982,11 @@ pub async fn get_tunnel_by_client_id(pool: &PgPool, client_id: i64) -> Result<Ss
 
 pub async fn insert_tunnel(pool: &PgPool, params: &NewSshTunnel) -> Result<SshTunnel, ApiError> {
     sqlx::query_as::<_, SshTunnel>(
-        "INSERT INTO ssh_tunnels (client_id, ssh_host, ssh_user, ssh_port, tunnel_port, enabled) \
-         VALUES ($1, $2, $3, COALESCE($4, 22), $5, COALESCE($6, true)) RETURNING id, client_id, \
+        "INSERT INTO ssh_tunnels (agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, enabled) \
+         VALUES ($1, $2, $3, COALESCE($4, 22), $5, COALESCE($6, true)) RETURNING id, agent_id, \
          ssh_host, ssh_user, ssh_port, tunnel_port, enabled, created_at",
     )
-    .bind(params.client_id)
+    .bind(params.agent_id)
     .bind(&params.ssh_host)
     .bind(&params.ssh_user)
     .bind(params.ssh_port)
@@ -1009,7 +1005,7 @@ pub async fn update_tunnel(
     sqlx::query_as::<_, SshTunnel>(
         "UPDATE ssh_tunnels SET ssh_host = COALESCE($2, ssh_host), ssh_user = COALESCE($3, \
          ssh_user), ssh_port = COALESCE($4, ssh_port), tunnel_port = COALESCE($5, tunnel_port), \
-         enabled = COALESCE($6, enabled) WHERE id = $1 RETURNING id, client_id, ssh_host, \
+         enabled = COALESCE($6, enabled) WHERE id = $1 RETURNING id, agent_id, ssh_host, \
          ssh_user, ssh_port, tunnel_port, enabled, created_at",
     )
     .bind(id)
@@ -1128,8 +1124,8 @@ pub async fn list_schedules(pool: &PgPool) -> Result<Vec<ScheduleRow>, ApiError>
          s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, \
          s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands, \
          s.post_backup_commands, s.execution_mode, s.on_failure, s.owner_id, s.visibility, \
-         ARRAY(SELECT c.hostname FROM schedule_targets st JOIN clients c ON c.id = st.client_id \
-         WHERE st.schedule_id = s.id ORDER BY st.execution_order, c.hostname) AS target_hostnames \
+         ARRAY(SELECT a.hostname FROM schedule_targets st JOIN agents a ON a.id = st.agent_id \
+         WHERE st.schedule_id = s.id ORDER BY st.execution_order, a.hostname) AS target_hostnames \
          FROM schedules s ORDER BY s.id",
     )
     .fetch_all(pool)
@@ -1307,33 +1303,33 @@ pub async fn list_all_repos(pool: &PgPool) -> Result<Vec<RepoRow>, ApiError> {
     .map_err(ApiError::Database)
 }
 
-pub async fn list_repos_for_client(
+pub async fn list_repos_for_agent(
     pool: &PgPool,
-    client_id: i64,
+    agent_id: i64,
 ) -> Result<Vec<RepoWithPassphraseRow>, ApiError> {
     sqlx::query_as::<_, RepoWithPassphraseRow>(
         "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, \
          r.ssh_host_key, r.passphrase_encrypted, r.compression, r.encryption, r.enabled, \
          r.relocation_pending, r.sync_schedule FROM repos r JOIN schedules s ON s.repo_id = r.id \
-         JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.client_id = $1 ORDER BY r.id",
+         JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 ORDER BY r.id",
     )
-    .bind(client_id)
+    .bind(agent_id)
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)
 }
 
-pub async fn list_repos_for_client_public(
+pub async fn list_repos_for_agent_public(
     pool: &PgPool,
-    client_id: i64,
+    agent_id: i64,
 ) -> Result<Vec<RepoRow>, ApiError> {
     sqlx::query_as::<_, RepoRow>(
         "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, \
          r.compression, r.encryption, r.enabled, r.owner_id, r.visibility, r.sync_schedule, \
          r.last_synced_at FROM repos r JOIN schedules s ON s.repo_id = r.id JOIN schedule_targets \
-         st ON st.schedule_id = s.id WHERE st.client_id = $1 ORDER BY r.id",
+         st ON st.schedule_id = s.id WHERE st.agent_id = $1 ORDER BY r.id",
     )
-    .bind(client_id)
+    .bind(agent_id)
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)
@@ -1369,7 +1365,7 @@ pub async fn list_backup_sources_for_schedule(
     }
 
     let rows = sqlx::query_as::<_, PathRow>(
-        "SELECT path FROM backup_sources WHERE schedule_id = $1 AND client_id IS NULL ORDER BY \
+        "SELECT path FROM backup_sources WHERE schedule_id = $1 AND agent_id IS NULL ORDER BY \
          sort_order, id",
     )
     .bind(schedule_id)
@@ -1380,10 +1376,10 @@ pub async fn list_backup_sources_for_schedule(
     Ok(rows.into_iter().map(|r| r.path).collect())
 }
 
-pub async fn list_backup_sources_for_schedule_client(
+pub async fn list_backup_sources_for_schedule_agent(
     pool: &PgPool,
     schedule_id: i64,
-    client_id: i64,
+    agent_id: i64,
 ) -> Result<Vec<String>, ApiError> {
     #[derive(sqlx::FromRow)]
     struct PathRow {
@@ -1391,11 +1387,11 @@ pub async fn list_backup_sources_for_schedule_client(
     }
 
     let rows = sqlx::query_as::<_, PathRow>(
-        "SELECT path FROM backup_sources WHERE schedule_id = $1 AND client_id = $2 ORDER BY \
+        "SELECT path FROM backup_sources WHERE schedule_id = $1 AND agent_id = $2 ORDER BY \
          sort_order, id",
     )
     .bind(schedule_id)
-    .bind(client_id)
+    .bind(agent_id)
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)?;
@@ -1404,24 +1400,24 @@ pub async fn list_backup_sources_for_schedule_client(
 }
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
-pub struct PerHostBackupSources {
-    pub client_id: i64,
+pub struct PerAgentBackupSources {
+    pub agent_id: i64,
     pub paths: Vec<String>,
 }
 
-pub async fn list_all_per_host_backup_sources_for_schedule(
+pub async fn list_all_per_agent_backup_sources_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
-) -> Result<Vec<PerHostBackupSources>, ApiError> {
+) -> Result<Vec<PerAgentBackupSources>, ApiError> {
     #[derive(sqlx::FromRow)]
     struct Row {
-        client_id: i64,
+        agent_id: i64,
         path: String,
     }
 
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT client_id, path FROM backup_sources WHERE schedule_id = $1 AND client_id IS NOT \
-         NULL ORDER BY client_id, sort_order, id",
+        "SELECT agent_id, path FROM backup_sources WHERE schedule_id = $1 AND agent_id IS NOT \
+         NULL ORDER BY agent_id, sort_order, id",
     )
     .bind(schedule_id)
     .fetch_all(pool)
@@ -1430,12 +1426,12 @@ pub async fn list_all_per_host_backup_sources_for_schedule(
 
     let mut map: std::collections::BTreeMap<i64, Vec<String>> = std::collections::BTreeMap::new();
     for row in rows {
-        map.entry(row.client_id).or_default().push(row.path);
+        map.entry(row.agent_id).or_default().push(row.path);
     }
 
     Ok(map
         .into_iter()
-        .map(|(client_id, paths)| PerHostBackupSources { client_id, paths })
+        .map(|(agent_id, paths)| PerAgentBackupSources { agent_id, paths })
         .collect())
 }
 
@@ -1455,19 +1451,19 @@ pub async fn insert_backup_source_for_schedule(
     Ok(())
 }
 
-pub async fn insert_backup_source_for_schedule_client(
+pub async fn insert_backup_source_for_schedule_agent(
     pool: &PgPool,
     schedule_id: i64,
-    client_id: i64,
+    agent_id: i64,
     path: &str,
     sort_order: i32,
 ) -> Result<(), ApiError> {
     sqlx::query(
-        "INSERT INTO backup_sources (schedule_id, client_id, path, sort_order) VALUES ($1, $2, \
-         $3, $4)",
+        "INSERT INTO backup_sources (schedule_id, agent_id, path, sort_order) VALUES ($1, $2, $3, \
+         $4)",
     )
     .bind(schedule_id)
-    .bind(client_id)
+    .bind(agent_id)
     .bind(path)
     .bind(sort_order)
     .execute(pool)
@@ -1480,7 +1476,7 @@ pub async fn delete_backup_sources_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
 ) -> Result<(), ApiError> {
-    sqlx::query("DELETE FROM backup_sources WHERE schedule_id = $1 AND client_id IS NULL")
+    sqlx::query("DELETE FROM backup_sources WHERE schedule_id = $1 AND agent_id IS NULL")
         .bind(schedule_id)
         .execute(pool)
         .await
@@ -1488,11 +1484,11 @@ pub async fn delete_backup_sources_for_schedule(
     Ok(())
 }
 
-pub async fn delete_per_host_backup_sources_for_schedule(
+pub async fn delete_per_agent_backup_sources_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
 ) -> Result<(), ApiError> {
-    sqlx::query("DELETE FROM backup_sources WHERE schedule_id = $1 AND client_id IS NOT NULL")
+    sqlx::query("DELETE FROM backup_sources WHERE schedule_id = $1 AND agent_id IS NOT NULL")
         .bind(schedule_id)
         .execute(pool)
         .await
@@ -1501,24 +1497,24 @@ pub async fn delete_per_host_backup_sources_for_schedule(
 }
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
-pub struct PerHostExcludePatterns {
-    pub client_id: i64,
+pub struct PerAgentExcludePatterns {
+    pub agent_id: i64,
     pub raw_text: String,
 }
 
-pub async fn list_all_per_host_excludes_for_schedule(
+pub async fn list_all_per_agent_excludes_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
-) -> Result<Vec<PerHostExcludePatterns>, ApiError> {
+) -> Result<Vec<PerAgentExcludePatterns>, ApiError> {
     #[derive(sqlx::FromRow)]
     struct Row {
-        client_id: i64,
+        agent_id: i64,
         raw_text: String,
     }
 
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT client_id, raw_text FROM per_host_excludes WHERE schedule_id = $1 ORDER BY \
-         client_id",
+        "SELECT agent_id, raw_text FROM per_agent_excludes WHERE schedule_id = $1 ORDER BY \
+         agent_id",
     )
     .bind(schedule_id)
     .fetch_all(pool)
@@ -1527,25 +1523,25 @@ pub async fn list_all_per_host_excludes_for_schedule(
 
     Ok(rows
         .into_iter()
-        .map(|r| PerHostExcludePatterns {
-            client_id: r.client_id,
+        .map(|r| PerAgentExcludePatterns {
+            agent_id: r.agent_id,
             raw_text: r.raw_text,
         })
         .collect())
 }
 
-pub async fn upsert_per_host_excludes_raw(
+pub async fn upsert_per_agent_excludes_raw(
     pool: &PgPool,
     schedule_id: i64,
-    client_id: i64,
+    agent_id: i64,
     raw_text: &str,
 ) -> Result<(), ApiError> {
     sqlx::query(
-        "INSERT INTO per_host_excludes (schedule_id, client_id, raw_text) VALUES ($1, $2, $3) ON \
-         CONFLICT (schedule_id, client_id) DO UPDATE SET raw_text = EXCLUDED.raw_text",
+        "INSERT INTO per_agent_excludes (schedule_id, agent_id, raw_text) VALUES ($1, $2, $3) ON \
+         CONFLICT (schedule_id, agent_id) DO UPDATE SET raw_text = EXCLUDED.raw_text",
     )
     .bind(schedule_id)
-    .bind(client_id)
+    .bind(agent_id)
     .bind(raw_text)
     .execute(pool)
     .await
@@ -1553,11 +1549,11 @@ pub async fn upsert_per_host_excludes_raw(
     Ok(())
 }
 
-pub async fn delete_per_host_excludes_for_schedule(
+pub async fn delete_per_agent_excludes_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
 ) -> Result<(), ApiError> {
-    sqlx::query("DELETE FROM per_host_excludes WHERE schedule_id = $1")
+    sqlx::query("DELETE FROM per_agent_excludes WHERE schedule_id = $1")
         .bind(schedule_id)
         .execute(pool)
         .await
@@ -1593,8 +1589,8 @@ pub async fn get_backup_schedule_for_hostname_repo(
          s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, \
          s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands, \
          s.post_backup_commands, s.execution_mode, s.on_failure, s.owner_id, s.visibility FROM \
-         schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN clients m ON \
-         st.client_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = \
+         schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents m ON \
+         st.agent_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = \
          'backup' LIMIT 1",
     )
     .bind(hostname)
@@ -1634,9 +1630,9 @@ pub async fn delete_schedule(pool: &PgPool, id: i64) -> Result<(), ApiError> {
     Ok(())
 }
 
-pub async fn list_schedules_for_client(
+pub async fn list_schedules_for_agent(
     pool: &PgPool,
-    client_id: i64,
+    agent_id: i64,
 ) -> Result<Vec<ScheduleRow>, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
         "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
@@ -1644,10 +1640,10 @@ pub async fn list_schedules_for_client(
          s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, \
          s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands, \
          s.post_backup_commands, s.execution_mode, s.on_failure, s.owner_id, s.visibility FROM \
-         schedules s JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.client_id = $1 \
+         schedules s JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 \
          ORDER by s.id",
     )
-    .bind(client_id)
+    .bind(agent_id)
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)
@@ -1657,7 +1653,7 @@ pub async fn list_schedules_for_client(
 pub struct DueScheduleRow {
     pub schedule_id: i64,
     pub repo_id: i64,
-    pub client_id: i64,
+    pub agent_id: i64,
     pub hostname: String,
     pub schedule_type: String,
     pub cron_expression: String,
@@ -1670,11 +1666,11 @@ pub async fn list_due_schedules(
     now: DateTime<Utc>,
 ) -> Result<Vec<DueScheduleRow>, ApiError> {
     sqlx::query_as::<_, DueScheduleRow>(
-        "SELECT s.id AS schedule_id, s.repo_id, st.client_id, c.hostname, s.schedule_type, \
+        "SELECT s.id AS schedule_id, s.repo_id, st.agent_id, a.hostname, s.schedule_type, \
          s.cron_expression, s.on_failure, st.execution_order FROM schedules s JOIN repos r ON \
-         r.id = s.repo_id JOIN schedule_targets st ON st.schedule_id = s.id JOIN clients c ON \
-         c.id = st.client_id WHERE s.enabled = true AND r.enabled = true AND c.is_hidden = false \
-         AND s.next_run_at IS NOT NULL AND s.next_run_at <= $1 ORDER BY s.id, st.execution_order",
+         r.id = s.repo_id JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id \
+         = st.agent_id WHERE s.enabled = true AND r.enabled = true AND a.is_hidden = false AND \
+         s.next_run_at IS NOT NULL AND s.next_run_at <= $1 ORDER BY s.id, st.execution_order",
     )
     .bind(now)
     .fetch_all(pool)
@@ -1739,8 +1735,8 @@ pub async fn get_schedule_target_hostnames(
     }
 
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT c.hostname FROM clients c JOIN schedule_targets st ON st.client_id = c.id WHERE \
-         st.schedule_id = $1 AND c.is_hidden = false ORDER BY st.execution_order",
+        "SELECT a.hostname FROM agents a JOIN schedule_targets st ON st.agent_id = a.id WHERE \
+         st.schedule_id = $1 AND a.is_hidden = false ORDER BY st.execution_order",
     )
     .bind(schedule_id)
     .fetch_all(pool)
@@ -1752,7 +1748,7 @@ pub async fn get_schedule_target_hostnames(
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct ScheduleRunTarget {
-    pub client_id: i64,
+    pub agent_id: i64,
     pub hostname: String,
 }
 
@@ -1761,8 +1757,8 @@ pub async fn get_schedule_targets_for_run(
     schedule_id: i64,
 ) -> Result<Vec<ScheduleRunTarget>, ApiError> {
     sqlx::query_as::<_, ScheduleRunTarget>(
-        "SELECT c.id AS client_id, c.hostname FROM clients c JOIN schedule_targets st ON \
-         st.client_id = c.id WHERE st.schedule_id = $1 AND c.is_hidden = false ORDER BY \
+        "SELECT a.id AS agent_id, a.hostname FROM agents a JOIN schedule_targets st ON \
+         st.agent_id = a.id WHERE st.schedule_id = $1 AND a.is_hidden = false ORDER BY \
          st.execution_order",
     )
     .bind(schedule_id)
@@ -1776,13 +1772,13 @@ pub async fn insert_schedule_targets(
     schedule_id: i64,
     targets: &[(i64, i32)],
 ) -> Result<(), ApiError> {
-    for (client_id, execution_order) in targets {
+    for (agent_id, execution_order) in targets {
         sqlx::query(
-            "INSERT INTO schedule_targets (schedule_id, client_id, execution_order) VALUES ($1, \
+            "INSERT INTO schedule_targets (schedule_id, agent_id, execution_order) VALUES ($1, \
              $2, $3)",
         )
         .bind(schedule_id)
-        .bind(*client_id)
+        .bind(*agent_id)
         .bind(*execution_order)
         .execute(pool)
         .await
@@ -1805,7 +1801,7 @@ pub async fn list_schedule_targets(
     schedule_id: i64,
 ) -> Result<Vec<ScheduleTargetRow>, ApiError> {
     sqlx::query_as::<_, ScheduleTargetRow>(
-        "SELECT client_id, execution_order FROM schedule_targets WHERE schedule_id = $1 ORDER BY \
+        "SELECT agent_id, execution_order FROM schedule_targets WHERE schedule_id = $1 ORDER BY \
          execution_order",
     )
     .bind(schedule_id)
@@ -1899,7 +1895,7 @@ pub async fn list_canary_results(
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ReportRow {
     pub id: i64,
-    pub client_id: i64,
+    pub agent_id: i64,
     pub repo_id: i64,
     pub started_at: DateTime<Utc>,
     pub finished_at: DateTime<Utc>,
@@ -1961,7 +1957,7 @@ pub struct HealthRow {
 
 #[derive(Clone)]
 pub struct InsertReportParams {
-    pub client_id: i64,
+    pub agent_id: i64,
     pub repo_id: i64,
     pub schedule_id: Option<i64>,
     pub started_at: DateTime<Utc>,
@@ -1984,18 +1980,18 @@ pub struct InsertReportParams {
 
 pub async fn insert_backup_pending(
     pool: &PgPool,
-    client_id: i64,
+    agent_id: i64,
     repo_id: i64,
     schedule_id: Option<i64>,
     run_id: &str,
     triggered_at: DateTime<Utc>,
 ) -> Result<(), ApiError> {
     sqlx::query(
-        "INSERT INTO backup_reports (client_id, repo_id, schedule_id, started_at, finished_at, \
+        "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
          status, run_id) VALUES ($1, $2, $3, $4, $4, 'pending', $5) ON CONFLICT (repo_id, \
-         client_id, started_at) WHERE archive_name IS NULL DO NOTHING",
+         agent_id, started_at) WHERE archive_name IS NULL DO NOTHING",
     )
-    .bind(client_id)
+    .bind(agent_id)
     .bind(repo_id)
     .bind(schedule_id)
     .bind(triggered_at)
@@ -2008,7 +2004,7 @@ pub async fn insert_backup_pending(
 
 pub async fn insert_backup_started(
     pool: &PgPool,
-    client_id: i64,
+    agent_id: i64,
     repo_id: i64,
     schedule_id: Option<i64>,
     started_at: DateTime<Utc>,
@@ -2018,22 +2014,22 @@ pub async fn insert_backup_started(
     if let Some(rid) = run_id {
         sqlx::query(
             "UPDATE backup_reports SET started_at = $1, status = 'started', borg_command = $2 \
-             WHERE run_id = $3 AND client_id = $4 AND status = 'pending'",
+             WHERE run_id = $3 AND agent_id = $4 AND status = 'pending'",
         )
         .bind(started_at)
         .bind(borg_command)
         .bind(rid)
-        .bind(client_id)
+        .bind(agent_id)
         .execute(pool)
         .await
         .map_err(ApiError::Database)?;
     } else {
         sqlx::query(
-            "INSERT INTO backup_reports (client_id, repo_id, schedule_id, started_at, \
+            "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, \
              finished_at, status, borg_command) VALUES ($1, $2, $3, $4, $4, 'started', $5) ON \
-             CONFLICT (repo_id, client_id, started_at) WHERE archive_name IS NULL DO NOTHING",
+             CONFLICT (repo_id, agent_id, started_at) WHERE archive_name IS NULL DO NOTHING",
         )
-        .bind(client_id)
+        .bind(agent_id)
         .bind(repo_id)
         .bind(schedule_id)
         .bind(started_at)
@@ -2047,14 +2043,14 @@ pub async fn insert_backup_started(
 
 pub async fn cancel_backup_report(
     pool: &PgPool,
-    client_id: i64,
+    agent_id: i64,
     repo_id: i64,
 ) -> Result<(), ApiError> {
     sqlx::query(
-        "UPDATE backup_reports SET status = 'cancelled', finished_at = NOW() WHERE client_id = $1 \
+        "UPDATE backup_reports SET status = 'cancelled', finished_at = NOW() WHERE agent_id = $1 \
          AND repo_id = $2 AND status = 'started'",
     )
-    .bind(client_id)
+    .bind(agent_id)
     .bind(repo_id)
     .execute(pool)
     .await
@@ -2072,7 +2068,7 @@ pub async fn insert_backup_report(
              status = $3, original_size = $4, compressed_size = $5, deduplicated_size = $6, \
              repo_unique_csize = $7, files_processed = $8, duration_secs = $9, error_message = \
              $10, warnings = $11, borg_version = $12, matched = $13, archive_name = $14, \
-             borg_command = $15, started_at = $16 WHERE run_id = $17 AND client_id = $18 AND \
+             borg_command = $15, started_at = $16 WHERE run_id = $17 AND agent_id = $18 AND \
              status IN ('pending', 'started')",
         )
         .bind(params.schedule_id)
@@ -2092,7 +2088,7 @@ pub async fn insert_backup_report(
         .bind(&params.borg_command)
         .bind(params.started_at)
         .bind(run_id)
-        .bind(params.client_id)
+        .bind(params.agent_id)
         .execute(pool)
         .await
         .map_err(ApiError::Database)?;
@@ -2101,12 +2097,12 @@ pub async fn insert_backup_report(
         // so distinct same-second archives never collide; reports without one
         // (e.g. failures) fall back to the bare per-run triple.
         let conflict_target = if params.archive_name.is_some() {
-            "(repo_id, client_id, started_at, archive_name) WHERE archive_name IS NOT NULL"
+            "(repo_id, agent_id, started_at, archive_name) WHERE archive_name IS NOT NULL"
         } else {
-            "(repo_id, client_id, started_at) WHERE archive_name IS NULL"
+            "(repo_id, agent_id, started_at) WHERE archive_name IS NULL"
         };
         let sql = format!(
-            "INSERT INTO backup_reports (client_id, repo_id, schedule_id, started_at, \
+            "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, \
              finished_at, status, original_size, compressed_size, deduplicated_size, \
              repo_unique_csize, files_processed, duration_secs, error_message, warnings, \
              borg_version, matched, archive_name, borg_command) VALUES ($1, $2, $3, $4, $5, $6, \
@@ -2122,7 +2118,7 @@ pub async fn insert_backup_report(
              EXCLUDED.archive_name, borg_command = EXCLUDED.borg_command"
         );
         sqlx::query(&sql)
-            .bind(params.client_id)
+            .bind(params.agent_id)
             .bind(params.repo_id)
             .bind(params.schedule_id)
             .bind(params.started_at)
@@ -2155,7 +2151,7 @@ pub async fn bulk_insert_backup_reports(
         return Ok(0);
     }
 
-    let mut client_ids = Vec::with_capacity(params.len());
+    let mut agent_ids = Vec::with_capacity(params.len());
     let mut repo_ids = Vec::with_capacity(params.len());
     let mut started_ats = Vec::with_capacity(params.len());
     let mut finished_ats = Vec::with_capacity(params.len());
@@ -2173,7 +2169,7 @@ pub async fn bulk_insert_backup_reports(
     let mut borg_commands: Vec<Option<&str>> = Vec::with_capacity(params.len());
 
     for p in params {
-        client_ids.push(p.client_id);
+        agent_ids.push(p.agent_id);
         repo_ids.push(p.repo_id);
         started_ats.push(p.started_at);
         finished_ats.push(p.finished_at);
@@ -2192,22 +2188,22 @@ pub async fn bulk_insert_backup_reports(
     }
 
     let result = sqlx::query(
-        "INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, \
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
          original_size, compressed_size, deduplicated_size, repo_unique_csize, files_processed, \
          duration_secs, error_message, warnings, borg_version, matched, archive_name, \
-         borg_command) SELECT t.client_id, t.repo_id, t.started_at, t.finished_at, t.status, \
+         borg_command) SELECT t.agent_id, t.repo_id, t.started_at, t.finished_at, t.status, \
          t.original_size, t.compressed_size, t.deduplicated_size, t.repo_unique_csize, \
          t.files_processed, t.duration_secs, t.error_message, ARRAY[]::text[], t.borg_version, \
          t.matched, t.archive_name, t.borg_command FROM UNNEST($1::bigint[], $2::bigint[], \
          $3::timestamptz[], $4::timestamptz[], $5::text[], $6::bigint[], $7::bigint[], \
          $8::bigint[], $9::bigint[], $10::bigint[], $11::bigint[], $12::text[], $13::text[], \
-         $14::bool[], $15::text[], $16::text[]) AS t(client_id, repo_id, started_at, finished_at, \
+         $14::bool[], $15::text[], $16::text[]) AS t(agent_id, repo_id, started_at, finished_at, \
          status, original_size, compressed_size, deduplicated_size, repo_unique_csize, \
          files_processed, duration_secs, error_message, borg_version, matched, archive_name, \
-         borg_command) ON CONFLICT (repo_id, client_id, started_at, archive_name) WHERE \
+         borg_command) ON CONFLICT (repo_id, agent_id, started_at, archive_name) WHERE \
          archive_name IS NOT NULL DO NOTHING",
     )
-    .bind(&client_ids)
+    .bind(&agent_ids)
     .bind(&repo_ids)
     .bind(&started_ats)
     .bind(&finished_ats)
@@ -2262,21 +2258,21 @@ pub async fn update_backup_report_stats(
     Ok(())
 }
 
-pub async fn list_reports_for_client(
+pub async fn list_reports_for_agent(
     pool: &PgPool,
-    client_id: i64,
+    agent_id: i64,
     target: Option<&str>,
     limit: i64,
 ) -> Result<Vec<ReportRow>, ApiError> {
     if let Some(target_name) = target {
         sqlx::query_as::<_, ReportRow>(
-            "SELECT br.id, br.client_id, br.repo_id, br.started_at, br.finished_at, br.status, \
+            "SELECT br.id, br.agent_id, br.repo_id, br.started_at, br.finished_at, br.status, \
              br.original_size, br.compressed_size, br.deduplicated_size, br.files_processed, \
              br.duration_secs, br.error_message, br.warnings, br.borg_version, br.archive_name, \
              br.borg_command FROM backup_reports br JOIN repos r ON r.id = br.repo_id WHERE \
-             br.client_id = $1 AND r.name = $2 ORDER by br.started_at DESC LIMIT $3",
+             br.agent_id = $1 AND r.name = $2 ORDER by br.started_at DESC LIMIT $3",
         )
-        .bind(client_id)
+        .bind(agent_id)
         .bind(target_name)
         .bind(limit)
         .fetch_all(pool)
@@ -2284,12 +2280,12 @@ pub async fn list_reports_for_client(
         .map_err(ApiError::Database)
     } else {
         sqlx::query_as::<_, ReportRow>(
-            "SELECT id, client_id, repo_id, started_at, finished_at, status, original_size, \
+            "SELECT id, agent_id, repo_id, started_at, finished_at, status, original_size, \
              compressed_size, deduplicated_size, files_processed, duration_secs, error_message, \
              warnings, borg_version, archive_name, borg_command FROM backup_reports WHERE \
-             client_id = $1 ORDER BY started_at DESC LIMIT $2",
+             agent_id = $1 ORDER BY started_at DESC LIMIT $2",
         )
-        .bind(client_id)
+        .bind(agent_id)
         .bind(limit)
         .fetch_all(pool)
         .await
@@ -2303,7 +2299,7 @@ pub async fn list_reports_for_schedule(
     limit: i64,
 ) -> Result<Vec<ReportRow>, ApiError> {
     sqlx::query_as::<_, ReportRow>(
-        "SELECT id, client_id, repo_id, started_at, finished_at, status, original_size, \
+        "SELECT id, agent_id, repo_id, started_at, finished_at, status, original_size, \
          compressed_size, deduplicated_size, files_processed, duration_secs, error_message, \
          warnings, borg_version, archive_name, borg_command FROM backup_reports WHERE schedule_id \
          = $1 ORDER BY started_at DESC LIMIT $2",
@@ -2317,12 +2313,12 @@ pub async fn list_reports_for_schedule(
 
 pub async fn get_storage_stats(pool: &PgPool) -> Result<Vec<StorageStatRow>, ApiError> {
     sqlx::query_as::<_, StorageStatRow>(
-        "SELECT c.hostname, r.name AS target_name, COALESCE(SUM(br.original_size), 0)::INT8 AS \
+        "SELECT a.hostname, r.name AS target_name, COALESCE(SUM(br.original_size), 0)::INT8 AS \
          total_original_size, COALESCE(SUM(br.compressed_size), 0)::INT8 AS \
          total_compressed_size, COALESCE(SUM(br.deduplicated_size), 0)::INT8 AS \
-         total_deduplicated_size, COUNT(br.id) AS report_count FROM backup_reports br JOIN \
-         clients c ON c.id = br.client_id JOIN repos r ON r.id = br.repo_id WHERE c.is_hidden = \
-         false GROUP BY c.hostname, r.name ORDER BY c.hostname, r.name",
+         total_deduplicated_size, COUNT(br.id) AS report_count FROM backup_reports br JOIN agents \
+         a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id WHERE a.is_hidden = false \
+         GROUP BY a.hostname, r.name ORDER BY a.hostname, r.name",
     )
     .fetch_all(pool)
     .await
@@ -2338,12 +2334,12 @@ pub async fn get_activity_feed(
     run_id: Option<&str>,
 ) -> Result<Vec<ActivityRow>, ApiError> {
     let mut sql = String::from(
-        "SELECT br.id, c.hostname, r.name AS target_name, br.started_at, br.finished_at, \
+        "SELECT br.id, a.hostname, r.name AS target_name, br.started_at, br.finished_at, \
          br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message, \
-         br.schedule_id, s.name AS schedule_name, br.run_id FROM backup_reports br JOIN clients c \
-         ON c.id = br.client_id JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = \
-         br.schedule_id WHERE c.is_hidden = false AND c.visibility <> 'hidden' AND \
-         COALESCE(c.display_name, '') NOT ILIKE '%(imported)%'",
+         br.schedule_id, s.name AS schedule_name, br.run_id FROM backup_reports br JOIN agents a \
+         ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = \
+         br.schedule_id WHERE a.is_hidden = false AND a.visibility <> 'hidden' AND \
+         COALESCE(a.display_name, '') NOT ILIKE '%(imported)%'",
     );
     let mut param_idx = 1u32;
     if repo_id.is_some() {
@@ -2351,7 +2347,7 @@ pub async fn get_activity_feed(
         param_idx += 1;
     }
     if hostname.is_some() {
-        sql.push_str(&format!(" AND c.hostname = ${param_idx}"));
+        sql.push_str(&format!(" AND a.hostname = ${param_idx}"));
         param_idx += 1;
     }
     if schedule_id.is_some() {
@@ -2383,16 +2379,16 @@ pub async fn get_activity_feed(
 
 pub async fn get_health_summary(pool: &PgPool) -> Result<Vec<HealthRow>, ApiError> {
     sqlx::query_as::<_, HealthRow>(
-        "SELECT r.id AS repo_id, s.id AS schedule_id, c.hostname, r.name AS target_name, (SELECT \
-         br.status FROM backup_reports br WHERE br.schedule_id = s.id AND br.client_id = c.id \
+        "SELECT r.id AS repo_id, s.id AS schedule_id, a.hostname, r.name AS target_name, (SELECT \
+         br.status FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id \
          ORDER BY br.started_at DESC LIMIT 1) AS last_status, (SELECT br.finished_at FROM \
-         backup_reports br WHERE br.schedule_id = s.id AND br.client_id = c.id ORDER BY \
+         backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id ORDER BY \
          br.started_at DESC LIMIT 1) AS last_backup_at, (SELECT br.error_message FROM \
-         backup_reports br WHERE br.schedule_id = s.id AND br.client_id = c.id ORDER BY \
+         backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = a.id ORDER BY \
          br.started_at DESC LIMIT 1) AS last_error_message, s.cron_expression, s.enabled AS \
          schedule_enabled FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN \
-         clients c ON c.id = st.client_id JOIN repos r ON r.id = s.repo_id WHERE c.is_hidden = \
-         false ORDER BY c.hostname, r.name",
+         agents a ON a.id = st.agent_id JOIN repos r ON r.id = s.repo_id WHERE a.is_hidden = \
+         false ORDER BY a.hostname, r.name",
     )
     .fetch_all(pool)
     .await
@@ -3077,8 +3073,8 @@ pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow
          COALESCE(agg.client_count, 0) AS client_count, COALESCE(agg.unmatched_count, 0) AS \
          unmatched_count, r.last_op_kind, r.last_op_at, r.last_op_by FROM repos r LEFT JOIN \
          LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' THEN \
-         br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.client_id) AS client_count, \
-         COUNT(DISTINCT br.client_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM \
+         br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS client_count, \
+         COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM \
          backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true ORDER \
          BY r.name",
     )
@@ -3101,8 +3097,8 @@ pub async fn get_repo_with_stats(
          COALESCE(agg.client_count, 0) AS client_count, COALESCE(agg.unmatched_count, 0) AS \
          unmatched_count, r.last_op_kind, r.last_op_at, r.last_op_by FROM repos r LEFT JOIN \
          LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' THEN \
-         br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.client_id) AS client_count, \
-         COUNT(DISTINCT br.client_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM \
+         br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS client_count, \
+         COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM \
          backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true WHERE \
          r.id = $1",
     )
@@ -3201,16 +3197,16 @@ pub async fn set_repo_tags(pool: &PgPool, repo_id: i64, tag_ids: &[i64]) -> Resu
     Ok(())
 }
 
-pub async fn set_host_tags(pool: &PgPool, client_id: i64, tag_ids: &[i64]) -> Result<(), ApiError> {
-    sqlx::query("DELETE FROM host_tags WHERE client_id = $1")
-        .bind(client_id)
+pub async fn set_agent_tags(pool: &PgPool, agent_id: i64, tag_ids: &[i64]) -> Result<(), ApiError> {
+    sqlx::query("DELETE FROM agent_tags WHERE agent_id = $1")
+        .bind(agent_id)
         .execute(pool)
         .await
         .map_err(ApiError::Database)?;
 
     for tag_id in tag_ids {
-        sqlx::query("INSERT INTO host_tags (client_id, tag_id) VALUES ($1, $2)")
-            .bind(client_id)
+        sqlx::query("INSERT INTO agent_tags (agent_id, tag_id) VALUES ($1, $2)")
+            .bind(agent_id)
             .bind(tag_id)
             .execute(pool)
             .await
@@ -3248,27 +3244,27 @@ pub async fn list_tags_for_repo(pool: &PgPool, repo_id: i64) -> Result<Vec<TagRo
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
-pub struct HostTagRow {
-    pub client_id: i64,
+pub struct AgentTagRow {
+    pub agent_id: i64,
     pub tag_name: String,
     pub tag_color: String,
 }
 
-pub async fn list_tags_for_host(pool: &PgPool, client_id: i64) -> Result<Vec<TagRow>, ApiError> {
+pub async fn list_tags_for_agent(pool: &PgPool, agent_id: i64) -> Result<Vec<TagRow>, ApiError> {
     sqlx::query_as::<_, TagRow>(
-        "SELECT t.id, t.name, t.color, t.scope FROM tags t JOIN host_tags ht ON ht.tag_id = t.id \
-         WHERE ht.client_id = $1 ORDER BY t.name",
+        "SELECT t.id, t.name, t.color, t.scope FROM tags t JOIN agent_tags at ON at.tag_id = t.id \
+         WHERE at.agent_id = $1 ORDER BY t.name",
     )
-    .bind(client_id)
+    .bind(agent_id)
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)
 }
 
-pub async fn list_all_host_tags(pool: &PgPool) -> Result<Vec<HostTagRow>, ApiError> {
-    sqlx::query_as::<_, HostTagRow>(
-        "SELECT ht.client_id, t.name AS tag_name, t.color AS tag_color FROM host_tags ht JOIN \
-         tags t ON t.id = ht.tag_id ORDER BY ht.client_id, t.name",
+pub async fn list_all_agent_tags(pool: &PgPool) -> Result<Vec<AgentTagRow>, ApiError> {
+    sqlx::query_as::<_, AgentTagRow>(
+        "SELECT at.agent_id, t.name AS tag_name, t.color AS tag_color FROM agent_tags at JOIN \
+         tags t ON t.id = at.tag_id ORDER BY at.agent_id, t.name",
     )
     .fetch_all(pool)
     .await
@@ -3277,7 +3273,7 @@ pub async fn list_all_host_tags(pool: &PgPool) -> Result<Vec<HostTagRow>, ApiErr
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct DashboardSummaryRow {
-    pub total_clients: i64,
+    pub total_agents: i64,
     pub total_repos: i64,
     pub active_schedules: i64,
     pub total_schedules: i64,
@@ -3307,7 +3303,7 @@ pub struct DashboardSummaryRow {
 
 pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow, ApiError> {
     sqlx::query_as::<_, DashboardSummaryRow>(
-        "SELECT (SELECT COUNT(*) FROM clients WHERE is_hidden = false) AS total_clients, (SELECT \
+        "SELECT (SELECT COUNT(*) FROM agents WHERE is_hidden = false) AS total_agents, (SELECT \
          COUNT(*) FROM repos) AS total_repos, (SELECT COUNT(*) FROM schedules WHERE enabled = \
          true) AS active_schedules, (SELECT COUNT(*) FROM schedules) AS total_schedules, \
          COALESCE((SELECT SUM(info_deduplicated_size) FROM repos), 0)::INT8 AS \
@@ -3387,12 +3383,12 @@ pub async fn get_activity_feed_days(
     run_id: Option<&str>,
 ) -> Result<Vec<ActivityRow>, ApiError> {
     let mut sql = String::from(
-        "SELECT br.id, c.hostname, r.name AS target_name, br.started_at, br.finished_at, \
+        "SELECT br.id, a.hostname, r.name AS target_name, br.started_at, br.finished_at, \
          br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message, \
-         br.schedule_id, s.name AS schedule_name, br.run_id FROM backup_reports br JOIN clients c \
-         ON c.id = br.client_id JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = \
-         br.schedule_id WHERE c.is_hidden = false AND c.visibility <> 'hidden' AND \
-         COALESCE(c.display_name, '') NOT ILIKE '%(imported)%' AND br.started_at > NOW() - \
+         br.schedule_id, s.name AS schedule_name, br.run_id FROM backup_reports br JOIN agents a \
+         ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = \
+         br.schedule_id WHERE a.is_hidden = false AND a.visibility <> 'hidden' AND \
+         COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND br.started_at > NOW() - \
          make_interval(days => $1::int)",
     );
     let mut param_idx = 2u32;
@@ -3401,7 +3397,7 @@ pub async fn get_activity_feed_days(
         param_idx += 1;
     }
     if hostname.is_some() {
-        sql.push_str(&format!(" AND c.hostname = ${param_idx}"));
+        sql.push_str(&format!(" AND a.hostname = ${param_idx}"));
         param_idx += 1;
     }
     if schedule_id.is_some() {
@@ -3442,9 +3438,9 @@ pub struct GroupRow {
 pub struct RoleRow {
     pub id: i64,
     pub name: String,
-    pub can_create_client: bool,
-    pub can_delete_client: bool,
-    pub can_delete_own_client: bool,
+    pub can_create_agent: bool,
+    pub can_delete_agent: bool,
+    pub can_delete_own_agent: bool,
     pub can_create_repo: bool,
     pub can_delete_repo: bool,
     pub can_delete_own_repo: bool,
@@ -3613,7 +3609,7 @@ pub async fn user_shares_group_with(
 
 pub async fn list_roles(pool: &PgPool) -> Result<Vec<RoleRow>, ApiError> {
     sqlx::query_as::<_, RoleRow>(
-        "SELECT id, name, can_create_client, can_delete_client, can_delete_own_client, \
+        "SELECT id, name, can_create_agent, can_delete_agent, can_delete_own_agent, \
          can_create_repo, can_delete_repo, can_delete_own_repo, can_create_schedule, \
          can_delete_schedule, can_delete_own_schedule, can_manage_tags, can_view_all_repos, \
          can_manage_tunnels, created_at FROM roles ORDER BY name",
@@ -3625,7 +3621,7 @@ pub async fn list_roles(pool: &PgPool) -> Result<Vec<RoleRow>, ApiError> {
 
 pub async fn get_role(pool: &PgPool, id: i64) -> Result<Option<RoleRow>, ApiError> {
     sqlx::query_as::<_, RoleRow>(
-        "SELECT id, name, can_create_client, can_delete_client, can_delete_own_client, \
+        "SELECT id, name, can_create_agent, can_delete_agent, can_delete_own_agent, \
          can_create_repo, can_delete_repo, can_delete_own_repo, can_create_schedule, \
          can_delete_schedule, can_delete_own_schedule, can_manage_tags, can_view_all_repos, \
          can_manage_tunnels, created_at FROM roles WHERE id = $1",
@@ -3638,9 +3634,9 @@ pub async fn get_role(pool: &PgPool, id: i64) -> Result<Option<RoleRow>, ApiErro
 
 pub struct InsertRoleParams<'a> {
     pub name: &'a str,
-    pub can_create_client: bool,
-    pub can_delete_client: bool,
-    pub can_delete_own_client: bool,
+    pub can_create_agent: bool,
+    pub can_delete_agent: bool,
+    pub can_delete_own_agent: bool,
     pub can_create_repo: bool,
     pub can_delete_repo: bool,
     pub can_delete_own_repo: bool,
@@ -3657,19 +3653,19 @@ pub async fn insert_role(
     params: &InsertRoleParams<'_>,
 ) -> Result<RoleRow, ApiError> {
     sqlx::query_as::<_, RoleRow>(
-        "INSERT INTO roles (name, can_create_client, can_delete_client, can_delete_own_client, \
+        "INSERT INTO roles (name, can_create_agent, can_delete_agent, can_delete_own_agent, \
          can_create_repo, can_delete_repo, can_delete_own_repo, can_create_schedule, \
          can_delete_schedule, can_delete_own_schedule, can_manage_tags, can_view_all_repos, \
          can_manage_tunnels) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) \
-         RETURNING id, name, can_create_client, can_delete_client, can_delete_own_client, \
+         RETURNING id, name, can_create_agent, can_delete_agent, can_delete_own_agent, \
          can_create_repo, can_delete_repo, can_delete_own_repo, can_create_schedule, \
          can_delete_schedule, can_delete_own_schedule, can_manage_tags, can_view_all_repos, \
          can_manage_tunnels, created_at",
     )
     .bind(params.name)
-    .bind(params.can_create_client)
-    .bind(params.can_delete_client)
-    .bind(params.can_delete_own_client)
+    .bind(params.can_create_agent)
+    .bind(params.can_delete_agent)
+    .bind(params.can_delete_own_agent)
     .bind(params.can_create_repo)
     .bind(params.can_delete_repo)
     .bind(params.can_delete_own_repo)
@@ -3690,20 +3686,20 @@ pub async fn update_role(
     params: &InsertRoleParams<'_>,
 ) -> Result<RoleRow, ApiError> {
     sqlx::query_as::<_, RoleRow>(
-        "UPDATE roles SET name = $2, can_create_client = $3, can_delete_client = $4, \
-         can_delete_own_client = $5, can_create_repo = $6, can_delete_repo = $7, \
+        "UPDATE roles SET name = $2, can_create_agent = $3, can_delete_agent = $4, \
+         can_delete_own_agent = $5, can_create_repo = $6, can_delete_repo = $7, \
          can_delete_own_repo = $8, can_create_schedule = $9, can_delete_schedule = $10, \
          can_delete_own_schedule = $11, can_manage_tags = $12, can_view_all_repos = $13, \
-         can_manage_tunnels = $14 WHERE id = $1 RETURNING id, name, can_create_client, \
-         can_delete_client, can_delete_own_client, can_create_repo, can_delete_repo, \
+         can_manage_tunnels = $14 WHERE id = $1 RETURNING id, name, can_create_agent, \
+         can_delete_agent, can_delete_own_agent, can_create_repo, can_delete_repo, \
          can_delete_own_repo, can_create_schedule, can_delete_schedule, can_delete_own_schedule, \
          can_manage_tags, can_view_all_repos, can_manage_tunnels, created_at",
     )
     .bind(id)
     .bind(params.name)
-    .bind(params.can_create_client)
-    .bind(params.can_delete_client)
-    .bind(params.can_delete_own_client)
+    .bind(params.can_create_agent)
+    .bind(params.can_delete_agent)
+    .bind(params.can_delete_own_agent)
     .bind(params.can_create_repo)
     .bind(params.can_delete_repo)
     .bind(params.can_delete_own_repo)
@@ -3736,7 +3732,7 @@ pub async fn delete_role(pool: &PgPool, id: i64) -> Result<(), ApiError> {
 
 pub async fn list_user_roles(pool: &PgPool, user_id: i64) -> Result<Vec<RoleRow>, ApiError> {
     sqlx::query_as::<_, RoleRow>(
-        "SELECT r.id, r.name, r.can_create_client, r.can_delete_client, r.can_delete_own_client, \
+        "SELECT r.id, r.name, r.can_create_agent, r.can_delete_agent, r.can_delete_own_agent, \
          r.can_create_repo, r.can_delete_repo, r.can_delete_own_repo, r.can_create_schedule, \
          r.can_delete_schedule, r.can_delete_own_schedule, r.can_manage_tags, \
          r.can_view_all_repos, r.can_manage_tunnels, r.created_at FROM roles r JOIN user_roles ur \
@@ -3769,9 +3765,9 @@ pub async fn set_user_roles(pool: &PgPool, user_id: i64, role_ids: &[i64]) -> Re
 pub async fn get_effective_permissions(pool: &PgPool, user_id: i64) -> Result<RoleRow, ApiError> {
     #[derive(sqlx::FromRow)]
     struct AggRow {
-        can_create_client: Option<bool>,
-        can_delete_client: Option<bool>,
-        can_delete_own_client: Option<bool>,
+        can_create_agent: Option<bool>,
+        can_delete_agent: Option<bool>,
+        can_delete_own_agent: Option<bool>,
         can_create_repo: Option<bool>,
         can_delete_repo: Option<bool>,
         can_delete_own_repo: Option<bool>,
@@ -3784,8 +3780,8 @@ pub async fn get_effective_permissions(pool: &PgPool, user_id: i64) -> Result<Ro
     }
 
     let row = sqlx::query_as::<_, AggRow>(
-        "SELECT BOOL_OR(r.can_create_client) AS can_create_client, BOOL_OR(r.can_delete_client) \
-         AS can_delete_client, BOOL_OR(r.can_delete_own_client) AS can_delete_own_client, \
+        "SELECT BOOL_OR(r.can_create_agent) AS can_create_agent, BOOL_OR(r.can_delete_agent) AS \
+         can_delete_agent, BOOL_OR(r.can_delete_own_agent) AS can_delete_own_agent, \
          BOOL_OR(r.can_create_repo) AS can_create_repo, BOOL_OR(r.can_delete_repo) AS \
          can_delete_repo, BOOL_OR(r.can_delete_own_repo) AS can_delete_own_repo, \
          BOOL_OR(r.can_create_schedule) AS can_create_schedule, BOOL_OR(r.can_delete_schedule) AS \
@@ -3802,9 +3798,9 @@ pub async fn get_effective_permissions(pool: &PgPool, user_id: i64) -> Result<Ro
     Ok(RoleRow {
         id: 0,
         name: String::from("effective"),
-        can_create_client: row.can_create_client.unwrap_or(false),
-        can_delete_client: row.can_delete_client.unwrap_or(false),
-        can_delete_own_client: row.can_delete_own_client.unwrap_or(false),
+        can_create_agent: row.can_create_agent.unwrap_or(false),
+        can_delete_agent: row.can_delete_agent.unwrap_or(false),
+        can_delete_own_agent: row.can_delete_own_agent.unwrap_or(false),
         can_create_repo: row.can_create_repo.unwrap_or(false),
         can_delete_repo: row.can_delete_repo.unwrap_or(false),
         can_delete_own_repo: row.can_delete_own_repo.unwrap_or(false),
@@ -3902,10 +3898,10 @@ pub async fn get_calendar_events(
         sqlx::query_as::<_, CalendarEventRow>(
             "SELECT (br.started_at AT TIME ZONE $4)::date AS date, 'backup' AS event_type, CASE \
              WHEN br.status = 'success' THEN 'success' ELSE 'failed' END AS status, r.name AS \
-             repo_name, c.hostname, to_char(br.started_at AT TIME ZONE $4, 'HH24:MI') AS time, \
+             repo_name, a.hostname, to_char(br.started_at AT TIME ZONE $4, 'HH24:MI') AS time, \
              br.id AS report_id, br.repo_id, br.error_message, br.archive_name FROM \
-             backup_reports br JOIN repos r ON r.id = br.repo_id JOIN clients c ON c.id = \
-             br.client_id WHERE c.is_hidden = false AND (br.started_at AT TIME ZONE $4)::date >= \
+             backup_reports br JOIN repos r ON r.id = br.repo_id JOIN agents a ON a.id = \
+             br.agent_id WHERE a.is_hidden = false AND (br.started_at AT TIME ZONE $4)::date >= \
              $1 AND (br.started_at AT TIME ZONE $4)::date < $2 AND br.repo_id = $3 ORDER BY \
              br.started_at",
         )
@@ -3920,10 +3916,10 @@ pub async fn get_calendar_events(
         sqlx::query_as::<_, CalendarEventRow>(
             "SELECT (br.started_at AT TIME ZONE $3)::date AS date, 'backup' AS event_type, CASE \
              WHEN br.status = 'success' THEN 'success' ELSE 'failed' END AS status, r.name AS \
-             repo_name, c.hostname, to_char(br.started_at AT TIME ZONE $3, 'HH24:MI') AS time, \
+             repo_name, a.hostname, to_char(br.started_at AT TIME ZONE $3, 'HH24:MI') AS time, \
              br.id AS report_id, br.repo_id, br.error_message, br.archive_name FROM \
-             backup_reports br JOIN repos r ON r.id = br.repo_id JOIN clients c ON c.id = \
-             br.client_id WHERE c.is_hidden = false AND (br.started_at AT TIME ZONE $3)::date >= \
+             backup_reports br JOIN repos r ON r.id = br.repo_id JOIN agents a ON a.id = \
+             br.agent_id WHERE a.is_hidden = false AND (br.started_at AT TIME ZONE $3)::date >= \
              $1 AND (br.started_at AT TIME ZONE $3)::date < $2 ORDER BY br.started_at",
         )
         .bind(start)

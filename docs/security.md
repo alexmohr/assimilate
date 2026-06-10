@@ -59,14 +59,14 @@ Authorization: Bearer <plaintext-token>
 
 ## Agent Tokens
 
-Each host registered in Assimilate has a unique agent token.
+Each agent registered in Assimilate has a unique agent token.
 
 - Tokens are generated with 32 bytes of cryptographic randomness.
 - The server stores the token as a bcrypt hash.
 - The agent presents its token in the WebSocket `Hello` handshake when connecting.
 - The same token is used to authenticate the SSH agent forwarding WebSocket endpoint.
 
-Agent tokens are scoped to a single host. Revoking a host removes its token.
+Agent tokens are scoped to a single agent. Revoking an agent removes its token.
 
 ## Role-Based Access Control
 
@@ -75,7 +75,7 @@ Assimilate has two roles: **Admin** and **User**.
 | Capability | Admin | User |
 |------------|-------|------|
 | Manage users and roles | ✓ | ✗ |
-| Create and delete hosts | ✓ | ✗ |
+| Create and delete agents | ✓ | ✗ |
 | View and manage all repositories | ✓ | per-repo permission |
 | Manage API tokens (all users) | ✓ | own tokens only |
 | Configure SSH tunnels | ✓ | ✗ |
@@ -156,6 +156,6 @@ When you start Assimilate for the first time:
 2. **Forced password change** — the UI requires you to set a new password before you can use the application.
 3. **Set `ASSIMILATE_SECRET_KEY`** — generate a strong random value and keep it stable. Without it, passphrase encryption cannot function.
 4. **Review user accounts** — create per-user accounts with the least privilege needed. Avoid sharing the admin account.
-5. **Rotate agent tokens** — if an agent token is ever exposed, delete the host and recreate it to issue a new token.
+5. **Rotate agent tokens** — if an agent token is ever exposed, delete the agent and recreate it to issue a new token.
 
 See [Getting Started](getting-started.md) for the full setup walkthrough.

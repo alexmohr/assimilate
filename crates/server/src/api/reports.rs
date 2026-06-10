@@ -18,10 +18,10 @@ pub struct ListReportsQuery {
 
 #[utoipa::path(
     get,
-    path = "/api/clients/{hostname}/reports",
+    path = "/api/agents/{hostname}/reports",
     tag = "Reports",
     operation_id = "listReports",
-    summary = "List backup reports for a client",
+    summary = "List backup reports for an agent",
     params(
         ("hostname" = String, Path, description = "Client hostname"),
         ("target" = Option<String>, Query, description = "Filter by target repo name"),
@@ -39,9 +39,9 @@ pub async fn list_reports(
     Path(hostname): Path<String>,
     Query(query): Query<ListReportsQuery>,
 ) -> Result<Json<Vec<db::ReportRow>>, ApiError> {
-    let client = db::get_client_by_hostname(&state.pool, &hostname).await?;
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
     let limit = query.limit.unwrap_or(50);
     let reports =
-        db::list_reports_for_client(&state.pool, client.id, query.target.as_deref(), limit).await?;
+        db::list_reports_for_agent(&state.pool, agent.id, query.target.as_deref(), limit).await?;
     Ok(Json(reports))
 }

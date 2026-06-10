@@ -73,7 +73,7 @@ When you create your first Web Push channel, the browser will prompt you to allo
 By default, a channel fires for **all** events system-wide. You can restrict a channel to specific repositories, hosts, or schedules using the **Scope** section on each channel card.
 
 - Click the **Scope** toggle on a channel card to expand scope options.
-- Select one or more **Repositories**, **Hosts**, or **Schedules** to narrow the channel's scope.
+- Select one or more **Repositories**, **Agents**, or **Schedules** to narrow the channel's scope.
 - Only events matching the selected scope will be delivered through that channel.
 - Leaving a scope category empty means "all" — no filtering for that dimension.
 
@@ -82,7 +82,7 @@ By default, a channel fires for **all** events system-wide. You can restrict a c
 
 ### Example
 
-A webhook channel scoped to the repository **server-backup** and the host **web-01** will only fire when backup events occur for that specific host/repository combination. Agent connect/disconnect events will still fire if the agent matches the host scope.
+A webhook channel scoped to the repository **server-backup** and the agent **web-01** will only fire when backup events occur for that specific agent/repository combination. Agent connect/disconnect events will still fire if the agent matches the agent scope.
 
 ## Rules
 
@@ -91,7 +91,7 @@ Each channel can have multiple **rules** that determine which events trigger it.
 Rules can optionally be scoped to:
 
 - A specific **repository** — only events from that repo trigger the rule
-- A specific **client** — only events from that host trigger the rule
+- A specific **agent** — only events from that agent trigger the rule
 - A specific **schedule** — only events from that schedule trigger the rule
 
 If no scope is set on a rule, the rule matches all events (subject to channel-level scope).

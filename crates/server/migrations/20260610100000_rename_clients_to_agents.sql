@@ -30,8 +30,9 @@ ALTER TABLE agent_hostname_patterns RENAME COLUMN client_id TO agent_id;
 -- backup_sources (added client_id in 20260531120000_per_host_backup_sources.sql)
 ALTER TABLE backup_sources RENAME COLUMN client_id TO agent_id;
 
--- schedule_excludes (added client_id in 20260531140000_per_host_excludes.sql)
-ALTER TABLE schedule_excludes RENAME COLUMN client_id TO agent_id;
+-- per_host_excludes (created in 20260603100000_excludes_raw_text.sql)
+ALTER TABLE per_host_excludes RENAME TO per_agent_excludes;
+ALTER TABLE per_agent_excludes RENAME COLUMN client_id TO agent_id;
 
 -- notification_rules
 ALTER TABLE notification_rules RENAME COLUMN client_id TO agent_id;
@@ -68,8 +69,3 @@ ALTER INDEX idx_client_hostname_patterns_pattern RENAME TO idx_agent_hostname_pa
 DROP INDEX backup_sources_schedule_client_path_idx;
 CREATE UNIQUE INDEX backup_sources_schedule_agent_path_idx
     ON backup_sources (schedule_id, COALESCE(agent_id, -1), path);
-
--- Update the unique index on schedule_excludes that references the old column name
-DROP INDEX schedule_excludes_schedule_client_pattern_idx;
-CREATE UNIQUE INDEX schedule_excludes_schedule_agent_pattern_idx
-    ON schedule_excludes (schedule_id, COALESCE(agent_id, -1), pattern);

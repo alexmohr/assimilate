@@ -27,7 +27,7 @@ import type {
   UpdateTunnelRequest,
 } from '../types/tunnel'
 
-interface ClientOption {
+interface AgentOption {
   id: number
   hostname: string
 }
@@ -36,7 +36,7 @@ const tunnels = ref<TunnelWithStatus[]>([])
 const loading = ref(false)
 const error = ref('')
 
-const clients = ref<ClientOption[]>([])
+const agents = ref<AgentOption[]>([])
 
 const showAddDialog = ref(false)
 const addForm = ref<CreateTunnelRequest>({
@@ -97,18 +97,18 @@ async function loadTunnels(): Promise<void> {
   }
 }
 
-async function loadClients(): Promise<void> {
+async function loadAgents(): Promise<void> {
   try {
-    const res = await apiClient.get<ClientOption[]>('/clients')
-    clients.value = res.data
+    const res = await apiClient.get<AgentOption[]>('/agents')
+    agents.value = res.data
   } catch (e: unknown) {
-    logger.error('loadClients failed', e)
+    logger.error('loadAgents failed', e)
   }
 }
 
-function availableClients(): ClientOption[] {
+function availableAgents(): AgentOption[] {
   const usedIds = new Set(tunnels.value.map((t) => t.client_id))
-  return clients.value.filter((c) => !usedIds.has(c.id))
+  return agents.value.filter((c) => !usedIds.has(c.id))
 }
 
 function openAdd(): void {
@@ -130,7 +130,7 @@ async function submitAdd(): Promise<void> {
     return
   }
   if (!addForm.value.client_id) {
-    addError.value = 'Client is required'
+    addError.value = 'Agent is required'
     return
   }
   addLoading.value = true
@@ -140,7 +140,7 @@ async function submitAdd(): Promise<void> {
     const withStatus: TunnelWithStatus = {
       ...created,
       status: 'disconnected',
-      client_hostname: clients.value.find((c) => c.id === created.client_id)?.hostname,
+      client_hostname: agents.value.find((c) => c.id === created.client_id)?.hostname,
     }
     tunnels.value.push(withStatus)
     showAddDialog.value = false
@@ -264,7 +264,7 @@ onMessage(
 
 onMounted(() => {
   loadTunnels().catch(logger.error)
-  loadClients().catch(logger.error)
+  loadAgents().catch(logger.error)
 })
 </script>
 
@@ -309,7 +309,7 @@ onMounted(() => {
       <table class="tunnels-table">
         <thead>
           <tr>
-            <th>Client</th>
+            <th>Agent</th>
             <th>SSH Host</th>
             <th>SSH User</th>
             <th>SSH Port</th>
@@ -394,7 +394,7 @@ onMounted(() => {
           </div>
           <div class="dialog-body">
             <div class="field">
-              <label class="field-label">Client <span class="required">*</span></label>
+              <label class="field-label">Agent <span class="required">*</span></label>
               <select
                 v-model.number="addForm.client_id"
                 class="input"
@@ -403,14 +403,14 @@ onMounted(() => {
                   :value="0"
                   disabled
                 >
-                  Select a client...
+                  Select an agent...
                 </option>
                 <option
-                  v-for="client in availableClients()"
-                  :key="client.id"
-                  :value="client.id"
+                  v-for="agent in availableAgents()"
+                  :key="agent.id"
+                  :value="agent.id"
                 >
-                  {{ client.hostname }}
+                  {{ agent.hostname }}
                 </option>
               </select>
             </div>

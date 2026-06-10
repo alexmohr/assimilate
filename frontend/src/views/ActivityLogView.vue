@@ -60,7 +60,7 @@ interface ReportRow {
   borg_command: string | null
 }
 
-interface Client {
+interface Agent {
   id: number
   hostname: string
 }
@@ -78,7 +78,7 @@ type LogLevel = '' | 'error' | 'warn' | 'info' | 'debug' | 'trace'
 
 const rows = ref<ActivityRow[]>([])
 const systemEvents = ref<SystemEvent[]>([])
-const clients = ref<Client[]>([])
+const clients = ref<Agent[]>([])
 const schedules = ref<ScheduleOption[]>([])
 const loading = ref(false)
 const loadingMore = ref(false)
@@ -208,7 +208,7 @@ watch(filterRunId, () => {
 })
 
 async function fetchMachines(): Promise<void> {
-  const res = await apiClient.get<Client[]>('/clients')
+  const res = await apiClient.get<Agent[]>('/agents')
   clients.value = res.data
 }
 
@@ -301,7 +301,7 @@ async function toggleRow(row: ActivityRow): Promise<void> {
   expandedDetail.value = null
   expandedLoading.value = true
   try {
-    const res = await apiClient.get<ReportRow[]>(`/clients/${row.hostname}/reports`, {
+    const res = await apiClient.get<ReportRow[]>(`/agents/${row.hostname}/reports`, {
       params: { limit: 100, target: row.target_name },
     })
     const match = res.data.find(

@@ -181,7 +181,7 @@ function setupApiSuccess(): void {
   mockApiClient.get.mockImplementation((url: string) => {
     if (url === '/schedules') return Promise.resolve({ data: mockSchedules })
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
-    if (url === '/clients') return Promise.resolve({ data: mockClients })
+    if (url === '/agents') return Promise.resolve({ data: mockClients })
     if (url === '/stats/health') return Promise.resolve({ data: mockHealth })
     return Promise.resolve({ data: [] })
   })

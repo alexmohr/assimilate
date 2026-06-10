@@ -87,15 +87,15 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         "agent attempting connection"
     );
 
-    let (client_id, token_hash) = match db::get_client_token_hash(&state.pool, &hostname).await {
+    let (agent_id, token_hash) = match db::get_agent_token_hash(&state.pool, &hostname).await {
         Ok(row) => row,
         Err(e) => {
-            tracing::warn!(hostname = %hostname, error = %e, "unknown client attempted connection");
+            tracing::warn!(hostname = %hostname, error = %e, "unknown agent attempted connection");
             if let Err(e) = db::insert_system_event(
                 &state.pool,
                 "auth_failed",
                 Some(&hostname),
-                &format!("Unknown client '{hostname}' attempted connection"),
+                &format!("Unknown agent '{hostname}' attempted connection"),
             )
             .await
             {
@@ -133,7 +133,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             &state.pool,
             "auth_failed",
             Some(&hostname),
-            &format!("Invalid token for client '{hostname}'"),
+            &format!("Invalid token for agent '{hostname}'"),
         )
         .await
         {
@@ -151,7 +151,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     if let Err(e) = db::update_last_seen_and_version(
         &state.pool,
-        client_id,
+        agent_id,
         &agent_version,
         agent_git_sha.as_deref(),
         agent_build_time.as_deref(),
@@ -212,7 +212,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             inbound = ws_stream.next() => {
                 match inbound {
                     Some(Ok(Message::Text(text))) => {
-                        handle_agent_message(text.as_str(), &hostname, client_id, &state).await;
+                        handle_agent_message(text.as_str(), &hostname, agent_id, &state).await;
                     }
                     Some(Ok(Message::Close(_))) | None => break,
                     Some(Err(e)) => {
@@ -242,7 +242,7 @@ async fn ping_loop(sender: mpsc::Sender<ServerToAgent>) {
     }
 }
 
-async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state: &AppState) {
+async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: &AppState) {
     let msg = match serde_json::from_str::<AgentToServer>(text) {
         Ok(m) => m,
         Err(e) => {
@@ -276,7 +276,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
             );
             if let Err(e) = db::insert_backup_started(
                 &state.pool,
-                client_id,
+                agent_id,
                 repo_id.0,
                 schedule_id,
                 started_at,
@@ -327,7 +327,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
             let notification_archive_name = report.archive_name.clone();
             let index_archive_name = notification_archive_name.clone();
             let params = db::InsertReportParams {
-                client_id,
+                agent_id,
                 repo_id: report.repo_id.0,
                 schedule_id: report.schedule_id,
                 started_at: report.started_at,
@@ -446,7 +446,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                         error_message: Some(message),
                         timestamp: chrono::Utc::now(),
                         repo_id: Some(report.repo_id.0),
-                        client_id: Some(client_id),
+                        agent_id: Some(agent_id),
                         schedule_id: None,
                         archive_name: None,
                     };
@@ -472,7 +472,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 error_message: notification_error_message,
                 timestamp: chrono::Utc::now(),
                 repo_id: Some(report.repo_id.0),
-                client_id: Some(client_id),
+                agent_id: Some(agent_id),
                 schedule_id: None,
                 archive_name: notification_archive_name,
             };
@@ -680,7 +680,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 error_message,
                 timestamp: chrono::Utc::now(),
                 repo_id: Some(repo_id.0),
-                client_id: Some(client_id),
+                agent_id: Some(agent_id),
                 schedule_id: None,
                 archive_name: None,
             };
@@ -905,7 +905,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 repo_id: repo_id.0,
                 success: false,
             });
-            if let Err(e) = db::cancel_backup_report(&state.pool, client_id, repo_id.0).await {
+            if let Err(e) = db::cancel_backup_report(&state.pool, agent_id, repo_id.0).await {
                 tracing::error!(
                     hostname = %hostname,
                     repo_id = ?repo_id,
@@ -931,7 +931,7 @@ mod tests {
     use shared::{
         crypto::{derive_key, encrypt_passphrase},
         protocol::AgentToServer,
-        types::{BackupReport, BackupStatus, ClientId, RepoId, ReportId},
+        types::{AgentId, BackupReport, BackupStatus, RepoId, ReportId},
     };
     use sqlx::PgPool;
     use tokio::time::timeout;
@@ -1086,9 +1086,9 @@ exit 0
     #[ignore]
     #[sqlx::test(migrations = "./migrations")]
     async fn backup_completed_queues_archive_indexing(pool: PgPool) {
-        let client = crate::db::insert_client(&pool, "agent-1", None, "token-hash", None)
+        let agent = crate::db::insert_agent(&pool, "agent-1", None, "token-hash", None)
             .await
-            .expect("insert client");
+            .expect("insert agent");
         let passphrase_encrypted = encrypt_passphrase(
             "test-passphrase",
             &derive_key(b"handler-test-secret-key").unwrap(),
@@ -1121,7 +1121,7 @@ exit 0
             .expect("valid timestamp");
         let report = BackupReport {
             id: ReportId(1),
-            client_id: ClientId(client.id),
+            agent_id: AgentId(agent.id),
             repo_id: RepoId(repo.id),
             schedule_id: None,
             started_at,
@@ -1143,7 +1143,7 @@ exit 0
         let msg = serde_json::to_string(&AgentToServer::BackupCompleted { report })
             .expect("serialize message");
 
-        handle_agent_message(&msg, &client.hostname, client.id, &state).await;
+        handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
 
         timeout(Duration::from_secs(5), async {
             loop {

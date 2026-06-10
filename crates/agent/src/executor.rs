@@ -217,9 +217,9 @@ impl Executor {
             return;
         };
 
-        let target = backup_target_from_repo(repo, &config.client_hostname, schedule_id);
+        let target = backup_target_from_repo(repo, &config.agent_hostname, schedule_id);
         let repo_key = RepoOperationKey::from_backup_target(&target);
-        let hostname = config.client_hostname.clone();
+        let hostname = config.agent_hostname.clone();
         drop(config_guard);
 
         let repo_queue = self.repo_operation_queue(&repo_key).await;
@@ -302,9 +302,9 @@ impl Executor {
             return;
         };
 
-        let target = backup_target_from_repo(repo, &config.client_hostname, None);
+        let target = backup_target_from_repo(repo, &config.agent_hostname, None);
         let repo_key = RepoOperationKey::from_backup_target(&target);
-        let hostname = config.client_hostname.clone();
+        let hostname = config.agent_hostname.clone();
         drop(config_guard);
 
         let repo_queue = self.repo_operation_queue(&repo_key).await;
@@ -350,9 +350,9 @@ impl Executor {
             return;
         };
 
-        let target = backup_target_from_repo(repo, &config.client_hostname, None);
+        let target = backup_target_from_repo(repo, &config.agent_hostname, None);
         let repo_key = RepoOperationKey::from_backup_target(&target);
-        let hostname = config.client_hostname.clone();
+        let hostname = config.agent_hostname.clone();
         drop(config_guard);
 
         let repo_queue = self.repo_operation_queue(&repo_key).await;
@@ -401,7 +401,7 @@ impl Executor {
             let config_guard = self.current_config.lock().await;
             config_guard
                 .as_ref()
-                .map_or_else(|| "unknown".to_owned(), |c| c.client_hostname.clone())
+                .map_or_else(|| "unknown".to_owned(), |c| c.agent_hostname.clone())
         };
 
         let repo_url = build_repo_url(ssh_user, ssh_host, ssh_port, repo_path);
@@ -492,9 +492,9 @@ impl Executor {
 
         let backup_sources = schedule.backup_sources.clone();
         let exclude_patterns = schedule.exclude_patterns.clone();
-        let target = backup_target_from_repo(repo, &config.client_hostname, Some(schedule_id));
+        let target = backup_target_from_repo(repo, &config.agent_hostname, Some(schedule_id));
         let repo_key = RepoOperationKey::from_backup_target(&target);
-        let hostname = config.client_hostname.clone();
+        let hostname = config.agent_hostname.clone();
         drop(config_guard);
 
         let repo_queue = self.repo_operation_queue(&repo_key).await;
@@ -566,9 +566,9 @@ impl Executor {
             return;
         };
 
-        let target = backup_target_from_repo(repo, &config.client_hostname, None);
+        let target = backup_target_from_repo(repo, &config.agent_hostname, None);
         let repo_key = RepoOperationKey::from_backup_target(&target);
-        let hostname = config.client_hostname.clone();
+        let hostname = config.agent_hostname.clone();
         drop(config_guard);
 
         let repo_queue = self.repo_operation_queue(&repo_key).await;
@@ -638,9 +638,9 @@ impl Executor {
             return;
         };
 
-        let target = backup_target_from_repo(repo, &config.client_hostname, None);
+        let target = backup_target_from_repo(repo, &config.agent_hostname, None);
         let repo_key = RepoOperationKey::from_backup_target(&target);
-        let hostname = config.client_hostname.clone();
+        let hostname = config.agent_hostname.clone();
         drop(config_guard);
 
         let repo_queue = self.repo_operation_queue(&repo_key).await;
@@ -851,7 +851,7 @@ fn make_failed_report(
     let finished_at = Utc::now();
     shared::types::BackupReport {
         id: shared::types::ReportId(0),
-        client_id: shared::types::ClientId(0),
+        agent_id: shared::types::AgentId(0),
         repo_id,
         schedule_id,
         started_at,
@@ -925,7 +925,7 @@ async fn run_backup_task(
             let finished_at = Utc::now();
             let report = shared::types::BackupReport {
                 id: shared::types::ReportId(0),
-                client_id: shared::types::ClientId(0),
+                agent_id: shared::types::AgentId(0),
                 repo_id,
                 schedule_id,
                 started_at,
@@ -1866,7 +1866,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(8);
         let repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
         let config = shared::types::AgentConfig {
-            client_hostname: "hostname".to_owned(),
+            agent_hostname: "hostname".to_owned(),
             skip_targets: Vec::new(),
             repos: vec![repo.clone()],
         };

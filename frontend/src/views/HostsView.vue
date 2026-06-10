@@ -465,31 +465,31 @@ onMessage<BackupPayload>('BackupCompleted', (payload) => {
       activeBackupsByHost.value = { ...activeBackupsByHost.value, [payload.hostname]: filtered }
     }
   }
-  loadClients().catch(logger.error)
+  loadAgents().catch(logger.error)
 })
 
-function hostActiveBackups(client: ClientRow): string[] {
-  return activeBackupsByHost.value[client.hostname] ?? []
+function hostActiveBackups(agent: AgentRow): string[] {
+  return activeBackupsByHost.value[agent.hostname] ?? []
 }
 
-function deployButtonLabel(client: ClientRow): string | null {
-  if (!client.agent_version) return 'Deploy'
-  if (serverCommitCount.value !== null && client.agent_commit_count !== null) {
-    return client.agent_commit_count >= serverCommitCount.value ? null : 'Upgrade'
+function deployButtonLabel(agent: AgentRow): string | null {
+  if (!agent.agent_version) return 'Deploy'
+  if (serverCommitCount.value !== null && agent.agent_commit_count !== null) {
+    return agent.agent_commit_count >= serverCommitCount.value ? null : 'Upgrade'
   }
-  if (availableAgentVersion.value && client.agent_version === availableAgentVersion.value)
+  if (availableAgentVersion.value && agent.agent_version === availableAgentVersion.value)
     return null
   return 'Upgrade'
 }
 
 watch(wsStatus, (newStatus, oldStatus) => {
   if (newStatus === 'connected' && oldStatus !== 'connected') {
-    loadClients().catch(logger.error)
+    loadAgents().catch(logger.error)
   }
 })
 
 watch(showHidden, () => {
-  loadClients().catch(logger.error)
+  loadAgents().catch(logger.error)
 })
 
 watch(
@@ -504,7 +504,7 @@ watch(
 <template>
   <div class="hosts-view">
     <div class="page-header">
-      <h1 class="page-title">Clients</h1>
+      <h1 class="page-title">Agents</h1>
       <div class="header-actions">
         <button
           class="btn btn-primary"
@@ -564,7 +564,7 @@ watch(
           <span class="hidden-toggle-label">Show hidden</span>
         </div>
         <div
-          v-if="allHostTags.length > 0"
+          v-if="allAgentTags.length > 0"
           class="tag-filter-wrapper"
         >
           <button
@@ -580,7 +580,7 @@ watch(
             class="tag-dropdown"
           >
             <label
-              v-for="tag in allHostTags"
+              v-for="tag in allAgentTags"
               :key="tag.id"
               class="tag-dropdown-item"
             >
@@ -643,18 +643,18 @@ watch(
       {{ error }}
     </div>
     <EmptyState
-      v-else-if="clients.length === 0"
+      v-else-if="agents.length === 0"
       :icon="Server"
-      title="No clients registered"
-      description="Add your first client to start backing up."
-      action="Add Client"
+      title="No agents registered"
+      description="Add your first agent to start backing up."
+      action="Add Agent"
       @action="showAddDialog = true"
     />
     <div
-      v-else-if="filteredClients.length === 0"
+      v-else-if="filteredAgents.length === 0"
       class="state-msg"
     >
-      No clients match the current filter.
+      No agents match the current filter.
     </div>
 
     <div
@@ -662,87 +662,87 @@ watch(
       class="host-grid"
     >
       <div
-        v-for="client in filteredClients"
-        :key="client.id"
+        v-for="agent in filteredAgents"
+        :key="agent.id"
         class="host-card"
-        :class="{ 'host-card-hidden': client.is_hidden }"
-        @click="navigateToHost(client)"
+        :class="{ 'host-card-hidden': agent.is_hidden }"
+        @click="navigateToAgent(agent)"
       >
         <div class="card-top">
           <div class="card-info">
-            <span class="card-hostname">{{ client.hostname }}</span>
+            <span class="card-hostname">{{ agent.hostname }}</span>
             <span
-              v-if="client.display_name"
+              v-if="agent.display_name"
               class="card-display"
-              >{{ client.display_name }}</span
+              >{{ agent.display_name }}</span
             >
           </div>
           <div class="card-top-badges">
             <span
-              v-if="client.is_hidden"
+              v-if="agent.is_hidden"
               class="badge-hidden"
             >
               Hidden
             </span>
             <span
-              v-if="isImported(client)"
+              v-if="isImported(agent)"
               class="badge-imported"
             >
               Imported
             </span>
             <span
               class="status-badge"
-              :class="isOnline(client) ? 'status-online' : 'status-offline'"
+              :class="isOnline(agent) ? 'status-online' : 'status-offline'"
             >
-              {{ isOnline(client) ? 'Online' : 'Offline' }}
+              {{ isOnline(agent) ? 'Online' : 'Offline' }}
             </span>
           </div>
         </div>
         <div class="card-stats">
           <div class="stat">
-            <span class="stat-value">{{ scheduleCount(client) }}</span>
+            <span class="stat-value">{{ scheduleCount(agent) }}</span>
             <span class="stat-label">Schedules</span>
           </div>
           <div class="stat">
-            <span class="stat-value">{{ formatLastSeen(client.last_seen_at) }}</span>
+            <span class="stat-value">{{ formatLastSeen(agent.last_seen_at) }}</span>
             <span class="stat-label">Last seen</span>
           </div>
           <div class="stat">
-            <span class="stat-value mono">{{ formatVersion(client.agent_version) }}</span>
+            <span class="stat-value mono">{{ formatVersion(agent.agent_version) }}</span>
             <span class="stat-label">Agent</span>
           </div>
         </div>
         <div
-          v-if="hostHasIssues(client)"
+          v-if="agentHasIssues(agent)"
           class="card-health-issues"
         >
           <AlertCircle :size="12" />
           <span
-            v-if="hostHealthStatus(client)!.failed > 0"
+            v-if="agentHealthStatus(agent)!.failed > 0"
             class="issue-text issue-failed"
           >
-            {{ hostHealthStatus(client)!.failed }} failed
+            {{ agentHealthStatus(agent)!.failed }} failed
           </span>
           <span
-            v-if="hostHealthStatus(client)!.overdue > 0"
+            v-if="agentHealthStatus(agent)!.overdue > 0"
             class="issue-text issue-overdue"
           >
-            {{ hostHealthStatus(client)!.overdue }} overdue
+            {{ agentHealthStatus(agent)!.overdue }} overdue
           </span>
         </div>
         <div
-          v-if="hostActiveBackups(client).length > 0"
+          v-if="hostActiveBackups(agent).length > 0"
           class="card-active-backup"
         >
           <span class="active-pulse" />
-          <span class="active-text"> Backing up: {{ hostActiveBackups(client).join(', ') }} </span>
+          <span class="active-text"> Backing up: {{ hostActiveBackups(agent).join(', ') }} </span>
         </div>
         <div
-          v-if="clientTags(client).length > 0"
+          v-if="agentTags(agent).length > 0"
           class="card-tags"
         >
           <span
-            v-for="tag in clientTags(client)"
+            v-for="tag in agentTags(agent)"
             :key="tag.name"
             class="tag-pill"
             :style="{
@@ -758,42 +758,42 @@ watch(
           class="card-actions"
           @click.stop
         >
-          <template v-if="client.is_hidden">
+          <template v-if="agent.is_hidden">
             <button
               class="btn btn-sm btn-ghost"
-              @click="unhideClient(client)"
+              @click="unhideAgent(agent)"
             >
               Unhide
             </button>
           </template>
           <template v-else>
             <button
-              v-if="isImported(client)"
+              v-if="isImported(agent)"
               class="btn btn-sm btn-ghost"
-              @click="openMergeDialog(client)"
+              @click="openMergeDialog(agent)"
             >
               Merge into...
             </button>
             <button
-              v-if="isImported(client)"
+              v-if="isImported(agent)"
               class="btn btn-sm btn-ghost"
-              @click="adoptClient(client)"
+              @click="adoptAgent(agent)"
             >
               Adopt
             </button>
             <button
-              v-if="deployButtonLabel(client) && !isImported(client)"
+              v-if="deployButtonLabel(agent) && !isImported(agent)"
               class="btn btn-sm btn-ghost"
-              @click="openDeployDialog(client)"
+              @click="openDeployDialog(agent)"
             >
-              {{ deployButtonLabel(client) }}
+              {{ deployButtonLabel(agent) }}
             </button>
           </template>
         </div>
       </div>
     </div>
 
-    <!-- Add Client Dialog -->
+    <!-- Add Agent Dialog -->
     <Teleport to="body">
       <div
         v-if="showAddDialog"
@@ -803,7 +803,7 @@ watch(
         <div class="dialog">
           <div class="dialog-header">
             <h2 class="dialog-title">
-              {{ newToken ? 'Client Created' : 'Add Client' }}
+              {{ newToken ? 'Agent Created' : 'Add Agent' }}
             </h2>
             <button
               class="close-btn"
@@ -887,7 +887,7 @@ watch(
       </div>
     </Teleport>
 
-    <!-- Adopt Host Dialog -->
+    <!-- Adopt Agent Dialog -->
     <Teleport to="body">
       <div
         v-if="showAdoptDialog"
@@ -896,7 +896,7 @@ watch(
       >
         <div class="dialog dialog-sm">
           <div class="dialog-header">
-            <h2 class="dialog-title">Host Adopted &mdash; {{ adoptHostname }}</h2>
+            <h2 class="dialog-title">Agent Adopted &mdash; {{ adoptHostname }}</h2>
             <button
               class="close-btn"
               @click="showAdoptDialog = false"
@@ -939,17 +939,17 @@ watch(
       @deployed="
         () => {
           showDeployDialog = false
-          loadClients()
+          loadAgents()
         }
       "
     />
 
-    <!-- Merge Client Dialog -->
+    <!-- Merge Agent Dialog -->
     <Teleport to="body">
       <MergeClientDialog
         v-if="showMergeDialog && mergeSource"
         :source="mergeSource"
-        :all-clients="clients"
+        :all-agents="agents"
         @merged="onMerged"
         @cancel="showMergeDialog = false"
       />

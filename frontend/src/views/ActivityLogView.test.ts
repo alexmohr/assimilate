@@ -45,12 +45,12 @@ interface SystemEvent {
   message: string
 }
 
-interface Client {
+interface Agent {
   id: number
   hostname: string
 }
 
-const CLIENTS: Client[] = [
+const CLIENTS: Agent[] = [
   { id: 1, hostname: 'web-server-01' },
   { id: 2, hostname: 'db-server-01' },
 ]
@@ -131,7 +131,7 @@ function mountView(): ReturnType<typeof mount> {
 
 function setupDefaultMocks(): void {
   mockGet.mockImplementation((url: string) => {
-    if (url === '/clients') return Promise.resolve({ data: CLIENTS })
+    if (url === '/agents') return Promise.resolve({ data: CLIENTS })
     if (url === '/stats/activity') return Promise.resolve({ data: ACTIVITY_ROWS })
     if (url === '/stats/system-events') return Promise.resolve({ data: SYSTEM_EVENTS })
     return Promise.resolve({ data: [] })
@@ -212,7 +212,7 @@ describe('ActivityLogView', () => {
   describe('empty state', () => {
     it('shows empty state when no activity data is returned', async () => {
       mockGet.mockImplementation((url: string) => {
-        if (url === '/clients') return Promise.resolve({ data: [] })
+        if (url === '/agents') return Promise.resolve({ data: [] })
         if (url === '/stats/activity') return Promise.resolve({ data: [] })
         if (url === '/stats/system-events') return Promise.resolve({ data: [] })
         return Promise.resolve({ data: [] })
@@ -227,7 +227,7 @@ describe('ActivityLogView', () => {
 
     it('does not show the table when there is no data', async () => {
       mockGet.mockImplementation((url: string) => {
-        if (url === '/clients') return Promise.resolve({ data: [] })
+        if (url === '/agents') return Promise.resolve({ data: [] })
         if (url === '/stats/activity') return Promise.resolve({ data: [] })
         if (url === '/stats/system-events') return Promise.resolve({ data: [] })
         return Promise.resolve({ data: [] })
@@ -459,7 +459,7 @@ describe('ActivityLogView', () => {
   describe('load more', () => {
     it('shows Load More button when hasMore is true', async () => {
       mockGet.mockImplementation((url: string) => {
-        if (url === '/clients') return Promise.resolve({ data: CLIENTS })
+        if (url === '/agents') return Promise.resolve({ data: CLIENTS })
         if (url === '/stats/activity')
           return Promise.resolve({
             data: Array.from({ length: 50 }, (_, i) => ({ ...ACTIVITY_ROWS[0], id: i + 1 })),
@@ -487,7 +487,7 @@ describe('ActivityLogView', () => {
   describe('server logs tab', () => {
     it('shows log search and level filter when Server Logs tab is active', async () => {
       mockGet.mockImplementation((url: string) => {
-        if (url === '/clients') return Promise.resolve({ data: CLIENTS })
+        if (url === '/agents') return Promise.resolve({ data: CLIENTS })
         if (url === '/stats/activity') return Promise.resolve({ data: [] })
         if (url === '/stats/system-events') return Promise.resolve({ data: [] })
         if (url === '/logs')
@@ -522,7 +522,7 @@ describe('ActivityLogView', () => {
   describe('system event badges', () => {
     it('colors non-error system events without using the failed badge', async () => {
       mockGet.mockImplementation((url: string) => {
-        if (url === '/clients') return Promise.resolve({ data: CLIENTS })
+        if (url === '/agents') return Promise.resolve({ data: CLIENTS })
         if (url === '/stats/activity') return Promise.resolve({ data: [] })
         if (url === '/stats/system-events')
           return Promise.resolve({
@@ -568,7 +568,7 @@ describe('ActivityLogView', () => {
       mountView()
       await flushPromises()
 
-      expect(mockGet).toHaveBeenCalledWith('/clients')
+      expect(mockGet).toHaveBeenCalledWith('/agents')
       expect(mockGet).toHaveBeenCalledWith('/stats/activity', expect.any(Object))
       expect(mockGet).toHaveBeenCalledWith('/stats/system-events', expect.any(Object))
     })

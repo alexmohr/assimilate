@@ -97,14 +97,14 @@ async fn build_test_app(pool: PgPool) -> Router {
         .route("/api/users/{id}/role", put(server::api::users::update_role))
         .route("/api/users/{id}", delete(server::api::users::delete_user))
         .route(
-            "/api/clients",
-            get(server::api::clients::list_clients).post(server::api::clients::create_client),
+            "/api/agents",
+            get(server::api::agents::list_agents).post(server::api::agents::create_agent),
         )
         .route(
-            "/api/clients/{hostname}",
-            get(server::api::clients::get_client)
-                .put(server::api::clients::update_client)
-                .delete(server::api::clients::delete_client),
+            "/api/agents/{hostname}",
+            get(server::api::agents::get_agent)
+                .put(server::api::agents::update_agent)
+                .delete(server::api::agents::delete_agent),
         )
         .route("/api/repos", get(server::api::repos::list_repos))
         .route(
@@ -150,7 +150,7 @@ async fn build_test_app(pool: PgPool) -> Router {
             get(server::api::schedules::list_schedule_backup_sources),
         )
         .route(
-            "/api/clients/{hostname}/reports",
+            "/api/agents/{hostname}/reports",
             get(server::api::reports::list_reports),
         )
         .route("/api/stats/storage", get(server::api::stats::storage))
@@ -364,7 +364,7 @@ async fn clean_tables(pool: &PgPool) {
         .execute(pool)
         .await
         .unwrap();
-    sqlx::query("DELETE FROM clients")
+    sqlx::query("DELETE FROM agents")
         .execute(pool)
         .await
         .unwrap();
@@ -430,7 +430,7 @@ fn delete_request(uri: &str) -> Request<Body> {
 
 #[tokio::test]
 #[ignore]
-async fn test_client_crud() {
+async fn test_agent_crud() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
@@ -438,7 +438,7 @@ async fn test_client_crud() {
 
     let req = json_request(
         "POST",
-        "/api/clients",
+        "/api/agents",
         Some(json!({
             "hostname": "test-host-1",
             "display_name": "Test Host 1"
@@ -447,11 +447,11 @@ async fn test_client_crud() {
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::CREATED);
     let body = body_json(resp).await;
-    assert_eq!(body["client"]["hostname"], "test-host-1");
-    assert_eq!(body["client"]["display_name"], "Test Host 1");
+    assert_eq!(body["agent"]["hostname"], "test-host-1");
+    assert_eq!(body["agent"]["display_name"], "Test Host 1");
     assert!(body["token"].as_str().is_some_and(|t| t.len() == 64));
 
-    let req = get_request("/api/clients/test-host-1");
+    let req = get_request("/api/agents/test-host-1");
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
@@ -521,7 +521,7 @@ async fn test_tunnel_create() {
     let mut app = build_test_app(pool.clone()).await;
 
     let client_id: i64 = sqlx::query_scalar(
-        "INSERT INTO clients (hostname, display_name, agent_token_hash) VALUES ('tunnel-host', \
+        "INSERT INTO agents (hostname, display_name, agent_token_hash) VALUES ('tunnel-host', \
          'Tunnel Host', 'fakehash') RETURNING id",
     )
     .fetch_one(&pool)
@@ -532,7 +532,7 @@ async fn test_tunnel_create() {
         "POST",
         "/api/tunnels",
         Some(json!({
-            "client_id": client_id,
+            "agent_id": client_id,
             "ssh_host": "remote.example.com",
             "ssh_user": "backup",
             "ssh_port": 22,
@@ -549,7 +549,7 @@ async fn test_tunnel_create() {
 
 #[tokio::test]
 #[ignore]
-async fn test_delete_client() {
+async fn test_delete_agent() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
@@ -557,17 +557,17 @@ async fn test_delete_client() {
 
     let req = json_request(
         "POST",
-        "/api/clients",
+        "/api/agents",
         Some(json!({ "hostname": "to-delete" })),
     );
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    let req = delete_request("/api/clients/to-delete");
+    let req = delete_request("/api/agents/to-delete");
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
-    let req = get_request("/api/clients/to-delete");
+    let req = get_request("/api/agents/to-delete");
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
@@ -655,7 +655,7 @@ async fn test_list_archives_deduplicates_archive_names() {
 
     let repo_id = insert_test_repo(&pool, "archive-list-repo").await;
     let client_id: i64 = sqlx::query_scalar(
-        "INSERT INTO clients (hostname, agent_token_hash) VALUES ('archive-host', 'hash') \
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('archive-host', 'hash') \
          RETURNING id",
     )
     .fetch_one(&pool)
@@ -683,7 +683,7 @@ async fn test_list_archives_deduplicates_archive_names() {
         ),
     ] {
         sqlx::query(
-            "INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, \
+            "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
              original_size, compressed_size, deduplicated_size, repo_unique_csize, \
              files_processed, duration_secs, error_message, warnings, borg_version, matched, \
              archive_name, borg_command) VALUES ($1, $2, $3, $4, 'success', $5, $6, $7, $8, $9, \
@@ -1070,7 +1070,7 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
 
     let mut app = build_test_app(pool.clone()).await;
     let client_id: i64 = sqlx::query_scalar(
-        "INSERT INTO clients (hostname, display_name, agent_token_hash) VALUES ($1, $2, $3) \
+        "INSERT INTO agents (hostname, display_name, agent_token_hash) VALUES ($1, $2, $3) \
          RETURNING id",
     )
     .bind("stale-host")
@@ -1084,7 +1084,7 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
     let stale_started_at = chrono::Utc::now() - chrono::Duration::days(1);
     let stale_finished_at = stale_started_at + chrono::Duration::minutes(5);
     sqlx::query(
-        "INSERT INTO backup_reports (client_id, repo_id, schedule_id, started_at, finished_at, \
+        "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
          status, original_size, compressed_size, deduplicated_size, repo_unique_csize, \
          files_processed, duration_secs, error_message, warnings, borg_version, matched, \
          archive_name, borg_command) VALUES ($1, $2, NULL, $3, $4, 'success', 10, 5, 5, 5, 1, \
@@ -1203,7 +1203,7 @@ async fn test_stats_summary_returns_200() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
     assert!(body.is_object(), "summary should be a JSON object");
-    assert!(body["total_clients"].is_number());
+    assert!(body["total_agents"].is_number());
     assert!(body["total_repos"].is_number());
     assert!(body["total_storage_bytes"].is_number());
 }
@@ -1335,7 +1335,7 @@ async fn insert_test_schedule(pool: &sqlx::PgPool, client_id: i64, repo_id: i64)
     .unwrap();
 
     sqlx::query(
-        "INSERT INTO schedule_targets (schedule_id, client_id, execution_order) VALUES ($1, $2, 0)",
+        "INSERT INTO schedule_targets (schedule_id, agent_id, execution_order) VALUES ($1, $2, 0)",
     )
     .bind(schedule_id)
     .bind(client_id)
@@ -1413,13 +1413,13 @@ async fn test_global_excludes_overwrite_replaces_fully(pool: sqlx::PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn test_per_host_excludes_roundtrip_preserves_raw_text(pool: sqlx::PgPool) {
+async fn test_per_agent_excludes_roundtrip_preserves_raw_text(pool: sqlx::PgPool) {
     create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone()).await;
 
     // Set up client and repo directly
     let client_id: i64 = sqlx::query_scalar(
-        "INSERT INTO clients (hostname, agent_token_hash) VALUES ('exc-host', 'hash-exc') \
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('exc-host', 'hash-exc') \
          RETURNING id",
     )
     .fetch_one(&pool)
@@ -1432,7 +1432,7 @@ async fn test_per_host_excludes_roundtrip_preserves_raw_text(pool: sqlx::PgPool)
     let raw = "# Cache dirs\n*.cache\npp:__pycache__\n\n# Runtime\n/proc\n/sys";
 
     sqlx::query(
-        "INSERT INTO per_host_excludes (schedule_id, client_id, raw_text) VALUES ($1, $2, $3)",
+        "INSERT INTO per_agent_excludes (schedule_id, agent_id, raw_text) VALUES ($1, $2, $3)",
     )
     .bind(schedule_id)
     .bind(client_id)
@@ -1449,10 +1449,10 @@ async fn test_per_host_excludes_roundtrip_preserves_raw_text(pool: sqlx::PgPool)
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
 
-    let per_host = body["exclude_patterns_per_host"].as_array().unwrap();
-    assert_eq!(per_host.len(), 1);
-    assert_eq!(per_host[0]["client_id"], client_id);
-    assert_eq!(per_host[0]["raw_text"], raw);
+    let per_agent = body["exclude_patterns_per_agent"].as_array().unwrap();
+    assert_eq!(per_agent.len(), 1);
+    assert_eq!(per_agent[0]["agent_id"], client_id);
+    assert_eq!(per_agent[0]["raw_text"], raw);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1475,7 +1475,7 @@ async fn test_export_config_with_hosts(pool: sqlx::PgPool) {
     let mut app = build_test_app(pool.clone()).await;
 
     sqlx::query(
-        "INSERT INTO clients (hostname, display_name, agent_token_hash, default_backup_paths, \
+        "INSERT INTO agents (hostname, display_name, agent_token_hash, default_backup_paths, \
          default_exclude_patterns) VALUES ('export-host', 'Export Host', 'real-token', \
          ARRAY['/etc','/home'], ARRAY['*.log'])",
     )
@@ -1501,7 +1501,7 @@ async fn test_export_config_skips_imported_token_hosts(pool: sqlx::PgPool) {
     let mut app = build_test_app(pool.clone()).await;
 
     sqlx::query(
-        "INSERT INTO clients (hostname, agent_token_hash) VALUES ('real-host', 'real-token'), \
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('real-host', 'real-token'), \
          ('imported-host', 'imported:no-auth')",
     )
     .execute(&pool)
@@ -1561,7 +1561,7 @@ async fn test_import_config_updates_existing_host(pool: sqlx::PgPool) {
     let mut app = build_test_app(pool.clone()).await;
 
     sqlx::query(
-        "INSERT INTO clients (hostname, agent_token_hash) VALUES ('existing-host', 'real-token')",
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('existing-host', 'real-token')",
     )
     .execute(&pool)
     .await
@@ -1619,7 +1619,7 @@ async fn test_import_config_warns_on_missing_repo(pool: sqlx::PgPool) {
     let mut app = build_test_app(pool.clone()).await;
 
     sqlx::query(
-        "INSERT INTO clients (hostname, agent_token_hash) VALUES ('sched-host', 'real-token')",
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('sched-host', 'real-token')",
     )
     .execute(&pool)
     .await
@@ -1684,7 +1684,7 @@ async fn test_import_config_creates_schedule_with_matching_repo(pool: sqlx::PgPo
     let _ = repo_id;
 
     sqlx::query(
-        "INSERT INTO clients (hostname, agent_token_hash) VALUES ('import-target', 'real-token')",
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('import-target', 'real-token')",
     )
     .execute(&pool)
     .await
@@ -1745,7 +1745,7 @@ async fn test_export_then_import_roundtrip(pool: sqlx::PgPool) {
     let mut app = build_test_app(pool.clone()).await;
 
     sqlx::query(
-        "INSERT INTO clients (hostname, display_name, agent_token_hash, default_backup_paths, \
+        "INSERT INTO agents (hostname, display_name, agent_token_hash, default_backup_paths, \
          default_exclude_patterns) VALUES ('roundtrip-host', 'RT Host', 'real-token', \
          ARRAY['/etc'], ARRAY['*.swp'])",
     )
@@ -1757,7 +1757,7 @@ async fn test_export_then_import_roundtrip(pool: sqlx::PgPool) {
     assert_eq!(resp.status(), StatusCode::OK);
     let export = body_json(resp).await;
 
-    sqlx::query("DELETE FROM clients WHERE hostname = 'roundtrip-host'")
+    sqlx::query("DELETE FROM agents WHERE hostname = 'roundtrip-host'")
         .execute(&pool)
         .await
         .unwrap();

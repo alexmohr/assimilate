@@ -93,7 +93,7 @@ async function submitDeploy(): Promise<void> {
       token?: string
       available_version?: string
       error?: string
-    }>(`/clients/${props.hostname}/deploy`, {
+    }>(`/agents/${props.hostname}/deploy`, {
       ssh_host: deployForm.ssh_host.trim(),
       ssh_user: deployForm.ssh_user.trim(),
       ssh_port: deployForm.ssh_port,

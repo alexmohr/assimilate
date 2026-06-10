@@ -38,14 +38,14 @@ async fn handle_ssh_relay(mut socket: WebSocket, hostname: String, state: AppSta
             }
         };
 
-    let authenticated = match db::get_client_token_hash(&state.pool, &hostname).await {
+    let authenticated = match db::get_agent_token_hash(&state.pool, &hostname).await {
         Ok((_, hash)) => bcrypt::verify(&token, &hash)
             .inspect_err(|e| {
                 tracing::error!(hostname = %hostname, error = %e, "bcrypt verify failed");
             })
             .unwrap_or(false),
         Err(e) => {
-            tracing::warn!(hostname = %hostname, error = %e, "ssh relay: client lookup failed");
+            tracing::warn!(hostname = %hostname, error = %e, "ssh relay: agent lookup failed");
             false
         }
     };

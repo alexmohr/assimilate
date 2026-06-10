@@ -140,7 +140,7 @@ pub struct NotificationEvent {
     pub error_message: Option<String>,
     pub timestamp: DateTime<Utc>,
     pub repo_id: Option<i64>,
-    pub client_id: Option<i64>,
+    pub agent_id: Option<i64>,
     pub schedule_id: Option<i64>,
     pub archive_name: Option<String>,
 }
@@ -250,7 +250,7 @@ pub async fn dispatch(
     )
     .bind(event.event_type.as_db_str())
     .bind(event.repo_id)
-    .bind(event.client_id)
+    .bind(event.agent_id)
     .bind(event.schedule_id)
     .fetch_all(&service.pool)
     .await?;

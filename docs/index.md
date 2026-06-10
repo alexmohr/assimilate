@@ -9,7 +9,7 @@ Assimilate is a self-hosted Borg backup server and dashboard for managing multip
 - [Configuration Reference](configuration.md)
 - [Security & Authentication](security.md)
 - [SSH Agent Forwarding](ssh-agent-forwarding.md)
-- [Host & Agent Management](hosts.md)
+- [Agent Management](agents.md)
 - [Repository Management](repositories.md)
 - [Scheduling & Retention](scheduling.md)
 - [Archive Browsing & Extraction](archives.md)

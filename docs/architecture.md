@@ -48,7 +48,7 @@ The server is structured around several subsystems:
 
 - **REST API** (`api/`) — handlers for clients, repos, schedules, archives, stats, auth, tokens, RBAC, tunnels, and system settings.
 - **WebSocket handlers** (`ws/`) — agent connection handler, UI broadcast channel, SSH relay endpoint.
-- **Scheduler** — a background task that ticks every 30 seconds, queries due schedules from the database, and dispatches `RunBackupNow`, `RunCheckNow`, or `RunVerifyNow` messages to connected agents. A separate hourly task prunes old reports and system events according to the configured retention policy.
+- **Scheduler** — a background task that ticks every 30 seconds, queries due schedules from the database, and dispatches `RunBackupNow`, `RunCheckNow`, or `RunVerifyNow` messages to connected agents. A separate hourly task prunes old backup-run history (runs without an archive) and system events according to the configured retention policy. Reports that represent an actual archive are exempt, so imported archives with old timestamps are never aged out.
 - **Agent registry** — an in-memory map of connected agents keyed by hostname, used to route messages from the scheduler and API to the correct WebSocket connection.
 - **Tunnel manager** — manages persistent SSH reverse tunnels for agents that cannot reach the server directly.
 

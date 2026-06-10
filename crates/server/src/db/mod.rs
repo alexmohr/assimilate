@@ -1951,6 +1951,7 @@ pub struct HealthRow {
     pub schedule_enabled: Option<bool>,
 }
 
+#[derive(Clone)]
 pub struct InsertReportParams {
     pub client_id: i64,
     pub repo_id: i64,
@@ -1984,7 +1985,7 @@ pub async fn insert_backup_pending(
     sqlx::query(
         "INSERT INTO backup_reports (client_id, repo_id, schedule_id, started_at, finished_at, \
          status, run_id) VALUES ($1, $2, $3, $4, $4, 'pending', $5) ON CONFLICT (repo_id, \
-         client_id, started_at) DO NOTHING",
+         client_id, started_at) WHERE archive_name IS NULL DO NOTHING",
     )
     .bind(client_id)
     .bind(repo_id)
@@ -2022,7 +2023,7 @@ pub async fn insert_backup_started(
         sqlx::query(
             "INSERT INTO backup_reports (client_id, repo_id, schedule_id, started_at, \
              finished_at, status, borg_command) VALUES ($1, $2, $3, $4, $4, 'started', $5) ON \
-             CONFLICT (repo_id, client_id, started_at) DO NOTHING",
+             CONFLICT (repo_id, client_id, started_at) WHERE archive_name IS NULL DO NOTHING",
         )
         .bind(client_id)
         .bind(repo_id)
@@ -2088,13 +2089,21 @@ pub async fn insert_backup_report(
         .await
         .map_err(ApiError::Database)?;
     } else {
-        sqlx::query(
+        // Reports carrying an archive name are deduplicated with the name included
+        // so distinct same-second archives never collide; reports without one
+        // (e.g. failures) fall back to the bare per-run triple.
+        let conflict_target = if params.archive_name.is_some() {
+            "(repo_id, client_id, started_at, archive_name) WHERE archive_name IS NOT NULL"
+        } else {
+            "(repo_id, client_id, started_at) WHERE archive_name IS NULL"
+        };
+        let sql = format!(
             "INSERT INTO backup_reports (client_id, repo_id, schedule_id, started_at, \
              finished_at, status, original_size, compressed_size, deduplicated_size, \
              repo_unique_csize, files_processed, duration_secs, error_message, warnings, \
              borg_version, matched, archive_name, borg_command) VALUES ($1, $2, $3, $4, $5, $6, \
-             $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) ON CONFLICT (repo_id, \
-             client_id, started_at) DO UPDATE SET schedule_id = COALESCE(EXCLUDED.schedule_id, \
+             $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) ON CONFLICT \
+             {conflict_target} DO UPDATE SET schedule_id = COALESCE(EXCLUDED.schedule_id, \
              backup_reports.schedule_id), finished_at = EXCLUDED.finished_at, status = \
              EXCLUDED.status, original_size = EXCLUDED.original_size, compressed_size = \
              EXCLUDED.compressed_size, deduplicated_size = EXCLUDED.deduplicated_size, \
@@ -2102,29 +2111,30 @@ pub async fn insert_backup_report(
              EXCLUDED.files_processed, duration_secs = EXCLUDED.duration_secs, error_message = \
              EXCLUDED.error_message, warnings = EXCLUDED.warnings, borg_version = \
              EXCLUDED.borg_version, matched = EXCLUDED.matched, archive_name = \
-             EXCLUDED.archive_name, borg_command = EXCLUDED.borg_command",
-        )
-        .bind(params.client_id)
-        .bind(params.repo_id)
-        .bind(params.schedule_id)
-        .bind(params.started_at)
-        .bind(params.finished_at)
-        .bind(&params.status)
-        .bind(params.original_size)
-        .bind(params.compressed_size)
-        .bind(params.deduplicated_size)
-        .bind(params.repo_unique_csize)
-        .bind(params.files_processed)
-        .bind(params.duration_secs)
-        .bind(&params.error_message)
-        .bind(&params.warnings)
-        .bind(&params.borg_version)
-        .bind(params.matched)
-        .bind(&params.archive_name)
-        .bind(&params.borg_command)
-        .execute(pool)
-        .await
-        .map_err(ApiError::Database)?;
+             EXCLUDED.archive_name, borg_command = EXCLUDED.borg_command"
+        );
+        sqlx::query(&sql)
+            .bind(params.client_id)
+            .bind(params.repo_id)
+            .bind(params.schedule_id)
+            .bind(params.started_at)
+            .bind(params.finished_at)
+            .bind(&params.status)
+            .bind(params.original_size)
+            .bind(params.compressed_size)
+            .bind(params.deduplicated_size)
+            .bind(params.repo_unique_csize)
+            .bind(params.files_processed)
+            .bind(params.duration_secs)
+            .bind(&params.error_message)
+            .bind(&params.warnings)
+            .bind(&params.borg_version)
+            .bind(params.matched)
+            .bind(&params.archive_name)
+            .bind(&params.borg_command)
+            .execute(pool)
+            .await
+            .map_err(ApiError::Database)?;
     }
     Ok(())
 }
@@ -2186,7 +2196,8 @@ pub async fn bulk_insert_backup_reports(
          $14::bool[], $15::text[], $16::text[]) AS t(client_id, repo_id, started_at, finished_at, \
          status, original_size, compressed_size, deduplicated_size, repo_unique_csize, \
          files_processed, duration_secs, error_message, borg_version, matched, archive_name, \
-         borg_command) ON CONFLICT (repo_id, client_id, started_at) DO NOTHING",
+         borg_command) ON CONFLICT (repo_id, client_id, started_at, archive_name) WHERE \
+         archive_name IS NOT NULL DO NOTHING",
     )
     .bind(&client_ids)
     .bind(&repo_ids)

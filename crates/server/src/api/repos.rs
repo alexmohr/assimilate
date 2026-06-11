@@ -1068,13 +1068,42 @@ async fn run_borg_info(repo_url: &str, passphrase: &str) -> Result<BorgInfoResul
 
 const LOCK_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 const LOCK_RETRY_MAX_ATTEMPTS: u32 = 60;
+const DEFAULT_BORG_QUERY_TIMEOUT_SECS: u64 = 300;
+
+/// Upper bound for a single `borg list`/`borg info` invocation. `--lock-wait`
+/// only bounds lock contention; a hung SSH connection would otherwise keep the
+/// process (and the import) waiting forever, leaving the repo stuck at "Listing
+/// archives". On timeout the process is killed and the operation fails so the
+/// importing state is cleared. Tunable via `ASSIMILATE_BORG_QUERY_TIMEOUT_SECS`.
+fn borg_query_timeout() -> Duration {
+    std::env::var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .map_or_else(
+            || Duration::from_secs(DEFAULT_BORG_QUERY_TIMEOUT_SECS),
+            Duration::from_secs,
+        )
+}
 
 async fn run_borg_info_with_retry(
     repo_url: &str,
     passphrase: &str,
 ) -> Result<BorgInfoResult, ApiError> {
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
-        match run_borg_info_once(repo_url, passphrase).await {
+        let attempt_result = match tokio::time::timeout(
+            borg_query_timeout(),
+            run_borg_info_once(repo_url, passphrase),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(ApiError::Internal(format!(
+                "borg info timed out after {}s; the repository may be unreachable",
+                borg_query_timeout().as_secs()
+            ))),
+        };
+        match attempt_result {
             Ok(result) => return Ok(result),
             Err(e) => {
                 let is_lock = matches!(&e, ApiError::BadGateway(msg) if is_lock_error(msg));
@@ -1256,10 +1285,16 @@ async fn run_borg_list_with_retry(
         borg_repo,
     ];
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
-        let output = borg
-            .run(&args, env)
-            .await
-            .map_err(|e| ApiError::Internal(format!("failed to execute borg list: {e}")))?;
+        let output = match tokio::time::timeout(borg_query_timeout(), borg.run(&args, env)).await {
+            Ok(result) => result
+                .map_err(|e| ApiError::Internal(format!("failed to execute borg list: {e}")))?,
+            Err(_) => {
+                return Err(ApiError::Internal(format!(
+                    "borg list timed out after {}s; the repository may be unreachable",
+                    borg_query_timeout().as_secs()
+                )));
+            }
+        };
 
         if output.status.success() {
             return Ok(output);

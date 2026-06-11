@@ -297,6 +297,24 @@ esac
     (tempdir, BorgBinaryGuard { previous })
 }
 
+/// Installs a fake borg whose `list` hangs, to exercise the query timeout.
+async fn install_hanging_borg() -> (TempDir, BorgBinaryGuard) {
+    let tempdir = tempfile::tempdir().unwrap();
+    let script = "#!/bin/sh\ncase \"$1\" in\n  list) sleep 60 ;;\n  *) exit 1 ;;\nesac\n";
+    let borg_path = tempdir.path().join("borg");
+    tokio::fs::write(&borg_path, script).await.unwrap();
+    let mut permissions = tokio::fs::metadata(&borg_path).await.unwrap().permissions();
+    permissions.set_mode(0o755);
+    tokio::fs::set_permissions(&borg_path, permissions)
+        .await
+        .unwrap();
+
+    let previous = std::env::var("BORG_BINARY").ok();
+    // SAFETY: tests serialize BORG_BINARY changes with a process-local lock.
+    unsafe { std::env::set_var("BORG_BINARY", &borg_path) };
+    (tempdir, BorgBinaryGuard { previous })
+}
+
 async fn wait_for_archive_index(
     pool: &PgPool,
     repo_id: i64,
@@ -729,6 +747,48 @@ async fn test_sync_repo_unreachable_returns_error_and_clears_importing() {
         !importing,
         "importing should be cleared after the synchronous sync returns"
     );
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_sync_repo_times_out_on_hanging_borg_and_clears_importing() {
+    let _borg_lock = borg_binary_lock().await;
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    // A borg that never returns must not hang the import forever.
+    let (_borg_dir, _borg_guard) = install_hanging_borg().await;
+    // SAFETY: BORG_BINARY/env changes are serialised by borg_binary_lock.
+    unsafe { std::env::set_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS", "1") };
+
+    let mut app = build_test_app(pool.clone()).await;
+    let repo_id = insert_test_repo(&pool, "hanging-borg-repo").await;
+
+    let started = std::time::Instant::now();
+    let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
+    let resp = oneshot(&mut app, req).await;
+    let elapsed = started.elapsed();
+
+    // SAFETY: serialised by borg_binary_lock.
+    unsafe { std::env::remove_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS") };
+
+    assert!(
+        resp.status().is_server_error(),
+        "a hanging borg list should fail the sync, got {}",
+        resp.status()
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(20),
+        "sync should time out quickly, took {elapsed:?}"
+    );
+
+    let importing: bool = sqlx::query_scalar("SELECT importing FROM repos WHERE id = $1")
+        .bind(repo_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(!importing, "importing must be cleared after a timeout");
 }
 
 #[tokio::test]

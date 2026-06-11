@@ -408,6 +408,18 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 );
             }
 
+            if report.detected_relocation {
+                if let Err(e) = db::set_relocation_pending(&state.pool, report.repo_id.0).await {
+                    tracing::error!(
+                        hostname = %hostname,
+                        error = %e,
+                        "failed to set relocation_pending after detected relocation"
+                    );
+                } else {
+                    config_assembler::push_config_to_agent(state, hostname).await;
+                }
+            }
+
             if let Ok(Some(quota)) = db::quota::get_quota(&state.pool, report.repo_id.0).await {
                 let quota_status = db::quota::evaluate_quota(&quota, report.deduplicated_size);
                 if !matches!(quota_status, db::quota::QuotaStatus::Ok) {
@@ -1133,6 +1145,7 @@ exit 0
             archive_name: Some("archive-2".to_string()),
             borg_command: Some("borg create".to_string()),
             run_id: None,
+            detected_relocation: false,
         };
         let msg = serde_json::to_string(&AgentToServer::BackupCompleted { report })
             .expect("serialize message");

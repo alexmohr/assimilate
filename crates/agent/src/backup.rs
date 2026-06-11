@@ -24,6 +24,8 @@ pub enum BackupError {
     Skipped(String),
     #[error("borg command failed: {0}")]
     BorgFailed(String),
+    #[error("borg command failed (repository relocation detected): {0}")]
+    BorgRelocated(String),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("stats parse error: {0}")]
@@ -289,9 +291,14 @@ impl BackupEngine {
                     borg_command,
                 })
             }
-            _ => Err(BackupError::BorgFailed(format!(
-                "borg create exited with code {exit_code}: {stderr}"
-            ))),
+            _ => {
+                let msg = format!("borg create exited with code {exit_code}: {stderr}");
+                if parse_relocation_detected(&stderr) {
+                    Err(BackupError::BorgRelocated(msg))
+                } else {
+                    Err(BackupError::BorgFailed(msg))
+                }
+            }
         }
     }
 
@@ -814,6 +821,22 @@ pub(crate) fn stderr_has_warnings(stderr: &str) -> bool {
     })
 }
 
+pub(crate) fn parse_relocation_detected(stderr: &str) -> bool {
+    stderr.lines().any(|line| {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            return false;
+        };
+        value
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|t| t == "question_prompt")
+            && value
+                .get("msgid")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|id| id == "BORG_RELOCATED_REPO_ACCESS_IS_OK")
+    })
+}
+
 /// Returns the messages for any log entries whose `msgid` indicates a backup
 /// source path was not found.  These are emitted as `WARNING` by borg (rc=1)
 /// but represent a configuration error - a configured source directory did
@@ -1279,5 +1302,37 @@ mod tests {
             !log.contains("--keep-yearly"),
             "keep-yearly should not appear when zero, but found in: {log}"
         );
+    }
+
+    #[test]
+    fn test_parse_relocation_detected_returns_true_for_question_prompt() {
+        let line1 = concat!(
+            r#"{"type": "question_prompt","#,
+            r#" "msgid": "BORG_RELOCATED_REPO_ACCESS_IS_OK","#,
+            r#" "message": "Warning: The repository at location ssh://host/./path"#,
+            r#" was previously located at ssh://host/old/path\nDo you want to continue? [yN] "}"#,
+        );
+        let line2 = concat!(
+            r#"{"type": "question_accepted_false","#,
+            r#" "msgid": "BORG_RELOCATED_REPO_ACCESS_IS_OK","#,
+            r#" "message": "Aborting."}"#,
+        );
+        let stderr = format!("{line1}\n{line2}");
+        assert!(parse_relocation_detected(&stderr));
+    }
+
+    #[test]
+    fn test_parse_relocation_detected_returns_false_for_other_errors() {
+        let stderr = concat!(
+            r#"{"type": "log_message", "levelname": "ERROR", "#,
+            r#""message": "Repository access aborted", "name": "borg.archiver", "#,
+            r#""msgid": "Cache.RepositoryAccessAborted"}"#,
+        );
+        assert!(!parse_relocation_detected(stderr));
+    }
+
+    #[test]
+    fn test_parse_relocation_detected_returns_false_for_empty() {
+        assert!(!parse_relocation_detected(""));
     }
 }

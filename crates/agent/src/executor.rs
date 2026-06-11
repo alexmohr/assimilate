@@ -869,6 +869,7 @@ fn make_failed_report(
         archive_name: None,
         borg_command: None,
         run_id,
+        detected_relocation: false,
     }
 }
 
@@ -943,6 +944,7 @@ async fn run_backup_task(
                 archive_name: result.archive_name,
                 borg_command: result.borg_command,
                 run_id: run_id.clone(),
+                detected_relocation: false,
             };
             (report, true)
         }
@@ -952,6 +954,13 @@ async fn run_backup_task(
                 make_failed_report(repo_id, schedule_id, started_at, reason, run_id.clone()),
                 false,
             )
+        }
+        Err(BackupError::BorgRelocated(msg)) => {
+            error!(repo_id = ?repo_id, error = %msg, "backup failed: repository relocation detected, will auto-accept on next run");
+            let mut report =
+                make_failed_report(repo_id, schedule_id, started_at, msg, run_id.clone());
+            report.detected_relocation = true;
+            (report, false)
         }
         Err(e) => {
             error!(repo_id = ?repo_id, error = %e, "backup failed");

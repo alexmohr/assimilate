@@ -247,7 +247,7 @@ impl FromStr for OnFailure {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BackupStatus {
     Success,
     Warning,
@@ -329,6 +329,8 @@ pub struct BackupReport {
     pub borg_command: Option<String>,
     #[serde(default)]
     pub run_id: Option<String>,
+    #[serde(default)]
+    pub detected_relocation: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

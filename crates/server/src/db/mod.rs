@@ -4049,6 +4049,7 @@ pub async fn delete_archive_records_by_names(
     }
 
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+
     let result =
         sqlx::query("DELETE FROM backup_reports WHERE repo_id = $1 AND archive_name = ANY($2)")
             .bind(repo_id)
@@ -4057,33 +4058,24 @@ pub async fn delete_archive_records_by_names(
             .await
             .map_err(ApiError::Database)?;
 
-    sqlx::query("DELETE FROM archive_files WHERE repo_id = $1 AND archive_name = ANY($2)")
+    // Deleting from archives cascades to archive_files, archive_index_jobs, and archive_tags.
+    sqlx::query("DELETE FROM archives WHERE repo_id = $1 AND name = ANY($2)")
         .bind(repo_id)
         .bind(names)
         .execute(&mut *tx)
         .await
         .map_err(ApiError::Database)?;
 
-    sqlx::query("DELETE FROM archive_paths WHERE repo_id = $1 AND archive_name = ANY($2)")
-        .bind(repo_id)
-        .bind(names)
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::Database)?;
-
-    sqlx::query("DELETE FROM archive_index_jobs WHERE repo_id = $1 AND archive_name = ANY($2)")
-        .bind(repo_id)
-        .bind(names)
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::Database)?;
-
-    sqlx::query("DELETE FROM archive_tags WHERE repo_id = $1 AND archive_name = ANY($2)")
-        .bind(repo_id)
-        .bind(names)
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::Database)?;
+    // GC paths that are no longer referenced by any archive in this repo.
+    sqlx::query(
+        "DELETE FROM archive_paths ap WHERE ap.repo_id = $1 AND NOT EXISTS (SELECT 1 FROM \
+         archive_files WHERE path_id = ap.id) AND NOT EXISTS (SELECT 1 FROM archive_files WHERE \
+         parent_path_id = ap.id)",
+    )
+    .bind(repo_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
 
     tx.commit().await.map_err(ApiError::Database)?;
     Ok(result.rows_affected())

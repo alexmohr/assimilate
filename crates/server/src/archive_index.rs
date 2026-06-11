@@ -33,13 +33,39 @@ pub fn get_index_status_from_str(s: &str) -> IndexStatus {
     }
 }
 
+/// Returns the `archives.id` for the given (repo_id, archive_name), creating the row if absent.
+async fn get_or_create_archive_id(
+    pool: &PgPool,
+    repo_id: i64,
+    archive_name: &str,
+) -> Result<i64, ApiError> {
+    if let Some(id) = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO archives (repo_id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING id",
+    )
+    .bind(repo_id)
+    .bind(archive_name)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?
+    {
+        return Ok(id);
+    }
+    sqlx::query_scalar::<_, i64>("SELECT id FROM archives WHERE repo_id = $1 AND name = $2")
+        .bind(repo_id)
+        .bind(archive_name)
+        .fetch_one(pool)
+        .await
+        .map_err(ApiError::Database)
+}
+
 pub async fn get_index_status(
     pool: &PgPool,
     repo_id: i64,
     archive_name: &str,
 ) -> Result<Option<IndexStatus>, ApiError> {
     let row = sqlx::query_as::<_, (String,)>(
-        "SELECT status FROM archive_index_jobs WHERE repo_id = $1 AND archive_name = $2",
+        "SELECT j.status FROM archive_index_jobs j JOIN archives a ON a.id = j.archive_id WHERE \
+         a.repo_id = $1 AND a.name = $2",
     )
     .bind(repo_id)
     .bind(archive_name)
@@ -53,7 +79,6 @@ pub async fn get_index_status(
 async fn ensure_archive_paths(
     pool: &PgPool,
     repo_id: i64,
-    archive_name: &str,
     paths: &[String],
 ) -> Result<HashMap<String, i64>, ApiError> {
     let mut unique_paths = paths.to_vec();
@@ -61,11 +86,10 @@ async fn ensure_archive_paths(
     unique_paths.dedup();
 
     sqlx::query(
-        "INSERT INTO archive_paths (repo_id, archive_name, path) SELECT $1, $2, \
-         unnest($3::text[]) ON CONFLICT DO NOTHING",
+        "INSERT INTO archive_paths (repo_id, path) SELECT $1, unnest($2::text[]) ON CONFLICT DO \
+         NOTHING",
     )
     .bind(repo_id)
-    .bind(archive_name)
     .bind(&unique_paths)
     .execute(pool)
     .await
@@ -78,11 +102,9 @@ async fn ensure_archive_paths(
     }
 
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT id, path FROM archive_paths WHERE repo_id = $1 AND archive_name = $2 AND path = \
-         ANY($3::text[])",
+        "SELECT id, path FROM archive_paths WHERE repo_id = $1 AND path = ANY($2::text[])",
     )
     .bind(repo_id)
-    .bind(archive_name)
     .bind(&unique_paths)
     .fetch_all(pool)
     .await
@@ -102,12 +124,13 @@ pub async fn ensure_indexed(
     repo_id: i64,
     archive_name: String,
 ) -> Result<IndexStatus, ApiError> {
+    let archive_id = get_or_create_archive_id(&pool, repo_id, &archive_name).await?;
+
     let result = sqlx::query(
-        "INSERT INTO archive_index_jobs (repo_id, archive_name, status) VALUES ($1, $2, \
-         'pending') ON CONFLICT DO NOTHING",
+        "INSERT INTO archive_index_jobs (archive_id, status) VALUES ($1, 'pending') ON CONFLICT \
+         DO NOTHING",
     )
-    .bind(repo_id)
-    .bind(&archive_name)
+    .bind(archive_id)
     .execute(&pool)
     .await
     .map_err(ApiError::Database)?;
@@ -151,7 +174,8 @@ pub async fn list_indexed_archive_names(
     repo_id: i64,
 ) -> Result<HashSet<String>, ApiError> {
     let names = sqlx::query_scalar::<_, String>(
-        "SELECT archive_name FROM archive_index_jobs WHERE repo_id = $1 AND status = 'done'",
+        "SELECT a.name FROM archive_index_jobs j JOIN archives a ON a.id = j.archive_id WHERE \
+         a.repo_id = $1 AND j.status = 'done'",
     )
     .bind(repo_id)
     .fetch_all(pool)
@@ -166,12 +190,12 @@ pub async fn ensure_index_job(
     repo_id: i64,
     archive_name: &str,
 ) -> Result<(), ApiError> {
+    let archive_id = get_or_create_archive_id(pool, repo_id, archive_name).await?;
     sqlx::query(
-        "INSERT INTO archive_index_jobs (repo_id, archive_name, status) VALUES ($1, $2, \
-         'pending') ON CONFLICT DO NOTHING",
+        "INSERT INTO archive_index_jobs (archive_id, status) VALUES ($1, 'pending') ON CONFLICT \
+         DO NOTHING",
     )
-    .bind(repo_id)
-    .bind(archive_name)
+    .bind(archive_id)
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
@@ -185,24 +209,33 @@ pub async fn run_indexing<F: FnMut(u64, Option<&str>)>(
     archive_name: &str,
     on_progress: &mut F,
 ) -> Result<(), ApiError> {
+    let archive_id = get_or_create_archive_id(pool, repo_id, archive_name).await?;
+
     sqlx::query(
-        "UPDATE archive_index_jobs SET status = 'indexing', started_at = NOW() WHERE repo_id = $1 \
-         AND archive_name = $2",
+        "UPDATE archive_index_jobs SET status = 'indexing', started_at = NOW() WHERE archive_id = \
+         $1",
     )
-    .bind(repo_id)
-    .bind(archive_name)
+    .bind(archive_id)
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
 
-    match index_archive(pool, encryption_key, repo_id, archive_name, on_progress).await {
+    match index_archive(
+        pool,
+        encryption_key,
+        repo_id,
+        archive_id,
+        archive_name,
+        on_progress,
+    )
+    .await
+    {
         Ok(file_count) => {
             sqlx::query(
                 "UPDATE archive_index_jobs SET status = 'done', finished_at = NOW(), file_count = \
-                 $3 WHERE repo_id = $1 AND archive_name = $2",
+                 $2 WHERE archive_id = $1",
             )
-            .bind(repo_id)
-            .bind(archive_name)
+            .bind(archive_id)
             .bind(file_count)
             .execute(pool)
             .await
@@ -213,10 +246,9 @@ pub async fn run_indexing<F: FnMut(u64, Option<&str>)>(
             let msg = e.to_string();
             sqlx::query(
                 "UPDATE archive_index_jobs SET status = 'failed', finished_at = NOW(), \
-                 error_message = $3 WHERE repo_id = $1 AND archive_name = $2",
+                 error_message = $2 WHERE archive_id = $1",
             )
-            .bind(repo_id)
-            .bind(archive_name)
+            .bind(archive_id)
             .bind(msg)
             .execute(pool)
             .await
@@ -230,6 +262,7 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
     pool: &PgPool,
     encryption_key: &[u8; 32],
     repo_id: i64,
+    archive_id: i64,
     archive_name: &str,
     on_progress: &mut F,
 ) -> Result<i64, ApiError> {
@@ -366,7 +399,7 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
 
     let file_count = i64::try_from(paths.len()).unwrap_or(i64::MAX);
     let path_values = path_values.into_iter().collect::<Vec<_>>();
-    let path_id_map = ensure_archive_paths(pool, repo_id, archive_name, &path_values).await?;
+    let path_id_map = ensure_archive_paths(pool, repo_id, &path_values).await?;
     let path_id = |path: &str| -> Result<i64, ApiError> {
         path_id_map
             .get(path)
@@ -385,13 +418,11 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
 
     // Bulk insert using unnest arrays - one round-trip regardless of archive size.
     sqlx::query(
-        "INSERT INTO archive_files (repo_id, archive_name, path_id, parent_path_id, entry_type, \
-         size, mtime, mode) SELECT $1, $2, unnest($3::bigint[]), unnest($4::bigint[]), \
-         unnest($5::text[]), unnest($6::bigint[]), unnest($7::text[]), unnest($8::text[]) ON \
-         CONFLICT DO NOTHING",
+        "INSERT INTO archive_files (archive_id, path_id, parent_path_id, entry_type, size, mtime, \
+         mode) SELECT $1, unnest($2::bigint[]), unnest($3::bigint[]), unnest($4::text[]), \
+         unnest($5::bigint[]), unnest($6::text[]), unnest($7::text[]) ON CONFLICT DO NOTHING",
     )
-    .bind(repo_id)
-    .bind(archive_name)
+    .bind(archive_id)
     .bind(&path_ids)
     .bind(&parent_path_ids)
     .bind(&entry_types)
@@ -421,11 +452,22 @@ pub async fn query_dir(
         mode: String,
     }
 
+    let archive_id =
+        sqlx::query_scalar::<_, i64>("SELECT id FROM archives WHERE repo_id = $1 AND name = $2")
+            .bind(repo_id)
+            .bind(archive_name)
+            .fetch_optional(pool)
+            .await
+            .map_err(ApiError::Database)?;
+
+    let Some(archive_id) = archive_id else {
+        return Ok(Vec::new());
+    };
+
     let parent_path_id = sqlx::query_scalar::<_, i64>(
-        "SELECT id FROM archive_paths WHERE repo_id = $1 AND archive_name = $2 AND path = $3",
+        "SELECT id FROM archive_paths WHERE repo_id = $1 AND path = $2",
     )
     .bind(repo_id)
-    .bind(archive_name)
     .bind(parent_path)
     .fetch_optional(pool)
     .await
@@ -437,11 +479,10 @@ pub async fn query_dir(
 
     let rows = sqlx::query_as::<_, Row>(
         "SELECT p.path, f.entry_type, f.size, f.mtime, f.mode FROM archive_files f JOIN \
-         archive_paths p ON p.id = f.path_id WHERE f.repo_id = $1 AND f.archive_name = $2 AND \
-         f.parent_path_id = $3 ORDER BY f.entry_type DESC, p.path ASC LIMIT $4",
+         archive_paths p ON p.id = f.path_id WHERE f.archive_id = $1 AND f.parent_path_id = $2 \
+         ORDER BY f.entry_type DESC, p.path ASC LIMIT $3",
     )
-    .bind(repo_id)
-    .bind(archive_name)
+    .bind(archive_id)
     .bind(parent_path_id)
     .bind(limit)
     .fetch_all(pool)

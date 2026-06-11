@@ -80,6 +80,9 @@ impl Borg {
             .envs(env)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            // Kill borg if the caller's future is dropped (e.g. a timeout fires),
+            // so a hung process is not left running and holding the repo lock.
+            .kill_on_drop(true)
             .output()
             .await;
         log_run_result(&subcommand, start.elapsed().as_millis(), &result);

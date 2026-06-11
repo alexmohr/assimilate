@@ -145,7 +145,7 @@ impl BackupEngine {
     }
 
     async fn run_hook_command(&self, cmd: &str, label: &str) -> Result<(), BackupError> {
-        info!("Running {label} command: {cmd}");
+        info!("Running {label} hook command");
 
         let output = tokio::time::timeout(
             Duration::from_mins(1),
@@ -157,7 +157,7 @@ impl BackupEngine {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let exit_code = output.status.code().unwrap_or(-1);
-            error!("{label} command `{cmd}` failed (exit {exit_code}): {stderr}");
+            error!("{label} hook command failed (exit {exit_code})");
             let stderr_trimmed = stderr.trim();
             let detail = if stderr_trimmed.is_empty() {
                 String::new()
@@ -165,7 +165,7 @@ impl BackupEngine {
                 format!(": {stderr_trimmed}")
             };
             return Err(BackupError::BorgFailed(format!(
-                "{label} command `{cmd}` exited with code {exit_code}{detail}"
+                "{label} hook command exited with code {exit_code}{detail}"
             )));
         }
 

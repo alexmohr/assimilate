@@ -1004,7 +1004,7 @@ async fn per_host_excludes_upsert_replaces_existing(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPool) {
-    let encryption_key = shared::crypto::derive_key(b"test-assembly-key-for-excludes");
+    let encryption_key = shared::crypto::derive_key(b"test-assembly-key-for-excludes").unwrap();
     let (client, repo, _schedule) = create_test_schedule(&pool).await;
 
     // Global excludes: blank lines and comments should be stripped

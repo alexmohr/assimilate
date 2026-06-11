@@ -123,12 +123,7 @@ pub async fn check_repo_permission(
     }
 
     let effective = db::get_effective_permissions(pool, auth.user_id).await?;
-    let role_allowed = effective.can_view_all_repos
-        || effective.can_create_schedule
-        || effective.can_delete_schedule
-        || effective.can_delete_own_schedule;
-
-    if role_allowed {
+    if effective.can_view_all_repos {
         return Ok(());
     }
 

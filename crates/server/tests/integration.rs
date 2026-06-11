@@ -1088,34 +1088,36 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
     .execute(&pool)
     .await
     .unwrap();
-    sqlx::query(
-        "INSERT INTO archive_index_jobs (repo_id, archive_name, status, file_count) VALUES ($1, \
-         $2, 'done', 1)",
+    let stale_archive_id: i64 = sqlx::query_scalar(
+        "INSERT INTO archives (repo_id, name) VALUES ($1, $2) RETURNING id",
     )
     .bind(repo_id)
     .bind("stale-archive")
-    .execute(&pool)
+    .fetch_one(&pool)
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO archive_paths (repo_id, archive_name, path) VALUES ($1, $2, $3), ($1, $2, $4)",
+        "INSERT INTO archive_index_jobs (archive_id, status, file_count) VALUES ($1, 'done', 1)",
     )
-    .bind(repo_id)
-    .bind("stale-archive")
-    .bind("")
-    .bind("stale.txt")
+    .bind(stale_archive_id)
     .execute(&pool)
     .await
     .unwrap();
+    sqlx::query("INSERT INTO archive_paths (repo_id, path) VALUES ($1, $2), ($1, $3)")
+        .bind(repo_id)
+        .bind("")
+        .bind("stale.txt")
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(
-        "INSERT INTO archive_files (repo_id, archive_name, path_id, parent_path_id, entry_type, \
-         size, mtime, mode) SELECT $1, $2, child.id, parent.id, 'f', 1, '', '' FROM archive_paths \
-         child JOIN archive_paths parent ON parent.repo_id = child.repo_id AND \
-         parent.archive_name = child.archive_name AND parent.path = $4 WHERE child.repo_id = $1 \
-         AND child.archive_name = $2 AND child.path = $3",
+        "INSERT INTO archive_files (archive_id, path_id, parent_path_id, entry_type, size, mtime, \
+         mode) SELECT $1, child.id, parent.id, 'f', 1, '', '' FROM archive_paths child JOIN \
+         archive_paths parent ON parent.repo_id = $2 AND parent.path = $4 WHERE child.repo_id = \
+         $2 AND child.path = $3",
     )
+    .bind(stale_archive_id)
     .bind(repo_id)
-    .bind("stale-archive")
     .bind("stale.txt")
     .bind("")
     .execute(&pool)

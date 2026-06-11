@@ -75,6 +75,15 @@ impl RepoOpTracker {
         }
     }
 
+    /// Number of operations waiting to run for this repository.
+    pub async fn queued_count(&self, repo_id: i64) -> u32 {
+        self.state
+            .read()
+            .await
+            .get(&repo_id)
+            .map_or(0, |state| state.queued)
+    }
+
     pub async fn get(&self, repo_id: i64) -> Option<ActiveRepoOp> {
         let map = self.state.read().await;
         map.get(&repo_id).and_then(|state| {

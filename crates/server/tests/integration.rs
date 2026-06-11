@@ -1765,3 +1765,71 @@ async fn test_export_then_import_roundtrip(pool: sqlx::PgPool) {
     .unwrap();
     assert_eq!(paths, vec!["/etc"]);
 }
+
+// -- must_change_password enforcement --
+
+const MCP_SESSION_ID: &str = "must-change-password-session-0000000";
+
+async fn create_must_change_password_user_and_session(pool: &PgPool) {
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash, role, must_change_password) VALUES \
+         ('mcp-user', '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'admin', \
+         true) ON CONFLICT (username) DO UPDATE SET must_change_password = true RETURNING id",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+
+    let expires = chrono::Utc::now() + chrono::Duration::hours(24);
+    sqlx::query(
+        "INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3) ON CONFLICT (id) DO \
+         UPDATE SET expires_at = EXCLUDED.expires_at",
+    )
+    .bind(MCP_SESSION_ID)
+    .bind(user_id)
+    .bind(expires)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+fn mcp_session_request(method: &str, uri: &str) -> Request<Body> {
+    Request::builder()
+        .uri(uri)
+        .method(method)
+        .header("cookie", format!("session={MCP_SESSION_ID}"))
+        .body(Body::empty())
+        .unwrap()
+}
+
+#[tokio::test]
+#[ignore]
+async fn must_change_password_blocks_regular_endpoints() {
+    let pool = setup_pool().await;
+    create_must_change_password_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    let resp = oneshot(&mut app, mcp_session_request("GET", "/api/clients")).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "must_change_password should block access to /api/clients"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn must_change_password_allows_me_endpoint() {
+    let pool = setup_pool().await;
+    create_must_change_password_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    let resp = oneshot(&mut app, mcp_session_request("GET", "/api/auth/me")).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "/api/auth/me should be accessible even with must_change_password"
+    );
+    let body = body_json(resp).await;
+    assert_eq!(body["must_change_password"], true);
+}

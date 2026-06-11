@@ -51,6 +51,7 @@ interface ActiveRepoOp {
   kind: RepoOpKind
   actor: string
   started_at: string
+  queued?: number
 }
 
 interface RepoWithStats {
@@ -514,15 +515,16 @@ function formatLastBackup(iso: string | null): string {
 }
 
 function repoOpLabel(op: ActiveRepoOp): string {
+  const queued = op.queued && op.queued > 0 ? ` (+${op.queued} queued)` : ''
   switch (op.kind) {
     case 'agent_backup':
-      return `Agent backup in progress by ${op.actor}`
+      return `Agent backup in progress by ${op.actor}${queued}`
     case 'server_sync':
-      return 'Server sync in progress'
+      return `Server sync in progress${queued}`
     case 'break_lock':
-      return 'Break-lock in progress'
+      return `Break-lock in progress${queued}`
     case 'delete_archive':
-      return `Deleting archive (started by ${op.actor})`
+      return `Deleting archive (started by ${op.actor})${queued}`
   }
 }
 

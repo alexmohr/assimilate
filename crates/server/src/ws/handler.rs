@@ -365,12 +365,14 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 let index_pool = state.pool.clone();
                 let index_key = state.encryption_key;
                 let index_repo_id = report.repo_id.0;
+                let index_repo_lock = state.repo_lock.clone();
                 tokio::spawn(async move {
                     match archive_index::ensure_indexed(
                         index_pool,
                         index_key,
                         index_repo_id,
                         archive_name.clone(),
+                        index_repo_lock,
                     )
                     .await
                     {
@@ -485,6 +487,7 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                 let sync_key = state.encryption_key;
                 let sync_repo_id = report.repo_id.0;
                 let sync_broadcast = state.ui_broadcast.clone();
+                let sync_repo_lock = state.repo_lock.clone();
                 tokio::spawn(async move {
                     if let Err(e) = db::set_repo_importing(&sync_pool, sync_repo_id, true).await {
                         tracing::error!(
@@ -494,8 +497,14 @@ async fn handle_agent_message(text: &str, hostname: &str, client_id: i64, state:
                         );
                         return;
                     }
-                    match sync_new_archives(&sync_pool, &sync_key, sync_repo_id, &sync_broadcast)
-                        .await
+                    match sync_new_archives(
+                        &sync_pool,
+                        &sync_key,
+                        sync_repo_id,
+                        &sync_broadcast,
+                        &sync_repo_lock,
+                    )
+                    .await
                     {
                         Ok((added, removed)) => {
                             if let Err(e) =

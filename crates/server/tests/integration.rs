@@ -835,6 +835,92 @@ async fn test_delete_archive_runs_in_background() {
 
 #[tokio::test]
 #[ignore]
+async fn test_delete_multiple_archives_queues_without_conflict() {
+    let _borg_lock = borg_binary_lock().await;
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let empty_list = r#"{"archives": []}"#;
+    let info_repo_json = r#"{
+  "cache": {
+    "stats": {
+      "total_size": 0,
+      "total_csize": 0,
+      "unique_csize": 0,
+      "total_chunks": 0,
+      "total_unique_chunks": 0
+    }
+  }
+}"#;
+    let (_borg_dir, _borg_guard) =
+        install_fake_borg(empty_list, empty_list, info_repo_json, "").await;
+
+    let mut app = build_test_app(pool.clone()).await;
+    let client_id: i64 = sqlx::query_scalar(
+        "INSERT INTO clients (hostname, agent_token_hash) VALUES ('multi-del', 'hash') RETURNING \
+         id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "multi-delete-repo").await;
+
+    let names = ["arch-a", "arch-b", "arch-c"];
+    for name in names {
+        sqlx::query(
+            "INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, \
+             matched, archive_name) VALUES ($1, $2, NOW(), NOW(), 'success', true, $3)",
+        )
+        .bind(client_id)
+        .bind(repo_id)
+        .bind(name)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    // Fire all deletions back to back; none should be rejected with a conflict.
+    for name in names {
+        let req = delete_request(&format!("/api/repos/{repo_id}/archives/{name}"));
+        let resp = oneshot(&mut app, req).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::ACCEPTED,
+            "concurrent deletes should be queued, not rejected"
+        );
+    }
+
+    use tokio::time::{Duration, timeout};
+    timeout(Duration::from_secs(15), async {
+        loop {
+            let done: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM audit_log WHERE action = 'delete_archive' AND target_id = $1",
+            )
+            .bind(repo_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            if done == names.len() as i64 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("all queued deletions should eventually complete");
+
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM backup_reports WHERE repo_id = $1")
+            .bind(repo_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(remaining, 0, "every queued archive should be deleted");
+}
+
+#[tokio::test]
+#[ignore]
 async fn test_sync_repo_returns_409_when_already_importing() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;

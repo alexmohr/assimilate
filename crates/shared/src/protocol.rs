@@ -22,6 +22,9 @@ pub struct ActiveRepoOp {
     pub kind: RepoOpKind,
     pub actor: String,
     pub started_at: DateTime<Utc>,
+    /// Number of further operations waiting behind this one for the repository.
+    #[serde(default)]
+    pub queued: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

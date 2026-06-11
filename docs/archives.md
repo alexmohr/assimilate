@@ -70,7 +70,9 @@ To download the whole archive as `tar.lz4`, click **Download** on the root `.` r
 
 Administrators can also click **Delete whole archive** on the root `.` row to permanently remove the archive from the repository. This deletes the borg archive itself, the imported report, and any archive tags.
 
-The `borg delete` runs in the background on the server so the UI is never blocked while it works. The repository detail page shows a **Deleting archive** indicator while the operation is in progress, and the archive disappears from the list once borg finishes. If the deletion fails, the archive remains in the list and a `archive_delete_failed` system event records the reason. Only one repository operation (backup, sync, break-lock, or archive deletion) runs at a time, so a delete is rejected with a conflict while another operation is already active.
+The `borg delete` runs in the background on the server so the UI is never blocked while it works. The repository detail page shows a **Deleting archive** indicator while the operation is in progress, and the archive disappears from the list once borg finishes. If the deletion fails, the archive remains in the list and a `archive_delete_failed` system event records the reason.
+
+All server-side borg operations for a repository (backup, sync, content indexing, and archive deletion) run **sequentially** through a per-repository queue, so they never contend for the borg repository lock. Deleting several archives at once no longer returns a conflict — each deletion is queued and runs in turn, and the indicator shows how many operations are waiting (for example, *Deleting archive (+3 queued)*).
 
 !!! warning "Restores overwrite files"
     Restoring writes directly to the original filesystem location on the matched host. Existing files may be overwritten without another prompt from borg.

@@ -41,9 +41,8 @@ async fn get_or_create_archive_id(
     archive_name: &str,
 ) -> Result<i64, ApiError> {
     sqlx::query_scalar::<_, i64>(
-        "INSERT INTO archives (repo_id, name) VALUES ($1, $2) \
-         ON CONFLICT (repo_id, name) DO UPDATE SET name = EXCLUDED.name \
-         RETURNING id",
+        "INSERT INTO archives (repo_id, name) VALUES ($1, $2) ON CONFLICT (repo_id, name) DO \
+         UPDATE SET name = EXCLUDED.name RETURNING id",
     )
     .bind(repo_id)
     .bind(archive_name)

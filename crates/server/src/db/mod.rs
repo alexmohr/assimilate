@@ -4060,11 +4060,9 @@ pub async fn delete_archive_records_by_names(
 
     // Collect candidate path IDs before the cascade delete removes archive_files.
     let candidate_ids: Vec<i64> = sqlx::query_scalar::<_, i64>(
-        "SELECT path_id FROM archive_files WHERE archive_id IN \
-             (SELECT id FROM archives WHERE repo_id = $1 AND name = ANY($2)) \
-         UNION \
-         SELECT parent_path_id FROM archive_files WHERE archive_id IN \
-             (SELECT id FROM archives WHERE repo_id = $1 AND name = ANY($2))",
+        "SELECT path_id FROM archive_files WHERE archive_id IN (SELECT id FROM archives WHERE \
+         repo_id = $1 AND name = ANY($2)) UNION SELECT parent_path_id FROM archive_files WHERE \
+         archive_id IN (SELECT id FROM archives WHERE repo_id = $1 AND name = ANY($2))",
     )
     .bind(repo_id)
     .bind(names)
@@ -4083,11 +4081,9 @@ pub async fn delete_archive_records_by_names(
     // GC paths that are now orphaned, checking only the candidates from the deleted archives.
     if !candidate_ids.is_empty() {
         sqlx::query(
-            "DELETE FROM archive_paths \
-             WHERE repo_id = $1 \
-               AND id = ANY($2) \
-               AND NOT EXISTS (SELECT 1 FROM archive_files WHERE path_id = archive_paths.id) \
-               AND NOT EXISTS (SELECT 1 FROM archive_files WHERE parent_path_id = archive_paths.id)",
+            "DELETE FROM archive_paths WHERE repo_id = $1 AND id = ANY($2) AND NOT EXISTS (SELECT \
+             1 FROM archive_files WHERE path_id = archive_paths.id) AND NOT EXISTS (SELECT 1 FROM \
+             archive_files WHERE parent_path_id = archive_paths.id)",
         )
         .bind(repo_id)
         .bind(&candidate_ids)

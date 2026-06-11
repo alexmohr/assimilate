@@ -1088,14 +1088,13 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
     .execute(&pool)
     .await
     .unwrap();
-    let stale_archive_id: i64 = sqlx::query_scalar(
-        "INSERT INTO archives (repo_id, name) VALUES ($1, $2) RETURNING id",
-    )
-    .bind(repo_id)
-    .bind("stale-archive")
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let stale_archive_id: i64 =
+        sqlx::query_scalar("INSERT INTO archives (repo_id, name) VALUES ($1, $2) RETURNING id")
+            .bind(repo_id)
+            .bind("stale-archive")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     sqlx::query(
         "INSERT INTO archive_index_jobs (archive_id, status, file_count) VALUES ($1, 'done', 1)",
     )

@@ -38,6 +38,8 @@ enum StartupError {
     EnvVar(#[from] std::env::VarError),
     #[error("bcrypt error: {0}")]
     Bcrypt(#[from] bcrypt::BcryptError),
+    #[error("crypto error: {0}")]
+    Crypto(#[from] shared::crypto::CryptoError),
 }
 
 #[tokio::main]
@@ -73,7 +75,7 @@ async fn main() -> Result<(), StartupError> {
 
     bootstrap_admin(&pool).await?;
 
-    let encryption_key = shared::crypto::derive_key(secret_key.as_bytes());
+    let encryption_key = shared::crypto::derive_key(secret_key.as_bytes())?;
 
     let bind_addr =
         std::env::var("ASSIMILATE_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());

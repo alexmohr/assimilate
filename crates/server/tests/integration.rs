@@ -52,7 +52,7 @@ async fn body_json(response: axum::response::Response) -> Value {
 }
 
 async fn build_test_app(pool: PgPool) -> Router {
-    let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-integration");
+    let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-integration").unwrap();
     let ui_broadcast = server::ws::ui_broadcast::UiBroadcast::new();
     let server_addr: std::net::SocketAddr = "127.0.0.1:8080".parse().unwrap();
     let tunnel_manager =
@@ -372,7 +372,7 @@ async fn clean_tables(pool: &PgPool) {
 
 /// Inserts a repo directly into DB, bypassing the API (which requires SSH connectivity).
 async fn insert_test_repo(pool: &PgPool, name: &str) -> i64 {
-    let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-integration");
+    let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-integration").unwrap();
     let passphrase_encrypted = shared::crypto::encrypt_passphrase("test-pass", &encryption_key)
         .expect("encryption should not fail");
     sqlx::query_scalar(
@@ -1298,7 +1298,7 @@ async fn test_auth_me_without_session() {
 
 /// Helper: insert a schedule directly into the DB (bypasses SSH check in the API).
 async fn insert_test_schedule(pool: &sqlx::PgPool, client_id: i64, repo_id: i64) -> i64 {
-    let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-integration");
+    let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-integration").unwrap();
     let passphrase_encrypted = shared::crypto::encrypt_passphrase("pass", &encryption_key).unwrap();
     sqlx::query_scalar("UPDATE repos SET passphrase_encrypted = $2 WHERE id = $1 RETURNING id")
         .bind(repo_id)

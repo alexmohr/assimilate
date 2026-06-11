@@ -41,6 +41,7 @@ pub struct TunnelSshHandler {
     pub server_addr: SocketAddr,
     pub ui_broadcast: UiBroadcast,
     pub client_id: i64,
+    pub expected_host_key: Option<String>,
 }
 
 impl client::Handler for TunnelSshHandler {
@@ -48,9 +49,18 @@ impl client::Handler for TunnelSshHandler {
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &PublicKey,
+        server_public_key: &PublicKey,
     ) -> Result<bool, Self::Error> {
-        Ok(true)
+        let Some(expected) = &self.expected_host_key else {
+            return Ok(true);
+        };
+        let actual = server_public_key.to_openssh().unwrap_or_default();
+        if actual.trim() == expected.trim() {
+            Ok(true)
+        } else {
+            tracing::error!("tunnel SSH host key mismatch: expected {expected}, got {actual}");
+            Ok(false)
+        }
     }
 
     async fn server_channel_open_forwarded_tcpip(
@@ -257,6 +267,7 @@ impl TunnelManager {
                     server_addr: manager.server_addr,
                     ui_broadcast: manager.ui_broadcast.clone(),
                     client_id: current.client_id,
+                    expected_host_key: None,
                 };
 
                 let session = tokio::select! {

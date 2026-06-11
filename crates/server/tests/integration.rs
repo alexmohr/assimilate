@@ -118,6 +118,10 @@ async fn build_test_app(pool: PgPool) -> Router {
             get(server::api::archives::list_archives),
         )
         .route(
+            "/api/repos/{repo_id}/archives/{archive_name}",
+            delete(server::api::archives::delete_archive),
+        )
+        .route(
             "/api/repos/{repo_id}/ssh-host-key/scan",
             post(server::api::repos::scan_repo_host_key),
         )
@@ -267,6 +271,9 @@ EOF
 EOF
         ;;
     esac
+    ;;
+  delete)
+    exit 0
     ;;
   *)
     exit 1
@@ -721,6 +728,108 @@ async fn test_sync_repo_unreachable_returns_error_and_clears_importing() {
     assert!(
         !importing,
         "importing should be cleared after the synchronous sync returns"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_delete_archive_runs_in_background() {
+    let _borg_lock = borg_binary_lock().await;
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let empty_list = r#"{"archives": []}"#;
+    let info_repo_json = r#"{
+  "cache": {
+    "stats": {
+      "total_size": 0,
+      "total_csize": 0,
+      "unique_csize": 0,
+      "total_chunks": 0,
+      "total_unique_chunks": 0
+    }
+  }
+}"#;
+    let (_borg_dir, _borg_guard) =
+        install_fake_borg(empty_list, empty_list, info_repo_json, "").await;
+
+    let mut app = build_test_app(pool.clone()).await;
+    let client_id: i64 = sqlx::query_scalar(
+        "INSERT INTO clients (hostname, agent_token_hash) VALUES ('del-host', 'hash') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "delete-archive-repo").await;
+
+    sqlx::query(
+        "INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, \
+         matched, archive_name) VALUES ($1, $2, NOW(), NOW(), 'success', true, $3)",
+    )
+    .bind(client_id)
+    .bind(repo_id)
+    .bind("delete-me")
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO archive_index_jobs (repo_id, archive_name, status) VALUES ($1, $2, 'done')",
+    )
+    .bind(repo_id)
+    .bind("delete-me")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = delete_request(&format!("/api/repos/{repo_id}/archives/delete-me"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    // The audit entry is written last in the background task, so waiting for it
+    // guarantees the borg delete and DB cleanup have already completed.
+    // The audit entry is written last in the background task, so waiting for it
+    // (scoped to this repo) guarantees the borg delete and DB cleanup completed.
+    use tokio::time::{Duration, timeout};
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let audit_rows: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM audit_log WHERE action = 'delete_archive' AND target_id = $1",
+            )
+            .bind(repo_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            if audit_rows == 1 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("background deletion should write an audit entry for this repo");
+
+    let remaining: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",
+    )
+    .bind(repo_id)
+    .bind("delete-me")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(remaining, 0, "the archive report should be removed");
+
+    let index_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM archive_index_jobs WHERE repo_id = $1 AND archive_name = $2",
+    )
+    .bind(repo_id)
+    .bind("delete-me")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        index_rows, 0,
+        "index job rows should be removed with the archive"
     );
 }
 

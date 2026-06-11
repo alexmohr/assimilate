@@ -382,20 +382,10 @@ pub async fn delete_archive(
     // UI is never blocked waiting for it.
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
 
-    if state.repo_op_tracker.get(repo_id).await.is_some() {
-        return Err(ApiError::Conflict(
-            "another repository operation is in progress".to_string(),
-        ));
-    }
-
-    state
-        .repo_op_tracker
-        .set(
-            repo_id,
-            shared::protocol::RepoOpKind::DeleteArchive,
-            auth.username.clone(),
-        )
-        .await;
+    // Queue the deletion rather than rejecting concurrent requests: every
+    // server-side borg operation for a repository runs sequentially via the
+    // per-repo lock, so deleting many archives at once just lines them up.
+    state.repo_op_tracker.enqueue(repo_id).await;
     state
         .ui_broadcast
         .send(shared::protocol::ServerToUi::RepoOpChanged {
@@ -431,6 +421,24 @@ async fn run_archive_deletion(
     user_id: i64,
     username: String,
 ) {
+    // Serialise with every other borg operation on this repository. While we
+    // wait here the deletion stays counted as queued in the op tracker.
+    let _repo_guard = state.repo_lock.acquire(repo_id).await;
+    state
+        .repo_op_tracker
+        .begin(
+            repo_id,
+            shared::protocol::RepoOpKind::DeleteArchive,
+            username.clone(),
+        )
+        .await;
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::RepoOpChanged {
+            repo_id,
+            op: state.repo_op_tracker.get(repo_id).await,
+        });
+
     let repo_archive = format!("{borg_repo}::{archive_name}");
     let result = Borg::new()
         .run(
@@ -447,7 +455,10 @@ async fn run_archive_deletion(
     state.repo_op_tracker.clear(repo_id).await;
     state
         .ui_broadcast
-        .send(shared::protocol::ServerToUi::RepoOpChanged { repo_id, op: None });
+        .send(shared::protocol::ServerToUi::RepoOpChanged {
+            repo_id,
+            op: state.repo_op_tracker.get(repo_id).await,
+        });
 
     match result {
         Ok(output) => {
@@ -694,6 +705,7 @@ pub async fn list_contents(
                 state.encryption_key,
                 repo_id,
                 archive_name.clone(),
+                state.repo_lock.clone(),
             )
             .await?;
             return Ok(Json(ContentsResponse {

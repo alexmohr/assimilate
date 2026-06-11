@@ -26,7 +26,7 @@ use super::{
     permissions::is_visible_to_user,
 };
 use crate::{
-    AppState, archive_index,
+    AppState, RepoLock, archive_index,
     borg::Borg,
     config_assembler,
     db::{self, InsertRepoParams, RepoRow, RepoWithStatsRow, UpdateRepoParams},
@@ -1526,6 +1526,7 @@ pub async fn sync_new_archives(
     encryption_key: &[u8; 32],
     repo_id: i64,
     ui_broadcast: &UiBroadcast,
+    repo_lock: &RepoLock,
 ) -> Result<(u64, u64), ApiError> {
     let (borg_repo, env) = super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
 
@@ -1677,6 +1678,7 @@ pub async fn sync_new_archives(
         encryption_key,
         repo_id,
         &archive_names,
+        repo_lock,
         "incremental sync",
     )
     .await;
@@ -1825,14 +1827,21 @@ async fn queue_archive_indexing(
     encryption_key: &[u8; 32],
     repo_id: i64,
     archive_names: &[String],
+    repo_lock: &RepoLock,
     sync_kind: &str,
 ) {
     join_all(archive_names.iter().map(|archive_name| {
         let pool = pool.clone();
+        let repo_lock = repo_lock.clone();
         async move {
-            if let Err(e) =
-                archive_index::ensure_indexed(pool, *encryption_key, repo_id, archive_name.clone())
-                    .await
+            if let Err(e) = archive_index::ensure_indexed(
+                pool,
+                *encryption_key,
+                repo_id,
+                archive_name.clone(),
+                repo_lock,
+            )
+            .await
             {
                 warn!(
                     repo_id,
@@ -1857,6 +1866,7 @@ async fn index_archives_with_progress(
     encryption_key: [u8; 32],
     repo_id: i64,
     ui_broadcast: UiBroadcast,
+    repo_lock: RepoLock,
 ) {
     let all = match db::list_archive_names_for_repo(&pool, repo_id).await {
         Ok(names) => names,
@@ -1938,6 +1948,7 @@ async fn index_archives_with_progress(
             &encryption_key,
             repo_id,
             archive_name,
+            &repo_lock,
             &mut on_progress,
         )
         .await
@@ -2155,8 +2166,16 @@ pub async fn sync_repo(
         let pool = state.pool.clone();
         let key = state.encryption_key;
         let ui_broadcast = state.ui_broadcast.clone();
+        let repo_lock = state.repo_lock.clone();
         tokio::spawn(async move {
-            index_archives_with_progress(pool.clone(), key, repo_id, ui_broadcast.clone()).await;
+            index_archives_with_progress(
+                pool.clone(),
+                key,
+                repo_id,
+                ui_broadcast.clone(),
+                repo_lock,
+            )
+            .await;
             if let Err(e) = db::set_repo_importing(&pool, repo_id, false).await {
                 error!(repo_id, error = %e, "failed to clear importing flag after indexing");
             }

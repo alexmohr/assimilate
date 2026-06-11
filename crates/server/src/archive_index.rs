@@ -8,6 +8,7 @@ use sqlx::PgPool;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::{
+    RepoLock,
     api::archives::{
         ContentEntry, LOCK_WAIT_SECS, classify_borg_error, get_repo_env, normalize_path,
     },
@@ -50,6 +51,10 @@ pub async fn get_index_status(
     Ok(row.map(|(s,)| get_index_status_from_str(&s)))
 }
 
+/// Rows inserted per statement. Large archives are written in chunks so a single
+/// statement never grows big enough to trip slow-statement alerts or timeouts.
+const INSERT_CHUNK: usize = 5000;
+
 async fn ensure_archive_paths(
     pool: &PgPool,
     repo_id: i64,
@@ -60,38 +65,40 @@ async fn ensure_archive_paths(
     unique_paths.sort_unstable();
     unique_paths.dedup();
 
-    sqlx::query(
-        "INSERT INTO archive_paths (repo_id, archive_name, path) SELECT $1, $2, \
-         unnest($3::text[]) ON CONFLICT DO NOTHING",
-    )
-    .bind(repo_id)
-    .bind(archive_name)
-    .bind(&unique_paths)
-    .execute(pool)
-    .await
-    .map_err(ApiError::Database)?;
-
     #[derive(sqlx::FromRow)]
     struct Row {
         id: i64,
         path: String,
     }
 
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT id, path FROM archive_paths WHERE repo_id = $1 AND archive_name = $2 AND path = \
-         ANY($3::text[])",
-    )
-    .bind(repo_id)
-    .bind(archive_name)
-    .bind(&unique_paths)
-    .fetch_all(pool)
-    .await
-    .map_err(ApiError::Database)?;
+    let mut map = HashMap::with_capacity(unique_paths.len());
+    for chunk in unique_paths.chunks(INSERT_CHUNK) {
+        sqlx::query(
+            "INSERT INTO archive_paths (repo_id, archive_name, path) SELECT $1, $2, \
+             unnest($3::text[]) ON CONFLICT DO NOTHING",
+        )
+        .bind(repo_id)
+        .bind(archive_name)
+        .bind(chunk)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
 
-    Ok(rows
-        .into_iter()
-        .map(|row| (row.path, row.id))
-        .collect::<HashMap<_, _>>())
+        let rows = sqlx::query_as::<_, Row>(
+            "SELECT id, path FROM archive_paths WHERE repo_id = $1 AND archive_name = $2 AND path \
+             = ANY($3::text[])",
+        )
+        .bind(repo_id)
+        .bind(archive_name)
+        .bind(chunk)
+        .fetch_all(pool)
+        .await
+        .map_err(ApiError::Database)?;
+
+        map.extend(rows.into_iter().map(|row| (row.path, row.id)));
+    }
+
+    Ok(map)
 }
 
 /// Atomically claim the indexing job and spawn a background task if we won the race.
@@ -101,6 +108,7 @@ pub async fn ensure_indexed(
     encryption_key: [u8; 32],
     repo_id: i64,
     archive_name: String,
+    repo_lock: RepoLock,
 ) -> Result<IndexStatus, ApiError> {
     let result = sqlx::query(
         "INSERT INTO archive_index_jobs (repo_id, archive_name, status) VALUES ($1, $2, \
@@ -122,6 +130,7 @@ pub async fn ensure_indexed(
                 &encryption_key,
                 repo_id,
                 &archive_name_bg,
+                &repo_lock,
                 &mut |_, _| {},
             )
             .await
@@ -183,8 +192,12 @@ pub async fn run_indexing<F: FnMut(u64, Option<&str>)>(
     encryption_key: &[u8; 32],
     repo_id: i64,
     archive_name: &str,
+    repo_lock: &RepoLock,
     on_progress: &mut F,
 ) -> Result<(), ApiError> {
+    // Serialise the borg `list` with every other borg operation on this repo so
+    // indexing, deletes, syncs and backups never contend for the repository lock.
+    let _repo_guard = repo_lock.acquire(repo_id).await;
     sqlx::query(
         "UPDATE archive_index_jobs SET status = 'indexing', started_at = NOW() WHERE repo_id = $1 \
          AND archive_name = $2",
@@ -393,24 +406,31 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
         .map(|path| path_id(path))
         .collect::<Result<_, _>>()?;
 
-    // Bulk insert using unnest arrays - one round-trip regardless of archive size.
-    sqlx::query(
-        "INSERT INTO archive_files (repo_id, archive_name, path_id, parent_path_id, entry_type, \
-         size, mtime, mode) SELECT $1, $2, unnest($3::bigint[]), unnest($4::bigint[]), \
-         unnest($5::text[]), unnest($6::bigint[]), unnest($7::text[]), unnest($8::text[]) ON \
-         CONFLICT DO NOTHING",
-    )
-    .bind(repo_id)
-    .bind(archive_name)
-    .bind(&path_ids)
-    .bind(&parent_path_ids)
-    .bind(&entry_types)
-    .bind(&sizes)
-    .bind(&mtimes)
-    .bind(&modes)
-    .execute(pool)
-    .await
-    .map_err(ApiError::Database)?;
+    // Insert in chunks rather than one giant statement: archives with millions
+    // of files would otherwise build a single query large enough to trip slow-
+    // statement alerts and statement timeouts.
+    let mut offset = 0;
+    while offset < path_ids.len() {
+        let end = (offset + INSERT_CHUNK).min(path_ids.len());
+        sqlx::query(
+            "INSERT INTO archive_files (repo_id, archive_name, path_id, parent_path_id, \
+             entry_type, size, mtime, mode) SELECT $1, $2, unnest($3::bigint[]), \
+             unnest($4::bigint[]), unnest($5::text[]), unnest($6::bigint[]), unnest($7::text[]), \
+             unnest($8::text[]) ON CONFLICT DO NOTHING",
+        )
+        .bind(repo_id)
+        .bind(archive_name)
+        .bind(&path_ids[offset..end])
+        .bind(&parent_path_ids[offset..end])
+        .bind(&entry_types[offset..end])
+        .bind(&sizes[offset..end])
+        .bind(&mtimes[offset..end])
+        .bind(&modes[offset..end])
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+        offset = end;
+    }
 
     Ok(file_count)
 }

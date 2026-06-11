@@ -2025,9 +2025,9 @@ pub async fn insert_backup_started(
         .map_err(ApiError::Database)?;
     } else {
         sqlx::query(
-            "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, \
-             finished_at, status, borg_command) VALUES ($1, $2, $3, $4, $4, 'started', $5) ON \
-             CONFLICT (repo_id, agent_id, started_at) WHERE archive_name IS NULL DO NOTHING",
+            "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
+             status, borg_command) VALUES ($1, $2, $3, $4, $4, 'started', $5) ON CONFLICT \
+             (repo_id, agent_id, started_at) WHERE archive_name IS NULL DO NOTHING",
         )
         .bind(agent_id)
         .bind(repo_id)
@@ -2102,20 +2102,20 @@ pub async fn insert_backup_report(
             "(repo_id, agent_id, started_at) WHERE archive_name IS NULL"
         };
         let sql = format!(
-            "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, \
-             finished_at, status, original_size, compressed_size, deduplicated_size, \
-             repo_unique_csize, files_processed, duration_secs, error_message, warnings, \
-             borg_version, matched, archive_name, borg_command) VALUES ($1, $2, $3, $4, $5, $6, \
-             $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) ON CONFLICT \
-             {conflict_target} DO UPDATE SET schedule_id = COALESCE(EXCLUDED.schedule_id, \
-             backup_reports.schedule_id), finished_at = EXCLUDED.finished_at, status = \
-             EXCLUDED.status, original_size = EXCLUDED.original_size, compressed_size = \
-             EXCLUDED.compressed_size, deduplicated_size = EXCLUDED.deduplicated_size, \
-             repo_unique_csize = EXCLUDED.repo_unique_csize, files_processed = \
-             EXCLUDED.files_processed, duration_secs = EXCLUDED.duration_secs, error_message = \
-             EXCLUDED.error_message, warnings = EXCLUDED.warnings, borg_version = \
-             EXCLUDED.borg_version, matched = EXCLUDED.matched, archive_name = \
-             EXCLUDED.archive_name, borg_command = EXCLUDED.borg_command"
+            "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
+             status, original_size, compressed_size, deduplicated_size, repo_unique_csize, \
+             files_processed, duration_secs, error_message, warnings, borg_version, matched, \
+             archive_name, borg_command) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, \
+             $12, $13, $14, $15, $16, $17, $18) ON CONFLICT {conflict_target} DO UPDATE SET \
+             schedule_id = COALESCE(EXCLUDED.schedule_id, backup_reports.schedule_id), \
+             finished_at = EXCLUDED.finished_at, status = EXCLUDED.status, original_size = \
+             EXCLUDED.original_size, compressed_size = EXCLUDED.compressed_size, \
+             deduplicated_size = EXCLUDED.deduplicated_size, repo_unique_csize = \
+             EXCLUDED.repo_unique_csize, files_processed = EXCLUDED.files_processed, \
+             duration_secs = EXCLUDED.duration_secs, error_message = EXCLUDED.error_message, \
+             warnings = EXCLUDED.warnings, borg_version = EXCLUDED.borg_version, matched = \
+             EXCLUDED.matched, archive_name = EXCLUDED.archive_name, borg_command = \
+             EXCLUDED.borg_command"
         );
         sqlx::query(&sql)
             .bind(params.agent_id)

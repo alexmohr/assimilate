@@ -3859,7 +3859,7 @@ async fn bulk_insert_keeps_distinct_archives_sharing_start_second(pool: PgPool) 
     // Borg reports archive `start` at whole-second precision, so two distinct
     // archives of the same host can share (client_id, started_at). They must not
     // collapse into a single row on import.
-    let client = db::insert_client(&pool, "same-second-host", None, "hash-ss", None)
+    let client = db::insert_agent(&pool, "same-second-host", None, "hash-ss", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -3867,7 +3867,7 @@ async fn bulk_insert_keeps_distinct_archives_sharing_start_second(pool: PgPool) 
     let finished = started + Duration::minutes(1);
 
     let base = InsertReportParams {
-        client_id: client.id,
+        agent_id: client.id,
         repo_id: repo.id,
         schedule_id: None,
         started_at: started,
@@ -4188,13 +4188,13 @@ async fn schedule_target_hostnames_for_repo_test(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn get_schedule_targets_for_run_returns_ordered_and_excludes_hidden(pool: PgPool) {
     let (client_a, _, schedule) = create_test_schedule(&pool).await;
-    let client_b = db::insert_client(&pool, "run-target-b", None, "hash-rtb", None)
+    let client_b = db::insert_agent(&pool, "run-target-b", None, "hash-rtb", None)
         .await
         .unwrap();
-    let client_hidden = db::insert_client(&pool, "run-target-hidden", None, "hash-rth", None)
+    let client_hidden = db::insert_agent(&pool, "run-target-hidden", None, "hash-rth", None)
         .await
         .unwrap();
-    db::set_client_hidden(&pool, "run-target-hidden", true)
+    db::set_agent_hidden(&pool, "run-target-hidden", true)
         .await
         .unwrap();
 
@@ -4212,9 +4212,9 @@ async fn get_schedule_targets_for_run_returns_ordered_and_excludes_hidden(pool: 
         .unwrap();
 
     assert_eq!(targets.len(), 2);
-    assert_eq!(targets[0].client_id, client_a.id);
+    assert_eq!(targets[0].agent_id, client_a.id);
     assert_eq!(targets[0].hostname, "sched-host");
-    assert_eq!(targets[1].client_id, client_b.id);
+    assert_eq!(targets[1].agent_id, client_b.id);
     assert_eq!(targets[1].hostname, "run-target-b");
 }
 
@@ -4480,14 +4480,14 @@ async fn archive_names_and_delete_test(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn list_archive_names_needing_stats_filters_enriched(pool: PgPool) {
-    let client = db::insert_client(&pool, "stats-needing-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "stats-needing-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
     let now = Utc::now();
 
     let base = InsertReportParams {
-        client_id: client.id,
+        agent_id: client.id,
         repo_id: repo.id,
         schedule_id: None,
         started_at: now - Duration::minutes(10),
@@ -4615,14 +4615,14 @@ async fn delete_backup_reports_before_keeps_archive_rows(pool: PgPool) {
     // Imported/synced archives keep their original (old) borg start timestamp.
     // Age-based report retention must not delete them, or archives vanish from
     // the UI even though they still exist in borg.
-    let client = db::insert_client(&pool, "retain-archive-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "retain-archive-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
     let old = Utc::now() - Duration::days(365);
 
     let base = InsertReportParams {
-        client_id: client.id,
+        agent_id: client.id,
         repo_id: repo.id,
         schedule_id: None,
         started_at: old,

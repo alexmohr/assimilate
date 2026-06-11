@@ -1472,13 +1472,6 @@ async function resetImport(): Promise<void> {
           <div class="panel archives-panel">
             <div class="panel-header">
               <span class="panel-title">Archives</span>
-              <button
-                class="btn btn-sm btn-ghost"
-                :disabled="archivesLoading"
-                @click="loadArchives"
-              >
-                {{ archivesLoading ? '...' : '&#8635;' }}
-              </button>
             </div>
 
             <div

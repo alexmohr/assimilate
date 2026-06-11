@@ -522,6 +522,24 @@ async fn run_archive_deletion(
         tracing::warn!("failed to write audit log: {e}");
     }
 
+    // Once the queue has drained, reconcile the archive list and repo stats
+    // (notably the total archive count, which is sourced from borg) by reusing
+    // the metadata import path. Content indexing is deliberately not run here.
+    if state.repo_op_tracker.queued_count(repo_id).await == 0 {
+        if let Err(e) = crate::api::repos::sync_existing_archives(
+            &state.pool,
+            &state.encryption_key,
+            repo_id,
+            &state.ui_broadcast,
+        )
+        .await
+        {
+            tracing::warn!(repo_id, error = %e, "post-delete archive list refresh failed");
+        }
+        crate::api::repos::clear_import_progress_state(&state.pool, &state.ui_broadcast, repo_id)
+            .await;
+    }
+
     state
         .ui_broadcast
         .send(shared::protocol::ServerToUi::DataChanged);

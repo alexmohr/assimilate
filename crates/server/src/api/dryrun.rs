@@ -12,7 +12,7 @@ use shared::{protocol::ServerToAgent, types::RepoId};
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-use super::auth::AuthUser;
+use super::{auth::AuthUser, permissions::check_repo_permission};
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
@@ -53,10 +53,12 @@ pub struct DryRunResponse {
 )]
 pub async fn dry_run(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(repo_id): Path<i64>,
     ApiJson(req): ApiJson<DryRunRequest>,
 ) -> Result<Json<DryRunResponse>, ApiError> {
+    check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_view).await?;
+
     let schedule = db::get_schedule_by_id(&state.pool, req.schedule_id).await?;
 
     if schedule.repo_id != Some(repo_id) {

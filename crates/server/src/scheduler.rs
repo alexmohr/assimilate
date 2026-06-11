@@ -26,6 +26,7 @@ use crate::{
 const TICK_INTERVAL: Duration = Duration::from_secs(30);
 const RETENTION_INTERVAL: Duration = Duration::from_secs(3600);
 const SYNC_CHECK_INTERVAL: Duration = Duration::from_secs(60);
+const SESSION_CLEANUP_INTERVAL: Duration = Duration::from_secs(3600);
 const SYNC_WARN_DURATION: Duration = Duration::from_secs(300);
 const DEFAULT_RETENTION_DAYS: i64 = 7;
 const SEQUENTIAL_TIMEOUT: Duration = Duration::from_secs(4 * 3600);
@@ -35,6 +36,7 @@ pub async fn run(state: AppState) {
     let schedule_state = state.clone();
     let retention_pool = state.pool.clone();
     let sync_state = state.clone();
+    let session_pool = state.pool.clone();
 
     let schedule_task = async move {
         let mut interval = tokio::time::interval(TICK_INTERVAL);
@@ -79,7 +81,28 @@ pub async fn run(state: AppState) {
         }
     };
 
-    tokio::join!(schedule_task, retention_task, sync_task);
+    let session_cleanup_task = async move {
+        let mut interval = tokio::time::interval(SESSION_CLEANUP_INTERVAL);
+        loop {
+            interval.tick().await;
+            match db::delete_expired_sessions(&session_pool).await {
+                Ok(count) if count > 0 => {
+                    tracing::debug!(count, "deleted expired sessions");
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e, "session cleanup failed");
+                }
+            }
+        }
+    };
+
+    tokio::join!(
+        schedule_task,
+        retention_task,
+        sync_task,
+        session_cleanup_task
+    );
 }
 
 async fn run_repo_sync(
@@ -326,7 +349,14 @@ async fn tick(
 
     for (schedule_id, cron, targets) in schedule_groups {
         let first = &targets[0];
-        let on_failure = first.on_failure.parse::<OnFailure>().unwrap_or_default();
+        let on_failure = first.on_failure.parse::<OnFailure>().unwrap_or_else(|_| {
+            tracing::warn!(
+                schedule_id,
+                value = %first.on_failure,
+                "invalid on_failure value in database; defaulting to Stop"
+            );
+            OnFailure::default()
+        });
 
         let run_id = Uuid::new_v4().to_string();
 
@@ -778,7 +808,7 @@ esac
 
         let (_borg_dir, _borg_guard) =
             install_fake_borg(list_json, list_json, info_repo_json).await;
-        let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-scheduler");
+        let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-scheduler").unwrap();
         let passphrase_encrypted =
             shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
         let client = db::insert_client(
@@ -863,7 +893,7 @@ esac
     const TICK_TEST_KEY_MATERIAL: &[u8] = b"tick-test-scheduler-secret-key";
 
     fn tick_test_key() -> [u8; 32] {
-        shared::crypto::derive_key(TICK_TEST_KEY_MATERIAL)
+        shared::crypto::derive_key(TICK_TEST_KEY_MATERIAL).unwrap()
     }
 
     fn dummy_tunnel(pool: sqlx::PgPool) -> TunnelManager {

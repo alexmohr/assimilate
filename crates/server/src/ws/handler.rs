@@ -946,7 +946,7 @@ mod tests {
 
         AppState {
             pool: pool.clone(),
-            encryption_key: derive_key(b"handler-test-secret-key"),
+            encryption_key: derive_key(b"handler-test-secret-key").unwrap(),
             registry: crate::ws::registry::AgentRegistry::new(),
             ui_broadcast,
             tunnel_manager,
@@ -1085,9 +1085,11 @@ exit 0
         let client = crate::db::insert_client(&pool, "agent-1", None, "token-hash", None)
             .await
             .expect("insert client");
-        let passphrase_encrypted =
-            encrypt_passphrase("test-passphrase", &derive_key(b"handler-test-secret-key"))
-                .expect("encrypt passphrase");
+        let passphrase_encrypted = encrypt_passphrase(
+            "test-passphrase",
+            &derive_key(b"handler-test-secret-key").unwrap(),
+        )
+        .expect("encrypt passphrase");
         let repo = crate::db::insert_repo(
             &pool,
             &crate::db::InsertRepoParams {

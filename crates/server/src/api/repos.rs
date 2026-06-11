@@ -115,7 +115,7 @@ pub async fn list_repos(
 )]
 pub async fn get_client_repos(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
 ) -> Result<Json<Vec<RepoRow>>, ApiError> {
     let client = db::get_client_by_hostname(&state.pool, &hostname).await?;
@@ -165,7 +165,7 @@ pub struct UpdateRepoRequest {
 )]
 pub async fn create_repo(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    RequireAdmin(_admin): RequireAdmin,
     ApiJson(req): ApiJson<CreateRepoRequest>,
 ) -> Result<(StatusCode, Json<RepoRow>), ApiError> {
     helpers::validate_non_empty(&req.name, "name")?;
@@ -173,19 +173,15 @@ pub async fn create_repo(
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
 
     let ssh_port = req.ssh_port.unwrap_or(22);
-    let ssh_port_u16 = u16::try_from(ssh_port).unwrap_or(22);
+    let ssh_port_u16 = u16::try_from(ssh_port)
+        .map_err(|_| ApiError::BadRequest("ssh_port out of range".into()))?;
     helpers::validate_path_exists(&req.ssh_host, &req.ssh_user, ssh_port_u16, &req.repo_path)
         .await?;
     let ssh_host_key = crate::ssh::scan_host_key(&req.ssh_host, ssh_port_u16)
         .await
         .map_err(|e| ApiError::BadGateway(e.to_string()))?;
 
-    let repo_url = build_repo_url(
-        &req.ssh_user,
-        &req.ssh_host,
-        u16::try_from(ssh_port).unwrap_or(22),
-        &req.repo_path,
-    );
+    let repo_url = build_repo_url(&req.ssh_user, &req.ssh_host, ssh_port_u16, &req.repo_path);
 
     let info_timeout = Duration::from_secs(30);
     let info_result: Option<BorgInfoResult> =
@@ -402,12 +398,18 @@ pub async fn destroy_repo(
         "destroying repository from disk"
     );
 
-    run_ssh_command(&conn.ssh_user, &conn.ssh_host, conn.ssh_port, &command)
-        .await
-        .map_err(|e| {
-            error!(repo_id, error = %e, "failed to destroy repository on disk");
-            ApiError::Internal(format!("failed to delete repository from disk: {e}"))
-        })?;
+    run_ssh_command(
+        &conn.ssh_user,
+        &conn.ssh_host,
+        conn.ssh_port,
+        &command,
+        repo.ssh_host_key.clone(),
+    )
+    .await
+    .map_err(|e| {
+        error!(repo_id, error = %e, "failed to destroy repository on disk");
+        ApiError::Internal(format!("failed to delete repository from disk: {e}"))
+    })?;
 
     db::delete_repo(&state.pool, repo_id).await?;
 
@@ -626,7 +628,7 @@ pub struct InitRepoResponse {
 )]
 pub async fn init_repo(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    RequireAdmin(_admin): RequireAdmin,
     ApiJson(req): ApiJson<InitRepoRequest>,
 ) -> Result<(StatusCode, Json<InitRepoResponse>), ApiError> {
     helpers::validate_non_empty(&req.name, "name")?;
@@ -634,7 +636,8 @@ pub async fn init_repo(
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
 
     let ssh_port = req.ssh_port.unwrap_or(22);
-    let ssh_port_u16 = u16::try_from(ssh_port).unwrap_or(22);
+    let ssh_port_u16 = u16::try_from(ssh_port)
+        .map_err(|_| ApiError::BadRequest("ssh_port out of range".into()))?;
     let ssh_host_key = crate::ssh::scan_host_key(&req.ssh_host, ssh_port_u16)
         .await
         .map_err(|e| ApiError::BadGateway(e.to_string()))?;
@@ -958,6 +961,7 @@ pub async fn migrate_encryption(
         &repo.ssh_host,
         repo.ssh_port,
         &format!("mv {} {migrated_path}", repo.repo_path),
+        repo.ssh_host_key.clone(),
     )
     .await;
 
@@ -977,6 +981,7 @@ pub async fn migrate_encryption(
             &repo.ssh_host,
             repo.ssh_port,
             &format!("mv {migrated_path} {}", repo.repo_path),
+            repo.ssh_host_key.clone(),
         )
         .await;
         return Err(ApiError::BadGateway(format!(
@@ -1028,10 +1033,11 @@ async fn run_ssh_command(
     ssh_host: &str,
     ssh_port: i32,
     command: &str,
+    expected_host_key: Option<String>,
 ) -> Result<(), String> {
     let port = u16::try_from(ssh_port).map_err(|e| format!("invalid SSH port: {e}"))?;
 
-    let session = crate::ssh::connect_with_key(ssh_host, ssh_user, port)
+    let session = crate::ssh::connect_with_key(ssh_host, ssh_user, port, expected_host_key)
         .await
         .map_err(|e| e.to_string())?;
 

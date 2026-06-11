@@ -61,7 +61,7 @@ pub struct DeployKeyRequest {
 }
 
 fn default_ssh_user() -> String {
-    "root".to_string()
+    "borg".to_string()
 }
 
 fn default_use_sftp() -> bool {
@@ -75,17 +75,27 @@ pub struct DeployKeyResponse {
     pub error: Option<String>,
 }
 
-pub(crate) struct SshClientHandler;
+pub(crate) struct SshClientHandler {
+    pub expected_host_key: Option<String>,
+}
 
 impl client::Handler for SshClientHandler {
     type Error = russh::Error;
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &PublicKey,
+        server_public_key: &PublicKey,
     ) -> Result<bool, Self::Error> {
-        // Accept all host keys (similar to StrictHostKeyChecking=accept-new)
-        Ok(true)
+        let Some(expected) = &self.expected_host_key else {
+            return Ok(true);
+        };
+        let actual = server_public_key.to_openssh().unwrap_or_default();
+        if actual.trim() == expected.trim() {
+            Ok(true)
+        } else {
+            tracing::error!("SSH host key mismatch: expected {expected}, got {actual}");
+            Ok(false)
+        }
     }
 }
 
@@ -159,9 +169,10 @@ pub(crate) async fn connect_with_key(
     host: &str,
     user: &str,
     port: u16,
+    expected_host_key: Option<String>,
 ) -> Result<client::Handle<SshClientHandler>, SshError> {
     let config = ssh_config();
-    let handler = SshClientHandler;
+    let handler = SshClientHandler { expected_host_key };
 
     let mut session = client::connect(config, (host, port), handler)
         .await
@@ -191,7 +202,9 @@ async fn connect_with_password(
     password: &str,
 ) -> Result<client::Handle<SshClientHandler>, SshError> {
     let config = ssh_config();
-    let handler = SshClientHandler;
+    let handler = SshClientHandler {
+        expected_host_key: None,
+    };
 
     let mut session = client::connect(config, (host, port), handler)
         .await
@@ -267,7 +280,7 @@ pub(crate) async fn exec_command(
 pub async fn test_connection(req: &TestConnectionRequest) -> TestConnectionResponse {
     let port = req.ssh_port.unwrap_or(22);
 
-    let session = match connect_with_key(&req.ssh_host, &req.ssh_user, port).await {
+    let session = match connect_with_key(&req.ssh_host, &req.ssh_user, port, None).await {
         Ok(s) => s,
         Err(e) => {
             return TestConnectionResponse {
@@ -313,7 +326,7 @@ pub async fn test_connection(req: &TestConnectionRequest) -> TestConnectionRespo
 pub async fn deploy_key(req: &DeployKeyRequest) -> DeployKeyResponse {
     let port = req.ssh_port.unwrap_or(22);
 
-    if connect_with_key(&req.ssh_host, &req.ssh_user, port)
+    if connect_with_key(&req.ssh_host, &req.ssh_user, port, None)
         .await
         .is_ok()
     {
@@ -362,7 +375,7 @@ pub async fn deploy_key(req: &DeployKeyRequest) -> DeployKeyResponse {
         };
     }
 
-    match connect_with_key(&req.ssh_host, &req.ssh_user, port).await {
+    match connect_with_key(&req.ssh_host, &req.ssh_user, port, None).await {
         Ok(_) => {
             info!(host = %req.ssh_host, "key deployed and verified");
             DeployKeyResponse {
@@ -486,7 +499,7 @@ pub async fn list_dir(req: &ListDirRequest) -> ListDirResponse {
     let port = req.ssh_port.unwrap_or(22);
     let path = if req.path.is_empty() { "/" } else { &req.path };
 
-    let session = match connect_with_key(&req.ssh_host, &req.ssh_user, port).await {
+    let session = match connect_with_key(&req.ssh_host, &req.ssh_user, port, None).await {
         Ok(s) => s,
         Err(e) => {
             return ListDirResponse {
@@ -568,7 +581,7 @@ pub async fn mkdir(req: &MkdirRequest) -> MkdirResponse {
         &req.path
     };
 
-    let session = match connect_with_key(&req.ssh_host, &req.ssh_user, port).await {
+    let session = match connect_with_key(&req.ssh_host, &req.ssh_user, port, None).await {
         Ok(s) => s,
         Err(e) => {
             return MkdirResponse {
@@ -733,7 +746,7 @@ async fn detect_remote_arch(
 pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError> {
     let session = match params.password {
         Some(pw) => connect_with_password(params.host, params.user, params.port, pw).await?,
-        None => connect_with_key(params.host, params.user, params.port).await?,
+        None => connect_with_key(params.host, params.user, params.port, None).await?,
     };
     let sftp = open_sftp(&session).await?;
 

@@ -14,7 +14,7 @@ use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use super::{
-    auth::{AuthUser, Role},
+    auth::{AuthUser, RequireAdmin, Role},
     helpers,
     permissions::is_visible_to_user,
 };
@@ -71,7 +71,7 @@ pub struct CreateClientResponse {
 )]
 pub async fn create_client(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireAdmin(admin): RequireAdmin,
     ApiJson(req): ApiJson<CreateClientRequest>,
 ) -> Result<(StatusCode, Json<CreateClientResponse>), ApiError> {
     helpers::validate_non_empty(&req.hostname, "hostname")?;
@@ -85,7 +85,7 @@ pub async fn create_client(
         &req.hostname,
         req.display_name.as_deref(),
         &token_hash,
-        Some(auth.user_id),
+        Some(admin.user_id),
     )
     .await?;
 

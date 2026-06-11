@@ -6,7 +6,7 @@ use crate::{error::ApiError, ssh};
 const VALID_COMPRESSIONS: &[&str] = &["none", "lz4", "zstd", "zlib"];
 
 pub fn default_ssh_user() -> String {
-    "root".to_string()
+    "borg".to_string()
 }
 
 /// Validates that a field value is not empty, returning a `BadRequest` error with the field name.

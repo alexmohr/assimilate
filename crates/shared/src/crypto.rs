@@ -15,18 +15,22 @@ const HKDF_INFO: &[u8] = b"borg-backup-server-passphrase-key";
 pub enum CryptoError {
     #[error("invalid ciphertext: too short or malformed")]
     InvalidCiphertext,
+    #[error("encryption failed")]
+    EncryptionFailed,
     #[error("decryption failed")]
     DecryptionFailed,
     #[error("decrypted bytes are not valid UTF-8")]
     InvalidUtf8,
+    #[error("key derivation failed")]
+    KeyDerivationFailed,
 }
 
-pub fn derive_key(secret: &[u8]) -> [u8; 32] {
+pub fn derive_key(secret: &[u8]) -> Result<[u8; 32], CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, secret);
     let mut key = [0u8; 32];
     hkdf.expand(HKDF_INFO, &mut key)
-        .expect("HKDF-SHA256 expand to 32 bytes should never fail");
-    key
+        .map_err(|_| CryptoError::KeyDerivationFailed)?;
+    Ok(key)
 }
 
 pub fn encrypt_passphrase(plaintext: &str, key: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
@@ -34,7 +38,7 @@ pub fn encrypt_passphrase(plaintext: &str, key: &[u8; 32]) -> Result<Vec<u8>, Cr
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
     let ciphertext = cipher
         .encrypt(&nonce, plaintext.as_bytes())
-        .map_err(|_| CryptoError::DecryptionFailed)?;
+        .map_err(|_| CryptoError::EncryptionFailed)?;
 
     let mut output = Vec::with_capacity(NONCE_SIZE + ciphertext.len());
     output.extend_from_slice(&nonce);
@@ -64,7 +68,7 @@ mod tests {
 
     #[test]
     fn encrypt_then_decrypt_roundtrip() {
-        let key = derive_key(b"test-secret-key");
+        let key = derive_key(b"test-secret-key").unwrap();
         let plaintext = "test-passphrase";
 
         let encrypted = encrypt_passphrase(plaintext, &key).unwrap();
@@ -75,7 +79,7 @@ mod tests {
 
     #[test]
     fn different_nonces_each_call() {
-        let key = derive_key(b"test-secret-key");
+        let key = derive_key(b"test-secret-key").unwrap();
         let plaintext = "same-passphrase";
 
         let encrypted1 = encrypt_passphrase(plaintext, &key).unwrap();
@@ -86,8 +90,8 @@ mod tests {
 
     #[test]
     fn wrong_key_fails() {
-        let key1 = derive_key(b"correct-key");
-        let key2 = derive_key(b"wrong-key");
+        let key1 = derive_key(b"correct-key").unwrap();
+        let key2 = derive_key(b"wrong-key").unwrap();
         let plaintext = "secret-passphrase";
 
         let encrypted = encrypt_passphrase(plaintext, &key1).unwrap();
@@ -98,7 +102,7 @@ mod tests {
 
     #[test]
     fn invalid_ciphertext_too_short() {
-        let key = derive_key(b"any-key");
+        let key = derive_key(b"any-key").unwrap();
         let result = decrypt_passphrase(&[0u8; 5], &key);
 
         assert!(matches!(result, Err(CryptoError::InvalidCiphertext)));

@@ -53,6 +53,12 @@ pub struct AuthUser {
     pub session_id: Option<String>,
 }
 
+const ALLOWED_PATHS_DURING_PASSWORD_CHANGE: &[&str] = &[
+    "/api/auth/change-password",
+    "/api/auth/logout",
+    "/api/auth/me",
+];
+
 impl FromRequestParts<AppState> for AuthUser {
     type Rejection = ApiError;
 
@@ -70,6 +76,15 @@ impl FromRequestParts<AppState> for AuthUser {
         let role = Role::parse(&user.role).ok_or_else(|| {
             ApiError::Internal(format!("invalid role in database: {}", user.role))
         })?;
+
+        if user.must_change_password {
+            let path = parts.uri.path();
+            if !ALLOWED_PATHS_DURING_PASSWORD_CHANGE.contains(&path) {
+                return Err(ApiError::Forbidden(
+                    "password change required before accessing this resource".to_string(),
+                ));
+            }
+        }
 
         Ok(Self {
             user_id: user.id,

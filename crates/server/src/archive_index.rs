@@ -253,6 +253,20 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
         return Err(ApiError::Internal("no stdout from borg".to_string()));
     };
 
+    // Drain stderr concurrently. borg writes lock-wait notices and warnings to
+    // stderr; if that pipe fills (~64 KiB) while we are still reading stdout, borg
+    // blocks on the write, stdout stalls, and `child.wait()` deadlocks with the
+    // repository lock held. Reading both streams concurrently avoids that.
+    let stderr = child.stderr.take();
+    let stderr_task = tokio::spawn(async move {
+        let mut buf = String::new();
+        if let Some(mut se) = stderr {
+            use tokio::io::AsyncReadExt;
+            let _ = se.read_to_string(&mut buf).await;
+        }
+        buf
+    });
+
     let mut raw: Vec<ContentEntry> = Vec::new();
     let mut lines = BufReader::new(stdout).lines();
     let mut last_emit = std::time::Instant::now();
@@ -291,12 +305,8 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
         .wait()
         .await
         .map_err(|e| ApiError::Internal(format!("borg wait failed: {e}")))?;
+    let stderr_str = stderr_task.await.unwrap_or_default();
     if !status.success() {
-        use tokio::io::AsyncReadExt;
-        let mut stderr_str = String::new();
-        if let Some(mut se) = child.stderr.take() {
-            let _ = se.read_to_string(&mut stderr_str).await;
-        }
         return Err(classify_borg_error(status.code().unwrap_or(1), &stderr_str));
     }
 

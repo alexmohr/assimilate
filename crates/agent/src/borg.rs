@@ -30,14 +30,29 @@ fn log_run_result(
 }
 
 /// Wraps a borg child process and sends SIGTERM (not SIGKILL) on drop, giving borg time
-/// to release its repository lock. Escalates to SIGKILL after 30 s if borg does not exit.
+/// to release its repository lock. Escalates to SIGKILL after 30 s if borg does not exit,
+/// then runs `borg break-lock` to remove the stale lock that SIGKILL leaves behind.
 struct GracefulChild {
     child: tokio::process::Child,
+    binary: PathBuf,
+    /// `BORG_REPO` value, used to run break-lock after a forced SIGKILL.
+    repo: Option<String>,
+    env: Vec<(String, String)>,
 }
 
 impl GracefulChild {
-    fn new(child: tokio::process::Child) -> Self {
-        Self { child }
+    fn new(
+        child: tokio::process::Child,
+        binary: PathBuf,
+        repo: Option<String>,
+        env: Vec<(String, String)>,
+    ) -> Self {
+        Self {
+            child,
+            binary,
+            repo,
+            env,
+        }
     }
 
     async fn wait_with_output(&mut self) -> std::io::Result<std::process::Output> {
@@ -81,13 +96,27 @@ impl Drop for GracefulChild {
         if let Ok(pid) = i32::try_from(pid) {
             let nix_pid = nix::unistd::Pid::from_raw(pid);
             let _ = nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGTERM);
-            // Escalate to SIGKILL if borg has not exited after 30 s. The lock may not be
-            // released in that case, but it is a last resort after a graceful attempt.
+
+            let binary = self.binary.clone();
+            let repo = self.repo.clone();
+            let env = self.env.clone();
+
+            // Escalate to SIGKILL if borg has not responded to SIGTERM after 30 s.
+            // SIGKILL leaves lock.exclusive on the repository, so break-lock is run
+            // immediately after to remove the stale lock.
             let _ = std::thread::Builder::new()
                 .name("borg-reaper".to_owned())
                 .spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(30));
                     let _ = nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGKILL);
+
+                    if let Some(repo) = repo {
+                        let _ = std::process::Command::new(&binary)
+                            .arg("break-lock")
+                            .arg(&repo)
+                            .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+                            .output();
+                    }
                 });
         }
     }
@@ -166,7 +195,14 @@ impl Borg {
         // its repository lock. GracefulChild handles termination with SIGTERM instead.
         cmd.kill_on_drop(false);
         let child = cmd.spawn()?;
-        let mut guard = GracefulChild::new(child);
+
+        let repo = env
+            .iter()
+            .find(|(k, _)| k == "BORG_REPO")
+            .map(|(_, v)| v.clone());
+        let combined_env: Vec<_> = env.iter().chain(self.extra_env.iter()).cloned().collect();
+
+        let mut guard = GracefulChild::new(child, self.binary.clone(), repo, combined_env);
         let result = guard.wait_with_output().await;
         log_run_result(&subcommand, start.elapsed().as_millis(), &result);
         result

@@ -1822,11 +1822,11 @@ async fn must_change_password_blocks_regular_endpoints() {
     create_must_change_password_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone()).await;
 
-    let resp = oneshot(&mut app, mcp_session_request("GET", "/api/clients")).await;
+    let resp = oneshot(&mut app, mcp_session_request("GET", "/api/agents")).await;
     assert_eq!(
         resp.status(),
         StatusCode::FORBIDDEN,
-        "must_change_password should block access to /api/clients"
+        "must_change_password should block access to /api/agents"
     );
 }
 

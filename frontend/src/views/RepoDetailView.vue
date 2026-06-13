@@ -1603,9 +1603,7 @@ async function resetImport(): Promise<void> {
                   @click="selectArchive(archive)"
                 >
                   <span class="archive-name">{{ archive.name }}</span>
-                  <span class="archive-host">{{
-                    archive.agent_hostname ?? archive.hostname
-                  }}</span>
+                  <span class="archive-host">{{ archive.agent_hostname ?? archive.hostname }}</span>
                   <span class="archive-date">{{ formatDate(archive.start) }}</span>
                   <span class="archive-size">{{ formatBytes(archive.original_size) }}</span>
                   <span class="archive-size">{{ formatBytes(archive.deduplicated_size) }}</span>

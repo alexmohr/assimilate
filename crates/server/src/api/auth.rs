@@ -219,7 +219,11 @@ pub async fn login(
     }
 
     let session_id = Uuid::new_v4().to_string();
-    let (ttl_hours, max_age_secs) = if req.remember_me { (24 * 30, 30 * 86400) } else { (24, 86400) };
+    let (ttl_hours, max_age_secs) = if req.remember_me {
+        (24 * 30, 30 * 86400)
+    } else {
+        (24, 86400)
+    };
     let expires_at = Utc::now() + Duration::hours(ttl_hours);
 
     db::insert_session(&state.pool, &session_id, user.id, expires_at).await?;

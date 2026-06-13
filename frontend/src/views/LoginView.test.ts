@@ -47,7 +47,7 @@ describe('LoginView', () => {
     await wrapper.find('#password').setValue('password123')
     await wrapper.find('form').trigger('submit.prevent')
 
-    expect(authStore.login).toHaveBeenCalledWith('admin', 'password123')
+    expect(authStore.login).toHaveBeenCalledWith('admin', 'password123', false)
   })
 
   it('shows an error message when login fails', async () => {

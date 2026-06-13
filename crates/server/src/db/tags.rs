@@ -22,9 +22,21 @@ pub async fn add_tag(
     tag: &str,
     created_by: Option<i64>,
 ) -> Result<ArchiveTag, sqlx::Error> {
+    // Ensure the archive row exists (created on first index or tag operation).
+    sqlx::query("INSERT INTO archives (repo_id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+        .bind(repo_id)
+        .bind(archive_name)
+        .execute(pool)
+        .await?;
+
     sqlx::query_as::<_, ArchiveTag>(
-        "INSERT INTO archive_tags (repo_id, archive_name, tag, created_by) VALUES ($1, $2, $3, \
-         $4) RETURNING id, repo_id, archive_name, tag, created_by, created_at",
+        "INSERT INTO archive_tags (archive_id, tag, created_by)
+         SELECT a.id, $3, $4 FROM archives a WHERE a.repo_id = $1 AND a.name = $2
+         RETURNING id,
+                   (SELECT repo_id FROM archives WHERE id = archive_tags.archive_id) AS repo_id,
+                   (SELECT name   FROM archives WHERE id = archive_tags.archive_id) AS \
+         archive_name,
+                   tag, created_by, created_at",
     )
     .bind(repo_id)
     .bind(archive_name)
@@ -41,7 +53,8 @@ pub async fn remove_tag(
     tag: &str,
 ) -> Result<bool, sqlx::Error> {
     let result = sqlx::query(
-        "DELETE FROM archive_tags WHERE repo_id = $1 AND archive_name = $2 AND tag = $3",
+        "DELETE FROM archive_tags t USING archives a WHERE a.id = t.archive_id AND a.repo_id = $1 \
+         AND a.name = $2 AND t.tag = $3",
     )
     .bind(repo_id)
     .bind(archive_name)
@@ -58,8 +71,9 @@ pub async fn list_tags_for_archive(
     archive_name: &str,
 ) -> Result<Vec<ArchiveTag>, sqlx::Error> {
     sqlx::query_as::<_, ArchiveTag>(
-        "SELECT id, repo_id, archive_name, tag, created_by, created_at FROM archive_tags WHERE \
-         repo_id = $1 AND archive_name = $2 ORDER BY tag",
+        "SELECT t.id, a.repo_id, a.name AS archive_name, t.tag, t.created_by, t.created_at FROM \
+         archive_tags t JOIN archives a ON a.id = t.archive_id WHERE a.repo_id = $1 AND a.name = \
+         $2 ORDER BY t.tag",
     )
     .bind(repo_id)
     .bind(archive_name)
@@ -72,19 +86,12 @@ pub async fn list_archives_by_tag(
     repo_id: i64,
     tag: &str,
 ) -> Result<Vec<String>, sqlx::Error> {
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        archive_name: String,
-    }
-
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT DISTINCT archive_name FROM archive_tags WHERE repo_id = $1 AND tag = $2 ORDER BY \
-         archive_name",
+    sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT a.name FROM archive_tags t JOIN archives a ON a.id = t.archive_id WHERE \
+         a.repo_id = $1 AND t.tag = $2 ORDER BY a.name",
     )
     .bind(repo_id)
     .bind(tag)
     .fetch_all(pool)
-    .await?;
-
-    Ok(rows.into_iter().map(|row| row.archive_name).collect())
+    .await
 }

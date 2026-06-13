@@ -325,8 +325,8 @@ async fn wait_for_archive_index(
     timeout(Duration::from_secs(10), async move {
         loop {
             let row = sqlx::query_as::<_, (String, Option<i64>)>(
-                "SELECT j.status, j.file_count FROM archive_index_jobs j JOIN archives a ON \
-                 a.id = j.archive_id WHERE a.repo_id = $1 AND a.name = $2",
+                "SELECT j.status, j.file_count FROM archive_index_jobs j JOIN archives a ON a.id \
+                 = j.archive_id WHERE a.repo_id = $1 AND a.name = $2",
             )
             .bind(repo_id)
             .bind(archive_name)

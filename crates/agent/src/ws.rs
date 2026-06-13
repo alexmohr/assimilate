@@ -103,11 +103,15 @@ async fn connect_and_run(
         tokio::select! {
             _ = heartbeat.tick() => {
                 let pong = serde_json::to_string(&AgentToServer::Pong).map_err(WsError::Serialize)?;
-                sink.send(Message::Text(pong.into())).await.map_err(|e| WsError::Send(Box::new(e)))?;
+                sink.send(Message::Text(pong.into()))
+                    .await
+                    .map_err(|e| WsError::Send(Box::new(e)))?;
             }
             Some(msg) = outbound_rx.recv() => {
                 let json = serde_json::to_string(&msg).map_err(WsError::Serialize)?;
-                sink.send(Message::Text(json.into())).await.map_err(|e| WsError::Send(Box::new(e)))?;
+                sink.send(Message::Text(json.into()))
+                    .await
+                    .map_err(|e| WsError::Send(Box::new(e)))?;
             }
             inbound = stream.next() => {
                 let Some(msg_result) = inbound else {
@@ -132,7 +136,9 @@ async fn connect_and_run(
                         return Ok(());
                     }
                     Message::Ping(data) => {
-                        sink.send(Message::Pong(data)).await.map_err(|e| WsError::Send(Box::new(e)))?;
+                        sink.send(Message::Pong(data))
+                            .await
+                            .map_err(|e| WsError::Send(Box::new(e)))?;
                     }
                     Message::Pong(_) | Message::Binary(_) | Message::Frame(_) => {}
                 }

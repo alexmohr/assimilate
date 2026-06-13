@@ -48,12 +48,12 @@ impl AgentRegistry {
         &self,
         hostname: &str,
         msg: ServerToAgent,
-    ) -> Result<(), mpsc::error::SendError<ServerToAgent>> {
+    ) -> Result<(), Box<mpsc::error::SendError<ServerToAgent>>> {
         let connections = self.connections.read().await;
         if let Some(conn) = connections.get(hostname) {
-            conn.sender.send(msg).await
+            conn.sender.send(msg).await.map_err(Box::new)
         } else {
-            Err(mpsc::error::SendError(msg))
+            Err(Box::new(mpsc::error::SendError(msg)))
         }
     }
 

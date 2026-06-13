@@ -95,7 +95,7 @@ async fn client_update_last_seen_and_version(pool: PgPool) {
         .await
         .unwrap();
 
-    db::update_last_seen_and_version(&pool, client.id, "2.0.0", None, None)
+    db::update_last_seen_and_version(&pool, client.id, "2.0.0", None, None, None)
         .await
         .unwrap();
 
@@ -4012,6 +4012,7 @@ async fn client_last_seen_updates(pool: PgPool) {
         "1.5.0",
         Some("abc123"),
         Some("2026-01-01"),
+        Some(42),
     )
     .await
     .unwrap();

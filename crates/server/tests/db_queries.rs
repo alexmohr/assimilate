@@ -2157,7 +2157,7 @@ async fn tags_crud(pool: PgPool) {
     let tags = db::list_tags(&pool, "repo").await.unwrap();
     assert_eq!(tags.len(), 1);
 
-    let host_tags = db::list_tags(&pool, "host").await.unwrap();
+    let host_tags = db::list_tags(&pool, "agent").await.unwrap();
     assert!(host_tags.is_empty());
 
     db::delete_tag(&pool, tag.id).await.unwrap();
@@ -2268,11 +2268,11 @@ async fn repo_tags_assignment(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn host_tags_assignment(pool: PgPool) {
+async fn agent_tags_assignment(pool: PgPool) {
     let client = db::insert_agent(&pool, "tagged-host", None, "hash", None)
         .await
         .unwrap();
-    let tag = db::insert_tag(&pool, "critical", "#f00", "host")
+    let tag = db::insert_tag(&pool, "critical", "#f00", "agent")
         .await
         .unwrap();
 

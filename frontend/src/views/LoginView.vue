@@ -14,6 +14,7 @@ const router = useRouter()
 
 const username = ref('')
 const password = ref('')
+const rememberMe = ref(false)
 const error = ref('')
 const submitting = ref(false)
 
@@ -21,7 +22,7 @@ async function handleSubmit(): Promise<void> {
   error.value = ''
   submitting.value = true
   try {
-    await authStore.login(username.value, password.value)
+    await authStore.login(username.value, password.value, rememberMe.value)
     const next =
       typeof route.query.next === 'string' && route.query.next.startsWith('/')
         ? route.query.next
@@ -79,6 +80,16 @@ async function handleSubmit(): Promise<void> {
             required
             :disabled="submitting"
           />
+        </div>
+
+        <div class="remember-me">
+          <input
+            id="remember-me"
+            v-model="rememberMe"
+            type="checkbox"
+            :disabled="submitting"
+          />
+          <label for="remember-me">Remember me for 30 days</label>
         </div>
 
         <div
@@ -171,6 +182,26 @@ async function handleSubmit(): Promise<void> {
 
 .form-group input:focus {
   border-color: var(--accent);
+}
+
+.remember-me {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.remember-me input[type='checkbox'] {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.remember-me label {
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
 }
 
 .login-error {

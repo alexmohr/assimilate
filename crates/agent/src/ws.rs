@@ -53,7 +53,7 @@ async fn connect_and_run(
     let url = format!("{}/ws/agent", args.server_url.trim_end_matches('/'));
     let (ws_stream, _response) = tokio_tungstenite::connect_async(&url)
         .await
-        .map_err(WsError::Connect)?;
+        .map_err(|e| WsError::Connect(Box::new(e)))?;
 
     info!("Connected to {url}");
 
@@ -92,7 +92,7 @@ async fn connect_and_run(
     let hello_json = serde_json::to_string(&hello).map_err(WsError::Serialize)?;
     sink.send(Message::Text(hello_json.into()))
         .await
-        .map_err(WsError::Send)?;
+        .map_err(|e| WsError::Send(Box::new(e)))?;
 
     info!("Sent Hello message");
 
@@ -103,17 +103,17 @@ async fn connect_and_run(
         tokio::select! {
             _ = heartbeat.tick() => {
                 let pong = serde_json::to_string(&AgentToServer::Pong).map_err(WsError::Serialize)?;
-                sink.send(Message::Text(pong.into())).await.map_err(WsError::Send)?;
+                sink.send(Message::Text(pong.into())).await.map_err(|e| WsError::Send(Box::new(e)))?;
             }
             Some(msg) = outbound_rx.recv() => {
                 let json = serde_json::to_string(&msg).map_err(WsError::Serialize)?;
-                sink.send(Message::Text(json.into())).await.map_err(WsError::Send)?;
+                sink.send(Message::Text(json.into())).await.map_err(|e| WsError::Send(Box::new(e)))?;
             }
             inbound = stream.next() => {
                 let Some(msg_result) = inbound else {
                     return Ok(());
                 };
-                let msg = msg_result.map_err(WsError::Receive)?;
+                let msg = msg_result.map_err(|e| WsError::Receive(Box::new(e)))?;
                 match msg {
                     Message::Text(text) => {
                         handle_text_message(
@@ -132,7 +132,7 @@ async fn connect_and_run(
                         return Ok(());
                     }
                     Message::Ping(data) => {
-                        sink.send(Message::Pong(data)).await.map_err(WsError::Send)?;
+                        sink.send(Message::Pong(data)).await.map_err(|e| WsError::Send(Box::new(e)))?;
                     }
                     Message::Pong(_) | Message::Binary(_) | Message::Frame(_) => {}
                 }
@@ -233,7 +233,7 @@ async fn handle_text_message(
             let pong = serde_json::to_string(&AgentToServer::Pong).map_err(WsError::Serialize)?;
             sink.send(Message::Text(pong.into()))
                 .await
-                .map_err(WsError::Send)?;
+                .map_err(|e| WsError::Send(Box::new(e)))?;
         }
         ServerToAgent::RestartAgent => {
             info!("Received RestartAgent command, exiting for systemd restart");
@@ -329,11 +329,11 @@ async fn handle_text_message(
 #[derive(Debug, thiserror::Error)]
 enum WsError {
     #[error("connection failed: {0}")]
-    Connect(tokio_tungstenite::tungstenite::Error),
+    Connect(Box<tokio_tungstenite::tungstenite::Error>),
     #[error("send failed: {0}")]
-    Send(tokio_tungstenite::tungstenite::Error),
+    Send(Box<tokio_tungstenite::tungstenite::Error>),
     #[error("receive failed: {0}")]
-    Receive(tokio_tungstenite::tungstenite::Error),
+    Receive(Box<tokio_tungstenite::tungstenite::Error>),
     #[error("serialization failed: {0}")]
     Serialize(serde_json::Error),
     #[error("deserialization failed: {0}")]

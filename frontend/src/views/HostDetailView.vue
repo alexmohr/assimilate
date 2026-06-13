@@ -243,7 +243,7 @@ const excludesError = ref<string | null>(null)
 // Hostname Aliases (patterns)
 interface AgentHostnamePattern {
   id: number
-  client_id: number
+  agent_id: number
   pattern: string
   created_at: string
 }
@@ -1306,7 +1306,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
         <div class="tab-header">
           <h3 class="tab-title">Schedules</h3>
           <RouterLink
-            :to="{ name: 'schedule-create', query: { client_id: client?.id } }"
+            :to="{ name: 'schedule-create', query: { agent_id: client?.id } }"
             class="btn btn-primary btn-sm"
           >
             + Add Schedule

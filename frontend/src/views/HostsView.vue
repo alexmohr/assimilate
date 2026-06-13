@@ -51,7 +51,7 @@ interface TagRow {
 }
 
 interface AgentTagRow {
-  client_id: number
+  agent_id: number
   tag_name: string
   tag_color: string
 }
@@ -278,20 +278,20 @@ async function loadAgents(): Promise<void> {
           .get<TagRow[]>('/tags', { params: { scope: 'host' } })
           .catch(() => ({ data: [] as TagRow[] })),
         apiClient.get<HealthEntry[]>('/stats/health'),
-        apiClient.get<{ client_id: number; count: number }[]>('/stats/schedule-counts'),
+        apiClient.get<{ agent_id: number; count: number }[]>('/stats/schedule-counts'),
         apiClient.get<DashboardOverview>('/stats/dashboard-overview'),
       ])
     agents.value = agentsRes.data
     machineScheduleCount.value = {}
     scheduleCountsRes.data.forEach((entry) => {
-      machineScheduleCount.value[entry.client_id] = entry.count
+      machineScheduleCount.value[entry.agent_id] = entry.count
     })
 
     allAgentTags.value = agentTagsRes.data
     const tagMap: Record<number, { name: string; color: string }[]> = {}
     agentTagAssocRes.data.forEach((ht) => {
-      if (!tagMap[ht.client_id]) tagMap[ht.client_id] = []
-      tagMap[ht.client_id].push({ name: ht.tag_name, color: ht.tag_color })
+      if (!tagMap[ht.agent_id]) tagMap[ht.agent_id] = []
+      tagMap[ht.agent_id].push({ name: ht.tag_name, color: ht.tag_color })
     })
     agentTagsMap.value = tagMap
 
@@ -308,16 +308,16 @@ async function loadAgents(): Promise<void> {
     healthByHost.value = hMap
     coverageHostIds.value = {
       protected: new Set(
-        overviewRes.data.protection.protected_host_links.map((host) => host.client_id),
+        overviewRes.data.protection.protected_host_links.map((host) => host.agent_id),
       ),
       unassigned: new Set(
-        overviewRes.data.protection.unassigned_hosts.map((host) => host.client_id),
+        overviewRes.data.protection.unassigned_hosts.map((host) => host.agent_id),
       ),
       'never-succeeded': new Set(
-        overviewRes.data.protection.never_succeeded_hosts.map((host) => host.client_id),
+        overviewRes.data.protection.never_succeeded_hosts.map((host) => host.agent_id),
       ),
       'disabled-only': new Set(
-        overviewRes.data.protection.disabled_only_hosts.map((host) => host.client_id),
+        overviewRes.data.protection.disabled_only_hosts.map((host) => host.agent_id),
       ),
     }
   } catch (e: unknown) {

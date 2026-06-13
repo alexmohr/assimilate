@@ -13,7 +13,7 @@ export interface ArchiveEntry {
   original_size: number
   deduplicated_size: number
   matched: boolean | null
-  client_hostname: string | null
+  agent_hostname: string | null
 }
 
 export interface ContentEntry {
@@ -256,7 +256,7 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     const archive = selectedArchive.value
     if (!archive) return false
 
-    const hostname = archive.client_hostname ?? archive.hostname
+    const hostname = archive.agent_hostname ?? archive.hostname
     const name = entry.path.length > 0 ? entry.path : 'the whole archive'
     if (!window.confirm(`Restore ${name} to its original location on ${hostname}?`)) return false
 

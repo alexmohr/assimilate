@@ -3857,7 +3857,7 @@ async fn bulk_insert_backup_reports_conflict_skipped(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn bulk_insert_keeps_distinct_archives_sharing_start_second(pool: PgPool) {
     // Borg reports archive `start` at whole-second precision, so two distinct
-    // archives of the same host can share (client_id, started_at). They must not
+    // archives of the same host can share (agent_id, started_at). They must not
     // collapse into a single row on import.
     let client = db::insert_agent(&pool, "same-second-host", None, "hash-ss", None)
         .await

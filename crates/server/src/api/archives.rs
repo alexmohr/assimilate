@@ -158,7 +158,7 @@ pub struct ArchiveEntry {
     pub original_size: i64,
     pub deduplicated_size: i64,
     pub matched: Option<bool>,
-    pub client_hostname: Option<String>,
+    pub agent_hostname: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -243,16 +243,16 @@ pub async fn list_archives(
         original_size: i64,
         deduplicated_size: i64,
         matched: bool,
-        client_hostname: String,
+        agent_hostname: String,
     }
 
     let rows = sqlx::query_as::<_, Row>(
         "WITH latest_archives AS (SELECT DISTINCT ON (br.archive_name) br.archive_name, \
          br.started_at, br.original_size, br.deduplicated_size, br.matched, c.hostname AS \
-         client_hostname FROM backup_reports br JOIN clients c ON c.id = br.client_id WHERE \
+         agent_hostname FROM backup_reports br JOIN agents c ON c.id = br.agent_id WHERE \
          br.repo_id = $1 AND br.archive_name IS NOT NULL AND br.status IN ('success', 'warning') \
          ORDER BY br.archive_name, br.started_at DESC, br.id DESC) SELECT archive_name, \
-         started_at, original_size, deduplicated_size, matched, client_hostname FROM \
+         started_at, original_size, deduplicated_size, matched, agent_hostname FROM \
          latest_archives ORDER BY started_at DESC",
     )
     .bind(repo_id)
@@ -268,12 +268,12 @@ pub async fn list_archives(
             ArchiveEntry {
                 name,
                 start,
-                hostname: row.client_hostname.clone(),
+                hostname: row.agent_hostname.clone(),
                 comment: String::new(),
                 original_size: row.original_size,
                 deduplicated_size: row.deduplicated_size,
                 matched: Some(row.matched),
-                client_hostname: Some(row.client_hostname),
+                agent_hostname: Some(row.agent_hostname),
             }
         })
         .collect();

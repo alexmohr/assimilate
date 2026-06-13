@@ -35,7 +35,7 @@ interface ArchiveEntry {
   original_size: number
   deduplicated_size: number
   matched: boolean | null
-  client_hostname: string | null
+  agent_hostname: string | null
 }
 
 interface ContentEntry {
@@ -504,12 +504,12 @@ onMounted(loadRepos)
               </template>
               <template #body="{ data }">
                 <RouterLink
-                  v-if="data.matched === true && data.client_hostname"
-                  :to="{ name: 'client-detail', params: { hostname: data.client_hostname } }"
+                  v-if="data.matched === true && data.agent_hostname"
+                  :to="{ name: 'client-detail', params: { hostname: data.agent_hostname } }"
                   class="host-link"
                   @click.stop
                 >
-                  {{ data.client_hostname }}
+                  {{ data.agent_hostname }}
                 </RouterLink>
                 <RouterLink
                   v-else-if="data.matched !== true"

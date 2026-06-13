@@ -70,7 +70,7 @@ export interface NotificationRule {
   channel_id: number
   event_type: NotificationEventType
   repo_id: number | null
-  client_id: number | null
+  agent_id: number | null
   enabled: boolean
 }
 
@@ -78,7 +78,7 @@ export interface CreateRuleRequest {
   channel_id: number
   event_type: NotificationEventType
   repo_id?: number | null
-  client_id?: number | null
+  agent_id?: number | null
   enabled: boolean
 }
 

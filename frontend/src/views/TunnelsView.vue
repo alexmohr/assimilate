@@ -40,7 +40,7 @@ const agents = ref<AgentOption[]>([])
 
 const showAddDialog = ref(false)
 const addForm = ref<CreateTunnelRequest>({
-  client_id: 0,
+  agent_id: 0,
   ssh_host: '',
   ssh_user: 'root',
   ssh_port: 22,
@@ -107,13 +107,13 @@ async function loadAgents(): Promise<void> {
 }
 
 function availableAgents(): AgentOption[] {
-  const usedIds = new Set(tunnels.value.map((t) => t.client_id))
+  const usedIds = new Set(tunnels.value.map((t) => t.agent_id))
   return agents.value.filter((c) => !usedIds.has(c.id))
 }
 
 function openAdd(): void {
   addForm.value = {
-    client_id: 0,
+    agent_id: 0,
     ssh_host: '',
     ssh_user: 'root',
     ssh_port: 22,
@@ -129,7 +129,7 @@ async function submitAdd(): Promise<void> {
     addError.value = 'SSH host is required'
     return
   }
-  if (!addForm.value.client_id) {
+  if (!addForm.value.agent_id) {
     addError.value = 'Agent is required'
     return
   }
@@ -140,7 +140,7 @@ async function submitAdd(): Promise<void> {
     const withStatus: TunnelWithStatus = {
       ...created,
       status: 'disconnected',
-      client_hostname: agents.value.find((c) => c.id === created.client_id)?.hostname,
+      agent_hostname: agents.value.find((c) => c.id === created.agent_id)?.hostname,
     }
     tunnels.value.push(withStatus)
     showAddDialog.value = false
@@ -201,7 +201,7 @@ async function submitEdit(): Promise<void> {
 
 function openDelete(tunnel: TunnelWithStatus): void {
   deleteId.value = tunnel.id
-  deleteHostname.value = tunnel.client_hostname ?? String(tunnel.client_id)
+  deleteHostname.value = tunnel.agent_hostname ?? String(tunnel.agent_id)
   deleteError.value = ''
   showDeleteDialog.value = true
 }
@@ -256,8 +256,8 @@ useEscapeKey(showErrorDialog, () => {
 const { onMessage } = useWebSocket()
 onMessage(
   'TunnelStatusChanged',
-  (data: { client_id: number; hostname: string; status: TunnelStatus }) => {
-    const tunnel = tunnels.value.find((t) => t.client_id === data.client_id)
+  (data: { agent_id: number; hostname: string; status: TunnelStatus }) => {
+    const tunnel = tunnels.value.find((t) => t.agent_id === data.agent_id)
     if (tunnel) tunnel.status = data.status
   },
 )
@@ -323,7 +323,7 @@ onMounted(() => {
             v-for="tunnel in tunnels"
             :key="tunnel.id"
           >
-            <td class="mono">{{ tunnel.client_hostname ?? tunnel.client_id }}</td>
+            <td class="mono">{{ tunnel.agent_hostname ?? tunnel.agent_id }}</td>
             <td class="mono">{{ tunnel.ssh_host }}</td>
             <td class="mono">{{ tunnel.ssh_user }}</td>
             <td class="mono">{{ tunnel.ssh_port }}</td>
@@ -396,7 +396,7 @@ onMounted(() => {
             <div class="field">
               <label class="field-label">Agent <span class="required">*</span></label>
               <select
-                v-model.number="addForm.client_id"
+                v-model.number="addForm.agent_id"
                 class="input"
               >
                 <option
@@ -480,7 +480,7 @@ onMounted(() => {
             <button
               class="btn btn-primary"
               :disabled="
-                addLoading || !addForm.client_id || !addForm.ssh_host.trim() || !addForm.tunnel_port
+                addLoading || !addForm.agent_id || !addForm.ssh_host.trim() || !addForm.tunnel_port
               "
               @click="submitAdd"
             >

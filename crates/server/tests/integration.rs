@@ -816,7 +816,7 @@ async fn test_delete_archive_runs_in_background() {
 
     let mut app = build_test_app(pool.clone()).await;
     let client_id: i64 = sqlx::query_scalar(
-        "INSERT INTO clients (hostname, agent_token_hash) VALUES ('del-host', 'hash') RETURNING id",
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('del-host', 'hash') RETURNING id",
     )
     .fetch_one(&pool)
     .await
@@ -824,8 +824,8 @@ async fn test_delete_archive_runs_in_background() {
     let repo_id = insert_test_repo(&pool, "delete-archive-repo").await;
 
     sqlx::query(
-        "INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, \
-         matched, archive_name) VALUES ($1, $2, NOW(), NOW(), 'success', true, $3)",
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched, \
+         archive_name) VALUES ($1, $2, NOW(), NOW(), 'success', true, $3)",
     )
     .bind(client_id)
     .bind(repo_id)
@@ -928,8 +928,7 @@ async fn test_delete_multiple_archives_queues_without_conflict() {
 
     let mut app = build_test_app(pool.clone()).await;
     let client_id: i64 = sqlx::query_scalar(
-        "INSERT INTO clients (hostname, agent_token_hash) VALUES ('multi-del', 'hash') RETURNING \
-         id",
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('multi-del', 'hash') RETURNING id",
     )
     .fetch_one(&pool)
     .await
@@ -939,7 +938,7 @@ async fn test_delete_multiple_archives_queues_without_conflict() {
     let names = ["arch-a", "arch-b", "arch-c"];
     for name in names {
         sqlx::query(
-            "INSERT INTO backup_reports (client_id, repo_id, started_at, finished_at, status, \
+            "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
              matched, archive_name) VALUES ($1, $2, NOW(), NOW(), 'success', true, $3)",
         )
         .bind(client_id)
@@ -1548,7 +1547,7 @@ async fn test_import_config_creates_hosts(pool: sqlx::PgPool) {
     assert_eq!(body["schedules_created"], 0);
 
     let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM clients WHERE hostname = 'new-host-1'")
+        sqlx::query_scalar("SELECT COUNT(*) FROM agents WHERE hostname = 'new-host-1'")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -1772,7 +1771,7 @@ async fn test_export_then_import_roundtrip(pool: sqlx::PgPool) {
     assert_eq!(body["hosts_created"], 1);
 
     let paths: Vec<String> = sqlx::query_scalar(
-        "SELECT default_backup_paths FROM clients WHERE hostname = 'roundtrip-host'",
+        "SELECT default_backup_paths FROM agents WHERE hostname = 'roundtrip-host'",
     )
     .fetch_one(&pool)
     .await

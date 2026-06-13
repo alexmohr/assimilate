@@ -3,7 +3,7 @@
 
 export interface SshTunnel {
   id: number
-  client_id: number
+  agent_id: number
   ssh_host: string
   ssh_user: string
   ssh_port: number
@@ -20,11 +20,11 @@ export type TunnelStatus =
 
 export interface TunnelWithStatus extends SshTunnel {
   status: TunnelStatus
-  client_hostname?: string
+  agent_hostname?: string
 }
 
 export interface CreateTunnelRequest {
-  client_id: number
+  agent_id: number
   ssh_host: string
   ssh_user: string
   ssh_port: number

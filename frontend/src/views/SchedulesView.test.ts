@@ -71,7 +71,7 @@ const mockApiClient = apiClient as {
 const mockSchedules = [
   {
     id: 1,
-    client_id: 10,
+    agent_id: 10,
     repo_id: 20,
     schedule_type: 'backup',
     cron_expression: '0 2 * * *',
@@ -94,7 +94,7 @@ const mockSchedules = [
   },
   {
     id: 2,
-    client_id: 11,
+    agent_id: 11,
     repo_id: 21,
     schedule_type: 'check',
     cron_expression: '0 * * * *',
@@ -117,7 +117,7 @@ const mockSchedules = [
   },
   {
     id: 3,
-    client_id: 12,
+    agent_id: 12,
     repo_id: 22,
     schedule_type: 'backup',
     cron_expression: '0 3 * * 0',

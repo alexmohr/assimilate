@@ -273,7 +273,7 @@ async function loadScopeOptions(): Promise<void> {
     const [reposRes, clientsRes, schedulesRes] = await Promise.all([
       apiClient.get<{ id: number; name: string }[]>('/repos'),
       apiClient.get<{ id: number; hostname: string; display_name: string | null }[]>('/agents'),
-      apiClient.get<{ id: number; client_id: number; repo_id: number | null }[]>('/schedules'),
+      apiClient.get<{ id: number; agent_id: number; repo_id: number | null }[]>('/schedules'),
     ])
     scopeRepos.value = reposRes.data.map((r) => ({ id: r.id, label: r.name }))
     scopeClients.value = clientsRes.data.map((c) => ({

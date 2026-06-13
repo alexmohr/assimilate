@@ -23,7 +23,7 @@ const ARCHIVE: ArchiveEntry = {
   original_size: 1,
   deduplicated_size: 1,
   matched: true,
-  client_hostname: 'web-server-01',
+  agent_hostname: 'web-server-01',
 }
 
 const ROOT_ENTRY: ContentEntry = {

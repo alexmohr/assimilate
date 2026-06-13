@@ -71,8 +71,8 @@ const mockClients = [
 const mockTunnels = [
   {
     id: 101,
-    client_id: 1,
-    client_hostname: 'web-server-01',
+    agent_id: 1,
+    agent_hostname: 'web-server-01',
     ssh_host: '10.0.0.11',
     ssh_user: 'root',
     ssh_port: 22,
@@ -83,8 +83,8 @@ const mockTunnels = [
   },
   {
     id: 102,
-    client_id: 2,
-    client_hostname: 'db-server-01',
+    agent_id: 2,
+    agent_hostname: 'db-server-01',
     ssh_host: '10.0.0.12',
     ssh_user: 'borg',
     ssh_port: 2222,
@@ -95,8 +95,8 @@ const mockTunnels = [
   },
   {
     id: 103,
-    client_id: 3,
-    client_hostname: 'media-store-01',
+    agent_id: 3,
+    agent_hostname: 'media-store-01',
     ssh_host: '10.0.0.13',
     ssh_user: 'root',
     ssh_port: 22,

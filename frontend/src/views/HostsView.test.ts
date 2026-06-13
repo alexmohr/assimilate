@@ -70,9 +70,9 @@ describe('HostsView', () => {
         return Promise.resolve({
           data: {
             protection: {
-              protected_host_links: [{ client_id: 1, hostname: 'protected-host' }],
+              protected_host_links: [{ agent_id: 1, hostname: 'protected-host' }],
               unassigned_hosts: [],
-              never_succeeded_hosts: [{ client_id: 2, hostname: 'never-succeeded-host' }],
+              never_succeeded_hosts: [{ agent_id: 2, hostname: 'never-succeeded-host' }],
               disabled_only_hosts: [],
             },
           },

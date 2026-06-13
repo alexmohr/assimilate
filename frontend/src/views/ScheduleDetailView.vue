@@ -43,17 +43,17 @@ interface ScheduleRow {
 }
 
 interface ScheduleTarget {
-  client_id: number
+  agent_id: number
   execution_order: number
 }
 
 interface PerHostBackupSources {
-  client_id: number
+  agent_id: number
   paths: string[]
 }
 
 interface PerHostExcludePatterns {
-  client_id: number
+  agent_id: number
   raw_text: string
 }
 
@@ -77,7 +77,7 @@ interface RepoRow {
 
 interface ReportRow {
   id: number
-  client_id: number
+  agent_id: number
   repo_id: number
   started_at: string
   finished_at: string
@@ -284,7 +284,7 @@ async function loadData(): Promise<void> {
       ])
       clients.value = clientsRes.data
       repos.value = reposRes.data
-      const queryClientId = Number(route.query.client_id)
+      const queryClientId = Number(route.query.agent_id)
       if (queryClientId && clients.value.some((c) => c.id === queryClientId)) {
         selectedClientIds.value = [queryClientId]
       }
@@ -303,7 +303,7 @@ async function loadData(): Promise<void> {
       scheduleTargets.value = targetsRes.data
       selectedRepoId.value = schedRes.data.repo_id ?? null
       const sorted = [...targetsRes.data].sort((a, b) => a.execution_order - b.execution_order)
-      selectedClientIds.value = sorted.map((t) => t.client_id)
+      selectedClientIds.value = sorted.map((t) => t.agent_id)
       populateForm(schedRes.data)
 
       const sources = sourcesRes.data
@@ -312,7 +312,7 @@ async function loadData(): Promise<void> {
         usePerHostPaths.value = true
         const map: Record<number, string> = {}
         for (const entry of sources.backup_sources_per_host) {
-          map[entry.client_id] = entry.paths.join('\n')
+          map[entry.agent_id] = entry.paths.join('\n')
         }
         perHostSources.value = map
       }
@@ -320,7 +320,7 @@ async function loadData(): Promise<void> {
         usePerHostExcludes.value = true
         const map: Record<number, string> = {}
         for (const entry of sources.exclude_patterns_per_host) {
-          map[entry.client_id] = entry.raw_text
+          map[entry.agent_id] = entry.raw_text
         }
         perHostExcludes.value = map
       }
@@ -356,12 +356,12 @@ async function save(): Promise<void> {
     }
 
     if (usePerHostPaths.value) {
-      const perHost: { client_id: number; paths: string[] }[] = []
+      const perHost: { agent_id: number; paths: string[] }[] = []
       for (const id of selectedClientIds.value) {
         const text = perHostSources.value[id] ?? ''
         const paths = parseLines(text)
         if (paths.length > 0) {
-          perHost.push({ client_id: id, paths })
+          perHost.push({ agent_id: id, paths })
         }
       }
       payload.backup_sources_per_host = perHost
@@ -369,10 +369,10 @@ async function save(): Promise<void> {
 
     if (usePerHostExcludes.value) {
       payload.exclude_patterns_raw = ''
-      const perHost: { client_id: number; raw_text: string }[] = []
+      const perHost: { agent_id: number; raw_text: string }[] = []
       for (const id of selectedClientIds.value) {
         const raw_text = perHostExcludes.value[id] ?? ''
-        perHost.push({ client_id: id, raw_text })
+        perHost.push({ agent_id: id, raw_text })
       }
       payload.exclude_patterns_per_host = perHost
     }
@@ -1208,9 +1208,9 @@ watch(activeTab, (tab) => {
                 <td class="cell-ts">{{ formatDateShort(r.started_at) }}</td>
                 <td class="cell-host">
                   {{
-                    clientMap.get(r.client_id)?.display_name ??
-                    clientMap.get(r.client_id)?.hostname ??
-                    `#${r.client_id}`
+                    clientMap.get(r.agent_id)?.display_name ??
+                    clientMap.get(r.agent_id)?.hostname ??
+                    `#${r.agent_id}`
                   }}
                 </td>
                 <td>

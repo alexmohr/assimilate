@@ -55,7 +55,7 @@ defineProps<{ protection: DashboardOverview['protection'] }>()
     >
       <RouterLink
         v-for="host in protection.unassigned_hosts"
-        :key="host.client_id"
+        :key="host.agent_id"
         :to="`/agents/${encodeURIComponent(host.hostname)}`"
       >
         {{ host.hostname }}

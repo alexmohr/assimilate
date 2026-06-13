@@ -30,6 +30,7 @@ interface ClientRow {
   agent_version: string | null
   agent_git_sha: string | null
   agent_build_time: string | null
+  agent_commit_count: number | null
   created_at: string
   last_seen_at: string | null
   is_connected: boolean
@@ -182,6 +183,7 @@ const restartError = ref<string | null>(null)
 
 // Deploy/Upgrade agent
 const availableAgentVersion = ref<string | null>(null)
+const serverCommitCount = ref<number | null>(null)
 const showDeployDialog = ref(false)
 
 // Deploy SSH key
@@ -190,6 +192,9 @@ const showDeploySshKey = ref(false)
 function deployButtonLabel(): string | null {
   if (!client.value) return null
   if (!client.value.agent_version) return 'Deploy'
+  if (serverCommitCount.value !== null && client.value.agent_commit_count !== null) {
+    return client.value.agent_commit_count >= serverCommitCount.value ? null : 'Upgrade'
+  }
   if (availableAgentVersion.value && client.value.agent_version === availableAgentVersion.value)
     return null
   return 'Upgrade'
@@ -686,9 +691,10 @@ watch(
 onMounted(() => {
   loadClient()
   apiClient
-    .get<{ agent_version: string | null }>('/system/version')
+    .get<{ agent_version: string | null; server_commit_count: number | null }>('/system/version')
     .then((res) => {
       availableAgentVersion.value = res.data.agent_version
+      serverCommitCount.value = res.data.server_commit_count ?? null
     })
     .catch(logger.error)
 })

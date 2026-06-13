@@ -262,6 +262,7 @@ pub struct VersionResponse {
     pub server_version: String,
     pub server_git_sha: String,
     pub build_timestamp: String,
+    pub server_commit_count: Option<u32>,
     pub agent_version: Option<String>,
 }
 
@@ -288,11 +289,15 @@ pub async fn get_version(_admin: RequireAdmin) -> Result<Json<VersionResponse>, 
         format!("{}+{}", env!("CARGO_PKG_VERSION"), git_sha)
     };
     let build_timestamp = option_env!("BUILD_TIMESTAMP").unwrap_or("unknown");
+    let server_commit_count = option_env!("GIT_COMMIT_COUNT")
+        .and_then(|s| s.parse::<u32>().ok())
+        .filter(|&n| n > 0);
 
     Ok(Json(VersionResponse {
         server_version,
         server_git_sha: git_sha.to_owned(),
         build_timestamp: build_timestamp.to_owned(),
+        server_commit_count,
         agent_version,
     }))
 }

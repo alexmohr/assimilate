@@ -8,7 +8,7 @@ use std::{
     time::Instant,
 };
 
-use tokio::process::Command;
+use tokio::{io::AsyncReadExt as _, process::Command};
 
 fn log_run_result(
     subcommand: &str,
@@ -26,6 +26,99 @@ fn log_run_result(
             }
         }
         Err(e) => tracing::error!(subcommand, error = %e, "borg: failed to spawn"),
+    }
+}
+
+/// Wraps a borg child process and sends SIGTERM (not SIGKILL) on drop, giving borg time
+/// to release its repository lock. Escalates to SIGKILL after 30 s if borg does not exit,
+/// then runs `borg break-lock` to remove the stale lock that SIGKILL leaves behind.
+struct GracefulChild {
+    child: tokio::process::Child,
+    binary: PathBuf,
+    /// `BORG_REPO` value, used to run break-lock after a forced SIGKILL.
+    repo: Option<String>,
+    env: Vec<(String, String)>,
+}
+
+impl GracefulChild {
+    fn new(
+        child: tokio::process::Child,
+        binary: PathBuf,
+        repo: Option<String>,
+        env: Vec<(String, String)>,
+    ) -> Self {
+        Self {
+            child,
+            binary,
+            repo,
+            env,
+        }
+    }
+
+    async fn wait_with_output(&mut self) -> std::io::Result<std::process::Output> {
+        let stdout = self.child.stdout.take();
+        let stderr = self.child.stderr.take();
+
+        // Drain stdout/stderr concurrently with wait to avoid pipe-buffer deadlocks.
+        let (status, out, err) = {
+            let wait = self.child.wait();
+            let read_out = async move {
+                let mut buf = Vec::new();
+                if let Some(mut s) = stdout {
+                    s.read_to_end(&mut buf).await?;
+                }
+                std::io::Result::Ok(buf)
+            };
+            let read_err = async move {
+                let mut buf = Vec::new();
+                if let Some(mut s) = stderr {
+                    s.read_to_end(&mut buf).await?;
+                }
+                std::io::Result::Ok(buf)
+            };
+            tokio::join!(wait, read_out, read_err)
+        };
+
+        Ok(std::process::Output {
+            status: status?,
+            stdout: out?,
+            stderr: err?,
+        })
+    }
+}
+
+impl Drop for GracefulChild {
+    fn drop(&mut self) {
+        // id() returns None once the process has been successfully waited on, meaning it has
+        // already exited and released any locks. Some(pid) means it may still be running.
+        let Some(pid) = self.child.id() else { return };
+        #[cfg(unix)]
+        if let Ok(pid) = i32::try_from(pid) {
+            let nix_pid = nix::unistd::Pid::from_raw(pid);
+            let _ = nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGTERM);
+
+            let binary = self.binary.clone();
+            let repo = self.repo.clone();
+            let env = self.env.clone();
+
+            // Escalate to SIGKILL if borg has not responded to SIGTERM after 30 s.
+            // SIGKILL leaves lock.exclusive on the repository, so break-lock is run
+            // immediately after to remove the stale lock.
+            let _ = std::thread::Builder::new()
+                .name("borg-reaper".to_owned())
+                .spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(30));
+                    let _ = nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGKILL);
+
+                    if let Some(repo) = repo {
+                        let _ = std::process::Command::new(&binary)
+                            .arg("break-lock")
+                            .arg(&repo)
+                            .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+                            .output();
+                    }
+                });
+        }
     }
 }
 
@@ -98,9 +191,19 @@ impl Borg {
         if let Some(d) = dir {
             cmd.current_dir(d);
         }
-        cmd.kill_on_drop(true);
+        // kill_on_drop would send SIGKILL, which does not give borg a chance to release
+        // its repository lock. GracefulChild handles termination with SIGTERM instead.
+        cmd.kill_on_drop(false);
         let child = cmd.spawn()?;
-        let result = child.wait_with_output().await;
+
+        let repo = env
+            .iter()
+            .find(|(k, _)| k == "BORG_REPO")
+            .map(|(_, v)| v.clone());
+        let combined_env: Vec<_> = env.iter().chain(self.extra_env.iter()).cloned().collect();
+
+        let mut guard = GracefulChild::new(child, self.binary.clone(), repo, combined_env);
+        let result = guard.wait_with_output().await;
         log_run_result(&subcommand, start.elapsed().as_millis(), &result);
         result
     }

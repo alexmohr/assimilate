@@ -162,6 +162,8 @@ fn extract_session_cookie(parts: &Parts) -> Result<String, ApiError> {
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
+    #[serde(default)]
+    pub remember_me: bool,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -217,7 +219,12 @@ pub async fn login(
     }
 
     let session_id = Uuid::new_v4().to_string();
-    let expires_at = Utc::now() + Duration::hours(24);
+    let (ttl_hours, max_age_secs) = if req.remember_me {
+        (24 * 30, 30 * 86400)
+    } else {
+        (24, 86400)
+    };
+    let expires_at = Utc::now() + Duration::hours(ttl_hours);
 
     db::insert_session(&state.pool, &session_id, user.id, expires_at).await?;
     db::update_last_login(&state.pool, user.id).await?;
@@ -227,8 +234,9 @@ pub async fn login(
     } else {
         ""
     };
-    let cookie =
-        format!("session={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400{secure_flag}");
+    let cookie = format!(
+        "session={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age_secs}{secure_flag}"
+    );
 
     let body = Json(LoginResponse { user });
     let mut response = body.into_response();

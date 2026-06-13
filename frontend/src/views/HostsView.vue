@@ -29,6 +29,7 @@ interface ClientRow {
   agent_version: string | null
   agent_git_sha: string | null
   agent_build_time: string | null
+  agent_commit_count: number | null
   created_at: string
   last_seen_at: string | null
   is_connected: boolean
@@ -420,9 +421,10 @@ function onMerged(): void {
 onMounted(() => {
   loadClients().catch(logger.error)
   apiClient
-    .get<{ agent_version: string | null }>('/system/version')
+    .get<{ agent_version: string | null; server_commit_count: number | null }>('/system/version')
     .then((res) => {
       availableAgentVersion.value = res.data.agent_version
+      serverCommitCount.value = res.data.server_commit_count ?? null
     })
     .catch(logger.error)
 })
@@ -440,6 +442,7 @@ interface BackupPayload {
 const activeBackupsByHost = ref<Record<string, string[]>>({})
 
 const availableAgentVersion = ref<string | null>(null)
+const serverCommitCount = ref<number | null>(null)
 onMessage<BackupPayload>('BackupStarted', (payload) => {
   const list = activeBackupsByHost.value[payload.hostname] ?? []
   if (!list.includes(payload.target_name)) {
@@ -471,6 +474,9 @@ function hostActiveBackups(client: ClientRow): string[] {
 
 function deployButtonLabel(client: ClientRow): string | null {
   if (!client.agent_version) return 'Deploy'
+  if (serverCommitCount.value !== null && client.agent_commit_count !== null) {
+    return client.agent_commit_count >= serverCommitCount.value ? null : 'Upgrade'
+  }
   if (availableAgentVersion.value && client.agent_version === availableAgentVersion.value)
     return null
   return 'Upgrade'

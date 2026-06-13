@@ -124,6 +124,8 @@ pub enum AgentToServer {
         #[serde(default)]
         agent_build_time: Option<String>,
         #[serde(default)]
+        agent_commit_count: Option<u32>,
+        #[serde(default)]
         supports_restart: bool,
         #[serde(default)]
         restart_unavailable_reason: Option<String>,
@@ -655,6 +657,7 @@ mod tests {
             agent_version: "1.0.0".into(),
             agent_git_sha: Some("deadbeef".into()),
             agent_build_time: Some("2026-01-01".into()),
+            agent_commit_count: Some(42),
             supports_restart: true,
             restart_unavailable_reason: None,
         };

@@ -65,11 +65,13 @@ async fn connect_and_run(
     let version = env!("CARGO_PKG_VERSION");
     let git_sha = env!("GIT_SHA");
     let build_timestamp = env!("BUILD_TIMESTAMP");
+    let commit_count_str = env!("GIT_COMMIT_COUNT");
     let agent_version = if git_sha.is_empty() {
         version.to_owned()
     } else {
         format!("{version}+{git_sha}")
     };
+    let agent_commit_count = commit_count_str.parse::<u32>().ok().filter(|&n| n > 0);
 
     let hello = AgentToServer::Hello {
         hostname,
@@ -85,6 +87,7 @@ async fn connect_and_run(
         } else {
             Some(build_timestamp.to_owned())
         },
+        agent_commit_count,
         supports_restart: restart_capability.supported,
         restart_unavailable_reason: restart_capability.unavailable_reason.clone(),
     };

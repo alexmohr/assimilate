@@ -41,6 +41,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 agent_version,
                 agent_git_sha,
                 agent_build_time,
+                agent_commit_count,
                 supports_restart,
                 restart_unavailable_reason,
             }) => Some((
@@ -49,6 +50,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 agent_version,
                 agent_git_sha,
                 agent_build_time,
+                agent_commit_count,
                 supports_restart,
                 restart_unavailable_reason,
             )),
@@ -64,6 +66,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         agent_version,
         agent_git_sha,
         agent_build_time,
+        agent_commit_count,
         supports_restart,
         restart_unavailable_reason,
     )) = hello
@@ -152,6 +155,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         &agent_version,
         agent_git_sha.as_deref(),
         agent_build_time.as_deref(),
+        agent_commit_count.map(|n| i32::try_from(n).unwrap_or(i32::MAX)),
     )
     .await
     {

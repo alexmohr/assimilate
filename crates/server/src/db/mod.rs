@@ -27,9 +27,9 @@ pub async fn resolve_client_for_hostname(
 ) -> Result<ResolveResult, ApiError> {
     let exact = sqlx::query_as::<_, ClientRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-         created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, agent_token_hash, is_hidden FROM clients WHERE hostname = $1 \
-         AND agent_token_hash != 'imported:no-auth'",
+         agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
+         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM clients \
+         WHERE hostname = $1 AND agent_token_hash != 'imported:no-auth'",
     )
     .bind(hostname)
     .fetch_optional(pool)
@@ -52,8 +52,9 @@ pub async fn merge_client(pool: &PgPool, source_id: i64, target_id: i64) -> Resu
 
     let source = sqlx::query_as::<_, ClientRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-         created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, agent_token_hash, is_hidden FROM clients WHERE id = $1",
+         agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
+         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM clients \
+         WHERE id = $1",
     )
     .bind(source_id)
     .fetch_optional(&mut *tx)
@@ -127,6 +128,7 @@ pub struct ClientRow {
     pub agent_version: Option<String>,
     pub agent_git_sha: Option<String>,
     pub agent_build_time: Option<String>,
+    pub agent_commit_count: Option<i32>,
     pub created_at: DateTime<Utc>,
     pub last_seen_at: Option<DateTime<Utc>>,
     pub owner_id: Option<i64>,
@@ -259,8 +261,9 @@ pub async fn get_schedule_counts_by_client(
 pub async fn get_client_by_hostname(pool: &PgPool, hostname: &str) -> Result<ClientRow, ApiError> {
     sqlx::query_as::<_, ClientRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-         created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, agent_token_hash, is_hidden FROM clients WHERE hostname = $1",
+         agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
+         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM clients \
+         WHERE hostname = $1",
     )
     .bind(hostname)
     .fetch_one(pool)
@@ -274,8 +277,9 @@ pub async fn get_client_by_hostname(pool: &PgPool, hostname: &str) -> Result<Cli
 pub async fn get_client_by_id(pool: &PgPool, client_id: i64) -> Result<ClientRow, ApiError> {
     sqlx::query_as::<_, ClientRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-         created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, agent_token_hash, is_hidden FROM clients WHERE id = $1",
+         agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
+         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM clients \
+         WHERE id = $1",
     )
     .bind(client_id)
     .fetch_one(pool)
@@ -328,15 +332,17 @@ pub async fn update_last_seen_and_version(
     agent_version: &str,
     agent_git_sha: Option<&str>,
     agent_build_time: Option<&str>,
+    agent_commit_count: Option<i32>,
 ) -> Result<(), ApiError> {
     sqlx::query(
         "UPDATE clients SET last_seen_at = NOW(), agent_version = $2, agent_git_sha = $3, \
-         agent_build_time = $4 WHERE id = $1",
+         agent_build_time = $4, agent_commit_count = $5 WHERE id = $1",
     )
     .bind(client_id)
     .bind(agent_version)
     .bind(agent_git_sha)
     .bind(agent_build_time)
+    .bind(agent_commit_count)
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
@@ -355,11 +361,11 @@ pub async fn update_last_seen_by_hostname(pool: &PgPool, hostname: &str) -> Resu
 pub async fn list_clients(pool: &PgPool, include_hidden: bool) -> Result<Vec<ClientRow>, ApiError> {
     let sql = if include_hidden {
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-         created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
+         agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
          default_exclude_patterns, agent_token_hash, is_hidden FROM clients ORDER BY hostname"
     } else {
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-         created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
+         agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
          default_exclude_patterns, agent_token_hash, is_hidden FROM clients WHERE is_hidden = \
          false ORDER BY hostname"
     };
@@ -376,9 +382,9 @@ pub async fn set_client_hidden(
 ) -> Result<ClientRow, ApiError> {
     sqlx::query_as::<_, ClientRow>(
         "UPDATE clients SET is_hidden = $2 WHERE hostname = $1 RETURNING id, hostname, \
-         display_name, agent_version, agent_git_sha, agent_build_time, created_at, last_seen_at, \
-         owner_id, visibility, default_backup_paths, default_exclude_patterns, agent_token_hash, \
-         is_hidden",
+         display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
+         created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
+         default_exclude_patterns, agent_token_hash, is_hidden",
     )
     .bind(hostname)
     .bind(hidden)
@@ -398,8 +404,9 @@ pub async fn get_or_create_client_by_hostname(
 ) -> Result<ClientRow, ApiError> {
     let existing = sqlx::query_as::<_, ClientRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
-         created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, agent_token_hash, is_hidden FROM clients WHERE hostname = $1",
+         agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
+         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM clients \
+         WHERE hostname = $1",
     )
     .bind(hostname)
     .fetch_optional(pool)
@@ -413,8 +420,8 @@ pub async fn get_or_create_client_by_hostname(
     sqlx::query_as::<_, ClientRow>(
         "INSERT INTO clients (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, \
          $3, NULL) RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
-         agent_build_time, created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, agent_token_hash, is_hidden",
+         agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
+         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden",
     )
     .bind(hostname)
     .bind(Some(format!("{hostname} (imported)")))
@@ -434,8 +441,8 @@ pub async fn insert_client(
     sqlx::query_as::<_, ClientRow>(
         "INSERT INTO clients (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, \
          $3, $4) RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
-         agent_build_time, created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, agent_token_hash, is_hidden",
+         agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
+         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden",
     )
     .bind(hostname)
     .bind(display_name)
@@ -457,9 +464,9 @@ pub async fn insert_client_with_paths(
     sqlx::query_as::<_, ClientRow>(
         "INSERT INTO clients (hostname, display_name, agent_token_hash, default_backup_paths, \
          default_exclude_patterns) VALUES ($1, $2, $3, $4, $5) RETURNING id, hostname, \
-         display_name, agent_version, agent_git_sha, agent_build_time, created_at, last_seen_at, \
-         owner_id, visibility, default_backup_paths, default_exclude_patterns, agent_token_hash, \
-         is_hidden",
+         display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
+         created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
+         default_exclude_patterns, agent_token_hash, is_hidden",
     )
     .bind(hostname)
     .bind(display_name)
@@ -482,8 +489,9 @@ pub async fn update_client(
     sqlx::query_as::<_, ClientRow>(
         "UPDATE clients SET hostname = $2, display_name = $3, default_backup_paths = $4, \
          default_exclude_patterns = $5 WHERE hostname = $1 RETURNING id, hostname, display_name, \
-         agent_version, agent_git_sha, agent_build_time, created_at, last_seen_at, owner_id, \
-         visibility, default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden",
+         agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, \
+         last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, \
+         agent_token_hash, is_hidden",
     )
     .bind(hostname)
     .bind(new_hostname)
@@ -505,9 +513,9 @@ pub async fn regenerate_client_token(
 ) -> Result<ClientRow, ApiError> {
     sqlx::query_as::<_, ClientRow>(
         "UPDATE clients SET agent_token_hash = $2 WHERE hostname = $1 RETURNING id, hostname, \
-         display_name, agent_version, agent_git_sha, agent_build_time, created_at, last_seen_at, \
-         owner_id, visibility, default_backup_paths, default_exclude_patterns, agent_token_hash, \
-         is_hidden",
+         display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
+         created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
+         default_exclude_patterns, agent_token_hash, is_hidden",
     )
     .bind(hostname)
     .bind(token_hash)

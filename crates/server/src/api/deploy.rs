@@ -142,22 +142,34 @@ pub async fn deploy_agent(
     let server_url = tunnel_server_url.unwrap_or(req.server_url);
 
     let available_version = query_available_agent_version(&binary_dir).await;
+    let server_commit_count = option_env!("GIT_COMMIT_COUNT")
+        .and_then(|s| s.parse::<i32>().ok())
+        .filter(|&n| n > 0);
 
-    if !uses_tunnel
-        && let Some(ref available) = available_version
-        && let Some(ref deployed) = client.agent_version
-        && available == deployed
+    let already_current = if let (Some(server_count), Some(agent_count)) =
+        (server_commit_count, client.agent_commit_count)
     {
+        agent_count >= server_count
+    } else {
+        available_version
+            .as_deref()
+            .zip(client.agent_version.as_deref())
+            .is_some_and(|(av, dv)| av == dv)
+    };
+
+    if !uses_tunnel && already_current {
+        let version = available_version
+            .clone()
+            .or_else(|| client.agent_version.clone());
         info!(
             hostname = %hostname,
-            version = %available,
             "agent already at latest version, skipping deploy"
         );
         return Ok(Json(DeployAgentResponse {
             success: true,
             skipped: true,
             token: None,
-            available_version: Some(available.clone()),
+            available_version: version,
             error: None,
         }));
     }
@@ -192,8 +204,15 @@ pub async fn deploy_agent(
     match result {
         Ok(()) => {
             if let Some(ref version) = available_version {
-                db::update_last_seen_and_version(&state.pool, client.id, version, None, None)
-                    .await?;
+                db::update_last_seen_and_version(
+                    &state.pool,
+                    client.id,
+                    version,
+                    None,
+                    None,
+                    server_commit_count,
+                )
+                .await?;
             }
             info!(hostname = %hostname, ssh_host = %req.ssh_host, "agent deployed successfully");
             Ok(Json(DeployAgentResponse {

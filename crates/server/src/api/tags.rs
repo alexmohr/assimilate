@@ -289,7 +289,6 @@ pub async fn list_archive_tags(
     auth: AuthUser,
     Path((repo_id, archive_name)): Path<(i64, String)>,
 ) -> Result<Json<Vec<db::tags::ArchiveTag>>, ApiError> {
-    let _ = repo_id;
     ensure_manage_tags(&state, &auth).await?;
     let tags = db::tags::list_tags_for_archive(&state.pool, repo_id, &archive_name).await?;
     Ok(Json(tags))
@@ -320,7 +319,6 @@ pub async fn add_archive_tag(
     Path((repo_id, archive_name)): Path<(i64, String)>,
     ApiJson(req): ApiJson<ArchiveTagRequest>,
 ) -> Result<(StatusCode, Json<db::tags::ArchiveTag>), ApiError> {
-    let _ = repo_id;
     ensure_manage_tags(&state, &auth).await?;
     let tag = normalize_tag(req.tag)?;
 
@@ -365,7 +363,6 @@ pub async fn remove_archive_tag(
     auth: AuthUser,
     Path((repo_id, archive_name, tag)): Path<(i64, String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    let _ = repo_id;
     ensure_manage_tags(&state, &auth).await?;
     let tag = normalize_tag(tag)?;
 

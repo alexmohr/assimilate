@@ -835,8 +835,8 @@ pub async fn get_archive_index_status(
     }
 
     let row = sqlx::query_as::<_, Row>(
-        "SELECT status, file_count, error_message FROM archive_index_jobs WHERE repo_id = $1 AND \
-         archive_name = $2",
+        "SELECT j.status, j.file_count, j.error_message FROM archive_index_jobs j JOIN archives a \
+         ON a.id = j.archive_id WHERE a.repo_id = $1 AND a.name = $2",
     )
     .bind(repo_id)
     .bind(&archive_name)

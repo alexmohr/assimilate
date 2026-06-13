@@ -4549,15 +4549,21 @@ async fn list_indexed_archive_names_returns_only_done(pool: PgPool) {
         ("pending-archive", "pending"),
         ("failed-archive", "failed"),
     ] {
-        sqlx::query(
-            "INSERT INTO archive_index_jobs (repo_id, archive_name, status) VALUES ($1, $2, $3)",
+        let archive_id: i64 = sqlx::query_scalar(
+            "INSERT INTO archives (repo_id, name) VALUES ($1, $2) ON CONFLICT (repo_id, name) DO \
+             UPDATE SET name = EXCLUDED.name RETURNING id",
         )
         .bind(repo.id)
         .bind(name)
-        .bind(status)
-        .execute(&pool)
+        .fetch_one(&pool)
         .await
         .unwrap();
+        sqlx::query("INSERT INTO archive_index_jobs (archive_id, status) VALUES ($1, $2)")
+            .bind(archive_id)
+            .bind(status)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     let done = server::archive_index::list_indexed_archive_names(&pool, repo.id)

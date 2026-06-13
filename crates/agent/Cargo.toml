@@ -29,6 +29,7 @@ tempfile = { workspace = true }
 uuid = { workspace = true }
 which = { workspace = true }
 rustls = { workspace = true }
+nix = { workspace = true }
 shared = { path = "../shared" }
 
 [build-dependencies]

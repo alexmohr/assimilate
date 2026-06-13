@@ -653,7 +653,7 @@ pub async fn summary(
         .into_iter()
         .map(|b| {
             let percentage = if total_storage > 0 {
-                percentage_of(b.compressed_size, total_storage)
+                percentage_of(b.deduplicated_size, total_storage)
             } else {
                 0.0
             };

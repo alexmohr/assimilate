@@ -256,6 +256,10 @@ function repoTags(repo: RepoWithStats): { name: string; color: string }[] {
   return repoTagsMap.value[repo.id] ?? []
 }
 
+function repoImportPhaseVerb(repo: RepoWithStats): string {
+  return (repo.import_status_message ?? '').startsWith('Indexing') ? 'Indexing' : 'Importing'
+}
+
 function formatLastBackup(iso: string | null): string {
   if (!iso) return 'Never'
   const ts = new Date(iso).getTime()
@@ -850,8 +854,8 @@ onMounted(loadRepos)
                   ? 'Import Failed'
                   : repo.importing
                     ? repo.import_total > 0
-                      ? `Importing ${repo.import_progress}/${repo.import_total}`
-                      : 'Importing\u2026'
+                      ? `${repoImportPhaseVerb(repo)} ${repo.import_progress}/${repo.import_total}`
+                      : `${repoImportPhaseVerb(repo)}\u2026`
                     : repo.enabled
                       ? 'Enabled'
                       : 'Disabled'
@@ -971,8 +975,8 @@ onMounted(loadRepos)
                       ? 'Import Failed'
                       : repo.importing
                         ? repo.import_total > 0
-                          ? `Importing ${repo.import_progress}/${repo.import_total}`
-                          : 'Importing\u2026'
+                          ? `${repoImportPhaseVerb(repo)} ${repo.import_progress}/${repo.import_total}`
+                          : `${repoImportPhaseVerb(repo)}\u2026`
                         : repo.enabled
                           ? 'Enabled'
                           : 'Disabled'

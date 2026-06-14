@@ -41,68 +41,73 @@ interface RepoWithStats {
   compression: string
   encryption: string
   enabled: boolean
+  importing: boolean
+  import_error: string | null
+  import_progress: number
+  import_total: number
+  import_status_message: string | null
   archive_count: number
   last_backup_at: string | null
   total_original_size: number
   total_compressed_size: number
   total_deduplicated_size: number
   client_count: number
+  unmatched_count: number
+}
+
+const baseRepo = {
+  ssh_user: 'borg',
+  ssh_host: 'backup.example.com',
+  ssh_port: 22,
+  ssh_host_key: 'ssh-ed25519 AAAA',
+  compression: 'lz4',
+  encryption: 'repokey-blake2',
+  enabled: true,
+  importing: false,
+  import_error: null,
+  import_progress: 0,
+  import_total: 0,
+  import_status_message: null,
+  last_backup_at: null,
+  total_original_size: 10_737_418_240,
+  total_compressed_size: 5_368_709_120,
+  total_deduplicated_size: 2_684_354_560,
+  client_count: 1,
+  unmatched_count: 0,
 }
 
 const mockRepos: RepoWithStats[] = [
   {
+    ...baseRepo,
     id: 1,
     name: 'server-daily',
     repo_path: '/backup/server-daily',
-    ssh_user: 'borg',
-    ssh_host: 'backup.example.com',
-    ssh_port: 22,
-    ssh_host_key: 'ssh-ed25519 AAAA',
     compression: 'lz4',
-    encryption: 'repokey-blake2',
-    enabled: true,
     archive_count: 30,
     last_backup_at: new Date(Date.now() - 3_600_000).toISOString(),
-    total_original_size: 10_737_418_240,
-    total_compressed_size: 5_368_709_120,
-    total_deduplicated_size: 2_684_354_560,
     client_count: 2,
   },
   {
+    ...baseRepo,
     id: 2,
     name: 'database-hourly',
     repo_path: '/backup/database-hourly',
-    ssh_user: 'borg',
-    ssh_host: 'backup.example.com',
-    ssh_port: 22,
-    ssh_host_key: 'ssh-ed25519 AAAA',
     compression: 'zstd',
-    encryption: 'repokey-blake2',
-    enabled: true,
     archive_count: 72,
     last_backup_at: new Date(Date.now() - 300_000).toISOString(),
-    total_original_size: 5_368_709_120,
-    total_compressed_size: 2_684_354_560,
-    total_deduplicated_size: 1_342_177_280,
-    client_count: 1,
   },
   {
+    ...baseRepo,
     id: 3,
     name: 'media-weekly',
     repo_path: '/backup/media-weekly',
-    ssh_user: 'borg',
-    ssh_host: 'backup.example.com',
-    ssh_port: 22,
-    ssh_host_key: 'ssh-ed25519 AAAA',
     compression: 'zstd',
-    encryption: 'repokey-blake2',
     enabled: false,
     archive_count: 12,
-    last_backup_at: null,
+    client_count: 3,
     total_original_size: 21_474_836_480,
     total_compressed_size: 10_737_418_240,
     total_deduplicated_size: 5_368_709_120,
-    client_count: 3,
   },
 ]
 
@@ -257,5 +262,103 @@ describe('ReposView', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('Never')
+  })
+
+  it('shows "Importing…" badge when repo is importing without progress', async () => {
+    const importingRepo: RepoWithStats = {
+      ...baseRepo,
+      id: 4,
+      name: 'importing-repo',
+      repo_path: '/backup/importing-repo',
+      archive_count: 0,
+      importing: true,
+      import_total: 0,
+    }
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/repos/stats') return Promise.resolve({ data: [importingRepo] })
+      if (url === '/repo-tags') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(ReposView, {
+      storeState: { auth: { user: { role: 'viewer' } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Importing…')
+  })
+
+  it('shows "Importing N/M" badge when repo is importing with progress', async () => {
+    const importingRepo: RepoWithStats = {
+      ...baseRepo,
+      id: 4,
+      name: 'importing-repo',
+      repo_path: '/backup/importing-repo',
+      archive_count: 0,
+      importing: true,
+      import_progress: 42,
+      import_total: 100,
+    }
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/repos/stats') return Promise.resolve({ data: [importingRepo] })
+      if (url === '/repo-tags') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(ReposView, {
+      storeState: { auth: { user: { role: 'viewer' } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Importing 42/100')
+  })
+
+  it('shows "Indexing…" badge when repo is in the indexing phase without progress', async () => {
+    const indexingRepo: RepoWithStats = {
+      ...baseRepo,
+      id: 4,
+      name: 'indexing-repo',
+      repo_path: '/backup/indexing-repo',
+      archive_count: 0,
+      importing: true,
+      import_total: 0,
+      import_status_message: 'Indexing archive contents…',
+    }
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/repos/stats') return Promise.resolve({ data: [indexingRepo] })
+      if (url === '/repo-tags') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(ReposView, {
+      storeState: { auth: { user: { role: 'viewer' } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Indexing…')
+    expect(wrapper.text()).not.toContain('Importing')
+  })
+
+  it('shows "Indexing N/M" badge when repo is in the indexing phase with progress', async () => {
+    const indexingRepo: RepoWithStats = {
+      ...baseRepo,
+      id: 4,
+      name: 'indexing-repo',
+      repo_path: '/backup/indexing-repo',
+      archive_count: 0,
+      importing: true,
+      import_progress: 10,
+      import_total: 50,
+      import_status_message: 'Indexing archive contents…',
+    }
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/repos/stats') return Promise.resolve({ data: [indexingRepo] })
+      if (url === '/repo-tags') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(ReposView, {
+      storeState: { auth: { user: { role: 'viewer' } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Indexing 10/50')
+    expect(wrapper.text()).not.toContain('Importing')
   })
 })

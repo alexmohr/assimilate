@@ -761,32 +761,8 @@ async fn run_init_repo_task(
     token: &str,
 ) -> Result<(), String> {
     let mut ssh_forward_target = BackupTarget {
-        target_name: String::new(),
-        schedule_id: None,
-        repo_path: String::new(),
-        ssh_user: String::new(),
-        ssh_host: String::new(),
-        ssh_port: 22,
-        ssh_host_key: String::new(),
-        known_hosts_path: None,
-        passphrase: String::new(),
         hostname: hostname.to_owned(),
-        compression: Compression::Lz4,
-        backup_sources: Vec::new(),
-        rate_limit_kbps: None,
-        keep_hourly: 0,
-        keep_daily: 0,
-        keep_weekly: 0,
-        keep_monthly: 0,
-        keep_yearly: 0,
-        compact_enabled: false,
-        pre_backup_commands: Vec::new(),
-        post_backup_commands: Vec::new(),
-        skip_targets: Vec::new(),
-        exclude_patterns: Vec::new(),
-        ssh_auth_sock: None,
-        canary_enabled: false,
-        accept_relocation: false,
+        ..BackupTarget::default()
     };
 
     let _ssh_forward =
@@ -1123,34 +1099,7 @@ async fn run_check_task(
     outbound_tx: &mpsc::Sender<AgentToServer>,
 ) {
     let start = std::time::Instant::now();
-    let mut target = BackupTarget {
-        target_name: target.target_name.clone(),
-        schedule_id: target.schedule_id,
-        repo_path: target.repo_path.clone(),
-        ssh_user: target.ssh_user.clone(),
-        ssh_host: target.ssh_host.clone(),
-        ssh_port: target.ssh_port,
-        ssh_host_key: target.ssh_host_key.clone(),
-        known_hosts_path: None,
-        passphrase: target.passphrase.clone(),
-        hostname: hostname.to_owned(),
-        compression: target.compression.clone(),
-        backup_sources: Vec::new(),
-        rate_limit_kbps: target.rate_limit_kbps,
-        keep_hourly: 0,
-        keep_daily: 0,
-        keep_weekly: 0,
-        keep_monthly: 0,
-        keep_yearly: 0,
-        compact_enabled: false,
-        pre_backup_commands: Vec::new(),
-        post_backup_commands: Vec::new(),
-        skip_targets: Vec::new(),
-        exclude_patterns: Vec::new(),
-        ssh_auth_sock: None,
-        canary_enabled: false,
-        accept_relocation: target.accept_relocation,
-    };
+    let mut target = BackupTarget::for_maintenance(target, hostname.to_owned());
 
     let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
 
@@ -1186,34 +1135,7 @@ async fn run_verify_task(
     outbound_tx: &mpsc::Sender<AgentToServer>,
 ) {
     let start = std::time::Instant::now();
-    let mut target = BackupTarget {
-        target_name: target.target_name.clone(),
-        schedule_id: target.schedule_id,
-        repo_path: target.repo_path.clone(),
-        ssh_user: target.ssh_user.clone(),
-        ssh_host: target.ssh_host.clone(),
-        ssh_port: target.ssh_port,
-        ssh_host_key: target.ssh_host_key.clone(),
-        known_hosts_path: None,
-        passphrase: target.passphrase.clone(),
-        hostname: hostname.to_owned(),
-        compression: target.compression.clone(),
-        backup_sources: Vec::new(),
-        rate_limit_kbps: target.rate_limit_kbps,
-        keep_hourly: 0,
-        keep_daily: 0,
-        keep_weekly: 0,
-        keep_monthly: 0,
-        keep_yearly: 0,
-        compact_enabled: false,
-        pre_backup_commands: Vec::new(),
-        post_backup_commands: Vec::new(),
-        skip_targets: Vec::new(),
-        exclude_patterns: Vec::new(),
-        ssh_auth_sock: None,
-        canary_enabled: false,
-        accept_relocation: target.accept_relocation,
-    };
+    let mut target = BackupTarget::for_maintenance(target, hostname.to_owned());
 
     let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
 

@@ -201,7 +201,7 @@ pub async fn get_agent(
 )]
 pub async fn update_agent(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
     ApiJson(req): ApiJson<UpdateAgentRequest>,
 ) -> Result<Json<AgentResponse>, ApiError> {
@@ -245,7 +245,7 @@ pub async fn update_agent(
 )]
 pub async fn delete_agent(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
@@ -275,7 +275,7 @@ pub async fn delete_agent(
 )]
 pub async fn regenerate_token(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
 ) -> Result<Json<CreateAgentResponse>, ApiError> {
     let existing = db::get_agent_by_hostname(&state.pool, &hostname).await?;
@@ -315,7 +315,7 @@ pub async fn regenerate_token(
 )]
 pub async fn restart_agent(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let (supports_restart, reason) = state.registry.restart_capability(&hostname).await;
@@ -384,7 +384,7 @@ pub struct AddPatternRequest {
 )]
 pub async fn add_hostname_pattern(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
     ApiJson(req): ApiJson<AddPatternRequest>,
 ) -> Result<(StatusCode, Json<HostnamePatternRow>), ApiError> {
@@ -412,7 +412,7 @@ pub async fn add_hostname_pattern(
 )]
 pub async fn delete_hostname_pattern(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    RequireAdmin(_admin): RequireAdmin,
     Path((hostname, pattern_id)): Path<(String, i64)>,
 ) -> Result<StatusCode, ApiError> {
     db::get_agent_by_hostname(&state.pool, &hostname).await?;
@@ -450,7 +450,7 @@ pub struct MergeAgentResponse {
 )]
 pub async fn merge_agent(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    RequireAdmin(_admin): RequireAdmin,
     Path((hostname, source_id)): Path<(String, i64)>,
     ApiJson(req): ApiJson<MergeAgentRequest>,
 ) -> Result<Json<MergeAgentResponse>, ApiError> {
@@ -483,7 +483,7 @@ pub async fn merge_agent(
 )]
 pub async fn hide_agent(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
 ) -> Result<Json<AgentResponse>, ApiError> {
     let a = db::set_agent_hidden(&state.pool, &hostname, true).await?;
@@ -516,7 +516,7 @@ pub async fn hide_agent(
 )]
 pub async fn unhide_agent(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
 ) -> Result<Json<AgentResponse>, ApiError> {
     let a = db::set_agent_hidden(&state.pool, &hostname, false).await?;
@@ -557,7 +557,7 @@ pub struct DeleteArchivesResponse {
 )]
 pub async fn delete_agent_archives(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
 ) -> Result<Json<DeleteArchivesResponse>, ApiError> {
     let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;

@@ -1126,7 +1126,9 @@ async fn run_borg_info_with_retry(
             }
         }
     }
-    unreachable!()
+    Err(ApiError::Internal(
+        "borg info failed after maximum retries".to_owned(),
+    ))
 }
 
 async fn run_borg_info_once(repo_url: &str, passphrase: &str) -> Result<BorgInfoResult, ApiError> {
@@ -1318,7 +1320,9 @@ async fn run_borg_list_with_retry(
         );
         tokio::time::sleep(LOCK_RETRY_INTERVAL).await;
     }
-    unreachable!()
+    Err(ApiError::Internal(
+        "borg list failed after maximum retries".to_owned(),
+    ))
 }
 
 /// Refreshes the authoritative repo statistics from `borg info --json`

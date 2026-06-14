@@ -21,7 +21,7 @@ pub async fn run_ws_client(
     exec_cmd_tx: mpsc::Sender<ExecutorCommand>,
     mut outbound_rx: mpsc::Receiver<AgentToServer>,
     restart_capability: &RestartCapability,
-) {
+) -> Result<(), WsError> {
     let mut backoff = BACKOFF_BASE;
 
     loop {
@@ -31,7 +31,7 @@ pub async fn run_ws_client(
             }
             Err(WsError::AuthRejected(reason)) => {
                 error!("Authentication rejected by server: {reason}");
-                process::exit(1);
+                return Err(WsError::AuthRejected(reason));
             }
             Err(e) => {
                 error!("WebSocket connection error: {e}");
@@ -336,7 +336,7 @@ async fn handle_text_message(
 }
 
 #[derive(Debug, thiserror::Error)]
-enum WsError {
+pub enum WsError {
     #[error("connection failed: {0}")]
     Connect(Box<tokio_tungstenite::tungstenite::Error>),
     #[error("send failed: {0}")]

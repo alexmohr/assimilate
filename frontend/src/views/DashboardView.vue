@@ -774,11 +774,11 @@ function navigateToSchedule(scheduleId: number | null): void {
               overview?.protection ?? {
                 protected_hosts: 0,
                 eligible_hosts: 0,
-                protected_host_links: [],
-                unassigned_hosts: [],
+                protected_agent_links: [],
+                unassigned_agents: [],
                 never_succeeded_targets: 0,
-                never_succeeded_hosts: [],
-                disabled_only_hosts: [],
+                never_succeeded_agents: [],
+                disabled_only_agents: [],
               }
             "
           />

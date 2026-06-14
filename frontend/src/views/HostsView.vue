@@ -308,16 +308,16 @@ async function loadAgents(): Promise<void> {
     healthByHost.value = hMap
     coverageHostIds.value = {
       protected: new Set(
-        overviewRes.data.protection.protected_host_links.map((host) => host.agent_id),
+        overviewRes.data.protection.protected_agent_links.map((host) => host.agent_id),
       ),
       unassigned: new Set(
-        overviewRes.data.protection.unassigned_hosts.map((host) => host.agent_id),
+        overviewRes.data.protection.unassigned_agents.map((host) => host.agent_id),
       ),
       'never-succeeded': new Set(
-        overviewRes.data.protection.never_succeeded_hosts.map((host) => host.agent_id),
+        overviewRes.data.protection.never_succeeded_agents.map((host) => host.agent_id),
       ),
       'disabled-only': new Set(
-        overviewRes.data.protection.disabled_only_hosts.map((host) => host.agent_id),
+        overviewRes.data.protection.disabled_only_agents.map((host) => host.agent_id),
       ),
     }
   } catch (e: unknown) {

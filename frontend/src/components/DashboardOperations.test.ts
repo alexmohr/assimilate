@@ -67,14 +67,14 @@ describe('dashboard operational components', () => {
         protection: {
           protected_hosts: 2,
           eligible_hosts: 3,
-          protected_host_links: [
+          protected_agent_links: [
             { agent_id: 5, hostname: 'protected-host' },
             { agent_id: 6, hostname: 'protected-host-2' },
           ],
-          unassigned_hosts: [{ agent_id: 7, hostname: 'unassigned-host' }],
+          unassigned_agents: [{ agent_id: 7, hostname: 'unassigned-host' }],
           never_succeeded_targets: 1,
-          never_succeeded_hosts: [{ agent_id: 9, hostname: 'never-succeeded-host' }],
-          disabled_only_hosts: [{ agent_id: 8, hostname: 'disabled-host' }],
+          never_succeeded_agents: [{ agent_id: 9, hostname: 'never-succeeded-host' }],
+          disabled_only_agents: [{ agent_id: 8, hostname: 'disabled-host' }],
         },
       },
     })

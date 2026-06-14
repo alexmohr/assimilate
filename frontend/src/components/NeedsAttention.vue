@@ -6,26 +6,44 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import type { RouteLocationRaw } from 'vue-router'
 import { RouterLink } from 'vue-router'
-import type { DashboardDestination, DashboardFinding } from '../types/dashboard'
+import type { DashboardFinding } from '../types/dashboard'
 import { relativeTime } from '../utils/format'
+import { apiClient } from '../api/client'
+import { logger } from '../utils/logger'
 
 defineProps<{ findings: DashboardFinding[] }>()
+const emit = defineEmits<{ dismissed: [] }>()
 
-function destinationRoute(destination: DashboardDestination): RouteLocationRaw {
-  switch (destination.kind) {
+function destinationRoute(finding: DashboardFinding): RouteLocationRaw {
+  const dest = finding.destination
+  switch (dest.kind) {
     case 'host':
-      return `/agents/${encodeURIComponent(destination.hostname)}`
+      return `/agents/${encodeURIComponent(dest.hostname)}`
     case 'schedule':
-      return `/schedules/${destination.schedule_id}`
+      return `/schedules/${dest.schedule_id}`
     case 'repository':
-      return `/repos/${destination.repo_id}`
-    case 'activity':
-      return { path: '/activity', query: { report: destination.report_id } }
+      return `/repos/${dest.repo_id}`
+    case 'activity': {
+      const query: Record<string, string> = { category: 'backup' }
+      if (finding.kind === 'backup_failed') query.status = 'failed'
+      else if (finding.kind === 'backup_warning') query.status = 'warning'
+      if (finding.schedule_id !== null) query.schedule_id = String(finding.schedule_id)
+      return { path: '/activity', query }
+    }
   }
 }
 
 function findingLabel(finding: DashboardFinding): string {
   return finding.hostname ?? finding.schedule_name ?? finding.repo_name ?? 'Backup system'
+}
+
+async function dismiss(finding: DashboardFinding): Promise<void> {
+  try {
+    await apiClient.post(`/stats/findings/${encodeURIComponent(finding.id)}/dismiss`)
+    emit('dismissed')
+  } catch (e: unknown) {
+    logger.error('Failed to dismiss finding', e)
+  }
 }
 </script>
 
@@ -51,10 +69,9 @@ function findingLabel(finding: DashboardFinding): string {
       v-else
       class="finding-list"
     >
-      <RouterLink
+      <div
         v-for="finding in findings"
         :key="finding.id"
-        :to="destinationRoute(finding.destination)"
         class="finding-row"
       >
         <span
@@ -76,8 +93,22 @@ function findingLabel(finding: DashboardFinding): string {
             {{ relativeTime(finding.occurred_at) }}
           </template>
         </span>
-        <span class="finding-action">Open</span>
-      </RouterLink>
+        <div class="finding-actions">
+          <RouterLink
+            :to="destinationRoute(finding)"
+            class="finding-action"
+          >
+            Open
+          </RouterLink>
+          <button
+            class="dismiss-btn"
+            title="Dismiss"
+            @click="dismiss(finding)"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
     </div>
   </section>
 </template>
@@ -130,13 +161,7 @@ p {
   gap: 0.85rem;
   align-items: center;
   padding: 0.8rem 0;
-  color: inherit;
-  text-decoration: none;
   border-top: 1px solid var(--border);
-}
-
-.finding-row:hover .finding-action {
-  color: var(--accent);
 }
 
 .severity-mark {
@@ -166,8 +191,7 @@ p {
 
 .finding-context,
 .finding-reason,
-.finding-time,
-.finding-action {
+.finding-time {
   color: var(--text-muted);
   font-size: 0.75rem;
 }
@@ -176,8 +200,41 @@ p {
   flex-basis: 100%;
 }
 
+.finding-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .finding-action {
   font-weight: 600;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.finding-action:hover {
+  color: var(--accent);
+}
+
+.dismiss-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  padding: 0.15rem 0.35rem;
+  border-radius: var(--radius-sm);
+  line-height: 1;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+
+.dismiss-btn:hover {
+  color: var(--danger);
+  background: var(--danger-subtle);
 }
 
 @media (max-width: 700px) {

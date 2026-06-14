@@ -32,6 +32,7 @@ pub enum BackupError {
     Timeout(u64),
 }
 
+#[derive(Clone)]
 pub struct BackupTarget {
     pub target_name: String,
     pub schedule_id: Option<i64>,
@@ -59,6 +60,62 @@ pub struct BackupTarget {
     pub ssh_auth_sock: Option<PathBuf>,
     pub canary_enabled: bool,
     pub accept_relocation: bool,
+}
+
+impl Default for BackupTarget {
+    fn default() -> Self {
+        Self {
+            target_name: String::new(),
+            schedule_id: None,
+            repo_path: String::new(),
+            ssh_user: String::new(),
+            ssh_host: String::new(),
+            ssh_port: 22,
+            ssh_host_key: String::new(),
+            known_hosts_path: None,
+            passphrase: String::new(),
+            hostname: String::new(),
+            compression: Compression::Lz4,
+            backup_sources: Vec::new(),
+            keep_hourly: 0,
+            keep_daily: 0,
+            keep_weekly: 0,
+            keep_monthly: 0,
+            keep_yearly: 0,
+            compact_enabled: false,
+            pre_backup_commands: Vec::new(),
+            post_backup_commands: Vec::new(),
+            skip_targets: Vec::new(),
+            exclude_patterns: Vec::new(),
+            rate_limit_kbps: None,
+            ssh_auth_sock: None,
+            canary_enabled: false,
+            accept_relocation: false,
+        }
+    }
+}
+
+impl BackupTarget {
+    /// Construct a maintenance target (check/verify) from an existing backup target,
+    /// overriding the hostname and clearing backup-specific fields irrelevant to
+    /// maintenance operations.
+    pub fn for_maintenance(base: &Self, hostname: String) -> Self {
+        Self {
+            target_name: base.target_name.clone(),
+            schedule_id: base.schedule_id,
+            repo_path: base.repo_path.clone(),
+            ssh_user: base.ssh_user.clone(),
+            ssh_host: base.ssh_host.clone(),
+            ssh_port: base.ssh_port,
+            ssh_host_key: base.ssh_host_key.clone(),
+            passphrase: base.passphrase.clone(),
+            compression: base.compression.clone(),
+            rate_limit_kbps: base.rate_limit_kbps,
+            accept_relocation: base.accept_relocation,
+            hostname,
+            ..Self::default()
+        }
+    }
 }
 
 #[derive(Debug)]

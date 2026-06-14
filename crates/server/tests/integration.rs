@@ -138,6 +138,10 @@ async fn build_test_app(pool: PgPool) -> Router {
             post(server::api::repos::reset_import),
         )
         .route(
+            "/api/repos/{repo_id}/schedules",
+            get(server::api::repos::list_schedules_for_repo),
+        )
+        .route(
             "/api/excludes",
             get(server::api::excludes::get_excludes).put(server::api::excludes::set_excludes),
         )
@@ -1845,4 +1849,48 @@ async fn must_change_password_allows_me_endpoint() {
     );
     let body = body_json(resp).await;
     assert_eq!(body["must_change_password"], true);
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_list_schedules_for_repo() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    let repo_id = insert_test_repo(&pool, "sched-repo-endpoint").await;
+    let client_id: i64 = sqlx::query_scalar(
+        "INSERT INTO clients (hostname, agent_token_hash) VALUES ('sched-endpoint-host', 'hash2') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let schedule_id = insert_test_schedule(&pool, client_id, repo_id).await;
+
+    // Returns schedules for the correct repo
+    let req = get_request(&format!("/api/repos/{repo_id}/schedules"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let schedules = body.as_array().unwrap();
+    assert_eq!(schedules.len(), 1);
+    assert_eq!(schedules[0]["id"], schedule_id);
+    assert_eq!(
+        schedules[0]["target_hostnames"]
+            .as_array()
+            .unwrap()
+            .first()
+            .unwrap(),
+        "sched-endpoint-host"
+    );
+
+    // Returns empty list for a different repo
+    let other_repo_id = insert_test_repo(&pool, "sched-repo-other").await;
+    let req = get_request(&format!("/api/repos/{other_repo_id}/schedules"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.as_array().unwrap().len(), 0);
 }

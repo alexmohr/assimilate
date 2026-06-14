@@ -718,7 +718,7 @@ async fn schedule_list_for_repo(pool: PgPool) {
 async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
     let (client_a, repo_a, schedule_a) = create_test_schedule(&pool).await;
 
-    let client_b = db::insert_client(&pool, "repo-list-host-b", None, "hashb", None)
+    let client_b = db::insert_agent(&pool, "repo-list-host-b", None, "hashb", None)
         .await
         .unwrap();
     let repo_b = db::insert_repo(

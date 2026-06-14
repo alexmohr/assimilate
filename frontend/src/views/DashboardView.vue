@@ -395,53 +395,33 @@ function navigateToLastBackup(): void {
   router.push({ path: `/repos/${summary.value.last_backup_repo_id}`, query })
 }
 
-interface StatusPopup {
-  type: 'failure' | 'warning'
-  message: string
-  repo_name: string | null
-  repo_id: number | null
-  schedule_name: string | null
-  schedule_id: number | null
-  at: string | null
-}
-
-const statusPopup = ref<StatusPopup | null>(null)
-
-function showFailurePopup(): void {
+function navigateToLastFailure(): void {
   if (!summary.value?.last_failure_at) return
-  statusPopup.value = {
-    type: 'failure',
-    message: summary.value.last_failure_message ?? 'No error details available.',
-    repo_name: summary.value.last_failure_repo_name,
-    repo_id: summary.value.last_failure_repo_id,
-    schedule_name: summary.value.last_failure_schedule_name,
-    schedule_id: summary.value.last_failure_schedule_id,
-    at: summary.value.last_failure_at,
+  const query: Record<string, string> = { status: 'failed', category: 'backup' }
+  if (summary.value.last_failure_schedule_id) {
+    query.schedule_id = String(summary.value.last_failure_schedule_id)
   }
+  router.push({ path: '/activity', query })
 }
 
-function showWarningPopup(): void {
+function navigateToLastWarning(): void {
   if (!summary.value?.last_warning_at) return
-  statusPopup.value = {
-    type: 'warning',
-    message: summary.value.last_warning_message ?? 'No warning details available.',
-    repo_name: summary.value.last_warning_repo_name,
-    repo_id: summary.value.last_warning_repo_id,
-    schedule_name: summary.value.last_warning_schedule_name,
-    schedule_id: summary.value.last_warning_schedule_id,
-    at: summary.value.last_warning_at,
+  const query: Record<string, string> = { status: 'warning', category: 'backup' }
+  if (summary.value.last_warning_schedule_id) {
+    query.schedule_id = String(summary.value.last_warning_schedule_id)
   }
-}
-
-function closeStatusPopup(): void {
-  statusPopup.value = null
+  router.push({ path: '/activity', query })
 }
 
 function navigateToSchedule(scheduleId: number | null): void {
   if (scheduleId) {
     router.push(`/schedules/${scheduleId}`)
   }
-  closeStatusPopup()
+}
+
+async function fetchOverview(): Promise<void> {
+  const o = await apiClient.get<DashboardOverview>('/stats/dashboard-overview')
+  overview.value = o.data
 }
 </script>
 
@@ -542,7 +522,7 @@ function navigateToSchedule(scheduleId: number | null): void {
         <div
           class="stat-card"
           :class="{ 'stat-card-link': summary?.last_failure_at }"
-          @click="showFailurePopup"
+          @click="navigateToLastFailure"
         >
           <span class="stat-label">Last Failure</span>
           <span
@@ -555,7 +535,7 @@ function navigateToSchedule(scheduleId: number | null): void {
         <div
           class="stat-card"
           :class="{ 'stat-card-link': summary?.last_warning_at }"
-          @click="showWarningPopup"
+          @click="navigateToLastWarning"
         >
           <span class="stat-label">Last Warning</span>
           <span
@@ -588,7 +568,10 @@ function navigateToSchedule(scheduleId: number | null): void {
       </section>
 
       <div class="attention-row">
-        <NeedsAttention :findings="overview?.findings ?? []" />
+        <NeedsAttention
+          :findings="overview?.findings ?? []"
+          @dismissed="fetchOverview().catch(logger.error)"
+        />
         <UpcomingWork
           :operations="overview?.running_operations ?? []"
           :schedules="overview?.upcoming_schedules ?? []"
@@ -1528,85 +1511,5 @@ function navigateToSchedule(scheduleId: number | null): void {
   color: var(--text-secondary);
   font-family: var(--mono);
   font-size: 0.8rem;
-}
-
-/* Status Popup */
-.status-popup-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.status-popup {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-  max-width: 32rem;
-  width: 90%;
-  max-height: 60vh;
-  overflow: auto;
-}
-
-.status-popup-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.5rem;
-}
-
-.status-popup-title {
-  font-weight: 600;
-  font-size: 0.85rem;
-}
-
-.status-popup-title-danger {
-  color: var(--danger);
-}
-
-.status-popup-title-warning {
-  color: var(--warning);
-}
-
-.status-popup-close {
-  background: transparent;
-  border: none;
-  font-size: 1.25rem;
-  cursor: pointer;
-  color: var(--text-muted);
-  line-height: 1;
-}
-
-.status-popup-meta {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  margin-bottom: 0.75rem;
-}
-
-.status-popup-link {
-  color: var(--accent);
-  cursor: pointer;
-  text-decoration: none;
-}
-
-.status-popup-link:hover {
-  text-decoration: underline;
-}
-
-.status-popup-msg {
-  font-family: var(--mono);
-  font-size: 0.75rem;
-  color: var(--text-primary);
-  background: var(--bg-base);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.75rem;
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
 }
 </style>

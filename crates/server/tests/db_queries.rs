@@ -707,10 +707,111 @@ async fn schedule_for_hostname_repo(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn schedule_list_for_repo(pool: PgPool) {
-    let (_, repo, _) = create_test_schedule(&pool).await;
+    let (client, repo, _) = create_test_schedule(&pool).await;
 
     let schedules = db::list_schedules_for_repo(&pool, repo.id).await.unwrap();
     assert_eq!(schedules.len(), 1);
+    assert_eq!(schedules[0].target_hostnames, vec![client.hostname]);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
+    let (client_a, repo_a, schedule_a) = create_test_schedule(&pool).await;
+
+    let client_b = db::insert_client(&pool, "repo-list-host-b", None, "hashb", None)
+        .await
+        .unwrap();
+    let repo_b = db::insert_repo(
+        &pool,
+        &InsertRepoParams {
+            name: "repo-list-repo-b",
+            repo_path: "/backups/b",
+            ssh_user: "user",
+            ssh_host: "host.local",
+            ssh_port: 22,
+            passphrase_encrypted: b"enc",
+            compression: "none",
+            encryption: "none",
+            owner_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    let schedule_b = db::insert_schedule(
+        &pool,
+        repo_b.id,
+        &ScheduleParams {
+            name: "schedule-b",
+            schedule_type: "backup",
+            cron_expression: "0 4 * * *",
+            enabled: true,
+            canary_enabled: false,
+            exclude_patterns_raw: "",
+            ignore_global_excludes: false,
+            keep_hourly: 0,
+            keep_daily: 7,
+            keep_weekly: 0,
+            keep_monthly: 0,
+            keep_yearly: 0,
+            compact_enabled: false,
+            rate_limit_kbps: None,
+            pre_backup_commands: "",
+            post_backup_commands: "",
+            on_failure: "stop",
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    db::insert_schedule_targets(&pool, schedule_b.id, &[(client_b.id, 0)])
+        .await
+        .unwrap();
+
+    // Second schedule on repo_a with two hosts
+    let schedule_a2 = db::insert_schedule(
+        &pool,
+        repo_a.id,
+        &ScheduleParams {
+            name: "schedule-a2",
+            schedule_type: "check",
+            cron_expression: "0 5 * * *",
+            enabled: true,
+            canary_enabled: false,
+            exclude_patterns_raw: "",
+            ignore_global_excludes: false,
+            keep_hourly: 0,
+            keep_daily: 0,
+            keep_weekly: 0,
+            keep_monthly: 0,
+            keep_yearly: 0,
+            compact_enabled: false,
+            rate_limit_kbps: None,
+            pre_backup_commands: "",
+            post_backup_commands: "",
+            on_failure: "stop",
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    db::insert_schedule_targets(&pool, schedule_a2.id, &[(client_a.id, 0), (client_b.id, 1)])
+        .await
+        .unwrap();
+
+    let results_a = db::list_schedules_for_repo(&pool, repo_a.id).await.unwrap();
+    assert_eq!(results_a.len(), 2);
+    let s1 = results_a.iter().find(|s| s.id == schedule_a.id).unwrap();
+    assert_eq!(s1.target_hostnames, vec![client_a.hostname.clone()]);
+    let s2 = results_a.iter().find(|s| s.id == schedule_a2.id).unwrap();
+    assert_eq!(
+        s2.target_hostnames,
+        vec![client_a.hostname.clone(), client_b.hostname.clone()]
+    );
+
+    // repo_b must only return its own schedule
+    let results_b = db::list_schedules_for_repo(&pool, repo_b.id).await.unwrap();
+    assert_eq!(results_b.len(), 1);
+    assert_eq!(results_b[0].id, schedule_b.id);
 }
 
 #[sqlx::test(migrations = "./migrations")]

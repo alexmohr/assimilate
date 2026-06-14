@@ -8,6 +8,8 @@ mod ssh_forward;
 mod systemd;
 mod ws;
 
+use std::process;
+
 use clap::Parser;
 use executor::{Executor, ExecutorCommand};
 use shared::protocol::AgentToServer;
@@ -56,7 +58,11 @@ async fn main() {
     });
 
     tokio::select! {
-        () = ws::run_ws_client(&args, exec_cmd_tx, outbound_rx, &restart_capability) => {}
+        result = ws::run_ws_client(&args, exec_cmd_tx, outbound_rx, &restart_capability) => {
+            if let Err(ws::WsError::AuthRejected(_)) = result {
+                process::exit(1);
+            }
+        }
         res = tokio::signal::ctrl_c() => {
             if let Err(e) = res {
                 tracing::error!("Failed to listen for Ctrl+C: {e}");

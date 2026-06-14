@@ -81,13 +81,18 @@ impl FromStr for ScheduleType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value")]
 pub enum Compression {
     None,
+    #[default]
     Lz4,
-    Zstd { level: i32 },
-    Zlib { level: i32 },
+    Zstd {
+        level: i32,
+    },
+    Zlib {
+        level: i32,
+    },
 }
 
 impl fmt::Display for Compression {

@@ -478,7 +478,7 @@ function navigateToSchedule(scheduleId: number | null): void {
       <section class="status-banner">
         <div
           class="stat-card stat-card-link"
-          @click="router.push({ name: 'clients', query: { status: 'offline' } })"
+          @click="router.push({ name: 'agents', query: { status: 'offline' } })"
         >
           <span class="stat-label">Online Clients</span>
           <span class="stat-value">

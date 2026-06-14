@@ -78,7 +78,7 @@ export ASSIMILATE_SECRET_KEY=$(openssl rand -hex 32)
 docker compose up -d
 ```
 
-Once the server is running, create a host in the UI and copy its token.
+Once the server is running, create an agent in the UI and copy its token.
 
 **On each backup machine:**
 
@@ -95,7 +95,7 @@ docker compose up -d
 |---|---|---|---|
 | `ASSIMILATE_SECRET_KEY` | **Yes** | — | 32-byte hex key used to encrypt repository passphrases at rest (AES-256-GCM) |
 | `POSTGRES_PASSWORD` | No | `borg_secret` | Password for the PostgreSQL `borg` user |
-| `BORG_AGENT_TOKEN` | Agent only | — | Token copied from the server UI after creating a host |
+| `BORG_AGENT_TOKEN` | Agent only | — | Token copied from the server UI after creating an agent |
 
 !!! warning "Protect `ASSIMILATE_SECRET_KEY`"
     This key derives the AES-256-GCM encryption key that protects all repository passphrases stored in the database. If you lose or rotate this value, every encrypted passphrase becomes **permanently unrecoverable**. Store it in a secrets manager or a secure `.env` file that is never committed to version control.
@@ -170,7 +170,7 @@ docker compose up -d
 
 The server creates a default admin account and generates an Ed25519 SSH key pair on first start. The SSH key pair is persisted in the `ssh_keys` volume and the public key is visible under **System** in the admin UI.
 
-Once the server is running, create a host in the UI and copy its token. Then on each backup machine:
+Once the server is running, create an agent in the UI and copy its token. Then on each backup machine:
 
 ```bash
 export BORG_AGENT_TOKEN=<token from server UI>
@@ -238,18 +238,18 @@ Open `http://localhost:8080` in your browser.
 !!! warning "Change the default password immediately"
     The server creates a default admin account with credentials `admin` / `admin`. You are required to change the password on first login. Do not skip this step on any internet-facing deployment.
 
-After changing the password, the dashboard loads and shows no hosts yet.
+After changing the password, the dashboard loads and shows no agents yet.
 
 ![Dashboard](assets/screenshots/dashboard-full.png)
 
-## Adding Your First Host
+## Adding Your First Agent
 
-A *host* represents a machine running the Assimilate agent.
+An *agent* represents a machine running the Assimilate agent binary.
 
-1. Navigate to **Clients** and click **Add Host**.
+1. Navigate to **Agents** and click **Add Agent**.
 2. Enter a display name for the machine.
 3. Click **Save** — the server generates a unique agent token.
-4. Copy the token shown on the host detail page.
+4. Copy the token shown on the agent detail page.
 5. On the backup machine, start the agent with that token:
 
 ```bash
@@ -258,9 +258,9 @@ BORG_AGENT_TOKEN=<copied-token> \
 ./assimilate-agent
 ```
 
-The host status changes to **Online** in the dashboard once the agent connects.
+The agent status changes to **Online** in the dashboard once the agent connects.
 
-See [Host & Agent Management](hosts.md) for systemd unit examples and advanced options.
+See [Agent Management](agents.md) for systemd unit examples and advanced options.
 
 ## Adding Your First Repository
 
@@ -299,7 +299,7 @@ See [Repository Management](repositories.md) for pruning policies and passphrase
 ## Your First Backup
 
 1. Navigate to **Scheduling** and click **Add Schedule**.
-2. Select the host and repository created above.
+2. Select the agent and repository created above.
 3. Set the paths to back up (e.g., `/home`, `/etc`).
 4. Choose a cron expression or interval (e.g., `0 2 * * *` for 2 AM daily).
 5. Click **Save**.
@@ -333,7 +333,7 @@ Start the server and Vite dev server with a single command:
 .devcontainer/start.sh
 ```
 
-After creating a host in the UI and copying its token, start the agent:
+After creating an agent in the UI and copying its token, start the agent binary:
 
 ```bash
 source /tmp/ssh-agent-env.sh

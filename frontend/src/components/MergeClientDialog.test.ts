@@ -15,21 +15,21 @@ vi.mock('../utils/error', () => ({
   extractError: (_e: unknown): string => 'API error',
 }))
 
-interface ClientRow {
+interface AgentRow {
   id: number
   hostname: string
   display_name: string | null
   is_imported: boolean
 }
 
-const SOURCE: ClientRow = {
+const SOURCE: AgentRow = {
   id: 10,
   hostname: 'old-webserver',
   display_name: null,
   is_imported: true,
 }
 
-const ALL_CLIENTS: ClientRow[] = [
+const ALL_AGENTS: AgentRow[] = [
   SOURCE,
   { id: 1, hostname: 'web-server-01', display_name: 'Web Server', is_imported: false },
   { id: 2, hostname: 'db-server-01', display_name: null, is_imported: false },
@@ -37,7 +37,7 @@ const ALL_CLIENTS: ClientRow[] = [
 
 function mountDialog(): ReturnType<typeof mount> {
   return mount(MergeClientDialog, {
-    props: { source: SOURCE, allClients: ALL_CLIENTS },
+    props: { source: SOURCE, allAgents: ALL_AGENTS },
     attachTo: document.body,
   })
 }

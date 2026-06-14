@@ -89,19 +89,19 @@ For full request/response schemas, use the [interactive explorer](#interactive-a
 | `POST` | `/api/tokens` | Create a new API token |
 | `DELETE` | `/api/tokens/:id` | Revoke a token |
 
-### Clients (Agents / Hosts)
+### Agents
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/clients` | List all registered clients |
-| `POST` | `/api/clients` | Register a new client |
-| `GET` | `/api/clients/:id` | Get a client by ID |
-| `PUT` | `/api/clients/:id` | Update a client |
-| `DELETE` | `/api/clients/:id` | Remove a client |
-| `POST` | `/api/clients/:id/regenerate-token` | Issue a new agent token |
-| `POST` | `/api/clients/:id/restart` | Send a restart command to the agent |
+| `GET` | `/api/agents` | List all registered agents |
+| `POST` | `/api/agents` | Register a new agent |
+| `GET` | `/api/agents/:id` | Get an agent by ID |
+| `PUT` | `/api/agents/:id` | Update an agent |
+| `DELETE` | `/api/agents/:id` | Remove an agent |
+| `POST` | `/api/agents/:id/regenerate-token` | Issue a new agent token |
+| `POST` | `/api/agents/:id/restart` | Send a restart command to the agent |
 
-See [Hosts](hosts.md) for setup and configuration details.
+See [Agent Management](agents.md) for setup and configuration details.
 
 ### Repositories
 
@@ -191,7 +191,7 @@ See [Access Control](access-control.md) for roles, groups, and permissions manag
 | `GET` | `/api/stats/activity` | List backup activity entries |
 | `GET` | `/api/stats/system-events` | List system events |
 | `GET` | `/api/stats/dashboard` | Dashboard statistics (success rates, storage, overdue counts) |
-| `GET` | `/api/clients/:hostname/reports` | List backup reports for a specific host |
+| `GET` | `/api/agents/:hostname/reports` | List backup reports for a specific agent |
 
 See [Activity Log](activity.md) for the activity timeline UI.
 
@@ -283,7 +283,7 @@ The server does **not** implement built-in rate limiting. For production deploym
 - Place the server behind a reverse proxy (nginx, Caddy, Traefik) and configure rate limiting there.
 - Restrict access to the admin API by IP allowlist at the proxy or firewall level.
 - CORS is **not** enabled by default; the API is intended to be served from the same origin as the frontend.
-- All agent tokens are cryptographically random (32+ bytes). Rotate them via `/api/clients/:id/regenerate-token` if compromised.
+- All agent tokens are cryptographically random (32+ bytes). Rotate them via `/api/agents/:id/regenerate-token` if compromised.
 
 See [Security](security.md) for hardening recommendations.
 

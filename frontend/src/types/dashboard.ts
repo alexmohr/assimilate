@@ -48,7 +48,7 @@ export interface DashboardFinding {
 }
 
 export interface DashboardHostLink {
-  client_id: number
+  agent_id: number
   hostname: string
 }
 

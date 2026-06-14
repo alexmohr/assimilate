@@ -48,8 +48,8 @@ pub struct HealthResponse {
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DashboardSummaryResponse {
-    pub online_clients: usize,
-    pub total_clients: i64,
+    pub online_agents: usize,
+    pub total_agents: i64,
     pub total_repos: i64,
     pub last_backup_at: Option<chrono::DateTime<Utc>>,
     pub next_backup_at: Option<chrono::DateTime<Utc>>,
@@ -158,8 +158,8 @@ pub struct DashboardSummaryCounters {
 }
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
-pub struct DashboardHostLink {
-    pub client_id: i64,
+pub struct DashboardAgentLink {
+    pub agent_id: i64,
     pub hostname: String,
 }
 
@@ -167,11 +167,11 @@ pub struct DashboardHostLink {
 pub struct DashboardProtectionCoverage {
     pub protected_hosts: i64,
     pub eligible_hosts: i64,
-    pub protected_host_links: Vec<DashboardHostLink>,
-    pub unassigned_hosts: Vec<DashboardHostLink>,
+    pub protected_agent_links: Vec<DashboardAgentLink>,
+    pub unassigned_agents: Vec<DashboardAgentLink>,
     pub never_succeeded_targets: i64,
-    pub never_succeeded_hosts: Vec<DashboardHostLink>,
-    pub disabled_only_hosts: Vec<DashboardHostLink>,
+    pub never_succeeded_agents: Vec<DashboardAgentLink>,
+    pub disabled_only_agents: Vec<DashboardAgentLink>,
 }
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
@@ -272,7 +272,7 @@ pub async fn dashboard_overview(
             .iter()
             .filter(|host| host.enabled_assignment_count == 0)
             .map(|host| DashboardFinding {
-                id: format!("host:{}:unassigned", host.client_id),
+                id: format!("agent:{}:unassigned", host.agent_id),
                 kind: DashboardFindingKind::HostUnassigned,
                 severity: DashboardSeverity::Warning,
                 status: DashboardStatus::Warning,
@@ -362,35 +362,35 @@ pub async fn dashboard_overview(
         .count();
     let protected_hosts = i64::try_from(protected_hosts).unwrap_or(i64::MAX);
     let eligible_hosts = i64::try_from(hosts.len()).unwrap_or(i64::MAX);
-    let protected_host_links = hosts
+    let protected_agent_links = hosts
         .iter()
         .filter(|host| host.successful_enabled_assignment_count > 0)
-        .map(host_link)
+        .map(agent_link)
         .collect();
-    let unassigned_hosts = hosts
+    let unassigned_agents = hosts
         .iter()
         .filter(|host| host.enabled_assignment_count == 0)
-        .map(host_link)
+        .map(agent_link)
         .collect();
-    let disabled_only_hosts = hosts
+    let disabled_only_agents = hosts
         .iter()
         .filter(|host| host.enabled_assignment_count == 0 && host.disabled_assignment_count > 0)
-        .map(host_link)
+        .map(agent_link)
         .collect();
     let never_succeeded_targets = targets
         .iter()
         .filter(|target| target.schedule_enabled && target.last_success_at.is_none())
         .count();
     let never_succeeded_targets = i64::try_from(never_succeeded_targets).unwrap_or(i64::MAX);
-    let never_succeeded_client_ids = targets
+    let never_succeeded_agent_ids = targets
         .iter()
         .filter(|target| target.schedule_enabled && target.last_success_at.is_none())
-        .map(|target| target.client_id)
+        .map(|target| target.agent_id)
         .collect::<HashSet<_>>();
-    let never_succeeded_hosts = hosts
+    let never_succeeded_agents = hosts
         .iter()
-        .filter(|host| never_succeeded_client_ids.contains(&host.client_id))
-        .map(host_link)
+        .filter(|host| never_succeeded_agent_ids.contains(&host.agent_id))
+        .map(agent_link)
         .collect();
 
     let upcoming_schedules = upcoming
@@ -428,11 +428,11 @@ pub async fn dashboard_overview(
         protection: DashboardProtectionCoverage {
             protected_hosts,
             eligible_hosts,
-            protected_host_links,
-            unassigned_hosts,
+            protected_agent_links,
+            unassigned_agents,
             never_succeeded_targets,
-            never_succeeded_hosts,
-            disabled_only_hosts,
+            never_succeeded_agents,
+            disabled_only_agents,
         },
         running_operations,
         upcoming_schedules,
@@ -533,10 +533,7 @@ fn target_finding(
         };
 
     Some(DashboardFinding {
-        id: format!(
-            "target:{}:{}:{kind:?}",
-            target.schedule_id, target.client_id
-        ),
+        id: format!("target:{}:{}:{kind:?}", target.schedule_id, target.agent_id),
         kind,
         severity,
         status,
@@ -552,9 +549,9 @@ fn target_finding(
     })
 }
 
-fn host_link(host: &db::dashboard::EligibleHostRow) -> DashboardHostLink {
-    DashboardHostLink {
-        client_id: host.client_id,
+fn agent_link(host: &db::dashboard::EligibleAgentRow) -> DashboardAgentLink {
+    DashboardAgentLink {
+        agent_id: host.agent_id,
         hostname: host.hostname.clone(),
     }
 }
@@ -646,7 +643,7 @@ pub async fn summary(
 ) -> Result<Json<DashboardSummaryResponse>, ApiError> {
     let row = db::get_dashboard_summary(&state.pool).await?;
     let breakdown = db::get_storage_breakdown(&state.pool).await?;
-    let online_clients = state.registry.connected_agents().await.len();
+    let online_agents = state.registry.connected_agents().await.len();
 
     let total_storage = row.total_storage_bytes;
     let storage_by_repo = breakdown
@@ -667,8 +664,8 @@ pub async fn summary(
         .collect();
 
     Ok(Json(DashboardSummaryResponse {
-        online_clients,
-        total_clients: row.total_clients,
+        online_agents,
+        total_agents: row.total_agents,
         total_repos: row.total_repos,
         last_backup_at: row.last_backup_at,
         next_backup_at: row.next_backup_at,
@@ -726,8 +723,8 @@ pub async fn storage(
     responses(
         (
             status = 200,
-            description = "Schedule counts by client",
-            body = Vec<crate::db::ScheduleCountByClient>,
+            description = "Schedule counts by agent",
+            body = Vec<crate::db::ScheduleCountByAgent>,
         ),
         (status = 401, description = "Unauthorized"),
     )
@@ -735,8 +732,8 @@ pub async fn storage(
 pub async fn schedule_counts(
     State(state): State<AppState>,
     _auth: AuthUser,
-) -> Result<Json<Vec<db::ScheduleCountByClient>>, ApiError> {
-    let counts = db::get_schedule_counts_by_client(&state.pool).await?;
+) -> Result<Json<Vec<db::ScheduleCountByAgent>>, ApiError> {
+    let counts = db::get_schedule_counts_by_agent(&state.pool).await?;
     Ok(Json(counts))
 }
 

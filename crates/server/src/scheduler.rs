@@ -363,7 +363,7 @@ async fn tick(
         for target in &targets {
             if let Err(e) = db::insert_backup_pending(
                 pool,
-                target.client_id,
+                target.agent_id,
                 target.repo_id,
                 Some(schedule_id),
                 &run_id,
@@ -499,7 +499,7 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         let _repo_guard = repo_lock.acquire(target.repo_id).await;
 
         tunnel_manager
-            .ensure_client_tunnel_connected(target.client_id)
+            .ensure_agent_tunnel_connected(target.agent_id)
             .await;
 
         match config_assembler::assemble_config(&pool, &encryption_key, &target.hostname).await {
@@ -811,7 +811,7 @@ esac
         let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-scheduler").unwrap();
         let passphrase_encrypted =
             shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
-        let client = db::insert_client(
+        let agent = db::insert_agent(
             &pool,
             "scheduler-test-host",
             Some("Scheduler Test Host"),
@@ -840,13 +840,13 @@ esac
         let stale_started_at = Utc::now() - chrono::Duration::days(1);
         let stale_finished_at = stale_started_at + chrono::Duration::minutes(5);
         sqlx::query(
-            "INSERT INTO backup_reports (client_id, repo_id, schedule_id, started_at, \
-             finished_at, status, original_size, compressed_size, deduplicated_size, \
-             repo_unique_csize, files_processed, duration_secs, error_message, warnings, \
-             borg_version, matched, archive_name, borg_command) VALUES ($1, $2, NULL, $3, $4, \
-             'success', 10, 5, 5, 5, 1, 300, NULL, '{}'::text[], NULL, true, $5, NULL)",
+            "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
+             status, original_size, compressed_size, deduplicated_size, repo_unique_csize, \
+             files_processed, duration_secs, error_message, warnings, borg_version, matched, \
+             archive_name, borg_command) VALUES ($1, $2, NULL, $3, $4, 'success', 10, 5, 5, 5, 1, \
+             300, NULL, '{}'::text[], NULL, true, $5, NULL)",
         )
-        .bind(client.id)
+        .bind(agent.id)
         .bind(repo.id)
         .bind(stale_started_at)
         .bind(stale_finished_at)
@@ -902,7 +902,7 @@ esac
 
     async fn setup_due_schedule(pool: &sqlx::PgPool, key: &[u8; 32]) -> (i64, i64) {
         let passphrase_enc = shared::crypto::encrypt_passphrase("test-pass", key).unwrap();
-        let client = db::insert_client(pool, TICK_TEST_HOSTNAME, None, "hash", None)
+        let agent = db::insert_agent(pool, TICK_TEST_HOSTNAME, None, "hash", None)
             .await
             .unwrap();
         let repo = db::insert_repo(
@@ -950,7 +950,7 @@ esac
         )
         .await
         .unwrap();
-        db::insert_schedule_targets(pool, schedule.id, &[(client.id, 0)])
+        db::insert_schedule_targets(pool, schedule.id, &[(agent.id, 0)])
             .await
             .unwrap();
         let past = Utc::now() - chrono::Duration::hours(1);

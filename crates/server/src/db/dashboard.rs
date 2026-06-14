@@ -16,7 +16,7 @@ pub struct TargetRow {
     pub schedule_enabled: bool,
     pub schedule_last_run_at: Option<DateTime<Utc>>,
     pub next_run_at: Option<DateTime<Utc>>,
-    pub client_id: i64,
+    pub agent_id: i64,
     pub hostname: String,
     pub repo_id: i64,
     pub repo_name: String,
@@ -31,8 +31,8 @@ pub struct TargetRow {
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
-pub struct EligibleHostRow {
-    pub client_id: i64,
+pub struct EligibleAgentRow {
+    pub agent_id: i64,
     pub hostname: String,
     pub enabled_assignment_count: i64,
     pub disabled_assignment_count: i64,
@@ -72,7 +72,7 @@ pub async fn targets(pool: &PgPool) -> Result<Vec<TargetRow>, ApiError> {
                s.enabled AS schedule_enabled,
                s.last_run_at AS schedule_last_run_at,
                s.next_run_at,
-               c.id AS client_id,
+               c.id AS agent_id,
                c.hostname,
                r.id AS repo_id,
                r.name AS repo_name,
@@ -89,20 +89,20 @@ pub async fn targets(pool: &PgPool) -> Result<Vec<TargetRow>, ApiError> {
                success.finished_at AS last_success_at
         FROM schedules s
         JOIN schedule_targets st ON st.schedule_id = s.id
-        JOIN clients c ON c.id = st.client_id
+        JOIN agents c ON c.id = st.agent_id
         JOIN repos r ON r.id = s.repo_id
         LEFT JOIN LATERAL (
             SELECT br.id, br.started_at, br.finished_at, br.status,
                    br.error_message, br.warnings
             FROM backup_reports br
-            WHERE br.schedule_id = s.id AND br.client_id = c.id
+            WHERE br.schedule_id = s.id AND br.agent_id = c.id
             ORDER BY br.started_at DESC
             LIMIT 1
         ) latest ON true
         LEFT JOIN LATERAL (
             SELECT br.finished_at
             FROM backup_reports br
-            WHERE br.schedule_id = s.id AND br.client_id = c.id
+            WHERE br.schedule_id = s.id AND br.agent_id = c.id
               AND br.status = 'success'
             ORDER BY br.finished_at DESC
             LIMIT 1
@@ -118,10 +118,10 @@ pub async fn targets(pool: &PgPool) -> Result<Vec<TargetRow>, ApiError> {
     .map_err(ApiError::Database)
 }
 
-pub async fn eligible_hosts(pool: &PgPool) -> Result<Vec<EligibleHostRow>, ApiError> {
-    sqlx::query_as::<_, EligibleHostRow>(
+pub async fn eligible_hosts(pool: &PgPool) -> Result<Vec<EligibleAgentRow>, ApiError> {
+    sqlx::query_as::<_, EligibleAgentRow>(
         r#"
-        SELECT c.id AS client_id,
+        SELECT c.id AS agent_id,
                c.hostname,
                COUNT(DISTINCT st.schedule_id) FILTER (
                    WHERE s.enabled = true AND r.enabled = true
@@ -132,12 +132,12 @@ pub async fn eligible_hosts(pool: &PgPool) -> Result<Vec<EligibleHostRow>, ApiEr
                COUNT(DISTINCT st.schedule_id) FILTER (
                    WHERE s.enabled = true AND r.enabled = true AND EXISTS (
                        SELECT 1 FROM backup_reports br
-                       WHERE br.schedule_id = s.id AND br.client_id = c.id
+                       WHERE br.schedule_id = s.id AND br.agent_id = c.id
                          AND br.status = 'success'
                    )
                ) AS successful_enabled_assignment_count
-        FROM clients c
-        LEFT JOIN schedule_targets st ON st.client_id = c.id
+        FROM agents c
+        LEFT JOIN schedule_targets st ON st.agent_id = c.id
         LEFT JOIN schedules s ON s.id = st.schedule_id
         LEFT JOIN repos r ON r.id = s.repo_id
         WHERE c.is_hidden = false
@@ -163,7 +163,7 @@ pub async fn upcoming_schedules(pool: &PgPool) -> Result<Vec<UpcomingScheduleRow
         FROM schedules s
         JOIN repos r ON r.id = s.repo_id
         JOIN schedule_targets st ON st.schedule_id = s.id
-        JOIN clients c ON c.id = st.client_id
+        JOIN agents c ON c.id = st.agent_id
         WHERE s.enabled = true
           AND r.enabled = true
           AND s.next_run_at IS NOT NULL

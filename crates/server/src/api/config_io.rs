@@ -91,23 +91,21 @@ pub async fn export_config(
     State(state): State<AppState>,
     _admin: RequireAdmin,
 ) -> Result<Json<ConfigExport>, ApiError> {
-    let clients = db::list_clients(&state.pool, false).await?;
-    let client_id_to_hostname: HashMap<i64, &str> = clients
-        .iter()
-        .map(|c| (c.id, c.hostname.as_str()))
-        .collect();
+    let agents = db::list_agents(&state.pool, false).await?;
+    let agent_id_to_hostname: HashMap<i64, &str> =
+        agents.iter().map(|c| (c.id, c.hostname.as_str())).collect();
 
     let mut hosts = Vec::new();
-    for client in &clients {
-        if client.agent_token_hash == IMPORTED_TOKEN {
+    for agent in &agents {
+        if agent.agent_token_hash == IMPORTED_TOKEN {
             continue;
         }
-        let patterns = db::patterns::list_patterns_for_client(&state.pool, client.id).await?;
+        let patterns = db::patterns::list_patterns_for_agent(&state.pool, agent.id).await?;
         hosts.push(HostExport {
-            hostname: client.hostname.clone(),
-            display_name: client.display_name.clone(),
-            default_backup_paths: client.default_backup_paths.clone(),
-            default_exclude_patterns: client.default_exclude_patterns.clone(),
+            hostname: agent.hostname.clone(),
+            display_name: agent.display_name.clone(),
+            default_backup_paths: agent.default_backup_paths.clone(),
+            default_exclude_patterns: agent.default_exclude_patterns.clone(),
             hostname_patterns: patterns.into_iter().map(|p| p.pattern).collect(),
         });
     }
@@ -126,33 +124,33 @@ pub async fn export_config(
 
         let target_rows = db::list_schedule_targets(&state.pool, sched.id).await?;
         let backup_sources = db::list_backup_sources_for_schedule(&state.pool, sched.id).await?;
-        let per_host_sources =
-            db::list_all_per_host_backup_sources_for_schedule(&state.pool, sched.id).await?;
-        let per_host_excludes =
-            db::list_all_per_host_excludes_for_schedule(&state.pool, sched.id).await?;
+        let per_agent_sources =
+            db::list_all_per_agent_backup_sources_for_schedule(&state.pool, sched.id).await?;
+        let per_agent_excludes =
+            db::list_all_per_agent_excludes_for_schedule(&state.pool, sched.id).await?;
 
-        let per_host_sources_map: HashMap<i64, &Vec<String>> = per_host_sources
+        let per_agent_sources_map: HashMap<i64, &Vec<String>> = per_agent_sources
             .iter()
-            .map(|s| (s.client_id, &s.paths))
+            .map(|s| (s.agent_id, &s.paths))
             .collect();
-        let per_host_excludes_map: HashMap<i64, &str> = per_host_excludes
+        let per_agent_excludes_map: HashMap<i64, &str> = per_agent_excludes
             .iter()
-            .map(|e| (e.client_id, e.raw_text.as_str()))
+            .map(|e| (e.agent_id, e.raw_text.as_str()))
             .collect();
 
         let targets = target_rows
             .iter()
             .filter_map(|t| {
-                let hostname = client_id_to_hostname.get(&t.client_id).copied()?.to_owned();
+                let hostname = agent_id_to_hostname.get(&t.agent_id).copied()?.to_owned();
                 Some(ScheduleTargetExport {
                     hostname,
                     execution_order: t.execution_order,
-                    backup_sources: per_host_sources_map
-                        .get(&t.client_id)
+                    backup_sources: per_agent_sources_map
+                        .get(&t.agent_id)
                         .map(|v| (*v).clone())
                         .unwrap_or_default(),
-                    exclude_patterns: per_host_excludes_map
-                        .get(&t.client_id)
+                    exclude_patterns: per_agent_excludes_map
+                        .get(&t.agent_id)
                         .copied()
                         .unwrap_or("")
                         .to_owned(),
@@ -231,7 +229,7 @@ pub async fn import_config(
         warnings: Vec::new(),
     };
 
-    let existing_clients = db::list_clients(&state.pool, true).await?;
+    let existing_clients = db::list_agents(&state.pool, true).await?;
     let mut hostname_to_id: HashMap<String, i64> = existing_clients
         .iter()
         .map(|c| (c.hostname.clone(), c.id))
@@ -239,7 +237,7 @@ pub async fn import_config(
 
     for host in &payload.hosts {
         if let Some(&existing_id) = hostname_to_id.get(&host.hostname) {
-            db::update_client(
+            db::update_agent(
                 &state.pool,
                 &host.hostname,
                 &host.hostname,
@@ -250,7 +248,7 @@ pub async fn import_config(
             .await?;
 
             let existing_patterns =
-                db::patterns::list_patterns_for_client(&state.pool, existing_id).await?;
+                db::patterns::list_patterns_for_agent(&state.pool, existing_id).await?;
             let existing_set: HashSet<&str> = existing_patterns
                 .iter()
                 .map(|p| p.pattern.as_str())
@@ -263,7 +261,7 @@ pub async fn import_config(
 
             result.hosts_updated += 1;
         } else {
-            let client = db::insert_client_with_paths(
+            let agent = db::insert_agent_with_paths(
                 &state.pool,
                 &host.hostname,
                 host.display_name.as_deref(),
@@ -273,9 +271,9 @@ pub async fn import_config(
             )
             .await?;
             for pattern in &host.hostname_patterns {
-                db::patterns::add_hostname_pattern(&state.pool, client.id, pattern).await?;
+                db::patterns::add_hostname_pattern(&state.pool, agent.id, pattern).await?;
             }
-            hostname_to_id.insert(host.hostname.clone(), client.id);
+            hostname_to_id.insert(host.hostname.clone(), agent.id);
             result.hosts_created += 1;
         }
     }
@@ -310,20 +308,20 @@ pub async fn import_config(
 
         let mut target_ids: Vec<(i64, i32)> = Vec::new();
         for target in &sched.targets {
-            let client_id = if let Some(&cid) = hostname_to_id.get(&target.hostname) {
+            let agent_id = if let Some(&cid) = hostname_to_id.get(&target.hostname) {
                 cid
             } else {
-                let client =
-                    db::insert_client(&state.pool, &target.hostname, None, IMPORTED_TOKEN, None)
+                let agent =
+                    db::insert_agent(&state.pool, &target.hostname, None, IMPORTED_TOKEN, None)
                         .await?;
                 result.warnings.push(format!(
-                    "created placeholder host {:?} referenced by schedule {:?}",
+                    "created placeholder agent {:?} referenced by schedule {:?}",
                     target.hostname, sched.name
                 ));
-                hostname_to_id.insert(target.hostname.clone(), client.id);
-                client.id
+                hostname_to_id.insert(target.hostname.clone(), agent.id);
+                agent.id
             };
-            target_ids.push((client_id, target.execution_order));
+            target_ids.push((agent_id, target.execution_order));
         }
 
         let pre_cmds_json =
@@ -361,25 +359,25 @@ pub async fn import_config(
         }
 
         for target in &sched.targets {
-            let Some(&client_id) = hostname_to_id.get(&target.hostname) else {
+            let Some(&agent_id) = hostname_to_id.get(&target.hostname) else {
                 continue;
             };
             for (i, path) in target.backup_sources.iter().enumerate() {
                 let sort_order = i32::try_from(i).unwrap_or(0);
-                db::insert_backup_source_for_schedule_client(
+                db::insert_backup_source_for_schedule_agent(
                     &state.pool,
                     new_sched.id,
-                    client_id,
+                    agent_id,
                     path,
                     sort_order,
                 )
                 .await?;
             }
             if !target.exclude_patterns.is_empty() {
-                db::upsert_per_host_excludes_raw(
+                db::upsert_per_agent_excludes_raw(
                     &state.pool,
                     new_sched.id,
-                    client_id,
+                    agent_id,
                     &target.exclude_patterns,
                 )
                 .await?;

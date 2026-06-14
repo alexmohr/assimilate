@@ -9,7 +9,7 @@ import { useRouter } from 'vue-router'
 
 const router = useRouter()
 onMounted(() => {
-  router.replace('/clients')
+  router.replace('/agents')
 })
 </script>
 

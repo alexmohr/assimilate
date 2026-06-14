@@ -197,58 +197,55 @@ async fn main() -> Result<(), StartupError> {
             get(ws::ssh_relay::ssh_relay_handler),
         )
         .route(
-            "/api/clients",
-            get(api::clients::list_clients).post(api::clients::create_client),
+            "/api/agents",
+            get(api::agents::list_agents).post(api::agents::create_agent),
         )
         .route(
-            "/api/clients/{hostname}",
-            get(api::clients::get_client)
-                .put(api::clients::update_client)
-                .delete(api::clients::delete_client),
+            "/api/agents/{hostname}",
+            get(api::agents::get_agent)
+                .put(api::agents::update_agent)
+                .delete(api::agents::delete_agent),
         )
         .route(
-            "/api/clients/{hostname}/regenerate-token",
-            post(api::clients::regenerate_token),
+            "/api/agents/{hostname}/regenerate-token",
+            post(api::agents::regenerate_token),
         )
         .route(
-            "/api/clients/{hostname}/restart",
-            post(api::clients::restart_agent),
+            "/api/agents/{hostname}/restart",
+            post(api::agents::restart_agent),
         )
         .route(
-            "/api/clients/{hostname}/hostname-patterns",
-            get(api::clients::list_hostname_patterns).post(api::clients::add_hostname_pattern),
+            "/api/agents/{hostname}/hostname-patterns",
+            get(api::agents::list_hostname_patterns).post(api::agents::add_hostname_pattern),
         )
         .route(
-            "/api/clients/{hostname}/hostname-patterns/{pattern_id}",
-            delete(api::clients::delete_hostname_pattern),
+            "/api/agents/{hostname}/hostname-patterns/{pattern_id}",
+            delete(api::agents::delete_hostname_pattern),
         )
         .route(
-            "/api/clients/{hostname}/merge-from/{source_id}",
-            post(api::clients::merge_client),
+            "/api/agents/{hostname}/merge-from/{source_id}",
+            post(api::agents::merge_agent),
+        )
+        .route("/api/agents/{hostname}/hide", put(api::agents::hide_agent))
+        .route(
+            "/api/agents/{hostname}/unhide",
+            put(api::agents::unhide_agent),
         )
         .route(
-            "/api/clients/{hostname}/hide",
-            put(api::clients::hide_client),
+            "/api/agents/{hostname}/delete-archives",
+            post(api::agents::delete_agent_archives),
         )
         .route(
-            "/api/clients/{hostname}/unhide",
-            put(api::clients::unhide_client),
-        )
-        .route(
-            "/api/clients/{hostname}/delete-archives",
-            post(api::clients::delete_client_archives),
-        )
-        .route(
-            "/api/clients/{hostname}/deploy",
+            "/api/agents/{hostname}/deploy",
             post(api::deploy::deploy_agent),
         )
         .route(
-            "/api/clients/{hostname}/tunnel",
-            get(api::tunnels::get_client_tunnel),
+            "/api/agents/{hostname}/tunnel",
+            get(api::tunnels::get_agent_tunnel),
         )
         .route(
-            "/api/clients/{hostname}/repos",
-            get(api::repos::get_client_repos),
+            "/api/agents/{hostname}/repos",
+            get(api::repos::get_agent_repos),
         )
         .route(
             "/api/repos",
@@ -347,7 +344,7 @@ async fn main() -> Result<(), StartupError> {
         .route("/api/config/export", get(api::config_io::export_config))
         .route("/api/config/import", post(api::config_io::import_config))
         .route(
-            "/api/clients/{hostname}/reports",
+            "/api/agents/{hostname}/reports",
             get(api::reports::list_reports),
         )
         .route("/api/audit-log", get(api::audit::list_audit_log))
@@ -484,10 +481,13 @@ async fn main() -> Result<(), StartupError> {
         )
         .route("/api/tags/{id}", delete(api::tags::delete_tag))
         .route(
-            "/api/clients/{hostname}/tags",
-            get(api::tags::get_host_tags).put(api::tags::set_host_tags),
+            "/api/agents/{hostname}/tags",
+            get(api::tags::get_agent_tags).put(api::tags::set_agent_tags),
         )
-        .route("/api/host-tags", get(api::tags::list_host_tag_associations))
+        .route(
+            "/api/agent-tags",
+            get(api::tags::list_agent_tag_associations),
+        )
         .route("/api/repo-tags", get(api::tags::list_repo_tag_associations))
         .route(
             "/api/groups",

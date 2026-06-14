@@ -32,11 +32,11 @@ done
 
 echo "==> Cleaning up existing demo data (idempotent re-run)..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<'SQL' > /dev/null 2>&1
-DELETE FROM backup_reports WHERE client_id IN (SELECT id FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod'));
-DELETE FROM schedules WHERE id IN (SELECT st.schedule_id FROM schedule_targets st JOIN clients c ON c.id = st.client_id WHERE c.hostname IN ('web-server-01','db-server-01','media-store-01'));
-DELETE FROM ssh_tunnels WHERE client_id IN (SELECT id FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
-DELETE FROM client_hostname_patterns WHERE client_id IN (SELECT id FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
-DELETE FROM clients WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod','unassigned-01','offline-due-01','disabled-only-01');
+DELETE FROM backup_reports WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod'));
+DELETE FROM schedules WHERE id IN (SELECT st.schedule_id FROM schedule_targets st JOIN agents c ON c.id = st.agent_id WHERE c.hostname IN ('web-server-01','db-server-01','media-store-01'));
+DELETE FROM ssh_tunnels WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
+DELETE FROM agent_hostname_patterns WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
+DELETE FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod','unassigned-01','offline-due-01','disabled-only-01');
 DELETE FROM repo_quotas WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly'));
 DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly'));
 DELETE FROM notification_rules;
@@ -60,12 +60,12 @@ echo "==> Setting timezone to Europe/Berlin..."
 api PUT /api/system/settings '{"timezone":"Europe/Berlin","retention_days":7}'
 
 echo "==> Registering hosts for protected, unassigned, never-succeeded, and disabled-only coverage filters..."
-WEB01_TOKEN=$(api POST "/api/clients" '{"hostname":"web-server-01","display_name":"Production Web Server"}' | jq -r '.token')
-DB01_TOKEN=$(api POST "/api/clients" '{"hostname":"db-server-01","display_name":"Primary Database"}' | jq -r '.token')
-MEDIA_TOKEN=$(api POST "/api/clients" '{"hostname":"media-store-01","display_name":"Media Storage NAS"}' | jq -r '.token')
-api POST "/api/clients" '{"hostname":"unassigned-01","display_name":"Unassigned Demo Host"}' > /dev/null
-api POST "/api/clients" '{"hostname":"offline-due-01","display_name":"Offline Due Soon"}' > /dev/null
-api POST "/api/clients" '{"hostname":"disabled-only-01","display_name":"Disabled Schedule Host"}' > /dev/null
+WEB01_TOKEN=$(api POST "/api/agents" '{"hostname":"web-server-01","display_name":"Production Web Server"}' | jq -r '.token')
+DB01_TOKEN=$(api POST "/api/agents" '{"hostname":"db-server-01","display_name":"Primary Database"}' | jq -r '.token')
+MEDIA_TOKEN=$(api POST "/api/agents" '{"hostname":"media-store-01","display_name":"Media Storage NAS"}' | jq -r '.token')
+api POST "/api/agents" '{"hostname":"unassigned-01","display_name":"Unassigned Demo Agent"}' > /dev/null
+api POST "/api/agents" '{"hostname":"offline-due-01","display_name":"Offline Due Soon"}' > /dev/null
+api POST "/api/agents" '{"hostname":"disabled-only-01","display_name":"Disabled Schedule Agent"}' > /dev/null
 
 export AGENT_TOKEN_1="$WEB01_TOKEN"
 export AGENT_TOKEN_2="$DB01_TOKEN"
@@ -203,8 +203,8 @@ for i in $(seq 1 12); do
 done
 
 echo "==> Creating unmatched archives (unknown hostnames)..."
-# Hostnames that don't match any registered host or pattern. On import these
-# resolve to auto-created, unmatched ("imported") clients -- demonstrating the
+# Hostnames that don't match any registered agent or pattern. On import these
+# resolve to auto-created, unmatched ("imported") agents -- demonstrating the
 # unmatched-archive scenario entirely from real borg data.
 UNMATCHED_DATE=$(date -u -d "5 days ago" +%Y-%m-%dT04:00:00 2>/dev/null || date -u -v-5d +%Y-%m-%dT04:00:00)
 create_unmatched_archive() {
@@ -242,18 +242,18 @@ echo "==> Waiting for archive import to complete..."
 wait_for_imports
 
 echo "==> Fetching IDs..."
-WEB01_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM clients WHERE hostname='web-server-01'")
-DB01_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM clients WHERE hostname='db-server-01'")
-MEDIA_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM clients WHERE hostname='media-store-01'")
-OFFLINE_DUE_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM clients WHERE hostname='offline-due-01'")
-DISABLED_ONLY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM clients WHERE hostname='disabled-only-01'")
+WEB01_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='web-server-01'")
+DB01_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='db-server-01'")
+MEDIA_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='media-store-01'")
+OFFLINE_DUE_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='offline-due-01'")
+DISABLED_ONLY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='disabled-only-01'")
 REPO_DAILY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM repos WHERE name='server-daily'")
 REPO_HOURLY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM repos WHERE name='database-hourly'")
 REPO_WEEKLY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM repos WHERE name='media-weekly'")
 
 echo "==> Creating schedules..."
 api POST "/api/schedules" "{
-    \"client_ids\": [$WEB01_ID],
+    \"agent_ids\": [$WEB01_ID],
     \"repo_id\": $REPO_DAILY_ID,
     \"cron_expression\": \"0 2 * * *\",
     \"enabled\": true,
@@ -265,8 +265,8 @@ api POST "/api/schedules" "{
 }" > /dev/null
 
 api POST "/api/schedules" "{
-    \"name\": \"Offline host due soon\",
-    \"client_ids\": [$OFFLINE_DUE_ID],
+    \"name\": \"Offline agent due soon\",
+    \"agent_ids\": [$OFFLINE_DUE_ID],
     \"repo_id\": $REPO_DAILY_ID,
     \"cron_expression\": \"*/30 * * * *\",
     \"enabled\": true,
@@ -279,7 +279,7 @@ api POST "/api/schedules" "{
 
 api POST "/api/schedules" "{
     \"name\": \"Disabled only coverage\",
-    \"client_ids\": [$DISABLED_ONLY_ID],
+    \"agent_ids\": [$DISABLED_ONLY_ID],
     \"repo_id\": $REPO_DAILY_ID,
     \"cron_expression\": \"0 1 * * *\",
     \"enabled\": false,
@@ -294,12 +294,12 @@ PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
 UPDATE schedules
 SET last_run_at = NOW() - interval '45 minutes',
     next_run_at = NOW() + interval '30 minutes'
-WHERE name = 'Offline host due soon';
+WHERE name = 'Offline agent due soon';
 
 SQL
 
 api POST "/api/schedules" "{
-    \"client_ids\": [$DB01_ID],
+    \"agent_ids\": [$DB01_ID],
     \"repo_id\": $REPO_HOURLY_ID,
     \"cron_expression\": \"0 * * * *\",
     \"enabled\": true,
@@ -313,7 +313,7 @@ api POST "/api/schedules" "{
 }" > /dev/null
 
 api POST "/api/schedules" "{
-    \"client_ids\": [$MEDIA_ID],
+    \"agent_ids\": [$MEDIA_ID],
     \"repo_id\": $REPO_WEEKLY_ID,
     \"cron_expression\": \"0 3 * * 0\",
     \"enabled\": true,
@@ -326,7 +326,7 @@ api POST "/api/schedules" "{
 }" > /dev/null
 
 api POST "/api/schedules" "{
-    \"client_ids\": [$WEB01_ID, $DB01_ID, $MEDIA_ID],
+    \"agent_ids\": [$WEB01_ID, $DB01_ID, $MEDIA_ID],
     \"repo_id\": $REPO_DAILY_ID,
     \"cron_expression\": \"0 4 * * *\",
     \"enabled\": true,
@@ -337,10 +337,10 @@ api POST "/api/schedules" "{
     \"keep_weekly\": 4,
     \"keep_monthly\": 6,
     \"backup_sources\": [\"/etc\"],
-    \"backup_sources_per_host\": [
-        {\"client_id\": $WEB01_ID, \"paths\": [\"/var/www\", \"/etc/nginx\", \"/var/log/nginx\"]},
-        {\"client_id\": $DB01_ID, \"paths\": [\"/var/lib/postgresql\", \"/etc/postgresql\"]},
-        {\"client_id\": $MEDIA_ID, \"paths\": [\"/mnt/media/photos\", \"/mnt/media/videos\"]}
+    \"backup_sources_per_agent\": [
+        {\"agent_id\": $WEB01_ID, \"paths\": [\"/var/www\", \"/etc/nginx\", \"/var/log/nginx\"]},
+        {\"agent_id\": $DB01_ID, \"paths\": [\"/var/lib/postgresql\", \"/etc/postgresql\"]},
+        {\"agent_id\": $MEDIA_ID, \"paths\": [\"/mnt/media/photos\", \"/mnt/media/videos\"]}
     ]
 }" > /dev/null
 
@@ -351,9 +351,9 @@ FROM schedules s
 JOIN schedule_targets st ON st.schedule_id = s.id
 WHERE br.schedule_id IS NULL
   AND br.repo_id = s.repo_id
-  AND br.client_id = st.client_id
+  AND br.agent_id = st.agent_id
   AND s.enabled = true
-  AND s.name <> 'Offline host due soon';
+  AND s.name <> 'Offline agent due soon';
 SQL
 
 echo "==> Adding global excludes..."
@@ -362,8 +362,8 @@ for PATTERN in "pp:__pycache__" "pp:.cache" "pp:node_modules" "*.pyc" "*.swp" "*
 done
 
 echo "==> Creating tags..."
-api POST "/api/tags" '{"name":"production","color":"#ef4444","scope":"host"}' > /dev/null 2>&1 || true
-api POST "/api/tags" '{"name":"staging","color":"#f59e0b","scope":"host"}' > /dev/null 2>&1 || true
+api POST "/api/tags" '{"name":"production","color":"#ef4444","scope":"agent"}' > /dev/null 2>&1 || true
+api POST "/api/tags" '{"name":"staging","color":"#f59e0b","scope":"agent"}' > /dev/null 2>&1 || true
 api POST "/api/tags" '{"name":"critical","color":"#dc2626","scope":"repo"}' > /dev/null 2>&1 || true
 api POST "/api/tags" '{"name":"archival","color":"#6366f1","scope":"repo"}' > /dev/null 2>&1 || true
 
@@ -380,11 +380,11 @@ api POST "/api/groups" '{"name":"backend-team","description":"Backend infrastruc
 api POST "/api/groups" '{"name":"data-team","description":"Database and analytics team"}' > /dev/null 2>&1 || true
 
 echo "==> Configuring hostname pattern matching..."
-# Demonstrates pattern-based host matching: archives from any 'web-server-*'
-# host resolve to web-server-01.
+# Demonstrates pattern-based agent matching: archives from any 'web-server-*'
+# agent resolve to web-server-01.
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
-INSERT INTO client_hostname_patterns (client_id, pattern)
-SELECT id, 'web-server-*' FROM clients WHERE hostname='web-server-01'
+INSERT INTO agent_hostname_patterns (agent_id, pattern)
+SELECT id, 'web-server-*' FROM agents WHERE hostname='web-server-01'
 ON CONFLICT DO NOTHING;
 SQL
 
@@ -414,9 +414,9 @@ INSERT INTO audit_log (user_id, username, action, target_type, target_id, detail
     (1, 'admin', 'repo.create', 'repository', $REPO_DAILY_ID, '{"name":"server-daily"}', '192.168.1.10', NOW() - interval '30 days'),
     (1, 'admin', 'repo.create', 'repository', $REPO_HOURLY_ID, '{"name":"database-hourly"}', '192.168.1.10', NOW() - interval '30 days'),
     (1, 'admin', 'repo.create', 'repository', $REPO_WEEKLY_ID, '{"name":"media-weekly"}', '192.168.1.10', NOW() - interval '29 days'),
-    (1, 'admin', 'host.create', 'host', $WEB01_ID, '{"hostname":"web-server-01"}', '192.168.1.10', NOW() - interval '28 days'),
-    (1, 'admin', 'host.create', 'host', $DB01_ID, '{"hostname":"db-server-01"}', '192.168.1.10', NOW() - interval '28 days'),
-    (1, 'admin', 'host.create', 'host', $MEDIA_ID, '{"hostname":"media-store-01"}', '192.168.1.10', NOW() - interval '27 days'),
+    (1, 'admin', 'agent.create', 'agent', $WEB01_ID, '{"hostname":"web-server-01"}', '192.168.1.10', NOW() - interval '28 days'),
+    (1, 'admin', 'agent.create', 'agent', $DB01_ID, '{"hostname":"db-server-01"}', '192.168.1.10', NOW() - interval '28 days'),
+    (1, 'admin', 'agent.create', 'agent', $MEDIA_ID, '{"hostname":"media-store-01"}', '192.168.1.10', NOW() - interval '27 days'),
     (1, 'admin', 'schedule.create', 'schedule', 1, '{"cron":"0 2 * * *"}', '192.168.1.10', NOW() - interval '27 days'),
     (1, 'admin', 'schedule.create', 'schedule', 2, '{"cron":"0 * * * *"}', '192.168.1.10', NOW() - interval '27 days'),
     (1, 'admin', 'schedule.create', 'schedule', 3, '{"cron":"0 3 * * 0"}', '192.168.1.10', NOW() - interval '26 days'),
@@ -445,7 +445,7 @@ WHERE c.name = 'Admin Email';
 SQL
 
 echo "==> Adding SSH tunnel entry for loopback agent communication..."
-api POST "/api/tunnels" "{\"client_id\":$MEDIA_ID,\"ssh_host\":\"127.0.0.1\",\"ssh_user\":\"borg\",\"ssh_port\":22,\"tunnel_port\":18080,\"enabled\":true}" > /dev/null
+api POST "/api/tunnels" "{\"agent_id\":$MEDIA_ID,\"ssh_host\":\"127.0.0.1\",\"ssh_user\":\"borg\",\"ssh_port\":22,\"tunnel_port\":18080,\"enabled\":true}" > /dev/null
 
 echo "==> Adding archive tags..."
 # Tag real imported archives (by actual name from backup_reports) rather than

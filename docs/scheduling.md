@@ -11,7 +11,7 @@ When set, the bandwidth cap is passed to Borg as `--remote-ratelimit` in kB/s.
 
 ## Creating a Schedule
 
-1. Navigate to **Clients** and select the host you want to back up.
+1. Navigate to **Agents** and select the agent you want to back up.
 2. Choose the repository to back up to (see [Repositories](repositories.md)).
 3. Click **Add Schedule**.
 4. Set the cron expression (see [Cron Expression Builder](#cron-expression-builder)).
@@ -23,13 +23,13 @@ When set, the bandwidth cap is passed to Borg as `--remote-ratelimit` in kB/s.
 
 The Schedules list page shows all configured backup schedules with:
 
-- **Text filter** — search by schedule name, host, or repository name
+- **Text filter** — search by schedule name, agent, or repository name
 - **Status filter** — show All, Enabled only, or Disabled only
 - **Type filter** — filter by Backup, Check, or Verify
 - **Health filter** — filter by Passed only, Failed only, or Overdue only
-- **Sort buttons** — sort by Client, Next Run, Last Run, or Type
+- **Sort buttons** — sort by Agent, Next Run, Last Run, or Type
 
-Each schedule card shows the repository or schedule name, the hosts included in the schedule, host count, execution mode (Parallel/Sequential), health status, enabled state, schedule type, cron description, next run time, last run time, and a **Run** button for manual triggering.
+Each schedule card shows the repository or schedule name, the agents included in the schedule, agent count, execution mode (Parallel/Sequential), health status, enabled state, schedule type, cron description, next run time, last run time, and a **Run** button for manual triggering.
 
 ![Schedule Detail](assets/screenshots/schedule-detail.png)
 
@@ -80,22 +80,22 @@ Backup paths determine which directories borg includes when creating an archive.
 
 | Priority | Source | Description |
 |----------|--------|-------------|
-| 1 (highest) | Per-host paths | Paths configured for a specific host within this schedule |
-| 2 | Schedule-level paths | Paths configured on the schedule (shared across all target hosts) |
-| 3 (lowest) | Host default paths | Default backup paths configured on the host itself |
+| 1 (highest) | Per-agent paths | Paths configured for a specific agent within this schedule |
+| 2 | Schedule-level paths | Paths configured on the schedule (shared across all target agents) |
+| 3 (lowest) | Agent default paths | Default backup paths configured on the agent itself |
 
 ### Schedule-Level Paths
 
-When all hosts in a schedule back up the same directories, enter the paths in the **Backup Paths** textarea. These apply to every target host unless overridden by per-host paths.
+When all agents in a schedule back up the same directories, enter the paths in the **Backup Paths** textarea. These apply to every target agent unless overridden by per-agent paths.
 
-### Per-Host Paths
+### Per-Agent Paths
 
-When a schedule targets multiple hosts and each host needs different directories, enable **Configure per host** in the Backup Paths section. This reveals a textarea for each selected host where you can specify host-specific paths.
+When a schedule targets multiple agents and each agent needs different directories, enable **Configure per agent** in the Backup Paths section. This reveals a textarea for each selected agent where you can specify agent-specific paths.
 
-Per-host paths completely override schedule-level paths for that host. If a host's per-host paths field is left empty, the system falls back to schedule-level paths, then to the host's default paths.
+Per-agent paths completely override schedule-level paths for that agent. If an agent's per-agent paths field is left empty, the system falls back to schedule-level paths, then to the agent's default paths.
 
 !!! tip
-    Use per-host paths when a single schedule targets hosts with different roles (e.g., a web server backing up `/var/www` and a database server backing up `/var/lib/postgresql`). This avoids creating separate schedules for each host while still customizing what gets backed up.
+    Use per-agent paths when a single schedule targets agents with different roles (e.g., a web server backing up `/var/www` and a database server backing up `/var/lib/postgresql`). This avoids creating separate schedules for each agent while still customizing what gets backed up.
 
 ## Schedule Status
 
@@ -124,8 +124,8 @@ Configure channels and rules under **Notifications** in the sidebar. See the [No
 
 You can also monitor outcomes passively:
 
-- **Dashboard** — the activity feed shows recent backup results across all hosts.
-- **Activity log** — per-host and per-repository views list every run with its result, duration, and archive size.
+- **Dashboard** — the activity feed shows recent backup results across all agents.
+- **Activity log** — per-agent and per-repository views list every run with its result, duration, and archive size.
 - **Schedule status** — the **Last result** column on the Schedules page turns red on failure.
 
 ## Pruning

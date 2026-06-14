@@ -105,7 +105,7 @@ pub async fn query_available_agent_version(binary_dir: &std::path::Path) -> Opti
 
 #[utoipa::path(
     post,
-    path = "/api/clients/{hostname}/deploy",
+    path = "/api/agents/{hostname}/deploy",
     tag = "Deployment",
     operation_id = "deployAgent",
     summary = "Deploy the agent binary to a host via SSH (admin only)",
@@ -133,8 +133,8 @@ pub async fn deploy_agent(
 
     let binary_dir = agent_binary_dir();
 
-    let client = db::get_client_by_hostname(&state.pool, &hostname).await?;
-    let tunnel_server_url = db::get_tunnel_by_client_id(&state.pool, client.id)
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    let tunnel_server_url = db::get_tunnel_by_agent_id(&state.pool, agent.id)
         .await
         .ok()
         .and_then(|tunnel| tunnel_server_url(&tunnel));
@@ -146,21 +146,17 @@ pub async fn deploy_agent(
         .and_then(|s| s.parse::<i32>().ok())
         .filter(|&n| n > 0);
 
-    let already_current = if let (Some(server_count), Some(agent_count)) =
-        (server_commit_count, client.agent_commit_count)
-    {
-        agent_count >= server_count
-    } else {
-        available_version
-            .as_deref()
-            .zip(client.agent_version.as_deref())
-            .is_some_and(|(av, dv)| av == dv)
-    };
+    let already_current = agent_is_current(
+        server_commit_count,
+        agent.agent_commit_count,
+        available_version.as_deref(),
+        agent.agent_version.as_deref(),
+    );
 
     if !uses_tunnel && already_current {
         let version = available_version
             .clone()
-            .or_else(|| client.agent_version.clone());
+            .or_else(|| agent.agent_version.clone());
         info!(
             hostname = %hostname,
             "agent already at latest version, skipping deploy"
@@ -177,7 +173,7 @@ pub async fn deploy_agent(
     let token_hex = helpers::generate_random_hex(32);
     let token_hash = bcrypt::hash(&token_hex, bcrypt::DEFAULT_COST)?;
 
-    db::regenerate_client_token(&state.pool, &hostname, &token_hash).await?;
+    db::regenerate_agent_token(&state.pool, &hostname, &token_hash).await?;
 
     let install_path = req
         .install_path
@@ -206,7 +202,7 @@ pub async fn deploy_agent(
             if let Some(ref version) = available_version {
                 db::update_last_seen_and_version(
                     &state.pool,
-                    client.id,
+                    agent.id,
                     version,
                     None,
                     None,
@@ -232,6 +228,21 @@ pub async fn deploy_agent(
         })),
     }
 }
+fn agent_is_current(
+    server_commit_count: Option<i32>,
+    agent_commit_count: Option<i32>,
+    available_version: Option<&str>,
+    agent_version: Option<&str>,
+) -> bool {
+    if let (Some(server_count), Some(agent_count)) = (server_commit_count, agent_commit_count) {
+        agent_count >= server_count
+    } else {
+        available_version
+            .zip(agent_version)
+            .is_some_and(|(av, dv)| av == dv)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,7 +251,7 @@ mod tests {
     fn enabled_tunnel_uses_loopback_server_url() {
         let tunnel = db::SshTunnel {
             id: 1,
-            client_id: 2,
+            agent_id: 2,
             ssh_host: "agent.example.com".to_string(),
             ssh_user: "root".to_string(),
             ssh_port: 22,
@@ -259,7 +270,7 @@ mod tests {
     fn disabled_tunnel_does_not_override_server_url() {
         let tunnel = db::SshTunnel {
             id: 1,
-            client_id: 2,
+            agent_id: 2,
             ssh_host: "agent.example.com".to_string(),
             ssh_user: "root".to_string(),
             ssh_port: 22,
@@ -281,5 +292,32 @@ mod tests {
         unsafe { std::env::remove_var("AGENT_BINARY_DIR") };
         let path = agent_binary_dir();
         assert!(path.is_absolute());
+    }
+
+    #[test]
+    fn agent_is_current_uses_commit_count_when_both_present() {
+        assert!(agent_is_current(Some(10), Some(10), None, None));
+        assert!(agent_is_current(Some(10), Some(11), None, None));
+        assert!(!agent_is_current(Some(11), Some(10), None, None));
+    }
+
+    #[test]
+    fn agent_is_current_falls_back_to_version_string() {
+        assert!(agent_is_current(None, None, Some("1.2.3"), Some("1.2.3")));
+        assert!(!agent_is_current(None, None, Some("1.2.4"), Some("1.2.3")));
+        assert!(!agent_is_current(None, None, None, Some("1.2.3")));
+        // falls back to version when only one count is available
+        assert!(agent_is_current(
+            Some(5),
+            None,
+            Some("1.2.3"),
+            Some("1.2.3")
+        ));
+        assert!(!agent_is_current(
+            Some(5),
+            None,
+            Some("1.2.4"),
+            Some("1.2.3")
+        ));
     }
 }

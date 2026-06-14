@@ -19,7 +19,7 @@ use sqlx::PgPool;
 
 #[sqlx::test(migrations = "./migrations")]
 async fn client_insert_and_get(pool: PgPool) {
-    let client = db::insert_client(&pool, "test-host", Some("Test Host"), "hash123", None)
+    let client = db::insert_agent(&pool, "test-host", Some("Test Host"), "hash123", None)
         .await
         .unwrap();
 
@@ -28,9 +28,7 @@ async fn client_insert_and_get(pool: PgPool) {
     assert!(client.agent_version.is_none());
     assert!(client.last_seen_at.is_none());
 
-    let fetched = db::get_client_by_hostname(&pool, "test-host")
-        .await
-        .unwrap();
+    let fetched = db::get_agent_by_hostname(&pool, "test-host").await.unwrap();
     assert_eq!(fetched.id, client.id);
     assert_eq!(fetched.hostname, "test-host");
 }
@@ -58,40 +56,36 @@ async fn database_storage_lists_application_tables(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn client_not_found(pool: PgPool) {
-    let result = db::get_client_by_hostname(&pool, "nonexistent").await;
+    let result = db::get_agent_by_hostname(&pool, "nonexistent").await;
     assert!(result.is_err());
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn client_token_hash(pool: PgPool) {
-    db::insert_client(&pool, "token-host", None, "secret_hash", None)
+    db::insert_agent(&pool, "token-host", None, "secret_hash", None)
         .await
         .unwrap();
 
-    let (id, hash) = db::get_client_token_hash(&pool, "token-host")
-        .await
-        .unwrap();
+    let (id, hash) = db::get_agent_token_hash(&pool, "token-host").await.unwrap();
     assert!(id > 0);
     assert_eq!(hash, "secret_hash");
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn client_update_last_seen(pool: PgPool) {
-    let client = db::insert_client(&pool, "seen-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "seen-host", None, "hash", None)
         .await
         .unwrap();
 
     db::update_last_seen(&pool, client.id).await.unwrap();
 
-    let fetched = db::get_client_by_hostname(&pool, "seen-host")
-        .await
-        .unwrap();
+    let fetched = db::get_agent_by_hostname(&pool, "seen-host").await.unwrap();
     assert!(fetched.last_seen_at.is_some());
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn client_update_last_seen_and_version(pool: PgPool) {
-    let client = db::insert_client(&pool, "ver-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "ver-host", None, "hash", None)
         .await
         .unwrap();
 
@@ -99,14 +93,14 @@ async fn client_update_last_seen_and_version(pool: PgPool) {
         .await
         .unwrap();
 
-    let fetched = db::get_client_by_hostname(&pool, "ver-host").await.unwrap();
+    let fetched = db::get_agent_by_hostname(&pool, "ver-host").await.unwrap();
     assert_eq!(fetched.agent_version.as_deref(), Some("2.0.0"));
     assert!(fetched.last_seen_at.is_some());
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn client_update_last_seen_by_hostname(pool: PgPool) {
-    db::insert_client(&pool, "hostname-seen", None, "hash", None)
+    db::insert_agent(&pool, "hostname-seen", None, "hash", None)
         .await
         .unwrap();
 
@@ -114,7 +108,7 @@ async fn client_update_last_seen_by_hostname(pool: PgPool) {
         .await
         .unwrap();
 
-    let fetched = db::get_client_by_hostname(&pool, "hostname-seen")
+    let fetched = db::get_agent_by_hostname(&pool, "hostname-seen")
         .await
         .unwrap();
     assert!(fetched.last_seen_at.is_some());
@@ -122,14 +116,14 @@ async fn client_update_last_seen_by_hostname(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn client_list(pool: PgPool) {
-    db::insert_client(&pool, "alpha", None, "h1", None)
+    db::insert_agent(&pool, "alpha", None, "h1", None)
         .await
         .unwrap();
-    db::insert_client(&pool, "beta", None, "h2", None)
+    db::insert_agent(&pool, "beta", None, "h2", None)
         .await
         .unwrap();
 
-    let clients = db::list_clients(&pool, false).await.unwrap();
+    let clients = db::list_agents(&pool, false).await.unwrap();
     assert_eq!(clients.len(), 2);
     assert_eq!(clients[0].hostname, "alpha");
     assert_eq!(clients[1].hostname, "beta");
@@ -137,11 +131,11 @@ async fn client_list(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn client_update(pool: PgPool) {
-    db::insert_client(&pool, "upd-host", Some("Old Name"), "hash", None)
+    db::insert_agent(&pool, "upd-host", Some("Old Name"), "hash", None)
         .await
         .unwrap();
 
-    let updated = db::update_client(&pool, "upd-host", "upd-host", Some("New Name"), &[], &[])
+    let updated = db::update_agent(&pool, "upd-host", "upd-host", Some("New Name"), &[], &[])
         .await
         .unwrap();
     assert_eq!(updated.display_name.as_deref(), Some("New Name"));
@@ -149,36 +143,34 @@ async fn client_update(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn client_regenerate_token(pool: PgPool) {
-    db::insert_client(&pool, "regen-host", None, "old_hash", None)
+    db::insert_agent(&pool, "regen-host", None, "old_hash", None)
         .await
         .unwrap();
 
-    let updated = db::regenerate_client_token(&pool, "regen-host", "new_hash")
+    let updated = db::regenerate_agent_token(&pool, "regen-host", "new_hash")
         .await
         .unwrap();
     assert_eq!(updated.hostname, "regen-host");
 
-    let (_, hash) = db::get_client_token_hash(&pool, "regen-host")
-        .await
-        .unwrap();
+    let (_, hash) = db::get_agent_token_hash(&pool, "regen-host").await.unwrap();
     assert_eq!(hash, "new_hash");
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn client_delete(pool: PgPool) {
-    db::insert_client(&pool, "del-host", None, "hash", None)
+    db::insert_agent(&pool, "del-host", None, "hash", None)
         .await
         .unwrap();
 
-    db::delete_client(&pool, "del-host").await.unwrap();
+    db::delete_agent(&pool, "del-host").await.unwrap();
 
-    let result = db::get_client_by_hostname(&pool, "del-host").await;
+    let result = db::get_agent_by_hostname(&pool, "del-host").await;
     assert!(result.is_err());
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn client_delete_not_found(pool: PgPool) {
-    let result = db::delete_client(&pool, "ghost").await;
+    let result = db::delete_agent(&pool, "ghost").await;
     assert!(result.is_err());
 }
 
@@ -478,14 +470,14 @@ async fn repo_name(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn tunnel_crud(pool: PgPool) {
-    let client = db::insert_client(&pool, "tunnel-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "tunnel-host", None, "hash", None)
         .await
         .unwrap();
 
     let tunnel = db::insert_tunnel(
         &pool,
         &NewSshTunnel {
-            client_id: client.id,
+            agent_id: client.id,
             ssh_host: "repo.example.com".to_string(),
             ssh_user: "borg".to_string(),
             ssh_port: Some(2222),
@@ -504,7 +496,7 @@ async fn tunnel_crud(pool: PgPool) {
     let by_id = db::get_tunnel_by_id(&pool, tunnel.id).await.unwrap();
     assert_eq!(by_id.id, tunnel.id);
 
-    let by_client = db::get_tunnel_by_client_id(&pool, client.id).await.unwrap();
+    let by_client = db::get_tunnel_by_agent_id(&pool, client.id).await.unwrap();
     assert_eq!(by_client.id, tunnel.id);
 
     let enabled = db::list_enabled_tunnels(&pool).await.unwrap();
@@ -539,14 +531,14 @@ async fn tunnel_crud(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn tunnel_defaults(pool: PgPool) {
-    let client = db::insert_client(&pool, "def-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "def-host", None, "hash", None)
         .await
         .unwrap();
 
     let tunnel = db::insert_tunnel(
         &pool,
         &NewSshTunnel {
-            client_id: client.id,
+            agent_id: client.id,
             ssh_host: "host.com".to_string(),
             ssh_user: "user".to_string(),
             ssh_port: None,
@@ -578,8 +570,8 @@ async fn excludes_crud(pool: PgPool) {
     assert_eq!(raw, "*.log");
 }
 
-async fn create_test_schedule(pool: &PgPool) -> (ClientRow, RepoRow, ScheduleRow) {
-    let client = db::insert_client(pool, "sched-host", None, "hash", None)
+async fn create_test_schedule(pool: &PgPool) -> (AgentRow, RepoRow, ScheduleRow) {
+    let client = db::insert_agent(pool, "sched-host", None, "hash", None)
         .await
         .unwrap();
     let repo = db::insert_repo(
@@ -725,7 +717,7 @@ async fn schedule_list_for_repo(pool: PgPool) {
 async fn schedule_list_for_client(pool: PgPool) {
     let (client, _, _) = create_test_schedule(&pool).await;
 
-    let schedules = db::list_schedules_for_client(&pool, client.id)
+    let schedules = db::list_schedules_for_agent(&pool, client.id)
         .await
         .unwrap();
     assert_eq!(schedules.len(), 1);
@@ -805,10 +797,10 @@ async fn backup_sources_crud(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn backup_sources_per_host_crud(pool: PgPool) {
+async fn backup_sources_per_agent_crud(pool: PgPool) {
     let (client, _, schedule) = create_test_schedule(&pool).await;
 
-    let client2 = db::insert_client(&pool, "host-two", None, "hash2", None)
+    let client2 = db::insert_agent(&pool, "host-two", None, "hash2", None)
         .await
         .unwrap();
 
@@ -816,13 +808,13 @@ async fn backup_sources_per_host_crud(pool: PgPool) {
         .await
         .unwrap();
 
-    db::insert_backup_source_for_schedule_client(&pool, schedule.id, client.id, "/home/one", 0)
+    db::insert_backup_source_for_schedule_agent(&pool, schedule.id, client.id, "/home/one", 0)
         .await
         .unwrap();
-    db::insert_backup_source_for_schedule_client(&pool, schedule.id, client.id, "/var/one", 1)
+    db::insert_backup_source_for_schedule_agent(&pool, schedule.id, client.id, "/var/one", 1)
         .await
         .unwrap();
-    db::insert_backup_source_for_schedule_client(&pool, schedule.id, client2.id, "/data/two", 0)
+    db::insert_backup_source_for_schedule_agent(&pool, schedule.id, client2.id, "/data/two", 0)
         .await
         .unwrap();
 
@@ -831,35 +823,34 @@ async fn backup_sources_per_host_crud(pool: PgPool) {
         .unwrap();
     assert_eq!(schedule_level, vec!["/shared"]);
 
-    let client1_sources =
-        db::list_backup_sources_for_schedule_client(&pool, schedule.id, client.id)
-            .await
-            .unwrap();
+    let client1_sources = db::list_backup_sources_for_schedule_agent(&pool, schedule.id, client.id)
+        .await
+        .unwrap();
     assert_eq!(client1_sources, vec!["/home/one", "/var/one"]);
 
     let client2_sources =
-        db::list_backup_sources_for_schedule_client(&pool, schedule.id, client2.id)
+        db::list_backup_sources_for_schedule_agent(&pool, schedule.id, client2.id)
             .await
             .unwrap();
     assert_eq!(client2_sources, vec!["/data/two"]);
 
-    let all_per_host = db::list_all_per_host_backup_sources_for_schedule(&pool, schedule.id)
+    let all_per_agent = db::list_all_per_agent_backup_sources_for_schedule(&pool, schedule.id)
         .await
         .unwrap();
-    assert_eq!(all_per_host.len(), 2);
-    assert_eq!(all_per_host[0].client_id, client.id);
-    assert_eq!(all_per_host[0].paths, vec!["/home/one", "/var/one"]);
-    assert_eq!(all_per_host[1].client_id, client2.id);
-    assert_eq!(all_per_host[1].paths, vec!["/data/two"]);
+    assert_eq!(all_per_agent.len(), 2);
+    assert_eq!(all_per_agent[0].agent_id, client.id);
+    assert_eq!(all_per_agent[0].paths, vec!["/home/one", "/var/one"]);
+    assert_eq!(all_per_agent[1].agent_id, client2.id);
+    assert_eq!(all_per_agent[1].paths, vec!["/data/two"]);
 
-    db::delete_per_host_backup_sources_for_schedule(&pool, schedule.id)
+    db::delete_per_agent_backup_sources_for_schedule(&pool, schedule.id)
         .await
         .unwrap();
 
-    let all_per_host = db::list_all_per_host_backup_sources_for_schedule(&pool, schedule.id)
+    let all_per_agent = db::list_all_per_agent_backup_sources_for_schedule(&pool, schedule.id)
         .await
         .unwrap();
-    assert!(all_per_host.is_empty());
+    assert!(all_per_agent.is_empty());
 
     let schedule_level = db::list_backup_sources_for_schedule(&pool, schedule.id)
         .await
@@ -868,46 +859,46 @@ async fn backup_sources_per_host_crud(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn excludes_per_host_crud(pool: PgPool) {
+async fn excludes_per_agent_crud(pool: PgPool) {
     let (client, _, schedule) = create_test_schedule(&pool).await;
 
-    let client2 = db::insert_client(&pool, "host-two-exc", None, "hash2exc", None)
+    let client2 = db::insert_agent(&pool, "host-two-exc", None, "hash2exc", None)
         .await
         .unwrap();
 
-    db::upsert_per_host_excludes_raw(&pool, schedule.id, client.id, "*.tmp\n*.cache")
+    db::upsert_per_agent_excludes_raw(&pool, schedule.id, client.id, "*.tmp\n*.cache")
         .await
         .unwrap();
-    db::upsert_per_host_excludes_raw(&pool, schedule.id, client2.id, "*.bak")
+    db::upsert_per_agent_excludes_raw(&pool, schedule.id, client2.id, "*.bak")
         .await
         .unwrap();
 
-    let all_per_host = db::list_all_per_host_excludes_for_schedule(&pool, schedule.id)
+    let all_per_agent = db::list_all_per_agent_excludes_for_schedule(&pool, schedule.id)
         .await
         .unwrap();
-    assert_eq!(all_per_host.len(), 2);
-    assert_eq!(all_per_host[0].client_id, client.id);
-    assert_eq!(all_per_host[0].raw_text, "*.tmp\n*.cache");
-    assert_eq!(all_per_host[1].client_id, client2.id);
-    assert_eq!(all_per_host[1].raw_text, "*.bak");
+    assert_eq!(all_per_agent.len(), 2);
+    assert_eq!(all_per_agent[0].agent_id, client.id);
+    assert_eq!(all_per_agent[0].raw_text, "*.tmp\n*.cache");
+    assert_eq!(all_per_agent[1].agent_id, client2.id);
+    assert_eq!(all_per_agent[1].raw_text, "*.bak");
 
     // Upsert updates existing row
-    db::upsert_per_host_excludes_raw(&pool, schedule.id, client.id, "*.tmp\n*.cache\n\n# new")
+    db::upsert_per_agent_excludes_raw(&pool, schedule.id, client.id, "*.tmp\n*.cache\n\n# new")
         .await
         .unwrap();
-    let all_per_host = db::list_all_per_host_excludes_for_schedule(&pool, schedule.id)
+    let all_per_agent = db::list_all_per_agent_excludes_for_schedule(&pool, schedule.id)
         .await
         .unwrap();
-    assert_eq!(all_per_host[0].raw_text, "*.tmp\n*.cache\n\n# new");
+    assert_eq!(all_per_agent[0].raw_text, "*.tmp\n*.cache\n\n# new");
 
-    db::delete_per_host_excludes_for_schedule(&pool, schedule.id)
+    db::delete_per_agent_excludes_for_schedule(&pool, schedule.id)
         .await
         .unwrap();
 
-    let all_per_host = db::list_all_per_host_excludes_for_schedule(&pool, schedule.id)
+    let all_per_agent = db::list_all_per_agent_excludes_for_schedule(&pool, schedule.id)
         .await
         .unwrap();
-    assert!(all_per_host.is_empty());
+    assert!(all_per_agent.is_empty());
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -969,15 +960,15 @@ async fn schedule_excludes_raw_text_round_trip(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn per_host_excludes_preserves_blank_lines_and_comments(pool: PgPool) {
+async fn per_agent_excludes_preserves_blank_lines_and_comments(pool: PgPool) {
     let (client, _, schedule) = create_test_schedule(&pool).await;
 
     let raw = "# Cache\n*.cache\n\n# Runtime\n/proc";
-    db::upsert_per_host_excludes_raw(&pool, schedule.id, client.id, raw)
+    db::upsert_per_agent_excludes_raw(&pool, schedule.id, client.id, raw)
         .await
         .unwrap();
 
-    let all = db::list_all_per_host_excludes_for_schedule(&pool, schedule.id)
+    let all = db::list_all_per_agent_excludes_for_schedule(&pool, schedule.id)
         .await
         .unwrap();
     assert_eq!(all.len(), 1);
@@ -985,17 +976,17 @@ async fn per_host_excludes_preserves_blank_lines_and_comments(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn per_host_excludes_upsert_replaces_existing(pool: PgPool) {
+async fn per_agent_excludes_upsert_replaces_existing(pool: PgPool) {
     let (client, _, schedule) = create_test_schedule(&pool).await;
 
-    db::upsert_per_host_excludes_raw(&pool, schedule.id, client.id, "first")
+    db::upsert_per_agent_excludes_raw(&pool, schedule.id, client.id, "first")
         .await
         .unwrap();
-    db::upsert_per_host_excludes_raw(&pool, schedule.id, client.id, "second\n\n# comment")
+    db::upsert_per_agent_excludes_raw(&pool, schedule.id, client.id, "second\n\n# comment")
         .await
         .unwrap();
 
-    let all = db::list_all_per_host_excludes_for_schedule(&pool, schedule.id)
+    let all = db::list_all_per_agent_excludes_for_schedule(&pool, schedule.id)
         .await
         .unwrap();
     assert_eq!(all.len(), 1);
@@ -1129,12 +1120,12 @@ async fn canary_results_crud(pool: PgPool) {
     assert_eq!(all.len(), 2);
 }
 
-async fn insert_test_report(pool: &PgPool, client_id: i64, repo_id: i64) {
+async fn insert_test_report(pool: &PgPool, agent_id: i64, repo_id: i64) {
     let now = Utc::now();
     db::insert_backup_report(
         pool,
         &InsertReportParams {
-            client_id,
+            agent_id,
             repo_id,
             schedule_id: None,
             started_at: now - Duration::minutes(5),
@@ -1161,7 +1152,7 @@ async fn insert_test_report(pool: &PgPool, client_id: i64, repo_id: i64) {
 
 async fn insert_test_report_for_schedule(
     pool: &PgPool,
-    client_id: i64,
+    agent_id: i64,
     repo_id: i64,
     schedule_id: i64,
     status: &str,
@@ -1170,7 +1161,7 @@ async fn insert_test_report_for_schedule(
     db::insert_backup_report(
         pool,
         &InsertReportParams {
-            client_id,
+            agent_id,
             repo_id,
             schedule_id: Some(schedule_id),
             started_at: now - Duration::minutes(5),
@@ -1197,14 +1188,14 @@ async fn insert_test_report_for_schedule(
 
 #[sqlx::test(migrations = "./migrations")]
 async fn backup_report_insert_and_list(pool: PgPool) {
-    let client = db::insert_client(&pool, "report-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "report-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
 
     insert_test_report(&pool, client.id, repo.id).await;
 
-    let reports = db::list_reports_for_client(&pool, client.id, None, 10)
+    let reports = db::list_reports_for_agent(&pool, client.id, None, 10)
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
@@ -1219,19 +1210,19 @@ async fn backup_report_insert_and_list(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn backup_report_list_with_target(pool: PgPool) {
-    let client = db::insert_client(&pool, "target-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "target-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
 
     insert_test_report(&pool, client.id, repo.id).await;
 
-    let reports = db::list_reports_for_client(&pool, client.id, Some("test-repo"), 10)
+    let reports = db::list_reports_for_agent(&pool, client.id, Some("test-repo"), 10)
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
 
-    let reports = db::list_reports_for_client(&pool, client.id, Some("nonexistent"), 10)
+    let reports = db::list_reports_for_agent(&pool, client.id, Some("nonexistent"), 10)
         .await
         .unwrap();
     assert!(reports.is_empty());
@@ -1239,7 +1230,7 @@ async fn backup_report_list_with_target(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn backup_report_with_warnings(pool: PgPool) {
-    let client = db::insert_client(&pool, "warn-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "warn-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -1248,7 +1239,7 @@ async fn backup_report_with_warnings(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            client_id: client.id,
+            agent_id: client.id,
             repo_id: repo.id,
             schedule_id: None,
             started_at: now - Duration::minutes(5),
@@ -1272,7 +1263,7 @@ async fn backup_report_with_warnings(pool: PgPool) {
     .await
     .unwrap();
 
-    let reports = db::list_reports_for_client(&pool, client.id, None, 10)
+    let reports = db::list_reports_for_agent(&pool, client.id, None, 10)
         .await
         .unwrap();
     assert_eq!(reports[0].warnings.len(), 2);
@@ -1281,7 +1272,7 @@ async fn backup_report_with_warnings(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn backup_report_delete_before(pool: PgPool) {
-    let client = db::insert_client(&pool, "del-report-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "del-report-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -1297,7 +1288,7 @@ async fn backup_report_delete_before(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn storage_stats_with_sum(pool: PgPool) {
-    let client = db::insert_client(&pool, "stats-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "stats-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -1322,7 +1313,7 @@ async fn storage_stats_empty(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn activity_feed(pool: PgPool) {
-    let client = db::insert_client(&pool, "act-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "act-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -1339,7 +1330,7 @@ async fn activity_feed(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn activity_feed_days(pool: PgPool) {
-    let client = db::insert_client(&pool, "days-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "days-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -1453,7 +1444,7 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
         .await
         .unwrap();
 
-    let disabled_client = db::insert_client(&pool, "disabled-only", None, "hash", None)
+    let disabled_client = db::insert_agent(&pool, "disabled-only", None, "hash", None)
         .await
         .unwrap();
     let disabled_schedule = db::insert_schedule(
@@ -1486,16 +1477,16 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
         .await
         .unwrap();
 
-    let unassigned = db::insert_client(&pool, "unassigned", None, "hash", None)
+    let unassigned = db::insert_agent(&pool, "unassigned", None, "hash", None)
         .await
         .unwrap();
-    let hidden = db::insert_client(&pool, "hidden", None, "hash", None)
+    let hidden = db::insert_agent(&pool, "hidden", None, "hash", None)
         .await
         .unwrap();
-    db::set_client_hidden(&pool, &hidden.hostname, true)
+    db::set_agent_hidden(&pool, &hidden.hostname, true)
         .await
         .unwrap();
-    db::get_or_create_client_by_hostname(&pool, "imported-placeholder")
+    db::get_or_create_agent_by_hostname(&pool, "imported-placeholder")
         .await
         .unwrap();
 
@@ -1511,7 +1502,7 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
     assert_eq!(
         targets
             .iter()
-            .filter(|target| target.client_id == client.id)
+            .filter(|target| target.agent_id == client.id)
             .count(),
         2
     );
@@ -1536,13 +1527,13 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
     );
     let disabled = hosts
         .iter()
-        .find(|host| host.client_id == disabled_client.id)
+        .find(|host| host.agent_id == disabled_client.id)
         .unwrap();
     assert_eq!(disabled.enabled_assignment_count, 0);
     assert_eq!(disabled.disabled_assignment_count, 1);
     let unassigned = hosts
         .iter()
-        .find(|host| host.client_id == unassigned.id)
+        .find(|host| host.agent_id == unassigned.id)
         .unwrap();
     assert_eq!(unassigned.enabled_assignment_count, 0);
 
@@ -1570,7 +1561,7 @@ async fn dashboard_repository_capacity_uses_repo_stats_and_quota(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn repos_with_stats(pool: PgPool) {
-    let client = db::insert_client(&pool, "rws-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "rws-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -1601,7 +1592,7 @@ async fn repos_with_stats_empty(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn repo_with_stats_single(pool: PgPool) {
-    let client = db::insert_client(&pool, "single-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "single-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -1615,7 +1606,7 @@ async fn repo_with_stats_single(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn storage_breakdown(pool: PgPool) {
-    let client = db::insert_client(&pool, "brk-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "brk-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -1772,7 +1763,7 @@ async fn dashboard_summary(pool: PgPool) {
     insert_test_report(&pool, client.id, repo.id).await;
 
     let summary = db::get_dashboard_summary(&pool).await.unwrap();
-    assert_eq!(summary.total_clients, 1);
+    assert_eq!(summary.total_agents, 1);
     assert_eq!(summary.total_repos, 1);
     assert_eq!(summary.total_schedules, 1);
     assert_eq!(summary.active_schedules, 1);
@@ -1786,7 +1777,7 @@ async fn dashboard_summary(pool: PgPool) {
 /// `repos.info_deduplicated_size` rather than backup_reports.
 #[sqlx::test(migrations = "./migrations")]
 async fn dashboard_summary_total_storage_from_repo_info(pool: PgPool) {
-    let client = db::insert_client(&pool, "ds-storage-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "ds-storage-host", None, "hash", None)
         .await
         .unwrap();
 
@@ -1843,7 +1834,7 @@ async fn dashboard_summary_total_storage_from_repo_info(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn dashboard_summary_empty(pool: PgPool) {
     let summary = db::get_dashboard_summary(&pool).await.unwrap();
-    assert_eq!(summary.total_clients, 0);
+    assert_eq!(summary.total_agents, 0);
     assert_eq!(summary.total_repos, 0);
     assert_eq!(summary.total_storage_bytes, 0);
 }
@@ -2166,7 +2157,7 @@ async fn tags_crud(pool: PgPool) {
     let tags = db::list_tags(&pool, "repo").await.unwrap();
     assert_eq!(tags.len(), 1);
 
-    let host_tags = db::list_tags(&pool, "host").await.unwrap();
+    let host_tags = db::list_tags(&pool, "agent").await.unwrap();
     assert!(host_tags.is_empty());
 
     db::delete_tag(&pool, tag.id).await.unwrap();
@@ -2277,23 +2268,23 @@ async fn repo_tags_assignment(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn host_tags_assignment(pool: PgPool) {
-    let client = db::insert_client(&pool, "tagged-host", None, "hash", None)
+async fn agent_tags_assignment(pool: PgPool) {
+    let client = db::insert_agent(&pool, "tagged-host", None, "hash", None)
         .await
         .unwrap();
-    let tag = db::insert_tag(&pool, "critical", "#f00", "host")
-        .await
-        .unwrap();
-
-    db::set_host_tags(&pool, client.id, &[tag.id])
+    let tag = db::insert_tag(&pool, "critical", "#f00", "agent")
         .await
         .unwrap();
 
-    let tags = db::list_tags_for_host(&pool, client.id).await.unwrap();
+    db::set_agent_tags(&pool, client.id, &[tag.id])
+        .await
+        .unwrap();
+
+    let tags = db::list_tags_for_agent(&pool, client.id).await.unwrap();
     assert_eq!(tags.len(), 1);
     assert_eq!(tags[0].name, "critical");
 
-    let all = db::list_all_host_tags(&pool).await.unwrap();
+    let all = db::list_all_agent_tags(&pool).await.unwrap();
     assert_eq!(all.len(), 1);
 }
 
@@ -2365,9 +2356,9 @@ async fn roles_crud(pool: PgPool) {
         &pool,
         &InsertRoleParams {
             name: "test-operator",
-            can_create_client: true,
-            can_delete_client: false,
-            can_delete_own_client: true,
+            can_create_agent: true,
+            can_delete_agent: false,
+            can_delete_own_agent: true,
             can_create_repo: true,
             can_delete_repo: false,
             can_delete_own_repo: true,
@@ -2383,9 +2374,9 @@ async fn roles_crud(pool: PgPool) {
     .unwrap();
 
     assert_eq!(role.name, "test-operator");
-    assert!(role.can_create_client);
-    assert!(!role.can_delete_client);
-    assert!(role.can_delete_own_client);
+    assert!(role.can_create_agent);
+    assert!(!role.can_delete_agent);
+    assert!(role.can_delete_own_agent);
 
     let fetched = db::get_role(&pool, role.id).await.unwrap();
     assert!(fetched.is_some());
@@ -2395,9 +2386,9 @@ async fn roles_crud(pool: PgPool) {
         role.id,
         &InsertRoleParams {
             name: "test-senior-operator",
-            can_create_client: true,
-            can_delete_client: true,
-            can_delete_own_client: true,
+            can_create_agent: true,
+            can_delete_agent: true,
+            can_delete_own_agent: true,
             can_create_repo: true,
             can_delete_repo: true,
             can_delete_own_repo: true,
@@ -2412,7 +2403,7 @@ async fn roles_crud(pool: PgPool) {
     .await
     .unwrap();
     assert_eq!(updated.name, "test-senior-operator");
-    assert!(updated.can_delete_client);
+    assert!(updated.can_delete_agent);
     assert!(updated.can_manage_tunnels);
 
     let roles = db::list_roles(&pool).await.unwrap();
@@ -2433,9 +2424,9 @@ async fn user_roles_and_effective_permissions(pool: PgPool) {
         &pool,
         &InsertRoleParams {
             name: "test-viewer",
-            can_create_client: false,
-            can_delete_client: false,
-            can_delete_own_client: false,
+            can_create_agent: false,
+            can_delete_agent: false,
+            can_delete_own_agent: false,
             can_create_repo: false,
             can_delete_repo: false,
             can_delete_own_repo: false,
@@ -2454,9 +2445,9 @@ async fn user_roles_and_effective_permissions(pool: PgPool) {
         &pool,
         &InsertRoleParams {
             name: "test-creator",
-            can_create_client: true,
-            can_delete_client: false,
-            can_delete_own_client: false,
+            can_create_agent: true,
+            can_delete_agent: false,
+            can_delete_own_agent: false,
             can_create_repo: true,
             can_delete_repo: false,
             can_delete_own_repo: false,
@@ -2479,11 +2470,11 @@ async fn user_roles_and_effective_permissions(pool: PgPool) {
     assert_eq!(user_roles.len(), 2);
 
     let effective = db::get_effective_permissions(&pool, user.id).await.unwrap();
-    assert!(effective.can_create_client);
+    assert!(effective.can_create_agent);
     assert!(effective.can_create_repo);
     assert!(effective.can_create_schedule);
     assert!(effective.can_view_all_repos);
-    assert!(!effective.can_delete_client);
+    assert!(!effective.can_delete_agent);
     assert!(!effective.can_manage_tunnels);
 }
 
@@ -2491,11 +2482,11 @@ async fn user_roles_and_effective_permissions(pool: PgPool) {
 async fn repos_for_client(pool: PgPool) {
     let (client, repo, _) = create_test_schedule(&pool).await;
 
-    let repos = db::list_repos_for_client(&pool, client.id).await.unwrap();
+    let repos = db::list_repos_for_agent(&pool, client.id).await.unwrap();
     assert_eq!(repos.len(), 1);
     assert_eq!(repos[0].id, repo.id);
 
-    let public_repos = db::list_repos_for_client_public(&pool, client.id)
+    let public_repos = db::list_repos_for_agent_public(&pool, client.id)
         .await
         .unwrap();
     assert_eq!(public_repos.len(), 1);
@@ -2524,17 +2515,17 @@ async fn backup_sources_for_repo(pool: PgPool) {
 async fn ssh_tunnel_crud(pool: PgPool) {
     use server::error::ApiError;
 
-    let client = db::insert_client(&pool, "tun-host-1", None, "tun-token-1", None)
+    let client = db::insert_agent(&pool, "tun-host-1", None, "tun-token-1", None)
         .await
         .unwrap();
-    let client_2 = db::insert_client(&pool, "tun-host-2", None, "tun-token-2", None)
+    let client_2 = db::insert_agent(&pool, "tun-host-2", None, "tun-token-2", None)
         .await
         .unwrap();
 
     let tunnel = db::insert_tunnel(
         &pool,
         &db::NewSshTunnel {
-            client_id: client.id,
+            agent_id: client.id,
             ssh_host: "repo.example.com".to_string(),
             ssh_user: "borg".to_string(),
             ssh_port: Some(2222),
@@ -2545,7 +2536,7 @@ async fn ssh_tunnel_crud(pool: PgPool) {
     .await
     .unwrap();
 
-    assert_eq!(tunnel.client_id, client.id);
+    assert_eq!(tunnel.agent_id, client.id);
     assert_eq!(tunnel.ssh_host, "repo.example.com");
     assert_eq!(tunnel.ssh_user, "borg");
     assert_eq!(tunnel.ssh_port, 2222);
@@ -2555,8 +2546,8 @@ async fn ssh_tunnel_crud(pool: PgPool) {
     let by_id = db::get_tunnel_by_id(&pool, tunnel.id).await.unwrap();
     assert_eq!(by_id.id, tunnel.id);
 
-    let by_client_id = db::get_tunnel_by_client_id(&pool, client.id).await.unwrap();
-    assert_eq!(by_client_id.id, tunnel.id);
+    let by_agent_id = db::get_tunnel_by_agent_id(&pool, client.id).await.unwrap();
+    assert_eq!(by_agent_id.id, tunnel.id);
 
     let enabled_tunnels = db::list_enabled_tunnels(&pool).await.unwrap();
     assert_eq!(enabled_tunnels.len(), 1);
@@ -2595,7 +2586,7 @@ async fn ssh_tunnel_crud(pool: PgPool) {
     let tunnel_2 = db::insert_tunnel(
         &pool,
         &db::NewSshTunnel {
-            client_id: client_2.id,
+            agent_id: client_2.id,
             ssh_host: "repo2.example.com".to_string(),
             ssh_user: "borg".to_string(),
             ssh_port: None,
@@ -2606,7 +2597,7 @@ async fn ssh_tunnel_crud(pool: PgPool) {
     .await
     .unwrap();
 
-    db::delete_client(&pool, "tun-host-2").await.unwrap();
+    db::delete_agent(&pool, "tun-host-2").await.unwrap();
     assert!(matches!(
         db::get_tunnel_by_id(&pool, tunnel_2.id).await,
         Err(ApiError::NotFound(_))
@@ -2676,7 +2667,7 @@ async fn test_backup_trends_empty(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_backup_trends_with_data(pool: PgPool) {
-    let client = db::insert_client(&pool, "trends-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "trends-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -2691,7 +2682,7 @@ async fn test_backup_trends_with_data(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_backup_trends_filtered_by_repo(pool: PgPool) {
-    let client = db::insert_client(&pool, "trends-filter-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "trends-filter-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -2719,7 +2710,7 @@ async fn test_calendar_events_empty(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_calendar_events_with_data(pool: PgPool) {
-    let client = db::insert_client(&pool, "cal-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "cal-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -2744,7 +2735,7 @@ async fn test_calendar_events_with_data(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_calendar_events_filtered_by_repo(pool: PgPool) {
-    let client = db::insert_client(&pool, "cal-filter-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "cal-filter-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -2841,7 +2832,7 @@ async fn test_audit_filter_by_date_range(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_hostname_pattern_crud(pool: PgPool) {
-    let client = db::insert_client(
+    let client = db::insert_agent(
         &pool,
         "pattern-crud-host",
         Some("Pattern CRUD"),
@@ -2855,7 +2846,7 @@ async fn test_hostname_pattern_crud(pool: PgPool) {
         .await
         .unwrap();
 
-    let patterns = patterns::list_patterns_for_client(&pool, client.id)
+    let patterns = patterns::list_patterns_for_agent(&pool, client.id)
         .await
         .unwrap();
     assert_eq!(patterns.len(), 1);
@@ -2865,7 +2856,7 @@ async fn test_hostname_pattern_crud(pool: PgPool) {
         .await
         .unwrap();
 
-    let patterns = patterns::list_patterns_for_client(&pool, client.id)
+    let patterns = patterns::list_patterns_for_agent(&pool, client.id)
         .await
         .unwrap();
     assert!(patterns.is_empty());
@@ -2873,7 +2864,7 @@ async fn test_hostname_pattern_crud(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_find_client_by_pattern_glob_match(pool: PgPool) {
-    let client = db::insert_client(
+    let client = db::insert_agent(
         &pool,
         "pattern-glob-client",
         Some("Pattern Glob"),
@@ -2887,7 +2878,7 @@ async fn test_find_client_by_pattern_glob_match(pool: PgPool) {
         .await
         .unwrap();
 
-    let matched = patterns::find_client_by_pattern(&pool, "bell.home.mohr.io")
+    let matched = patterns::find_agent_by_pattern(&pool, "bell.home.mohr.io")
         .await
         .unwrap();
 
@@ -2898,7 +2889,7 @@ async fn test_find_client_by_pattern_glob_match(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_find_client_by_pattern_no_match(pool: PgPool) {
-    let client = db::insert_client(
+    let client = db::insert_agent(
         &pool,
         "pattern-no-match-client",
         Some("Pattern No Match"),
@@ -2912,7 +2903,7 @@ async fn test_find_client_by_pattern_no_match(pool: PgPool) {
         .await
         .unwrap();
 
-    let matched = patterns::find_client_by_pattern(&pool, "gamma.home.mohr.io")
+    let matched = patterns::find_agent_by_pattern(&pool, "gamma.home.mohr.io")
         .await
         .unwrap();
 
@@ -2921,7 +2912,7 @@ async fn test_find_client_by_pattern_no_match(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_add_duplicate_pattern_returns_error(pool: PgPool) {
-    let client_one = db::insert_client(
+    let client_one = db::insert_agent(
         &pool,
         "duplicate-pattern-one",
         Some("Duplicate One"),
@@ -2930,7 +2921,7 @@ async fn test_add_duplicate_pattern_returns_error(pool: PgPool) {
     )
     .await
     .unwrap();
-    let client_two = db::insert_client(
+    let client_two = db::insert_agent(
         &pool,
         "duplicate-pattern-two",
         Some("Duplicate Two"),
@@ -2950,10 +2941,10 @@ async fn test_add_duplicate_pattern_returns_error(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_resolve_client_exact_match_priority(pool: PgPool) {
-    let exact = db::insert_client(&pool, "foo", Some("Exact Foo"), "hash", None)
+    let exact = db::insert_agent(&pool, "foo", Some("Exact Foo"), "hash", None)
         .await
         .unwrap();
-    let patterned = db::insert_client(
+    let patterned = db::insert_agent(
         &pool,
         "pattern-priority-client",
         Some("Pattern Foo"),
@@ -2967,7 +2958,7 @@ async fn test_resolve_client_exact_match_priority(pool: PgPool) {
         .await
         .unwrap();
 
-    let resolved = db::resolve_client_for_hostname(&pool, "foo").await.unwrap();
+    let resolved = db::resolve_agent_for_hostname(&pool, "foo").await.unwrap();
     match resolved {
         db::ResolveResult::ExactMatch(client) => assert_eq!(client.id, exact.id),
         other => panic!("unexpected resolve result: {other:?}"),
@@ -2976,7 +2967,7 @@ async fn test_resolve_client_exact_match_priority(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_merge_client_moves_reports(pool: PgPool) {
-    let placeholder = db::insert_client(
+    let placeholder = db::insert_agent(
         &pool,
         "merge-placeholder",
         Some("Merge Placeholder"),
@@ -2985,40 +2976,40 @@ async fn test_merge_client_moves_reports(pool: PgPool) {
     )
     .await
     .unwrap();
-    let target = db::insert_client(&pool, "merge-target", Some("Merge Target"), "hash", None)
+    let target = db::insert_agent(&pool, "merge-target", Some("Merge Target"), "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
 
     insert_test_report(&pool, placeholder.id, repo.id).await;
 
-    db::merge_client(&pool, placeholder.id, target.id)
+    db::merge_agent(&pool, placeholder.id, target.id)
         .await
         .unwrap();
 
-    let reports = db::list_reports_for_client(&pool, target.id, None, 10)
+    let reports = db::list_reports_for_agent(&pool, target.id, None, 10)
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
 
     let matched =
-        sqlx::query_scalar::<_, bool>("SELECT matched FROM backup_reports WHERE client_id = $1")
+        sqlx::query_scalar::<_, bool>("SELECT matched FROM backup_reports WHERE agent_id = $1")
             .bind(target.id)
             .fetch_one(&pool)
             .await
             .unwrap();
     assert!(matched);
 
-    let source = db::get_client_by_hostname(&pool, "merge-placeholder").await;
+    let source = db::get_agent_by_hostname(&pool, "merge-placeholder").await;
     assert!(source.is_err());
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_merge_client_refuses_non_placeholder(pool: PgPool) {
-    let source = db::insert_client(&pool, "merge-source", Some("Merge Source"), "hash", None)
+    let source = db::insert_agent(&pool, "merge-source", Some("Merge Source"), "hash", None)
         .await
         .unwrap();
-    let target = db::insert_client(
+    let target = db::insert_agent(
         &pool,
         "merge-target-real",
         Some("Merge Target Real"),
@@ -3028,13 +3019,13 @@ async fn test_merge_client_refuses_non_placeholder(pool: PgPool) {
     .await
     .unwrap();
 
-    let result = db::merge_client(&pool, source.id, target.id).await;
+    let result = db::merge_agent(&pool, source.id, target.id).await;
     assert!(result.is_err());
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_mark_client_reports_matched(pool: PgPool) {
-    let client = db::insert_client(
+    let client = db::insert_agent(
         &pool,
         "adopt-host",
         Some("Adopt Host (imported)"),
@@ -3049,7 +3040,7 @@ async fn test_mark_client_reports_matched(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            client_id: client.id,
+            agent_id: client.id,
             repo_id: repo.id,
             schedule_id: None,
             started_at: now - Duration::minutes(5),
@@ -3074,19 +3065,19 @@ async fn test_mark_client_reports_matched(pool: PgPool) {
     .unwrap();
 
     let unmatched =
-        sqlx::query_scalar::<_, bool>("SELECT matched FROM backup_reports WHERE client_id = $1")
+        sqlx::query_scalar::<_, bool>("SELECT matched FROM backup_reports WHERE agent_id = $1")
             .bind(client.id)
             .fetch_one(&pool)
             .await
             .unwrap();
     assert!(!unmatched);
 
-    db::mark_client_reports_matched(&pool, client.id)
+    db::mark_agent_reports_matched(&pool, client.id)
         .await
         .unwrap();
 
     let matched =
-        sqlx::query_scalar::<_, bool>("SELECT matched FROM backup_reports WHERE client_id = $1")
+        sqlx::query_scalar::<_, bool>("SELECT matched FROM backup_reports WHERE agent_id = $1")
             .bind(client.id)
             .fetch_one(&pool)
             .await
@@ -3096,7 +3087,7 @@ async fn test_mark_client_reports_matched(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn get_archives_for_client_across_multiple_repos(pool: PgPool) {
-    let client = db::insert_client(&pool, "primary-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "primary-host", None, "hash", None)
         .await
         .unwrap();
     let repo1 = db::insert_repo(
@@ -3137,7 +3128,7 @@ async fn get_archives_for_client_across_multiple_repos(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            client_id: client.id,
+            agent_id: client.id,
             repo_id: repo1.id,
             schedule_id: None,
             started_at: now - Duration::minutes(10),
@@ -3163,7 +3154,7 @@ async fn get_archives_for_client_across_multiple_repos(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            client_id: client.id,
+            agent_id: client.id,
             repo_id: repo1.id,
             schedule_id: None,
             started_at: now - Duration::minutes(20),
@@ -3190,7 +3181,7 @@ async fn get_archives_for_client_across_multiple_repos(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            client_id: client.id,
+            agent_id: client.id,
             repo_id: repo2.id,
             schedule_id: None,
             started_at: now - Duration::minutes(30),
@@ -3217,7 +3208,7 @@ async fn get_archives_for_client_across_multiple_repos(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            client_id: client.id,
+            agent_id: client.id,
             repo_id: repo1.id,
             schedule_id: None,
             started_at: now - Duration::minutes(40),
@@ -3241,7 +3232,7 @@ async fn get_archives_for_client_across_multiple_repos(pool: PgPool) {
     .await
     .unwrap();
 
-    let archives = db::get_archives_for_client(&pool, client.id).await.unwrap();
+    let archives = db::get_archives_for_agent(&pool, client.id).await.unwrap();
 
     assert_eq!(archives.len(), 2);
 
@@ -3265,10 +3256,10 @@ async fn get_archives_for_client_across_multiple_repos(pool: PgPool) {
 
 /// Verifies that `get_archives_for_client_with_patterns` finds archives from imported clients
 /// whose hostnames match the configured glob patterns, even when those archives haven't been
-/// merged/reassigned yet (client_id still points to the imported client).
+/// merged/reassigned yet (agent_id still points to the imported client).
 #[sqlx::test(migrations = "./migrations")]
 async fn get_archives_for_client_includes_pattern_matched_archives(pool: PgPool) {
-    let client = db::insert_client(&pool, "web-server-01", None, "hash", None)
+    let client = db::insert_agent(&pool, "web-server-01", None, "hash", None)
         .await
         .unwrap();
     patterns::add_hostname_pattern(&pool, client.id, "web-server-*")
@@ -3281,7 +3272,7 @@ async fn get_archives_for_client_includes_pattern_matched_archives(pool: PgPool)
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            client_id: client.id,
+            agent_id: client.id,
             repo_id: repo.id,
             schedule_id: None,
             started_at: now - Duration::minutes(10),
@@ -3308,7 +3299,7 @@ async fn get_archives_for_client_includes_pattern_matched_archives(pool: PgPool)
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            client_id: client.id,
+            agent_id: client.id,
             repo_id: repo.id,
             schedule_id: None,
             started_at: now - Duration::minutes(20),
@@ -3332,7 +3323,7 @@ async fn get_archives_for_client_includes_pattern_matched_archives(pool: PgPool)
     .await
     .unwrap();
 
-    let imported = db::insert_client(
+    let imported = db::insert_agent(
         &pool,
         "web-server-legacy (imported)",
         None,
@@ -3344,7 +3335,7 @@ async fn get_archives_for_client_includes_pattern_matched_archives(pool: PgPool)
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            client_id: imported.id,
+            agent_id: imported.id,
             repo_id: repo.id,
             schedule_id: None,
             started_at: now - Duration::minutes(30),
@@ -3368,7 +3359,7 @@ async fn get_archives_for_client_includes_pattern_matched_archives(pool: PgPool)
     .await
     .unwrap();
 
-    let archives = db::get_archives_for_client(&pool, client.id).await.unwrap();
+    let archives = db::get_archives_for_agent(&pool, client.id).await.unwrap();
     assert_eq!(archives.len(), 1);
     let names: Vec<_> = archives
         .iter()
@@ -3378,7 +3369,7 @@ async fn get_archives_for_client_includes_pattern_matched_archives(pool: PgPool)
     assert!(names.contains(&"web-server-01-2026-01-01T10:00:00".to_string()));
     assert!(names.contains(&"web-server-02-2026-01-01T10:00:00".to_string()));
 
-    let all_archives = db::get_archives_for_client_with_patterns(&pool, client.id)
+    let all_archives = db::get_archives_for_agent_with_patterns(&pool, client.id)
         .await
         .unwrap();
     let all_names: Vec<_> = all_archives
@@ -3395,7 +3386,7 @@ async fn get_archives_for_client_includes_pattern_matched_archives(pool: PgPool)
 /// Verifies pattern matching across multiple repos with unrelated clients excluded.
 #[sqlx::test(migrations = "./migrations")]
 async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
-    let client = db::insert_client(&pool, "db-server-01", None, "hash", None)
+    let client = db::insert_agent(&pool, "db-server-01", None, "hash", None)
         .await
         .unwrap();
     patterns::add_hostname_pattern(&pool, client.id, "db-server-*")
@@ -3440,7 +3431,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            client_id: client.id,
+            agent_id: client.id,
             repo_id: repo1.id,
             schedule_id: None,
             started_at: now - Duration::minutes(10),
@@ -3466,7 +3457,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            client_id: client.id,
+            agent_id: client.id,
             repo_id: repo2.id,
             schedule_id: None,
             started_at: now - Duration::minutes(20),
@@ -3490,7 +3481,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
     .await
     .unwrap();
 
-    let imported = db::insert_client(
+    let imported = db::insert_agent(
         &pool,
         "db-server-02 (imported)",
         None,
@@ -3502,7 +3493,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            client_id: imported.id,
+            agent_id: imported.id,
             repo_id: repo1.id,
             schedule_id: None,
             started_at: now - Duration::minutes(30),
@@ -3526,7 +3517,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
     .await
     .unwrap();
 
-    let imported2 = db::insert_client(
+    let imported2 = db::insert_agent(
         &pool,
         "db-server-staging (imported)",
         None,
@@ -3538,7 +3529,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            client_id: imported2.id,
+            agent_id: imported2.id,
             repo_id: repo2.id,
             schedule_id: None,
             started_at: now - Duration::minutes(40),
@@ -3562,7 +3553,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
     .await
     .unwrap();
 
-    let unrelated = db::insert_client(
+    let unrelated = db::insert_agent(
         &pool,
         "app-server-01 (imported)",
         None,
@@ -3574,7 +3565,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            client_id: unrelated.id,
+            agent_id: unrelated.id,
             repo_id: repo1.id,
             schedule_id: None,
             started_at: now - Duration::minutes(50),
@@ -3598,7 +3589,7 @@ async fn get_archives_for_client_with_patterns_multiple_repos(pool: PgPool) {
     .await
     .unwrap();
 
-    let archives = db::get_archives_for_client_with_patterns(&pool, client.id)
+    let archives = db::get_archives_for_agent_with_patterns(&pool, client.id)
         .await
         .unwrap();
 
@@ -3756,7 +3747,7 @@ async fn bulk_insert_backup_reports_empty(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn bulk_insert_backup_reports_basic(pool: PgPool) {
-    let client = db::insert_client(&pool, "bulk-host", None, "hash-bulk", None)
+    let client = db::insert_agent(&pool, "bulk-host", None, "hash-bulk", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -3764,7 +3755,7 @@ async fn bulk_insert_backup_reports_basic(pool: PgPool) {
 
     let params = vec![
         InsertReportParams {
-            client_id: client.id,
+            agent_id: client.id,
             repo_id: repo.id,
             schedule_id: None,
             started_at: now - Duration::minutes(10),
@@ -3785,7 +3776,7 @@ async fn bulk_insert_backup_reports_basic(pool: PgPool) {
             run_id: None,
         },
         InsertReportParams {
-            client_id: client.id,
+            agent_id: client.id,
             repo_id: repo.id,
             schedule_id: None,
             started_at: now - Duration::minutes(20),
@@ -3812,7 +3803,7 @@ async fn bulk_insert_backup_reports_basic(pool: PgPool) {
         .unwrap();
     assert_eq!(affected, 2);
 
-    let reports = db::list_reports_for_client(&pool, client.id, None, 100)
+    let reports = db::list_reports_for_agent(&pool, client.id, None, 100)
         .await
         .unwrap();
     assert_eq!(reports.len(), 2);
@@ -3820,7 +3811,7 @@ async fn bulk_insert_backup_reports_basic(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn bulk_insert_backup_reports_conflict_skipped(pool: PgPool) {
-    let client = db::insert_client(&pool, "bulk-dup-host", None, "hash-dup", None)
+    let client = db::insert_agent(&pool, "bulk-dup-host", None, "hash-dup", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -3828,7 +3819,7 @@ async fn bulk_insert_backup_reports_conflict_skipped(pool: PgPool) {
     let started = now - Duration::minutes(10);
 
     let param = InsertReportParams {
-        client_id: client.id,
+        agent_id: client.id,
         repo_id: repo.id,
         schedule_id: None,
         started_at: started,
@@ -3857,7 +3848,7 @@ async fn bulk_insert_backup_reports_conflict_skipped(pool: PgPool) {
         .unwrap();
     assert_eq!(affected, 0);
 
-    let reports = db::list_reports_for_client(&pool, client.id, None, 100)
+    let reports = db::list_reports_for_agent(&pool, client.id, None, 100)
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
@@ -3866,9 +3857,9 @@ async fn bulk_insert_backup_reports_conflict_skipped(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn bulk_insert_keeps_distinct_archives_sharing_start_second(pool: PgPool) {
     // Borg reports archive `start` at whole-second precision, so two distinct
-    // archives of the same host can share (client_id, started_at). They must not
+    // archives of the same host can share (agent_id, started_at). They must not
     // collapse into a single row on import.
-    let client = db::insert_client(&pool, "same-second-host", None, "hash-ss", None)
+    let client = db::insert_agent(&pool, "same-second-host", None, "hash-ss", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -3876,7 +3867,7 @@ async fn bulk_insert_keeps_distinct_archives_sharing_start_second(pool: PgPool) 
     let finished = started + Duration::minutes(1);
 
     let base = InsertReportParams {
-        client_id: client.id,
+        agent_id: client.id,
         repo_id: repo.id,
         schedule_id: None,
         started_at: started,
@@ -3939,71 +3930,69 @@ async fn repo_last_synced_at_updates(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn client_get_by_id(pool: PgPool) {
-    let client = db::insert_client(&pool, "byid-host", None, "hash-byid", None)
+    let client = db::insert_agent(&pool, "byid-host", None, "hash-byid", None)
         .await
         .unwrap();
 
-    let fetched = db::get_client_by_id(&pool, client.id).await.unwrap();
+    let fetched = db::get_agent_by_id(&pool, client.id).await.unwrap();
     assert_eq!(fetched.id, client.id);
     assert_eq!(fetched.hostname, "byid-host");
 
-    let result = db::get_client_by_id(&pool, 999_999_999).await;
+    let result = db::get_agent_by_id(&pool, 999_999_999).await;
     assert!(result.is_err());
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn client_set_hidden_and_list(pool: PgPool) {
-    db::insert_client(&pool, "hidden-host", None, "hash-hidden", None)
+    db::insert_agent(&pool, "hidden-host", None, "hash-hidden", None)
         .await
         .unwrap();
 
-    let before = db::list_clients(&pool, false).await.unwrap();
+    let before = db::list_agents(&pool, false).await.unwrap();
     assert!(before.iter().any(|c| c.hostname == "hidden-host"));
 
-    db::set_client_hidden(&pool, "hidden-host", true)
+    db::set_agent_hidden(&pool, "hidden-host", true)
         .await
         .unwrap();
 
-    let visible = db::list_clients(&pool, false).await.unwrap();
+    let visible = db::list_agents(&pool, false).await.unwrap();
     assert!(!visible.iter().any(|c| c.hostname == "hidden-host"));
 
-    let all = db::list_clients(&pool, true).await.unwrap();
+    let all = db::list_agents(&pool, true).await.unwrap();
     assert!(all.iter().any(|c| c.hostname == "hidden-host"));
 
-    db::set_client_hidden(&pool, "hidden-host", false)
+    db::set_agent_hidden(&pool, "hidden-host", false)
         .await
         .unwrap();
 
-    let restored = db::list_clients(&pool, false).await.unwrap();
+    let restored = db::list_agents(&pool, false).await.unwrap();
     assert!(restored.iter().any(|c| c.hostname == "hidden-host"));
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn client_token_hash_lookup(pool: PgPool) {
-    let client = db::insert_client(&pool, "token-host", None, "secret-hash", None)
+    let client = db::insert_agent(&pool, "token-host", None, "secret-hash", None)
         .await
         .unwrap();
 
-    let (id, hash) = db::get_client_token_hash(&pool, "token-host")
-        .await
-        .unwrap();
+    let (id, hash) = db::get_agent_token_hash(&pool, "token-host").await.unwrap();
     assert_eq!(id, client.id);
     assert_eq!(hash, "secret-hash");
 
-    let result = db::get_client_token_hash(&pool, "nonexistent-host").await;
+    let result = db::get_agent_token_hash(&pool, "nonexistent-host").await;
     assert!(result.is_err());
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn client_last_seen_updates(pool: PgPool) {
-    let client = db::insert_client(&pool, "seen-host", None, "hash-seen", None)
+    let client = db::insert_agent(&pool, "seen-host", None, "hash-seen", None)
         .await
         .unwrap();
 
     assert!(client.last_seen_at.is_none());
 
     db::update_last_seen(&pool, client.id).await.unwrap();
-    let fetched = db::get_client_by_id(&pool, client.id).await.unwrap();
+    let fetched = db::get_agent_by_id(&pool, client.id).await.unwrap();
     assert!(fetched.last_seen_at.is_some());
 
     db::update_last_seen_and_version(
@@ -4016,26 +4005,26 @@ async fn client_last_seen_updates(pool: PgPool) {
     )
     .await
     .unwrap();
-    let fetched = db::get_client_by_id(&pool, client.id).await.unwrap();
+    let fetched = db::get_agent_by_id(&pool, client.id).await.unwrap();
     assert_eq!(fetched.agent_version.as_deref(), Some("1.5.0"));
     assert_eq!(fetched.agent_git_sha.as_deref(), Some("abc123"));
 
     db::update_last_seen_by_hostname(&pool, "seen-host")
         .await
         .unwrap();
-    let fetched = db::get_client_by_id(&pool, client.id).await.unwrap();
+    let fetched = db::get_agent_by_id(&pool, client.id).await.unwrap();
     assert!(fetched.last_seen_at.is_some());
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn get_or_create_client_by_hostname_creates_new(pool: PgPool) {
-    let client = db::get_or_create_client_by_hostname(&pool, "placeholder-new")
+    let client = db::get_or_create_agent_by_hostname(&pool, "placeholder-new")
         .await
         .unwrap();
     assert_eq!(client.hostname, "placeholder-new");
     assert_eq!(client.agent_token_hash, "imported:no-auth");
 
-    let again = db::get_or_create_client_by_hostname(&pool, "placeholder-new")
+    let again = db::get_or_create_agent_by_hostname(&pool, "placeholder-new")
         .await
         .unwrap();
     assert_eq!(again.id, client.id);
@@ -4043,11 +4032,11 @@ async fn get_or_create_client_by_hostname_creates_new(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn get_or_create_client_by_hostname_returns_existing(pool: PgPool) {
-    let real = db::insert_client(&pool, "existing-real", None, "realhash", None)
+    let real = db::insert_agent(&pool, "existing-real", None, "realhash", None)
         .await
         .unwrap();
 
-    let fetched = db::get_or_create_client_by_hostname(&pool, "existing-real")
+    let fetched = db::get_or_create_agent_by_hostname(&pool, "existing-real")
         .await
         .unwrap();
     assert_eq!(fetched.id, real.id);
@@ -4058,8 +4047,8 @@ async fn get_or_create_client_by_hostname_returns_existing(pool: PgPool) {
 async fn schedule_counts_by_client(pool: PgPool) {
     let (client, _, _) = create_test_schedule(&pool).await;
 
-    let counts = db::get_schedule_counts_by_client(&pool).await.unwrap();
-    let entry = counts.iter().find(|c| c.client_id == client.id);
+    let counts = db::get_schedule_counts_by_agent(&pool).await.unwrap();
+    let entry = counts.iter().find(|c| c.agent_id == client.id);
     assert!(entry.is_some());
     assert_eq!(entry.unwrap().count, 1);
 }
@@ -4176,7 +4165,7 @@ async fn schedule_targets_list_and_delete(pool: PgPool) {
 
     let targets = db::list_schedule_targets(&pool, schedule.id).await.unwrap();
     assert_eq!(targets.len(), 1);
-    assert_eq!(targets[0].client_id, client.id);
+    assert_eq!(targets[0].agent_id, client.id);
 
     db::delete_schedule_targets(&pool, schedule.id)
         .await
@@ -4199,13 +4188,13 @@ async fn schedule_target_hostnames_for_repo_test(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn get_schedule_targets_for_run_returns_ordered_and_excludes_hidden(pool: PgPool) {
     let (client_a, _, schedule) = create_test_schedule(&pool).await;
-    let client_b = db::insert_client(&pool, "run-target-b", None, "hash-rtb", None)
+    let client_b = db::insert_agent(&pool, "run-target-b", None, "hash-rtb", None)
         .await
         .unwrap();
-    let client_hidden = db::insert_client(&pool, "run-target-hidden", None, "hash-rth", None)
+    let client_hidden = db::insert_agent(&pool, "run-target-hidden", None, "hash-rth", None)
         .await
         .unwrap();
-    db::set_client_hidden(&pool, "run-target-hidden", true)
+    db::set_agent_hidden(&pool, "run-target-hidden", true)
         .await
         .unwrap();
 
@@ -4223,9 +4212,9 @@ async fn get_schedule_targets_for_run_returns_ordered_and_excludes_hidden(pool: 
         .unwrap();
 
     assert_eq!(targets.len(), 2);
-    assert_eq!(targets[0].client_id, client_a.id);
+    assert_eq!(targets[0].agent_id, client_a.id);
     assert_eq!(targets[0].hostname, "sched-host");
-    assert_eq!(targets[1].client_id, client_b.id);
+    assert_eq!(targets[1].agent_id, client_b.id);
     assert_eq!(targets[1].hostname, "run-target-b");
 }
 
@@ -4265,7 +4254,7 @@ async fn reports_for_schedule_test(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn activity_feed_repo_filter(pool: PgPool) {
-    let client = db::insert_client(&pool, "feed-repo-filter-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "feed-repo-filter-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -4290,7 +4279,7 @@ async fn activity_feed_repo_filter(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn activity_feed_hostname_filter(pool: PgPool) {
-    let client = db::insert_client(&pool, "hostname-filter-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "hostname-filter-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -4310,7 +4299,7 @@ async fn activity_feed_hostname_filter(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn activity_feed_days_test(pool: PgPool) {
-    let client = db::insert_client(&pool, "days-feed-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "days-feed-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -4360,7 +4349,7 @@ async fn storage_trends_test(pool: PgPool) {
     let empty_trends = db::get_storage_trends(&pool, None, 7).await.unwrap();
     assert!(empty_trends.iter().all(|t| t.deduplicated_size == 0));
 
-    let client = db::insert_client(&pool, "strend-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "strend-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -4386,7 +4375,7 @@ async fn storage_trends_by_repo_test(pool: PgPool) {
     let empty = db::get_storage_trends_by_repo(&pool, 7).await.unwrap();
     assert!(empty.is_empty());
 
-    let client = db::insert_client(&pool, "strend-repo-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "strend-repo-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -4404,7 +4393,7 @@ async fn storage_trends_by_repo_test(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn archive_names_and_delete_test(pool: PgPool) {
-    let client = db::insert_client(&pool, "archive-del-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "archive-del-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -4413,7 +4402,7 @@ async fn archive_names_and_delete_test(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            client_id: client.id,
+            agent_id: client.id,
             repo_id: repo.id,
             schedule_id: None,
             started_at: now - Duration::minutes(10),
@@ -4440,7 +4429,7 @@ async fn archive_names_and_delete_test(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            client_id: client.id,
+            agent_id: client.id,
             repo_id: repo.id,
             schedule_id: None,
             started_at: now - Duration::minutes(20),
@@ -4491,14 +4480,14 @@ async fn archive_names_and_delete_test(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn list_archive_names_needing_stats_filters_enriched(pool: PgPool) {
-    let client = db::insert_client(&pool, "stats-needing-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "stats-needing-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
     let now = Utc::now();
 
     let base = InsertReportParams {
-        client_id: client.id,
+        agent_id: client.id,
         repo_id: repo.id,
         schedule_id: None,
         started_at: now - Duration::minutes(10),
@@ -4576,7 +4565,7 @@ async fn list_indexed_archive_names_returns_only_done(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn delete_backup_reports_before_test(pool: PgPool) {
-    let client = db::insert_client(&pool, "del-before-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "del-before-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -4585,7 +4574,7 @@ async fn delete_backup_reports_before_test(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            client_id: client.id,
+            agent_id: client.id,
             repo_id: repo.id,
             schedule_id: None,
             started_at: now - Duration::hours(2),
@@ -4615,7 +4604,7 @@ async fn delete_backup_reports_before_test(pool: PgPool) {
         .unwrap();
     assert_eq!(deleted, 1);
 
-    let reports = db::list_reports_for_client(&pool, client.id, None, 10)
+    let reports = db::list_reports_for_agent(&pool, client.id, None, 10)
         .await
         .unwrap();
     assert!(reports.is_empty());
@@ -4626,14 +4615,14 @@ async fn delete_backup_reports_before_keeps_archive_rows(pool: PgPool) {
     // Imported/synced archives keep their original (old) borg start timestamp.
     // Age-based report retention must not delete them, or archives vanish from
     // the UI even though they still exist in borg.
-    let client = db::insert_client(&pool, "retain-archive-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "retain-archive-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
     let old = Utc::now() - Duration::days(365);
 
     let base = InsertReportParams {
-        client_id: client.id,
+        agent_id: client.id,
         repo_id: repo.id,
         schedule_id: None,
         started_at: old,
@@ -4814,7 +4803,7 @@ async fn recovery_clears_stuck_importing_and_error(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn cancel_backup_report_updates_started_row(pool: PgPool) {
-    let client = db::insert_client(&pool, "cancel-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "cancel-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -4828,7 +4817,7 @@ async fn cancel_backup_report_updates_started_row(pool: PgPool) {
         .await
         .unwrap();
 
-    let reports = db::list_reports_for_client(&pool, client.id, None, 10)
+    let reports = db::list_reports_for_agent(&pool, client.id, None, 10)
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
@@ -4837,7 +4826,7 @@ async fn cancel_backup_report_updates_started_row(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn cancel_backup_report_ignores_already_completed(pool: PgPool) {
-    let client = db::insert_client(&pool, "cancel-done-host", None, "hash", None)
+    let client = db::insert_agent(&pool, "cancel-done-host", None, "hash", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -4846,7 +4835,7 @@ async fn cancel_backup_report_ignores_already_completed(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            client_id: client.id,
+            agent_id: client.id,
             repo_id: repo.id,
             schedule_id: None,
             started_at: now - Duration::minutes(5),
@@ -4874,7 +4863,7 @@ async fn cancel_backup_report_ignores_already_completed(pool: PgPool) {
         .await
         .unwrap();
 
-    let reports = db::list_reports_for_client(&pool, client.id, None, 10)
+    let reports = db::list_reports_for_agent(&pool, client.id, None, 10)
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
@@ -4885,7 +4874,7 @@ async fn cancel_backup_report_ignores_already_completed(pool: PgPool) {
 async fn client_insert_with_paths(pool: PgPool) {
     let paths = vec!["/etc".to_string(), "/home".to_string()];
     let excludes = vec!["*.log".to_string()];
-    let client = db::insert_client_with_paths(
+    let client = db::insert_agent_with_paths(
         &pool,
         "paths-host",
         Some("Paths Host"),
@@ -4904,10 +4893,10 @@ async fn client_insert_with_paths(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn run_id_update_scoped_to_client(pool: PgPool) {
-    let client_a = db::insert_client(&pool, "run-host-a", None, "hash-a", None)
+    let client_a = db::insert_agent(&pool, "run-host-a", None, "hash-a", None)
         .await
         .unwrap();
-    let client_b = db::insert_client(&pool, "run-host-b", None, "hash-b", None)
+    let client_b = db::insert_agent(&pool, "run-host-b", None, "hash-b", None)
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
@@ -4927,7 +4916,7 @@ async fn run_id_update_scoped_to_client(pool: PgPool) {
         .unwrap();
 
     // client_b's record must still be 'pending'.
-    let b_reports = db::list_reports_for_client(&pool, client_b.id, None, 10)
+    let b_reports = db::list_reports_for_agent(&pool, client_b.id, None, 10)
         .await
         .unwrap();
     assert_eq!(b_reports.len(), 1);
@@ -4937,7 +4926,7 @@ async fn run_id_update_scoped_to_client(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            client_id: client_a.id,
+            agent_id: client_a.id,
             repo_id: repo.id,
             schedule_id: None,
             started_at: now,
@@ -4962,13 +4951,13 @@ async fn run_id_update_scoped_to_client(pool: PgPool) {
     .unwrap();
 
     // client_b's record must still be 'pending' - not bulk-failed by client_a's report.
-    let b_reports = db::list_reports_for_client(&pool, client_b.id, None, 10)
+    let b_reports = db::list_reports_for_agent(&pool, client_b.id, None, 10)
         .await
         .unwrap();
     assert_eq!(b_reports.len(), 1);
     assert_eq!(b_reports[0].status, "pending");
 
-    let a_reports = db::list_reports_for_client(&pool, client_a.id, None, 10)
+    let a_reports = db::list_reports_for_agent(&pool, client_a.id, None, 10)
         .await
         .unwrap();
     assert_eq!(a_reports.len(), 1);

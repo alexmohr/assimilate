@@ -54,7 +54,7 @@ const mockApiClient = apiClient as {
 
 const mockSchedule = {
   id: 1,
-  client_id: 10,
+  agent_id: 10,
   repo_id: 20,
   schedule_type: 'backup',
   cron_expression: '0 2 * * *',
@@ -101,10 +101,10 @@ function setupEditMode(schedule = mockSchedule): void {
   mockApiClient.get.mockImplementation((url: string) => {
     if (url === `/schedules/${schedule.id}`) return Promise.resolve({ data: schedule })
     if (url === `/schedules/${schedule.id}/targets`)
-      return Promise.resolve({ data: [{ client_id: schedule.client_id, execution_order: 0 }] })
+      return Promise.resolve({ data: [{ agent_id: schedule.agent_id, execution_order: 0 }] })
     if (url === `/schedules/${schedule.id}/sources`)
       return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_host: [] } })
-    if (url === '/clients') return Promise.resolve({ data: mockClients })
+    if (url === '/agents') return Promise.resolve({ data: mockClients })
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
     return Promise.resolve({ data: [] })
   })
@@ -112,7 +112,7 @@ function setupEditMode(schedule = mockSchedule): void {
 
 function setupCreateMode(): void {
   mockApiClient.get.mockImplementation((url: string) => {
-    if (url === '/clients') return Promise.resolve({ data: mockClients })
+    if (url === '/agents') return Promise.resolve({ data: mockClients })
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
     return Promise.resolve({ data: [] })
   })

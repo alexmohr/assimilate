@@ -59,7 +59,7 @@ describe('tunnels api', () => {
     apiClient.post.mockResolvedValue({ data: {} })
 
     await createTunnel({
-      client_id: 1,
+      agent_id: 1,
       ssh_host: 'ssh.example.com',
       ssh_user: 'borg',
       ssh_port: 22,
@@ -68,7 +68,7 @@ describe('tunnels api', () => {
     })
 
     expect(apiClient.post).toHaveBeenCalledWith('/tunnels', {
-      client_id: 1,
+      agent_id: 1,
       ssh_host: 'ssh.example.com',
       ssh_user: 'borg',
       ssh_port: 22,

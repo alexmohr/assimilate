@@ -298,7 +298,7 @@ pub enum ServerToUi {
         message: Option<String>,
     },
     TunnelStatusChanged {
-        client_id: i64,
+        agent_id: i64,
         hostname: String,
         status: TunnelStatus,
     },

@@ -128,10 +128,10 @@ const mockReports = [
 
 function setupApi(reports = mockReports, repos: unknown[] = [], schedules: unknown[] = []): void {
   vi.mocked(apiClient.get).mockImplementation((url: string) => {
-    if (url === '/clients') return Promise.resolve({ data: [mockClient] })
-    if (url === '/clients/test-host/repos') return Promise.resolve({ data: repos })
+    if (url === '/agents') return Promise.resolve({ data: [mockClient] })
+    if (url === '/agents/test-host/repos') return Promise.resolve({ data: repos })
     if (url === '/schedules') return Promise.resolve({ data: schedules })
-    if (url === '/clients/test-host/reports') return Promise.resolve({ data: reports })
+    if (url === '/agents/test-host/reports') return Promise.resolve({ data: reports })
     if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
     if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
     return Promise.resolve({ data: [] })

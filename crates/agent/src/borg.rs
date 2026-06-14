@@ -92,6 +92,17 @@ impl Drop for GracefulChild {
         // id() returns None once the process has been successfully waited on, meaning it has
         // already exited and released any locks. Some(pid) means it may still be running.
         let Some(pid) = self.child.id() else { return };
+
+        // Non-blocking check: if the child has already exited there is nothing to kill and
+        // no lock to break. Skipping the reaper avoids sending SIGKILL to a recycled PID.
+        match self.child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, "borg: try_wait failed; proceeding with SIGTERM");
+            }
+        }
+
         #[cfg(unix)]
         if let Ok(pid) = i32::try_from(pid) {
             let nix_pid = nix::unistd::Pid::from_raw(pid);
@@ -108,14 +119,24 @@ impl Drop for GracefulChild {
                 .name("borg-reaper".to_owned())
                 .spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(30));
+
+                    // Send signal 0 (existence check) before escalating to SIGKILL.
+                    // If the process is already gone, skip SIGKILL to avoid hitting a
+                    // recycled PID.
+                    if nix::sys::signal::kill(nix_pid, None).is_err() {
+                        return;
+                    }
+
                     let _ = nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGKILL);
 
-                    if let Some(repo) = repo {
-                        let _ = std::process::Command::new(&binary)
+                    if let Some(repo) = repo
+                        && let Err(e) = std::process::Command::new(&binary)
                             .arg("break-lock")
                             .arg(&repo)
                             .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-                            .output();
+                            .output()
+                    {
+                        tracing::warn!(error = %e, "borg: break-lock failed after SIGKILL");
                     }
                 });
         }

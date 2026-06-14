@@ -59,7 +59,7 @@ test('dashboard renders content panels', async ({ page }) => {
 // ── Navigation: every main route loads without throwing ─────────────────────
 
 const routes = [
-  { path: '/agents', label: 'agents list' },
+  { path: '/clients', label: 'agents list' },
   { path: '/repos', label: 'repos list' },
   { path: '/schedules', label: 'schedules list' },
   { path: '/activity', label: 'activity log' },
@@ -101,7 +101,7 @@ for (const { path, label } of adminRoutes) {
 
 test('agents page lists seeded agents', async ({ page }) => {
   await loginAsAdmin(page)
-  await page.goto('/agents')
+  await page.goto('/clients')
   // Demo seeds web-server-01, db-server-01, media-store-01
   await expect(page.getByText('web-server-01')).toBeVisible({ timeout: 10_000 })
 })
@@ -115,6 +115,6 @@ test('repos page lists seeded repositories', async ({ page }) => {
 test('schedules page lists seeded schedules', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/schedules')
-  // Demo seeds at least one schedule
-  await expect(page.locator('table, [role="list"], .schedule')).toBeVisible({ timeout: 10_000 })
+  // Demo seeds at least one schedule (cards rendered with .schedule-card class)
+  await expect(page.locator('.schedule-card').first()).toBeVisible({ timeout: 10_000 })
 })

@@ -204,8 +204,12 @@ jobs:
       - name: Start demo environment
         run: |
           docker compose -f .devcontainer/demo/docker-compose.demo.yml up -d
-          for i in $(seq 1 60); do
-            if curl -sf http://localhost:8080/ > /dev/null 2>&1; then break; fi
+          echo "Waiting for demo seed to complete..."
+          for i in $(seq 1 120); do
+            if docker compose -f .devcontainer/demo/docker-compose.demo.yml logs demo 2>&1 | grep -q "Demo ready:"; then
+              echo "Demo is seeded and ready"
+              break
+            fi
             sleep 5
           done
       - name: Run Playwright tests

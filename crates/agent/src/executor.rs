@@ -15,9 +15,7 @@ use chrono::Utc;
 use shared::{
     protocol::AgentToServer,
     ssh::{borg_rsh, borg_rsh_with_known_hosts, known_hosts_host},
-    types::{
-        AgentConfig, BorgEncryption, Compression, DryRunFile, RepoConfig, RepoId, build_repo_url,
-    },
+    types::{AgentConfig, BorgEncryption, DryRunFile, RepoConfig, RepoId, build_repo_url},
 };
 use tokio::{
     sync::{Mutex, Semaphore, mpsc},

@@ -1456,7 +1456,7 @@ pub async fn sync_existing_archives(
         ui_broadcast,
         repo_id,
         0,
-        total as i32,
+        i32::try_from(total).unwrap_or(i32::MAX),
         Some(&importing_msg),
     )
     .await;
@@ -1498,7 +1498,7 @@ pub async fn sync_existing_archives(
         };
         let finished_at = end.unwrap_or(started_at);
 
-        let processed_count = (processed + 1) as i32;
+        let processed_count = i32::try_from(processed + 1).unwrap_or(i32::MAX);
         info!(repo_id, archive = %name, processed = processed_count, total, "archive imported");
         let progress_msg = format!("Imported \u{2018}{name}\u{2019} ({processed_count}/{total})");
         publish_import_progress(
@@ -1506,7 +1506,7 @@ pub async fn sync_existing_archives(
             ui_broadcast,
             repo_id,
             processed_count,
-            total as i32,
+            i32::try_from(total).unwrap_or(i32::MAX),
             Some(&progress_msg),
         )
         .await;
@@ -1534,7 +1534,7 @@ pub async fn sync_existing_archives(
         });
     }
 
-    let imported = report_params.len() as u64;
+    let imported = u64::try_from(report_params.len()).unwrap_or(u64::MAX);
     let finalizing_msg = "Finalizing import\u{2026}".to_string();
     publish_import_progress(
         pool,
@@ -1557,7 +1557,14 @@ pub async fn sync_existing_archives(
         repo_id,
         archive_names.clone(),
     );
-    refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, borg_names.len() as i64).await;
+    refresh_repo_info_stats(
+        pool,
+        &borg_repo,
+        &env,
+        repo_id,
+        i64::try_from(borg_names.len()).unwrap_or(i64::MAX),
+    )
+    .await;
     info!(repo_id, imported, total, "synced existing archives");
     Ok((imported, removed))
 }
@@ -1602,7 +1609,14 @@ pub async fn sync_new_archives(
         .collect();
 
     if new_archives.is_empty() {
-        refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, borg_names.len() as i64).await;
+        refresh_repo_info_stats(
+            pool,
+            &borg_repo,
+            &env,
+            repo_id,
+            i64::try_from(borg_names.len()).unwrap_or(i64::MAX),
+        )
+        .await;
         return Ok((0, 0));
     }
 
@@ -1613,7 +1627,7 @@ pub async fn sync_new_archives(
         ui_broadcast,
         repo_id,
         0,
-        total as i32,
+        i32::try_from(total).unwrap_or(i32::MAX),
         Some(&importing_msg),
     )
     .await;
@@ -1655,7 +1669,7 @@ pub async fn sync_new_archives(
         };
         let finished_at = end.unwrap_or(started_at);
 
-        let processed_count = (processed + 1) as i32;
+        let processed_count = i32::try_from(processed + 1).unwrap_or(i32::MAX);
         info!(repo_id, archive = %name, processed = processed_count, total, "archive imported");
         let progress_msg = format!("Imported \u{2018}{name}\u{2019} ({processed_count}/{total})");
         publish_import_progress(
@@ -1663,7 +1677,7 @@ pub async fn sync_new_archives(
             ui_broadcast,
             repo_id,
             processed_count,
-            total as i32,
+            i32::try_from(total).unwrap_or(i32::MAX),
             Some(&progress_msg),
         )
         .await;
@@ -1691,7 +1705,7 @@ pub async fn sync_new_archives(
         });
     }
 
-    let added = report_params.len() as u64;
+    let added = u64::try_from(report_params.len()).unwrap_or(u64::MAX);
     let finalizing_msg = "Finalizing import\u{2026}".to_string();
     publish_import_progress(
         pool,
@@ -1723,7 +1737,14 @@ pub async fn sync_new_archives(
         "incremental sync",
     )
     .await;
-    refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, borg_names.len() as i64).await;
+    refresh_repo_info_stats(
+        pool,
+        &borg_repo,
+        &env,
+        repo_id,
+        i64::try_from(borg_names.len()).unwrap_or(i64::MAX),
+    )
+    .await;
     info!(repo_id, added, total, "incremental sync complete");
     Ok((added, 0))
 }

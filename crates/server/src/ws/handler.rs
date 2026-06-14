@@ -412,6 +412,10 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 );
             }
 
+            let repo_name = db::get_repo_name(&state.pool, report.repo_id.0)
+                .await
+                .unwrap_or_else(|_| report.repo_id.0.to_string());
+
             if let Ok(Some(quota)) = db::quota::get_quota(&state.pool, report.repo_id.0).await {
                 let quota_status = db::quota::evaluate_quota(&quota, report.deduplicated_size);
                 if !matches!(quota_status, db::quota::QuotaStatus::Ok) {
@@ -436,12 +440,12 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                     let message = format!(
                         "Repository quota {quota_label} for repo {}: deduplicated size {} bytes \
                          exceeds configured limits",
-                        report.repo_id.0, report.deduplicated_size,
+                        repo_name, report.deduplicated_size,
                     );
                     let quota_event = NotificationEvent {
                         event_type,
                         hostname: hostname.to_owned(),
-                        repo_name: report.repo_id.0.to_string(),
+                        repo_name: repo_name.clone(),
                         status: quota_label.to_owned(),
                         error_message: Some(message),
                         timestamp: chrono::Utc::now(),
@@ -467,7 +471,7 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
             let event = NotificationEvent {
                 event_type,
                 hostname: hostname.to_owned(),
-                repo_name: report.repo_id.0.to_string(),
+                repo_name,
                 status: status.to_string(),
                 error_message: notification_error_message,
                 timestamp: chrono::Utc::now(),

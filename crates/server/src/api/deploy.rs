@@ -160,7 +160,7 @@ pub async fn deploy_agent(
     if !uses_tunnel && already_current {
         let version = available_version
             .clone()
-            .or_else(|| client.agent_version.clone());
+            .or_else(|| agent.agent_version.clone());
         info!(
             hostname = %hostname,
             "agent already at latest version, skipping deploy"

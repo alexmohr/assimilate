@@ -24,7 +24,7 @@ defineProps<{ protection: DashboardOverview['protection'] }>()
       <span>eligible hosts protected</span>
     </RouterLink>
     <p
-      v-if="protection.unassigned_hosts.length === 0 && protection.never_succeeded_targets === 0"
+      v-if="protection.unassigned_agents.length === 0 && protection.never_succeeded_targets === 0"
       class="coverage-ok"
     >
       All eligible hosts protected
@@ -33,7 +33,7 @@ defineProps<{ protection: DashboardOverview['protection'] }>()
       <div>
         <RouterLink to="/agents?coverage=unassigned">
           <dt>Unassigned hosts</dt>
-          <dd>{{ protection.unassigned_hosts.length }}</dd>
+          <dd>{{ protection.unassigned_agents.length }}</dd>
         </RouterLink>
       </div>
       <div>
@@ -45,16 +45,16 @@ defineProps<{ protection: DashboardOverview['protection'] }>()
       <div>
         <RouterLink to="/agents?coverage=disabled-only">
           <dt>Hosts covered only by disabled schedules</dt>
-          <dd>{{ protection.disabled_only_hosts.length }}</dd>
+          <dd>{{ protection.disabled_only_agents.length }}</dd>
         </RouterLink>
       </div>
     </dl>
     <div
-      v-if="protection.unassigned_hosts.length > 0"
+      v-if="protection.unassigned_agents.length > 0"
       class="host-links"
     >
       <RouterLink
-        v-for="host in protection.unassigned_hosts"
+        v-for="host in protection.unassigned_agents"
         :key="host.agent_id"
         :to="`/agents/${encodeURIComponent(host.hostname)}`"
       >

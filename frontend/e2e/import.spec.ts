@@ -124,6 +124,75 @@ test('Cancel Import button appears when repo is in importing state', async ({ pa
   await expect(cancelBtn.or(resyncBtn)).toBeVisible({ timeout: 15_000 })
 })
 
+// ── Full resync ──────────────────────────────────────────────────────────────
+
+test('full resync completes and preserves archives', async ({ page }) => {
+  await loginAsAdmin(page)
+  await navigateToRepo(page, 'server-daily')
+
+  // Wait for the page to settle and button to be ready
+  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  await expect(resyncBtn).toBeVisible({ timeout: 10_000 })
+  await resyncBtn.click()
+
+  // Button immediately switches to "Syncing..." while the request is in flight
+  await expect(page.getByRole('button', { name: /syncing/i })).toBeVisible({ timeout: 5_000 })
+
+  // Sync is synchronous server-side; toast fires when it resolves
+  await expect(page.getByText('Full resync started.')).toBeVisible({ timeout: 120_000 })
+
+  // Button must return to its resting state
+  await expect(resyncBtn).toBeVisible({ timeout: 5_000 })
+
+  // Archives must still be present — resync must not delete everything
+  await expect(page.locator('table tbody tr, .archive-row').first()).toBeVisible()
+})
+
+test('full resync preserves unmatched-banner', async ({ page }) => {
+  await loginAsAdmin(page)
+  await navigateToRepo(page, 'server-daily')
+
+  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  await expect(resyncBtn).toBeVisible({ timeout: 10_000 })
+  await resyncBtn.click()
+
+  await expect(page.getByText('Full resync started.')).toBeVisible({ timeout: 120_000 })
+
+  // Unmatched old-webserver archive must survive a resync — it has no pattern match
+  await expect(page.locator('.unmatched-banner')).toBeVisible({ timeout: 10_000 })
+})
+
+test('full resync shows error toast on failure, not /error page', async ({ page }) => {
+  await loginAsAdmin(page)
+
+  // Navigate to a repo then break its path via API to provoke a sync failure
+  const reposRes = await page.request.get('/api/repos')
+  const repos = (await reposRes.json()) as Array<{ id: number; name: string }>
+  const repo = repos.find((r) => r.name === 'server-daily')
+  if (!repo) throw new Error('server-daily repo not found')
+
+  // Patch the repo to an invalid path
+  await page.request.put(`/api/repos/${repo.id}`, {
+    data: { repo_path: '/nonexistent/broken/path' },
+  })
+
+  await page.goto(`/repos/${repo.id}`)
+  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  await expect(resyncBtn).toBeVisible({ timeout: 10_000 })
+  await resyncBtn.click()
+
+  // Should show an error toast, NOT navigate to /error
+  await expect(page.locator('.toast, [class*="toast"], [role="alert"]')).toBeVisible({
+    timeout: 30_000,
+  })
+  await expect(page).not.toHaveURL(/\/error/)
+
+  // Restore the repo path
+  await page.request.put(`/api/repos/${repo.id}`, {
+    data: { repo_path: '/backup/repos/server-daily' },
+  })
+})
+
 // ── Archive browsing ─────────────────────────────────────────────────────────
 
 test('clicking an archive opens the file browser', async ({ page }) => {

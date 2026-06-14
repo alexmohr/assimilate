@@ -146,16 +146,12 @@ pub async fn deploy_agent(
         .and_then(|s| s.parse::<i32>().ok())
         .filter(|&n| n > 0);
 
-    let already_current = if let (Some(server_count), Some(agent_count)) =
-        (server_commit_count, agent.agent_commit_count)
-    {
-        agent_count >= server_count
-    } else {
-        available_version
-            .as_deref()
-            .zip(agent.agent_version.as_deref())
-            .is_some_and(|(av, dv)| av == dv)
-    };
+    let already_current = agent_is_current(
+        server_commit_count,
+        agent.agent_commit_count,
+        available_version.as_deref(),
+        agent.agent_version.as_deref(),
+    );
 
     if !uses_tunnel && already_current {
         let version = available_version
@@ -233,6 +229,22 @@ pub async fn deploy_agent(
     }
 }
 #[cfg(test)]
+fn agent_is_current(
+    server_commit_count: Option<i32>,
+    agent_commit_count: Option<i32>,
+    available_version: Option<&str>,
+    agent_version: Option<&str>,
+) -> bool {
+    if let (Some(server_count), Some(agent_count)) = (server_commit_count, agent_commit_count) {
+        agent_count >= server_count
+    } else {
+        available_version
+            .zip(agent_version)
+            .is_some_and(|(av, dv)| av == dv)
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -281,5 +293,22 @@ mod tests {
         unsafe { std::env::remove_var("AGENT_BINARY_DIR") };
         let path = agent_binary_dir();
         assert!(path.is_absolute());
+    }
+
+    #[test]
+    fn agent_is_current_uses_commit_count_when_both_present() {
+        assert!(agent_is_current(Some(10), Some(10), None, None));
+        assert!(agent_is_current(Some(10), Some(11), None, None));
+        assert!(!agent_is_current(Some(11), Some(10), None, None));
+    }
+
+    #[test]
+    fn agent_is_current_falls_back_to_version_string() {
+        assert!(agent_is_current(None, None, Some("1.2.3"), Some("1.2.3")));
+        assert!(!agent_is_current(None, None, Some("1.2.4"), Some("1.2.3")));
+        assert!(!agent_is_current(None, None, None, Some("1.2.3")));
+        // falls back to version when only one count is available
+        assert!(agent_is_current(Some(5), None, Some("1.2.3"), Some("1.2.3")));
+        assert!(!agent_is_current(Some(5), None, Some("1.2.4"), Some("1.2.3")));
     }
 }

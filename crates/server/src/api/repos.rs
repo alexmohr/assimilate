@@ -1198,7 +1198,9 @@ async fn run_borg_info_with_retry(
             }
         }
     }
-    unreachable!()
+    Err(ApiError::Internal(
+        "borg info failed after maximum retries".to_owned(),
+    ))
 }
 
 async fn run_borg_info_once(repo_url: &str, passphrase: &str) -> Result<BorgInfoResult, ApiError> {
@@ -1476,7 +1478,9 @@ async fn run_borg_list_with_retry(
             }
         }
     }
-    unreachable!()
+    Err(ApiError::Internal(
+        "borg list failed after maximum retries".to_owned(),
+    ))
 }
 
 /// Extracts lock holder info from borg's LockTimeout stderr output.

@@ -288,6 +288,10 @@ async fn main() -> Result<(), StartupError> {
             post(api::repos::accept_repo_host_key),
         )
         .route(
+            "/api/repos/{repo_id}/schedules",
+            get(api::repos::list_schedules_for_repo),
+        )
+        .route(
             "/api/repos/{repo_id}/confirm-relocation",
             post(api::repos::confirm_relocation),
         )

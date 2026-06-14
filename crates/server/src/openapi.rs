@@ -82,6 +82,7 @@ use crate::{
         crate::api::repos::rescan_repo,
         crate::api::repos::sync_repo,
         crate::api::repos::reset_import,
+        crate::api::repos::list_schedules_for_repo,
         crate::api::archives::list_archives,
         crate::api::archives::archive_info,
         crate::api::archives::delete_archive,

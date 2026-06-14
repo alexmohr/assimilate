@@ -124,7 +124,18 @@ pub async fn check_repo_permission(
 
     let effective = db::get_effective_permissions(pool, auth.user_id).await?;
     if effective.can_view_all_repos {
-        return Ok(());
+        let view_only = db::RepoPermissionRow {
+            user_id: auth.user_id,
+            repo_id,
+            can_view: true,
+            can_backup: false,
+            can_modify_schedules: false,
+            can_extract: false,
+            can_delete: false,
+        };
+        if check(&view_only) {
+            return Ok(());
+        }
     }
 
     Err(ApiError::Forbidden(

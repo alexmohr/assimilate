@@ -228,7 +228,6 @@ pub async fn deploy_agent(
         })),
     }
 }
-#[cfg(test)]
 fn agent_is_current(
     server_commit_count: Option<i32>,
     agent_commit_count: Option<i32>,
@@ -308,7 +307,17 @@ mod tests {
         assert!(!agent_is_current(None, None, Some("1.2.4"), Some("1.2.3")));
         assert!(!agent_is_current(None, None, None, Some("1.2.3")));
         // falls back to version when only one count is available
-        assert!(agent_is_current(Some(5), None, Some("1.2.3"), Some("1.2.3")));
-        assert!(!agent_is_current(Some(5), None, Some("1.2.4"), Some("1.2.3")));
+        assert!(agent_is_current(
+            Some(5),
+            None,
+            Some("1.2.3"),
+            Some("1.2.3")
+        ));
+        assert!(!agent_is_current(
+            Some(5),
+            None,
+            Some("1.2.4"),
+            Some("1.2.3")
+        ));
     }
 }

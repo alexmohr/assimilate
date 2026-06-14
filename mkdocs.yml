@@ -50,7 +50,7 @@ nav:
       - Access Control: access-control.md
       - Audit Log: audit-log.md
   - SSH Agent Forwarding: ssh-agent-forwarding.md
-  - Host & Agent Management: hosts.md
+  - Agent Management: agents.md
   - Repository Management: repositories.md
   - Scheduling & Retention: scheduling.md
   - Archive Browsing: archives.md

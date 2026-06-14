@@ -102,23 +102,23 @@ For large repositories with many archives, the initial import and first full ind
 
 ### Archive-to-Host Matching
 
-During import, each archive's hostname is resolved to a registered client:
+During import, each archive's hostname is resolved to a registered agent:
 
-1. **Exact match** — the archive hostname matches a client's hostname directly.
-2. **Pattern match** — the hostname matches a glob pattern configured on a client (see [Hosts — Hostname Aliases](hosts.md#hostname-aliases-glob-patterns)).
-3. **Unmatched** — a placeholder client is created with an "(imported)" badge.
+1. **Exact match** — the archive hostname matches an agent's hostname directly.
+2. **Pattern match** — the hostname matches a glob pattern configured on an agent (see [Agent Management — Hostname Aliases](agents.md#hostname-aliases-glob-patterns)).
+3. **Unmatched** — a placeholder agent is created with an "(imported)" badge.
 
 Unmatched archives can be resolved later by adding hostname patterns and running a re-scan.
 
 ## Re-scanning Unmatched Archives
 
-After adding hostname aliases to clients, you can re-scan a repository to match previously unmatched archives against the updated patterns.
+After adding hostname aliases to agents, you can re-scan a repository to match previously unmatched archives against the updated patterns.
 
 1. Open the repository detail page.
 2. Click **Re-scan Archives** (admin only).
 3. The server evaluates all unmatched archives against current hostname patterns.
 4. A toast shows how many archives were matched and how many remain unmatched.
-5. Placeholder clients with no remaining archives are automatically cleaned up.
+5. Placeholder agents with no remaining archives are automatically cleaned up.
 
 ## Encryption Migration
 
@@ -182,7 +182,7 @@ For general-purpose backups, `lz4` is the default and works well. Use `zstd,3` w
 
 ## Repository Tags
 
-Tags are short labels that help organize repositories when managing many hosts. A repository can have multiple tags.
+Tags are short labels that help organize repositories when managing many agents. A repository can have multiple tags.
 
 Tags are set in the repository edit form and are visible in the repository list. They have no effect on backup behavior — they are purely organizational.
 

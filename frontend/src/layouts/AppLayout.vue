@@ -59,7 +59,7 @@ const settingsOpen = ref(false)
 
 const mainNav = [
   { to: '/', label: 'Dashboard', icon: 'dashboard' },
-  { to: '/clients', label: 'Clients', icon: 'hosts' },
+  { to: '/agents', label: 'Agents', icon: 'hosts' },
   { to: '/repos', label: 'Repos', icon: 'repos' },
   { to: '/schedules', label: 'Schedules', icon: 'schedules' },
   { to: '/tunnels', label: 'Tunnels', icon: 'tunnels' },

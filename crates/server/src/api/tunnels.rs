@@ -18,7 +18,7 @@ use crate::{
 
 #[derive(Debug, Deserialize)]
 pub struct CreateTunnelRequest {
-    pub client_id: i64,
+    pub agent_id: i64,
     pub ssh_host: String,
     #[serde(default = "super::helpers::default_ssh_user")]
     pub ssh_user: String,
@@ -92,13 +92,13 @@ pub async fn get_tunnel(
     Ok(Json(TunnelResponse { tunnel, status }))
 }
 
-pub async fn get_client_tunnel(
+pub async fn get_agent_tunnel(
     State(state): State<AppState>,
     _admin: RequireAdmin,
     Path(hostname): Path<String>,
 ) -> Result<Json<TunnelResponse>, ApiError> {
-    let client = db::get_client_by_hostname(&state.pool, &hostname).await?;
-    let tunnel = db::get_tunnel_by_client_id(&state.pool, client.id).await?;
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    let tunnel = db::get_tunnel_by_agent_id(&state.pool, agent.id).await?;
     let status = state
         .tunnel_manager
         .tunnel_status(tunnel.id)
@@ -120,7 +120,7 @@ pub async fn create_tunnel(
     let tunnel = db::insert_tunnel(
         &state.pool,
         &NewSshTunnel {
-            client_id: req.client_id,
+            agent_id: req.agent_id,
             ssh_host: req.ssh_host,
             ssh_user: req.ssh_user,
             ssh_port: req.ssh_port,

@@ -14,7 +14,7 @@ const mockBrowserArchives = ref<
     original_size: number
     deduplicated_size: number
     matched: boolean | null
-    client_hostname: string | null
+    agent_hostname: string | null
   }>
 >([])
 const mockSortedArchives = ref<typeof mockBrowserArchives.value>([])
@@ -330,7 +330,7 @@ describe('RepoDetailView', () => {
         original_size: 1_000,
         deduplicated_size: 500,
         matched: true,
-        client_hostname: 'web-server-01',
+        agent_hostname: 'web-server-01',
       },
     ]
     mockSortedArchives.value = [...mockBrowserArchives.value]

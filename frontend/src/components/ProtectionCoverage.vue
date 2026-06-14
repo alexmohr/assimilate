@@ -18,7 +18,7 @@ defineProps<{ protection: DashboardOverview['protection'] }>()
     <h2 class="panel-title">Protection Coverage</h2>
     <RouterLink
       class="coverage-score"
-      to="/clients?coverage=protected"
+      to="/agents?coverage=protected"
     >
       <strong>{{ protection.protected_hosts }}/{{ protection.eligible_hosts }}</strong>
       <span>eligible hosts protected</span>
@@ -31,19 +31,19 @@ defineProps<{ protection: DashboardOverview['protection'] }>()
     </p>
     <dl class="coverage-facts">
       <div>
-        <RouterLink to="/clients?coverage=unassigned">
+        <RouterLink to="/agents?coverage=unassigned">
           <dt>Unassigned hosts</dt>
           <dd>{{ protection.unassigned_hosts.length }}</dd>
         </RouterLink>
       </div>
       <div>
-        <RouterLink to="/clients?coverage=never-succeeded">
+        <RouterLink to="/agents?coverage=never-succeeded">
           <dt>Targets never succeeded</dt>
           <dd>{{ protection.never_succeeded_targets }}</dd>
         </RouterLink>
       </div>
       <div>
-        <RouterLink to="/clients?coverage=disabled-only">
+        <RouterLink to="/agents?coverage=disabled-only">
           <dt>Hosts covered only by disabled schedules</dt>
           <dd>{{ protection.disabled_only_hosts.length }}</dd>
         </RouterLink>
@@ -55,8 +55,8 @@ defineProps<{ protection: DashboardOverview['protection'] }>()
     >
       <RouterLink
         v-for="host in protection.unassigned_hosts"
-        :key="host.client_id"
-        :to="`/clients/${encodeURIComponent(host.hostname)}`"
+        :key="host.agent_id"
+        :to="`/agents/${encodeURIComponent(host.hostname)}`"
       >
         {{ host.hostname }}
       </RouterLink>

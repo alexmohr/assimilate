@@ -8,7 +8,7 @@ import { ref, computed } from 'vue'
 import { apiClient } from '../api/client'
 import { extractError } from '../utils/error'
 
-interface ClientRow {
+interface AgentRow {
   id: number
   hostname: string
   display_name: string | null
@@ -20,8 +20,8 @@ interface MergeResult {
 }
 
 const props = defineProps<{
-  source: ClientRow
-  allClients: ClientRow[]
+  source: AgentRow
+  allAgents: AgentRow[]
 }>()
 
 const emit = defineEmits<{
@@ -35,8 +35,8 @@ const patternValue = ref(`${props.source.hostname}*`)
 const mergeLoading = ref(false)
 const mergeError = ref<string | null>(null)
 
-const realClients = computed<ClientRow[]>(() =>
-  props.allClients.filter((c) => c.id !== props.source.id && !c.is_imported),
+const realAgents = computed<AgentRow[]>(() =>
+  props.allAgents.filter((c) => c.id !== props.source.id && !c.is_imported),
 )
 
 async function confirmMerge(): Promise<void> {
@@ -49,7 +49,7 @@ async function confirmMerge(): Promise<void> {
       body.create_pattern = patternValue.value.trim()
     }
     await apiClient.post<MergeResult>(
-      `/clients/${targetHostname.value}/merge-from/${props.source.id}`,
+      `/agents/${targetHostname.value}/merge-from/${props.source.id}`,
       body,
     )
     emit('merged')
@@ -68,7 +68,7 @@ async function confirmMerge(): Promise<void> {
   >
     <div class="dialog dialog-sm">
       <div class="dialog-header">
-        <h2 class="dialog-title">Merge Client</h2>
+        <h2 class="dialog-title">Merge Agent</h2>
         <button
           class="close-btn"
           @click="emit('cancel')"
@@ -91,9 +91,9 @@ async function confirmMerge(): Promise<void> {
             v-model="targetHostname"
             class="input"
           >
-            <option value="">Select target client...</option>
+            <option value="">Select target agent...</option>
             <option
-              v-for="c in realClients"
+              v-for="c in realAgents"
               :key="c.id"
               :value="c.hostname"
             >

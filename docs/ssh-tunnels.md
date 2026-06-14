@@ -112,7 +112,7 @@ Reverse SSH tunnels are useful when the network topology prevents the agent from
 - **Strict egress firewall on agent** — Only outbound SSH (port 22) is allowed; the agent cannot open a WebSocket to the server's port.
 - **Multi-site deployments** — Agents at remote sites connect back through tunnels without requiring VPN or firewall changes.
 
-See [Hosts](hosts.md) for how to register agent machines, and [Repositories](repositories.md) for configuring borg repositories on those machines.
+See [Agent Management](agents.md) for how to register agent machines, and [Repositories](repositories.md) for configuring borg repositories on those machines.
 
 ## Security Considerations
 

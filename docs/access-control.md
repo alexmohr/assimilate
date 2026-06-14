@@ -21,7 +21,7 @@ graph TD
 
 ## Roles
 
-A role is a named bundle of **system-wide capabilities**. Each user is assigned exactly one role. Roles control whether a user can create clients, manage repositories, configure schedules, and similar administrative actions.
+A role is a named bundle of **system-wide capabilities**. Each user is assigned exactly one role. Roles control whether a user can create agents, manage repositories, configure schedules, and similar administrative actions.
 
 Roles do **not** control which specific repositories a user can see or interact with — that is the job of groups and per-repo permissions.
 
@@ -34,7 +34,7 @@ Assimilate ships with three built-in roles that cannot be deleted:
 | Role | Description |
 |------|-------------|
 | **admin** | Full access to everything. Bypasses all permission checks. |
-| **operator** | Can create and manage clients, repos, and schedules but cannot manage users or system settings. |
+| **operator** | Can create and manage agents, repos, and schedules but cannot manage users or system settings. |
 | **viewer** | Read-only access. Cannot create or modify resources. |
 
 ### Custom Roles
@@ -43,9 +43,9 @@ Admins can create custom roles with any combination of these capabilities:
 
 | Capability | Effect |
 |------------|--------|
-| Create Client | Create new backup clients |
-| Delete Client | Delete any client |
-| Delete Own Client | Delete only clients the user created |
+| Create Agent | Create new backup agents |
+| Delete Agent | Delete any agent |
+| Delete Own Agent | Delete only agents the user created |
 | Create Repo | Register new borg repositories |
 | Delete Repo | Delete any repository |
 | Delete Own Repo | Delete only repositories the user created |
@@ -105,7 +105,7 @@ When evaluating whether a user can perform an action on a repository:
 
 | Question | Answer |
 |----------|--------|
-| "Should this user be able to create new clients?" | **Role** — this is a system capability |
+| "Should this user be able to create new agents?" | **Role** — this is a system capability |
 | "Should this user see repository X?" | **Group** (or direct grant) — this is per-repo access |
 | "Should this team share the same repo access?" | **Group** — add all team members to one group |
 | "Should this user be able to delete schedules?" | **Role** — this is a system capability |

@@ -70,7 +70,7 @@ async fn ensure_manage_tags(state: &AppState, auth: &AuthUser) -> Result<(), Api
     tag = "Tags",
     operation_id = "listTags",
     summary = "List tags by scope",
-    params(("scope" = String, Query, description = "Tag scope (e.g. 'repo' or 'host')")),
+    params(("scope" = String, Query, description = "Tag scope (e.g. 'repo' or 'agent')")),
     responses(
         (status = 200, description = "List of tags", body = Vec<crate::db::TagRow>),
         (status = 401, description = "Unauthorized"),
@@ -180,7 +180,7 @@ pub async fn get_repo_tags(
 
 #[utoipa::path(
     put,
-    path = "/api/clients/{hostname}/tags",
+    path = "/api/agents/{hostname}/tags",
     tag = "Tags",
     operation_id = "setHostTags",
     summary = "Set tags for a host",
@@ -192,20 +192,20 @@ pub async fn get_repo_tags(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
-pub async fn set_host_tags(
+pub async fn set_agent_tags(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
     ApiJson(req): ApiJson<SetTagsRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let client = db::get_client_by_hostname(&state.pool, &hostname).await?;
-    db::set_host_tags(&state.pool, client.id, &req.tag_ids).await?;
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    db::set_agent_tags(&state.pool, agent.id, &req.tag_ids).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 #[utoipa::path(
     get,
-    path = "/api/clients/{hostname}/tags",
+    path = "/api/agents/{hostname}/tags",
     tag = "Tags",
     operation_id = "getHostTags",
     summary = "Get tags for a host",
@@ -216,34 +216,34 @@ pub async fn set_host_tags(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
-pub async fn get_host_tags(
+pub async fn get_agent_tags(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
 ) -> Result<Json<Vec<db::TagRow>>, ApiError> {
-    let client = db::get_client_by_hostname(&state.pool, &hostname).await?;
-    let tags = db::list_tags_for_host(&state.pool, client.id).await?;
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    let tags = db::list_tags_for_agent(&state.pool, agent.id).await?;
     Ok(Json(tags))
 }
 
 #[utoipa::path(
     get,
-    path = "/api/host-tags",
+    path = "/api/agent-tags",
     tag = "Tags",
     operation_id = "listHostTagAssociations",
     summary = "List all host-tag associations",
     responses(
         (status = 200, description = "Host-tag associations",
-            body = Vec<crate::db::HostTagRow>),
+            body = Vec<crate::db::AgentTagRow>),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
-pub async fn list_host_tag_associations(
+pub async fn list_agent_tag_associations(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
-) -> Result<Json<Vec<db::HostTagRow>>, ApiError> {
-    let tags = db::list_all_host_tags(&state.pool).await?;
+) -> Result<Json<Vec<db::AgentTagRow>>, ApiError> {
+    let tags = db::list_all_agent_tags(&state.pool).await?;
     Ok(Json(tags))
 }
 

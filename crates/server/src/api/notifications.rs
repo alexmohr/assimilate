@@ -53,7 +53,7 @@ pub struct NotificationRule {
     pub channel_id: i64,
     pub event_type: String,
     pub repo_id: Option<i64>,
-    pub client_id: Option<i64>,
+    pub agent_id: Option<i64>,
     pub enabled: bool,
 }
 
@@ -62,7 +62,7 @@ pub struct CreateRuleRequest {
     pub channel_id: i64,
     pub event_type: String,
     pub repo_id: Option<i64>,
-    pub client_id: Option<i64>,
+    pub agent_id: Option<i64>,
     pub enabled: Option<bool>,
 }
 
@@ -332,7 +332,7 @@ pub async fn list_rules(
     _admin: RequireAdmin,
 ) -> Result<Json<Vec<NotificationRule>>, ApiError> {
     let rules: Vec<NotificationRule> = sqlx::query_as(
-        "SELECT id, channel_id, event_type, repo_id, client_id, enabled FROM notification_rules \
+        "SELECT id, channel_id, event_type, repo_id, agent_id, enabled FROM notification_rules \
          ORDER BY id",
     )
     .fetch_all(&state.pool)
@@ -350,15 +350,15 @@ pub async fn create_rule(
     let enabled = req.enabled.unwrap_or(true);
     let rule: NotificationRule = sqlx::query_as(
         r#"
-        INSERT INTO notification_rules (channel_id, event_type, repo_id, client_id, enabled)
+        INSERT INTO notification_rules (channel_id, event_type, repo_id, agent_id, enabled)
         VALUES ($1, $2, $3, $4, $5)
-        RETURNING id, channel_id, event_type, repo_id, client_id, enabled
+        RETURNING id, channel_id, event_type, repo_id, agent_id, enabled
         "#,
     )
     .bind(req.channel_id)
     .bind(&req.event_type)
     .bind(req.repo_id)
-    .bind(req.client_id)
+    .bind(req.agent_id)
     .bind(enabled)
     .fetch_one(&state.pool)
     .await?;

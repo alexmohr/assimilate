@@ -14,7 +14,7 @@ defineProps<{ findings: DashboardFinding[] }>()
 function destinationRoute(destination: DashboardDestination): RouteLocationRaw {
   switch (destination.kind) {
     case 'host':
-      return `/clients/${encodeURIComponent(destination.hostname)}`
+      return `/agents/${encodeURIComponent(destination.hostname)}`
     case 'schedule':
       return `/schedules/${destination.schedule_id}`
     case 'repository':

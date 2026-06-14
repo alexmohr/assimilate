@@ -27,7 +27,7 @@ import type {
   UpdateTunnelRequest,
 } from '../types/tunnel'
 
-interface ClientOption {
+interface AgentOption {
   id: number
   hostname: string
 }
@@ -36,11 +36,11 @@ const tunnels = ref<TunnelWithStatus[]>([])
 const loading = ref(false)
 const error = ref('')
 
-const clients = ref<ClientOption[]>([])
+const agents = ref<AgentOption[]>([])
 
 const showAddDialog = ref(false)
 const addForm = ref<CreateTunnelRequest>({
-  client_id: 0,
+  agent_id: 0,
   ssh_host: '',
   ssh_user: 'root',
   ssh_port: 22,
@@ -97,23 +97,23 @@ async function loadTunnels(): Promise<void> {
   }
 }
 
-async function loadClients(): Promise<void> {
+async function loadAgents(): Promise<void> {
   try {
-    const res = await apiClient.get<ClientOption[]>('/clients')
-    clients.value = res.data
+    const res = await apiClient.get<AgentOption[]>('/agents')
+    agents.value = res.data
   } catch (e: unknown) {
-    logger.error('loadClients failed', e)
+    logger.error('loadAgents failed', e)
   }
 }
 
-function availableClients(): ClientOption[] {
-  const usedIds = new Set(tunnels.value.map((t) => t.client_id))
-  return clients.value.filter((c) => !usedIds.has(c.id))
+function availableAgents(): AgentOption[] {
+  const usedIds = new Set(tunnels.value.map((t) => t.agent_id))
+  return agents.value.filter((c) => !usedIds.has(c.id))
 }
 
 function openAdd(): void {
   addForm.value = {
-    client_id: 0,
+    agent_id: 0,
     ssh_host: '',
     ssh_user: 'root',
     ssh_port: 22,
@@ -129,8 +129,8 @@ async function submitAdd(): Promise<void> {
     addError.value = 'SSH host is required'
     return
   }
-  if (!addForm.value.client_id) {
-    addError.value = 'Client is required'
+  if (!addForm.value.agent_id) {
+    addError.value = 'Agent is required'
     return
   }
   addLoading.value = true
@@ -140,7 +140,7 @@ async function submitAdd(): Promise<void> {
     const withStatus: TunnelWithStatus = {
       ...created,
       status: 'disconnected',
-      client_hostname: clients.value.find((c) => c.id === created.client_id)?.hostname,
+      agent_hostname: agents.value.find((c) => c.id === created.agent_id)?.hostname,
     }
     tunnels.value.push(withStatus)
     showAddDialog.value = false
@@ -201,7 +201,7 @@ async function submitEdit(): Promise<void> {
 
 function openDelete(tunnel: TunnelWithStatus): void {
   deleteId.value = tunnel.id
-  deleteHostname.value = tunnel.client_hostname ?? String(tunnel.client_id)
+  deleteHostname.value = tunnel.agent_hostname ?? String(tunnel.agent_id)
   deleteError.value = ''
   showDeleteDialog.value = true
 }
@@ -256,15 +256,15 @@ useEscapeKey(showErrorDialog, () => {
 const { onMessage } = useWebSocket()
 onMessage(
   'TunnelStatusChanged',
-  (data: { client_id: number; hostname: string; status: TunnelStatus }) => {
-    const tunnel = tunnels.value.find((t) => t.client_id === data.client_id)
+  (data: { agent_id: number; hostname: string; status: TunnelStatus }) => {
+    const tunnel = tunnels.value.find((t) => t.agent_id === data.agent_id)
     if (tunnel) tunnel.status = data.status
   },
 )
 
 onMounted(() => {
   loadTunnels().catch(logger.error)
-  loadClients().catch(logger.error)
+  loadAgents().catch(logger.error)
 })
 </script>
 
@@ -309,7 +309,7 @@ onMounted(() => {
       <table class="tunnels-table">
         <thead>
           <tr>
-            <th>Client</th>
+            <th>Agent</th>
             <th>SSH Host</th>
             <th>SSH User</th>
             <th>SSH Port</th>
@@ -323,7 +323,7 @@ onMounted(() => {
             v-for="tunnel in tunnels"
             :key="tunnel.id"
           >
-            <td class="mono">{{ tunnel.client_hostname ?? tunnel.client_id }}</td>
+            <td class="mono">{{ tunnel.agent_hostname ?? tunnel.agent_id }}</td>
             <td class="mono">{{ tunnel.ssh_host }}</td>
             <td class="mono">{{ tunnel.ssh_user }}</td>
             <td class="mono">{{ tunnel.ssh_port }}</td>
@@ -394,23 +394,23 @@ onMounted(() => {
           </div>
           <div class="dialog-body">
             <div class="field">
-              <label class="field-label">Client <span class="required">*</span></label>
+              <label class="field-label">Agent <span class="required">*</span></label>
               <select
-                v-model.number="addForm.client_id"
+                v-model.number="addForm.agent_id"
                 class="input"
               >
                 <option
                   :value="0"
                   disabled
                 >
-                  Select a client...
+                  Select an agent...
                 </option>
                 <option
-                  v-for="client in availableClients()"
-                  :key="client.id"
-                  :value="client.id"
+                  v-for="agent in availableAgents()"
+                  :key="agent.id"
+                  :value="agent.id"
                 >
-                  {{ client.hostname }}
+                  {{ agent.hostname }}
                 </option>
               </select>
             </div>
@@ -480,7 +480,7 @@ onMounted(() => {
             <button
               class="btn btn-primary"
               :disabled="
-                addLoading || !addForm.client_id || !addForm.ssh_host.trim() || !addForm.tunnel_port
+                addLoading || !addForm.agent_id || !addForm.ssh_host.trim() || !addForm.tunnel_port
               "
               @click="submitAdd"
             >

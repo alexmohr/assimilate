@@ -97,7 +97,7 @@ const MOCK_RULES: NotificationRule[] = [
     channel_id: 1,
     event_type: 'backup_failed',
     repo_id: null,
-    client_id: null,
+    agent_id: null,
     enabled: true,
   },
 ]

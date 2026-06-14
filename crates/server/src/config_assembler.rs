@@ -18,11 +18,11 @@ pub async fn assemble_config(
     encryption_key: &[u8; 32],
     hostname: &str,
 ) -> Result<AgentConfig, ApiError> {
-    let client = db::get_client_by_hostname(pool, hostname).await?;
+    let agent = db::get_agent_by_hostname(pool, hostname).await?;
 
     let global_excludes = parse_raw_excludes(&db::get_global_excludes_raw(pool).await?);
 
-    let schedule_rows = db::list_schedules_for_client(pool, client.id).await?;
+    let schedule_rows = db::list_schedules_for_agent(pool, agent.id).await?;
 
     let mut repo_map: std::collections::HashMap<
         i64,
@@ -35,7 +35,7 @@ pub async fn assemble_config(
         };
 
         if !repo_map.contains_key(&repo_id) {
-            let repo_rows = db::list_repos_for_client(pool, client.id).await?;
+            let repo_rows = db::list_repos_for_agent(pool, agent.id).await?;
             for repo in repo_rows {
                 repo_map
                     .entry(repo.id)
@@ -84,21 +84,21 @@ pub async fn assemble_config(
         };
 
         let mut backup_sources =
-            db::list_backup_sources_for_schedule_client(pool, schedule.id, client.id).await?;
+            db::list_backup_sources_for_schedule_agent(pool, schedule.id, agent.id).await?;
 
         if backup_sources.is_empty() {
             backup_sources = db::list_backup_sources_for_schedule(pool, schedule.id).await?;
         }
 
         if backup_sources.is_empty() {
-            backup_sources.extend(client.default_backup_paths.iter().cloned());
+            backup_sources.extend(agent.default_backup_paths.iter().cloned());
         }
 
         let mut exclude_patterns: Vec<String> = Vec::new();
         if !schedule.ignore_global_excludes {
             exclude_patterns.extend(global_excludes.iter().cloned());
         }
-        exclude_patterns.extend(client.default_exclude_patterns.iter().cloned());
+        exclude_patterns.extend(agent.default_exclude_patterns.iter().cloned());
         exclude_patterns.extend(parse_raw_excludes(&schedule.exclude_patterns_raw));
 
         let mut seen = std::collections::HashSet::new();
@@ -190,7 +190,7 @@ pub async fn assemble_config(
     }
 
     Ok(AgentConfig {
-        client_hostname: hostname.to_string(),
+        agent_hostname: hostname.to_string(),
         skip_targets: Vec::new(),
         repos,
     })

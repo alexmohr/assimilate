@@ -65,14 +65,14 @@ describe('HostsView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/clients') return Promise.resolve({ data: clients })
+      if (url === '/agents') return Promise.resolve({ data: clients })
       if (url === '/stats/dashboard-overview') {
         return Promise.resolve({
           data: {
             protection: {
-              protected_host_links: [{ client_id: 1, hostname: 'protected-host' }],
+              protected_host_links: [{ agent_id: 1, hostname: 'protected-host' }],
               unassigned_hosts: [],
-              never_succeeded_hosts: [{ client_id: 2, hostname: 'never-succeeded-host' }],
+              never_succeeded_hosts: [{ agent_id: 2, hostname: 'never-succeeded-host' }],
               disabled_only_hosts: [],
             },
           },
@@ -95,7 +95,7 @@ describe('HostsView', () => {
         },
       ],
     })
-    await router.push('/clients?coverage=never-succeeded')
+    await router.push('/agents?coverage=never-succeeded')
     await router.isReady()
     const wrapper = mount(HostsView, {
       global: { plugins: [createPinia(), router] },

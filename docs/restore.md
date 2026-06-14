@@ -74,4 +74,4 @@ sequenceDiagram
 
 - [Archive Browsing & Extraction](archives.md) — browse archive contents and download individual files
 - [Scheduling & Retention](scheduling.md) — configure backup schedules and retention policies
-- [Host & Agent Management](hosts.md) — manage connected agents
+- [Agent Management](agents.md) — manage connected agents

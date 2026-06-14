@@ -46,7 +46,7 @@ The project is a Cargo workspace with three crates and a frontend package.
 
 The server is structured around several subsystems:
 
-- **REST API** (`api/`) — handlers for clients, repos, schedules, archives, stats, auth, tokens, RBAC, tunnels, and system settings.
+- **REST API** (`api/`) — handlers for agents, repos, schedules, archives, stats, auth, tokens, RBAC, tunnels, and system settings.
 - **WebSocket handlers** (`ws/`) — agent connection handler, UI broadcast channel, SSH relay endpoint.
 - **Scheduler** — a background task that ticks every 30 seconds, queries due schedules from the database, and dispatches `RunBackupNow`, `RunCheckNow`, or `RunVerifyNow` messages to connected agents. A separate hourly task prunes old backup-run history (runs without an archive) and system events according to the configured retention policy. Reports that represent an actual archive are exempt, so imported archives with old timestamps are never aged out.
 - **Agent registry** — an in-memory map of connected agents keyed by hostname, used to route messages from the scheduler and API to the correct WebSocket connection.
@@ -145,16 +145,16 @@ The PostgreSQL schema contains the following key tables. Relationships are descr
 |---|---|
 | `users` | Admin and operator accounts with hashed passwords and roles |
 | `login_attempts` | Tracks failed logins per username for brute-force protection |
-| `clients` | Registered agent machines (hostname, token hash, status) |
+| `agents` | Registered agent machines (hostname, token hash, status) |
 | `repos` | Borg repository definitions (SSH host/user/path, encrypted passphrase) |
-| `schedules` | Cron-based backup, check, and verify schedules linked to a repo and client |
+| `schedules` | Cron-based backup, check, and verify schedules linked to a repo and agent |
 | `archives` | Individual borg archive records created after each successful backup |
 | `tokens` | API tokens for programmatic access |
 | `system_events` | Audit log of significant server-side events |
 
 **Key relationships:**
 
-- Each `client` can have many `repos`; each `repo` belongs to one `client`.
+- Each `agent` can have many `repos`; each `repo` belongs to one `agent`.
 - Each `repo` can have many `schedules` (one per schedule type: backup, check, verify).
 - Each successful backup creates one `archive` row linked to its `repo`.
 - `system_events` are pruned automatically according to the configured retention policy.

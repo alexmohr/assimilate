@@ -22,7 +22,7 @@ import MergeClientDialog from '../components/MergeClientDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import type { DashboardOverview } from '../types/dashboard'
 
-interface ClientRow {
+interface AgentRow {
   id: number
   hostname: string
   display_name: string | null
@@ -38,8 +38,8 @@ interface ClientRow {
   default_backup_paths: string[]
 }
 
-interface CreateClientResponse {
-  client: ClientRow
+interface CreateAgentResponse {
+  client: AgentRow
   token: string
 }
 
@@ -50,8 +50,8 @@ interface TagRow {
   scope: string
 }
 
-interface HostTagRow {
-  client_id: number
+interface AgentTagRow {
+  agent_id: number
   tag_name: string
   tag_color: string
 }
@@ -65,7 +65,7 @@ interface HealthEntry {
   last_error_message: string | null
 }
 
-interface HostHealth {
+interface AgentHealth {
   failed: number
   overdue: number
   warning: number
@@ -89,10 +89,10 @@ const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 const isAdmin = computed(() => authStore.user?.role === 'admin')
-const clients = ref<ClientRow[]>([])
+const agents = ref<AgentRow[]>([])
 const showHidden = ref(false)
 const machineScheduleCount = ref<Record<number, number>>({})
-const healthByHost = ref<Record<string, HostHealth>>({})
+const healthByHost = ref<Record<string, AgentHealth>>({})
 const loading = ref(false)
 const error = ref<string | null>(null)
 
@@ -118,11 +118,11 @@ const showTagDropdown = ref(false)
 const { isMobile } = useMobile()
 const showMobileFilters = ref(false)
 
-const allHostTags = ref<TagRow[]>([])
-const hostTagsMap = ref<Record<number, { name: string; color: string }[]>>({})
+const allAgentTags = ref<TagRow[]>([])
+const agentTagsMap = ref<Record<number, { name: string; color: string }[]>>({})
 
-const filteredClients = computed(() => {
-  let list = [...clients.value]
+const filteredAgents = computed(() => {
+  let list = [...agents.value]
 
   if (filterStatus.value === 'online') {
     list = list.filter((m) => m.is_connected)
@@ -132,7 +132,7 @@ const filteredClients = computed(() => {
 
   if (filterCoverage.value !== 'all') {
     const hostIds = coverageHostIds.value[filterCoverage.value]
-    list = list.filter((client) => hostIds.has(client.id))
+    list = list.filter((agent) => hostIds.has(agent.id))
   }
 
   if (filterText.value.trim()) {
@@ -141,16 +141,16 @@ const filteredClients = computed(() => {
       (m) =>
         m.hostname.toLowerCase().includes(q) ||
         (m.display_name?.toLowerCase().includes(q) ?? false) ||
-        (hostTagsMap.value[m.id] ?? []).some((t) => t.name.toLowerCase().includes(q)),
+        (agentTagsMap.value[m.id] ?? []).some((t) => t.name.toLowerCase().includes(q)),
     )
   }
 
   if (filterTagIds.value.length > 0) {
     const selectedNames = new Set(
-      allHostTags.value.filter((t) => filterTagIds.value.includes(t.id)).map((t) => t.name),
+      allAgentTags.value.filter((t) => filterTagIds.value.includes(t.id)).map((t) => t.name),
     )
     list = list.filter((m) =>
-      (hostTagsMap.value[m.id] ?? []).some((t) => selectedNames.has(t.name)),
+      (agentTagsMap.value[m.id] ?? []).some((t) => selectedNames.has(t.name)),
     )
   }
 
@@ -192,17 +192,17 @@ const addError = ref<string | null>(null)
 const newToken = ref<string | null>(null)
 const { copied: tokenCopied, copy: copyToClipboard } = useClipboard()
 
-// Adopt imported client
+// Adopt imported agent
 const showAdoptDialog = ref(false)
 const adoptToken = ref<string | null>(null)
 const adoptHostname = ref('')
 
 const showDeployDialog = ref(false)
-const deployTarget = ref<ClientRow | null>(null)
+const deployTarget = ref<AgentRow | null>(null)
 
-// Merge imported client
+// Merge imported agent
 const showMergeDialog = ref(false)
-const mergeSource = ref<ClientRow | null>(null)
+const mergeSource = ref<AgentRow | null>(null)
 
 useEscapeKey(showMergeDialog, () => {
   showMergeDialog.value = false
@@ -210,12 +210,12 @@ useEscapeKey(showMergeDialog, () => {
 
 useEscapeKey(showAddDialog, closeAddDialog)
 
-function isOnline(client: ClientRow): boolean {
-  return client.is_connected
+function isOnline(agent: AgentRow): boolean {
+  return agent.is_connected
 }
 
-function isImported(client: ClientRow): boolean {
-  return client.is_imported
+function isImported(agent: AgentRow): boolean {
+  return agent.is_imported
 }
 
 function formatLastSeen(iso: string | null): string {
@@ -237,20 +237,20 @@ function formatVersion(v: string | null): string {
   return v
 }
 
-function scheduleCount(client: ClientRow): number {
-  return machineScheduleCount.value[client.id] ?? 0
+function scheduleCount(agent: AgentRow): number {
+  return machineScheduleCount.value[agent.id] ?? 0
 }
 
-function clientTags(client: ClientRow): { name: string; color: string }[] {
-  return hostTagsMap.value[client.id] ?? []
+function agentTags(agent: AgentRow): { name: string; color: string }[] {
+  return agentTagsMap.value[agent.id] ?? []
 }
 
-function hostHealthStatus(client: ClientRow): HostHealth | null {
-  return healthByHost.value[client.hostname] ?? null
+function agentHealthStatus(agent: AgentRow): AgentHealth | null {
+  return healthByHost.value[agent.hostname] ?? null
 }
 
-function hostHasIssues(client: ClientRow): boolean {
-  const h = hostHealthStatus(client)
+function agentHasIssues(agent: AgentRow): boolean {
+  const h = agentHealthStatus(agent)
   if (!h) return false
   return h.failed > 0 || h.overdue > 0
 }
@@ -264,38 +264,38 @@ function toggleTagFilter(tagId: number): void {
   }
 }
 
-async function loadClients(): Promise<void> {
+async function loadAgents(): Promise<void> {
   loading.value = true
   error.value = null
   try {
-    const [clientsRes, hostTagAssocRes, hostTagsRes, healthRes, scheduleCountsRes, overviewRes] =
+    const [agentsRes, agentTagAssocRes, agentTagsRes, healthRes, scheduleCountsRes, overviewRes] =
       await Promise.all([
-        apiClient.get<ClientRow[]>('/clients', {
+        apiClient.get<AgentRow[]>('/agents', {
           params: showHidden.value ? { include_hidden: true } : undefined,
         }),
-        apiClient.get<HostTagRow[]>('/host-tags').catch(() => ({ data: [] as HostTagRow[] })),
+        apiClient.get<AgentTagRow[]>('/agent-tags').catch(() => ({ data: [] as AgentTagRow[] })),
         apiClient
           .get<TagRow[]>('/tags', { params: { scope: 'host' } })
           .catch(() => ({ data: [] as TagRow[] })),
         apiClient.get<HealthEntry[]>('/stats/health'),
-        apiClient.get<{ client_id: number; count: number }[]>('/stats/schedule-counts'),
+        apiClient.get<{ agent_id: number; count: number }[]>('/stats/schedule-counts'),
         apiClient.get<DashboardOverview>('/stats/dashboard-overview'),
       ])
-    clients.value = clientsRes.data
+    agents.value = agentsRes.data
     machineScheduleCount.value = {}
     scheduleCountsRes.data.forEach((entry) => {
-      machineScheduleCount.value[entry.client_id] = entry.count
+      machineScheduleCount.value[entry.agent_id] = entry.count
     })
 
-    allHostTags.value = hostTagsRes.data
+    allAgentTags.value = agentTagsRes.data
     const tagMap: Record<number, { name: string; color: string }[]> = {}
-    hostTagAssocRes.data.forEach((ht) => {
-      if (!tagMap[ht.client_id]) tagMap[ht.client_id] = []
-      tagMap[ht.client_id].push({ name: ht.tag_name, color: ht.tag_color })
+    agentTagAssocRes.data.forEach((ht) => {
+      if (!tagMap[ht.agent_id]) tagMap[ht.agent_id] = []
+      tagMap[ht.agent_id].push({ name: ht.tag_name, color: ht.tag_color })
     })
-    hostTagsMap.value = tagMap
+    agentTagsMap.value = tagMap
 
-    const hMap: Record<string, HostHealth> = {}
+    const hMap: Record<string, AgentHealth> = {}
     healthRes.data.forEach((entry) => {
       if (!hMap[entry.hostname]) {
         hMap[entry.hostname] = { failed: 0, overdue: 0, warning: 0, total: 0 }
@@ -308,16 +308,16 @@ async function loadClients(): Promise<void> {
     healthByHost.value = hMap
     coverageHostIds.value = {
       protected: new Set(
-        overviewRes.data.protection.protected_host_links.map((host) => host.client_id),
+        overviewRes.data.protection.protected_host_links.map((host) => host.agent_id),
       ),
       unassigned: new Set(
-        overviewRes.data.protection.unassigned_hosts.map((host) => host.client_id),
+        overviewRes.data.protection.unassigned_hosts.map((host) => host.agent_id),
       ),
       'never-succeeded': new Set(
-        overviewRes.data.protection.never_succeeded_hosts.map((host) => host.client_id),
+        overviewRes.data.protection.never_succeeded_hosts.map((host) => host.agent_id),
       ),
       'disabled-only': new Set(
-        overviewRes.data.protection.disabled_only_hosts.map((host) => host.client_id),
+        overviewRes.data.protection.disabled_only_hosts.map((host) => host.agent_id),
       ),
     }
   } catch (e: unknown) {
@@ -345,11 +345,11 @@ async function submitAdd(): Promise<void> {
   addLoading.value = true
   addError.value = null
   try {
-    const res = await apiClient.post<CreateClientResponse>('/clients', {
+    const res = await apiClient.post<CreateAgentResponse>('/agents', {
       hostname,
       display_name: addForm.display_name.trim() || null,
     })
-    clients.value.push(res.data.client)
+    agents.value.push(res.data.client)
     newToken.value = res.data.token
   } catch (e: unknown) {
     addError.value = extractError(e)
@@ -363,63 +363,63 @@ function closeAddDialog(): void {
   newToken.value = null
 }
 
-function navigateToHost(client: ClientRow): void {
-  router.push(`/clients/${client.hostname}`)
+function navigateToAgent(agent: AgentRow): void {
+  router.push(`/agents/${agent.hostname}`)
 }
 
-async function adoptClient(client: ClientRow): Promise<void> {
+async function adoptAgent(agent: AgentRow): Promise<void> {
   try {
-    const cleanDisplayName = client.display_name?.replace(/\s*\(imported\)$/, '').trim() || null
-    await apiClient.put(`/clients/${client.hostname}`, {
+    const cleanDisplayName = agent.display_name?.replace(/\s*\(imported\)$/, '').trim() || null
+    await apiClient.put(`/agents/${agent.hostname}`, {
       display_name: cleanDisplayName,
     })
-    const res = await apiClient.post<CreateClientResponse>(
-      `/clients/${client.hostname}/regenerate-token`,
+    const res = await apiClient.post<CreateAgentResponse>(
+      `/agents/${agent.hostname}/regenerate-token`,
     )
-    const idx = clients.value.findIndex((m) => m.id === client.id)
+    const idx = agents.value.findIndex((m) => m.id === agent.id)
     if (idx !== -1) {
-      clients.value[idx] = {
-        ...clients.value[idx],
+      agents.value[idx] = {
+        ...agents.value[idx],
         ...res.data.client,
         is_imported: false,
         display_name: cleanDisplayName,
       }
     }
-    adoptHostname.value = client.hostname
+    adoptHostname.value = agent.hostname
     adoptToken.value = res.data.token
     tokenCopied.value = false
     showAdoptDialog.value = true
   } catch (e: unknown) {
-    logger.error('Failed to adopt client', e)
+    logger.error('Failed to adopt agent', e)
   }
 }
 
-function openDeployDialog(client: ClientRow): void {
-  deployTarget.value = client
+function openDeployDialog(agent: AgentRow): void {
+  deployTarget.value = agent
   showDeployDialog.value = true
 }
 
-function openMergeDialog(client: ClientRow): void {
-  mergeSource.value = client
+function openMergeDialog(agent: AgentRow): void {
+  mergeSource.value = agent
   showMergeDialog.value = true
 }
 
-async function unhideClient(client: ClientRow): Promise<void> {
+async function unhideAgent(agent: AgentRow): Promise<void> {
   try {
-    await apiClient.put(`/clients/${client.hostname}/unhide`)
-    await loadClients()
+    await apiClient.put(`/agents/${agent.hostname}/unhide`)
+    await loadAgents()
   } catch (e: unknown) {
-    logger.error('Failed to unhide client', e)
+    logger.error('Failed to unhide agent', e)
   }
 }
 
 function onMerged(): void {
   showMergeDialog.value = false
-  loadClients().catch(logger.error)
+  loadAgents().catch(logger.error)
 }
 
 onMounted(() => {
-  loadClients().catch(logger.error)
+  loadAgents().catch(logger.error)
   apiClient
     .get<{ agent_version: string | null; server_commit_count: number | null }>('/system/version')
     .then((res) => {
@@ -430,9 +430,9 @@ onMounted(() => {
 })
 
 const { onMessage, status: wsStatus } = useWebSocket()
-onMessage('AgentConnected', () => loadClients().catch(logger.error))
-onMessage('AgentDisconnected', () => loadClients().catch(logger.error))
-onMessage('DataChanged', () => loadClients().catch(logger.error))
+onMessage('AgentConnected', () => loadAgents().catch(logger.error))
+onMessage('AgentDisconnected', () => loadAgents().catch(logger.error))
+onMessage('DataChanged', () => loadAgents().catch(logger.error))
 
 interface BackupPayload {
   hostname: string
@@ -465,31 +465,31 @@ onMessage<BackupPayload>('BackupCompleted', (payload) => {
       activeBackupsByHost.value = { ...activeBackupsByHost.value, [payload.hostname]: filtered }
     }
   }
-  loadClients().catch(logger.error)
+  loadAgents().catch(logger.error)
 })
 
-function hostActiveBackups(client: ClientRow): string[] {
-  return activeBackupsByHost.value[client.hostname] ?? []
+function hostActiveBackups(agent: AgentRow): string[] {
+  return activeBackupsByHost.value[agent.hostname] ?? []
 }
 
-function deployButtonLabel(client: ClientRow): string | null {
-  if (!client.agent_version) return 'Deploy'
-  if (serverCommitCount.value !== null && client.agent_commit_count !== null) {
-    return client.agent_commit_count >= serverCommitCount.value ? null : 'Upgrade'
+function deployButtonLabel(agent: AgentRow): string | null {
+  if (!agent.agent_version) return 'Deploy'
+  if (serverCommitCount.value !== null && agent.agent_commit_count !== null) {
+    return agent.agent_commit_count >= serverCommitCount.value ? null : 'Upgrade'
   }
-  if (availableAgentVersion.value && client.agent_version === availableAgentVersion.value)
+  if (availableAgentVersion.value && agent.agent_version === availableAgentVersion.value)
     return null
   return 'Upgrade'
 }
 
 watch(wsStatus, (newStatus, oldStatus) => {
   if (newStatus === 'connected' && oldStatus !== 'connected') {
-    loadClients().catch(logger.error)
+    loadAgents().catch(logger.error)
   }
 })
 
 watch(showHidden, () => {
-  loadClients().catch(logger.error)
+  loadAgents().catch(logger.error)
 })
 
 watch(
@@ -504,7 +504,7 @@ watch(
 <template>
   <div class="hosts-view">
     <div class="page-header">
-      <h1 class="page-title">Clients</h1>
+      <h1 class="page-title">Agents</h1>
       <div class="header-actions">
         <button
           class="btn btn-primary"
@@ -564,7 +564,7 @@ watch(
           <span class="hidden-toggle-label">Show hidden</span>
         </div>
         <div
-          v-if="allHostTags.length > 0"
+          v-if="allAgentTags.length > 0"
           class="tag-filter-wrapper"
         >
           <button
@@ -580,7 +580,7 @@ watch(
             class="tag-dropdown"
           >
             <label
-              v-for="tag in allHostTags"
+              v-for="tag in allAgentTags"
               :key="tag.id"
               class="tag-dropdown-item"
             >
@@ -643,18 +643,18 @@ watch(
       {{ error }}
     </div>
     <EmptyState
-      v-else-if="clients.length === 0"
+      v-else-if="agents.length === 0"
       :icon="Server"
-      title="No clients registered"
-      description="Add your first client to start backing up."
-      action="Add Client"
+      title="No agents registered"
+      description="Add your first agent to start backing up."
+      action="Add Agent"
       @action="showAddDialog = true"
     />
     <div
-      v-else-if="filteredClients.length === 0"
+      v-else-if="filteredAgents.length === 0"
       class="state-msg"
     >
-      No clients match the current filter.
+      No agents match the current filter.
     </div>
 
     <div
@@ -662,87 +662,87 @@ watch(
       class="host-grid"
     >
       <div
-        v-for="client in filteredClients"
-        :key="client.id"
+        v-for="agent in filteredAgents"
+        :key="agent.id"
         class="host-card"
-        :class="{ 'host-card-hidden': client.is_hidden }"
-        @click="navigateToHost(client)"
+        :class="{ 'host-card-hidden': agent.is_hidden }"
+        @click="navigateToAgent(agent)"
       >
         <div class="card-top">
           <div class="card-info">
-            <span class="card-hostname">{{ client.hostname }}</span>
+            <span class="card-hostname">{{ agent.hostname }}</span>
             <span
-              v-if="client.display_name"
+              v-if="agent.display_name"
               class="card-display"
-              >{{ client.display_name }}</span
+              >{{ agent.display_name }}</span
             >
           </div>
           <div class="card-top-badges">
             <span
-              v-if="client.is_hidden"
+              v-if="agent.is_hidden"
               class="badge-hidden"
             >
               Hidden
             </span>
             <span
-              v-if="isImported(client)"
+              v-if="isImported(agent)"
               class="badge-imported"
             >
               Imported
             </span>
             <span
               class="status-badge"
-              :class="isOnline(client) ? 'status-online' : 'status-offline'"
+              :class="isOnline(agent) ? 'status-online' : 'status-offline'"
             >
-              {{ isOnline(client) ? 'Online' : 'Offline' }}
+              {{ isOnline(agent) ? 'Online' : 'Offline' }}
             </span>
           </div>
         </div>
         <div class="card-stats">
           <div class="stat">
-            <span class="stat-value">{{ scheduleCount(client) }}</span>
+            <span class="stat-value">{{ scheduleCount(agent) }}</span>
             <span class="stat-label">Schedules</span>
           </div>
           <div class="stat">
-            <span class="stat-value">{{ formatLastSeen(client.last_seen_at) }}</span>
+            <span class="stat-value">{{ formatLastSeen(agent.last_seen_at) }}</span>
             <span class="stat-label">Last seen</span>
           </div>
           <div class="stat">
-            <span class="stat-value mono">{{ formatVersion(client.agent_version) }}</span>
+            <span class="stat-value mono">{{ formatVersion(agent.agent_version) }}</span>
             <span class="stat-label">Agent</span>
           </div>
         </div>
         <div
-          v-if="hostHasIssues(client)"
+          v-if="agentHasIssues(agent)"
           class="card-health-issues"
         >
           <AlertCircle :size="12" />
           <span
-            v-if="hostHealthStatus(client)!.failed > 0"
+            v-if="agentHealthStatus(agent)!.failed > 0"
             class="issue-text issue-failed"
           >
-            {{ hostHealthStatus(client)!.failed }} failed
+            {{ agentHealthStatus(agent)!.failed }} failed
           </span>
           <span
-            v-if="hostHealthStatus(client)!.overdue > 0"
+            v-if="agentHealthStatus(agent)!.overdue > 0"
             class="issue-text issue-overdue"
           >
-            {{ hostHealthStatus(client)!.overdue }} overdue
+            {{ agentHealthStatus(agent)!.overdue }} overdue
           </span>
         </div>
         <div
-          v-if="hostActiveBackups(client).length > 0"
+          v-if="hostActiveBackups(agent).length > 0"
           class="card-active-backup"
         >
           <span class="active-pulse" />
-          <span class="active-text"> Backing up: {{ hostActiveBackups(client).join(', ') }} </span>
+          <span class="active-text"> Backing up: {{ hostActiveBackups(agent).join(', ') }} </span>
         </div>
         <div
-          v-if="clientTags(client).length > 0"
+          v-if="agentTags(agent).length > 0"
           class="card-tags"
         >
           <span
-            v-for="tag in clientTags(client)"
+            v-for="tag in agentTags(agent)"
             :key="tag.name"
             class="tag-pill"
             :style="{
@@ -758,42 +758,42 @@ watch(
           class="card-actions"
           @click.stop
         >
-          <template v-if="client.is_hidden">
+          <template v-if="agent.is_hidden">
             <button
               class="btn btn-sm btn-ghost"
-              @click="unhideClient(client)"
+              @click="unhideAgent(agent)"
             >
               Unhide
             </button>
           </template>
           <template v-else>
             <button
-              v-if="isImported(client)"
+              v-if="isImported(agent)"
               class="btn btn-sm btn-ghost"
-              @click="openMergeDialog(client)"
+              @click="openMergeDialog(agent)"
             >
               Merge into...
             </button>
             <button
-              v-if="isImported(client)"
+              v-if="isImported(agent)"
               class="btn btn-sm btn-ghost"
-              @click="adoptClient(client)"
+              @click="adoptAgent(agent)"
             >
               Adopt
             </button>
             <button
-              v-if="deployButtonLabel(client) && !isImported(client)"
+              v-if="deployButtonLabel(agent) && !isImported(agent)"
               class="btn btn-sm btn-ghost"
-              @click="openDeployDialog(client)"
+              @click="openDeployDialog(agent)"
             >
-              {{ deployButtonLabel(client) }}
+              {{ deployButtonLabel(agent) }}
             </button>
           </template>
         </div>
       </div>
     </div>
 
-    <!-- Add Client Dialog -->
+    <!-- Add Agent Dialog -->
     <Teleport to="body">
       <div
         v-if="showAddDialog"
@@ -803,7 +803,7 @@ watch(
         <div class="dialog">
           <div class="dialog-header">
             <h2 class="dialog-title">
-              {{ newToken ? 'Client Created' : 'Add Client' }}
+              {{ newToken ? 'Agent Created' : 'Add Agent' }}
             </h2>
             <button
               class="close-btn"
@@ -887,7 +887,7 @@ watch(
       </div>
     </Teleport>
 
-    <!-- Adopt Host Dialog -->
+    <!-- Adopt Agent Dialog -->
     <Teleport to="body">
       <div
         v-if="showAdoptDialog"
@@ -896,7 +896,7 @@ watch(
       >
         <div class="dialog dialog-sm">
           <div class="dialog-header">
-            <h2 class="dialog-title">Host Adopted &mdash; {{ adoptHostname }}</h2>
+            <h2 class="dialog-title">Agent Adopted &mdash; {{ adoptHostname }}</h2>
             <button
               class="close-btn"
               @click="showAdoptDialog = false"
@@ -939,17 +939,17 @@ watch(
       @deployed="
         () => {
           showDeployDialog = false
-          loadClients()
+          loadAgents()
         }
       "
     />
 
-    <!-- Merge Client Dialog -->
+    <!-- Merge Agent Dialog -->
     <Teleport to="body">
       <MergeClientDialog
         v-if="showMergeDialog && mergeSource"
         :source="mergeSource"
-        :all-clients="clients"
+        :all-agents="agents"
         @merged="onMerged"
         @cancel="showMergeDialog = false"
       />

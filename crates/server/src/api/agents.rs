@@ -20,18 +20,18 @@ use super::{
 };
 use crate::{
     AppState, config_assembler,
-    db::{self, ClientRow, patterns::HostnamePatternRow},
+    db::{self, AgentRow, patterns::HostnamePatternRow},
     error::{ApiError, ApiJson},
 };
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct CreateClientRequest {
+pub struct CreateAgentRequest {
     pub hostname: String,
     pub display_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct UpdateClientRequest {
+pub struct UpdateAgentRequest {
     pub hostname: Option<String>,
     pub display_name: Option<String>,
     #[serde(default)]
@@ -41,9 +41,9 @@ pub struct UpdateClientRequest {
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct ClientResponse {
+pub struct AgentResponse {
     #[serde(flatten)]
-    pub client: ClientRow,
+    pub agent: AgentRow,
     pub is_connected: bool,
     pub is_imported: bool,
     pub supports_restart: bool,
@@ -51,36 +51,36 @@ pub struct ClientResponse {
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct CreateClientResponse {
-    pub client: ClientRow,
+pub struct CreateAgentResponse {
+    pub agent: AgentRow,
     pub token: String,
 }
 
 #[utoipa::path(
     post,
-    path = "/api/clients",
-    tag = "Hosts",
-    operation_id = "createClient",
-    summary = "Register a new host/client",
-    request_body = CreateClientRequest,
+    path = "/api/agents",
+    tag = "Agents",
+    operation_id = "createAgent",
+    summary = "Register a new agent",
+    request_body = CreateAgentRequest,
     responses(
-        (status = 201, description = "Client created", body = CreateClientResponse),
+        (status = 201, description = "Agent registered", body = CreateAgentResponse),
         (status = 400, description = "Validation error"),
         (status = 401, description = "Unauthorized"),
     )
 )]
-pub async fn create_client(
+pub async fn create_agent(
     State(state): State<AppState>,
     RequireAdmin(admin): RequireAdmin,
-    ApiJson(req): ApiJson<CreateClientRequest>,
-) -> Result<(StatusCode, Json<CreateClientResponse>), ApiError> {
+    ApiJson(req): ApiJson<CreateAgentRequest>,
+) -> Result<(StatusCode, Json<CreateAgentResponse>), ApiError> {
     helpers::validate_non_empty(&req.hostname, "hostname")?;
 
     let token_hex = helpers::generate_random_hex(32);
 
     let token_hash = bcrypt::hash(&token_hex, bcrypt::DEFAULT_COST)?;
 
-    let client = db::insert_client(
+    let agent = db::insert_agent(
         &state.pool,
         &req.hostname,
         req.display_name.as_deref(),
@@ -91,57 +91,57 @@ pub async fn create_client(
 
     Ok((
         StatusCode::CREATED,
-        Json(CreateClientResponse {
-            client,
+        Json(CreateAgentResponse {
+            agent,
             token: token_hex,
         }),
     ))
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ListClientsQuery {
+pub struct ListAgentsQuery {
     #[serde(default)]
     pub include_hidden: bool,
 }
 
 #[utoipa::path(
     get,
-    path = "/api/clients",
-    tag = "Hosts",
-    operation_id = "listClients",
-    summary = "List all hosts/clients",
+    path = "/api/agents",
+    tag = "Agents",
+    operation_id = "listAgents",
+    summary = "List all agents",
     responses(
-        (status = 200, description = "List of clients", body = Vec<ClientResponse>),
+        (status = 200, description = "List of agents", body = Vec<AgentResponse>),
         (status = 401, description = "Unauthorized"),
     )
 )]
-pub async fn list_clients(
+pub async fn list_agents(
     State(state): State<AppState>,
     auth: AuthUser,
-    Query(query): Query<ListClientsQuery>,
-) -> Result<Json<Vec<ClientResponse>>, ApiError> {
+    Query(query): Query<ListAgentsQuery>,
+) -> Result<Json<Vec<AgentResponse>>, ApiError> {
     let is_admin = auth.role == Role::Admin;
     let include_hidden = query.include_hidden && is_admin;
-    let clients = db::list_clients(&state.pool, include_hidden).await?;
-    let mut responses = Vec::with_capacity(clients.len());
-    for c in clients {
+    let agents = db::list_agents(&state.pool, include_hidden).await?;
+    let mut responses = Vec::with_capacity(agents.len());
+    for a in agents {
         if !is_visible_to_user(
             &state.pool,
             auth.user_id,
-            c.owner_id,
-            &c.visibility,
+            a.owner_id,
+            &a.visibility,
             is_admin,
         )
         .await?
         {
             continue;
         }
-        let is_connected = state.registry.is_connected(&c.hostname).await;
+        let is_connected = state.registry.is_connected(&a.hostname).await;
         let (supports_restart, restart_unavailable_reason) =
-            state.registry.restart_capability(&c.hostname).await;
-        responses.push(ClientResponse {
-            is_imported: c.agent_token_hash == "imported:no-auth",
-            client: c,
+            state.registry.restart_capability(&a.hostname).await;
+        responses.push(AgentResponse {
+            is_imported: a.agent_token_hash == "imported:no-auth",
+            agent: a,
             is_connected,
             supports_restart,
             restart_unavailable_reason,
@@ -152,31 +152,31 @@ pub async fn list_clients(
 
 #[utoipa::path(
     get,
-    path = "/api/clients/{hostname}",
-    tag = "Hosts",
-    operation_id = "getClient",
-    summary = "Get a host/client by hostname",
+    path = "/api/agents/{hostname}",
+    tag = "Agents",
+    operation_id = "getAgent",
+    summary = "Get an agent by hostname",
     params(
-        ("hostname" = String, Path, description = "Client hostname"),
+        ("hostname" = String, Path, description = "Agent hostname"),
     ),
     responses(
-        (status = 200, description = "Client details", body = ClientResponse),
+        (status = 200, description = "Agent details", body = AgentResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
     )
 )]
-pub async fn get_client(
+pub async fn get_agent(
     State(state): State<AppState>,
     _auth: AuthUser,
     Path(hostname): Path<String>,
-) -> Result<Json<ClientResponse>, ApiError> {
-    let client = db::get_client_by_hostname(&state.pool, &hostname).await?;
+) -> Result<Json<AgentResponse>, ApiError> {
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
     let is_connected = state.registry.is_connected(&hostname).await;
     let (supports_restart, restart_unavailable_reason) =
         state.registry.restart_capability(&hostname).await;
-    Ok(Json(ClientResponse {
-        is_imported: client.agent_token_hash == "imported:no-auth",
-        client,
+    Ok(Json(AgentResponse {
+        is_imported: agent.agent_token_hash == "imported:no-auth",
+        agent,
         is_connected,
         supports_restart,
         restart_unavailable_reason,
@@ -185,28 +185,28 @@ pub async fn get_client(
 
 #[utoipa::path(
     put,
-    path = "/api/clients/{hostname}",
-    tag = "Hosts",
-    operation_id = "updateClient",
-    summary = "Update a host/client",
+    path = "/api/agents/{hostname}",
+    tag = "Agents",
+    operation_id = "updateAgent",
+    summary = "Update an agent",
     params(
-        ("hostname" = String, Path, description = "Client hostname"),
+        ("hostname" = String, Path, description = "Agent hostname"),
     ),
-    request_body = UpdateClientRequest,
+    request_body = UpdateAgentRequest,
     responses(
-        (status = 200, description = "Updated client", body = ClientResponse),
+        (status = 200, description = "Updated agent", body = AgentResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
     )
 )]
-pub async fn update_client(
+pub async fn update_agent(
     State(state): State<AppState>,
     _auth: AuthUser,
     Path(hostname): Path<String>,
-    ApiJson(req): ApiJson<UpdateClientRequest>,
-) -> Result<Json<ClientResponse>, ApiError> {
+    ApiJson(req): ApiJson<UpdateAgentRequest>,
+) -> Result<Json<AgentResponse>, ApiError> {
     let new_hostname = req.hostname.as_deref().unwrap_or(&hostname);
-    let client = db::update_client(
+    let agent = db::update_agent(
         &state.pool,
         &hostname,
         new_hostname,
@@ -219,9 +219,9 @@ pub async fn update_client(
     let is_connected = state.registry.is_connected(&hostname).await;
     let (supports_restart, restart_unavailable_reason) =
         state.registry.restart_capability(&hostname).await;
-    Ok(Json(ClientResponse {
-        is_imported: client.agent_token_hash == "imported:no-auth",
-        client,
+    Ok(Json(AgentResponse {
+        is_imported: agent.agent_token_hash == "imported:no-auth",
+        agent,
         is_connected,
         supports_restart,
         restart_unavailable_reason,
@@ -230,12 +230,12 @@ pub async fn update_client(
 
 #[utoipa::path(
     delete,
-    path = "/api/clients/{hostname}",
-    tag = "Hosts",
-    operation_id = "deleteClient",
-    summary = "Delete a host/client",
+    path = "/api/agents/{hostname}",
+    tag = "Agents",
+    operation_id = "deleteAgent",
+    summary = "Delete an agent",
     params(
-        ("hostname" = String, Path, description = "Client hostname"),
+        ("hostname" = String, Path, description = "Agent hostname"),
     ),
     responses(
         (status = 204, description = "Deleted"),
@@ -243,32 +243,32 @@ pub async fn update_client(
         (status = 404, description = "Not found"),
     )
 )]
-pub async fn delete_client(
+pub async fn delete_agent(
     State(state): State<AppState>,
     _auth: AuthUser,
     Path(hostname): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let client = db::get_client_by_hostname(&state.pool, &hostname).await?;
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
 
-    if let Ok(tunnel) = db::get_tunnel_by_client_id(&state.pool, client.id).await {
+    if let Ok(tunnel) = db::get_tunnel_by_agent_id(&state.pool, agent.id).await {
         state.tunnel_manager.stop_tunnel(tunnel.id).await;
     }
 
-    db::delete_client(&state.pool, &hostname).await?;
+    db::delete_agent(&state.pool, &hostname).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 #[utoipa::path(
     post,
-    path = "/api/clients/{hostname}/regenerate-token",
-    tag = "Hosts",
-    operation_id = "regenerateClientToken",
-    summary = "Regenerate the agent token for a host",
+    path = "/api/agents/{hostname}/regenerate-token",
+    tag = "Agents",
+    operation_id = "regenerateAgentToken",
+    summary = "Regenerate the agent token for an agent",
     params(
-        ("hostname" = String, Path, description = "Client hostname"),
+        ("hostname" = String, Path, description = "Agent hostname"),
     ),
     responses(
-        (status = 200, description = "New token issued", body = CreateClientResponse),
+        (status = 200, description = "New token issued", body = CreateAgentResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
     )
@@ -277,34 +277,34 @@ pub async fn regenerate_token(
     State(state): State<AppState>,
     _auth: AuthUser,
     Path(hostname): Path<String>,
-) -> Result<Json<CreateClientResponse>, ApiError> {
-    let existing = db::get_client_by_hostname(&state.pool, &hostname).await?;
+) -> Result<Json<CreateAgentResponse>, ApiError> {
+    let existing = db::get_agent_by_hostname(&state.pool, &hostname).await?;
     let was_imported = existing.agent_token_hash == "imported:no-auth";
 
     let token_hex = helpers::generate_random_hex(32);
 
     let token_hash = bcrypt::hash(&token_hex, bcrypt::DEFAULT_COST)?;
 
-    let client = db::regenerate_client_token(&state.pool, &hostname, &token_hash).await?;
+    let agent = db::regenerate_agent_token(&state.pool, &hostname, &token_hash).await?;
 
     if was_imported {
-        db::mark_client_reports_matched(&state.pool, client.id).await?;
+        db::mark_agent_reports_matched(&state.pool, agent.id).await?;
     }
 
-    Ok(Json(CreateClientResponse {
-        client,
+    Ok(Json(CreateAgentResponse {
+        agent,
         token: token_hex,
     }))
 }
 
 #[utoipa::path(
     post,
-    path = "/api/clients/{hostname}/restart",
-    tag = "Hosts",
+    path = "/api/agents/{hostname}/restart",
+    tag = "Agents",
     operation_id = "restartAgent",
     summary = "Send a restart command to the agent",
     params(
-        ("hostname" = String, Path, description = "Client hostname"),
+        ("hostname" = String, Path, description = "Agent hostname"),
     ),
     responses(
         (status = 202, description = "Restart accepted"),
@@ -337,12 +337,12 @@ pub async fn restart_agent(
 
 #[utoipa::path(
     get,
-    path = "/api/clients/{hostname}/hostname-patterns",
-    tag = "Hosts",
+    path = "/api/agents/{hostname}/hostname-patterns",
+    tag = "Agents",
     operation_id = "listHostnamePatterns",
-    summary = "List hostname patterns for a client",
+    summary = "List hostname patterns for an agent",
     params(
-        ("hostname" = String, Path, description = "Client hostname"),
+        ("hostname" = String, Path, description = "Agent hostname"),
     ),
     responses(
         (status = 200, description = "List of patterns", body = Vec<HostnamePatternRow>),
@@ -355,8 +355,8 @@ pub async fn list_hostname_patterns(
     _auth: AuthUser,
     Path(hostname): Path<String>,
 ) -> Result<Json<Vec<HostnamePatternRow>>, ApiError> {
-    let client = db::get_client_by_hostname(&state.pool, &hostname).await?;
-    let patterns = db::patterns::list_patterns_for_client(&state.pool, client.id).await?;
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    let patterns = db::patterns::list_patterns_for_agent(&state.pool, agent.id).await?;
     Ok(Json(patterns))
 }
 
@@ -367,12 +367,12 @@ pub struct AddPatternRequest {
 
 #[utoipa::path(
     post,
-    path = "/api/clients/{hostname}/hostname-patterns",
-    tag = "Hosts",
+    path = "/api/agents/{hostname}/hostname-patterns",
+    tag = "Agents",
     operation_id = "addHostnamePattern",
-    summary = "Add a hostname pattern to a client",
+    summary = "Add a hostname pattern to an agent",
     params(
-        ("hostname" = String, Path, description = "Client hostname"),
+        ("hostname" = String, Path, description = "Agent hostname"),
     ),
     request_body = AddPatternRequest,
     responses(
@@ -389,19 +389,19 @@ pub async fn add_hostname_pattern(
     ApiJson(req): ApiJson<AddPatternRequest>,
 ) -> Result<(StatusCode, Json<HostnamePatternRow>), ApiError> {
     helpers::validate_non_empty(&req.pattern, "pattern")?;
-    let client = db::get_client_by_hostname(&state.pool, &hostname).await?;
-    let row = db::patterns::add_hostname_pattern(&state.pool, client.id, &req.pattern).await?;
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    let row = db::patterns::add_hostname_pattern(&state.pool, agent.id, &req.pattern).await?;
     Ok((StatusCode::CREATED, Json(row)))
 }
 
 #[utoipa::path(
     delete,
-    path = "/api/clients/{hostname}/hostname-patterns/{pattern_id}",
-    tag = "Hosts",
+    path = "/api/agents/{hostname}/hostname-patterns/{pattern_id}",
+    tag = "Agents",
     operation_id = "deleteHostnamePattern",
     summary = "Delete a hostname pattern",
     params(
-        ("hostname" = String, Path, description = "Client hostname"),
+        ("hostname" = String, Path, description = "Agent hostname"),
         ("pattern_id" = i64, Path, description = "Pattern ID"),
     ),
     responses(
@@ -415,47 +415,47 @@ pub async fn delete_hostname_pattern(
     _auth: AuthUser,
     Path((hostname, pattern_id)): Path<(String, i64)>,
 ) -> Result<StatusCode, ApiError> {
-    db::get_client_by_hostname(&state.pool, &hostname).await?;
+    db::get_agent_by_hostname(&state.pool, &hostname).await?;
     db::patterns::delete_hostname_pattern(&state.pool, pattern_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct MergeClientRequest {
+pub struct MergeAgentRequest {
     pub create_pattern: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct MergeClientResponse {
+pub struct MergeAgentResponse {
     pub merged: bool,
 }
 
 #[utoipa::path(
     post,
-    path = "/api/clients/{hostname}/merge-from/{source_id}",
-    tag = "Hosts",
-    operation_id = "mergeClient",
-    summary = "Merge a placeholder client into this client",
+    path = "/api/agents/{hostname}/merge-from/{source_id}",
+    tag = "Agents",
+    operation_id = "mergeAgent",
+    summary = "Merge a placeholder agent into this agent",
     params(
-        ("hostname" = String, Path, description = "Target client hostname"),
-        ("source_id" = i64, Path, description = "Source placeholder client ID"),
+        ("hostname" = String, Path, description = "Target agent hostname"),
+        ("source_id" = i64, Path, description = "Source placeholder agent ID"),
     ),
-    request_body(content = Option<MergeClientRequest>, content_type = "application/json"),
+    request_body(content = Option<MergeAgentRequest>, content_type = "application/json"),
     responses(
-        (status = 200, description = "Merge completed", body = MergeClientResponse),
+        (status = 200, description = "Merge completed", body = MergeAgentResponse),
         (status = 400, description = "Source is not a placeholder"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
     )
 )]
-pub async fn merge_client(
+pub async fn merge_agent(
     State(state): State<AppState>,
     _auth: AuthUser,
     Path((hostname, source_id)): Path<(String, i64)>,
-    ApiJson(req): ApiJson<MergeClientRequest>,
-) -> Result<Json<MergeClientResponse>, ApiError> {
-    let target = db::get_client_by_hostname(&state.pool, &hostname).await?;
-    db::merge_client(&state.pool, source_id, target.id).await?;
+    ApiJson(req): ApiJson<MergeAgentRequest>,
+) -> Result<Json<MergeAgentResponse>, ApiError> {
+    let target = db::get_agent_by_hostname(&state.pool, &hostname).await?;
+    db::merge_agent(&state.pool, source_id, target.id).await?;
 
     if let Some(pattern) = &req.create_pattern
         && !pattern.is_empty()
@@ -463,36 +463,36 @@ pub async fn merge_client(
         db::patterns::add_hostname_pattern(&state.pool, target.id, pattern).await?;
     }
 
-    Ok(Json(MergeClientResponse { merged: true }))
+    Ok(Json(MergeAgentResponse { merged: true }))
 }
 
 #[utoipa::path(
     put,
-    path = "/api/clients/{hostname}/hide",
-    tag = "Hosts",
-    operation_id = "hideClient",
-    summary = "Hide a client from all views",
+    path = "/api/agents/{hostname}/hide",
+    tag = "Agents",
+    operation_id = "hideAgent",
+    summary = "Hide an agent from all views",
     params(
-        ("hostname" = String, Path, description = "Client hostname"),
+        ("hostname" = String, Path, description = "Agent hostname"),
     ),
     responses(
-        (status = 200, description = "Client hidden"),
+        (status = 200, description = "Agent hidden"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
     )
 )]
-pub async fn hide_client(
+pub async fn hide_agent(
     State(state): State<AppState>,
     _auth: AuthUser,
     Path(hostname): Path<String>,
-) -> Result<Json<ClientResponse>, ApiError> {
-    let c = db::set_client_hidden(&state.pool, &hostname, true).await?;
-    let is_connected = state.registry.is_connected(&c.hostname).await;
+) -> Result<Json<AgentResponse>, ApiError> {
+    let a = db::set_agent_hidden(&state.pool, &hostname, true).await?;
+    let is_connected = state.registry.is_connected(&a.hostname).await;
     let (supports_restart, restart_unavailable_reason) =
-        state.registry.restart_capability(&c.hostname).await;
-    Ok(Json(ClientResponse {
-        is_imported: c.agent_token_hash == "imported:no-auth",
-        client: c,
+        state.registry.restart_capability(&a.hostname).await;
+    Ok(Json(AgentResponse {
+        is_imported: a.agent_token_hash == "imported:no-auth",
+        agent: a,
         is_connected,
         supports_restart,
         restart_unavailable_reason,
@@ -501,31 +501,31 @@ pub async fn hide_client(
 
 #[utoipa::path(
     put,
-    path = "/api/clients/{hostname}/unhide",
-    tag = "Hosts",
-    operation_id = "unhideClient",
-    summary = "Unhide a previously hidden client",
+    path = "/api/agents/{hostname}/unhide",
+    tag = "Agents",
+    operation_id = "unhideAgent",
+    summary = "Unhide a previously hidden agent",
     params(
-        ("hostname" = String, Path, description = "Client hostname"),
+        ("hostname" = String, Path, description = "Agent hostname"),
     ),
     responses(
-        (status = 200, description = "Client unhidden"),
+        (status = 200, description = "Agent unhidden"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
     )
 )]
-pub async fn unhide_client(
+pub async fn unhide_agent(
     State(state): State<AppState>,
     _auth: AuthUser,
     Path(hostname): Path<String>,
-) -> Result<Json<ClientResponse>, ApiError> {
-    let c = db::set_client_hidden(&state.pool, &hostname, false).await?;
-    let is_connected = state.registry.is_connected(&c.hostname).await;
+) -> Result<Json<AgentResponse>, ApiError> {
+    let a = db::set_agent_hidden(&state.pool, &hostname, false).await?;
+    let is_connected = state.registry.is_connected(&a.hostname).await;
     let (supports_restart, restart_unavailable_reason) =
-        state.registry.restart_capability(&c.hostname).await;
-    Ok(Json(ClientResponse {
-        is_imported: c.agent_token_hash == "imported:no-auth",
-        client: c,
+        state.registry.restart_capability(&a.hostname).await;
+    Ok(Json(AgentResponse {
+        is_imported: a.agent_token_hash == "imported:no-auth",
+        agent: a,
         is_connected,
         supports_restart,
         restart_unavailable_reason,
@@ -541,12 +541,12 @@ pub struct DeleteArchivesResponse {
 
 #[utoipa::path(
     post,
-    path = "/api/clients/{hostname}/delete-archives",
-    tag = "Hosts",
-    operation_id = "deleteClientArchives",
-    summary = "Delete all borg archives belonging to this client and remove the client",
+    path = "/api/agents/{hostname}/delete-archives",
+    tag = "Agents",
+    operation_id = "deleteAgentArchives",
+    summary = "Delete all borg archives belonging to this agent and remove the agent",
     params(
-        ("hostname" = String, Path, description = "Client hostname"),
+        ("hostname" = String, Path, description = "Agent hostname"),
     ),
     responses(
         (status = 200, description = "Archives deleted", body = DeleteArchivesResponse),
@@ -555,15 +555,14 @@ pub struct DeleteArchivesResponse {
         (status = 503, description = "Agent offline"),
     )
 )]
-pub async fn delete_client_archives(
+pub async fn delete_agent_archives(
     State(state): State<AppState>,
     _auth: AuthUser,
     Path(hostname): Path<String>,
 ) -> Result<Json<DeleteArchivesResponse>, ApiError> {
-    let client = db::get_client_by_hostname(&state.pool, &hostname).await?;
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
 
-    let archives_by_repo =
-        db::get_archives_for_client_with_patterns(&state.pool, client.id).await?;
+    let archives_by_repo = db::get_archives_for_agent_with_patterns(&state.pool, agent.id).await?;
 
     let mut total_deleted: u32 = 0;
     let mut errors: Vec<String> = Vec::new();
@@ -632,7 +631,7 @@ pub async fn delete_client_archives(
     }
 
     if errors.is_empty() {
-        db::delete_client(&state.pool, &hostname).await?;
+        db::delete_agent(&state.pool, &hostname).await?;
     }
 
     Ok(Json(DeleteArchivesResponse {

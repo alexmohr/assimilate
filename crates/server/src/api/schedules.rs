@@ -28,20 +28,20 @@ use crate::{
 };
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct HostBackupSources {
-    pub client_id: i64,
+pub struct AgentBackupSources {
+    pub agent_id: i64,
     pub paths: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct HostExcludePatterns {
-    pub client_id: i64,
+pub struct AgentExcludePatterns {
+    pub agent_id: i64,
     pub raw_text: String,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateScheduleRequest {
-    pub client_ids: Vec<i64>,
+    pub agent_ids: Vec<i64>,
     pub repo_id: i64,
     pub name: Option<String>,
     #[schema(value_type = Option<String>)]
@@ -61,8 +61,8 @@ pub struct CreateScheduleRequest {
     pub pre_backup_commands: Option<Vec<String>>,
     pub post_backup_commands: Option<Vec<String>>,
     pub backup_sources: Option<Vec<String>>,
-    pub backup_sources_per_host: Option<Vec<HostBackupSources>>,
-    pub exclude_patterns_per_host: Option<Vec<HostExcludePatterns>>,
+    pub backup_sources_per_agent: Option<Vec<AgentBackupSources>>,
+    pub exclude_patterns_per_agent: Option<Vec<AgentExcludePatterns>>,
     #[schema(value_type = Option<String>)]
     pub on_failure: Option<OnFailure>,
 }
@@ -86,9 +86,9 @@ pub struct UpdateScheduleRequest {
     pub pre_backup_commands: Option<Vec<String>>,
     pub post_backup_commands: Option<Vec<String>>,
     pub backup_sources: Option<Vec<String>>,
-    pub backup_sources_per_host: Option<Vec<HostBackupSources>>,
-    pub exclude_patterns_per_host: Option<Vec<HostExcludePatterns>>,
-    pub client_ids: Option<Vec<i64>>,
+    pub backup_sources_per_agent: Option<Vec<AgentBackupSources>>,
+    pub exclude_patterns_per_agent: Option<Vec<AgentExcludePatterns>>,
+    pub agent_ids: Option<Vec<i64>>,
     #[schema(value_type = Option<String>)]
     pub on_failure: Option<OnFailure>,
 }
@@ -147,9 +147,9 @@ pub async fn create_schedule(
     auth: AuthUser,
     ApiJson(req): ApiJson<CreateScheduleRequest>,
 ) -> Result<(StatusCode, Json<ScheduleRow>), ApiError> {
-    if req.client_ids.is_empty() {
+    if req.agent_ids.is_empty() {
         return Err(ApiError::BadRequest(
-            "client_ids must contain at least one entry".into(),
+            "agent_ids must contain at least one entry".into(),
         ));
     }
     check_repo_permission(&state.pool, &auth, req.repo_id, |p| p.can_modify_schedules).await?;
@@ -182,15 +182,15 @@ pub async fn create_schedule(
 
     let has_backup_sources = req.backup_sources.as_ref().is_some_and(|v| !v.is_empty());
     let has_per_host_sources = req
-        .backup_sources_per_host
+        .backup_sources_per_agent
         .as_ref()
         .is_some_and(|v| !v.is_empty());
 
     if !has_backup_sources && !has_per_host_sources && schedule_type_enum == ScheduleType::Backup {
-        let client = db::get_client_by_id(&state.pool, req.client_ids[0]).await?;
-        if client.default_backup_paths.is_empty() {
+        let agent = db::get_agent_by_id(&state.pool, req.agent_ids[0]).await?;
+        if agent.default_backup_paths.is_empty() {
             return Err(ApiError::BadRequest(
-                "no backup sources provided and client has no default backup paths configured"
+                "no backup sources provided and agent has no default backup paths configured"
                     .into(),
             ));
         }
@@ -231,7 +231,7 @@ pub async fn create_schedule(
         db::insert_schedule(&state.pool, req.repo_id, &params, Some(auth.user_id)).await?;
 
     let targets: Vec<(i64, i32)> = req
-        .client_ids
+        .agent_ids
         .iter()
         .enumerate()
         .map(|(i, &cid)| {
@@ -250,15 +250,15 @@ pub async fn create_schedule(
         }
     }
 
-    if let Some(per_host) = &req.backup_sources_per_host {
-        for entry in per_host {
+    if let Some(per_agent) = &req.backup_sources_per_agent {
+        for entry in per_agent {
             for (i, path) in entry.paths.iter().enumerate() {
                 let sort_order = i32::try_from(i)
                     .map_err(|_| ApiError::BadRequest("too many sources".into()))?;
-                db::insert_backup_source_for_schedule_client(
+                db::insert_backup_source_for_schedule_agent(
                     &state.pool,
                     schedule.id,
-                    entry.client_id,
+                    entry.agent_id,
                     path,
                     sort_order,
                 )
@@ -267,12 +267,12 @@ pub async fn create_schedule(
         }
     }
 
-    if let Some(per_host) = &req.exclude_patterns_per_host {
-        for entry in per_host {
-            db::upsert_per_host_excludes_raw(
+    if let Some(per_agent) = &req.exclude_patterns_per_agent {
+        for entry in per_agent {
+            db::upsert_per_agent_excludes_raw(
                 &state.pool,
                 schedule.id,
-                entry.client_id,
+                entry.agent_id,
                 &entry.raw_text,
             )
             .await?;
@@ -430,14 +430,14 @@ pub async fn update_schedule(
     }
     let schedule = db::update_schedule(&state.pool, id, &params).await?;
 
-    if let Some(client_ids) = &req.client_ids {
-        if client_ids.is_empty() {
+    if let Some(agent_ids) = &req.agent_ids {
+        if agent_ids.is_empty() {
             return Err(ApiError::BadRequest(
-                "client_ids must contain at least one entry".into(),
+                "agent_ids must contain at least one entry".into(),
             ));
         }
         db::delete_schedule_targets(&state.pool, schedule.id).await?;
-        let targets: Vec<(i64, i32)> = client_ids
+        let targets: Vec<(i64, i32)> = agent_ids
             .iter()
             .enumerate()
             .map(|(i, &cid)| {
@@ -458,16 +458,16 @@ pub async fn update_schedule(
         }
     }
 
-    if let Some(per_host) = &req.backup_sources_per_host {
-        db::delete_per_host_backup_sources_for_schedule(&state.pool, schedule.id).await?;
-        for entry in per_host {
+    if let Some(per_agent) = &req.backup_sources_per_agent {
+        db::delete_per_agent_backup_sources_for_schedule(&state.pool, schedule.id).await?;
+        for entry in per_agent {
             for (i, path) in entry.paths.iter().enumerate() {
                 let sort_order = i32::try_from(i)
                     .map_err(|_| ApiError::BadRequest("too many sources".into()))?;
-                db::insert_backup_source_for_schedule_client(
+                db::insert_backup_source_for_schedule_agent(
                     &state.pool,
                     schedule.id,
-                    entry.client_id,
+                    entry.agent_id,
                     path,
                     sort_order,
                 )
@@ -476,13 +476,13 @@ pub async fn update_schedule(
         }
     }
 
-    if let Some(per_host) = &req.exclude_patterns_per_host {
-        db::delete_per_host_excludes_for_schedule(&state.pool, schedule.id).await?;
-        for entry in per_host {
-            db::upsert_per_host_excludes_raw(
+    if let Some(per_agent) = &req.exclude_patterns_per_agent {
+        db::delete_per_agent_excludes_for_schedule(&state.pool, schedule.id).await?;
+        for entry in per_agent {
+            db::upsert_per_agent_excludes_raw(
                 &state.pool,
                 schedule.id,
-                entry.client_id,
+                entry.agent_id,
                 &entry.raw_text,
             )
             .await?;
@@ -597,7 +597,7 @@ pub async fn run_schedule_now(
     for target in &targets {
         if let Err(e) = db::insert_backup_pending(
             &state.pool,
-            target.client_id,
+            target.agent_id,
             schedule_repo_id,
             Some(id),
             &run_id,
@@ -731,8 +731,8 @@ pub async fn list_schedule_targets(
 #[derive(Debug, serde::Serialize, utoipa::ToSchema)]
 pub struct ScheduleBackupSourcesResponse {
     pub backup_sources: Vec<String>,
-    pub backup_sources_per_host: Vec<db::PerHostBackupSources>,
-    pub exclude_patterns_per_host: Vec<db::PerHostExcludePatterns>,
+    pub backup_sources_per_agent: Vec<db::PerAgentBackupSources>,
+    pub exclude_patterns_per_agent: Vec<db::PerAgentExcludePatterns>,
 }
 
 #[utoipa::path(
@@ -755,14 +755,14 @@ pub async fn list_schedule_backup_sources(
 ) -> Result<Json<ScheduleBackupSourcesResponse>, ApiError> {
     let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
     let backup_sources = db::list_backup_sources_for_schedule(&state.pool, id).await?;
-    let backup_sources_per_host =
-        db::list_all_per_host_backup_sources_for_schedule(&state.pool, id).await?;
-    let exclude_patterns_per_host =
-        db::list_all_per_host_excludes_for_schedule(&state.pool, id).await?;
+    let backup_sources_per_agent =
+        db::list_all_per_agent_backup_sources_for_schedule(&state.pool, id).await?;
+    let exclude_patterns_per_agent =
+        db::list_all_per_agent_excludes_for_schedule(&state.pool, id).await?;
     Ok(Json(ScheduleBackupSourcesResponse {
         backup_sources,
-        backup_sources_per_host,
-        exclude_patterns_per_host,
+        backup_sources_per_agent,
+        exclude_patterns_per_agent,
     }))
 }
 

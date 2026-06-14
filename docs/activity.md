@@ -95,14 +95,14 @@ The activity view loads entries in pages. Click **Load More** at the bottom to f
 | `GET` | `/api/stats/activity` | List backup activity entries |
 | `GET` | `/api/stats/system-events` | List system events |
 | `GET` | `/api/logs` | Retrieve server log entries |
-| `GET` | `/api/clients/:hostname/reports` | List backup reports for a host |
+| `GET` | `/api/agents/:hostname/reports` | List backup reports for an agent |
 
 See the full [API Reference](api-reference.md) for request/response schemas.
 
 ## Related Pages
 
 - [Scheduling & Retention](scheduling.md) — configure when backups run
-- [Host & Agent Management](hosts.md) — manage hosts that produce activity
+- [Agent Management](agents.md) — manage agents that produce activity
 - [Dashboard](dashboard.md) — summary view with success rates and health
 
 <!--

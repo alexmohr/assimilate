@@ -464,12 +464,12 @@ const groupedArchives = computed<ArchiveGroup[]>(() => {
   const groups = new Map<string, ArchiveGroup>()
   for (const archive of orderedArchives.value) {
     const isMatched = archive.matched === true
-    const key = isMatched ? (archive.client_hostname ?? archive.hostname) : archive.hostname
+    const key = isMatched ? (archive.agent_hostname ?? archive.hostname) : archive.hostname
     if (!groups.has(key)) {
       groups.set(key, {
         hostname: key,
         matched: isMatched,
-        clientHostname: isMatched ? archive.client_hostname : null,
+        clientHostname: isMatched ? archive.agent_hostname : null,
         archives: [],
       })
     }
@@ -1603,9 +1603,7 @@ async function resetImport(): Promise<void> {
                   @click="selectArchive(archive)"
                 >
                   <span class="archive-name">{{ archive.name }}</span>
-                  <span class="archive-host">{{
-                    archive.client_hostname ?? archive.hostname
-                  }}</span>
+                  <span class="archive-host">{{ archive.agent_hostname ?? archive.hostname }}</span>
                   <span class="archive-date">{{ formatDate(archive.start) }}</span>
                   <span class="archive-size">{{ formatBytes(archive.original_size) }}</span>
                   <span class="archive-size">{{ formatBytes(archive.deduplicated_size) }}</span>

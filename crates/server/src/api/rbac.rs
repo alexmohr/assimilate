@@ -34,9 +34,9 @@ pub struct SetGroupMembersRequest {
 #[derive(Debug, Deserialize)]
 pub struct CreateRoleRequest {
     pub name: String,
-    pub can_create_client: bool,
-    pub can_delete_client: bool,
-    pub can_delete_own_client: bool,
+    pub can_create_agent: bool,
+    pub can_delete_agent: bool,
+    pub can_delete_own_agent: bool,
     pub can_create_repo: bool,
     pub can_delete_repo: bool,
     pub can_delete_own_repo: bool,
@@ -51,9 +51,9 @@ pub struct CreateRoleRequest {
 #[derive(Debug, Deserialize)]
 pub struct UpdateRoleRequest {
     pub name: String,
-    pub can_create_client: bool,
-    pub can_delete_client: bool,
-    pub can_delete_own_client: bool,
+    pub can_create_agent: bool,
+    pub can_delete_agent: bool,
+    pub can_delete_own_agent: bool,
     pub can_create_repo: bool,
     pub can_delete_repo: bool,
     pub can_delete_own_repo: bool,
@@ -171,9 +171,9 @@ pub async fn create_role(
     }
     let params = db::InsertRoleParams {
         name,
-        can_create_client: req.can_create_client,
-        can_delete_client: req.can_delete_client,
-        can_delete_own_client: req.can_delete_own_client,
+        can_create_agent: req.can_create_agent,
+        can_delete_agent: req.can_delete_agent,
+        can_delete_own_agent: req.can_delete_own_agent,
         can_create_repo: req.can_create_repo,
         can_delete_repo: req.can_delete_repo,
         can_delete_own_repo: req.can_delete_own_repo,
@@ -202,9 +202,9 @@ pub async fn update_role(
     }
     let params = db::InsertRoleParams {
         name,
-        can_create_client: req.can_create_client,
-        can_delete_client: req.can_delete_client,
-        can_delete_own_client: req.can_delete_own_client,
+        can_create_agent: req.can_create_agent,
+        can_delete_agent: req.can_delete_agent,
+        can_delete_own_agent: req.can_delete_own_agent,
         can_create_repo: req.can_create_repo,
         can_delete_repo: req.can_delete_repo,
         can_delete_own_repo: req.can_delete_own_repo,

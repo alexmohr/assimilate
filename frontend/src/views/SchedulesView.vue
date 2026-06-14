@@ -50,7 +50,7 @@ interface ScheduleRow {
   target_hostnames: string[]
 }
 
-interface ClientRow {
+interface AgentRow {
   id: number
   hostname: string
   display_name: string | null
@@ -77,7 +77,7 @@ interface HealthEntry {
 
 const schedules = ref<ScheduleRow[]>([])
 const repos = ref<RepoRow[]>([])
-const clients = ref<ClientRow[]>([])
+const agents = ref<AgentRow[]>([])
 const health = ref<HealthEntry[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
@@ -133,8 +133,8 @@ interface EnrichedSchedule extends ScheduleRow {
 }
 
 const clientMap = computed(() => {
-  const map = new Map<string, ClientRow>()
-  clients.value.forEach((client) => map.set(client.hostname, client))
+  const map = new Map<string, AgentRow>()
+  agents.value.forEach((agent) => map.set(agent.hostname, agent))
   return map
 })
 
@@ -151,8 +151,8 @@ const healthBySchedule = computed(() => {
 const enrichedSchedules = computed<EnrichedSchedule[]>(() =>
   schedules.value.map((s) => {
     const hostLabels = s.target_hostnames.map((hostname) => {
-      const client = clientMap.value.get(hostname)
-      return client?.display_name ? `${client.display_name} (${hostname})` : hostname
+      const agent = clientMap.value.get(hostname)
+      return agent?.display_name ? `${agent.display_name} (${hostname})` : hostname
     })
     const repo: RepoRow | null = s.repo_id != null ? (repoMap.value.get(s.repo_id) ?? null) : null
     const entries = healthBySchedule.value.get(s.id) ?? []
@@ -269,15 +269,15 @@ async function fetchAll(): Promise<void> {
   loading.value = true
   error.value = null
   try {
-    const [schRes, repoRes, machRes, healthRes] = await Promise.all([
+    const [schRes, repoRes, agentsRes, healthRes] = await Promise.all([
       apiClient.get<ScheduleRow[]>('/schedules'),
       apiClient.get<RepoRow[]>('/repos'),
-      apiClient.get<ClientRow[]>('/clients'),
+      apiClient.get<AgentRow[]>('/agents'),
       apiClient.get<HealthEntry[]>('/stats/health'),
     ])
     schedules.value = schRes.data
     repos.value = repoRes.data
-    clients.value = machRes.data
+    agents.value = agentsRes.data
     health.value = healthRes.data
   } catch {
     error.value = 'Failed to load schedules.'

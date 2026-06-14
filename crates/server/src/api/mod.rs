@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+pub mod agents;
 pub mod archives;
 pub mod audit;
 pub mod auth;
-pub mod clients;
 pub mod config_io;
 pub mod deploy;
 pub mod diff;

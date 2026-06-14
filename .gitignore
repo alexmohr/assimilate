@@ -30,3 +30,6 @@ docs_html/
 
 # Git worktrees
 .worktrees/
+
+# Claude Code
+.claude/

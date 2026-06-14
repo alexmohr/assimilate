@@ -677,10 +677,10 @@ async fn exec_sudo_command(
 
 fn build_write_unit_cmd(content: &str, path: &str) -> String {
     let encoded = base64::engine::general_purpose::STANDARD.encode(content.as_bytes());
-    format!("echo {encoded} | base64 -d > {path}")
+    format!("echo {encoded} | base64 -d > {}", shell_escape(path))
 }
 
-fn shell_escape(s: &str) -> String {
+pub(crate) fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
@@ -790,9 +790,10 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
         .await
         .map_err(|e| SshError::Sftp(format!("failed to upload agent binary: {e}")))?;
 
+    let escaped_remote = shell_escape(params.remote_path);
     let move_cmd = format!(
-        "mv {upload_path} {} && chmod +x {}",
-        params.remote_path, params.remote_path
+        "mv {} {escaped_remote} && chmod +x {escaped_remote}",
+        shell_escape(&upload_path),
     );
 
     if params.use_sudo {

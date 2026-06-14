@@ -12,6 +12,7 @@ use shared::{
     schedule::{calculate_next_run, validate_cron},
     types::{OnFailure, RepoId, ScheduleType},
 };
+use sqlx::PgPool;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
@@ -158,24 +159,7 @@ pub async fn create_schedule(
     let exclude_patterns_raw = req.exclude_patterns_raw.unwrap_or_default();
     let enabled = req.enabled.unwrap_or(true);
     if enabled {
-        let repo = db::get_repo_connection(&state.pool, req.repo_id).await?;
-        let ssh_port = u16::try_from(repo.ssh_port).map_err(|_| {
-            ApiError::Unprocessable("Cannot reach repository: invalid SSH port".into())
-        })?;
-        let response = ssh::test_connection(&TestConnectionRequest {
-            ssh_host: repo.ssh_host,
-            ssh_user: repo.ssh_user,
-            ssh_port: Some(ssh_port),
-        })
-        .await;
-        if !response.ssh_ok {
-            return Err(ApiError::Unprocessable(format!(
-                "Cannot reach repository: {}",
-                response
-                    .error
-                    .unwrap_or_else(|| "unknown error".to_string())
-            )));
-        }
+        check_ssh_reachability(&state.pool, req.repo_id).await?;
     }
     let schedule_type_enum = req.schedule_type.unwrap_or_default();
     let schedule_type = schedule_type_to_str(schedule_type_enum);
@@ -213,13 +197,7 @@ pub async fn create_schedule(
         keep_monthly: req.keep_monthly.unwrap_or(6),
         keep_yearly: req.keep_yearly.unwrap_or(0),
         compact_enabled: req.compact_enabled.unwrap_or(true),
-        rate_limit_kbps: match req.rate_limit_kbps {
-            Some(rate_limit_kbps) => Some(
-                i32::try_from(rate_limit_kbps)
-                    .map_err(|_| ApiError::BadRequest("rate_limit_kbps is too large".into()))?,
-            ),
-            None => None,
-        },
+        rate_limit_kbps: convert_rate_limit(req.rate_limit_kbps)?,
         pre_backup_commands: &serde_json::to_string(&req.pre_backup_commands.unwrap_or_default())
             .unwrap_or_else(|_| "[]".to_owned()),
         post_backup_commands: &serde_json::to_string(&req.post_backup_commands.unwrap_or_default())
@@ -242,49 +220,19 @@ pub async fn create_schedule(
     db::insert_schedule_targets(&state.pool, schedule.id, &targets).await?;
 
     if let Some(sources) = &req.backup_sources {
-        for (i, path) in sources.iter().enumerate() {
-            let sort_order =
-                i32::try_from(i).map_err(|_| ApiError::BadRequest("too many sources".into()))?;
-            db::insert_backup_source_for_schedule(&state.pool, schedule.id, path, sort_order)
-                .await?;
-        }
+        insert_schedule_sources(&state.pool, schedule.id, sources).await?;
     }
 
     if let Some(per_agent) = &req.backup_sources_per_agent {
-        for entry in per_agent {
-            for (i, path) in entry.paths.iter().enumerate() {
-                let sort_order = i32::try_from(i)
-                    .map_err(|_| ApiError::BadRequest("too many sources".into()))?;
-                db::insert_backup_source_for_schedule_agent(
-                    &state.pool,
-                    schedule.id,
-                    entry.agent_id,
-                    path,
-                    sort_order,
-                )
-                .await?;
-            }
-        }
+        insert_per_agent_sources(&state.pool, schedule.id, per_agent).await?;
     }
 
     if let Some(per_agent) = &req.exclude_patterns_per_agent {
-        for entry in per_agent {
-            db::upsert_per_agent_excludes_raw(
-                &state.pool,
-                schedule.id,
-                entry.agent_id,
-                &entry.raw_text,
-            )
-            .await?;
-        }
+        insert_per_agent_excludes(&state.pool, schedule.id, per_agent).await?;
     }
 
     if enabled {
-        let now = chrono::Utc::now();
-        let tz = db::get_schedule_timezone(&state.pool).await?;
-        let next = calculate_next_run(&req.cron_expression, now, tz)
-            .map_err(|e| ApiError::Internal(format!("failed to calculate next run: {e}")))?;
-        db::set_next_run_at(&state.pool, schedule.id, next).await?;
+        refresh_next_run(&state.pool, schedule.id, &req.cron_expression).await?;
     }
 
     config_assembler::push_config_to_all_schedule_targets(&state, schedule.id).await;
@@ -362,24 +310,7 @@ pub async fn update_schedule(
                 "cannot enable a schedule with no repository assigned".into(),
             ));
         };
-        let repo = db::get_repo_connection(&state.pool, eff_rid).await?;
-        let ssh_port = u16::try_from(repo.ssh_port).map_err(|_| {
-            ApiError::Unprocessable("Cannot reach repository: invalid SSH port".into())
-        })?;
-        let response = ssh::test_connection(&TestConnectionRequest {
-            ssh_host: repo.ssh_host,
-            ssh_user: repo.ssh_user,
-            ssh_port: Some(ssh_port),
-        })
-        .await;
-        if !response.ssh_ok {
-            return Err(ApiError::Unprocessable(format!(
-                "Cannot reach repository: {}",
-                response
-                    .error
-                    .unwrap_or_else(|| "unknown error".to_string())
-            )));
-        }
+        check_ssh_reachability(&state.pool, eff_rid).await?;
     }
 
     let pre_cmds_json = req.pre_backup_commands.map_or_else(
@@ -411,11 +342,8 @@ pub async fn update_schedule(
         keep_monthly: req.keep_monthly.unwrap_or(existing.keep_monthly),
         keep_yearly: req.keep_yearly.unwrap_or(existing.keep_yearly),
         compact_enabled: req.compact_enabled.unwrap_or(existing.compact_enabled),
-        rate_limit_kbps: match req.rate_limit_kbps {
-            Some(rate_limit_kbps) => Some(
-                i32::try_from(rate_limit_kbps)
-                    .map_err(|_| ApiError::BadRequest("rate_limit_kbps is too large".into()))?,
-            ),
+        rate_limit_kbps: match convert_rate_limit(req.rate_limit_kbps)? {
+            Some(v) => Some(v),
             None => existing.rate_limit_kbps,
         },
         pre_backup_commands: &pre_cmds_json,
@@ -450,51 +378,21 @@ pub async fn update_schedule(
 
     if let Some(sources) = &req.backup_sources {
         db::delete_backup_sources_for_schedule(&state.pool, schedule.id).await?;
-        for (i, path) in sources.iter().enumerate() {
-            let sort_order =
-                i32::try_from(i).map_err(|_| ApiError::BadRequest("too many sources".into()))?;
-            db::insert_backup_source_for_schedule(&state.pool, schedule.id, path, sort_order)
-                .await?;
-        }
+        insert_schedule_sources(&state.pool, schedule.id, sources).await?;
     }
 
     if let Some(per_agent) = &req.backup_sources_per_agent {
         db::delete_per_agent_backup_sources_for_schedule(&state.pool, schedule.id).await?;
-        for entry in per_agent {
-            for (i, path) in entry.paths.iter().enumerate() {
-                let sort_order = i32::try_from(i)
-                    .map_err(|_| ApiError::BadRequest("too many sources".into()))?;
-                db::insert_backup_source_for_schedule_agent(
-                    &state.pool,
-                    schedule.id,
-                    entry.agent_id,
-                    path,
-                    sort_order,
-                )
-                .await?;
-            }
-        }
+        insert_per_agent_sources(&state.pool, schedule.id, per_agent).await?;
     }
 
     if let Some(per_agent) = &req.exclude_patterns_per_agent {
         db::delete_per_agent_excludes_for_schedule(&state.pool, schedule.id).await?;
-        for entry in per_agent {
-            db::upsert_per_agent_excludes_raw(
-                &state.pool,
-                schedule.id,
-                entry.agent_id,
-                &entry.raw_text,
-            )
-            .await?;
-        }
+        insert_per_agent_excludes(&state.pool, schedule.id, per_agent).await?;
     }
 
     if enabled {
-        let now = chrono::Utc::now();
-        let tz = db::get_schedule_timezone(&state.pool).await?;
-        let next = calculate_next_run(&req.cron_expression, now, tz)
-            .map_err(|e| ApiError::Internal(format!("failed to calculate next run: {e}")))?;
-        db::set_next_run_at(&state.pool, schedule.id, next).await?;
+        refresh_next_run(&state.pool, schedule.id, &req.cron_expression).await?;
     } else {
         db::set_next_run_at(&state.pool, schedule.id, chrono::Utc::now()).await?;
     }
@@ -553,6 +451,96 @@ fn schedule_type_to_str(st: ScheduleType) -> &'static str {
         ScheduleType::Check => "check",
         ScheduleType::Verify => "verify",
     }
+}
+
+async fn check_ssh_reachability(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
+    let repo = db::get_repo_connection(pool, repo_id).await?;
+    let ssh_port = u16::try_from(repo.ssh_port)
+        .map_err(|_| ApiError::Unprocessable("Cannot reach repository: invalid SSH port".into()))?;
+    let response = ssh::test_connection(&TestConnectionRequest {
+        ssh_host: repo.ssh_host,
+        ssh_user: repo.ssh_user,
+        ssh_port: Some(ssh_port),
+    })
+    .await;
+    if response.ssh_ok {
+        Ok(())
+    } else {
+        Err(ApiError::Unprocessable(format!(
+            "Cannot reach repository: {}",
+            response
+                .error
+                .unwrap_or_else(|| "unknown error".to_string())
+        )))
+    }
+}
+
+fn convert_rate_limit(rate_limit_kbps: Option<u32>) -> Result<Option<i32>, ApiError> {
+    rate_limit_kbps
+        .map(|v| {
+            i32::try_from(v)
+                .map_err(|_| ApiError::BadRequest("rate_limit_kbps is too large".into()))
+        })
+        .transpose()
+}
+
+async fn insert_schedule_sources(
+    pool: &PgPool,
+    schedule_id: i64,
+    sources: &[String],
+) -> Result<(), ApiError> {
+    for (i, path) in sources.iter().enumerate() {
+        let sort_order =
+            i32::try_from(i).map_err(|_| ApiError::BadRequest("too many sources".into()))?;
+        db::insert_backup_source_for_schedule(pool, schedule_id, path, sort_order).await?;
+    }
+    Ok(())
+}
+
+async fn insert_per_agent_sources(
+    pool: &PgPool,
+    schedule_id: i64,
+    per_agent: &[AgentBackupSources],
+) -> Result<(), ApiError> {
+    for entry in per_agent {
+        for (i, path) in entry.paths.iter().enumerate() {
+            let sort_order =
+                i32::try_from(i).map_err(|_| ApiError::BadRequest("too many sources".into()))?;
+            db::insert_backup_source_for_schedule_agent(
+                pool,
+                schedule_id,
+                entry.agent_id,
+                path,
+                sort_order,
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+async fn insert_per_agent_excludes(
+    pool: &PgPool,
+    schedule_id: i64,
+    per_agent: &[AgentExcludePatterns],
+) -> Result<(), ApiError> {
+    for entry in per_agent {
+        db::upsert_per_agent_excludes_raw(pool, schedule_id, entry.agent_id, &entry.raw_text)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn refresh_next_run(
+    pool: &PgPool,
+    schedule_id: i64,
+    cron_expression: &str,
+) -> Result<(), ApiError> {
+    let now = chrono::Utc::now();
+    let tz = db::get_schedule_timezone(pool).await?;
+    let next = calculate_next_run(cron_expression, now, tz)
+        .map_err(|e| ApiError::Internal(format!("failed to calculate next run: {e}")))?;
+    db::set_next_run_at(pool, schedule_id, next).await
 }
 
 #[utoipa::path(

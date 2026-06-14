@@ -21,13 +21,53 @@ import { formatBytes, formatDate } from '../utils/format'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
-import { Folder, File, Download, RotateCcw, Trash2 } from '@lucide/vue'
+import {
+  Folder,
+  File,
+  Download,
+  RotateCcw,
+  Trash2,
+  CheckCircle,
+  AlertTriangle,
+  AlertCircle,
+} from '@lucide/vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import QuotaPanel from '../components/QuotaPanel.vue'
 import BaseModal from '../components/BaseModal.vue'
 
-type TabId = 'overview' | 'archives'
+type TabId = 'overview' | 'archives' | 'schedules'
+type ScheduleType = 'backup' | 'check' | 'verify'
+
+interface ScheduleRow {
+  id: number
+  repo_id: number | null
+  name: string
+  schedule_type: ScheduleType
+  cron_expression: string
+  enabled: boolean
+  canary_enabled: boolean
+  last_run_at: string | null
+  next_run_at: string | null
+  execution_mode: string
+  on_failure: string
+  target_hostnames: string[]
+}
+
+interface ClientRow {
+  id: number
+  hostname: string
+  display_name: string | null
+}
+
+interface HealthEntry {
+  schedule_id: number
+  hostname: string
+  last_status: string | null
+  last_backup_at: string | null
+  is_overdue: boolean
+  last_error_message: string | null
+}
 type ArchiveSortMode =
   | 'date-desc'
   | 'date-asc'
@@ -115,7 +155,7 @@ const repoIdRef = computed(() => repoId.value)
 const activeTab = computed<TabId>({
   get() {
     const t = route.query.tab as string | undefined
-    if (t === 'archives') return t
+    if (t === 'archives' || t === 'schedules') return t
     return 'overview'
   },
   set(val: TabId) {
@@ -126,6 +166,7 @@ const activeTab = computed<TabId>({
 const tabs: { id: TabId; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'archives', label: 'Archives' },
+  { id: 'schedules', label: 'Schedules' },
 ]
 
 const repo = ref<RepoWithStats | null>(null)
@@ -215,6 +256,133 @@ interface RescanResult {
 useEscapeKey(showBreakLockDialog, () => {
   showBreakLockDialog.value = false
 })
+
+// Schedules tab
+const repoSchedules = ref<ScheduleRow[]>([])
+const repoSchedulesLoading = ref(false)
+const repoSchedulesError = ref<string | null>(null)
+const scheduleClients = ref<ClientRow[]>([])
+const scheduleHealth = ref<HealthEntry[]>([])
+const scheduleExpandedError = ref<number | null>(null)
+const scheduleRunNowLoading = ref<number | null>(null)
+const { success: scheduleToastSuccess, error: scheduleToastError } = useToast()
+
+const scheduleClientMap = computed(() => {
+  const m = new Map<string, ClientRow>()
+  scheduleClients.value.forEach((c) => m.set(c.hostname, c))
+  return m
+})
+
+const scheduleHealthBySchedule = computed(() => {
+  const m = new Map<number, HealthEntry[]>()
+  scheduleHealth.value.forEach((h) => {
+    const entries = m.get(h.schedule_id) ?? []
+    entries.push(h)
+    m.set(h.schedule_id, entries)
+  })
+  return m
+})
+
+interface EnrichedSchedule extends ScheduleRow {
+  hostLabels: string[]
+  health: HealthEntry | null
+}
+
+const enrichedRepoSchedules = computed<EnrichedSchedule[]>(() =>
+  repoSchedules.value.map((s) => {
+    const hostLabels = s.target_hostnames.map((hostname) => {
+      const client = scheduleClientMap.value.get(hostname)
+      return client?.display_name ? `${client.display_name} (${hostname})` : hostname
+    })
+    const entries = scheduleHealthBySchedule.value.get(s.id) ?? []
+    const health: HealthEntry | null =
+      entries.find((h) => h.is_overdue) ??
+      entries.find((h) => h.last_status === 'failed') ??
+      entries[0] ??
+      null
+    return { ...s, hostLabels, health }
+  }),
+)
+
+function scheduleTypeLabel(t: ScheduleType): string {
+  switch (t) {
+    case 'backup':
+      return 'Backup'
+    case 'check':
+      return 'Integrity Check'
+    case 'verify':
+      return 'Verify (extract dry-run)'
+  }
+}
+
+function scheduleStatusClass(entry: HealthEntry | null): string {
+  if (!entry) return ''
+  if (entry.is_overdue) return 'status-overdue'
+  switch (entry.last_status) {
+    case 'success':
+      return 'status-success'
+    case 'warning':
+      return 'status-warning'
+    case 'failed':
+      return 'status-failed'
+    case 'started':
+      return 'status-started'
+    default:
+      return ''
+  }
+}
+
+function scheduleStatusLabel(entry: HealthEntry | null): string {
+  if (!entry) return ''
+  if (entry.is_overdue) return 'Overdue'
+  switch (entry.last_status) {
+    case 'success':
+      return 'Success'
+    case 'warning':
+      return 'Warning'
+    case 'failed':
+      return 'Failed'
+    case 'started':
+      return 'Running'
+    default:
+      return 'No data'
+  }
+}
+
+function toggleScheduleError(id: number): void {
+  scheduleExpandedError.value = scheduleExpandedError.value === id ? null : id
+}
+
+async function loadRepoSchedules(): Promise<void> {
+  repoSchedulesLoading.value = true
+  repoSchedulesError.value = null
+  try {
+    const [schRes, clientRes, healthRes] = await Promise.all([
+      apiClient.get<ScheduleRow[]>(`/repos/${repoId.value}/schedules`),
+      apiClient.get<ClientRow[]>('/clients'),
+      apiClient.get<HealthEntry[]>('/stats/health'),
+    ])
+    repoSchedules.value = schRes.data
+    scheduleClients.value = clientRes.data
+    scheduleHealth.value = healthRes.data
+  } catch {
+    repoSchedulesError.value = 'Failed to load schedules.'
+  } finally {
+    repoSchedulesLoading.value = false
+  }
+}
+
+async function runScheduleNow(s: ScheduleRow): Promise<void> {
+  scheduleRunNowLoading.value = s.id
+  try {
+    await apiClient.post(`/schedules/${s.id}/run`)
+    scheduleToastSuccess(`${scheduleTypeLabel(s.schedule_type)} started.`)
+  } catch (e: unknown) {
+    scheduleToastError(extractError(e))
+  } finally {
+    scheduleRunNowLoading.value = null
+  }
+}
 
 // Confirm Relocation
 const showConfirmRelocationDialog = ref(false)
@@ -776,19 +944,32 @@ watch(
     archiveFilter.value = ''
     collapsedGroups.value = new Set()
     selectedArchive.value = null
+    repoSchedules.value = []
     await loadRepo()
     if (repo.value) {
       await Promise.all([loadTags(), loadArchives(), checkHostKeyMismatch()])
       await selectArchiveFromQuery()
+      if (activeTab.value === 'schedules') {
+        await loadRepoSchedules()
+      }
     }
   },
 )
+
+watch(activeTab, async (tab) => {
+  if (tab === 'schedules' && repoSchedules.value.length === 0 && !repoSchedulesLoading.value) {
+    await loadRepoSchedules()
+  }
+})
 
 onMounted(async () => {
   await loadRepo()
   if (repo.value) {
     await Promise.all([loadTags(), loadArchives(), checkHostKeyMismatch()])
     await selectArchiveFromQuery()
+    if (activeTab.value === 'schedules') {
+      await loadRepoSchedules()
+    }
   }
 })
 
@@ -1783,6 +1964,138 @@ async function resetImport(): Promise<void> {
             class="panel browser-panel empty-browser"
           >
             <span class="muted">Select an archive to browse its contents.</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Schedules Tab -->
+      <div
+        v-if="activeTab === 'schedules'"
+        class="tab-content"
+      >
+        <BaseSpinner
+          v-if="repoSchedulesLoading"
+          size="lg"
+        />
+        <div
+          v-else-if="repoSchedulesError"
+          class="state-msg state-error"
+        >
+          {{ repoSchedulesError }}
+        </div>
+        <div
+          v-else-if="enrichedRepoSchedules.length === 0"
+          class="state-msg"
+        >
+          No schedules configured for this repository.
+        </div>
+        <div
+          v-else
+          class="repo-schedule-grid"
+        >
+          <div
+            v-for="s in enrichedRepoSchedules"
+            :key="s.id"
+            class="schedule-card"
+            :class="{ disabled: !s.enabled }"
+            @click="router.push(`/schedules/${s.id}`)"
+          >
+            <div class="card-top">
+              <div class="card-info">
+                <span class="card-hostname">{{ s.name || `Schedule #${s.id}` }}</span>
+                <span class="card-repo">{{ s.hostLabels.join(', ') || 'No hosts assigned' }}</span>
+              </div>
+              <div class="card-badges">
+                <span
+                  v-if="s.health && (s.health.last_status || s.health.is_overdue)"
+                  class="health-badge"
+                  :class="scheduleStatusClass(s.health)"
+                >
+                  <CheckCircle
+                    v-if="s.health.last_status === 'success' && !s.health.is_overdue"
+                    :size="12"
+                  />
+                  <AlertTriangle
+                    v-else-if="s.health.last_status === 'warning' || s.health.is_overdue"
+                    :size="12"
+                  />
+                  <AlertCircle
+                    v-else-if="s.health.last_status === 'failed'"
+                    :size="12"
+                  />
+                  {{ scheduleStatusLabel(s.health) }}
+                </span>
+                <span
+                  class="status-badge"
+                  :class="s.enabled ? 'status-online' : 'status-offline'"
+                >
+                  {{ s.enabled ? 'Enabled' : 'Disabled' }}
+                </span>
+              </div>
+            </div>
+            <div class="card-meta">
+              <span class="host-count">
+                {{ s.target_hostnames.length }}
+                host{{ s.target_hostnames.length === 1 ? '' : 's' }}
+              </span>
+              <span
+                class="type-badge"
+                :class="`type-${s.schedule_type ?? 'backup'}`"
+              >
+                {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
+              </span>
+              <span class="execution-badge">
+                {{ s.execution_mode === 'sequential' ? 'Sequential' : 'Parallel' }}
+              </span>
+            </div>
+            <div
+              v-if="s.health?.last_error_message"
+              class="card-error"
+              @click.stop
+            >
+              <button
+                class="error-toggle"
+                @click="toggleScheduleError(s.id)"
+              >
+                <AlertCircle :size="12" />
+                Last backup failed
+                <span class="toggle-arrow">{{ scheduleExpandedError === s.id ? '▴' : '▾' }}</span>
+              </button>
+              <pre
+                v-if="scheduleExpandedError === s.id"
+                class="error-pre"
+                >{{ s.health.last_error_message }}</pre
+              >
+            </div>
+            <div class="card-stats">
+              <div class="stat">
+                <span class="stat-value">{{
+                  cronToHuman(s.cron_expression) ?? s.cron_expression
+                }}</span>
+                <span class="stat-label">Schedule</span>
+              </div>
+              <div class="stat">
+                <span class="stat-value">{{ formatDate(s.next_run_at) }}</span>
+                <span class="stat-label">Next run</span>
+              </div>
+              <div class="stat">
+                <span class="stat-value">{{ formatDate(s.last_run_at) }}</span>
+                <span class="stat-label">Last run</span>
+              </div>
+            </div>
+            <div
+              class="card-actions"
+              @click.stop
+            >
+              <button
+                class="btn btn-sm btn-ghost"
+                :disabled="scheduleRunNowLoading === s.id"
+                :title="`Run ${scheduleTypeLabel(s.schedule_type ?? 'backup').toLowerCase()} now`"
+                @click="runScheduleNow(s)"
+              >
+                {{ scheduleRunNowLoading === s.id ? '...' : 'Run' }}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -3220,5 +3533,236 @@ async function resetImport(): Promise<void> {
   border-radius: 50%;
   color: var(--danger);
   background: var(--danger-subtle);
+}
+
+.repo-schedule-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
+  gap: 1rem;
+}
+
+.schedule-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  cursor: pointer;
+  transition:
+    box-shadow 0.15s,
+    border-color 0.15s;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.schedule-card:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow);
+}
+
+.schedule-card.disabled {
+  opacity: 0.5;
+}
+
+.card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.card-badges {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.health-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.health-badge.status-success {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.health-badge.status-warning {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.health-badge.status-failed {
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.health-badge.status-overdue {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.health-badge.status-started {
+  background: var(--info-subtle);
+  color: var(--info);
+}
+
+.card-error {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.error-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: none;
+  border: none;
+  color: var(--danger);
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0.2rem 0;
+}
+
+.error-toggle:hover {
+  text-decoration: underline;
+}
+
+.toggle-arrow {
+  font-size: 0.6rem;
+  margin-left: 0.1rem;
+}
+
+.error-pre {
+  background: var(--bg-input);
+  border: 1px solid var(--danger-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.75rem;
+  font-size: 0.72rem;
+  font-family: var(--mono);
+  color: var(--danger);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 150px;
+  overflow-y: auto;
+  margin: 0;
+}
+
+.card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.card-hostname {
+  font-weight: 600;
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-repo {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.card-meta {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.host-count,
+.execution-badge {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.host-count {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.execution-badge {
+  background: var(--info-subtle);
+  color: var(--info);
+}
+
+.type-badge {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.type-backup {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.type-check {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.type-verify {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.card-stats {
+  display: flex;
+  gap: 1.25rem;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.stat-value {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.stat-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.25rem;
+  margin-top: auto;
 }
 </style>

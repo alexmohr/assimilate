@@ -53,7 +53,7 @@ describe('dashboard operational components', () => {
 
     findingKinds.forEach((kind) => expect(wrapper.text()).toContain(`reason-${kind}`))
     expect(wrapper.findAll('.finding-row')).toHaveLength(findingKinds.length)
-    expect(wrapper.find('.finding-row').attributes('href')).toBe('/schedules/1')
+    expect(wrapper.find('.finding-row .finding-action').attributes('href')).toBe('/schedules/1')
   })
 
   it('renders the no-problems empty state', () => {

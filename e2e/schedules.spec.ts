@@ -3,6 +3,12 @@
 
 import { expect, test } from '@playwright/test';
 
+interface ScheduleListEntry {
+  id: number;
+  name: string;
+  target_hostnames: string[];
+}
+
 test.describe('Schedules Management', () => {
   test('schedules list shows heading', async ({ page }) => {
     await page.goto('/schedules');
@@ -91,5 +97,33 @@ test.describe('Schedules Management', () => {
     await expect(page.getByText('SUCCESS').first()).toBeVisible();
     await expect(page.getByText('WARNING').first()).toBeVisible();
     await expect(page.getByText('FAILED').first()).toBeVisible();
+  });
+
+  test('schedule detail with per-host backup sources loads without error', async ({
+    request,
+    page,
+  }) => {
+    // Find the multi-agent schedule seeded with backup_sources_per_agent.
+    const listResp = await request.get('/api/schedules');
+    expect(listResp.ok()).toBe(true);
+    const schedules = (await listResp.json()) as ScheduleListEntry[];
+
+    const multiHost = schedules.find(
+      (s) =>
+        s.target_hostnames.includes('web-server-01') &&
+        s.target_hostnames.includes('db-server-01') &&
+        s.target_hostnames.includes('media-store-01'),
+    );
+    expect(multiHost).toBeDefined();
+
+    // Navigate to the detail page — this used to crash before the null-safety fix.
+    await page.goto(`/schedules/${multiHost!.id}`);
+    await page.waitForLoadState('networkidle');
+
+    // Page must stay on the schedule detail URL (no redirect or error page).
+    await expect(page).toHaveURL(`/schedules/${multiHost!.id}`);
+
+    // Per-host backup sources section should be rendered.
+    await expect(page.locator('.per-host-paths').or(page.locator('.per-host-entry')).first()).toBeVisible();
   });
 });

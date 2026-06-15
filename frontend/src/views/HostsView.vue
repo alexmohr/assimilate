@@ -20,6 +20,7 @@ import EmptyState from '../components/EmptyState.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import MergeClientDialog from '../components/MergeClientDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
+import CardError from '../components/CardError.vue'
 import type { DashboardOverview } from '../types/dashboard'
 
 interface AgentRow {
@@ -70,6 +71,7 @@ interface AgentHealth {
   overdue: number
   warning: number
   total: number
+  last_error_message: string | null
 }
 
 type SortField = 'hostname' | 'status' | 'last_seen' | 'version'
@@ -255,6 +257,15 @@ function agentHasIssues(agent: AgentRow): boolean {
   return h.failed > 0 || h.overdue > 0
 }
 
+function agentIssueLabel(agent: AgentRow): string {
+  const h = agentHealthStatus(agent)
+  if (!h) return ''
+  const parts: string[] = []
+  if (h.failed > 0) parts.push(`${h.failed} failed`)
+  if (h.overdue > 0) parts.push(`${h.overdue} overdue`)
+  return parts.join(', ')
+}
+
 function toggleTagFilter(tagId: number): void {
   const idx = filterTagIds.value.indexOf(tagId)
   if (idx === -1) {
@@ -298,10 +309,21 @@ async function loadAgents(): Promise<void> {
     const hMap: Record<string, AgentHealth> = {}
     healthRes.data.forEach((entry) => {
       if (!hMap[entry.hostname]) {
-        hMap[entry.hostname] = { failed: 0, overdue: 0, warning: 0, total: 0 }
+        hMap[entry.hostname] = {
+          failed: 0,
+          overdue: 0,
+          warning: 0,
+          total: 0,
+          last_error_message: null,
+        }
       }
       hMap[entry.hostname].total++
-      if (entry.last_status === 'failed') hMap[entry.hostname].failed++
+      if (entry.last_status === 'failed') {
+        hMap[entry.hostname].failed++
+        if (entry.last_error_message) {
+          hMap[entry.hostname].last_error_message = entry.last_error_message
+        }
+      }
       if (entry.last_status === 'warning') hMap[entry.hostname].warning++
       if (entry.is_overdue) hMap[entry.hostname].overdue++
     })
@@ -712,8 +734,13 @@ watch(
             <span class="stat-label">Agent</span>
           </div>
         </div>
+        <CardError
+          v-if="agentHasIssues(agent) && agentHealthStatus(agent)!.last_error_message"
+          :label="agentIssueLabel(agent)"
+          :message="agentHealthStatus(agent)!.last_error_message!"
+        />
         <div
-          v-if="agentHasIssues(agent)"
+          v-else-if="agentHasIssues(agent)"
           class="card-health-issues"
         >
           <AlertCircle :size="12" />
@@ -937,7 +964,11 @@ watch(
       :agent-version="deployTarget.agent_version"
       @close="showDeployDialog = false"
       @deployed="
-        () => {
+        (version) => {
+          if (version && deployTarget) {
+            const agent = agents.find((a) => a.hostname === deployTarget!.hostname)
+            if (agent) agent.agent_version = version
+          }
           showDeployDialog = false
           loadAgents()
         }

@@ -860,6 +860,36 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
     Ok(())
 }
 
+pub struct ReadFileParams<'a> {
+    pub host: &'a str,
+    pub user: &'a str,
+    pub port: u16,
+    pub password: Option<&'a str>,
+    pub use_sudo: bool,
+    pub sudo_password: Option<&'a str>,
+    pub path: &'a str,
+}
+
+pub async fn read_remote_file(params: &ReadFileParams<'_>) -> Result<Option<String>, SshError> {
+    let session = match params.password {
+        Some(pw) => connect_with_password(params.host, params.user, params.port, pw).await?,
+        None => connect_with_key(params.host, params.user, params.port, None).await?,
+    };
+
+    let cat_cmd = format!("cat {}", shell_escape(params.path));
+    let (exit_code, stdout, _stderr) = if params.use_sudo {
+        exec_sudo_command(&session, &cat_cmd, params.sudo_password).await?
+    } else {
+        exec_command(&session, &cat_cmd).await?
+    };
+
+    if exit_code != 0 {
+        return Ok(None);
+    }
+
+    Ok(Some(stdout))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

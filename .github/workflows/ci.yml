@@ -179,6 +179,17 @@ jobs:
         with:
           file: merged.info
           format: lcov
+          flag-name: unit
+          parallel: true
+
+  coveralls-finish:
+    name: Coveralls Finish
+    runs-on: ubuntu-latest
+    needs: [coverage, e2e]
+    steps:
+      - uses: coverallsapp/github-action@v2
+        with:
+          parallel-finished: true
 
   e2e:
     name: Playwright E2E
@@ -198,12 +209,17 @@ jobs:
       - name: Install Playwright browsers
         run: npm run e2e:install
         working-directory: frontend
-      - name: Build frontend
+      - name: Build frontend with Istanbul instrumentation
         run: npm run build
         working-directory: frontend
-      - name: Start demo environment
+        env:
+          VITE_COVERAGE: "true"
+      - name: Start demo environment (with instrumented frontend)
         run: |
-          docker compose -f .devcontainer/demo/docker-compose.demo.yml up -d
+          docker compose \
+            -f .devcontainer/demo/docker-compose.demo.yml \
+            -f .devcontainer/demo/docker-compose.coverage-override.yml \
+            up -d
           echo "Waiting for demo seed to complete..."
           for i in $(seq 1 120); do
             if docker compose -f .devcontainer/demo/docker-compose.demo.yml logs demo 2>&1 | grep -q "Demo ready:"; then
@@ -217,6 +233,19 @@ jobs:
         working-directory: frontend
         env:
           E2E_BASE_URL: http://localhost:8080
+          VITE_COVERAGE: "true"
+      - name: Generate e2e coverage report
+        if: always()
+        run: npx nyc report --reporter=lcov --report-dir=coverage-e2e --temp-dir=.nyc_output
+        working-directory: frontend
+      - name: Upload coverage to Coveralls
+        if: always()
+        uses: coverallsapp/github-action@v2
+        with:
+          file: frontend/coverage-e2e/lcov.info
+          format: lcov
+          flag-name: e2e
+          parallel: true
       - name: Upload Playwright report
         uses: actions/upload-artifact@v4
         if: always()
@@ -226,7 +255,11 @@ jobs:
           retention-days: 7
       - name: Stop services
         if: always()
-        run: docker compose -f .devcontainer/demo/docker-compose.demo.yml down -v
+        run: |
+          docker compose \
+            -f .devcontainer/demo/docker-compose.demo.yml \
+            -f .devcontainer/demo/docker-compose.coverage-override.yml \
+            down -v
   build-agent:
     name: Build Agent (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}

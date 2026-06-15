@@ -26,10 +26,21 @@ test.describe('Dashboard', () => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
 
-    await expect(page.getByText('Online Clients').or(page.getByText('ONLINE CLIENTS')).first()).toBeVisible();
+    await expect(page.getByText('Online Agents').or(page.getByText('ONLINE AGENTS')).first()).toBeVisible();
     await expect(page.getByText('Overdue').or(page.getByText('OVERDUE')).first()).toBeVisible();
     await expect(page.getByText('Last Backup').or(page.getByText('LAST BACKUP')).first()).toBeVisible();
     await expect(page.getByText('Total Storage').or(page.getByText('TOTAL STORAGE')).first()).toBeVisible();
+  });
+
+  test('Online Agents stat uses correct field names from API', async ({ request }) => {
+    const resp = await request.get('/api/stats/summary');
+    expect(resp.ok()).toBe(true);
+    const body = (await resp.json()) as Record<string, unknown>;
+
+    // These fields drove the 0/0 display bug — verify the API uses the correct names.
+    expect(typeof body['online_agents']).toBe('number');
+    expect(typeof body['total_agents']).toBe('number');
+    expect(body['total_agents']).toBeGreaterThan(0);
   });
 
   test('dashboard shows repository health section', async ({ page }) => {

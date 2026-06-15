@@ -220,6 +220,7 @@ pub async fn create_repo(
     let pool = state.pool.clone();
     let encryption_key = state.encryption_key;
     let ui_broadcast = state.ui_broadcast.clone();
+    let state_repo_lock = state.repo_lock.clone();
     let need_borg_info = info_result.is_none();
     let bg_repo_url = repo_url.clone();
     let bg_passphrase = req.passphrase.clone();
@@ -252,11 +253,27 @@ pub async fn create_repo(
             }
         }
 
-        if let Err(e) = sync_existing_archives(&pool, &encryption_key, repo_id, &ui_broadcast).await
-        {
-            warn!(repo_id, error = %e, "failed to sync existing archives on import");
-            let _ = db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await;
+        let sync_ok =
+            match sync_existing_archives(&pool, &encryption_key, repo_id, &ui_broadcast).await {
+                Ok(_) => true,
+                Err(e) => {
+                    warn!(repo_id, error = %e, "failed to sync existing archives on import");
+                    let _ = db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await;
+                    false
+                }
+            };
+
+        if sync_ok {
+            index_archives_with_progress(
+                pool.clone(),
+                encryption_key,
+                repo_id,
+                ui_broadcast.clone(),
+                state_repo_lock,
+            )
+            .await;
         }
+
         if let Err(e) = db::set_repo_importing(&pool, repo_id, false).await {
             warn!(repo_id, error = %e, "failed to clear importing flag");
         }
@@ -1574,28 +1591,33 @@ pub async fn sync_existing_archives(
     }
 
     let imported = report_params.len() as u64;
-    let finalizing_msg = "Finalizing import\u{2026}".to_string();
+    let total_i32 = i32::try_from(total).unwrap_or(i32::MAX);
+    let save_msg = format!("Saving {imported} backup reports\u{2026}");
     publish_import_progress(
         pool,
         ui_broadcast,
         repo_id,
-        i32::try_from(total).unwrap_or(i32::MAX),
-        i32::try_from(total).unwrap_or(i32::MAX),
-        Some(&finalizing_msg),
+        total_i32,
+        total_i32,
+        Some(&save_msg),
     )
     .await;
-    let archive_names: Vec<String> = report_params
-        .iter()
-        .filter_map(|params| params.archive_name.clone())
-        .collect();
     db::bulk_insert_backup_reports(pool, &report_params).await?;
-    enrich_archive_stats_background(
-        pool.clone(),
-        borg_repo.clone(),
-        env.clone(),
+    enrich_archive_stats_background(pool.clone(), borg_repo.clone(), env.clone(), repo_id, {
+        report_params
+            .iter()
+            .filter_map(|params| params.archive_name.clone())
+            .collect()
+    });
+    publish_import_progress(
+        pool,
+        ui_broadcast,
         repo_id,
-        archive_names.clone(),
-    );
+        total_i32,
+        total_i32,
+        Some("Refreshing repository statistics\u{2026}"),
+    )
+    .await;
     refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, borg_names.len() as i64).await;
     info!(repo_id, imported, total, "synced existing archives");
     Ok((imported, removed))
@@ -1731,14 +1753,15 @@ pub async fn sync_new_archives(
     }
 
     let added = report_params.len() as u64;
-    let finalizing_msg = "Finalizing import\u{2026}".to_string();
+    let total_i32 = i32::try_from(total).unwrap_or(i32::MAX);
+    let save_msg = format!("Saving {added} backup reports\u{2026}");
     publish_import_progress(
         pool,
         ui_broadcast,
         repo_id,
-        i32::try_from(total).unwrap_or(i32::MAX),
-        i32::try_from(total).unwrap_or(i32::MAX),
-        Some(&finalizing_msg),
+        total_i32,
+        total_i32,
+        Some(&save_msg),
     )
     .await;
     let archive_names: Vec<String> = report_params
@@ -1760,6 +1783,15 @@ pub async fn sync_new_archives(
         &archive_names,
         repo_lock,
         "incremental sync",
+    )
+    .await;
+    publish_import_progress(
+        pool,
+        ui_broadcast,
+        repo_id,
+        total_i32,
+        total_i32,
+        Some("Refreshing repository statistics\u{2026}"),
     )
     .await;
     refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, borg_names.len() as i64).await;

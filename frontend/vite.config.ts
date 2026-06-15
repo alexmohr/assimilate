@@ -4,9 +4,27 @@
 import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
+import istanbul from 'vite-plugin-istanbul'
+
+const withCoverage = process.env.VITE_COVERAGE === 'true'
 
 export default defineConfig({
-  plugins: [vue(), tailwindcss()],
+  plugins: [
+    vue(),
+    tailwindcss(),
+    ...(withCoverage
+      ? [
+          istanbul({
+            include: ['src/**/*'],
+            exclude: ['node_modules', '**/*.spec.ts', '**/*.test.ts'],
+            forceBuildInstrument: true,
+          }),
+        ]
+      : []),
+  ],
+  build: {
+    sourcemap: withCoverage ? 'inline' : false,
+  },
   server: {
     proxy: {
       '/api': 'http://localhost:8080',

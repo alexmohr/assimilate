@@ -170,7 +170,7 @@ test('full resync preserves unmatched-banner', async ({ page }) => {
   await expect(page.locator('.unmatched-banner')).toBeVisible({ timeout: 10_000 })
 })
 
-test('full resync shows error toast on failure, not /error page', async ({ page }) => {
+test('broken repo resync does not navigate to /error page', async ({ page }) => {
   await loginAsAdmin(page)
 
   // Navigate to a repo then break its path via API to provoke a sync failure
@@ -189,10 +189,9 @@ test('full resync shows error toast on failure, not /error page', async ({ page 
   await expect(resyncBtn).toBeVisible({ timeout: 10_000 })
   await resyncBtn.click()
 
-  // Should show an error toast, NOT navigate to /error
-  await expect(page.locator('.toast, [class*="toast"], [role="alert"]')).toBeVisible({
-    timeout: 30_000,
-  })
+  // The sync request is accepted immediately — "Full resync started." toast must appear
+  // and the page must stay on the repo detail view, never redirecting to /error
+  await expect(page.locator('.toast-success').first()).toBeVisible({ timeout: 30_000 })
   await expect(page).not.toHaveURL(/\/error/)
 
   // Restore the repo path

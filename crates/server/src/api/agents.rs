@@ -20,7 +20,7 @@ use super::{
 };
 use crate::{
     AppState, config_assembler,
-    db::{self, AgentRow, patterns::HostnamePatternRow},
+    db::{self, AgentRow, IMPORTED_TOKEN_HASH, patterns::HostnamePatternRow},
     error::{ApiError, ApiJson},
 };
 
@@ -140,7 +140,7 @@ pub async fn list_agents(
         let (supports_restart, restart_unavailable_reason) =
             state.registry.restart_capability(&a.hostname).await;
         responses.push(AgentResponse {
-            is_imported: a.agent_token_hash == "imported:no-auth",
+            is_imported: a.agent_token_hash == IMPORTED_TOKEN_HASH,
             agent: a,
             is_connected,
             supports_restart,
@@ -175,7 +175,7 @@ pub async fn get_agent(
     let (supports_restart, restart_unavailable_reason) =
         state.registry.restart_capability(&hostname).await;
     Ok(Json(AgentResponse {
-        is_imported: agent.agent_token_hash == "imported:no-auth",
+        is_imported: agent.agent_token_hash == IMPORTED_TOKEN_HASH,
         agent,
         is_connected,
         supports_restart,
@@ -220,7 +220,7 @@ pub async fn update_agent(
     let (supports_restart, restart_unavailable_reason) =
         state.registry.restart_capability(&hostname).await;
     Ok(Json(AgentResponse {
-        is_imported: agent.agent_token_hash == "imported:no-auth",
+        is_imported: agent.agent_token_hash == IMPORTED_TOKEN_HASH,
         agent,
         is_connected,
         supports_restart,
@@ -279,7 +279,7 @@ pub async fn regenerate_token(
     Path(hostname): Path<String>,
 ) -> Result<Json<CreateAgentResponse>, ApiError> {
     let existing = db::get_agent_by_hostname(&state.pool, &hostname).await?;
-    let was_imported = existing.agent_token_hash == "imported:no-auth";
+    let was_imported = existing.agent_token_hash == IMPORTED_TOKEN_HASH;
 
     let token_hex = helpers::generate_random_hex(32);
 
@@ -491,7 +491,7 @@ pub async fn hide_agent(
     let (supports_restart, restart_unavailable_reason) =
         state.registry.restart_capability(&a.hostname).await;
     Ok(Json(AgentResponse {
-        is_imported: a.agent_token_hash == "imported:no-auth",
+        is_imported: a.agent_token_hash == IMPORTED_TOKEN_HASH,
         agent: a,
         is_connected,
         supports_restart,
@@ -524,7 +524,7 @@ pub async fn unhide_agent(
     let (supports_restart, restart_unavailable_reason) =
         state.registry.restart_capability(&a.hostname).await;
     Ok(Json(AgentResponse {
-        is_imported: a.agent_token_hash == "imported:no-auth",
+        is_imported: a.agent_token_hash == IMPORTED_TOKEN_HASH,
         agent: a,
         is_connected,
         supports_restart,

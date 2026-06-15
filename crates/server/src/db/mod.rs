@@ -14,6 +14,10 @@ use sqlx::PgPool;
 
 use crate::error::ApiError;
 
+/// Sentinel `agent_token_hash` value for imported placeholder agents that have
+/// no real authentication token.
+pub const IMPORTED_TOKEN_HASH: &str = "imported:no-auth";
+
 #[derive(Debug, Clone, Serialize)]
 pub enum ResolveResult {
     ExactMatch(AgentRow),
@@ -74,7 +78,7 @@ pub async fn merge_agent(pool: &PgPool, source_id: i64, target_id: i64) -> Resul
             .await
             .map_err(ApiError::Database)?;
 
-    if has_imported_token != "imported:no-auth" {
+    if has_imported_token != IMPORTED_TOKEN_HASH {
         return Err(ApiError::BadRequest(
             "source agent does not have imported:no-auth token".to_string(),
         ));

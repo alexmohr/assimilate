@@ -1861,7 +1861,7 @@ async fn test_list_schedules_for_repo() {
 
     let repo_id = insert_test_repo(&pool, "sched-repo-endpoint").await;
     let client_id: i64 = sqlx::query_scalar(
-        "INSERT INTO clients (hostname, agent_token_hash) VALUES ('sched-endpoint-host', 'hash2') \
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('sched-endpoint-host', 'hash2') \
          RETURNING id",
     )
     .fetch_one(&pool)

@@ -24,6 +24,7 @@ import {
 } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
+import CardError from '../components/CardError.vue'
 
 type ScheduleType = 'backup' | 'check' | 'verify'
 
@@ -82,8 +83,6 @@ const health = ref<HealthEntry[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
 const router = useRouter()
-const expandedError = ref<number | null>(null)
-
 type SortField = 'client' | 'next_run' | 'last_run' | 'type'
 type SortDir = 'asc' | 'desc'
 type FilterStatus = 'all' | 'enabled' | 'disabled'
@@ -259,10 +258,6 @@ function statusLabel(entry: HealthEntry | null): string {
     default:
       return 'No data'
   }
-}
-
-function toggleError(id: number): void {
-  expandedError.value = expandedError.value === id ? null : id
 }
 
 async function fetchAll(): Promise<void> {
@@ -486,25 +481,11 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
             {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
           </span>
         </div>
-        <div
+        <CardError
           v-if="s.health?.last_error_message"
-          class="card-error"
-          @click.stop
-        >
-          <button
-            class="error-toggle"
-            @click="toggleError(s.id)"
-          >
-            <AlertCircle :size="12" />
-            Last backup failed
-            <span class="toggle-arrow">{{ expandedError === s.id ? '\u25B4' : '\u25BE' }}</span>
-          </button>
-          <pre
-            v-if="expandedError === s.id"
-            class="error-pre"
-            >{{ s.health.last_error_message }}</pre
-          >
-        </div>
+          label="Last backup failed"
+          :message="s.health.last_error_message"
+        />
         <div class="card-stats">
           <div class="stat">
             <span class="stat-value">{{
@@ -710,49 +691,6 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
 .health-badge.status-started {
   background: var(--info-subtle);
   color: var(--info);
-}
-
-.card-error {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.error-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  background: none;
-  border: none;
-  color: var(--danger);
-  font-size: 0.75rem;
-  font-weight: 500;
-  cursor: pointer;
-  padding: 0.2rem 0;
-}
-
-.error-toggle:hover {
-  text-decoration: underline;
-}
-
-.toggle-arrow {
-  font-size: 0.6rem;
-  margin-left: 0.1rem;
-}
-
-.error-pre {
-  background: var(--bg-input);
-  border: 1px solid var(--danger-subtle);
-  border-radius: var(--radius-sm);
-  padding: 0.6rem 0.75rem;
-  font-size: 0.72rem;
-  font-family: var(--mono);
-  color: var(--danger);
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 150px;
-  overflow-y: auto;
-  margin: 0;
 }
 
 .card-info {

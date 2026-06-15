@@ -58,9 +58,9 @@ interface PerHostExcludePatterns {
 }
 
 interface ScheduleBackupSourcesResponse {
-  backup_sources: string[]
-  backup_sources_per_host: PerHostBackupSources[]
-  exclude_patterns_per_host: PerHostExcludePatterns[]
+  backup_sources: string[] | null
+  backup_sources_per_host: PerHostBackupSources[] | null
+  exclude_patterns_per_host: PerHostExcludePatterns[] | null
 }
 
 interface AgentRow {
@@ -307,19 +307,21 @@ async function loadData(): Promise<void> {
       populateForm(schedRes.data)
 
       const sources = sourcesRes.data
-      form.value.backup_sources = sources.backup_sources.join('\n')
-      if (sources.backup_sources_per_host.length > 0) {
+      form.value.backup_sources = (sources.backup_sources ?? []).join('\n')
+      const perHost = sources.backup_sources_per_host ?? []
+      if (perHost.length > 0) {
         usePerHostPaths.value = true
         const map: Record<number, string> = {}
-        for (const entry of sources.backup_sources_per_host) {
+        for (const entry of perHost) {
           map[entry.agent_id] = entry.paths.join('\n')
         }
         perHostSources.value = map
       }
-      if (sources.exclude_patterns_per_host.length > 0) {
+      const perHostExcludeEntries = sources.exclude_patterns_per_host ?? []
+      if (perHostExcludeEntries.length > 0) {
         usePerHostExcludes.value = true
         const map: Record<number, string> = {}
-        for (const entry of sources.exclude_patterns_per_host) {
+        for (const entry of perHostExcludeEntries) {
           map[entry.agent_id] = entry.raw_text
         }
         perHostExcludes.value = map

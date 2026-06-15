@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+#
+# Overlay for coverage-instrumented e2e runs.
+# Mounts a locally-built (Istanbul-instrumented) frontend dist directory over
+# the image's /app/static so Playwright tests hit instrumented code.
+#
+# Usage (from repo root):
+#   VITE_COVERAGE=true npm --prefix frontend run build
+#   docker compose \
+#     -f .devcontainer/demo/docker-compose.demo.yml \
+#     -f .devcontainer/demo/docker-compose.coverage-override.yml \
+#     up -d
+
+services:
+  demo:
+    volumes:
+      - ../../frontend/dist:/app/static:ro

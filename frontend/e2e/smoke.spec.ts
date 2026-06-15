@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test } from './fixtures'
+import type { Page } from '@playwright/test'
 
 async function loginAsAdmin(page: Page): Promise<void> {
   await page.goto('/login')

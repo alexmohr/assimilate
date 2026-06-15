@@ -17,7 +17,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
-  deployed: []
+  deployed: [version: string | undefined]
 }>()
 
 const visible = ref(true)
@@ -28,6 +28,8 @@ useEscapeKey(visible, () => {
 
 const deployLoading = ref(false)
 const deployError = ref<string | null>(null)
+const fetchServiceLoading = ref(false)
+const fetchServiceError = ref<string | null>(null)
 const deployResult = ref<{
   success: boolean
   skipped: boolean
@@ -73,6 +75,35 @@ onMounted(() => {
   deployForm.systemd_service_content = defaultSystemdUnit('/usr/local/bin/assimilate-agent')
 })
 
+async function loadExistingServiceUnit(): Promise<void> {
+  if (!deployForm.ssh_host) return
+  fetchServiceLoading.value = true
+  fetchServiceError.value = null
+  try {
+    const res = await apiClient.post<{ content: string | null }>(
+      `/agents/${props.hostname}/service-unit`,
+      {
+        ssh_host: deployForm.ssh_host.trim(),
+        ssh_user: deployForm.ssh_user.trim(),
+        ssh_port: deployForm.ssh_port,
+        ssh_password: deployForm.ssh_password || undefined,
+        use_sudo: deployForm.use_sudo,
+        sudo_password:
+          deployForm.use_sudo && deployForm.sudo_password ? deployForm.sudo_password : undefined,
+      },
+    )
+    if (res.data.content) {
+      deployForm.systemd_service_content = res.data.content
+    } else {
+      fetchServiceError.value = 'No existing service unit found on remote host.'
+    }
+  } catch (e: unknown) {
+    fetchServiceError.value = extractError(e)
+  } finally {
+    fetchServiceLoading.value = false
+  }
+}
+
 function dialogTitle(): string {
   return props.agentVersion ? 'Upgrade' : 'Deploy'
 }
@@ -107,7 +138,7 @@ async function submitDeploy(): Promise<void> {
     })
     deployResult.value = res.data
     if (res.data.success) {
-      emit('deployed')
+      emit('deployed', res.data.available_version)
     }
   } catch (e: unknown) {
     deployError.value = extractError(e)
@@ -229,7 +260,17 @@ async function submitDeploy(): Promise<void> {
               />
             </div>
             <div class="field">
-              <label class="field-label">Systemd Service Unit</label>
+              <div class="field-label-row">
+                <label class="field-label">Systemd Service Unit</label>
+                <button
+                  class="btn btn-sm btn-ghost"
+                  type="button"
+                  :disabled="fetchServiceLoading || !deployForm.ssh_host"
+                  @click="loadExistingServiceUnit"
+                >
+                  {{ fetchServiceLoading ? 'Loading…' : 'Load from remote' }}
+                </button>
+              </div>
               <textarea
                 v-model="deployForm.systemd_service_content"
                 class="input mono service-textarea"
@@ -239,6 +280,12 @@ async function submitDeploy(): Promise<void> {
               <span class="field-hint">
                 The <code>BORG_SERVER_URL</code> and <code>BORG_AGENT_TOKEN</code> environment
                 variables will be injected automatically if not present in custom content.
+              </span>
+              <span
+                v-if="fetchServiceError"
+                class="field-hint field-hint-error"
+              >
+                {{ fetchServiceError }}
               </span>
             </div>
             <div
@@ -358,6 +405,21 @@ async function submitDeploy(): Promise<void> {
 .toggle-row-label {
   font-size: 0.875rem;
   color: var(--text-secondary);
+}
+
+.field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.3rem;
+}
+
+.field-label-row .field-label {
+  margin-bottom: 0;
+}
+
+.field-hint-error {
+  color: var(--danger);
 }
 
 .service-textarea {

@@ -30,8 +30,8 @@ interface StorageRepoEntry {
 }
 
 interface DashboardSummary {
-  online_clients: number
-  total_clients: number
+  online_agents: number
+  total_agents: number
   total_repos: number
   last_backup_at: string | null
   next_backup_at: string | null
@@ -253,7 +253,7 @@ const successRingDasharray = computed((): string => {
 
 const clientIndicatorColor = computed((): string => {
   if (!summary.value) return 'var(--text-muted)'
-  return summary.value.online_clients === summary.value.total_clients
+  return summary.value.online_agents === summary.value.total_agents
     ? 'var(--success)'
     : 'var(--warning)'
 })
@@ -460,13 +460,13 @@ async function fetchOverview(): Promise<void> {
           class="stat-card stat-card-link"
           @click="router.push({ name: 'agents', query: { status: 'offline' } })"
         >
-          <span class="stat-label">Online Clients</span>
+          <span class="stat-label">Online Agents</span>
           <span class="stat-value">
             <span
               class="stat-dot"
               :style="{ background: clientIndicatorColor }"
             />
-            {{ summary?.online_clients ?? 0 }}/{{ summary?.total_clients ?? 0 }}
+            {{ summary?.online_agents ?? 0 }}/{{ summary?.total_agents ?? 0 }}
           </span>
         </div>
         <div

@@ -719,6 +719,45 @@ pub async fn confirm_relocation(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/repos/{repo_id}/schedules",
+    tag = "Repositories",
+    operation_id = "listSchedulesForRepo",
+    summary = "List schedules for a repository",
+    params(
+        ("repo_id" = i64, Path, description = "Repository ID"),
+    ),
+    responses(
+        (status = 200, description = "List of schedules", body = Vec<crate::db::ScheduleRow>),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Not found"),
+    )
+)]
+pub async fn list_schedules_for_repo(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(repo_id): Path<i64>,
+) -> Result<Json<Vec<db::ScheduleRow>>, ApiError> {
+    let schedules = db::list_schedules_for_repo(&state.pool, repo_id).await?;
+    let is_admin = auth.role == Role::Admin;
+    let mut visible = Vec::with_capacity(schedules.len());
+    for s in schedules {
+        if super::permissions::is_visible_to_user(
+            &state.pool,
+            auth.user_id,
+            s.owner_id,
+            &s.visibility,
+            is_admin,
+        )
+        .await?
+        {
+            visible.push(s);
+        }
+    }
+    Ok(Json(visible))
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct BreakLockResponse {
     pub message: String,

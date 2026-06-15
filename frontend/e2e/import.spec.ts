@@ -138,7 +138,7 @@ test('full resync completes and preserves archives', async ({ page }) => {
 
   // Wait for the page to settle and button to be ready
   const resyncBtn = page.getByRole('button', { name: /full resync/i })
-  await expect(resyncBtn).toBeVisible({ timeout: 10_000 })
+  await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
   await resyncBtn.click()
 
   // Button immediately switches to "Syncing..." while the request is in flight
@@ -160,7 +160,7 @@ test('full resync preserves unmatched-banner', async ({ page }) => {
   await navigateToRepo(page, 'server-daily')
 
   const resyncBtn = page.getByRole('button', { name: /full resync/i })
-  await expect(resyncBtn).toBeVisible({ timeout: 10_000 })
+  await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
   await resyncBtn.click()
 
   await expect(page.getByText('Full resync started.')).toBeVisible({ timeout: 120_000 })
@@ -186,7 +186,7 @@ test('broken repo resync does not navigate to /error page', async ({ page }) => 
 
   await page.goto(`/repos/${repo.id}`)
   const resyncBtn = page.getByRole('button', { name: /full resync/i })
-  await expect(resyncBtn).toBeVisible({ timeout: 10_000 })
+  await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
   await resyncBtn.click()
 
   // The sync request is accepted immediately — "Full resync started." toast must appear

@@ -13,6 +13,7 @@ import { extractError } from '../utils/error'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useMobile } from '../composables/useMobile'
 import { useToast } from '../composables/useToast'
+import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
 import {
   Plus,
@@ -51,8 +52,7 @@ const schedules = ref<ScheduleRow[]>([])
 const repos = ref<RepoRow[]>([])
 const agents = ref<AgentRow[]>([])
 const health = ref<HealthEntry[]>([])
-const loading = ref(false)
-const error = ref<string | null>(null)
+const { loading, error, run } = useAsyncAction('Failed to load schedules.')
 const router = useRouter()
 type SortField = 'agent' | 'next_run' | 'last_run' | 'type'
 type SortDir = 'asc' | 'desc'
@@ -241,9 +241,7 @@ function statusLabel(entry: HealthEntry | null): string {
 }
 
 async function fetchAll(): Promise<void> {
-  loading.value = true
-  error.value = null
-  try {
+  await run(async () => {
     const [schRes, repoRes, agentsRes, healthRes] = await Promise.all([
       apiClient.get<ScheduleRow[]>('/schedules'),
       apiClient.get<RepoRow[]>('/repos'),
@@ -254,11 +252,7 @@ async function fetchAll(): Promise<void> {
     repos.value = repoRes.data
     agents.value = agentsRes.data
     health.value = healthRes.data
-  } catch {
-    error.value = 'Failed to load schedules.'
-  } finally {
-    loading.value = false
-  }
+  })
 }
 
 function navigateToSchedule(s: ScheduleRow): void {

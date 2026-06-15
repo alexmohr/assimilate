@@ -80,6 +80,29 @@ test.describe('Import / Sync lifecycle', () => {
     expect(detail.import_error).toBeNull();
   });
 
+  test('sync returns expected response structure with imported and removed counts', async ({
+    request,
+  }) => {
+    const listResp = await request.get('/api/repos');
+    expect(listResp.ok()).toBe(true);
+    const repos = (await listResp.json()) as RepoListEntry[];
+    const repo = repos.find((r) => !r.importing);
+    expect(repo).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const repoId = repo!.id;
+
+    const syncResp = await request.post(`/api/repos/${repoId}/sync`);
+    expect(syncResp.ok()).toBe(true);
+    const body = (await syncResp.json()) as SyncResponse;
+
+    // The sync response must include these fields (they correspond to the granular
+    // "Saving N backup reports…" substep messages added in issue #124).
+    expect(typeof body.imported).toBe('number');
+    expect(typeof body.removed).toBe('number');
+    expect(typeof body.duration_secs).toBe('number');
+    expect(body.duration_secs).toBeGreaterThanOrEqual(0);
+  });
+
   test('reset-import clears importing flag', async ({ request }) => {
     const listResp = await request.get('/api/repos');
     expect(listResp.ok()).toBe(true);

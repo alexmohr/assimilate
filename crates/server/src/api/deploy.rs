@@ -256,7 +256,8 @@ pub struct FetchServiceUnitResponse {
     ),
     request_body = FetchServiceUnitRequest,
     responses(
-        (status = 200, description = "Service unit content or null if not present", body = FetchServiceUnitResponse),
+        (status = 200, description = "Service unit content or null if not present", body =
+            FetchServiceUnitResponse),
         (status = 400, description = "Validation error"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden"),

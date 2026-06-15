@@ -280,7 +280,7 @@ async function fetchAll(): Promise<void> {
     agents.value = agentsRes.data
     health.value = healthRes.data
   } catch (e: unknown) {
-    error.value = extractError(e)
+    error.value = extractError(e, 'Failed to load schedules.')
   } finally {
     loading.value = false
   }

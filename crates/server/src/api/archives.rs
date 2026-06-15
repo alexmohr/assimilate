@@ -867,6 +867,14 @@ pub async fn get_archive_index_status(
     Ok(Json(response))
 }
 
+/// Resolves to `true` if the timeout elapsed before completion was signalled.
+async fn timed_out_before_done(done_rx: oneshot::Receiver<()>, timeout: Duration) -> bool {
+    tokio::select! {
+        () = tokio::time::sleep(timeout) => true,
+        _ = done_rx => false,
+    }
+}
+
 #[utoipa::path(
     get,
     path = "/api/repos/{repo_id}/archives/{archive_name}/extract",
@@ -939,11 +947,8 @@ pub async fn extract_file(
 
     // Kill the child only if the stream did not complete within the timeout.
     tokio::spawn(async move {
-        tokio::select! {
-            _ = tokio::time::sleep(EXTRACT_TIMEOUT) => {
-                let _ = child.kill().await;
-            }
-            _ = done_rx => {}
+        if timed_out_before_done(done_rx, EXTRACT_TIMEOUT).await {
+            let _ = child.kill().await;
         }
     });
 
@@ -1196,5 +1201,20 @@ mod tests {
         cases.iter().for_each(|(filename, expected)| {
             assert_eq!(content_type_for_extension(filename), *expected);
         });
+    }
+
+    #[tokio::test]
+    async fn timed_out_before_done_returns_false_when_signalled_first() {
+        let (done_tx, done_rx) = oneshot::channel::<()>();
+        drop(done_tx);
+
+        assert!(!timed_out_before_done(done_rx, Duration::from_secs(60)).await);
+    }
+
+    #[tokio::test]
+    async fn timed_out_before_done_returns_true_when_timeout_elapses() {
+        let (_done_tx, done_rx) = oneshot::channel::<()>();
+
+        assert!(timed_out_before_done(done_rx, Duration::from_millis(10)).await);
     }
 }

@@ -575,13 +575,13 @@ function openScopeModal(channelId: number): void {
   showScopeModal.value = true
 }
 
-function eventsModalChannel(): NotificationChannel | undefined {
-  return channels.value.find((c) => c.id === eventsModalChannelId.value)
-}
+const eventsModalChannel = computed<NotificationChannel | undefined>(() =>
+  channels.value.find((c) => c.id === eventsModalChannelId.value),
+)
 
-function scopeModalChannel(): NotificationChannel | undefined {
-  return channels.value.find((c) => c.id === scopeModalChannelId.value)
-}
+const scopeModalChannel = computed<NotificationChannel | undefined>(() =>
+  channels.value.find((c) => c.id === scopeModalChannelId.value),
+)
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
@@ -1340,13 +1340,13 @@ onMounted(() => {
     <!-- Events Edit Modal -->
     <Teleport to="body">
       <div
-        v-if="showEventsModal && eventsModalChannel()"
+        v-if="showEventsModal && eventsModalChannel"
         class="overlay"
         @click.self="showEventsModal = false"
       >
         <div class="dialog">
           <div class="dialog-header">
-            <h2 class="dialog-title">Events — {{ eventsModalChannel()!.name }}</h2>
+            <h2 class="dialog-title">Events — {{ eventsModalChannel!.name }}</h2>
             <button
               class="close-btn"
               @click="showEventsModal = false"
@@ -1388,13 +1388,13 @@ onMounted(() => {
     <!-- Scope Edit Modal -->
     <Teleport to="body">
       <div
-        v-if="showScopeModal && scopeModalChannel()"
+        v-if="showScopeModal && scopeModalChannel"
         class="overlay"
         @click.self="showScopeModal = false"
       >
         <div class="dialog">
           <div class="dialog-header">
-            <h2 class="dialog-title">Scope — {{ scopeModalChannel()!.name }}</h2>
+            <h2 class="dialog-title">Scope — {{ scopeModalChannel!.name }}</h2>
             <button
               class="close-btn"
               @click="showScopeModal = false"
@@ -1425,8 +1425,8 @@ onMounted(() => {
                 >
                   <input
                     type="checkbox"
-                    :checked="isScopeSelected(scopeModalChannel()!, 'repo_ids', opt.id)"
-                    @change="toggleScopeItem(scopeModalChannel()!, 'repo_ids', opt.id)"
+                    :checked="isScopeSelected(scopeModalChannel!, 'repo_ids', opt.id)"
+                    @change="toggleScopeItem(scopeModalChannel!, 'repo_ids', opt.id)"
                   />
                   <span>{{ opt.label }}</span>
                 </label>
@@ -1443,8 +1443,8 @@ onMounted(() => {
                 >
                   <input
                     type="checkbox"
-                    :checked="isScopeSelected(scopeModalChannel()!, 'client_ids', opt.id)"
-                    @change="toggleScopeItem(scopeModalChannel()!, 'client_ids', opt.id)"
+                    :checked="isScopeSelected(scopeModalChannel!, 'client_ids', opt.id)"
+                    @change="toggleScopeItem(scopeModalChannel!, 'client_ids', opt.id)"
                   />
                   <span>{{ opt.label }}</span>
                 </label>
@@ -1461,8 +1461,8 @@ onMounted(() => {
                 >
                   <input
                     type="checkbox"
-                    :checked="isScopeSelected(scopeModalChannel()!, 'schedule_ids', opt.id)"
-                    @change="toggleScopeItem(scopeModalChannel()!, 'schedule_ids', opt.id)"
+                    :checked="isScopeSelected(scopeModalChannel!, 'schedule_ids', opt.id)"
+                    @change="toggleScopeItem(scopeModalChannel!, 'schedule_ids', opt.id)"
                   />
                   <span>{{ opt.label }}</span>
                 </label>

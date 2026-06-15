@@ -263,7 +263,7 @@ function repoImportPhaseVerb(repo: RepoWithStats): string {
 function formatLastBackup(iso: string | null): string {
   if (!iso) return 'Never'
   const ts = new Date(iso).getTime()
-  if (isNaN(ts) || ts === 0) return 'Never'
+  if (Number.isNaN(ts) || ts === 0) return 'Never'
   const diff = Date.now() - ts
   const mins = Math.floor(diff / 60000)
   if (mins < 1) return 'Just now'

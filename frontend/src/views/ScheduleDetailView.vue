@@ -109,6 +109,7 @@ const error = ref<string | null>(null)
 const saving = ref(false)
 const saveError = ref<string | null>(null)
 const saveSuccess = ref(false)
+let saveSuccessTimer: ReturnType<typeof setTimeout> | null = null
 const showDeleteDialog = ref(false)
 const deleteLoading = ref(false)
 const refOpen = ref(false)
@@ -232,6 +233,9 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
+  if (saveSuccessTimer !== null) {
+    clearTimeout(saveSuccessTimer)
+  }
 })
 
 function populateForm(s: ScheduleRow): void {
@@ -400,8 +404,12 @@ async function save(): Promise<void> {
       schedule.value = res.data
       populateForm(res.data)
       saveSuccess.value = true
-      setTimeout(() => {
+      if (saveSuccessTimer !== null) {
+        clearTimeout(saveSuccessTimer)
+      }
+      saveSuccessTimer = setTimeout(() => {
         saveSuccess.value = false
+        saveSuccessTimer = null
       }, 3000)
     }
   } catch (e: unknown) {

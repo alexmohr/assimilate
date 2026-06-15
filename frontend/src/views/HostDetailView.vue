@@ -305,20 +305,27 @@ async function saveIdentity(): Promise<void> {
 const showAliasConfirm = ref(false)
 const pendingAliasOldHostname = ref('')
 const pendingAliasNewHostname = ref('')
+const aliasError = ref<string | null>(null)
 
 useEscapeKey(showAliasConfirm, () => {
   showAliasConfirm.value = false
 })
 
 async function confirmAddAlias(): Promise<void> {
-  await apiClient.post(`/agents/${pendingAliasNewHostname.value}/hostname-patterns`, {
-    pattern: pendingAliasOldHostname.value,
-  })
-  await loadHostnamePatterns(pendingAliasNewHostname.value)
-  showAliasConfirm.value = false
+  aliasError.value = null
+  try {
+    await apiClient.post(`/agents/${pendingAliasNewHostname.value}/hostname-patterns`, {
+      pattern: pendingAliasOldHostname.value,
+    })
+    await loadHostnamePatterns(pendingAliasNewHostname.value)
+    showAliasConfirm.value = false
+  } catch (e: unknown) {
+    aliasError.value = extractError(e)
+  }
 }
 
 function declineAlias(): void {
+  aliasError.value = null
   showAliasConfirm.value = false
 }
 const deleteLoading = ref(false)
@@ -1633,6 +1640,12 @@ watch(wsStatus, (newStatus, oldStatus) => {
             <p>
               Add <code>{{ pendingAliasOldHostname }}</code> as an alternative hostname pattern so
               existing archives still match?
+            </p>
+            <p
+              v-if="aliasError"
+              class="error-text"
+            >
+              {{ aliasError }}
             </p>
           </div>
           <div class="dialog-footer">

@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2026 Alexander Mohr -->
+
 # Contributing
 
 This page covers how to set up a development environment, run tests, and generate coverage reports.

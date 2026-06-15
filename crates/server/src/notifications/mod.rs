@@ -450,12 +450,12 @@ pub(crate) fn build_push_url(payload: &serde_json::Value) -> String {
                 .and_then(serde_json::Value::as_str);
             if let Some(name) = archive_name {
                 let encoded = name.replace(':', "%3A").replace(' ', "%20");
-                format!("/clients/{hostname}?tab=backups&archive={encoded}")
+                format!("/agents/{hostname}?tab=backups&archive={encoded}")
             } else {
-                format!("/clients/{hostname}?tab=backups")
+                format!("/agents/{hostname}?tab=backups")
             }
         } else {
-            format!("/clients/{hostname}")
+            format!("/agents/{hostname}")
         }
     } else if let Some(repo_id) = payload.get("repo_id").and_then(serde_json::Value::as_i64) {
         format!("/repos/{repo_id}")
@@ -481,7 +481,7 @@ mod tests {
         }));
         assert_eq!(
             build_push_url(&p),
-            "/clients/myhost?tab=backups&archive=myhost-2026-06-03T12%3A30%3A00.000000"
+            "/agents/myhost?tab=backups&archive=myhost-2026-06-03T12%3A30%3A00.000000"
         );
     }
 
@@ -491,7 +491,7 @@ mod tests {
             "event_type": "backup_warning",
             "hostname": "myhost",
         }));
-        assert_eq!(build_push_url(&p), "/clients/myhost?tab=backups");
+        assert_eq!(build_push_url(&p), "/agents/myhost?tab=backups");
     }
 
     #[test]
@@ -503,7 +503,7 @@ mod tests {
         }));
         assert_eq!(
             build_push_url(&p),
-            "/clients/myhost?tab=backups&archive=myhost-2026-06-03T08%3A00%3A00.000000"
+            "/agents/myhost?tab=backups&archive=myhost-2026-06-03T08%3A00%3A00.000000"
         );
     }
 
@@ -513,7 +513,7 @@ mod tests {
             "event_type": "backup_failed",
             "hostname": "myhost",
         }));
-        assert_eq!(build_push_url(&p), "/clients/myhost?tab=backups");
+        assert_eq!(build_push_url(&p), "/agents/myhost?tab=backups");
     }
 
     #[test]
@@ -523,7 +523,7 @@ mod tests {
             "hostname": "myhost",
             "archive_name": "myhost-2026-06-03T08:00:00.000000",
         }));
-        assert_eq!(build_push_url(&p), "/clients/myhost");
+        assert_eq!(build_push_url(&p), "/agents/myhost");
     }
 
     #[test]
@@ -560,7 +560,7 @@ mod tests {
         }));
         assert_eq!(
             build_push_url(&p),
-            "/clients/myhost?tab=backups&archive=my%20host%20archive"
+            "/agents/myhost?tab=backups&archive=my%20host%20archive"
         );
     }
 

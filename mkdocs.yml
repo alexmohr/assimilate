@@ -63,4 +63,5 @@ nav:
   - Profile & Preferences: profile.md
   - API Reference: api-reference.md
   - Contributing:
+      - Development: contributing/development.md
       - Style Guide: contributing/style-guide.md

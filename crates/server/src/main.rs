@@ -240,6 +240,10 @@ async fn main() -> Result<(), StartupError> {
             post(api::deploy::deploy_agent),
         )
         .route(
+            "/api/agents/{hostname}/service-unit",
+            post(api::deploy::fetch_service_unit),
+        )
+        .route(
             "/api/agents/{hostname}/tunnel",
             get(api::tunnels::get_agent_tunnel),
         )

@@ -228,6 +228,63 @@ pub async fn deploy_agent(
         })),
     }
 }
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct FetchServiceUnitRequest {
+    pub ssh_host: String,
+    #[serde(default = "super::helpers::default_ssh_user")]
+    pub ssh_user: String,
+    pub ssh_port: Option<u16>,
+    pub ssh_password: Option<String>,
+    #[serde(default)]
+    pub use_sudo: bool,
+    pub sudo_password: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct FetchServiceUnitResponse {
+    pub content: Option<String>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/agents/{hostname}/service-unit",
+    tag = "Deployment",
+    operation_id = "fetchServiceUnit",
+    summary = "Read the existing systemd service unit from a remote host via SSH (admin only)",
+    params(
+        ("hostname" = String, Path, description = "Client hostname"),
+    ),
+    request_body = FetchServiceUnitRequest,
+    responses(
+        (status = 200, description = "Service unit content or null if not present", body = FetchServiceUnitResponse),
+        (status = 400, description = "Validation error"),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+    )
+)]
+pub async fn fetch_service_unit(
+    _admin: RequireAdmin,
+    Path(_hostname): Path<String>,
+    ApiJson(req): ApiJson<FetchServiceUnitRequest>,
+) -> Result<Json<FetchServiceUnitResponse>, ApiError> {
+    helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
+
+    let port = req.ssh_port.unwrap_or(22);
+    let content = ssh::read_remote_file(&ssh::ReadFileParams {
+        host: &req.ssh_host,
+        user: &req.ssh_user,
+        port,
+        password: req.ssh_password.as_deref(),
+        use_sudo: req.use_sudo,
+        sudo_password: req.sudo_password.as_deref(),
+        path: "/etc/systemd/system/assimilate-agent.service",
+    })
+    .await
+    .map_err(|e| ApiError::BadGateway(e.to_string()))?;
+
+    Ok(Json(FetchServiceUnitResponse { content }))
+}
+
 fn agent_is_current(
     server_commit_count: Option<i32>,
     agent_commit_count: Option<i32>,

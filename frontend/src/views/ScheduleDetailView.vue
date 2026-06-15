@@ -18,6 +18,22 @@ import CronBuilder from '../components/CronBuilder.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 
 type ScheduleType = 'backup' | 'check' | 'verify'
+type OnFailure = 'stop' | 'continue'
+type TabId = 'settings' | 'advanced' | 'logs'
+
+function parseScheduleType(value: string): ScheduleType {
+  if (value === 'check' || value === 'verify') return value
+  return 'backup'
+}
+
+function parseOnFailure(value: string): OnFailure {
+  return value === 'continue' ? 'continue' : 'stop'
+}
+
+function parseTabId(value: string | undefined): TabId {
+  if (value === 'advanced' || value === 'logs') return value
+  return 'settings'
+}
 
 interface ScheduleRow {
   id: number
@@ -133,13 +149,10 @@ const perHostExcludes = ref<Record<number, string>>({})
 const showClientDropdown = ref(false)
 const clientDropdownRef = ref<HTMLElement | null>(null)
 
-type TabId = 'settings' | 'advanced' | 'logs'
 const activeTab = computed<TabId>({
   get() {
-    const t = route.query.tab as string | undefined
-    if (t === 'advanced') return t
-    if (t === 'logs') return t
-    return 'settings'
+    const t = route.query.tab
+    return parseTabId(typeof t === 'string' ? t : undefined)
   },
   set(val: TabId) {
     router.replace({ query: { ...route.query, tab: val } })
@@ -153,8 +166,10 @@ function goToLogs(): void {
   )
 }
 
-const scheduleType = computed(() =>
-  isCreate.value ? selectedType.value : (schedule.value?.schedule_type ?? 'backup'),
+const scheduleType = computed<ScheduleType>(() =>
+  isCreate.value
+    ? selectedType.value
+    : parseScheduleType(schedule.value?.schedule_type ?? 'backup'),
 )
 const isBackup = computed(() => scheduleType.value === 'backup')
 
@@ -253,19 +268,18 @@ function populateForm(s: ScheduleRow): void {
     backup_sources: '',
   }
   selectedRepoId.value = s.repo_id ?? null
-  onFailure.value = (s.on_failure as 'stop' | 'continue') ?? 'stop'
+  onFailure.value = parseOnFailure(s.on_failure)
 }
 
 function scheduleTypeLabel(t: string): string {
-  switch (t) {
+  const type = parseScheduleType(t)
+  switch (type) {
     case 'backup':
       return 'Backup'
     case 'check':
       return 'Integrity Check'
     case 'verify':
       return 'Verify (extract dry-run)'
-    default:
-      return t
   }
 }
 
@@ -393,7 +407,12 @@ async function save(): Promise<void> {
       })
       router.push(`/schedules/${res.data.id}`)
     } else {
-      const res = await apiClient.put<ScheduleRow>(`/schedules/${schedule.value!.id}`, {
+      const current = schedule.value
+      if (!current) {
+        saveError.value = 'Schedule not loaded.'
+        return
+      }
+      const res = await apiClient.put<ScheduleRow>(`/schedules/${current.id}`, {
         ...payload,
         client_ids: selectedClientIds.value,
         repo_id: selectedRepoId.value,

@@ -936,6 +936,30 @@ mod tests {
     }
 
     #[test]
+    fn shell_escape_simple_path() {
+        assert_eq!(shell_escape("/data/repo"), "'/data/repo'");
+    }
+
+    #[test]
+    fn shell_escape_path_with_spaces() {
+        assert_eq!(shell_escape("/my repo/x"), "'/my repo/x'");
+    }
+
+    #[test]
+    fn shell_escape_path_with_single_quote() {
+        assert_eq!(shell_escape("a'b"), "'a'\\''b'");
+    }
+
+    #[test]
+    fn build_write_unit_cmd_escapes_path_with_special_chars() {
+        let cmd = build_write_unit_cmd("unit", "/etc/sys d/it's.service");
+        assert!(
+            cmd.ends_with("> '/etc/sys d/it'\\''s.service'"),
+            "path was not shell-escaped: {cmd}"
+        );
+    }
+
+    #[test]
     fn inject_env_vars_replaces_placeholders() {
         let content = concat!(
             "[Service]\n",

@@ -20,80 +20,16 @@ import BaseSpinner from '../components/BaseSpinner.vue'
 import MergeAgentDialog from '../components/MergeAgentDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import SshKeyDeployPanel from '../components/SshKeyDeployPanel.vue'
+import type { AgentRow } from '../types/agent'
+import type { ReportRow } from '../types/report'
+import type { ScheduleRow } from '../types/schedule'
+import type { TagRow } from '../types/tag'
 
 type TabId = 'overview' | 'schedules' | 'backups'
-
-interface AgentRow {
-  id: number
-  hostname: string
-  display_name: string | null
-  agent_version: string | null
-  agent_git_sha: string | null
-  agent_build_time: string | null
-  agent_commit_count: number | null
-  created_at: string
-  last_seen_at: string | null
-  is_connected: boolean
-  is_imported: boolean
-  is_hidden: boolean
-  supports_restart: boolean
-  restart_unavailable_reason: string | null
-  default_backup_paths: string[]
-  default_exclude_patterns: string[]
-}
 
 interface RepoRow {
   id: number
   target_name: string
-}
-
-interface ScheduleRow {
-  id: number
-  repo_id: number | null
-  name: string
-  target_hostnames: string[]
-  schedule_type: string
-  cron_expression: string
-  enabled: boolean
-  last_run_at: string | null
-  next_run_at: string | null
-  exclude_patterns: string[]
-  ignore_global_excludes: boolean
-  keep_daily: number
-  keep_weekly: number
-  keep_monthly: number
-  keep_yearly: number
-  compact_enabled: boolean
-  pre_backup_commands: string
-  post_backup_commands: string
-}
-
-interface ReportRow {
-  id: number
-  machine_id: number
-  repo_id: number
-  repo_name: string
-  schedule_id: number | null
-  schedule_name: string | null
-  started_at: string
-  finished_at: string
-  status: string
-  original_size: number
-  compressed_size: number
-  deduplicated_size: number
-  files_processed: number
-  duration_secs: number
-  error_message: string | null
-  warnings: string[]
-  borg_version: string | null
-  archive_name: string | null
-}
-
-interface TagRow {
-  id: number
-  name: string
-  color: string
-  scope: string
 }
 
 const props = defineProps<{ hostname: string }>()
@@ -195,8 +131,9 @@ const showDeploySshKey = ref(false)
 function deployButtonLabel(): string | null {
   if (!agent.value) return null
   if (!agent.value.agent_version) return 'Deploy'
-  if (serverCommitCount.value !== null && agent.value.agent_commit_count !== null) {
-    return agent.value.agent_commit_count >= serverCommitCount.value ? null : 'Upgrade'
+  const commitCount = agent.value.agent_commit_count ?? null
+  if (serverCommitCount.value !== null && commitCount !== null) {
+    return commitCount >= serverCommitCount.value ? null : 'Upgrade'
   }
   if (!availableAgentVersion.value) return null
   return agent.value.agent_version === availableAgentVersion.value ? null : 'Upgrade'
@@ -492,7 +429,7 @@ async function deleteHostnamePattern(id: number): Promise<void> {
 }
 
 function isOnline(agent: AgentRow): boolean {
-  return agent.is_connected
+  return agent.is_connected ?? false
 }
 
 function handleResultClick(r: ReportRow): void {
@@ -808,9 +745,9 @@ watch(wsStatus, (newStatus, oldStatus) => {
               {{ agent.agent_build_time ?? '—' }}
             </dd>
             <dt>Created</dt>
-            <dd>{{ formatDate(agent.created_at, 'Never') }}</dd>
+            <dd>{{ formatDate(agent.created_at ?? null, 'Never') }}</dd>
             <dt>Last Seen</dt>
-            <dd>{{ formatDate(agent.last_seen_at, 'Never') }}</dd>
+            <dd>{{ formatDate(agent.last_seen_at ?? null, 'Never') }}</dd>
             <dt>Repositories</dt>
             <dd>{{ repos.length }}</dd>
           </dl>
@@ -1052,11 +989,11 @@ watch(wsStatus, (newStatus, oldStatus) => {
           <h3 class="info-title">Default Backup Paths</h3>
           <template v-if="!editingPaths">
             <div
-              v-if="agent.default_backup_paths.length > 0"
+              v-if="(agent.default_backup_paths ?? []).length > 0"
               class="paths-list"
             >
               <code
-                v-for="(p, idx) in agent.default_backup_paths"
+                v-for="(p, idx) in agent.default_backup_paths ?? []"
                 :key="idx"
                 class="path-item mono"
               >
@@ -1118,11 +1055,11 @@ watch(wsStatus, (newStatus, oldStatus) => {
           <h3 class="info-title">Default Exclude Patterns</h3>
           <template v-if="!editingExcludes">
             <div
-              v-if="agent.default_exclude_patterns.length > 0"
+              v-if="(agent.default_exclude_patterns ?? []).length > 0"
               class="paths-list"
             >
               <code
-                v-for="(p, idx) in agent.default_exclude_patterns"
+                v-for="(p, idx) in agent.default_exclude_patterns ?? []"
                 :key="idx"
                 class="path-item mono"
               >
@@ -1450,11 +1387,11 @@ watch(wsStatus, (newStatus, oldStatus) => {
             </div>
             <template v-if="expandedReportId === r.id">
               <div
-                v-if="r.warnings.length > 0"
+                v-if="(r.warnings ?? []).length > 0"
                 class="result-warnings"
               >
                 <strong class="result-section-label">Warnings</strong>
-                <pre class="result-output">{{ r.warnings.join('\n') }}</pre>
+                <pre class="result-output">{{ (r.warnings ?? []).join('\n') }}</pre>
               </div>
               <div
                 v-if="r.error_message"
@@ -1470,7 +1407,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
               >View archives →</span
             >
             <span
-              v-else-if="r.error_message || r.warnings.length > 0"
+              v-else-if="r.error_message || (r.warnings ?? []).length > 0"
               class="result-expand-hint"
               >{{ expandedReportId === r.id ? 'Click to collapse' : 'Click to expand' }}</span
             >
@@ -1680,7 +1617,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
     <AgentDeployDialog
       v-if="showDeployDialog && agent"
       :hostname="agent.hostname"
-      :agent-version="agent.agent_version"
+      :agent-version="agent.agent_version ?? null"
       @close="showDeployDialog = false"
       @deployed="
         () => {

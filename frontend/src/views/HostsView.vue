@@ -22,33 +22,12 @@ import MergeAgentDialog from '../components/MergeAgentDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import CardError from '../components/CardError.vue'
 import type { DashboardOverview } from '../types/dashboard'
-
-interface AgentRow {
-  id: number
-  hostname: string
-  display_name: string | null
-  agent_version: string | null
-  agent_git_sha: string | null
-  agent_build_time: string | null
-  agent_commit_count: number | null
-  created_at: string
-  last_seen_at: string | null
-  is_connected: boolean
-  is_imported: boolean
-  is_hidden: boolean
-  default_backup_paths: string[]
-}
+import type { AgentRow } from '../types/agent'
+import type { TagRow } from '../types/tag'
 
 interface CreateAgentResponse {
   agent: AgentRow
   token: string
-}
-
-interface TagRow {
-  id: number
-  name: string
-  color: string
-  scope: string
 }
 
 interface AgentTagRow {
@@ -213,14 +192,14 @@ useEscapeKey(showMergeDialog, () => {
 useEscapeKey(showAddDialog, closeAddDialog)
 
 function isOnline(agent: AgentRow): boolean {
-  return agent.is_connected
+  return agent.is_connected ?? false
 }
 
 function isImported(agent: AgentRow): boolean {
-  return agent.is_imported
+  return agent.is_imported ?? false
 }
 
-function formatLastSeen(iso: string | null): string {
+function formatLastSeen(iso: string | null | undefined): string {
   if (!iso) return 'Never'
   const ts = new Date(iso).getTime()
   if (isNaN(ts) || ts === 0) return 'Never'
@@ -234,7 +213,7 @@ function formatLastSeen(iso: string | null): string {
   return `${days}d ago`
 }
 
-function formatVersion(v: string | null): string {
+function formatVersion(v: string | null | undefined): string {
   if (!v) return '\u2014'
   return v
 }
@@ -533,8 +512,9 @@ function hostActiveBackups(agent: AgentRow): string[] {
 
 function deployButtonLabel(agent: AgentRow): string | null {
   if (!agent.agent_version) return 'Deploy'
-  if (serverCommitCount.value !== null && agent.agent_commit_count !== null) {
-    return agent.agent_commit_count >= serverCommitCount.value ? null : 'Upgrade'
+  const commitCount = agent.agent_commit_count ?? null
+  if (serverCommitCount.value !== null && commitCount !== null) {
+    return commitCount >= serverCommitCount.value ? null : 'Upgrade'
   }
   if (!availableAgentVersion.value) return null
   return agent.agent_version === availableAgentVersion.value ? null : 'Upgrade'
@@ -997,7 +977,7 @@ watch(
     <AgentDeployDialog
       v-if="showDeployDialog && deployTarget"
       :hostname="deployTarget.hostname"
-      :agent-version="deployTarget.agent_version"
+      :agent-version="deployTarget.agent_version ?? null"
       @close="showDeployDialog = false"
       @deployed="
         (version) => {

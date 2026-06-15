@@ -20,6 +20,8 @@ import BaseModal from '../components/BaseModal.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import SshKeyDeployPanel from '../components/SshKeyDeployPanel.vue'
+import type { RepoWithStats } from '../types/repo'
+import type { TagRow } from '../types/tag'
 
 type CompressionType = 'lz4' | 'zstd' | 'none'
 type EncryptionType =
@@ -34,13 +36,6 @@ type AddTab = 'import' | 'create'
 type SortField = 'name' | 'size' | 'last_backup'
 type SortDir = 'asc' | 'desc'
 
-interface TagRow {
-  id: number
-  name: string
-  color: string
-  scope: string
-}
-
 interface RepoTagRow {
   repo_id: number
   tag_name: string
@@ -51,31 +46,6 @@ interface TagGroup {
   label: string
   color: string | null
   repos: RepoWithStats[]
-}
-
-interface RepoWithStats {
-  id: number
-  name: string
-  repo_path: string
-  ssh_user: string
-  ssh_host: string
-  ssh_port: number
-  ssh_host_key: string | null
-  compression: string
-  encryption: string
-  enabled: boolean
-  importing: boolean
-  import_error: string | null
-  import_progress: number
-  import_total: number
-  import_status_message: string | null
-  archive_count: number
-  last_backup_at: string | null
-  total_original_size: number
-  total_compressed_size: number
-  total_deduplicated_size: number
-  agent_count: number
-  unmatched_count: number
 }
 
 interface RepoForm {

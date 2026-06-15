@@ -25,37 +25,8 @@ import {
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import CardError from '../components/CardError.vue'
-
-type ScheduleType = 'backup' | 'check' | 'verify'
-
-interface ScheduleRow {
-  id: number
-  repo_id: number | null
-  name: string
-  schedule_type: ScheduleType
-  cron_expression: string
-  enabled: boolean
-  canary_enabled: boolean
-  last_run_at: string | null
-  next_run_at: string | null
-  exclude_patterns: string[]
-  ignore_global_excludes: boolean
-  keep_daily: number
-  keep_weekly: number
-  keep_monthly: number
-  keep_yearly: number
-  compact_enabled: boolean
-  pre_backup_commands: string
-  post_backup_commands: string
-  on_failure: string
-  target_hostnames: string[]
-}
-
-interface AgentRow {
-  id: number
-  hostname: string
-  display_name: string | null
-}
+import type { AgentRow } from '../types/agent'
+import type { ScheduleRow, ScheduleType } from '../types/schedule'
 
 interface RepoRow {
   id: number

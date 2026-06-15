@@ -16,6 +16,7 @@ import { useWebSocket } from '../composables/useWebSocket'
 import { useMobile } from '../composables/useMobile'
 import { formatDuration, formatBytes, formatDateShort } from '../utils/format'
 import { logger } from '../utils/logger'
+import type { ReportRow } from '../types/report'
 
 interface ActivityRow {
   id: number
@@ -41,23 +42,6 @@ interface SystemEvent {
   event_type: string
   hostname: string | null
   message: string
-}
-
-interface ReportRow {
-  id: number
-  machine_id: number
-  repo_id: number
-  started_at: string
-  finished_at: string
-  status: string
-  original_size: number
-  compressed_size: number
-  deduplicated_size: number
-  files_processed: number
-  duration_secs: number
-  error_message: string | null
-  borg_version: string | null
-  borg_command: string | null
 }
 
 interface Agent {

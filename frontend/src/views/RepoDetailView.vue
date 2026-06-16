@@ -2058,7 +2058,11 @@ async function resetImport(): Promise<void> {
                 @click="toggleScheduleError(s.id)"
               >
                 <AlertCircle :size="12" />
-                Last backup failed
+                {{
+                  s.health?.last_status === 'warning'
+                    ? 'Last backup had a warning'
+                    : 'Last backup failed'
+                }}
                 <span class="toggle-arrow">{{ scheduleExpandedError === s.id ? '▴' : '▾' }}</span>
               </button>
               <pre

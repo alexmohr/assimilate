@@ -2310,13 +2310,14 @@ pub async fn list_reports_for_agent(
 ) -> Result<Vec<ReportRow>, ApiError> {
     if let Some(target_name) = target {
         sqlx::query_as::<_, ReportRow>(
-            "SELECT br.id, br.agent_id, br.repo_id, r.name AS repo_name, br.schedule_id, \
-             COALESCE(NULLIF(s.name, ''), r.name) AS schedule_name, br.started_at, \
-             br.finished_at, br.status, br.original_size, br.compressed_size, \
-             br.deduplicated_size, br.files_processed, br.duration_secs, br.error_message, \
-             br.warnings, br.borg_version, br.archive_name, br.borg_command FROM backup_reports \
-             br JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = br.schedule_id \
-             WHERE br.agent_id = $1 AND r.name = $2 ORDER by br.started_at DESC LIMIT $3",
+            "SELECT br.id, br.agent_id, br.repo_id, r.name AS repo_name, br.schedule_id, CASE \
+             WHEN s.id IS NOT NULL THEN COALESCE(NULLIF(s.name, ''), r.name) END AS \
+             schedule_name, br.started_at, br.finished_at, br.status, br.original_size, \
+             br.compressed_size, br.deduplicated_size, br.files_processed, br.duration_secs, \
+             br.error_message, br.warnings, br.borg_version, br.archive_name, br.borg_command \
+             FROM backup_reports br JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON \
+             s.id = br.schedule_id WHERE br.agent_id = $1 AND r.name = $2 ORDER by br.started_at \
+             DESC LIMIT $3",
         )
         .bind(agent_id)
         .bind(target_name)
@@ -2326,13 +2327,13 @@ pub async fn list_reports_for_agent(
         .map_err(ApiError::Database)
     } else {
         sqlx::query_as::<_, ReportRow>(
-            "SELECT br.id, br.agent_id, br.repo_id, r.name AS repo_name, br.schedule_id, \
-             COALESCE(NULLIF(s.name, ''), r.name) AS schedule_name, br.started_at, \
-             br.finished_at, br.status, br.original_size, br.compressed_size, \
-             br.deduplicated_size, br.files_processed, br.duration_secs, br.error_message, \
-             br.warnings, br.borg_version, br.archive_name, br.borg_command FROM backup_reports \
-             br JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = br.schedule_id \
-             WHERE br.agent_id = $1 ORDER BY br.started_at DESC LIMIT $2",
+            "SELECT br.id, br.agent_id, br.repo_id, r.name AS repo_name, br.schedule_id, CASE \
+             WHEN s.id IS NOT NULL THEN COALESCE(NULLIF(s.name, ''), r.name) END AS \
+             schedule_name, br.started_at, br.finished_at, br.status, br.original_size, \
+             br.compressed_size, br.deduplicated_size, br.files_processed, br.duration_secs, \
+             br.error_message, br.warnings, br.borg_version, br.archive_name, br.borg_command \
+             FROM backup_reports br JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON \
+             s.id = br.schedule_id WHERE br.agent_id = $1 ORDER BY br.started_at DESC LIMIT $2",
         )
         .bind(agent_id)
         .bind(limit)
@@ -2348,13 +2349,13 @@ pub async fn list_reports_for_schedule(
     limit: i64,
 ) -> Result<Vec<ReportRow>, ApiError> {
     sqlx::query_as::<_, ReportRow>(
-        "SELECT br.id, br.agent_id, br.repo_id, r.name AS repo_name, br.schedule_id, \
-         COALESCE(NULLIF(s.name, ''), r.name) AS schedule_name, br.started_at, br.finished_at, \
-         br.status, br.original_size, br.compressed_size, br.deduplicated_size, \
-         br.files_processed, br.duration_secs, br.error_message, br.warnings, br.borg_version, \
-         br.archive_name, br.borg_command FROM backup_reports br JOIN repos r ON r.id = \
-         br.repo_id LEFT JOIN schedules s ON s.id = br.schedule_id WHERE br.schedule_id = $1 \
-         ORDER BY br.started_at DESC LIMIT $2",
+        "SELECT br.id, br.agent_id, br.repo_id, r.name AS repo_name, br.schedule_id, CASE WHEN \
+         s.id IS NOT NULL THEN COALESCE(NULLIF(s.name, ''), r.name) END AS schedule_name, \
+         br.started_at, br.finished_at, br.status, br.original_size, br.compressed_size, \
+         br.deduplicated_size, br.files_processed, br.duration_secs, br.error_message, \
+         br.warnings, br.borg_version, br.archive_name, br.borg_command FROM backup_reports br \
+         JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = br.schedule_id WHERE \
+         br.schedule_id = $1 ORDER BY br.started_at DESC LIMIT $2",
     )
     .bind(schedule_id)
     .bind(limit)

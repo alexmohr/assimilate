@@ -14,9 +14,9 @@ interface Role {
   id: number
   name: string
   is_seeded: boolean
-  can_create_client: boolean
-  can_delete_client: boolean
-  can_delete_own_client: boolean
+  can_create_agent: boolean
+  can_delete_agent: boolean
+  can_delete_own_agent: boolean
   can_create_repo: boolean
   can_delete_repo: boolean
   can_delete_own_repo: boolean
@@ -29,9 +29,9 @@ interface Role {
 }
 
 type PermissionKey =
-  | 'can_create_client'
-  | 'can_delete_client'
-  | 'can_delete_own_client'
+  | 'can_create_agent'
+  | 'can_delete_agent'
+  | 'can_delete_own_agent'
   | 'can_create_repo'
   | 'can_delete_repo'
   | 'can_delete_own_repo'
@@ -43,9 +43,9 @@ type PermissionKey =
   | 'can_manage_tunnels'
 
 const PERMISSION_LABELS: { key: PermissionKey; label: string }[] = [
-  { key: 'can_create_client', label: 'Create Client' },
-  { key: 'can_delete_client', label: 'Delete Client' },
-  { key: 'can_delete_own_client', label: 'Delete Own Client' },
+  { key: 'can_create_agent', label: 'Create Agent' },
+  { key: 'can_delete_agent', label: 'Delete Agent' },
+  { key: 'can_delete_own_agent', label: 'Delete Own Agent' },
   { key: 'can_create_repo', label: 'Create Repo' },
   { key: 'can_delete_repo', label: 'Delete Repo' },
   { key: 'can_delete_own_repo', label: 'Delete Own Repo' },
@@ -66,9 +66,9 @@ const error = ref<string | null>(null)
 const showCreateModal = ref(false)
 const createForm = ref<{ name: string } & Record<PermissionKey, boolean>>({
   name: '',
-  can_create_client: false,
-  can_delete_client: false,
-  can_delete_own_client: false,
+  can_create_agent: false,
+  can_delete_agent: false,
+  can_delete_own_agent: false,
   can_create_repo: false,
   can_delete_repo: false,
   can_delete_own_repo: false,
@@ -85,9 +85,9 @@ const createSubmitting = ref(false)
 const showEditModal = ref(false)
 const editTarget = ref<Role | null>(null)
 const editForm = ref<Record<PermissionKey, boolean>>({
-  can_create_client: false,
-  can_delete_client: false,
-  can_delete_own_client: false,
+  can_create_agent: false,
+  can_delete_agent: false,
+  can_delete_own_agent: false,
   can_create_repo: false,
   can_delete_repo: false,
   can_delete_own_repo: false,
@@ -138,9 +138,9 @@ async function fetchRoles(): Promise<void> {
 function openCreate(): void {
   createForm.value = {
     name: '',
-    can_create_client: false,
-    can_delete_client: false,
-    can_delete_own_client: false,
+    can_create_agent: false,
+    can_delete_agent: false,
+    can_delete_own_agent: false,
     can_create_repo: false,
     can_delete_repo: false,
     can_delete_own_repo: false,
@@ -165,9 +165,9 @@ async function submitCreate(): Promise<void> {
   try {
     await apiClient.post('/roles', {
       name: createForm.value.name.trim(),
-      can_create_client: createForm.value.can_create_client,
-      can_delete_client: createForm.value.can_delete_client,
-      can_delete_own_client: createForm.value.can_delete_own_client,
+      can_create_agent: createForm.value.can_create_agent,
+      can_delete_agent: createForm.value.can_delete_agent,
+      can_delete_own_agent: createForm.value.can_delete_own_agent,
       can_create_repo: createForm.value.can_create_repo,
       can_delete_repo: createForm.value.can_delete_repo,
       can_delete_own_repo: createForm.value.can_delete_own_repo,
@@ -190,9 +190,9 @@ async function submitCreate(): Promise<void> {
 function openEdit(role: Role): void {
   editTarget.value = role
   editForm.value = {
-    can_create_client: role.can_create_client,
-    can_delete_client: role.can_delete_client,
-    can_delete_own_client: role.can_delete_own_client,
+    can_create_agent: role.can_create_agent,
+    can_delete_agent: role.can_delete_agent,
+    can_delete_own_agent: role.can_delete_own_agent,
     can_create_repo: role.can_create_repo,
     can_delete_repo: role.can_delete_repo,
     can_delete_own_repo: role.can_delete_own_repo,
@@ -263,7 +263,7 @@ onMounted(fetchRoles)
 
     <p class="page-description">
       Roles define sets of system-wide permissions that control what actions a user can perform.
-      Assign a role to a user to grant capabilities like creating clients, managing repositories, or
+      Assign a role to a user to grant capabilities like creating agents, managing repositories, or
       configuring schedules. Unlike groups, roles do not control access to specific repositories.
     </p>
 

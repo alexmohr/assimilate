@@ -55,7 +55,7 @@ pub async fn delete_hostname_pattern(pool: &PgPool, pattern_id: i64) -> Result<(
 }
 
 #[derive(Debug, sqlx::FromRow)]
-struct PatternClientJoinRow {
+struct PatternAgentJoinRow {
     pub pattern: String,
     pub id: i64,
     pub hostname: String,
@@ -78,7 +78,7 @@ pub async fn find_agent_by_pattern(
     pool: &PgPool,
     hostname: &str,
 ) -> Result<Option<super::AgentRow>, ApiError> {
-    let rows = sqlx::query_as::<_, PatternClientJoinRow>(
+    let rows = sqlx::query_as::<_, PatternAgentJoinRow>(
         "SELECT p.pattern, a.id, a.hostname, a.display_name, a.agent_version, a.agent_git_sha, \
          a.agent_build_time, a.agent_commit_count, a.created_at, a.last_seen_at, a.owner_id, \
          a.visibility, a.default_backup_paths, a.default_exclude_patterns, a.agent_token_hash, \

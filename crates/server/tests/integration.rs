@@ -524,7 +524,7 @@ async fn test_tunnel_create() {
     create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone()).await;
 
-    let client_id: i64 = sqlx::query_scalar(
+    let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, display_name, agent_token_hash) VALUES ('tunnel-host', \
          'Tunnel Host', 'fakehash') RETURNING id",
     )
@@ -536,7 +536,7 @@ async fn test_tunnel_create() {
         "POST",
         "/api/tunnels",
         Some(json!({
-            "agent_id": client_id,
+            "agent_id": agent_id,
             "ssh_host": "remote.example.com",
             "ssh_user": "backup",
             "ssh_port": 22,
@@ -658,7 +658,7 @@ async fn test_list_archives_deduplicates_archive_names() {
     let mut app = build_test_app(pool.clone()).await;
 
     let repo_id = insert_test_repo(&pool, "archive-list-repo").await;
-    let client_id: i64 = sqlx::query_scalar(
+    let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('archive-host', 'hash') \
          RETURNING id",
     )
@@ -693,7 +693,7 @@ async fn test_list_archives_deduplicates_archive_names() {
              archive_name, borg_command) VALUES ($1, $2, $3, $4, 'success', $5, $6, $7, $8, $9, \
              $10, NULL, ARRAY[]::text[], NULL, true, $11, NULL)",
         )
-        .bind(client_id)
+        .bind(agent_id)
         .bind(repo_id)
         .bind(chrono::DateTime::parse_from_rfc3339(started_at).unwrap())
         .bind(chrono::DateTime::parse_from_rfc3339(finished_at).unwrap())
@@ -819,7 +819,7 @@ async fn test_delete_archive_runs_in_background() {
         install_fake_borg(empty_list, empty_list, info_repo_json, "").await;
 
     let mut app = build_test_app(pool.clone()).await;
-    let client_id: i64 = sqlx::query_scalar(
+    let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('del-host', 'hash') RETURNING id",
     )
     .fetch_one(&pool)
@@ -831,7 +831,7 @@ async fn test_delete_archive_runs_in_background() {
         "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched, \
          archive_name) VALUES ($1, $2, NOW(), NOW(), 'success', true, $3)",
     )
-    .bind(client_id)
+    .bind(agent_id)
     .bind(repo_id)
     .bind("delete-me")
     .execute(&pool)
@@ -931,7 +931,7 @@ async fn test_delete_multiple_archives_queues_without_conflict() {
         install_fake_borg(empty_list, empty_list, info_repo_json, "").await;
 
     let mut app = build_test_app(pool.clone()).await;
-    let client_id: i64 = sqlx::query_scalar(
+    let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('multi-del', 'hash') RETURNING id",
     )
     .fetch_one(&pool)
@@ -945,7 +945,7 @@ async fn test_delete_multiple_archives_queues_without_conflict() {
             "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
              matched, archive_name) VALUES ($1, $2, NOW(), NOW(), 'success', true, $3)",
         )
-        .bind(client_id)
+        .bind(agent_id)
         .bind(repo_id)
         .bind(name)
         .execute(&pool)
@@ -1072,7 +1072,7 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
         install_fake_borg(list_json, info_all_json, info_repo_json, json_lines).await;
 
     let mut app = build_test_app(pool.clone()).await;
-    let client_id: i64 = sqlx::query_scalar(
+    let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, display_name, agent_token_hash) VALUES ($1, $2, $3) \
          RETURNING id",
     )
@@ -1093,7 +1093,7 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
          archive_name, borg_command) VALUES ($1, $2, NULL, $3, $4, 'success', 10, 5, 5, 5, 1, \
          300, NULL, '{}'::text[], NULL, true, $5, NULL)",
     )
-    .bind(client_id)
+    .bind(agent_id)
     .bind(repo_id)
     .bind(stale_started_at)
     .bind(stale_finished_at)
@@ -1314,7 +1314,7 @@ async fn test_auth_me_without_session() {
 // -- Excludes API tests --
 
 /// Helper: insert a schedule directly into the DB (bypasses SSH check in the API).
-async fn insert_test_schedule(pool: &sqlx::PgPool, client_id: i64, repo_id: i64) -> i64 {
+async fn insert_test_schedule(pool: &sqlx::PgPool, agent_id: i64, repo_id: i64) -> i64 {
     let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-integration").unwrap();
     let passphrase_encrypted = shared::crypto::encrypt_passphrase("pass", &encryption_key).unwrap();
     sqlx::query_scalar("UPDATE repos SET passphrase_encrypted = $2 WHERE id = $1 RETURNING id")
@@ -1341,7 +1341,7 @@ async fn insert_test_schedule(pool: &sqlx::PgPool, client_id: i64, repo_id: i64)
         "INSERT INTO schedule_targets (schedule_id, agent_id, execution_order) VALUES ($1, $2, 0)",
     )
     .bind(schedule_id)
-    .bind(client_id)
+    .bind(agent_id)
     .execute(pool)
     .await
     .unwrap();
@@ -1420,8 +1420,8 @@ async fn test_per_agent_excludes_roundtrip_preserves_raw_text(pool: sqlx::PgPool
     create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone()).await;
 
-    // Set up client and repo directly
-    let client_id: i64 = sqlx::query_scalar(
+    // Set up agent and repo directly
+    let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('exc-host', 'hash-exc') \
          RETURNING id",
     )
@@ -1430,7 +1430,7 @@ async fn test_per_agent_excludes_roundtrip_preserves_raw_text(pool: sqlx::PgPool
     .unwrap();
 
     let repo_id = insert_test_repo(&pool, "exc-repo").await;
-    let schedule_id = insert_test_schedule(&pool, client_id, repo_id).await;
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
 
     let raw = "# Cache dirs\n*.cache\npp:__pycache__\n\n# Runtime\n/proc\n/sys";
 
@@ -1438,7 +1438,7 @@ async fn test_per_agent_excludes_roundtrip_preserves_raw_text(pool: sqlx::PgPool
         "INSERT INTO per_agent_excludes (schedule_id, agent_id, raw_text) VALUES ($1, $2, $3)",
     )
     .bind(schedule_id)
-    .bind(client_id)
+    .bind(agent_id)
     .bind(raw)
     .execute(&pool)
     .await
@@ -1454,7 +1454,7 @@ async fn test_per_agent_excludes_roundtrip_preserves_raw_text(pool: sqlx::PgPool
 
     let per_agent = body["exclude_patterns_per_agent"].as_array().unwrap();
     assert_eq!(per_agent.len(), 1);
-    assert_eq!(per_agent[0]["agent_id"], client_id);
+    assert_eq!(per_agent[0]["agent_id"], agent_id);
     assert_eq!(per_agent[0]["raw_text"], raw);
 }
 
@@ -1860,14 +1860,14 @@ async fn test_list_schedules_for_repo() {
     let mut app = build_test_app(pool.clone()).await;
 
     let repo_id = insert_test_repo(&pool, "sched-repo-endpoint").await;
-    let client_id: i64 = sqlx::query_scalar(
+    let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('sched-endpoint-host', 'hash2') \
          RETURNING id",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
-    let schedule_id = insert_test_schedule(&pool, client_id, repo_id).await;
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
 
     // Returns schedules for the correct repo
     let req = get_request(&format!("/api/repos/{repo_id}/schedules"));

@@ -74,7 +74,7 @@ interface RepoWithStats {
   total_original_size: number
   total_compressed_size: number
   total_deduplicated_size: number
-  client_count: number
+  agent_count: number
   unmatched_count: number
 }
 
@@ -595,7 +595,7 @@ async function submitRepo(): Promise<void> {
             total_original_size: 0,
             total_compressed_size: 0,
             total_deduplicated_size: 0,
-            client_count: 0,
+            agent_count: 0,
             unmatched_count: 0,
           },
         ]

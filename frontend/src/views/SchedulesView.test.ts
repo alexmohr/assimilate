@@ -140,7 +140,7 @@ const mockSchedules = [
   },
 ]
 
-const mockClients = [
+const mockAgents = [
   { id: 10, hostname: 'web-server-01', display_name: 'Web Server' },
   { id: 11, hostname: 'db-server-01', display_name: null },
   { id: 12, hostname: 'media-store-01', display_name: 'Media Store' },
@@ -181,7 +181,7 @@ function setupApiSuccess(): void {
   mockApiClient.get.mockImplementation((url: string) => {
     if (url === '/schedules') return Promise.resolve({ data: mockSchedules })
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
-    if (url === '/agents') return Promise.resolve({ data: mockClients })
+    if (url === '/agents') return Promise.resolve({ data: mockAgents })
     if (url === '/stats/health') return Promise.resolve({ data: mockHealth })
     return Promise.resolve({ data: [] })
   })
@@ -364,7 +364,7 @@ describe('SchedulesView', () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules') return Promise.resolve({ data: mockSchedules })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
-      if (url === '/agents') return Promise.resolve({ data: mockClients })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
       if (url === '/stats/health') {
         return Promise.resolve({
           data: [{ ...mockHealth[0], last_status: 'started' }, mockHealth[1]],
@@ -385,7 +385,7 @@ describe('SchedulesView', () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules') return Promise.resolve({ data: mockSchedules })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
-      if (url === '/agents') return Promise.resolve({ data: mockClients })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
       if (url === '/stats/health') {
         return Promise.resolve({ data: [{ ...mockHealth[0], last_status: 'started' }] })
       }

@@ -51,7 +51,7 @@ interface RepoWithStats {
   total_original_size: number
   total_compressed_size: number
   total_deduplicated_size: number
-  client_count: number
+  agent_count: number
   unmatched_count: number
 }
 
@@ -72,7 +72,7 @@ const baseRepo = {
   total_original_size: 10_737_418_240,
   total_compressed_size: 5_368_709_120,
   total_deduplicated_size: 2_684_354_560,
-  client_count: 1,
+  agent_count: 1,
   unmatched_count: 0,
 }
 
@@ -85,7 +85,7 @@ const mockRepos: RepoWithStats[] = [
     compression: 'lz4',
     archive_count: 30,
     last_backup_at: new Date(Date.now() - 3_600_000).toISOString(),
-    client_count: 2,
+    agent_count: 2,
   },
   {
     ...baseRepo,
@@ -104,7 +104,7 @@ const mockRepos: RepoWithStats[] = [
     compression: 'zstd',
     enabled: false,
     archive_count: 12,
-    client_count: 3,
+    agent_count: 3,
     total_original_size: 21_474_836_480,
     total_compressed_size: 10_737_418_240,
     total_deduplicated_size: 5_368_709_120,
@@ -162,7 +162,7 @@ describe('ReposView', () => {
     expect(text).toContain('Disabled')
   })
 
-  it('renders archive count, size, and client stats for each repo', async () => {
+  it('renders archive count, size, and agent stats for each repo', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(ReposView, {
       storeState: { auth: { user: { role: 'admin' } } },

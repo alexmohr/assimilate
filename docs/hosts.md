@@ -6,7 +6,7 @@ See [Getting Started](getting-started.md) for initial setup instructions.
 
 ## Adding a Host
 
-1. Navigate to **Clients** in the sidebar.
+1. Navigate to **Agents** in the sidebar.
 2. Click **Add Host**.
 3. Enter the machine's hostname (must be unique).
 4. Optionally set a display name.
@@ -21,16 +21,16 @@ BORG_SERVER_URL=https://your-server BORG_AGENT_TOKEN=<token> assimilate-agent
 
 ![Hosts](assets/screenshots/hosts.png)
 
-The Clients list page provides:
+The Agents list page provides:
 
 - **Text filter** — search by hostname or tag
 - **Status filter** — show All, Online only, or Offline only
 - **Coverage filter** — show protected, unassigned, never-succeeded, or disabled-only hosts; dashboard coverage links set this filter automatically
-- **Show hidden toggle** — reveal hidden imported clients (admin-only)
+- **Show hidden toggle** — reveal hidden imported hosts (admin-only)
 - **Tag filter** — filter by one or more tags
 - **Sort buttons** — sort by Name, Status, Last Seen, or Agent Version
 
-Each client card shows the hostname, display name, online/offline status, schedule count, last seen time, agent version, and overdue indicators. Imported clients show **Merge into...** and **Adopt** buttons for managing unmatched archive hosts.
+Each host card shows the hostname, display name, online/offline status, schedule count, last seen time, agent version, and overdue indicators. Imported hosts show **Merge into...** and **Adopt** buttons for managing unmatched archive hosts.
 
 ## Agent Deployment
 
@@ -164,7 +164,7 @@ The host detail page shows:
 
 ## Hostname Aliases (Glob Patterns)
 
-When importing an existing borg repository, archives may have hostnames that don't match the registered client name (e.g. the machine was renamed, or borg was configured with a custom hostname). Hostname aliases let you define glob patterns so these archives are automatically matched to the correct client.
+When importing an existing borg repository, archives may have hostnames that don't match the registered host name (e.g. the machine was renamed, or borg was configured with a custom hostname). Hostname aliases let you define glob patterns so these archives are automatically matched to the correct host.
 
 ### Adding a Pattern
 
@@ -185,28 +185,28 @@ Patterns use standard glob syntax:
 
 During repository import (and re-scan), each archive's hostname is resolved in order:
 
-1. **Exact match** — hostname equals a registered client's hostname
-2. **Pattern match** — hostname matches a glob pattern attached to a client
-3. **Unmatched** — a placeholder client is created with an "(imported)" suffix
+1. **Exact match** — hostname equals a registered host's hostname
+2. **Pattern match** — hostname matches a glob pattern attached to a host
+3. **Unmatched** — a placeholder host is created with an "(imported)" suffix
 
-Patterns are evaluated across all clients. The first matching pattern wins.
+Patterns are evaluated across all hosts. The first matching pattern wins.
 
 ### Re-scanning Unmatched Archives
 
 After adding patterns, you can re-scan a repository to match previously unmatched archives. See [Repositories — Re-scan](repositories.md#re-scanning-unmatched-archives).
 
-## Merging Imported Clients
+## Merging Imported Hosts
 
-When a repository is imported, placeholder clients are created for archive hostnames that don't match any existing client. These appear in the Hosts list with an **Imported** badge.
+When a repository is imported, placeholder hosts are created for archive hostnames that don't match any existing host. These appear in the Hosts list with an **Imported** badge.
 
-To merge a placeholder into a real client:
+To merge a placeholder into a real host:
 
-1. On the **Hosts** list, click the **Merge** button on the imported client row.
-2. Select the target client from the dropdown.
+1. On the **Hosts** list, click the **Merge** button on the imported host row.
+2. Select the target host from the dropdown.
 3. Optionally check **Save as hostname alias** to automatically create a glob pattern (pre-filled with the placeholder's hostname followed by `*`).
 4. Click **Merge**.
 
-Merging transfers all backup reports from the placeholder to the target client and deletes the placeholder. If you saved a pattern, future imports will match automatically.
+Merging transfers all backup reports from the placeholder to the target host and deletes the placeholder. If you saved a pattern, future imports will match automatically.
 
 ## Host Tags
 
@@ -233,11 +233,11 @@ Tags let you organize hosts for filtering on the Hosts list page.
 !!! warning
     Deleting a host does not remove borg archives from the repository server. Use `borg delete` or the [Archives](archives.md) page to remove archive data.
 
-## Hiding Imported Clients
+## Hiding Imported Hosts
 
-When repositories are scanned, placeholder "imported" client entries are created for hostnames found in existing archives. If you don't need to see these clients in the UI, you can hide them.
+When repositories are scanned, placeholder "imported" host entries are created for hostnames found in existing archives. If you don't need to see these hosts in the UI, you can hide them.
 
-Hidden clients are excluded from:
+Hidden hosts are excluded from:
 
 - The hosts list (default view)
 - Dashboard statistics and storage aggregations
@@ -245,34 +245,34 @@ Hidden clients are excluded from:
 - Scheduled backup targets
 - Calendar events
 
-### Hiding a Client
+### Hiding a Host
 
-1. Open the imported client's detail page.
+1. Open the imported host's detail page.
 2. In the **Danger Zone** section, click **Hide**.
-3. The client disappears from all views immediately.
+3. The host disappears from all views immediately.
 
-### Viewing and Unhiding Hidden Clients
+### Viewing and Unhiding Hidden Hosts
 
-1. Navigate to **Clients** in the sidebar.
+1. Navigate to **Agents** in the sidebar.
 2. Enable the **Show hidden** toggle (admin-only).
-3. Hidden clients appear with reduced opacity and a "Hidden" badge.
-4. Click **Unhide** on a hidden client to restore it to normal visibility.
+3. Hidden hosts appear with reduced opacity and a "Hidden" badge.
+4. Click **Unhide** on a hidden host to restore it to normal visibility.
 
 !!! note
-    Hiding is non-destructive — all archive data remains intact on disk. The client will not reappear on the next repository scan because the database record is preserved with the hidden flag.
+    Hiding is non-destructive — all archive data remains intact on disk. The host will not reappear on the next repository scan because the database record is preserved with the hidden flag.
 
-## Deleting Archives & Removing Imported Clients
+## Deleting Archives & Removing Imported Hosts
 
-For imported clients whose archive data is no longer needed, you can permanently delete all borg archives and remove the client record.
+For imported hosts whose archive data is no longer needed, you can permanently delete all borg archives and remove the host record.
 
-1. Open the imported client's detail page.
+1. Open the imported host's detail page.
 2. In the **Danger Zone** section, click **Delete Archives & Remove**.
 3. Confirm in the dialog — this action is irreversible.
 
-The server sends `borg delete` commands to connected agents for each repository containing archives from this client. Once all archives are deleted, the client record is removed from the database.
+The server sends `borg delete` commands to connected agents for each repository containing archives from this host. Once all archives are deleted, the host record is removed from the database.
 
 !!! danger
-    This permanently destroys backup data. All borg archives belonging to this client are deleted from disk across all repositories. This cannot be undone.
+    This permanently destroys backup data. All borg archives belonging to this host are deleted from disk across all repositories. This cannot be undone.
 
 **Requirements:**
 

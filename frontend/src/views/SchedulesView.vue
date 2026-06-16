@@ -83,13 +83,13 @@ const health = ref<HealthEntry[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
 const router = useRouter()
-type SortField = 'client' | 'next_run' | 'last_run' | 'type'
+type SortField = 'agent' | 'next_run' | 'last_run' | 'type'
 type SortDir = 'asc' | 'desc'
 type FilterStatus = 'all' | 'enabled' | 'disabled'
 type FilterType = 'all' | 'backup' | 'check' | 'verify'
 type FilterHealth = 'all' | 'overdue' | 'success' | 'warning' | 'failed'
 
-const sortField = ref<SortField>('client')
+const sortField = ref<SortField>('agent')
 const sortDir = ref<SortDir>('asc')
 const filterStatus = ref<FilterStatus>('all')
 const filterType = ref<FilterType>('all')
@@ -135,7 +135,7 @@ interface EnrichedSchedule extends ScheduleRow {
 
 const RUNNING_STATUSES = new Set(['pending', 'started'])
 
-const clientMap = computed(() => {
+const agentMap = computed(() => {
   const map = new Map<string, AgentRow>()
   agents.value.forEach((agent) => map.set(agent.hostname, agent))
   return map
@@ -154,7 +154,7 @@ const healthBySchedule = computed(() => {
 const enrichedSchedules = computed<EnrichedSchedule[]>(() =>
   schedules.value.map((s) => {
     const hostLabels = s.target_hostnames.map((hostname) => {
-      const agent = clientMap.value.get(hostname)
+      const agent = agentMap.value.get(hostname)
       return agent?.display_name ? `${agent.display_name} (${hostname})` : hostname
     })
     const repo: RepoRow | null = s.repo_id != null ? (repoMap.value.get(s.repo_id) ?? null) : null
@@ -207,7 +207,7 @@ const filteredSchedules = computed(() => {
   list.sort((a, b) => {
     let cmp = 0
     switch (sortField.value) {
-      case 'client':
+      case 'agent':
         cmp = (a.hostLabels[0] ?? '').localeCompare(b.hostLabels[0] ?? '')
         break
       case 'next_run':
@@ -350,7 +350,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
       <input
         v-model="filterText"
         class="input search-input"
-        placeholder="Filter by name, client, or repo..."
+        placeholder="Filter by name, agent, or repo..."
       />
       <button
         v-if="isMobile"
@@ -398,10 +398,10 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
           <span class="sort-label">Sort:</span>
           <button
             class="btn btn-sm btn-ghost"
-            :class="{ active: sortField === 'client' }"
-            @click="toggleSort('client')"
+            :class="{ active: sortField === 'agent' }"
+            @click="toggleSort('agent')"
           >
-            Client {{ sortField === 'client' ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '' }}
+            Agent {{ sortField === 'agent' ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '' }}
           </button>
           <button
             class="btn btn-sm btn-ghost"

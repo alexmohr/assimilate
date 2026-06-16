@@ -110,7 +110,7 @@ pub async fn query_available_agent_version(binary_dir: &std::path::Path) -> Opti
     operation_id = "deployAgent",
     summary = "Deploy the agent binary to a host via SSH (admin only)",
     params(
-        ("hostname" = String, Path, description = "Client hostname"),
+        ("hostname" = String, Path, description = "Agent hostname"),
     ),
     request_body = DeployAgentRequest,
     responses(
@@ -252,7 +252,7 @@ pub struct FetchServiceUnitResponse {
     operation_id = "fetchServiceUnit",
     summary = "Read the existing systemd service unit from a remote host via SSH (admin only)",
     params(
-        ("hostname" = String, Path, description = "Client hostname"),
+        ("hostname" = String, Path, description = "Agent hostname"),
     ),
     request_body = FetchServiceUnitRequest,
     responses(

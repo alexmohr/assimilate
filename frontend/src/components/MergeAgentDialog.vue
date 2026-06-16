@@ -120,7 +120,7 @@ async function confirmMerge(): Promise<void> {
             placeholder="e.g. myhost*"
           />
           <span class="field-hint">
-            This pattern will be added to the target client's hostname aliases.
+            This pattern will be added to the target agent's hostname aliases.
           </span>
         </div>
         <div

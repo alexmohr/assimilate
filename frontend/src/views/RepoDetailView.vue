@@ -55,7 +55,7 @@ interface ScheduleRow {
   target_hostnames: string[]
 }
 
-interface ClientRow {
+interface AgentRow {
   id: number
   hostname: string
   display_name: string | null
@@ -118,7 +118,7 @@ interface RepoWithStats {
   total_original_size: number
   total_compressed_size: number
   total_deduplicated_size: number
-  client_count: number
+  agent_count: number
   relocation_pending: boolean
   last_op_kind: string | null
   last_op_at: string | null
@@ -262,15 +262,15 @@ useEscapeKey(showBreakLockDialog, () => {
 const repoSchedules = ref<ScheduleRow[]>([])
 const repoSchedulesLoading = ref(false)
 const repoSchedulesError = ref<string | null>(null)
-const scheduleClients = ref<ClientRow[]>([])
+const scheduleAgents = ref<AgentRow[]>([])
 const scheduleHealth = ref<HealthEntry[]>([])
 const scheduleExpandedError = ref<number | null>(null)
 const scheduleRunNowLoading = ref<number | null>(null)
 const { success: scheduleToastSuccess, error: scheduleToastError } = useToast()
 
-const scheduleClientMap = computed(() => {
-  const m = new Map<string, ClientRow>()
-  scheduleClients.value.forEach((c) => m.set(c.hostname, c))
+const scheduleAgentMap = computed(() => {
+  const m = new Map<string, AgentRow>()
+  scheduleAgents.value.forEach((a) => m.set(a.hostname, a))
   return m
 })
 
@@ -292,8 +292,8 @@ interface EnrichedSchedule extends ScheduleRow {
 const enrichedRepoSchedules = computed<EnrichedSchedule[]>(() =>
   repoSchedules.value.map((s) => {
     const hostLabels = s.target_hostnames.map((hostname) => {
-      const client = scheduleClientMap.value.get(hostname)
-      return client?.display_name ? `${client.display_name} (${hostname})` : hostname
+      const agent = scheduleAgentMap.value.get(hostname)
+      return agent?.display_name ? `${agent.display_name} (${hostname})` : hostname
     })
     const entries = scheduleHealthBySchedule.value.get(s.id) ?? []
     const health: HealthEntry | null =
@@ -358,13 +358,13 @@ async function loadRepoSchedules(): Promise<void> {
   repoSchedulesLoading.value = true
   repoSchedulesError.value = null
   try {
-    const [schRes, clientRes, healthRes] = await Promise.all([
+    const [schRes, agentRes, healthRes] = await Promise.all([
       apiClient.get<ScheduleRow[]>(`/repos/${repoId.value}/schedules`),
-      apiClient.get<ClientRow[]>('/agents'),
+      apiClient.get<AgentRow[]>('/agents'),
       apiClient.get<HealthEntry[]>('/stats/health'),
     ])
     repoSchedules.value = schRes.data
-    scheduleClients.value = clientRes.data
+    scheduleAgents.value = agentRes.data
     scheduleHealth.value = healthRes.data
   } catch {
     repoSchedulesError.value = 'Failed to load schedules.'
@@ -590,7 +590,7 @@ const archiveSortModeOptions: { value: ArchiveSortMode; label: string }[] = [
 interface ArchiveGroup {
   hostname: string
   matched: boolean
-  clientHostname: string | null
+  agentHostname: string | null
   archives: ArchiveEntry[]
 }
 
@@ -638,7 +638,7 @@ const groupedArchives = computed<ArchiveGroup[]>(() => {
       groups.set(key, {
         hostname: key,
         matched: isMatched,
-        clientHostname: isMatched ? archive.agent_hostname : null,
+        agentHostname: isMatched ? archive.agent_hostname : null,
         archives: [],
       })
     }
@@ -1225,8 +1225,8 @@ async function resetImport(): Promise<void> {
                 <dt>Current Operation</dt>
                 <dd class="current-op-running">{{ repoOpLabel(currentOp) }}</dd>
               </template>
-              <dt>Clients</dt>
-              <dd>{{ repo.client_count }}</dd>
+              <dt>Agents</dt>
+              <dd>{{ repo.agent_count }}</dd>
             </dl>
           </template>
 
@@ -1726,9 +1726,7 @@ async function resetImport(): Promise<void> {
                     <span class="group-chevron">&#9656;</span>
                     <BaseHostLink
                       :hostname="
-                        group.clientHostname && group.matched
-                          ? group.clientHostname
-                          : group.hostname
+                        group.agentHostname && group.matched ? group.agentHostname : group.hostname
                       "
                       class="host-link group-hostname"
                       :class="{ 'group-unmatched': !group.matched }"

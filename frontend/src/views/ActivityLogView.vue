@@ -78,7 +78,7 @@ type LogLevel = '' | 'error' | 'warn' | 'info' | 'debug' | 'trace'
 
 const rows = ref<ActivityRow[]>([])
 const systemEvents = ref<SystemEvent[]>([])
-const clients = ref<Agent[]>([])
+const agents = ref<Agent[]>([])
 const schedules = ref<ScheduleOption[]>([])
 const loading = ref(false)
 const loadingMore = ref(false)
@@ -209,7 +209,7 @@ watch(filterRunId, () => {
 
 async function fetchMachines(): Promise<void> {
   const res = await apiClient.get<Agent[]>('/agents')
-  clients.value = res.data
+  agents.value = res.data
 }
 
 async function fetchSchedules(): Promise<void> {
@@ -519,7 +519,7 @@ function filterByRun(runId: string): void {
               >
                 <option value="">All Machines</option>
                 <option
-                  v-for="m in clients"
+                  v-for="m in agents"
                   :key="m.hostname"
                   :value="m.hostname"
                 >

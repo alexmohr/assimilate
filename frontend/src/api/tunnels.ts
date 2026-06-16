@@ -46,7 +46,7 @@ export async function reconnectTunnel(id: number): Promise<TunnelWithStatus> {
   return response.data
 }
 
-export async function getClientTunnel(hostname: string): Promise<TunnelWithStatus | null> {
+export async function getAgentTunnel(hostname: string): Promise<TunnelWithStatus | null> {
   try {
     const response = await apiClient.get<TunnelWithStatus>(`/agents/${hostname}/tunnel`)
     return response.data

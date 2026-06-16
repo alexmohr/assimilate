@@ -18,7 +18,7 @@ import { Plus, SlidersHorizontal, Server, AlertCircle } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
-import MergeClientDialog from '../components/MergeClientDialog.vue'
+import MergeAgentDialog from '../components/MergeAgentDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import CardError from '../components/CardError.vue'
 import type { DashboardOverview } from '../types/dashboard'
@@ -40,7 +40,7 @@ interface AgentRow {
 }
 
 interface CreateAgentResponse {
-  client: AgentRow
+  agent: AgentRow
   token: string
 }
 
@@ -371,7 +371,7 @@ async function submitAdd(): Promise<void> {
       hostname,
       display_name: addForm.display_name.trim() || null,
     })
-    agents.value.push(res.data.client)
+    agents.value.push(res.data.agent)
     newToken.value = res.data.token
   } catch (e: unknown) {
     addError.value = extractError(e)
@@ -402,7 +402,7 @@ async function adoptAgent(agent: AgentRow): Promise<void> {
     if (idx !== -1) {
       agents.value[idx] = {
         ...agents.value[idx],
-        ...res.data.client,
+        ...res.data.agent,
         is_imported: false,
         display_name: cleanDisplayName,
       }
@@ -977,7 +977,7 @@ watch(
 
     <!-- Merge Agent Dialog -->
     <Teleport to="body">
-      <MergeClientDialog
+      <MergeAgentDialog
         v-if="showMergeDialog && mergeSource"
         :source="mergeSource"
         :all-agents="agents"

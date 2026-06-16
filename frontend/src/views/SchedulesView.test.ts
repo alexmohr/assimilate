@@ -360,6 +360,50 @@ describe('SchedulesView', () => {
     expect(mockToastError).toHaveBeenCalled()
   })
 
+  it('shows Cancel instead of Run when the schedule is currently running', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules') return Promise.resolve({ data: mockSchedules })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/agents') return Promise.resolve({ data: mockClients })
+      if (url === '/stats/health') {
+        return Promise.resolve({
+          data: [{ ...mockHealth[0], last_status: 'started' }, mockHealth[1]],
+        })
+      }
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const buttons = wrapper.findAll('button')
+    expect(buttons.some((b) => b.text() === 'Cancel')).toBe(true)
+    // Schedule 1 (running) no longer shows a Run button; schedules 2 and 3 still do.
+    expect(buttons.filter((b) => b.text() === 'Run')).toHaveLength(2)
+  })
+
+  it('calls cancel API on cancel button click for a running schedule', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules') return Promise.resolve({ data: mockSchedules })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/agents') return Promise.resolve({ data: mockClients })
+      if (url === '/stats/health') {
+        return Promise.resolve({ data: [{ ...mockHealth[0], last_status: 'started' }] })
+      }
+      return Promise.resolve({ data: [] })
+    })
+    mockApiClient.post.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const cancelButton = wrapper.findAll('button').find((b) => b.text() === 'Cancel')
+    expect(cancelButton).toBeTruthy()
+    await cancelButton!.trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.post).toHaveBeenCalledWith('/schedules/1/cancel')
+    expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringMatching(/cancel/i))
+  })
+
   it('has New button linking to /schedules/new', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(SchedulesView)

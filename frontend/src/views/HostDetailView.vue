@@ -72,6 +72,9 @@ interface ReportRow {
   id: number
   machine_id: number
   repo_id: number
+  repo_name: string
+  schedule_id: number | null
+  schedule_name: string | null
   started_at: string
   finished_at: string
   status: string
@@ -1431,6 +1434,17 @@ watch(wsStatus, (newStatus, oldStatus) => {
               <span class="result-date">{{ relativeTime(r.finished_at) }}</span>
               <span class="result-duration">{{ r.duration_secs }}s</span>
             </div>
+            <div class="result-meta">
+              <span class="result-repo">{{ r.repo_name }}</span>
+              <RouterLink
+                v-if="r.schedule_id && r.schedule_name && r.schedule_name !== r.repo_name"
+                :to="`/schedules/${r.schedule_id}`"
+                class="result-schedule-link"
+                @click.stop
+              >
+                {{ r.schedule_name }}
+              </RouterLink>
+            </div>
             <div class="result-stats">
               <span>{{ formatBytes(r.original_size) }} original</span>
               <span>{{ formatBytes(r.deduplicated_size) }} dedup</span>
@@ -2215,6 +2229,24 @@ watch(wsStatus, (newStatus, oldStatus) => {
   font-size: 0.75rem;
   color: var(--text-muted);
   margin-left: auto;
+}
+
+.result-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-bottom: 0.35rem;
+}
+
+.result-schedule-link {
+  color: var(--text-muted);
+}
+
+.result-schedule-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
 }
 
 .result-stats {

@@ -298,6 +298,61 @@ describe('ScheduleDetailView - edit mode', () => {
     const weeklyInput = inputs[2]
     expect(weeklyInput.element.value).toBe('52')
   })
+
+  it('shows Run Now and no Cancel Backup button when nothing is running', async () => {
+    setupEditMode()
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    const buttons = wrapper.findAll('button').map((b) => b.text())
+    expect(buttons).toContain('Run Now')
+    expect(buttons).not.toContain('Cancel Backup')
+  })
+
+  it('seeds running state from recent reports and shows Cancel Backup instead of Run Now', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/targets')
+        return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_host: [] } })
+      if (url === '/schedules/1/reports')
+        return Promise.resolve({ data: [{ id: 1, status: 'started' }] })
+      if (url === '/agents') return Promise.resolve({ data: mockClients })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    const buttons = wrapper.findAll('button').map((b) => b.text())
+    expect(buttons).toContain('Cancel Backup')
+    expect(buttons).not.toContain('Run Now')
+  })
+
+  it('calls cancel API when Cancel Backup is clicked', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/targets')
+        return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_host: [] } })
+      if (url === '/schedules/1/reports')
+        return Promise.resolve({ data: [{ id: 1, status: 'pending' }] })
+      if (url === '/agents') return Promise.resolve({ data: mockClients })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      return Promise.resolve({ data: [] })
+    })
+    mockApiClient.post.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    const cancelBtn = wrapper.findAll('button').find((b) => b.text() === 'Cancel Backup')
+    await cancelBtn!.trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.post).toHaveBeenCalledWith('/schedules/1/cancel')
+  })
 })
 
 describe('ScheduleDetailView - create mode', () => {

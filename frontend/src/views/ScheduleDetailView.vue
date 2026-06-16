@@ -290,18 +290,23 @@ async function loadData(): Promise<void> {
       }
       selectedRepoId.value = repos.value.length > 0 ? repos.value[0].id : null
     } else {
-      const [schedRes, clientsRes, reposRes, targetsRes, sourcesRes] = await Promise.all([
-        apiClient.get<ScheduleRow>(`/schedules/${props.id}`),
-        apiClient.get<AgentRow[]>('/agents'),
-        apiClient.get<RepoRow[]>('/repos'),
-        apiClient.get<ScheduleTarget[]>(`/schedules/${props.id}/targets`),
-        apiClient.get<ScheduleBackupSourcesResponse>(`/schedules/${props.id}/sources`),
-      ])
+      const [schedRes, clientsRes, reposRes, targetsRes, sourcesRes, recentReportsRes] =
+        await Promise.all([
+          apiClient.get<ScheduleRow>(`/schedules/${props.id}`),
+          apiClient.get<AgentRow[]>('/agents'),
+          apiClient.get<RepoRow[]>('/repos'),
+          apiClient.get<ScheduleTarget[]>(`/schedules/${props.id}/targets`),
+          apiClient.get<ScheduleBackupSourcesResponse>(`/schedules/${props.id}/sources`),
+          apiClient.get<ReportRow[]>(`/schedules/${props.id}/reports`, { params: { limit: 20 } }),
+        ])
       schedule.value = schedRes.data
       clients.value = clientsRes.data
       repos.value = reposRes.data
       scheduleTargets.value = targetsRes.data
       selectedRepoId.value = schedRes.data.repo_id ?? null
+      backupRunning.value = recentReportsRes.data.some(
+        (r) => r.status === 'pending' || r.status === 'started',
+      )
       const sorted = [...targetsRes.data].sort((a, b) => a.execution_order - b.execution_order)
       selectedClientIds.value = sorted.map((t) => t.agent_id)
       populateForm(schedRes.data)
@@ -545,8 +550,9 @@ watch(activeTab, (tab) => {
           {{ cancelLoading ? '...' : 'Cancel Backup' }}
         </button>
         <button
+          v-else
           class="btn btn-sm btn-primary"
-          :disabled="runNowLoading || backupRunning"
+          :disabled="runNowLoading"
           @click="runNow"
         >
           {{ runNowLoading ? '...' : 'Run Now' }}

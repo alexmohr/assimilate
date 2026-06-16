@@ -87,7 +87,7 @@ type SortField = 'client' | 'next_run' | 'last_run' | 'type'
 type SortDir = 'asc' | 'desc'
 type FilterStatus = 'all' | 'enabled' | 'disabled'
 type FilterType = 'all' | 'backup' | 'check' | 'verify'
-type FilterHealth = 'all' | 'overdue' | 'success' | 'failed'
+type FilterHealth = 'all' | 'overdue' | 'success' | 'warning' | 'failed'
 
 const sortField = ref<SortField>('client')
 const sortDir = ref<SortDir>('asc')
@@ -97,7 +97,7 @@ const filterText = ref('')
 const filterHealth = ref<FilterHealth>(
   (() => {
     const q = useRoute().query.filter as string | undefined
-    if (q === 'overdue' || q === 'success' || q === 'failed') return q
+    if (q === 'overdue' || q === 'success' || q === 'warning' || q === 'failed') return q
     return 'all'
   })(),
 )
@@ -188,6 +188,8 @@ const filteredSchedules = computed(() => {
     list = list.filter((s) => s.health?.is_overdue)
   } else if (filterHealth.value === 'success') {
     list = list.filter((s) => s.health?.last_status === 'success')
+  } else if (filterHealth.value === 'warning') {
+    list = list.filter((s) => s.health?.last_status === 'warning')
   } else if (filterHealth.value === 'failed') {
     list = list.filter((s) => s.health?.last_status === 'failed')
   }
@@ -388,6 +390,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
         >
           <option value="all">All health</option>
           <option value="success">Passed only</option>
+          <option value="warning">Warned only</option>
           <option value="failed">Failed only</option>
           <option value="overdue">Overdue only</option>
         </select>
@@ -502,7 +505,9 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
         </div>
         <CardError
           v-if="s.health?.last_error_message"
-          label="Last backup failed"
+          :label="
+            s.health.last_status === 'warning' ? 'Last backup had a warning' : 'Last backup failed'
+          "
           :message="s.health.last_error_message"
         />
         <div class="card-stats">

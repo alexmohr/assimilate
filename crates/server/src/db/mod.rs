@@ -9,7 +9,7 @@ pub mod tags;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use shared::types::Compression;
+use shared::types::{Compression, ScheduleType};
 use sqlx::PgPool;
 
 use crate::error::ApiError;
@@ -1578,10 +1578,16 @@ pub async fn get_schedule_for_repo(
     .map_err(ApiError::Database)
 }
 
-pub async fn get_backup_schedule_for_hostname_repo(
+/// Finds the schedule (of the given type) that targets `hostname` and `repo_id`.
+/// Used to attribute a completion reported by the agent (which only carries a
+/// repo id, not a schedule id) back to the schedule that most likely triggered
+/// it. If multiple schedules of the same type target the same host/repo pair,
+/// an arbitrary one is returned.
+pub async fn get_schedule_for_hostname_repo(
     pool: &PgPool,
     hostname: &str,
     repo_id: i64,
+    schedule_type: ScheduleType,
 ) -> Result<Option<ScheduleRow>, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
         "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
@@ -1590,11 +1596,12 @@ pub async fn get_backup_schedule_for_hostname_repo(
          s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands, \
          s.post_backup_commands, s.execution_mode, s.on_failure, s.owner_id, s.visibility FROM \
          schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents m ON \
-         st.agent_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = \
-         'backup' LIMIT 1",
+         st.agent_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = $3 \
+         LIMIT 1",
     )
     .bind(hostname)
     .bind(repo_id)
+    .bind(schedule_type.to_string())
     .fetch_optional(pool)
     .await
     .map_err(ApiError::Database)
@@ -1831,6 +1838,37 @@ pub async fn get_repo_name(pool: &PgPool, repo_id: i64) -> Result<String, ApiErr
     Ok(row.name)
 }
 
+/// Resolves a schedule's display name, falling back to `default_name` (typically
+/// the repo name) when the schedule has no custom name set, mirroring the
+/// `COALESCE(NULLIF(s.name, ''), r.name)` convention used elsewhere.
+pub async fn get_schedule_display_name(
+    pool: &PgPool,
+    schedule_id: i64,
+    default_name: &str,
+) -> Result<String, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        name: String,
+    }
+
+    let row = sqlx::query_as::<_, Row>("SELECT name FROM schedules WHERE id = $1")
+        .bind(schedule_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => {
+                ApiError::NotFound(format!("schedule {schedule_id} not found"))
+            }
+            other => ApiError::Database(other),
+        })?;
+
+    Ok(if row.name.trim().is_empty() {
+        default_name.to_owned()
+    } else {
+        row.name
+    })
+}
+
 pub async fn insert_canary_result(
     pool: &PgPool,
     schedule_id: i64,
@@ -1900,6 +1938,9 @@ pub struct ReportRow {
     pub id: i64,
     pub agent_id: i64,
     pub repo_id: i64,
+    pub repo_name: String,
+    pub schedule_id: Option<i64>,
+    pub schedule_name: Option<String>,
     pub started_at: DateTime<Utc>,
     pub finished_at: DateTime<Utc>,
     pub status: String,
@@ -2269,11 +2310,13 @@ pub async fn list_reports_for_agent(
 ) -> Result<Vec<ReportRow>, ApiError> {
     if let Some(target_name) = target {
         sqlx::query_as::<_, ReportRow>(
-            "SELECT br.id, br.agent_id, br.repo_id, br.started_at, br.finished_at, br.status, \
-             br.original_size, br.compressed_size, br.deduplicated_size, br.files_processed, \
-             br.duration_secs, br.error_message, br.warnings, br.borg_version, br.archive_name, \
-             br.borg_command FROM backup_reports br JOIN repos r ON r.id = br.repo_id WHERE \
-             br.agent_id = $1 AND r.name = $2 ORDER by br.started_at DESC LIMIT $3",
+            "SELECT br.id, br.agent_id, br.repo_id, r.name AS repo_name, br.schedule_id, \
+             COALESCE(NULLIF(s.name, ''), r.name) AS schedule_name, br.started_at, \
+             br.finished_at, br.status, br.original_size, br.compressed_size, \
+             br.deduplicated_size, br.files_processed, br.duration_secs, br.error_message, \
+             br.warnings, br.borg_version, br.archive_name, br.borg_command FROM backup_reports \
+             br JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = br.schedule_id \
+             WHERE br.agent_id = $1 AND r.name = $2 ORDER by br.started_at DESC LIMIT $3",
         )
         .bind(agent_id)
         .bind(target_name)
@@ -2283,10 +2326,13 @@ pub async fn list_reports_for_agent(
         .map_err(ApiError::Database)
     } else {
         sqlx::query_as::<_, ReportRow>(
-            "SELECT id, agent_id, repo_id, started_at, finished_at, status, original_size, \
-             compressed_size, deduplicated_size, files_processed, duration_secs, error_message, \
-             warnings, borg_version, archive_name, borg_command FROM backup_reports WHERE \
-             agent_id = $1 ORDER BY started_at DESC LIMIT $2",
+            "SELECT br.id, br.agent_id, br.repo_id, r.name AS repo_name, br.schedule_id, \
+             COALESCE(NULLIF(s.name, ''), r.name) AS schedule_name, br.started_at, \
+             br.finished_at, br.status, br.original_size, br.compressed_size, \
+             br.deduplicated_size, br.files_processed, br.duration_secs, br.error_message, \
+             br.warnings, br.borg_version, br.archive_name, br.borg_command FROM backup_reports \
+             br JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = br.schedule_id \
+             WHERE br.agent_id = $1 ORDER BY br.started_at DESC LIMIT $2",
         )
         .bind(agent_id)
         .bind(limit)
@@ -2302,10 +2348,13 @@ pub async fn list_reports_for_schedule(
     limit: i64,
 ) -> Result<Vec<ReportRow>, ApiError> {
     sqlx::query_as::<_, ReportRow>(
-        "SELECT id, agent_id, repo_id, started_at, finished_at, status, original_size, \
-         compressed_size, deduplicated_size, files_processed, duration_secs, error_message, \
-         warnings, borg_version, archive_name, borg_command FROM backup_reports WHERE schedule_id \
-         = $1 ORDER BY started_at DESC LIMIT $2",
+        "SELECT br.id, br.agent_id, br.repo_id, r.name AS repo_name, br.schedule_id, \
+         COALESCE(NULLIF(s.name, ''), r.name) AS schedule_name, br.started_at, br.finished_at, \
+         br.status, br.original_size, br.compressed_size, br.deduplicated_size, \
+         br.files_processed, br.duration_secs, br.error_message, br.warnings, br.borg_version, \
+         br.archive_name, br.borg_command FROM backup_reports br JOIN repos r ON r.id = \
+         br.repo_id LEFT JOIN schedules s ON s.id = br.schedule_id WHERE br.schedule_id = $1 \
+         ORDER BY br.started_at DESC LIMIT $2",
     )
     .bind(schedule_id)
     .bind(limit)

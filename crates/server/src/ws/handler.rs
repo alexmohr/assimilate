@@ -11,7 +11,10 @@ use axum::{
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
-use shared::protocol::{AgentToServer, ServerToAgent, ServerToUi};
+use shared::{
+    protocol::{AgentToServer, ServerToAgent, ServerToUi},
+    types::ScheduleType,
+};
 use tokio::sync::mpsc;
 
 use crate::{
@@ -452,6 +455,7 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                         repo_id: Some(report.repo_id.0),
                         agent_id: Some(agent_id),
                         schedule_id: None,
+                        schedule_name: None,
                         archive_name: None,
                     };
                     let service = state.notification_service.clone();
@@ -468,6 +472,12 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 shared::types::BackupStatus::Warning => EventType::BackupWarning,
                 shared::types::BackupStatus::Failed => EventType::BackupFailed,
             };
+            let schedule_name = match report.schedule_id {
+                Some(sid) => db::get_schedule_display_name(&state.pool, sid, &repo_name)
+                    .await
+                    .ok(),
+                None => None,
+            };
             let event = NotificationEvent {
                 event_type,
                 hostname: hostname.to_owned(),
@@ -477,7 +487,8 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 timestamp: chrono::Utc::now(),
                 repo_id: Some(report.repo_id.0),
                 agent_id: Some(agent_id),
-                schedule_id: None,
+                schedule_id: report.schedule_id,
+                schedule_name,
                 archive_name: notification_archive_name,
             };
             let service = state.notification_service.clone();
@@ -662,14 +673,32 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 repo_id: repo_id.0,
                 success,
             });
-            if let Ok(target_name) = db::get_repo_name(&state.pool, repo_id.0).await {
-                state.ui_broadcast.send(ServerToUi::CheckCompleted {
-                    hostname: hostname.to_owned(),
-                    target_name,
-                    success,
-                    error_message: error_message.clone(),
-                });
-            }
+            let repo_name = db::get_repo_name(&state.pool, repo_id.0)
+                .await
+                .unwrap_or_else(|_| repo_id.0.to_string());
+            state.ui_broadcast.send(ServerToUi::CheckCompleted {
+                hostname: hostname.to_owned(),
+                target_name: repo_name.clone(),
+                success,
+                error_message: error_message.clone(),
+            });
+
+            // The agent only reports a repo id, not which schedule triggered the
+            // check, so infer it from the host/repo/type combination.
+            let schedule = db::get_schedule_for_hostname_repo(
+                &state.pool,
+                hostname,
+                repo_id.0,
+                ScheduleType::Check,
+            )
+            .await
+            .ok()
+            .flatten();
+            let schedule_name = match &schedule {
+                Some(s) if !s.name.trim().is_empty() => Some(s.name.clone()),
+                Some(_) => Some(repo_name.clone()),
+                None => None,
+            };
 
             let event_type = if success {
                 EventType::CheckSuccess
@@ -679,13 +708,14 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
             let event = NotificationEvent {
                 event_type,
                 hostname: hostname.to_owned(),
-                repo_name: repo_id.0.to_string(),
+                repo_name,
                 status: if success { "success" } else { "failed" }.to_owned(),
                 error_message,
                 timestamp: chrono::Utc::now(),
                 repo_id: Some(repo_id.0),
                 agent_id: Some(agent_id),
-                schedule_id: None,
+                schedule_id: schedule.map(|s| s.id),
+                schedule_name,
                 archive_name: None,
             };
             let service = state.notification_service.clone();
@@ -740,20 +770,24 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 success,
                 "canary verification completed"
             );
-            let schedule_id =
-                db::get_backup_schedule_for_hostname_repo(&state.pool, hostname, repo_id.0)
-                    .await
-                    .map_err(|e| {
-                        tracing::warn!(
-                            hostname = %hostname,
-                            repo_id = ?repo_id,
-                            error = %e,
-                            "failed to look up schedule for canary result"
-                        );
-                    })
-                    .ok()
-                    .flatten()
-                    .map(|s| s.id);
+            let schedule_id = db::get_schedule_for_hostname_repo(
+                &state.pool,
+                hostname,
+                repo_id.0,
+                ScheduleType::Backup,
+            )
+            .await
+            .map_err(|e| {
+                tracing::warn!(
+                    hostname = %hostname,
+                    repo_id = ?repo_id,
+                    error = %e,
+                    "failed to look up schedule for canary result"
+                );
+            })
+            .ok()
+            .flatten()
+            .map(|s| s.id);
 
             if let Some(sid) = schedule_id {
                 if let Err(e) = db::insert_canary_result(

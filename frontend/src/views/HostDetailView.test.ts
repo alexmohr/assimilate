@@ -77,6 +77,9 @@ const mockReports = [
     id: 1,
     machine_id: 1,
     repo_id: 10,
+    repo_name: 'server-daily',
+    schedule_id: 100,
+    schedule_name: 'Nightly Server Backup',
     started_at: '2026-06-01T09:55:00Z',
     finished_at: '2026-06-01T10:00:00Z',
     status: 'success',
@@ -94,6 +97,9 @@ const mockReports = [
     id: 2,
     machine_id: 1,
     repo_id: 10,
+    repo_name: 'server-daily',
+    schedule_id: 100,
+    schedule_name: 'Nightly Server Backup',
     started_at: '2026-06-02T09:55:00Z',
     finished_at: '2026-06-02T10:00:00Z',
     status: 'warning',
@@ -111,6 +117,9 @@ const mockReports = [
     id: 3,
     machine_id: 1,
     repo_id: 10,
+    repo_name: 'server-daily',
+    schedule_id: 100,
+    schedule_name: 'Nightly Server Backup',
     started_at: '2026-06-03T09:55:00Z',
     finished_at: '2026-06-03T10:00:00Z',
     status: 'failed',
@@ -187,6 +196,37 @@ describe('HostDetailView — backups tab', () => {
     await openBackupsTab(wrapper)
 
     expect(wrapper.findAll('.result-card')).toHaveLength(3)
+  })
+
+  it('shows the repo and schedule name on each report so a failure can be traced', async () => {
+    setupApi()
+    const wrapper = renderWithPlugins(HostDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await openBackupsTab(wrapper)
+
+    const card = wrapper.findAll('.result-card')[0]
+    expect(card.text()).toContain('server-daily')
+    expect(card.text()).toContain('Nightly Server Backup')
+    const scheduleLink = card.find('a.result-schedule-link')
+    expect(scheduleLink.exists()).toBe(true)
+    expect(scheduleLink.attributes('href')).toBe('/schedules/100')
+  })
+
+  it('omits the schedule link when a report has no schedule_id', async () => {
+    setupApi([{ ...mockReports[0], schedule_id: null, schedule_name: null }])
+    const wrapper = renderWithPlugins(HostDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await openBackupsTab(wrapper)
+
+    const card = wrapper.findAll('.result-card')[0]
+    expect(card.find('a.result-schedule-link').exists()).toBe(false)
+    expect(card.text()).toContain('server-daily')
   })
 
   it('filters to only warning reports when Warning is clicked', async () => {

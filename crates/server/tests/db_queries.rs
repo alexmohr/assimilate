@@ -699,10 +699,33 @@ async fn schedule_for_repo(pool: PgPool) {
 async fn schedule_for_hostname_repo(pool: PgPool) {
     let (_, repo, _) = create_test_schedule(&pool).await;
 
-    let result = db::get_backup_schedule_for_hostname_repo(&pool, "sched-host", repo.id)
-        .await
-        .unwrap();
+    let result = db::get_schedule_for_hostname_repo(
+        &pool,
+        "sched-host",
+        repo.id,
+        shared::types::ScheduleType::Backup,
+    )
+    .await
+    .unwrap();
     assert!(result.is_some());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn schedule_for_hostname_repo_filters_by_type(pool: PgPool) {
+    let (_, repo, _) = create_test_schedule(&pool).await;
+
+    let result = db::get_schedule_for_hostname_repo(
+        &pool,
+        "sched-host",
+        repo.id,
+        shared::types::ScheduleType::Check,
+    )
+    .await
+    .unwrap();
+    assert!(
+        result.is_none(),
+        "a backup schedule must not match when looking up a check schedule"
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -4346,11 +4369,80 @@ async fn reports_for_schedule_test(pool: PgPool) {
         .unwrap();
     assert_eq!(reports.len(), 1);
     assert_eq!(reports[0].status, "success");
+    assert_eq!(reports[0].repo_name, repo.name);
+    assert_eq!(reports[0].schedule_id, Some(schedule.id));
+    assert_eq!(reports[0].schedule_name.as_deref(), Some("test-schedule"));
 
     let empty = db::list_reports_for_schedule(&pool, schedule.id + 999, 10)
         .await
         .unwrap();
     assert!(empty.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn reports_carry_repo_name_and_fall_back_to_it_when_schedule_unnamed(pool: PgPool) {
+    let client = db::insert_agent(&pool, "unnamed-sched-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let schedule = db::insert_schedule(
+        &pool,
+        repo.id,
+        &ScheduleParams {
+            name: "",
+            schedule_type: "backup",
+            cron_expression: "0 3 * * *",
+            enabled: true,
+            canary_enabled: false,
+            exclude_patterns_raw: "",
+            ignore_global_excludes: false,
+            keep_hourly: 0,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 0,
+            compact_enabled: true,
+            rate_limit_kbps: None,
+            pre_backup_commands: "",
+            post_backup_commands: "",
+            on_failure: "stop",
+        },
+        None,
+    )
+    .await
+    .unwrap();
+
+    insert_test_report_for_schedule(&pool, client.id, repo.id, schedule.id, "failed").await;
+
+    let reports = db::list_reports_for_agent(&pool, client.id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].repo_name, repo.name);
+    assert_eq!(reports[0].schedule_id, Some(schedule.id));
+    assert_eq!(
+        reports[0].schedule_name.as_deref(),
+        Some(repo.name.as_str()),
+        "an unnamed schedule should fall back to the repo name"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn reports_for_agent_have_no_schedule_when_not_schedule_triggered(pool: PgPool) {
+    let client = db::insert_agent(&pool, "no-schedule-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+
+    insert_test_report(&pool, client.id, repo.id).await;
+
+    let reports = db::list_reports_for_agent(&pool, client.id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].repo_name, repo.name);
+    assert_eq!(reports[0].schedule_id, None);
+    assert_eq!(reports[0].schedule_name, None);
 }
 
 #[sqlx::test(migrations = "./migrations")]

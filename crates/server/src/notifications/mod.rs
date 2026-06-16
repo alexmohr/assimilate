@@ -142,6 +142,7 @@ pub struct NotificationEvent {
     pub repo_id: Option<i64>,
     pub agent_id: Option<i64>,
     pub schedule_id: Option<i64>,
+    pub schedule_name: Option<String>,
     pub archive_name: Option<String>,
 }
 

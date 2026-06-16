@@ -359,7 +359,7 @@ async function loadRepoSchedules(): Promise<void> {
   try {
     const [schRes, clientRes, healthRes] = await Promise.all([
       apiClient.get<ScheduleRow[]>(`/repos/${repoId.value}/schedules`),
-      apiClient.get<ClientRow[]>('/clients'),
+      apiClient.get<ClientRow[]>('/agents'),
       apiClient.get<HealthEntry[]>('/stats/health'),
     ])
     repoSchedules.value = schRes.data

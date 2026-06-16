@@ -429,7 +429,7 @@ impl TunnelManager {
         }
     }
 
-    /// Ensures the tunnel for the given client is started and not in a disconnected/error state.
+    /// Ensures the tunnel for the given agent is started and not in a disconnected/error state.
     /// If it's not running or disconnected, restarts it. Returns `true` if the tunnel is
     /// connected or was just restarted (best-effort).
     pub async fn ensure_agent_tunnel_connected(&self, agent_id: i64) -> bool {

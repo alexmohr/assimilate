@@ -100,7 +100,7 @@ const router = useRouter()
 const isCreate = computed(() => props.id === 'new')
 
 const schedule = ref<ScheduleRow | null>(null)
-const clients = ref<AgentRow[]>([])
+const agents = ref<AgentRow[]>([])
 const repos = ref<RepoRow[]>([])
 const repo = computed(() => repos.value.find((r) => r.id === selectedRepoId.value) ?? null)
 const scheduleTargets = ref<ScheduleTarget[]>([])
@@ -121,7 +121,7 @@ const reportsError = ref<string | null>(null)
 const { success: toastSuccess, error: toastError } = useToast()
 const { onMessage } = useWebSocket()
 
-const selectedClientIds = ref<number[]>([])
+const selectedAgentIds = ref<number[]>([])
 const selectedRepoId = ref<number | null>(null)
 const selectedType = ref<ScheduleType>('backup')
 const onFailure = ref<'stop' | 'continue'>('stop')
@@ -130,8 +130,8 @@ const perHostSources = ref<Record<number, string>>({})
 const usePerHostExcludes = ref(false)
 const perHostExcludes = ref<Record<number, string>>({})
 
-const showClientDropdown = ref(false)
-const clientDropdownRef = ref<HTMLElement | null>(null)
+const showAgentDropdown = ref(false)
+const agentDropdownRef = ref<HTMLElement | null>(null)
 
 type TabId = 'settings' | 'advanced' | 'logs'
 const activeTab = computed<TabId>({
@@ -158,9 +158,9 @@ const scheduleType = computed(() =>
 )
 const isBackup = computed(() => scheduleType.value === 'backup')
 
-const clientMap = computed(() => {
+const agentMap = computed(() => {
   const m = new Map<number, AgentRow>()
-  clients.value.forEach((c) => m.set(c.id, c))
+  agents.value.forEach((c) => m.set(c.id, c))
   return m
 })
 
@@ -182,46 +182,46 @@ const form = ref({
   backup_sources: '',
 })
 
-function clientLabel(id: number): string {
-  const c = clients.value.find((x) => x.id === id)
+function agentLabel(id: number): string {
+  const c = agents.value.find((x) => x.id === id)
   return c ? (c.display_name ?? c.hostname) : `#${id}`
 }
 
 function multiSelectLabel(): string {
-  if (selectedClientIds.value.length === 0) return 'Select hosts...'
-  if (selectedClientIds.value.length === 1) return clientLabel(selectedClientIds.value[0])
-  return `${selectedClientIds.value.length} hosts selected`
+  if (selectedAgentIds.value.length === 0) return 'Select hosts...'
+  if (selectedAgentIds.value.length === 1) return agentLabel(selectedAgentIds.value[0])
+  return `${selectedAgentIds.value.length} hosts selected`
 }
 
-function toggleClientSelection(id: number): void {
-  if (selectedClientIds.value.includes(id)) {
-    selectedClientIds.value = selectedClientIds.value.filter((x) => x !== id)
+function toggleAgentSelection(id: number): void {
+  if (selectedAgentIds.value.includes(id)) {
+    selectedAgentIds.value = selectedAgentIds.value.filter((x) => x !== id)
   } else {
-    selectedClientIds.value = [...selectedClientIds.value, id]
+    selectedAgentIds.value = [...selectedAgentIds.value, id]
   }
 }
 
-function moveClientUp(index: number): void {
+function moveAgentUp(index: number): void {
   if (index === 0) return
-  const ids = [...selectedClientIds.value]
+  const ids = [...selectedAgentIds.value]
   ;[ids[index - 1], ids[index]] = [ids[index], ids[index - 1]]
-  selectedClientIds.value = ids
+  selectedAgentIds.value = ids
 }
 
-function moveClientDown(index: number): void {
-  if (index >= selectedClientIds.value.length - 1) return
-  const ids = [...selectedClientIds.value]
+function moveAgentDown(index: number): void {
+  if (index >= selectedAgentIds.value.length - 1) return
+  const ids = [...selectedAgentIds.value]
   ;[ids[index], ids[index + 1]] = [ids[index + 1], ids[index]]
-  selectedClientIds.value = ids
+  selectedAgentIds.value = ids
 }
 
 function handleClickOutside(event: MouseEvent): void {
   if (
-    showClientDropdown.value &&
-    clientDropdownRef.value &&
-    !clientDropdownRef.value.contains(event.target as Node)
+    showAgentDropdown.value &&
+    agentDropdownRef.value &&
+    !agentDropdownRef.value.contains(event.target as Node)
   ) {
-    showClientDropdown.value = false
+    showAgentDropdown.value = false
   }
 }
 
@@ -270,7 +270,7 @@ function scheduleTypeLabel(t: string): string {
 }
 
 function targetHostnames(): string {
-  return selectedClientIds.value.map(clientLabel).join(', ')
+  return selectedAgentIds.value.map(agentLabel).join(', ')
 }
 
 async function loadData(): Promise<void> {
@@ -278,19 +278,19 @@ async function loadData(): Promise<void> {
   error.value = null
   try {
     if (isCreate.value) {
-      const [clientsRes, reposRes] = await Promise.all([
+      const [agentsRes, reposRes] = await Promise.all([
         apiClient.get<AgentRow[]>('/agents'),
         apiClient.get<RepoRow[]>('/repos'),
       ])
-      clients.value = clientsRes.data
+      agents.value = agentsRes.data
       repos.value = reposRes.data
-      const queryClientId = Number(route.query.agent_id)
-      if (queryClientId && clients.value.some((c) => c.id === queryClientId)) {
-        selectedClientIds.value = [queryClientId]
+      const queryAgentId = Number(route.query.agent_id)
+      if (queryAgentId && agents.value.some((c) => c.id === queryAgentId)) {
+        selectedAgentIds.value = [queryAgentId]
       }
       selectedRepoId.value = repos.value.length > 0 ? repos.value[0].id : null
     } else {
-      const [schedRes, clientsRes, reposRes, targetsRes, sourcesRes, recentReportsRes] =
+      const [schedRes, agentsRes, reposRes, targetsRes, sourcesRes, recentReportsRes] =
         await Promise.all([
           apiClient.get<ScheduleRow>(`/schedules/${props.id}`),
           apiClient.get<AgentRow[]>('/agents'),
@@ -300,7 +300,7 @@ async function loadData(): Promise<void> {
           apiClient.get<ReportRow[]>(`/schedules/${props.id}/reports`, { params: { limit: 20 } }),
         ])
       schedule.value = schedRes.data
-      clients.value = clientsRes.data
+      agents.value = agentsRes.data
       repos.value = reposRes.data
       scheduleTargets.value = targetsRes.data
       selectedRepoId.value = schedRes.data.repo_id ?? null
@@ -308,7 +308,7 @@ async function loadData(): Promise<void> {
         (r) => r.status === 'pending' || r.status === 'started',
       )
       const sorted = [...targetsRes.data].sort((a, b) => a.execution_order - b.execution_order)
-      selectedClientIds.value = sorted.map((t) => t.agent_id)
+      selectedAgentIds.value = sorted.map((t) => t.agent_id)
       populateForm(schedRes.data)
 
       const sources = sourcesRes.data
@@ -364,7 +364,7 @@ async function save(): Promise<void> {
 
     if (usePerHostPaths.value) {
       const perHost: { agent_id: number; paths: string[] }[] = []
-      for (const id of selectedClientIds.value) {
+      for (const id of selectedAgentIds.value) {
         const text = perHostSources.value[id] ?? ''
         const paths = parseLines(text)
         if (paths.length > 0) {
@@ -377,7 +377,7 @@ async function save(): Promise<void> {
     if (usePerHostExcludes.value) {
       payload.exclude_patterns_raw = ''
       const perHost: { agent_id: number; raw_text: string }[] = []
-      for (const id of selectedClientIds.value) {
+      for (const id of selectedAgentIds.value) {
         const raw_text = perHostExcludes.value[id] ?? ''
         perHost.push({ agent_id: id, raw_text })
       }
@@ -385,13 +385,13 @@ async function save(): Promise<void> {
     }
 
     if (isCreate.value) {
-      if (selectedClientIds.value.length === 0 || !selectedRepoId.value) {
+      if (selectedAgentIds.value.length === 0 || !selectedRepoId.value) {
         saveError.value = 'Please select at least one host and a repository.'
         return
       }
       const res = await apiClient.post<ScheduleRow>('/schedules', {
         ...payload,
-        agent_ids: selectedClientIds.value,
+        agent_ids: selectedAgentIds.value,
         repo_id: selectedRepoId.value,
         schedule_type: selectedType.value,
         on_failure: onFailure.value,
@@ -400,7 +400,7 @@ async function save(): Promise<void> {
     } else {
       const res = await apiClient.put<ScheduleRow>(`/schedules/${schedule.value!.id}`, {
         ...payload,
-        agent_ids: selectedClientIds.value,
+        agent_ids: selectedAgentIds.value,
         repo_id: selectedRepoId.value,
         on_failure: onFailure.value,
       })
@@ -630,37 +630,37 @@ watch(activeTab, (tab) => {
             <div class="form-group">
               <label class="form-label">Hosts <span class="required">*</span></label>
               <div
-                ref="clientDropdownRef"
+                ref="agentDropdownRef"
                 class="multi-select-wrapper"
               >
                 <button
                   type="button"
                   class="multi-select-trigger"
-                  :class="{ open: showClientDropdown }"
-                  @click.stop="showClientDropdown = !showClientDropdown"
+                  :class="{ open: showAgentDropdown }"
+                  @click.stop="showAgentDropdown = !showAgentDropdown"
                 >
                   <span class="multi-select-label">{{ multiSelectLabel() }}</span>
-                  <span class="multi-select-arrow">{{ showClientDropdown ? '▲' : '▼' }}</span>
+                  <span class="multi-select-arrow">{{ showAgentDropdown ? '▲' : '▼' }}</span>
                 </button>
                 <div
-                  v-if="showClientDropdown"
+                  v-if="showAgentDropdown"
                   class="multi-select-dropdown"
                 >
                   <label
-                    v-for="c in clients"
+                    v-for="c in agents"
                     :key="c.id"
                     class="multi-select-item"
                   >
                     <input
                       type="checkbox"
-                      :checked="selectedClientIds.includes(c.id)"
-                      @change="toggleClientSelection(c.id)"
+                      :checked="selectedAgentIds.includes(c.id)"
+                      @change="toggleAgentSelection(c.id)"
                     />
                     <span class="multi-select-name">{{ c.display_name ?? c.hostname }}</span>
                   </label>
                 </div>
               </div>
-              <span class="field-hint">The agent clients that will execute this schedule</span>
+              <span class="field-hint">The agents that will execute this schedule</span>
             </div>
 
             <!-- On Failure -->
@@ -680,34 +680,34 @@ watch(activeTab, (tab) => {
 
             <!-- Ordering (2+ hosts) -->
             <div
-              v-if="selectedClientIds.length > 1"
+              v-if="selectedAgentIds.length > 1"
               class="form-group"
             >
               <label class="form-label">Execution Order</label>
               <div class="order-list">
                 <div
-                  v-for="(clientId, idx) in selectedClientIds"
-                  :key="clientId"
+                  v-for="(agentId, idx) in selectedAgentIds"
+                  :key="agentId"
                   class="order-item"
                 >
                   <span class="order-index">{{ idx + 1 }}</span>
-                  <span class="order-name">{{ clientLabel(clientId) }}</span>
+                  <span class="order-name">{{ agentLabel(agentId) }}</span>
                   <div class="order-actions">
                     <button
                       type="button"
                       class="order-btn"
                       :disabled="idx === 0"
                       title="Move up"
-                      @click="moveClientUp(idx)"
+                      @click="moveAgentUp(idx)"
                     >
                       ▲
                     </button>
                     <button
                       type="button"
                       class="order-btn"
-                      :disabled="idx === selectedClientIds.length - 1"
+                      :disabled="idx === selectedAgentIds.length - 1"
                       title="Move down"
-                      @click="moveClientDown(idx)"
+                      @click="moveAgentDown(idx)"
                     >
                       ▼
                     </button>
@@ -809,31 +809,31 @@ watch(activeTab, (tab) => {
             <div class="form-group">
               <label class="form-label">Hosts</label>
               <div
-                ref="clientDropdownRef"
+                ref="agentDropdownRef"
                 class="multi-select-wrapper"
               >
                 <button
                   type="button"
                   class="multi-select-trigger"
-                  :class="{ open: showClientDropdown }"
-                  @click.stop="showClientDropdown = !showClientDropdown"
+                  :class="{ open: showAgentDropdown }"
+                  @click.stop="showAgentDropdown = !showAgentDropdown"
                 >
                   <span class="multi-select-label">{{ multiSelectLabel() }}</span>
-                  <span class="multi-select-arrow">{{ showClientDropdown ? '▲' : '▼' }}</span>
+                  <span class="multi-select-arrow">{{ showAgentDropdown ? '▲' : '▼' }}</span>
                 </button>
                 <div
-                  v-if="showClientDropdown"
+                  v-if="showAgentDropdown"
                   class="multi-select-dropdown"
                 >
                   <label
-                    v-for="c in clients"
+                    v-for="c in agents"
                     :key="c.id"
                     class="multi-select-item"
                   >
                     <input
                       type="checkbox"
-                      :checked="selectedClientIds.includes(c.id)"
-                      @change="toggleClientSelection(c.id)"
+                      :checked="selectedAgentIds.includes(c.id)"
+                      @change="toggleAgentSelection(c.id)"
                     />
                     <span class="multi-select-name">{{ c.display_name ?? c.hostname }}</span>
                   </label>
@@ -871,34 +871,34 @@ watch(activeTab, (tab) => {
 
             <!-- Ordering (2+ hosts) -->
             <div
-              v-if="selectedClientIds.length > 1"
+              v-if="selectedAgentIds.length > 1"
               class="form-group"
             >
               <label class="form-label">Execution Order</label>
               <div class="order-list">
                 <div
-                  v-for="(clientId, idx) in selectedClientIds"
-                  :key="clientId"
+                  v-for="(agentId, idx) in selectedAgentIds"
+                  :key="agentId"
                   class="order-item"
                 >
                   <span class="order-index">{{ idx + 1 }}</span>
-                  <span class="order-name">{{ clientLabel(clientId) }}</span>
+                  <span class="order-name">{{ agentLabel(agentId) }}</span>
                   <div class="order-actions">
                     <button
                       type="button"
                       class="order-btn"
                       :disabled="idx === 0"
                       title="Move up"
-                      @click="moveClientUp(idx)"
+                      @click="moveAgentUp(idx)"
                     >
                       ▲
                     </button>
                     <button
                       type="button"
                       class="order-btn"
-                      :disabled="idx === selectedClientIds.length - 1"
+                      :disabled="idx === selectedAgentIds.length - 1"
                       title="Move down"
-                      @click="moveClientDown(idx)"
+                      @click="moveAgentDown(idx)"
                     >
                       ▼
                     </button>
@@ -924,7 +924,7 @@ watch(activeTab, (tab) => {
             <div class="form-card">
               <h3 class="info-title">Backup Paths</h3>
               <div
-                v-if="selectedClientIds.length > 1"
+                v-if="selectedAgentIds.length > 1"
                 class="form-group form-group-inline"
               >
                 <label class="form-label">Configure per host</label>
@@ -951,19 +951,19 @@ watch(activeTab, (tab) => {
                 class="per-host-paths"
               >
                 <div
-                  v-for="clientId in selectedClientIds"
-                  :key="clientId"
+                  v-for="agentId in selectedAgentIds"
+                  :key="agentId"
                   class="per-host-entry"
                 >
-                  <label class="form-label">{{ clientLabel(clientId) }}</label>
+                  <label class="form-label">{{ agentLabel(agentId) }}</label>
                   <textarea
-                    :value="perHostSources[clientId] ?? ''"
+                    :value="perHostSources[agentId] ?? ''"
                     class="form-input area-input area-input-sm"
                     placeholder="Directories to back up, one per line"
                     spellcheck="false"
                     @input="
                       ($event) =>
-                        (perHostSources[clientId] = ($event.target as HTMLTextAreaElement).value)
+                        (perHostSources[agentId] = ($event.target as HTMLTextAreaElement).value)
                     "
                   />
                 </div>
@@ -1052,7 +1052,7 @@ watch(activeTab, (tab) => {
           <div class="form-card">
             <h3 class="info-title">Exclude Patterns</h3>
             <div
-              v-if="selectedClientIds.length > 1"
+              v-if="selectedAgentIds.length > 1"
               class="form-group form-group-inline"
             >
               <label class="form-label">Configure per host</label>
@@ -1081,19 +1081,19 @@ watch(activeTab, (tab) => {
                 class="per-host-paths"
               >
                 <div
-                  v-for="clientId in selectedClientIds"
-                  :key="clientId"
+                  v-for="agentId in selectedAgentIds"
+                  :key="agentId"
                   class="per-host-entry"
                 >
-                  <label class="form-label">{{ clientLabel(clientId) }}</label>
+                  <label class="form-label">{{ agentLabel(agentId) }}</label>
                   <textarea
-                    :value="perHostExcludes[clientId] ?? ''"
+                    :value="perHostExcludes[agentId] ?? ''"
                     class="form-input area-input area-input-sm"
                     placeholder="Exclude patterns, one per line"
                     spellcheck="false"
                     @input="
                       ($event) =>
-                        (perHostExcludes[clientId] = ($event.target as HTMLTextAreaElement).value)
+                        (perHostExcludes[agentId] = ($event.target as HTMLTextAreaElement).value)
                     "
                   />
                 </div>
@@ -1216,8 +1216,8 @@ watch(activeTab, (tab) => {
                 <td class="cell-ts">{{ formatDateShort(r.started_at) }}</td>
                 <td class="cell-host">
                   {{
-                    clientMap.get(r.agent_id)?.display_name ??
-                    clientMap.get(r.agent_id)?.hostname ??
+                    agentMap.get(r.agent_id)?.display_name ??
+                    agentMap.get(r.agent_id)?.hostname ??
                     `#${r.agent_id}`
                   }}
                 </td>

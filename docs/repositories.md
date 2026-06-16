@@ -157,7 +157,7 @@ Assimilate supports all borg encryption modes. The encryption type is set at `bo
 |------|-------------|
 | `repokey` | Passphrase-protected key stored in the repository |
 | `repokey-blake2` | Same as `repokey` with BLAKE2b MAC — **recommended** |
-| `keyfile` | Passphrase-protected key stored on the client machine |
+| `keyfile` | Passphrase-protected key stored on the agent machine |
 | `keyfile-blake2` | Same as `keyfile` with BLAKE2b MAC |
 | `authenticated` | No encryption, HMAC authentication only |
 | `authenticated-blake2` | No encryption, BLAKE2b authentication only |

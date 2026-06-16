@@ -77,29 +77,29 @@ test('database-hourly shows unmatched-banner for legacy-db-prod archives', async
   await expect(page.locator('.unmatched-banner')).toBeVisible({ timeout: 15_000 })
 })
 
-// ── Imported clients ─────────────────────────────────────────────────────────
+// ── Imported agents ──────────────────────────────────────────────────────────
 
-test('agents page shows imported placeholder clients', async ({ page }) => {
+test('agents page shows imported placeholder agents', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/agents')
-  // Demo creates imported clients for old-webserver and legacy-db-prod
+  // Demo creates imported agents for old-webserver and legacy-db-prod
   await expect(
     page.getByText('old-webserver').or(page.getByText('legacy-db-prod')).first(),
   ).toBeVisible({ timeout: 10_000 })
 })
 
-test('imported clients have the Imported badge', async ({ page }) => {
+test('imported agents have the Imported badge', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/agents')
   // At least one .badge-imported must be present (old-webserver and legacy-db-prod)
   await expect(page.locator('.badge-imported').first()).toBeVisible({ timeout: 10_000 })
 })
 
-test('imported clients show Merge into... and Adopt action buttons', async ({ page }) => {
+test('imported agents show Merge into... and Adopt action buttons', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/agents')
   await expect(page.locator('.badge-imported').first()).toBeVisible({ timeout: 10_000 })
-  // Merge and Adopt must be visible for at least one imported client
+  // Merge and Adopt must be visible for at least one imported agent
   await expect(page.getByRole('button', { name: /merge into/i }).first()).toBeVisible()
   await expect(page.getByRole('button', { name: /adopt/i }).first()).toBeVisible()
 })

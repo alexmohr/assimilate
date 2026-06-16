@@ -518,7 +518,7 @@ mod tests {
     }
 
     #[test]
-    fn backup_success_goes_to_client_overview() {
+    fn backup_success_goes_to_agent_overview() {
         let p = payload(serde_json::json!({
             "event_type": "backup_success",
             "hostname": "myhost",

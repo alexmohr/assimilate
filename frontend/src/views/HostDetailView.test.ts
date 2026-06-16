@@ -36,11 +36,11 @@ vi.mock('../utils/error', () => ({
   extractError: (_e: unknown, fallback?: string) => fallback ?? 'Unknown error',
 }))
 
-vi.mock('../components/MergeClientDialog.vue', () => ({
+vi.mock('../components/MergeAgentDialog.vue', () => ({
   default: {
-    name: 'MergeClientDialog',
+    name: 'MergeAgentDialog',
     template: '<div />',
-    props: ['clients', 'current'],
+    props: ['source', 'allAgents'],
   },
 }))
 
@@ -54,7 +54,7 @@ vi.mock('../components/AgentDeployDialog.vue', () => ({
 
 import { apiClient } from '../api/client'
 
-const mockClient = {
+const mockAgent = {
   id: 1,
   hostname: 'test-host',
   display_name: 'Test Host',
@@ -137,7 +137,7 @@ const mockReports = [
 
 function setupApi(reports = mockReports, repos: unknown[] = [], schedules: unknown[] = []): void {
   vi.mocked(apiClient.get).mockImplementation((url: string) => {
-    if (url === '/agents') return Promise.resolve({ data: [mockClient] })
+    if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
     if (url === '/agents/test-host/repos') return Promise.resolve({ data: repos })
     if (url === '/schedules') return Promise.resolve({ data: schedules })
     if (url === '/agents/test-host/reports') return Promise.resolve({ data: reports })
@@ -353,7 +353,7 @@ describe('HostDetailView — schedules tab', () => {
     vi.clearAllMocks()
   })
 
-  it('shows only schedules that explicitly target the client', async () => {
+  it('shows only schedules that explicitly target the agent', async () => {
     const schedules = [
       {
         id: 1,
@@ -383,9 +383,9 @@ describe('HostDetailView — schedules tab', () => {
     })
     await flushPromises()
 
-    const clientSchedules = (
-      wrapper.vm as unknown as { clientSchedules: Array<{ id: number; name: string }> }
-    ).clientSchedules
-    expect(clientSchedules).toEqual([{ ...schedules[0] }])
+    const agentSchedules = (
+      wrapper.vm as unknown as { agentSchedules: Array<{ id: number; name: string }> }
+    ).agentSchedules
+    expect(agentSchedules).toEqual([{ ...schedules[0] }])
   })
 })

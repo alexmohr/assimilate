@@ -164,12 +164,12 @@ pub async fn create_schedule(
     let schedule_type = schedule_type_to_str(schedule_type_enum);
 
     let has_backup_sources = req.backup_sources.as_ref().is_some_and(|v| !v.is_empty());
-    let has_per_host_sources = req
+    let has_per_agent_sources = req
         .backup_sources_per_agent
         .as_ref()
         .is_some_and(|v| !v.is_empty());
 
-    if !has_backup_sources && !has_per_host_sources && schedule_type_enum == ScheduleType::Backup {
+    if !has_backup_sources && !has_per_agent_sources && schedule_type_enum == ScheduleType::Backup {
         let agent = db::get_agent_by_id(&state.pool, req.agent_ids[0]).await?;
         if agent.default_backup_paths.is_empty() {
             return Err(ApiError::BadRequest(

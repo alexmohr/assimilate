@@ -229,10 +229,10 @@ pub async fn import_config(
         warnings: Vec::new(),
     };
 
-    let existing_clients = db::list_agents(&state.pool, true).await?;
-    let mut hostname_to_id: HashMap<String, i64> = existing_clients
+    let existing_agents = db::list_agents(&state.pool, true).await?;
+    let mut hostname_to_id: HashMap<String, i64> = existing_agents
         .iter()
-        .map(|c| (c.hostname.clone(), c.id))
+        .map(|a| (a.hostname.clone(), a.id))
         .collect();
 
     for host in &payload.hosts {

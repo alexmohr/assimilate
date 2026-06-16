@@ -23,14 +23,14 @@ pub struct ListReportsQuery {
     operation_id = "listReports",
     summary = "List backup reports for an agent",
     params(
-        ("hostname" = String, Path, description = "Client hostname"),
+        ("hostname" = String, Path, description = "Agent hostname"),
         ("target" = Option<String>, Query, description = "Filter by target repo name"),
         ("limit" = Option<i64>, Query, description = "Max entries to return"),
     ),
     responses(
         (status = 200, description = "List of backup reports", body = Vec<crate::db::ReportRow>),
         (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Client not found"),
+        (status = 404, description = "Agent not found"),
     )
 )]
 pub async fn list_reports(

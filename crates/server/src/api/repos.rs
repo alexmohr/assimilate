@@ -102,10 +102,10 @@ pub async fn list_repos(
     get,
     path = "/api/agents/{hostname}/repos",
     tag = "Repositories",
-    operation_id = "getClientRepos",
+    operation_id = "getAgentRepos",
     summary = "List repositories for a specific host",
     params(
-        ("hostname" = String, Path, description = "Client hostname"),
+        ("hostname" = String, Path, description = "Agent hostname"),
     ),
     responses(
         (status = 200, description = "List of repositories", body = Vec<RepoRow>),

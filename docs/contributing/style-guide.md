@@ -162,7 +162,7 @@ Backup schedules define when the agent runs `borg create` on a host. Configure a
 
 **Steps:**
 
-1. Open the **Clients** page and select a host.
+1. Open the **Agents** page and select a host.
 2. Click **Edit Schedule**.
 3. Set the cron expression:
 

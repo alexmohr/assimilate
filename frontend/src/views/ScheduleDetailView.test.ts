@@ -87,7 +87,7 @@ const mockCheckSchedule = {
   post_backup_commands: '[]',
 }
 
-const mockClients = [
+const mockAgents = [
   { id: 10, hostname: 'web-server-01', display_name: 'Web Server' },
   { id: 11, hostname: 'db-server-01', display_name: null },
 ]
@@ -104,7 +104,7 @@ function setupEditMode(schedule = mockSchedule): void {
       return Promise.resolve({ data: [{ agent_id: schedule.agent_id, execution_order: 0 }] })
     if (url === `/schedules/${schedule.id}/sources`)
       return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_agent: [] } })
-    if (url === '/agents') return Promise.resolve({ data: mockClients })
+    if (url === '/agents') return Promise.resolve({ data: mockAgents })
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
     return Promise.resolve({ data: [] })
   })
@@ -112,7 +112,7 @@ function setupEditMode(schedule = mockSchedule): void {
 
 function setupCreateMode(): void {
   mockApiClient.get.mockImplementation((url: string) => {
-    if (url === '/agents') return Promise.resolve({ data: mockClients })
+    if (url === '/agents') return Promise.resolve({ data: mockAgents })
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
     return Promise.resolve({ data: [] })
   })
@@ -144,7 +144,7 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(wrapper.find('h1').text()).toContain('Backup Schedule')
   })
 
-  it('shows client and repo in info card', async () => {
+  it('shows agent and repo in info card', async () => {
     setupEditMode()
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
@@ -318,7 +318,7 @@ describe('ScheduleDetailView - edit mode', () => {
         return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_host: [] } })
       if (url === '/schedules/1/reports')
         return Promise.resolve({ data: [{ id: 1, status: 'started' }] })
-      if (url === '/agents') return Promise.resolve({ data: mockClients })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
       return Promise.resolve({ data: [] })
     })
@@ -339,7 +339,7 @@ describe('ScheduleDetailView - edit mode', () => {
         return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_host: [] } })
       if (url === '/schedules/1/reports')
         return Promise.resolve({ data: [{ id: 1, status: 'pending' }] })
-      if (url === '/agents') return Promise.resolve({ data: mockClients })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
       return Promise.resolve({ data: [] })
     })
@@ -380,7 +380,7 @@ describe('ScheduleDetailView - create mode', () => {
     expect(wrapper.text()).toContain('New')
   })
 
-  it('shows client and repo dropdowns', async () => {
+  it('shows agent and repo dropdowns', async () => {
     setupCreateMode()
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
     await flushPromises()

@@ -30,7 +30,7 @@ vi.mock('../utils/logger', () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }))
 
-const clients = [
+const agents = [
   {
     id: 1,
     hostname: 'protected-host',
@@ -65,7 +65,7 @@ describe('HostsView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/agents') return Promise.resolve({ data: clients })
+      if (url === '/agents') return Promise.resolve({ data: agents })
       if (url === '/stats/dashboard-overview') {
         return Promise.resolve({
           data: {

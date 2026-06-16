@@ -26,7 +26,7 @@ test.describe('Schedules Management', () => {
     await expect(page.getByText('media-weekly')).toBeVisible();
   });
 
-  test('schedules list shows associated client hostnames', async ({ page }) => {
+  test('schedules list shows associated agent hostnames', async ({ page }) => {
     await page.goto('/schedules');
     await page.waitForLoadState('networkidle');
 
@@ -72,7 +72,7 @@ test.describe('Schedules Management', () => {
     await page.goto('/schedules/1');
     await page.waitForLoadState('networkidle');
 
-    await expect(page.getByText('Client', { exact: true })).toBeVisible();
+    await expect(page.getByText('Targets', { exact: true })).toBeVisible();
     await expect(page.getByText('Repository', { exact: true })).toBeVisible();
     await expect(page.getByText('server-daily')).toBeVisible();
   });

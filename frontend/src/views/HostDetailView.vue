@@ -17,7 +17,7 @@ import { logger } from '../utils/logger'
 import { cronToHuman } from '../utils/cron'
 import { parseLines } from '../utils/validation'
 import BaseSpinner from '../components/BaseSpinner.vue'
-import MergeClientDialog from '../components/MergeClientDialog.vue'
+import MergeAgentDialog from '../components/MergeAgentDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import SshKeyDeployPanel from '../components/SshKeyDeployPanel.vue'
 
@@ -118,7 +118,7 @@ const tabs: { id: TabId; label: string }[] = [
   { id: 'backups', label: 'Backups' },
 ]
 
-const client = ref<AgentRow | null>(null)
+const agent = ref<AgentRow | null>(null)
 const repos = ref<RepoRow[]>([])
 const schedules = ref<ScheduleRow[]>([])
 const reports = ref<ReportRow[]>([])
@@ -155,7 +155,7 @@ const newTagColor = ref('#6b7280')
 const createTagLoading = ref(false)
 
 const isAdmin = computed(() => authStore.user?.role === 'admin')
-const isImported = computed(() => client.value?.is_imported ?? false)
+const isImported = computed(() => agent.value?.is_imported ?? false)
 
 const hostTags = computed<TagRow[]>(() =>
   allAgentTags.value.filter((t) => agentTagIds.value.includes(t.id)),
@@ -193,12 +193,12 @@ const showDeployDialog = ref(false)
 const showDeploySshKey = ref(false)
 
 function deployButtonLabel(): string | null {
-  if (!client.value) return null
-  if (!client.value.agent_version) return 'Deploy'
-  if (serverCommitCount.value !== null && client.value.agent_commit_count !== null) {
-    return client.value.agent_commit_count >= serverCommitCount.value ? null : 'Upgrade'
+  if (!agent.value) return null
+  if (!agent.value.agent_version) return 'Deploy'
+  if (serverCommitCount.value !== null && agent.value.agent_commit_count !== null) {
+    return agent.value.agent_commit_count >= serverCommitCount.value ? null : 'Upgrade'
   }
-  if (availableAgentVersion.value && client.value.agent_version === availableAgentVersion.value)
+  if (availableAgentVersion.value && agent.value.agent_version === availableAgentVersion.value)
     return null
   return 'Upgrade'
 }
@@ -210,7 +210,7 @@ const pathsSaving = ref(false)
 const pathsError = ref<string | null>(null)
 
 function startEditPaths(): void {
-  pathsText.value = (client.value?.default_backup_paths ?? []).join('\n')
+  pathsText.value = (agent.value?.default_backup_paths ?? []).join('\n')
   pathsError.value = null
   editingPaths.value = true
 }
@@ -220,16 +220,16 @@ function cancelEditPaths(): void {
 }
 
 async function savePaths(): Promise<void> {
-  if (!client.value) return
+  if (!agent.value) return
   pathsSaving.value = true
   pathsError.value = null
   try {
-    const res = await apiClient.put<AgentRow>(`/agents/${client.value.hostname}`, {
-      display_name: client.value.display_name,
+    const res = await apiClient.put<AgentRow>(`/agents/${agent.value.hostname}`, {
+      display_name: agent.value.display_name,
       default_backup_paths: parseLines(pathsText.value),
-      default_exclude_patterns: client.value.default_exclude_patterns,
+      default_exclude_patterns: agent.value.default_exclude_patterns,
     })
-    client.value = { ...client.value, ...res.data }
+    agent.value = { ...agent.value, ...res.data }
     editingPaths.value = false
   } catch (e: unknown) {
     pathsError.value = extractError(e)
@@ -264,9 +264,9 @@ const identitySaving = ref(false)
 const identityError = ref<string | null>(null)
 
 function startEditIdentity(): void {
-  if (!client.value) return
-  identityHostname.value = client.value.hostname
-  identityDisplayName.value = client.value.display_name ?? ''
+  if (!agent.value) return
+  identityHostname.value = agent.value.hostname
+  identityDisplayName.value = agent.value.display_name ?? ''
   identityError.value = null
   editingIdentity.value = true
 }
@@ -276,18 +276,18 @@ function cancelEditIdentity(): void {
 }
 
 async function saveIdentity(): Promise<void> {
-  if (!client.value) return
+  if (!agent.value) return
   identitySaving.value = true
   identityError.value = null
   try {
-    const oldHostname = client.value.hostname
+    const oldHostname = agent.value.hostname
     const newHostname = identityHostname.value.trim()
     const hostnameChanged = newHostname !== oldHostname && newHostname.length > 0
     const res = await apiClient.put<AgentRow>(`/agents/${oldHostname}`, {
       hostname: hostnameChanged ? newHostname : undefined,
       display_name: identityDisplayName.value.trim() || null,
-      default_backup_paths: client.value.default_backup_paths,
-      default_exclude_patterns: client.value.default_exclude_patterns,
+      default_backup_paths: agent.value.default_backup_paths,
+      default_exclude_patterns: agent.value.default_exclude_patterns,
     })
     if (hostnameChanged) {
       pendingAliasOldHostname.value = oldHostname
@@ -295,7 +295,7 @@ async function saveIdentity(): Promise<void> {
       showAliasConfirm.value = true
       router.replace(`/agents/${newHostname}`)
     }
-    client.value = { ...client.value, ...res.data }
+    agent.value = { ...agent.value, ...res.data }
     editingIdentity.value = false
   } catch (e: unknown) {
     identityError.value = extractError(e)
@@ -332,10 +332,10 @@ useEscapeKey(showDeleteDialog, () => {
 })
 
 async function confirmDeleteHost(): Promise<void> {
-  if (!client.value) return
+  if (!agent.value) return
   deleteLoading.value = true
   try {
-    await apiClient.delete(`/agents/${client.value.hostname}`)
+    await apiClient.delete(`/agents/${agent.value.hostname}`)
     router.push('/agents')
   } catch (e: unknown) {
     logger.error('Failed to delete host', e)
@@ -347,20 +347,20 @@ async function confirmDeleteHost(): Promise<void> {
 // Hide imported agent
 const hideLoading = ref(false)
 
-async function hideClient(): Promise<void> {
-  if (!client.value) return
+async function hideAgent(): Promise<void> {
+  if (!agent.value) return
   hideLoading.value = true
   try {
-    await apiClient.put(`/agents/${client.value.hostname}/hide`)
+    await apiClient.put(`/agents/${agent.value.hostname}/hide`)
     router.push('/agents')
   } catch (e: unknown) {
-    logger.error('Failed to hide client', e)
+    logger.error('Failed to hide agent', e)
   } finally {
     hideLoading.value = false
   }
 }
 
-// Delete archives & remove imported client
+// Delete archives & remove imported agent
 const showDeleteArchivesDialog = ref(false)
 const deleteArchivesLoading = ref(false)
 
@@ -369,10 +369,10 @@ useEscapeKey(showDeleteArchivesDialog, () => {
 })
 
 async function confirmDeleteArchives(): Promise<void> {
-  if (!client.value) return
+  if (!agent.value) return
   deleteArchivesLoading.value = true
   try {
-    await apiClient.post(`/agents/${client.value.hostname}/delete-archives`)
+    await apiClient.post(`/agents/${agent.value.hostname}/delete-archives`)
     router.push('/agents')
   } catch (e: unknown) {
     logger.error('Failed to delete archives', e)
@@ -382,24 +382,24 @@ async function confirmDeleteArchives(): Promise<void> {
 }
 
 interface CreateAgentResponse {
-  client: AgentRow
+  agent: AgentRow
   token: string
 }
 
 async function adoptHost(): Promise<void> {
-  if (!client.value) return
+  if (!agent.value) return
   try {
     const cleanDisplayName =
-      client.value.display_name?.replace(/\s*\(imported\)$/, '').trim() || null
-    await apiClient.put(`/agents/${client.value.hostname}`, {
+      agent.value.display_name?.replace(/\s*\(imported\)$/, '').trim() || null
+    await apiClient.put(`/agents/${agent.value.hostname}`, {
       display_name: cleanDisplayName,
     })
     const res = await apiClient.post<CreateAgentResponse>(
-      `/agents/${client.value.hostname}/regenerate-token`,
+      `/agents/${agent.value.hostname}/regenerate-token`,
     )
-    client.value = {
-      ...client.value,
-      ...res.data.client,
+    agent.value = {
+      ...agent.value,
+      ...res.data.agent,
       is_imported: false,
       display_name: cleanDisplayName,
     }
@@ -421,7 +421,7 @@ function onMerged(): void {
 }
 
 function startEditExcludes(): void {
-  excludesText.value = (client.value?.default_exclude_patterns ?? []).join('\n')
+  excludesText.value = (agent.value?.default_exclude_patterns ?? []).join('\n')
   excludesError.value = null
   editingExcludes.value = true
 }
@@ -431,16 +431,16 @@ function cancelEditExcludes(): void {
 }
 
 async function saveExcludes(): Promise<void> {
-  if (!client.value) return
+  if (!agent.value) return
   excludesSaving.value = true
   excludesError.value = null
   try {
-    const res = await apiClient.put<AgentRow>(`/agents/${client.value.hostname}`, {
-      display_name: client.value.display_name,
-      default_backup_paths: client.value.default_backup_paths,
+    const res = await apiClient.put<AgentRow>(`/agents/${agent.value.hostname}`, {
+      display_name: agent.value.display_name,
+      default_backup_paths: agent.value.default_backup_paths,
       default_exclude_patterns: parseLines(excludesText.value),
     })
-    client.value = { ...client.value, ...res.data }
+    agent.value = { ...agent.value, ...res.data }
     editingExcludes.value = false
   } catch (e: unknown) {
     excludesError.value = extractError(e)
@@ -454,7 +454,7 @@ useEscapeKey(showTokenDialog, () => {
 })
 
 async function loadHostnamePatterns(hostname?: string): Promise<void> {
-  const h = hostname ?? client.value?.hostname
+  const h = hostname ?? agent.value?.hostname
   if (!h) return
   try {
     const res = await apiClient.get<AgentHostnamePattern[]>(`/agents/${h}/hostname-patterns`)
@@ -465,12 +465,12 @@ async function loadHostnamePatterns(hostname?: string): Promise<void> {
 }
 
 async function addHostnamePattern(): Promise<void> {
-  if (!client.value || !newPattern.value.trim()) return
+  if (!agent.value || !newPattern.value.trim()) return
   patternAddLoading.value = true
   patternError.value = null
   try {
     const res = await apiClient.post<AgentHostnamePattern>(
-      `/agents/${client.value.hostname}/hostname-patterns`,
+      `/agents/${agent.value.hostname}/hostname-patterns`,
       { pattern: newPattern.value.trim() },
     )
     hostnamePatterns.value = [...hostnamePatterns.value, res.data]
@@ -483,17 +483,17 @@ async function addHostnamePattern(): Promise<void> {
 }
 
 async function deleteHostnamePattern(id: number): Promise<void> {
-  if (!client.value) return
+  if (!agent.value) return
   try {
-    await apiClient.delete(`/agents/${client.value.hostname}/hostname-patterns/${id}`)
+    await apiClient.delete(`/agents/${agent.value.hostname}/hostname-patterns/${id}`)
     hostnamePatterns.value = hostnamePatterns.value.filter((p) => p.id !== id)
   } catch (e: unknown) {
     patternError.value = extractError(e)
   }
 }
 
-function isOnline(client: AgentRow): boolean {
-  return client.is_connected
+function isOnline(agent: AgentRow): boolean {
+  return agent.is_connected
 }
 
 function handleResultClick(r: ReportRow): void {
@@ -508,14 +508,14 @@ function handleResultClick(r: ReportRow): void {
   }
 }
 
-async function loadClient(): Promise<void> {
+async function loadAgent(): Promise<void> {
   loading.value = true
   error.value = null
   try {
     const res = await apiClient.get<AgentRow[]>('/agents')
     allAgents.value = res.data
-    client.value = res.data.find((m) => m.hostname === props.hostname) ?? null
-    if (!client.value) {
+    agent.value = res.data.find((m) => m.hostname === props.hostname) ?? null
+    if (!agent.value) {
       error.value = `Agent "${props.hostname}" not found`
       return
     }
@@ -528,8 +528,8 @@ async function loadClient(): Promise<void> {
 }
 
 async function loadTabData(): Promise<void> {
-  if (!client.value) return
-  const hostname = client.value.hostname
+  if (!agent.value) return
+  const hostname = agent.value.hostname
   try {
     const [repoRes, schedRes, reportRes] = await Promise.all([
       apiClient.get<RepoRow[]>(`/agents/${hostname}/repos`),
@@ -560,8 +560,8 @@ watch(
   { immediate: true },
 )
 
-const clientSchedules = computed(() => {
-  const hostname = client.value?.hostname
+const agentSchedules = computed(() => {
+  const hostname = agent.value?.hostname
   return hostname ? schedules.value.filter((s) => s.target_hostnames.includes(hostname)) : []
 })
 
@@ -600,11 +600,11 @@ async function regenerateToken(): Promise<void> {
   regenToken.value = null
   tokenCopied.value = false
   try {
-    const res = await apiClient.post<{ client: AgentRow; token: string }>(
+    const res = await apiClient.post<{ agent: AgentRow; token: string }>(
       `/agents/${props.hostname}/regenerate-token`,
     )
     regenToken.value = res.data.token
-    client.value = res.data.client
+    agent.value = res.data.agent
     showTokenDialog.value = true
   } catch (e: unknown) {
     regenError.value = extractError(e)
@@ -688,11 +688,11 @@ async function createAndAddTag(): Promise<void> {
 watch(
   () => props.hostname,
   () => {
-    loadClient()
+    loadAgent()
   },
 )
 onMounted(() => {
-  loadClient()
+  loadAgent()
   apiClient
     .get<{ agent_version: string | null; server_commit_count: number | null }>('/system/version')
     .then((res) => {
@@ -703,9 +703,9 @@ onMounted(() => {
 })
 
 const { onMessage, status: wsStatus } = useWebSocket()
-onMessage('DataChanged', () => loadClient().catch(logger.error))
-onMessage('AgentConnected', () => loadClient().catch(logger.error))
-onMessage('AgentDisconnected', () => loadClient().catch(logger.error))
+onMessage('DataChanged', () => loadAgent().catch(logger.error))
+onMessage('AgentConnected', () => loadAgent().catch(logger.error))
+onMessage('AgentDisconnected', () => loadAgent().catch(logger.error))
 
 interface BackupPayload {
   hostname: string
@@ -724,12 +724,12 @@ onMessage<BackupPayload>('BackupCompleted', (payload) => {
   if (payload.hostname === props.hostname) {
     activeBackups.value = activeBackups.value.filter((t) => t !== payload.target_name)
   }
-  loadClient().catch(logger.error)
+  loadAgent().catch(logger.error)
 })
 
 watch(wsStatus, (newStatus, oldStatus) => {
   if (newStatus === 'connected' && oldStatus !== 'connected') {
-    loadClient().catch(logger.error)
+    loadAgent().catch(logger.error)
   }
 })
 </script>
@@ -759,7 +759,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
       {{ error }}
     </div>
 
-    <template v-else-if="client">
+    <template v-else-if="agent">
       <!-- Tab bar -->
       <div class="tab-bar">
         <button
@@ -783,35 +783,35 @@ watch(wsStatus, (newStatus, oldStatus) => {
           <dl class="info-grid">
             <dt>Hostname</dt>
             <dd class="mono">
-              {{ client.hostname }}
+              {{ agent.hostname }}
             </dd>
             <dt>Display Name</dt>
-            <dd>{{ client.display_name ?? '—' }}</dd>
+            <dd>{{ agent.display_name ?? '—' }}</dd>
             <dt>Status</dt>
             <dd>
               <span
                 class="status-badge"
-                :class="isOnline(client) ? 'status-online' : 'status-offline'"
+                :class="isOnline(agent) ? 'status-online' : 'status-offline'"
               >
-                {{ isOnline(client) ? 'Online' : 'Offline' }}
+                {{ isOnline(agent) ? 'Online' : 'Offline' }}
               </span>
             </dd>
             <dt>Agent Version</dt>
             <dd class="mono">
-              {{ client.agent_version ?? '—' }}
+              {{ agent.agent_version ?? '—' }}
             </dd>
             <dt>Revision</dt>
             <dd class="mono">
-              {{ client.agent_git_sha ?? '—' }}
+              {{ agent.agent_git_sha ?? '—' }}
             </dd>
             <dt>Built</dt>
             <dd class="mono">
-              {{ client.agent_build_time ?? '—' }}
+              {{ agent.agent_build_time ?? '—' }}
             </dd>
             <dt>Created</dt>
-            <dd>{{ formatDate(client.created_at, 'Never') }}</dd>
+            <dd>{{ formatDate(agent.created_at, 'Never') }}</dd>
             <dt>Last Seen</dt>
-            <dd>{{ formatDate(client.last_seen_at, 'Never') }}</dd>
+            <dd>{{ formatDate(agent.last_seen_at, 'Never') }}</dd>
             <dt>Repositories</dt>
             <dd>{{ repos.length }}</dd>
           </dl>
@@ -861,18 +861,18 @@ watch(wsStatus, (newStatus, oldStatus) => {
               {{ regenLoading ? 'Regenerating...' : 'Regenerate Token' }}
             </button>
             <button
-              v-if="client.supports_restart && !isImported"
+              v-if="agent.supports_restart && !isImported"
               class="btn btn-sm btn-ghost btn-danger-text"
-              :disabled="restartLoading || !isOnline(client)"
+              :disabled="restartLoading || !isOnline(agent)"
               @click="restartAgent"
             >
               {{ restartLoading ? 'Restarting...' : 'Restart Agent' }}
             </button>
             <span
-              v-else-if="isOnline(client) && client.restart_unavailable_reason"
+              v-else-if="isOnline(agent) && agent.restart_unavailable_reason"
               class="restart-hint"
             >
-              {{ client.restart_unavailable_reason }}
+              {{ agent.restart_unavailable_reason }}
             </span>
             <button
               v-if="deployButtonLabel() && !isImported"
@@ -912,7 +912,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
             </button>
           </div>
           <SshKeyDeployPanel
-            :ssh-host="client.hostname"
+            :ssh-host="agent.hostname"
             show-credentials
           />
         </div>
@@ -1053,11 +1053,11 @@ watch(wsStatus, (newStatus, oldStatus) => {
           <h3 class="info-title">Default Backup Paths</h3>
           <template v-if="!editingPaths">
             <div
-              v-if="client.default_backup_paths.length > 0"
+              v-if="agent.default_backup_paths.length > 0"
               class="paths-list"
             >
               <code
-                v-for="(p, idx) in client.default_backup_paths"
+                v-for="(p, idx) in agent.default_backup_paths"
                 :key="idx"
                 class="path-item mono"
               >
@@ -1119,11 +1119,11 @@ watch(wsStatus, (newStatus, oldStatus) => {
           <h3 class="info-title">Default Exclude Patterns</h3>
           <template v-if="!editingExcludes">
             <div
-              v-if="client.default_exclude_patterns.length > 0"
+              v-if="agent.default_exclude_patterns.length > 0"
               class="paths-list"
             >
               <code
-                v-for="(p, idx) in client.default_exclude_patterns"
+                v-for="(p, idx) in agent.default_exclude_patterns"
                 :key="idx"
                 class="path-item mono"
               >
@@ -1259,7 +1259,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
               <button
                 class="btn btn-sm btn-ghost"
                 :disabled="hideLoading"
-                @click="hideClient"
+                @click="hideAgent"
               >
                 {{ hideLoading ? 'Hiding...' : 'Hide' }}
               </button>
@@ -1309,14 +1309,14 @@ watch(wsStatus, (newStatus, oldStatus) => {
         <div class="tab-header">
           <h3 class="tab-title">Schedules</h3>
           <RouterLink
-            :to="{ name: 'schedule-create', query: { agent_id: client?.id } }"
+            :to="{ name: 'schedule-create', query: { agent_id: agent?.id } }"
             class="btn btn-primary btn-sm"
           >
             + Add Schedule
           </RouterLink>
         </div>
         <div
-          v-if="clientSchedules.length === 0"
+          v-if="agentSchedules.length === 0"
           class="state-msg"
         >
           No schedules for this agent.
@@ -1326,7 +1326,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
           class="schedule-grid"
         >
           <div
-            v-for="s in clientSchedules"
+            v-for="s in agentSchedules"
             :key="s.id"
             class="schedule-card"
             :class="{ disabled: !s.enabled }"
@@ -1551,7 +1551,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
           </div>
           <div class="dialog-body">
             <p>
-              Permanently delete <strong>{{ client?.hostname }}</strong
+              Permanently delete <strong>{{ agent?.hostname }}</strong
               >? All associated schedules and backup reports will be removed. This action cannot be
               undone.
             </p>
@@ -1595,7 +1595,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
           <div class="dialog-body">
             <p class="danger-warning-text">
               This will <strong>permanently destroy all borg archives</strong> belonging to
-              <strong>{{ client?.hostname }}</strong> and remove the agent from the system.
+              <strong>{{ agent?.hostname }}</strong> and remove the agent from the system.
             </p>
             <p class="danger-warning-text">
               This operation is <strong>irreversible</strong>. Backup data will be permanently lost
@@ -1669,9 +1669,9 @@ watch(wsStatus, (newStatus, oldStatus) => {
 
     <!-- Merge Agent Dialog -->
     <Teleport to="body">
-      <MergeClientDialog
-        v-if="showMergeDialog && client"
-        :source="client"
+      <MergeAgentDialog
+        v-if="showMergeDialog && agent"
+        :source="agent"
         :all-agents="allAgents"
         @merged="onMerged"
         @cancel="showMergeDialog = false"
@@ -1680,14 +1680,14 @@ watch(wsStatus, (newStatus, oldStatus) => {
 
     <!-- Deploy Agent Dialog -->
     <AgentDeployDialog
-      v-if="showDeployDialog && client"
-      :hostname="client.hostname"
-      :agent-version="client.agent_version"
+      v-if="showDeployDialog && agent"
+      :hostname="agent.hostname"
+      :agent-version="agent.agent_version"
       @close="showDeployDialog = false"
       @deployed="
         () => {
           showDeployDialog = false
-          loadClient()
+          loadAgent()
         }
       "
     />

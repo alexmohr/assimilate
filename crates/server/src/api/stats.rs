@@ -718,8 +718,8 @@ pub async fn storage(
     get,
     path = "/api/stats/schedule-counts",
     tag = "Statistics",
-    operation_id = "getScheduleCountsByClient",
-    summary = "Get schedule counts per client",
+    operation_id = "getScheduleCountsByAgent",
+    summary = "Get schedule counts per agent",
     responses(
         (
             status = 200,
@@ -785,7 +785,7 @@ pub async fn storage_breakdown(
         ("limit" = Option<i64>, Query, description = "Max entries to return"),
         ("days" = Option<i64>, Query, description = "Return entries from last N days"),
         ("repo_id" = Option<i64>, Query, description = "Filter by repository ID"),
-        ("hostname" = Option<String>, Query, description = "Filter by client hostname"),
+        ("hostname" = Option<String>, Query, description = "Filter by agent hostname"),
         ("schedule_id" = Option<i64>, Query, description = "Filter by schedule ID"),
         ("run_id" = Option<String>, Query, description = "Filter by run ID"),
     ),

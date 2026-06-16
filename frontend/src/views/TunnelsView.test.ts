@@ -62,7 +62,7 @@ const mockApiClient = apiClient as {
 
 const mockListTunnels = listTunnels as ReturnType<typeof vi.fn>
 
-const mockClients = [
+const mockAgents = [
   { id: 1, hostname: 'web-server-01' },
   { id: 2, hostname: 'db-server-01' },
   { id: 3, hostname: 'media-store-01' },
@@ -109,7 +109,7 @@ const mockTunnels = [
 
 function setupSuccessMocks(): void {
   mockListTunnels.mockResolvedValue(mockTunnels)
-  mockApiClient.get.mockResolvedValue({ data: mockClients })
+  mockApiClient.get.mockResolvedValue({ data: mockAgents })
 }
 
 describe('TunnelsView', () => {
@@ -151,7 +151,7 @@ describe('TunnelsView', () => {
 
   it('renders empty state when no tunnels exist', async () => {
     mockListTunnels.mockResolvedValue([])
-    mockApiClient.get.mockResolvedValue({ data: mockClients })
+    mockApiClient.get.mockResolvedValue({ data: mockAgents })
 
     const wrapper = renderWithPlugins(TunnelsView)
     await flushPromises()

@@ -3,7 +3,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import MergeClientDialog from './MergeClientDialog.vue'
+import MergeAgentDialog from './MergeAgentDialog.vue'
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -36,13 +36,13 @@ const ALL_AGENTS: AgentRow[] = [
 ]
 
 function mountDialog(): ReturnType<typeof mount> {
-  return mount(MergeClientDialog, {
+  return mount(MergeAgentDialog, {
     props: { source: SOURCE, allAgents: ALL_AGENTS },
     attachTo: document.body,
   })
 }
 
-describe('MergeClientDialog', () => {
+describe('MergeAgentDialog', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
@@ -53,7 +53,7 @@ describe('MergeClientDialog', () => {
     expect((sourceInput.element as HTMLInputElement).value).toBe('old-webserver')
   })
 
-  it('renders Merge into select with non-imported clients only', () => {
+  it('renders Merge into select with non-imported agents only', () => {
     const wrapper = mountDialog()
     const select = wrapper.find('select')
     const options = select.findAll('option')
@@ -85,7 +85,7 @@ describe('MergeClientDialog', () => {
     expect(wrapper.emitted('cancel')).toBeTruthy()
   })
 
-  it('displays client hostname in target options', () => {
+  it('displays agent hostname in target options', () => {
     const wrapper = mountDialog()
     const select = wrapper.find('select')
     const texts = select.findAll('option').map((o) => o.text())

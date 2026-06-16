@@ -21,7 +21,7 @@ test('dashboard', async ({ page }) => {
 
 test('hosts', async ({ page }) => {
   await login(page, 'admin', 'admin');
-  await page.goto('/clients');
+  await page.goto('/agents');
   await page.waitForLoadState('networkidle');
   await page.screenshot({
     path: path.join(screenshotsDir, 'hosts.png'),
@@ -31,7 +31,7 @@ test('hosts', async ({ page }) => {
 
 test('host-detail', async ({ page }) => {
   await login(page, 'admin', 'admin');
-  await page.goto('/clients/web-01');
+  await page.goto('/agents/web-01');
   await page.waitForLoadState('networkidle');
   await page.screenshot({
     path: path.join(screenshotsDir, 'host-detail.png'),

@@ -254,7 +254,7 @@ const successRingDasharray = computed((): string => {
   return `${filled} ${circumference - filled}`
 })
 
-const clientIndicatorColor = computed((): string => {
+const agentIndicatorColor = computed((): string => {
   if (!summary.value) return 'var(--text-muted)'
   return summary.value.online_agents === summary.value.total_agents
     ? 'var(--success)'
@@ -467,7 +467,7 @@ async function fetchOverview(): Promise<void> {
           <span class="stat-value">
             <span
               class="stat-dot"
-              :style="{ background: clientIndicatorColor }"
+              :style="{ background: agentIndicatorColor }"
             />
             {{ summary?.online_agents ?? 0 }}/{{ summary?.total_agents ?? 0 }}
           </span>

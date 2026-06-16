@@ -55,7 +55,7 @@ const deliveries = ref<NotificationDelivery[]>([])
 const loading = ref(false)
 const error = ref('')
 const scopeRepos = ref<ScopeOption[]>([])
-const scopeClients = ref<ScopeOption[]>([])
+const scopeAgents = ref<ScopeOption[]>([])
 const scopeSchedules = ref<ScopeOption[]>([])
 
 // Add channel wizard state
@@ -270,13 +270,13 @@ async function loadPushStatus(): Promise<void> {
 
 async function loadScopeOptions(): Promise<void> {
   try {
-    const [reposRes, clientsRes, schedulesRes] = await Promise.all([
+    const [reposRes, agentsRes, schedulesRes] = await Promise.all([
       apiClient.get<{ id: number; name: string }[]>('/repos'),
       apiClient.get<{ id: number; hostname: string; display_name: string | null }[]>('/agents'),
       apiClient.get<{ id: number; agent_id: number; repo_id: number | null }[]>('/schedules'),
     ])
     scopeRepos.value = reposRes.data.map((r) => ({ id: r.id, label: r.name }))
-    scopeClients.value = clientsRes.data.map((c) => ({
+    scopeAgents.value = agentsRes.data.map((c) => ({
       id: c.id,
       label: c.display_name ?? c.hostname,
     }))
@@ -1058,12 +1058,12 @@ onMounted(() => {
                   </label>
                 </div>
                 <div
-                  v-if="scopeClients.length > 0"
+                  v-if="scopeAgents.length > 0"
                   class="scope-section"
                 >
                   <span class="scope-section-title">Hosts</span>
                   <label
-                    v-for="opt in filteredScopeOptions(scopeClients)"
+                    v-for="opt in filteredScopeOptions(scopeAgents)"
                     :key="'c' + opt.id"
                     class="scope-item"
                   >
@@ -1432,12 +1432,12 @@ onMounted(() => {
                 </label>
               </div>
               <div
-                v-if="scopeClients.length > 0"
+                v-if="scopeAgents.length > 0"
                 class="scope-section"
               >
                 <span class="scope-section-title">Hosts</span>
                 <label
-                  v-for="opt in filteredScopeOptions(scopeClients)"
+                  v-for="opt in filteredScopeOptions(scopeAgents)"
                   :key="'c' + opt.id"
                   class="scope-item"
                 >

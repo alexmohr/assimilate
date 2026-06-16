@@ -95,7 +95,7 @@ interface RepoWithStats {
   total_original_size: number
   total_compressed_size: number
   total_deduplicated_size: number
-  client_count: number
+  agent_count: number
 }
 
 const mockRepo: RepoWithStats = {
@@ -114,7 +114,7 @@ const mockRepo: RepoWithStats = {
   total_original_size: 10_737_418_240,
   total_compressed_size: 5_368_709_120,
   total_deduplicated_size: 2_684_354_560,
-  client_count: 2,
+  agent_count: 2,
 }
 
 const refreshedHostKey = 'ssh-ed25519 AAAANEW'
@@ -243,7 +243,7 @@ describe('RepoDetailView', () => {
     expect(wrapper.text()).toContain('/backup/repos/server-daily')
   })
 
-  it('renders stat cards with archive count and client count', async () => {
+  it('renders stat cards with archive count and agent count', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(RepoDetailView, {
       props: { id: '1' },
@@ -255,7 +255,7 @@ describe('RepoDetailView', () => {
     expect(text).toContain('30')
     expect(text).toContain('Archives')
     expect(text).toContain('2')
-    expect(text).toContain('Clients')
+    expect(text).toContain('Agents')
   })
 
   it('renders QuotaPanel component', async () => {

@@ -12,6 +12,8 @@ use crate::types::{
 #[serde(rename_all = "snake_case")]
 pub enum RepoOpKind {
     AgentBackup,
+    AgentCheck,
+    AgentVerify,
     ServerSync,
     BreakLock,
     DeleteArchive,

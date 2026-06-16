@@ -229,8 +229,11 @@ const successTotal = computed((): number => successActivity.value.length)
 const successCount = computed(
   (): number => successActivity.value.filter((a) => a.status === 'success').length,
 )
+const warnedCount = computed(
+  (): number => successActivity.value.filter((a) => a.status === 'warning').length,
+)
 const failedCount = computed(
-  (): number => successActivity.value.filter((a) => a.status !== 'success').length,
+  (): number => successActivity.value.filter((a) => a.status === 'failed').length,
 )
 
 const successRate = computed((): number => {
@@ -675,6 +678,13 @@ async function fetchOverview(): Promise<void> {
               >
                 <span class="legend-dot" />
                 Passed: {{ successCount }}
+              </span>
+              <span
+                class="legend-item legend-warn legend-link"
+                @click="router.push({ name: 'schedules', query: { filter: 'warning' } })"
+              >
+                <span class="legend-dot" />
+                Warned: {{ warnedCount }}
               </span>
               <span
                 class="legend-item legend-fail legend-link"
@@ -1189,6 +1199,10 @@ async function fetchOverview(): Promise<void> {
 
 .legend-pass .legend-dot {
   background: var(--success);
+}
+
+.legend-warn .legend-dot {
+  background: var(--warning);
 }
 
 .legend-fail .legend-dot {

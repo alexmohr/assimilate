@@ -8,12 +8,11 @@ use axum::{
 };
 use serde::Deserialize;
 use shared::{
-    protocol::ServerToAgent,
+    protocol::{ServerToAgent, ServerToUi},
     schedule::{calculate_next_run, validate_cron},
     types::{OnFailure, RepoId, ScheduleType},
 };
 use sqlx::PgPool;
-use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use super::{
@@ -25,7 +24,7 @@ use crate::{
     db::{self, ScheduleParams, ScheduleRow},
     error::{ApiError, ApiJson},
     ssh::{self, TestConnectionRequest},
-    ws::completion_bus::OperationOutcome,
+    ws::completion_bus,
 };
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -754,8 +753,6 @@ pub async fn list_schedule_backup_sources(
     }))
 }
 
-const MANUAL_RUN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4 * 3600);
-
 async fn run_manual_sequential(
     state: AppState,
     targets: Vec<db::ScheduleRunTarget>,
@@ -765,7 +762,7 @@ async fn run_manual_sequential(
     run_id: String,
 ) {
     for target in &targets {
-        let mut rx = state.completion_bus.subscribe();
+        let rx = state.completion_bus.subscribe();
 
         let _repo_guard = state.repo_lock.acquire(repo_id.0).await;
 
@@ -832,22 +829,39 @@ async fn run_manual_sequential(
             "manual run: triggered"
         );
 
+        // Mark the repo as actively in use for the lifetime of the lock guard (not
+        // just while the agent happens to be reporting progress), so the repo detail
+        // page can show that it's locked right now.
+        state
+            .repo_op_tracker
+            .set(
+                repo_id.0,
+                crate::scheduler::repo_op_kind_for(schedule_type),
+                target.hostname.clone(),
+            )
+            .await;
+        state.ui_broadcast.send(ServerToUi::RepoOpChanged {
+            repo_id: repo_id.0,
+            op: state.repo_op_tracker.get(repo_id.0).await,
+        });
+
         let hostname = target.hostname.clone();
         let repo_id_val = repo_id.0;
-        let _ = tokio::time::timeout(MANUAL_RUN_TIMEOUT, async {
-            loop {
-                match rx.recv().await {
-                    Ok(OperationOutcome {
-                        hostname: h,
-                        repo_id: r,
-                        ..
-                    }) if h == hostname && r == repo_id_val => break,
-                    Ok(_) => {}
-                    Err(broadcast::error::RecvError::Lagged(_)) => {}
-                    Err(broadcast::error::RecvError::Closed) => break,
-                }
-            }
-        })
-        .await;
+        let outcome =
+            completion_bus::wait_for_completion(&state.registry, rx, &hostname, repo_id_val).await;
+
+        state.repo_op_tracker.clear(repo_id_val).await;
+        state.ui_broadcast.send(ServerToUi::RepoOpChanged {
+            repo_id: repo_id_val,
+            op: None,
+        });
+
+        if outcome == completion_bus::CompletionOutcome::AgentDisconnected {
+            tracing::warn!(
+                hostname = %hostname,
+                schedule_id,
+                "manual run: agent disconnected before reporting completion"
+            );
+        }
     }
 }

@@ -10,7 +10,6 @@ use shared::{
     types::{OnFailure, RepoId, ScheduleType},
 };
 use sqlx::PgPool;
-use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::{
@@ -20,7 +19,10 @@ use crate::{
     db::DueScheduleRow,
     repo_op_tracker::RepoOpTracker,
     tunnel::TunnelManager,
-    ws::{completion_bus::CompletionBus, registry::AgentRegistry, ui_broadcast::UiBroadcast},
+    ws::{
+        completion_bus, completion_bus::CompletionBus, registry::AgentRegistry,
+        ui_broadcast::UiBroadcast,
+    },
 };
 
 const TICK_INTERVAL: Duration = Duration::from_secs(30);
@@ -29,7 +31,6 @@ const SYNC_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 const SESSION_CLEANUP_INTERVAL: Duration = Duration::from_secs(3600);
 const SYNC_WARN_DURATION: Duration = Duration::from_secs(300);
 const DEFAULT_RETENTION_DAYS: i64 = 7;
-const SEQUENTIAL_TIMEOUT: Duration = Duration::from_secs(4 * 3600);
 
 pub async fn run(state: AppState) {
     let _receiver = state.completion_bus.subscribe();
@@ -42,14 +43,16 @@ pub async fn run(state: AppState) {
         let mut interval = tokio::time::interval(TICK_INTERVAL);
         loop {
             interval.tick().await;
-            if let Err(e) = tick(
-                &schedule_state.pool,
-                &schedule_state.registry,
-                &schedule_state.encryption_key,
-                &schedule_state.tunnel_manager,
-                &schedule_state.completion_bus,
-                &schedule_state.repo_lock,
-            )
+            if let Err(e) = tick(&TickDeps {
+                pool: &schedule_state.pool,
+                registry: &schedule_state.registry,
+                encryption_key: &schedule_state.encryption_key,
+                tunnel_manager: &schedule_state.tunnel_manager,
+                completion_bus: &schedule_state.completion_bus,
+                repo_lock: &schedule_state.repo_lock,
+                repo_op_tracker: &schedule_state.repo_op_tracker,
+                ui_broadcast: &schedule_state.ui_broadcast,
+            })
             .await
             {
                 tracing::error!(error = %e, "scheduler tick failed");
@@ -316,14 +319,33 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
     Ok(())
 }
 
-async fn tick(
-    pool: &PgPool,
-    registry: &AgentRegistry,
-    encryption_key: &[u8; 32],
-    tunnel_manager: &TunnelManager,
-    completion_bus: &CompletionBus,
-    repo_lock: &RepoLock,
-) -> Result<(), crate::error::ApiError> {
+/// Dependencies needed to evaluate and trigger due schedules. Bundled into one
+/// struct (rather than passed as individual arguments) to keep `tick`'s
+/// signature manageable as the scheduler grows more cross-cutting concerns
+/// (op tracking, broadcasts) beyond the original trigger/wait logic.
+#[derive(Clone, Copy)]
+struct TickDeps<'a> {
+    pool: &'a PgPool,
+    registry: &'a AgentRegistry,
+    encryption_key: &'a [u8; 32],
+    tunnel_manager: &'a TunnelManager,
+    completion_bus: &'a CompletionBus,
+    repo_lock: &'a RepoLock,
+    repo_op_tracker: &'a RepoOpTracker,
+    ui_broadcast: &'a UiBroadcast,
+}
+
+async fn tick(deps: &TickDeps<'_>) -> Result<(), crate::error::ApiError> {
+    let TickDeps {
+        pool,
+        registry,
+        encryption_key,
+        tunnel_manager,
+        completion_bus,
+        repo_lock,
+        repo_op_tracker,
+        ui_broadcast,
+    } = *deps;
     let now = Utc::now();
     let due = db::list_due_schedules(pool, now).await?;
 
@@ -388,6 +410,8 @@ async fn tick(
             tunnel_manager: tunnel_manager.clone(),
             completion_bus: completion_bus.clone(),
             repo_lock: repo_lock.clone(),
+            repo_op_tracker: repo_op_tracker.clone(),
+            ui_broadcast: ui_broadcast.clone(),
             schedule_id,
             cron,
             targets,
@@ -440,6 +464,17 @@ fn schedule_type_label(schedule_type: ScheduleType) -> &'static str {
     }
 }
 
+/// The op kind to record while a triggered schedule target is in flight, so the
+/// repo detail page can show that the repository is actually locked right now
+/// rather than only ever showing the last completed operation.
+pub(crate) fn repo_op_kind_for(schedule_type: ScheduleType) -> shared::protocol::RepoOpKind {
+    match schedule_type {
+        ScheduleType::Backup => shared::protocol::RepoOpKind::AgentBackup,
+        ScheduleType::Check => shared::protocol::RepoOpKind::AgentCheck,
+        ScheduleType::Verify => shared::protocol::RepoOpKind::AgentVerify,
+    }
+}
+
 struct SequentialExecution {
     pool: PgPool,
     registry: AgentRegistry,
@@ -447,6 +482,8 @@ struct SequentialExecution {
     tunnel_manager: TunnelManager,
     completion_bus: CompletionBus,
     repo_lock: RepoLock,
+    repo_op_tracker: RepoOpTracker,
+    ui_broadcast: UiBroadcast,
     schedule_id: i64,
     cron: String,
     targets: Vec<DueScheduleRow>,
@@ -467,6 +504,8 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         tunnel_manager,
         completion_bus,
         repo_lock,
+        repo_op_tracker,
+        ui_broadcast,
         schedule_id,
         cron,
         targets,
@@ -493,7 +532,7 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         };
 
         // Subscribe before sending so we don't miss the completion event.
-        let mut rx = completion_bus.subscribe();
+        let rx = completion_bus.subscribe();
 
         // Acquire the per-repo lock to prevent concurrent backups across schedules.
         let _repo_guard = repo_lock.acquire(target.repo_id).await;
@@ -557,6 +596,21 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
                 if let Some(tx) = triggered_tx.take() {
                     let _ = tx.send(());
                 }
+                // Mark the repo as actively in use for the lifetime of the lock guard
+                // (not just while the agent happens to be reporting progress), so the
+                // repo detail page can show that it's locked right now rather than
+                // only ever showing the last completed operation.
+                repo_op_tracker
+                    .set(
+                        target.repo_id,
+                        repo_op_kind_for(schedule_type),
+                        target.hostname.clone(),
+                    )
+                    .await;
+                ui_broadcast.send(ServerToUi::RepoOpChanged {
+                    repo_id: target.repo_id,
+                    op: repo_op_tracker.get(target.repo_id).await,
+                });
                 if !marked_triggered {
                     match calculate_next_run(&cron, now, tz) {
                         Ok(next) => {
@@ -606,28 +660,24 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         let hostname = target.hostname.clone();
         let repo_id_val = target.repo_id;
 
-        let result = tokio::time::timeout(SEQUENTIAL_TIMEOUT, async {
-            loop {
-                match rx.recv().await {
-                    Ok(o) if o.hostname == hostname && o.repo_id == repo_id_val => {
-                        break o.success;
-                    }
-                    Ok(_) => {}
-                    Err(broadcast::error::RecvError::Lagged(_)) => {}
-                    Err(broadcast::error::RecvError::Closed) => break false,
-                }
-            }
-        })
-        .await;
+        let outcome =
+            completion_bus::wait_for_completion(&registry, rx, &hostname, repo_id_val).await;
 
-        let success = match result {
-            Ok(s) => s,
-            Err(_) => {
+        repo_op_tracker.clear(repo_id_val).await;
+        ui_broadcast.send(ServerToUi::RepoOpChanged {
+            repo_id: repo_id_val,
+            op: None,
+        });
+
+        let success = match outcome {
+            completion_bus::CompletionOutcome::Success => true,
+            completion_bus::CompletionOutcome::Failed => false,
+            completion_bus::CompletionOutcome::AgentDisconnected => {
                 tracing::error!(
                     schedule_id,
                     hostname = %target.hostname,
                     repo_id = target.repo_id,
-                    "sequential: timed out waiting for operation to complete"
+                    "sequential: agent disconnected before reporting completion"
                 );
                 false
             }
@@ -981,9 +1031,18 @@ esac
         let tunnel = dummy_tunnel(pool.clone());
         let bus = CompletionBus::new();
 
-        tick(&pool, &registry, &key, &tunnel, &bus, &RepoLock::default())
-            .await
-            .unwrap();
+        tick(&TickDeps {
+            pool: &pool,
+            registry: &registry,
+            encryption_key: &key,
+            tunnel_manager: &tunnel,
+            completion_bus: &bus,
+            repo_lock: &RepoLock::default(),
+            repo_op_tracker: &RepoOpTracker::default(),
+            ui_broadcast: &UiBroadcast::new(),
+        })
+        .await
+        .unwrap();
 
         let first = rx
             .try_recv()
@@ -1020,9 +1079,18 @@ esac
         let tunnel = dummy_tunnel(pool.clone());
         let bus = CompletionBus::new();
 
-        tick(&pool, &registry, &key, &tunnel, &bus, &RepoLock::default())
-            .await
-            .unwrap();
+        tick(&TickDeps {
+            pool: &pool,
+            registry: &registry,
+            encryption_key: &key,
+            tunnel_manager: &tunnel,
+            completion_bus: &bus,
+            repo_lock: &RepoLock::default(),
+            repo_op_tracker: &RepoOpTracker::default(),
+            ui_broadcast: &UiBroadcast::new(),
+        })
+        .await
+        .unwrap();
 
         let msg = rx.try_recv().expect("expected ConfigUpdate");
         match msg {
@@ -1058,9 +1126,18 @@ esac
         let tunnel = dummy_tunnel(pool.clone());
         let bus = CompletionBus::new();
 
-        tick(&pool, &registry, &key, &tunnel, &bus, &RepoLock::default())
-            .await
-            .unwrap();
+        tick(&TickDeps {
+            pool: &pool,
+            registry: &registry,
+            encryption_key: &key,
+            tunnel_manager: &tunnel,
+            completion_bus: &bus,
+            repo_lock: &RepoLock::default(),
+            repo_op_tracker: &RepoOpTracker::default(),
+            ui_broadcast: &UiBroadcast::new(),
+        })
+        .await
+        .unwrap();
 
         let due = db::list_due_schedules(&pool, Utc::now()).await.unwrap();
         assert!(

@@ -103,7 +103,7 @@ function setupEditMode(schedule = mockSchedule): void {
     if (url === `/schedules/${schedule.id}/targets`)
       return Promise.resolve({ data: [{ agent_id: schedule.agent_id, execution_order: 0 }] })
     if (url === `/schedules/${schedule.id}/sources`)
-      return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_host: [] } })
+      return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_agent: [] } })
     if (url === '/agents') return Promise.resolve({ data: mockClients })
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
     return Promise.resolve({ data: [] })

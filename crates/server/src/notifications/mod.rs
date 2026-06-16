@@ -239,9 +239,9 @@ pub async fn dispatch(
                     OR nc.scope->'repo_ids' = '[]'::jsonb
                     OR nc.scope->'repo_ids' @> to_jsonb($2::bigint))
                AND ($3::bigint IS NULL
-                    OR NOT nc.scope ? 'client_ids'
-                    OR nc.scope->'client_ids' = '[]'::jsonb
-                    OR nc.scope->'client_ids' @> to_jsonb($3::bigint))
+                    OR NOT nc.scope ? 'agent_ids'
+                    OR nc.scope->'agent_ids' = '[]'::jsonb
+                    OR nc.scope->'agent_ids' @> to_jsonb($3::bigint))
                AND ($4::bigint IS NULL
                     OR NOT nc.scope ? 'schedule_ids'
                     OR nc.scope->'schedule_ids' = '[]'::jsonb

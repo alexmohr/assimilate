@@ -106,6 +106,7 @@ const { isMobile } = useMobile()
 const showMobileFilters = ref(false)
 
 const runNowLoading = ref<number | null>(null)
+const cancelLoading = ref<number | null>(null)
 const { success: toastSuccess, error: toastError } = useToast()
 
 function scheduleTypeLabel(t: ScheduleType): string {
@@ -129,7 +130,10 @@ interface EnrichedSchedule extends ScheduleRow {
   hostLabels: string[]
   repo: RepoRow | null
   health: HealthEntry | null
+  isRunning: boolean
 }
+
+const RUNNING_STATUSES = new Set(['pending', 'started'])
 
 const clientMap = computed(() => {
   const map = new Map<string, AgentRow>()
@@ -160,7 +164,10 @@ const enrichedSchedules = computed<EnrichedSchedule[]>(() =>
       entries.find((h) => h.last_status === 'failed') ??
       entries[0] ??
       null
-    return { ...s, hostLabels, repo, health: healthEntry }
+    const isRunning = entries.some(
+      (h) => h.last_status != null && RUNNING_STATUSES.has(h.last_status),
+    )
+    return { ...s, hostLabels, repo, health: healthEntry, isRunning }
   }),
 )
 
@@ -294,6 +301,18 @@ async function runNow(s: ScheduleRow): Promise<void> {
     toastError(extractError(e))
   } finally {
     runNowLoading.value = null
+  }
+}
+
+async function cancelBackup(s: ScheduleRow): Promise<void> {
+  cancelLoading.value = s.id
+  try {
+    await apiClient.post(`/schedules/${s.id}/cancel`)
+    toastSuccess('Cancel request sent.')
+  } catch (e: unknown) {
+    toastError(extractError(e))
+  } finally {
+    cancelLoading.value = null
   }
 }
 
@@ -507,6 +526,16 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
           @click.stop
         >
           <button
+            v-if="s.isRunning"
+            class="btn btn-sm btn-danger"
+            :disabled="cancelLoading === s.id"
+            title="Cancel the running backup"
+            @click="cancelBackup(s)"
+          >
+            {{ cancelLoading === s.id ? '...' : 'Cancel' }}
+          </button>
+          <button
+            v-else
             class="btn btn-sm btn-ghost"
             :disabled="runNowLoading === s.id"
             :title="`Run ${scheduleTypeLabel(s.schedule_type ?? 'backup').toLowerCase()} now`"

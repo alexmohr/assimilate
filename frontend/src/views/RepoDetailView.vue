@@ -35,6 +35,7 @@ import ToggleSwitch from '../components/ToggleSwitch.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import QuotaPanel from '../components/QuotaPanel.vue'
 import BaseModal from '../components/BaseModal.vue'
+import BaseHostLink from '../components/BaseHostLink.vue'
 
 type TabId = 'overview' | 'archives' | 'schedules'
 type ScheduleType = 'backup' | 'check' | 'verify'
@@ -1723,22 +1724,16 @@ async function resetImport(): Promise<void> {
                     @click="toggleGroup(group.hostname)"
                   >
                     <span class="group-chevron">&#9656;</span>
-                    <RouterLink
-                      v-if="group.matched && group.clientHostname"
-                      :to="{ name: 'client-detail', params: { hostname: group.clientHostname } }"
+                    <BaseHostLink
+                      :hostname="
+                        group.clientHostname && group.matched
+                          ? group.clientHostname
+                          : group.hostname
+                      "
                       class="host-link group-hostname"
+                      :class="{ 'group-unmatched': !group.matched }"
                       @click.stop
-                    >
-                      {{ group.hostname }}
-                    </RouterLink>
-                    <RouterLink
-                      v-else
-                      :to="{ name: 'client-detail', params: { hostname: group.hostname } }"
-                      class="host-link group-hostname group-unmatched"
-                      @click.stop
-                    >
-                      {{ group.hostname }}
-                    </RouterLink>
+                    />
                     <span
                       v-if="!group.matched"
                       class="match-icon match-warn"

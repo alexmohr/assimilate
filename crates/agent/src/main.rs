@@ -59,7 +59,7 @@ async fn main() {
 
     tokio::select! {
         result = ws::run_ws_client(&args, exec_cmd_tx, outbound_rx, &restart_capability) => {
-            if let Err(ws::WsError::AuthRejected(_)) = result {
+            if result.as_ref().err().is_some_and(ws::is_fatal) {
                 process::exit(1);
             }
         }

@@ -14,7 +14,7 @@ use std::{
 use chrono::Utc;
 use shared::{
     protocol::AgentToServer,
-    ssh::{borg_rsh, borg_rsh_with_known_hosts, known_hosts_host},
+    ssh::known_hosts_host,
     types::{AgentConfig, BorgEncryption, DryRunFile, RepoConfig, RepoId, build_repo_url},
 };
 use tokio::{
@@ -24,7 +24,10 @@ use tokio::{
 use tracing::{error, info, warn};
 
 use crate::{
-    backup::{BackupEngine, BackupError, BackupTarget, CanaryToken},
+    backup::{
+        BackupEngine, BackupError, BackupTarget, CanaryToken, borg_env, borg_rsh_for_target,
+        write_exclude_file,
+    },
     borg::Borg,
     ssh_forward::{SshForwardError, SshForwardSocket, run_ssh_forward},
 };
@@ -802,19 +805,6 @@ async fn run_init_repo_task(
     Ok(())
 }
 
-fn borg_rsh_for_target(target: &BackupTarget) -> String {
-    target.known_hosts_path.as_ref().map_or_else(
-        || {
-            if target.ssh_host_key.is_empty() {
-                borg_rsh()
-            } else {
-                "false".to_owned()
-            }
-        },
-        |path| borg_rsh_with_known_hosts(path),
-    )
-}
-
 fn make_failed_report(
     repo_id: RepoId,
     schedule_id: Option<i64>,
@@ -1175,7 +1165,7 @@ async fn run_dry_run_task(
 ) {
     let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
 
-    let exclude_file = match write_temp_excludes(&exclude_patterns) {
+    let exclude_file = match write_exclude_file(&exclude_patterns) {
         Ok(f) => f,
         Err(e) => {
             let msg = AgentToServer::OperationFailed {
@@ -1192,7 +1182,7 @@ async fn run_dry_run_task(
     let timestamp = Utc::now().timestamp();
     let archive_spec = format!("::{hostname}-dryrun-{timestamp}");
 
-    let env_vars = build_borg_env(&target);
+    let env_vars = borg_env(&target);
 
     let mut args = vec![
         "create".to_owned(),
@@ -1278,7 +1268,7 @@ async fn run_restore_task(
 ) {
     let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
 
-    let env_vars = build_borg_env(&target);
+    let env_vars = borg_env(&target);
 
     let args = restore_args(&archive_name, &paths);
     let target_path = std::path::PathBuf::from(target_path);
@@ -1384,7 +1374,7 @@ async fn run_delete_archives_task(
     let (hostname, server_url, token) = ssh_params;
     let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
 
-    let env_vars = build_borg_env(&target);
+    let env_vars = borg_env(&target);
     let mut deleted_count: u32 = 0;
 
     for archive_name in &archive_names {
@@ -1496,50 +1486,6 @@ fn parse_dry_run_output(stderr: &str) -> (Vec<DryRunFile>, i64) {
     }
 
     (files, total_size)
-}
-
-fn write_temp_excludes(patterns: &[String]) -> Result<tempfile::NamedTempFile, std::io::Error> {
-    use std::io::Write;
-    let mut file = tempfile::NamedTempFile::new()?;
-    for pattern in patterns {
-        writeln!(file, "{pattern}")?;
-    }
-    file.flush()?;
-    Ok(file)
-}
-
-fn build_borg_env(target: &BackupTarget) -> Vec<(String, String)> {
-    let repo_url = build_repo_url(
-        &target.ssh_user,
-        &target.ssh_host,
-        target.ssh_port,
-        &target.repo_path,
-    );
-
-    let mut env = vec![
-        ("BORG_REPO".to_owned(), repo_url),
-        ("BORG_PASSPHRASE".to_owned(), target.passphrase.clone()),
-        ("BORG_HOST_ID".to_owned(), target.hostname.clone()),
-        ("BORG_RSH".to_owned(), borg_rsh_for_target(target)),
-        ("LANG".to_owned(), "en_US.UTF-8".to_owned()),
-        ("LC_CTYPE".to_owned(), "en_US.UTF-8".to_owned()),
-    ];
-
-    if target.accept_relocation {
-        env.push((
-            "BORG_RELOCATED_REPO_ACCESS_IS_OK".to_owned(),
-            "yes".to_owned(),
-        ));
-    }
-
-    if let Some(sock) = &target.ssh_auth_sock {
-        env.push((
-            "SSH_AUTH_SOCK".to_owned(),
-            sock.to_string_lossy().into_owned(),
-        ));
-    }
-
-    env
 }
 
 #[cfg(test)]
@@ -1732,7 +1678,7 @@ mod tests {
             None,
         );
         let known_hosts = write_known_hosts(&mut target).unwrap().unwrap();
-        let env = build_borg_env(&target);
+        let env = borg_env(&target);
         let borg_rsh = env
             .iter()
             .find(|(key, _value)| key == "BORG_RSH")

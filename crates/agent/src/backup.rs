@@ -168,7 +168,7 @@ impl BackupEngine {
             self.run_hook_command(cmd, "pre-backup").await?;
         }
 
-        let exclude_file = Self::write_exclude_file(&target.exclude_patterns)?;
+        let exclude_file = write_exclude_file(&target.exclude_patterns)?;
 
         let create_result = self
             .run_borg_create(target, &target.backup_sources, exclude_file.path())
@@ -229,49 +229,6 @@ impl BackupEngine {
         Ok(())
     }
 
-    fn write_exclude_file(patterns: &[String]) -> Result<tempfile::NamedTempFile, BackupError> {
-        let mut file = tempfile::NamedTempFile::new()?;
-        for pattern in patterns {
-            writeln!(file, "{pattern}")?;
-        }
-        file.flush()?;
-        Ok(file)
-    }
-
-    fn borg_env(target: &BackupTarget) -> Vec<(String, String)> {
-        let repo_url = build_repo_url(
-            &target.ssh_user,
-            &target.ssh_host,
-            target.ssh_port,
-            &target.repo_path,
-        );
-
-        let mut env = vec![
-            ("BORG_REPO".to_owned(), repo_url),
-            ("BORG_PASSPHRASE".to_owned(), target.passphrase.clone()),
-            ("BORG_HOST_ID".to_owned(), target.hostname.clone()),
-            ("BORG_RSH".to_owned(), borg_rsh_for_target(target)),
-            ("LANG".to_owned(), "en_US.UTF-8".to_owned()),
-            ("LC_CTYPE".to_owned(), "en_US.UTF-8".to_owned()),
-        ];
-
-        if target.accept_relocation {
-            env.push((
-                "BORG_RELOCATED_REPO_ACCESS_IS_OK".to_owned(),
-                "yes".to_owned(),
-            ));
-        }
-
-        if let Some(sock) = &target.ssh_auth_sock {
-            env.push((
-                "SSH_AUTH_SOCK".to_owned(),
-                sock.to_string_lossy().into_owned(),
-            ));
-        }
-
-        env
-    }
-
     fn compression_arg(compression: &Compression) -> String {
         compression.to_string()
     }
@@ -288,7 +245,7 @@ impl BackupEngine {
         let args = Self::borg_create_args(target, backup_sources, exclude_file, &archive_name);
         let borg_command = Self::format_command_string(target, &args);
 
-        let env_vars = Self::borg_env(target);
+        let env_vars = borg_env(target);
 
         info!("Running borg create for archive {archive_name}");
 
@@ -469,7 +426,7 @@ impl BackupEngine {
             args.push(&keep_yearly);
         }
 
-        let env_vars = Self::borg_env(target);
+        let env_vars = borg_env(target);
 
         info!("Running borg prune");
 
@@ -497,7 +454,7 @@ impl BackupEngine {
     }
 
     async fn run_borg_compact(&self, target: &BackupTarget) -> Result<(), BackupError> {
-        let env_vars = Self::borg_env(target);
+        let env_vars = borg_env(target);
 
         info!("Running borg compact");
 
@@ -529,7 +486,7 @@ impl BackupEngine {
     }
 
     pub async fn run_check(&self, target: &BackupTarget) -> Result<(), BackupError> {
-        let env_vars = Self::borg_env(target);
+        let env_vars = borg_env(target);
 
         info!(target = %target.target_name, "Running borg check");
 
@@ -562,7 +519,7 @@ impl BackupEngine {
     }
 
     pub async fn run_verify(&self, target: &BackupTarget) -> Result<i64, BackupError> {
-        let env_vars = Self::borg_env(target);
+        let env_vars = borg_env(target);
         let hostname = &target.hostname;
 
         info!(target = %target.target_name, "Running borg extract --dry-run (verify)");
@@ -655,7 +612,7 @@ impl BackupEngine {
         target: &BackupTarget,
         canary: &CanaryToken,
     ) -> Result<String, BackupError> {
-        let env_vars = Self::borg_env(target);
+        let env_vars = borg_env(target);
         let hostname = &target.hostname;
 
         let glob_pattern = format!("*{hostname}-*");
@@ -747,7 +704,7 @@ impl BackupEngine {
     }
 }
 
-fn borg_rsh_for_target(target: &BackupTarget) -> String {
+pub(crate) fn borg_rsh_for_target(target: &BackupTarget) -> String {
     target.known_hosts_path.as_ref().map_or_else(
         || {
             if target.ssh_host_key.is_empty() {
@@ -758,6 +715,51 @@ fn borg_rsh_for_target(target: &BackupTarget) -> String {
         },
         |path| borg_rsh_with_known_hosts(path),
     )
+}
+
+pub(crate) fn write_exclude_file(
+    patterns: &[String],
+) -> Result<tempfile::NamedTempFile, BackupError> {
+    let mut file = tempfile::NamedTempFile::new()?;
+    for pattern in patterns {
+        writeln!(file, "{pattern}")?;
+    }
+    file.flush()?;
+    Ok(file)
+}
+
+pub(crate) fn borg_env(target: &BackupTarget) -> Vec<(String, String)> {
+    let repo_url = build_repo_url(
+        &target.ssh_user,
+        &target.ssh_host,
+        target.ssh_port,
+        &target.repo_path,
+    );
+
+    let mut env = vec![
+        ("BORG_REPO".to_owned(), repo_url),
+        ("BORG_PASSPHRASE".to_owned(), target.passphrase.clone()),
+        ("BORG_HOST_ID".to_owned(), target.hostname.clone()),
+        ("BORG_RSH".to_owned(), borg_rsh_for_target(target)),
+        ("LANG".to_owned(), "en_US.UTF-8".to_owned()),
+        ("LC_CTYPE".to_owned(), "en_US.UTF-8".to_owned()),
+    ];
+
+    if target.accept_relocation {
+        env.push((
+            "BORG_RELOCATED_REPO_ACCESS_IS_OK".to_owned(),
+            "yes".to_owned(),
+        ));
+    }
+
+    if let Some(sock) = &target.ssh_auth_sock {
+        env.push((
+            "SSH_AUTH_SOCK".to_owned(),
+            sock.to_string_lossy().into_owned(),
+        ));
+    }
+
+    env
 }
 
 pub struct CanaryToken {
@@ -981,7 +983,7 @@ mod tests {
         let known_hosts = tempfile::NamedTempFile::new().unwrap();
         let mut target = test_target();
         target.known_hosts_path = Some(known_hosts.path().to_path_buf());
-        let env = BackupEngine::borg_env(&target);
+        let env = borg_env(&target);
         let borg_rsh = env
             .iter()
             .find(|(key, _value)| key == "BORG_RSH")

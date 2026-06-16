@@ -185,8 +185,8 @@ function channelScopeLabel(channel: NotificationChannel): string {
   if (s.repo_ids && s.repo_ids.length > 0) {
     parts.push(`${s.repo_ids.length} repo${s.repo_ids.length > 1 ? 's' : ''}`)
   }
-  if (s.client_ids && s.client_ids.length > 0) {
-    parts.push(`${s.client_ids.length} host${s.client_ids.length > 1 ? 's' : ''}`)
+  if (s.agent_ids && s.agent_ids.length > 0) {
+    parts.push(`${s.agent_ids.length} host${s.agent_ids.length > 1 ? 's' : ''}`)
   }
   if (s.schedule_ids && s.schedule_ids.length > 0) {
     parts.push(`${s.schedule_ids.length} schedule${s.schedule_ids.length > 1 ? 's' : ''}`)
@@ -1069,8 +1069,8 @@ onMounted(() => {
                   >
                     <input
                       type="checkbox"
-                      :checked="isWizardScopeSelected('client_ids', opt.id)"
-                      @change="toggleWizardScopeItem('client_ids', opt.id)"
+                      :checked="isWizardScopeSelected('agent_ids', opt.id)"
+                      @change="toggleWizardScopeItem('agent_ids', opt.id)"
                     />
                     <span>{{ opt.label }}</span>
                   </label>
@@ -1443,8 +1443,8 @@ onMounted(() => {
                 >
                   <input
                     type="checkbox"
-                    :checked="isScopeSelected(scopeModalChannel()!, 'client_ids', opt.id)"
-                    @change="toggleScopeItem(scopeModalChannel()!, 'client_ids', opt.id)"
+                    :checked="isScopeSelected(scopeModalChannel()!, 'agent_ids', opt.id)"
+                    @change="toggleScopeItem(scopeModalChannel()!, 'agent_ids', opt.id)"
                   />
                   <span>{{ opt.label }}</span>
                 </label>

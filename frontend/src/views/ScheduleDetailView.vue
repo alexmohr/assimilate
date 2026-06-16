@@ -59,8 +59,8 @@ interface PerHostExcludePatterns {
 
 interface ScheduleBackupSourcesResponse {
   backup_sources: string[] | null
-  backup_sources_per_host: PerHostBackupSources[] | null
-  exclude_patterns_per_host: PerHostExcludePatterns[] | null
+  backup_sources_per_agent: PerHostBackupSources[] | null
+  exclude_patterns_per_agent: PerHostExcludePatterns[] | null
 }
 
 interface AgentRow {
@@ -308,7 +308,7 @@ async function loadData(): Promise<void> {
 
       const sources = sourcesRes.data
       form.value.backup_sources = (sources.backup_sources ?? []).join('\n')
-      const perHost = sources.backup_sources_per_host ?? []
+      const perHost = sources.backup_sources_per_agent ?? []
       if (perHost.length > 0) {
         usePerHostPaths.value = true
         const map: Record<number, string> = {}
@@ -317,7 +317,7 @@ async function loadData(): Promise<void> {
         }
         perHostSources.value = map
       }
-      const perHostExcludeEntries = sources.exclude_patterns_per_host ?? []
+      const perHostExcludeEntries = sources.exclude_patterns_per_agent ?? []
       if (perHostExcludeEntries.length > 0) {
         usePerHostExcludes.value = true
         const map: Record<number, string> = {}
@@ -366,7 +366,7 @@ async function save(): Promise<void> {
           perHost.push({ agent_id: id, paths })
         }
       }
-      payload.backup_sources_per_host = perHost
+      payload.backup_sources_per_agent = perHost
     }
 
     if (usePerHostExcludes.value) {
@@ -376,7 +376,7 @@ async function save(): Promise<void> {
         const raw_text = perHostExcludes.value[id] ?? ''
         perHost.push({ agent_id: id, raw_text })
       }
-      payload.exclude_patterns_per_host = perHost
+      payload.exclude_patterns_per_agent = perHost
     }
 
     if (isCreate.value) {
@@ -386,7 +386,7 @@ async function save(): Promise<void> {
       }
       const res = await apiClient.post<ScheduleRow>('/schedules', {
         ...payload,
-        client_ids: selectedClientIds.value,
+        agent_ids: selectedClientIds.value,
         repo_id: selectedRepoId.value,
         schedule_type: selectedType.value,
         on_failure: onFailure.value,
@@ -395,7 +395,7 @@ async function save(): Promise<void> {
     } else {
       const res = await apiClient.put<ScheduleRow>(`/schedules/${schedule.value!.id}`, {
         ...payload,
-        client_ids: selectedClientIds.value,
+        agent_ids: selectedClientIds.value,
         repo_id: selectedRepoId.value,
         on_failure: onFailure.value,
       })

@@ -931,13 +931,9 @@ esac
         .await
         .unwrap();
 
-        run_repo_sync(
-            &pool,
-            &encryption_key,
-            &UiBroadcast::new(),
-            &RepoOpTracker::default(),
-        )
-        .await;
+        sync_existing_archives(&pool, &encryption_key, repo.id, &UiBroadcast::new())
+            .await
+            .expect("sync_existing_archives failed");
 
         let stale_count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",

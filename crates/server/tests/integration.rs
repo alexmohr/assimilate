@@ -327,7 +327,10 @@ async fn install_borg_empty_list_hanging_info() -> (TempDir, BorgBinaryGuard) {
 /// repo syncs concurrently instead of sequentially.
 async fn install_slow_borg_list(delay_secs: u64) -> (TempDir, BorgBinaryGuard) {
     let tempdir = tempfile::tempdir().unwrap();
-    let info_json = r#"{"cache":{"stats":{"total_size":0,"total_csize":0,"unique_csize":0,"total_chunks":0,"total_unique_chunks":0}}}"#;
+    let info_json = concat!(
+        r#"{"cache":{"stats":{"total_size":0,"total_csize":0,"#,
+        r#""unique_csize":0,"total_chunks":0,"total_unique_chunks":0}}}"#
+    );
     let script = format!(
         "#!/bin/sh\ncase \"$1\" in\n  list) sleep {delay_secs}; echo '{{\"archives\":[]}}';;  \n  \
          info) echo '{info_json}';;\n  *) exit 1;;\nesac\n"

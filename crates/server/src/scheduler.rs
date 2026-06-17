@@ -188,103 +188,129 @@ pub async fn run_repo_sync(
             op: repo_op_tracker.get(repo.id).await,
         });
 
-        let start = std::time::Instant::now();
-        let sync_result = sync_existing_archives(pool, encryption_key, repo.id, ui_broadcast).await;
+        let task_pool = pool.clone();
+        let task_key = *encryption_key;
+        let task_broadcast = ui_broadcast.clone();
+        let task_op_tracker = repo_op_tracker.clone();
+        let repo_id = repo.id;
+        let repo_name = repo.name.clone();
+        tokio::spawn(async move {
+            let start = std::time::Instant::now();
+            let sync_result =
+                sync_existing_archives(&task_pool, &task_key, repo_id, &task_broadcast).await;
 
-        repo_op_tracker.clear(repo.id).await;
-        ui_broadcast.send(ServerToUi::RepoOpChanged {
-            repo_id: repo.id,
-            op: None,
-        });
+            task_op_tracker.clear(repo_id).await;
+            task_broadcast.send(ServerToUi::RepoOpChanged { repo_id, op: None });
 
-        match sync_result {
-            Ok((added, removed)) => {
-                let elapsed = start.elapsed();
-                let duration_secs = elapsed.as_secs();
+            match sync_result {
+                Ok((added, removed)) => {
+                    let elapsed = start.elapsed();
+                    let duration_secs = elapsed.as_secs();
 
-                if let Err(e) = db::update_repo_last_synced(pool, repo.id).await {
-                    tracing::error!(repo_id = repo.id, error = %e, "failed to update last_synced_at");
-                }
-                if let Err(e) =
-                    db::update_repo_last_op(pool, repo.id, "server_sync", Utc::now(), "server")
-                        .await
-                {
-                    tracing::error!(repo_id = repo.id, error = %e, "failed to update last_op after sync");
-                }
+                    if let Err(e) = db::update_repo_last_synced(&task_pool, repo_id).await {
+                        tracing::error!(repo_id, error = %e, "failed to update last_synced_at");
+                    }
+                    if let Err(e) = db::update_repo_last_op(
+                        &task_pool,
+                        repo_id,
+                        "server_sync",
+                        Utc::now(),
+                        "server",
+                    )
+                    .await
+                    {
+                        tracing::error!(repo_id, error = %e, "failed to update last_op after sync");
+                    }
 
-                if let Err(e) = db::set_repo_importing(pool, repo.id, false).await {
-                    tracing::error!(repo_id = repo.id, error = %e, "failed to clear importing flag after sync");
-                }
-                if let Err(e) = db::set_repo_import_error(pool, repo.id, None).await {
-                    tracing::error!(repo_id = repo.id, error = %e, "failed to clear import_error after sync");
-                }
-                crate::api::repos::clear_import_progress_state(pool, ui_broadcast, repo.id).await;
-                ui_broadcast.send(ServerToUi::DataChanged);
+                    if let Err(e) = db::set_repo_importing(&task_pool, repo_id, false).await {
+                        tracing::error!(repo_id, error = %e, "failed to clear importing flag after sync");
+                    }
+                    if let Err(e) = db::set_repo_import_error(&task_pool, repo_id, None).await {
+                        tracing::error!(repo_id, error = %e, "failed to clear import_error after sync");
+                    }
+                    crate::api::repos::clear_import_progress_state(
+                        &task_pool,
+                        &task_broadcast,
+                        repo_id,
+                    )
+                    .await;
+                    task_broadcast.send(ServerToUi::DataChanged);
 
-                if added > 0 || removed > 0 {
-                    let msg = format!(
-                        "periodic sync for '{}': added {added}, removed {removed} archives in \
-                         {duration_secs}s",
-                        repo.name
-                    );
-                    tracing::info!("{msg}");
-                    if let Err(e) = db::insert_system_event(pool, "repo_sync", None, &msg).await {
-                        tracing::error!(error = %e, "failed to log sync event");
+                    if added > 0 || removed > 0 {
+                        let msg = format!(
+                            "periodic sync for '{repo_name}': added {added}, removed {removed} \
+                             archives in {duration_secs}s",
+                        );
+                        tracing::info!("{msg}");
+                        if let Err(e) =
+                            db::insert_system_event(&task_pool, "repo_sync", None, &msg).await
+                        {
+                            tracing::error!(error = %e, "failed to log sync event");
+                        }
+                    }
+
+                    if elapsed > SYNC_WARN_DURATION {
+                        let msg = format!(
+                            "periodic sync for '{repo_name}' took {duration_secs}s (exceeds {}s \
+                             threshold)",
+                            SYNC_WARN_DURATION.as_secs()
+                        );
+                        tracing::error!("{msg}");
+                        if let Err(e) =
+                            db::insert_system_event(&task_pool, "repo_sync_slow", None, &msg).await
+                        {
+                            tracing::error!(error = %e, "failed to log slow sync event");
+                        }
                     }
                 }
-
-                if elapsed > SYNC_WARN_DURATION {
+                Err(crate::error::ApiError::NotFound(ref reason)) => {
+                    tracing::warn!(
+                        repo_id,
+                        repo_name = %repo_name,
+                        reason = %reason,
+                        "skipping sync for repo that no longer exists"
+                    );
+                    if let Err(e) = db::set_repo_importing(&task_pool, repo_id, false).await {
+                        tracing::error!(repo_id, error = %e, "failed to clear importing flag after NotFound");
+                    }
+                    crate::api::repos::clear_import_progress_state(
+                        &task_pool,
+                        &task_broadcast,
+                        repo_id,
+                    )
+                    .await;
+                    task_broadcast.send(ServerToUi::DataChanged);
+                }
+                Err(e) => {
+                    let elapsed = start.elapsed();
                     let msg = format!(
-                        "periodic sync for '{}' took {duration_secs}s (exceeds {}s threshold)",
-                        repo.name,
-                        SYNC_WARN_DURATION.as_secs()
+                        "periodic sync failed for '{repo_name}' after {:.1}s: {e}",
+                        elapsed.as_secs_f64()
                     );
                     tracing::error!("{msg}");
-                    if let Err(e) =
-                        db::insert_system_event(pool, "repo_sync_slow", None, &msg).await
+                    if let Err(log_err) =
+                        db::insert_system_event(&task_pool, "repo_sync_failed", None, &msg).await
                     {
-                        tracing::error!(error = %e, "failed to log slow sync event");
+                        tracing::error!(error = %log_err, "failed to log sync event");
                     }
+                    if let Err(e2) = db::set_repo_importing(&task_pool, repo_id, false).await {
+                        tracing::error!(repo_id, error = %e2, "failed to clear import flag");
+                    }
+                    if let Err(e2) =
+                        db::set_repo_import_error(&task_pool, repo_id, Some(&format!("{e}"))).await
+                    {
+                        tracing::error!(repo_id, error = %e2, "failed to set import_error");
+                    }
+                    crate::api::repos::clear_import_progress_state(
+                        &task_pool,
+                        &task_broadcast,
+                        repo_id,
+                    )
+                    .await;
+                    task_broadcast.send(ServerToUi::DataChanged);
                 }
             }
-            Err(crate::error::ApiError::NotFound(ref reason)) => {
-                tracing::warn!(
-                    repo_id = repo.id,
-                    repo_name = %repo.name,
-                    reason = %reason,
-                    "skipping sync for repo that no longer exists"
-                );
-                if let Err(e) = db::set_repo_importing(pool, repo.id, false).await {
-                    tracing::error!(repo_id = repo.id, error = %e, "failed to clear importing flag after NotFound");
-                }
-                crate::api::repos::clear_import_progress_state(pool, ui_broadcast, repo.id).await;
-                ui_broadcast.send(ServerToUi::DataChanged);
-            }
-            Err(e) => {
-                let elapsed = start.elapsed();
-                let msg = format!(
-                    "periodic sync failed for '{}' after {:.1}s: {e}",
-                    repo.name,
-                    elapsed.as_secs_f64()
-                );
-                tracing::error!("{msg}");
-                if let Err(log_err) =
-                    db::insert_system_event(pool, "repo_sync_failed", None, &msg).await
-                {
-                    tracing::error!(error = %log_err, "failed to log sync event");
-                }
-                if let Err(e2) = db::set_repo_importing(pool, repo.id, false).await {
-                    tracing::error!(repo_id = repo.id, error = %e2, "failed to clear import flag");
-                }
-                if let Err(e2) =
-                    db::set_repo_import_error(pool, repo.id, Some(&format!("{e}"))).await
-                {
-                    tracing::error!(repo_id = repo.id, error = %e2, "failed to set import_error");
-                }
-                crate::api::repos::clear_import_progress_state(pool, ui_broadcast, repo.id).await;
-                ui_broadcast.send(ServerToUi::DataChanged);
-            }
-        }
+        });
     }
 }
 

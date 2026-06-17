@@ -210,7 +210,7 @@ test('status badge transitions to importing class when resync starts', async ({ 
   const resyncBtn = page.getByRole('button', { name: /full resync/i })
   await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
 
-  const statusBadge = page.locator('.status-badge')
+  const statusBadge = page.locator('.repo-status-badge')
   await expect(statusBadge).toBeVisible({ timeout: 10_000 })
 
   await resyncBtn.click()
@@ -232,7 +232,7 @@ test('status badge text shows importing phase verb during resync', async ({ page
   await resyncBtn.click()
 
   // While importing the badge text must match "Importing..." or "Importing X/Y"
-  const statusBadge = page.locator('.status-badge')
+  const statusBadge = page.locator('.repo-status-badge')
   await expect(statusBadge).toHaveText(/importing/i, { timeout: 30_000 })
 
   // Once done the badge must read "Enabled"
@@ -283,7 +283,7 @@ test('status badge shows Enabled and no importing elements after resync complete
   await resyncBtn.click()
 
   // Wait for the importing phase to begin then complete
-  const statusBadge = page.locator('.status-badge')
+  const statusBadge = page.locator('.repo-status-badge')
   await expect(statusBadge).toHaveClass(/status-importing/, { timeout: 30_000 })
   await expect(statusBadge).toHaveClass(/status-online/, { timeout: 120_000 })
 

@@ -72,7 +72,7 @@ export AGENT_TOKEN_2="$DB01_TOKEN"
 export AGENT_TOKEN_3="$MEDIA_TOKEN"
 
 echo "==> Registering repositories..."
-api POST "/api/repos" "{
+REPO_DAILY_ID=$(api POST "/api/repos" "{
     \"name\": \"server-daily\",
     \"repo_path\": \"/backup/repos/server-daily\",
     \"ssh_user\": \"borg\",
@@ -80,9 +80,9 @@ api POST "/api/repos" "{
     \"ssh_port\": 22,
     \"passphrase\": \"demo-passphrase-123\",
     \"compression\": \"lz4\"
-}" > /dev/null
+}" | jq -r '.id')
 
-api POST "/api/repos" "{
+REPO_HOURLY_ID=$(api POST "/api/repos" "{
     \"name\": \"database-hourly\",
     \"repo_path\": \"/backup/repos/database-hourly\",
     \"ssh_user\": \"borg\",
@@ -90,9 +90,9 @@ api POST "/api/repos" "{
     \"ssh_port\": 22,
     \"passphrase\": \"demo-passphrase-123\",
     \"compression\": \"zstd,3\"
-}" > /dev/null
+}" | jq -r '.id')
 
-api POST "/api/repos" "{
+REPO_WEEKLY_ID=$(api POST "/api/repos" "{
     \"name\": \"media-weekly\",
     \"repo_path\": \"/backup/repos/media-weekly\",
     \"ssh_user\": \"borg\",
@@ -100,10 +100,10 @@ api POST "/api/repos" "{
     \"ssh_port\": 22,
     \"passphrase\": \"demo-passphrase-123\",
     \"compression\": \"lz4\"
-}" > /dev/null
+}" | jq -r '.id')
 
 echo "==> Configuring per-repo sync schedules..."
-api PUT "/api/repos/2" "{
+api PUT "/api/repos/$REPO_HOURLY_ID" "{
     \"repo_path\": \"/backup/repos/database-hourly\",
     \"ssh_user\": \"borg\",
     \"ssh_host\": \"localhost\",
@@ -112,7 +112,7 @@ api PUT "/api/repos/2" "{
     \"sync_schedule\": \"0 */4 * * *\"
 }" > /dev/null
 
-api PUT "/api/repos/3" "{
+api PUT "/api/repos/$REPO_WEEKLY_ID" "{
     \"repo_path\": \"/backup/repos/media-weekly\",
     \"ssh_user\": \"borg\",
     \"ssh_host\": \"localhost\",
@@ -165,42 +165,59 @@ sys.exit(main())
 # server-daily: 30 days of daily web-server-01 backups.
 # Archive contents intentionally vary in both timestamp and payload size so the
 # archive browser's date/size sort modes have meaningful demo data.
-for i in $(seq 1 30); do
-    ARCHIVE_DATE=$(date -u -d "$i days ago" +%Y-%m-%dT02:00:00 2>/dev/null || date -u -v-"${i}"d +%Y-%m-%dT02:00:00)
-    ARCHIVE_DIR=$(mktemp -d)
-    chmod 755 "$ARCHIVE_DIR"
-    mkdir -p "$ARCHIVE_DIR/var/www/html" "$ARCHIVE_DIR/etc/nginx/conf.d"
-    echo "<html><body>Version $i</body></html>" > "$ARCHIVE_DIR/var/www/html/index.html"
-    echo "server { listen 80; }" > "$ARCHIVE_DIR/etc/nginx/conf.d/default.conf"
-    echo "Restore this file from the archive browser." > "$ARCHIVE_DIR/restore-example.txt"
-    dd if=/dev/urandom of="$ARCHIVE_DIR/var/www/html/app.js" bs=1024 count=$((50 + i * 10)) 2>/dev/null
-    borg_create_as "web-server-01" "/backup/repos/server-daily::web-server-01-backup-$ARCHIVE_DATE" "$ARCHIVE_DIR" "$ARCHIVE_DATE"
-    rm -rf "$ARCHIVE_DIR"
-done
+#
+# All three repo loops run concurrently: each writes to a distinct borg repository
+# so there are no lock conflicts. Total archive creation time is dominated by the
+# longest loop (database-hourly at 48 archives) rather than the sum of all three.
+(
+    for i in $(seq 1 30); do
+        ARCHIVE_DATE=$(date -u -d "$i days ago" +%Y-%m-%dT02:00:00 2>/dev/null || date -u -v-"${i}"d +%Y-%m-%dT02:00:00)
+        ARCHIVE_DIR=$(mktemp -d)
+        chmod 755 "$ARCHIVE_DIR"
+        mkdir -p "$ARCHIVE_DIR/var/www/html" "$ARCHIVE_DIR/etc/nginx/conf.d"
+        echo "<html><body>Version $i</body></html>" > "$ARCHIVE_DIR/var/www/html/index.html"
+        echo "server { listen 80; }" > "$ARCHIVE_DIR/etc/nginx/conf.d/default.conf"
+        echo "Restore this file from the archive browser." > "$ARCHIVE_DIR/restore-example.txt"
+        dd if=/dev/urandom of="$ARCHIVE_DIR/var/www/html/app.js" bs=1024 count=$((50 + i * 10)) 2>/dev/null
+        borg_create_as "web-server-01" "/backup/repos/server-daily::web-server-01-backup-$ARCHIVE_DATE" "$ARCHIVE_DIR" "$ARCHIVE_DATE"
+        rm -rf "$ARCHIVE_DIR"
+    done
+) &
+DAILY_PID=$!
 
 # database-hourly: 48 hours of hourly db-server-01 backups.
-for i in $(seq 1 48); do
-    ARCHIVE_DATE=$(date -u -d "$i hours ago" +%Y-%m-%dT%H:00:00 2>/dev/null || date -u -v-"${i}"H +%Y-%m-%dT%H:00:00)
-    ARCHIVE_DIR=$(mktemp -d)
-    chmod 755 "$ARCHIVE_DIR"
-    mkdir -p "$ARCHIVE_DIR/tmp" "$ARCHIVE_DIR/var/lib/postgresql"
-    echo "-- pg_dump output v$i" > "$ARCHIVE_DIR/tmp/mydb.sql"
-    dd if=/dev/urandom of="$ARCHIVE_DIR/var/lib/postgresql/data.bin" bs=1024 count=$((100 + i * 20)) 2>/dev/null
-    borg_create_as "db-server-01" "/backup/repos/database-hourly::db-server-01-backup-$ARCHIVE_DATE" "$ARCHIVE_DIR" "$ARCHIVE_DATE"
-    rm -rf "$ARCHIVE_DIR"
-done
+(
+    for i in $(seq 1 48); do
+        ARCHIVE_DATE=$(date -u -d "$i hours ago" +%Y-%m-%dT%H:00:00 2>/dev/null || date -u -v-"${i}"H +%Y-%m-%dT%H:00:00)
+        ARCHIVE_DIR=$(mktemp -d)
+        chmod 755 "$ARCHIVE_DIR"
+        mkdir -p "$ARCHIVE_DIR/tmp" "$ARCHIVE_DIR/var/lib/postgresql"
+        echo "-- pg_dump output v$i" > "$ARCHIVE_DIR/tmp/mydb.sql"
+        dd if=/dev/urandom of="$ARCHIVE_DIR/var/lib/postgresql/data.bin" bs=1024 count=$((100 + i * 20)) 2>/dev/null
+        borg_create_as "db-server-01" "/backup/repos/database-hourly::db-server-01-backup-$ARCHIVE_DATE" "$ARCHIVE_DIR" "$ARCHIVE_DATE"
+        rm -rf "$ARCHIVE_DIR"
+    done
+) &
+HOURLY_PID=$!
 
 # media-weekly: 12 weeks of weekly media-store-01 backups.
-for i in $(seq 1 12); do
-    ARCHIVE_DATE=$(date -u -d "$((i * 7)) days ago" +%Y-%m-%dT03:00:00 2>/dev/null || date -u -v-"$((i * 7))"d +%Y-%m-%dT03:00:00)
-    ARCHIVE_DIR=$(mktemp -d)
-    chmod 755 "$ARCHIVE_DIR"
-    mkdir -p "$ARCHIVE_DIR/mnt/media/photos" "$ARCHIVE_DIR/mnt/media/videos"
-    dd if=/dev/urandom of="$ARCHIVE_DIR/mnt/media/photos/img_$i.jpg" bs=1024 count=$((200 + i * 50)) 2>/dev/null
-    dd if=/dev/urandom of="$ARCHIVE_DIR/mnt/media/videos/clip_$i.mp4" bs=1024 count=$((500 + i * 100)) 2>/dev/null
-    borg_create_as "media-store-01" "/backup/repos/media-weekly::media-store-01-backup-$ARCHIVE_DATE" "$ARCHIVE_DIR" "$ARCHIVE_DATE"
-    rm -rf "$ARCHIVE_DIR"
-done
+(
+    for i in $(seq 1 12); do
+        ARCHIVE_DATE=$(date -u -d "$((i * 7)) days ago" +%Y-%m-%dT03:00:00 2>/dev/null || date -u -v-"$((i * 7))"d +%Y-%m-%dT03:00:00)
+        ARCHIVE_DIR=$(mktemp -d)
+        chmod 755 "$ARCHIVE_DIR"
+        mkdir -p "$ARCHIVE_DIR/mnt/media/photos" "$ARCHIVE_DIR/mnt/media/videos"
+        dd if=/dev/urandom of="$ARCHIVE_DIR/mnt/media/photos/img_$i.jpg" bs=1024 count=$((200 + i * 50)) 2>/dev/null
+        dd if=/dev/urandom of="$ARCHIVE_DIR/mnt/media/videos/clip_$i.mp4" bs=1024 count=$((500 + i * 100)) 2>/dev/null
+        borg_create_as "media-store-01" "/backup/repos/media-weekly::media-store-01-backup-$ARCHIVE_DATE" "$ARCHIVE_DIR" "$ARCHIVE_DATE"
+        rm -rf "$ARCHIVE_DIR"
+    done
+) &
+WEEKLY_PID=$!
+
+wait $DAILY_PID || { echo "ERROR: server-daily archive creation failed"; exit 1; }
+wait $HOURLY_PID || { echo "ERROR: database-hourly archive creation failed"; exit 1; }
+wait $WEEKLY_PID || { echo "ERROR: media-weekly archive creation failed"; exit 1; }
 
 echo "==> Creating unmatched archives (unknown hostnames)..."
 # Hostnames that don't match any registered agent or pattern. On import these
@@ -234,22 +251,19 @@ echo "==> Waiting for registration-time import to settle..."
 wait_for_imports
 
 echo "==> Syncing repos to import borg archives..."
-api POST /api/repos/1/sync > /dev/null
-api POST /api/repos/2/sync > /dev/null
-api POST /api/repos/3/sync > /dev/null
+api POST "/api/repos/$REPO_DAILY_ID/sync" > /dev/null
+api POST "/api/repos/$REPO_HOURLY_ID/sync" > /dev/null
+api POST "/api/repos/$REPO_WEEKLY_ID/sync" > /dev/null
 
 echo "==> Waiting for archive import to complete..."
 wait_for_imports
 
-echo "==> Fetching IDs..."
+echo "==> Fetching agent IDs..."
 WEB01_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='web-server-01'")
 DB01_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='db-server-01'")
 MEDIA_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='media-store-01'")
 OFFLINE_DUE_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='offline-due-01'")
 DISABLED_ONLY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='disabled-only-01'")
-REPO_DAILY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM repos WHERE name='server-daily'")
-REPO_HOURLY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM repos WHERE name='database-hourly'")
-REPO_WEEKLY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM repos WHERE name='media-weekly'")
 
 echo "==> Creating schedules..."
 api POST "/api/schedules" "{

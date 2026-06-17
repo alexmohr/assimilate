@@ -491,6 +491,9 @@ onMessage<ImportProgressPayload>('ImportProgress', (payload) => {
       repo.value.import_total = payload.total
     }
     repo.value.import_status_message = payload.message
+    if (payload.message !== null) {
+      repo.value.importing = true
+    }
   }
 })
 
@@ -1142,7 +1145,7 @@ async function resetImport(): Promise<void> {
               <dt>Status</dt>
               <dd>
                 <span
-                  class="status-badge"
+                  class="status-badge repo-status-badge"
                   :class="
                     repo.import_error
                       ? 'status-error'

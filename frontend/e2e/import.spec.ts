@@ -201,6 +201,98 @@ test('broken repo resync does not navigate to /error page', async ({ page }) => 
   })
 })
 
+// ── Status badge live updates during resync ──────────────────────────────────
+
+test('status badge transitions to importing class when resync starts', async ({ page }) => {
+  await loginAsAdmin(page)
+  await navigateToRepo(page, 'server-daily')
+
+  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
+
+  const statusBadge = page.locator('.status-badge')
+  await expect(statusBadge).toBeVisible({ timeout: 10_000 })
+
+  await resyncBtn.click()
+
+  // Badge must acquire status-importing class while the sync runs
+  await expect(statusBadge).toHaveClass(/status-importing/, { timeout: 30_000 })
+
+  // After sync completes badge must return to status-online
+  await expect(statusBadge).toHaveClass(/status-online/, { timeout: 120_000 })
+  await expect(statusBadge).not.toHaveClass(/status-importing/)
+})
+
+test('status badge text shows importing phase verb during resync', async ({ page }) => {
+  await loginAsAdmin(page)
+  await navigateToRepo(page, 'server-daily')
+
+  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
+  await resyncBtn.click()
+
+  // While importing the badge text must match "Importing..." or "Importing X/Y"
+  const statusBadge = page.locator('.status-badge')
+  await expect(statusBadge).toHaveText(/importing/i, { timeout: 30_000 })
+
+  // Once done the badge must read "Enabled"
+  await expect(statusBadge).toHaveText(/enabled/i, { timeout: 120_000 })
+})
+
+test('import-status-msg appears with live status text during resync', async ({ page }) => {
+  await loginAsAdmin(page)
+  await navigateToRepo(page, 'server-daily')
+
+  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
+  await resyncBtn.click()
+
+  // WebSocket ImportProgress messages must populate the status message element
+  const statusMsg = page.locator('.import-status-msg')
+  await expect(statusMsg).toBeVisible({ timeout: 30_000 })
+  await expect(statusMsg).toHaveText(/listing|importing|saving|refreshing/i, { timeout: 30_000 })
+
+  // Message must disappear once importing finishes (v-if="repo.importing && ...")
+  await expect(statusMsg).not.toBeVisible({ timeout: 120_000 })
+})
+
+test('import-progress bar appears when archive count is known', async ({ page }) => {
+  await loginAsAdmin(page)
+  await navigateToRepo(page, 'server-daily')
+
+  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
+  await resyncBtn.click()
+
+  // Progress bar only renders when import_total > 0; server-daily has archives so it must appear
+  const progressBar = page.locator('.import-progress-bar')
+  await expect(progressBar).toBeVisible({ timeout: 60_000 })
+
+  // Bar must disappear after sync completes
+  await expect(progressBar).not.toBeVisible({ timeout: 120_000 })
+})
+
+test('status badge shows Enabled and no importing elements after resync completes', async ({
+  page,
+}) => {
+  await loginAsAdmin(page)
+  await navigateToRepo(page, 'server-daily')
+
+  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
+  await resyncBtn.click()
+
+  // Wait for the importing phase to begin then complete
+  const statusBadge = page.locator('.status-badge')
+  await expect(statusBadge).toHaveClass(/status-importing/, { timeout: 30_000 })
+  await expect(statusBadge).toHaveClass(/status-online/, { timeout: 120_000 })
+
+  // All importing UI elements must be gone after completion
+  await expect(page.locator('.import-status-msg')).not.toBeVisible()
+  await expect(page.locator('.import-progress')).not.toBeVisible()
+  await expect(statusBadge).toHaveText(/enabled/i)
+})
+
 // ── Archive browsing ─────────────────────────────────────────────────────────
 
 test('clicking an archive opens the file browser', async ({ page }) => {

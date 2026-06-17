@@ -301,6 +301,53 @@ esac
     (tempdir, BorgBinaryGuard { previous })
 }
 
+/// Installs a fake borg where `list` returns an empty archive set immediately
+/// but `info` sleeps indefinitely. Used to reproduce the bug where
+/// `refresh_repo_info_stats` had no timeout, causing repos with no archives
+/// to hang forever with `importing = true`.
+async fn install_borg_empty_list_hanging_info() -> (TempDir, BorgBinaryGuard) {
+    let tempdir = tempfile::tempdir().unwrap();
+    let script = "#!/bin/sh\ncase \"$1\" in\n  list) echo '{\"archives\":[]}';;  \n  info) sleep \
+                  120;;\n  *) exit 1;;\nesac\n";
+    let borg_path = tempdir.path().join("borg");
+    tokio::fs::write(&borg_path, script).await.unwrap();
+    let mut permissions = tokio::fs::metadata(&borg_path).await.unwrap().permissions();
+    permissions.set_mode(0o755);
+    tokio::fs::set_permissions(&borg_path, permissions)
+        .await
+        .unwrap();
+    let previous = std::env::var("BORG_BINARY").ok();
+    // SAFETY: tests serialise BORG_BINARY changes with a process-local lock.
+    unsafe { std::env::set_var("BORG_BINARY", &borg_path) };
+    (tempdir, BorgBinaryGuard { previous })
+}
+
+/// Installs a fake borg whose `list` returns an empty archive list after
+/// sleeping for `delay_secs`. Used to verify that the scheduler dispatches
+/// repo syncs concurrently instead of sequentially.
+async fn install_slow_borg_list(delay_secs: u64) -> (TempDir, BorgBinaryGuard) {
+    let tempdir = tempfile::tempdir().unwrap();
+    let info_json = concat!(
+        r#"{"cache":{"stats":{"total_size":0,"total_csize":0,"#,
+        r#""unique_csize":0,"total_chunks":0,"total_unique_chunks":0}}}"#
+    );
+    let script = format!(
+        "#!/bin/sh\ncase \"$1\" in\n  list) sleep {delay_secs}; echo '{{\"archives\":[]}}';;  \n  \
+         info) echo '{info_json}';;\n  *) exit 1;;\nesac\n"
+    );
+    let borg_path = tempdir.path().join("borg");
+    tokio::fs::write(&borg_path, script).await.unwrap();
+    let mut permissions = tokio::fs::metadata(&borg_path).await.unwrap().permissions();
+    permissions.set_mode(0o755);
+    tokio::fs::set_permissions(&borg_path, permissions)
+        .await
+        .unwrap();
+    let previous = std::env::var("BORG_BINARY").ok();
+    // SAFETY: tests serialise BORG_BINARY changes with a process-local lock.
+    unsafe { std::env::set_var("BORG_BINARY", &borg_path) };
+    (tempdir, BorgBinaryGuard { previous })
+}
+
 /// Installs a fake borg whose `list` hangs, to exercise the query timeout.
 async fn install_hanging_borg() -> (TempDir, BorgBinaryGuard) {
     let tempdir = tempfile::tempdir().unwrap();
@@ -1893,4 +1940,137 @@ async fn test_list_schedules_for_repo() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
     assert_eq!(body.as_array().unwrap().len(), 0);
+}
+
+// -- archive resync reliability --
+
+/// Regression test for: repos with no backups getting stuck in "Listing archives..." forever.
+///
+/// `refresh_repo_info_stats` was called after an empty borg-list result without any
+/// timeout guard. If `borg info` hung (e.g. due to a stalled SSH connection), the
+/// importing flag was never cleared and the repo appeared stuck indefinitely.
+///
+/// This test installs a fake borg that returns an empty archive list immediately but
+/// hangs on `borg info`, sets the per-command timeout to 1 s, and verifies that the
+/// sync endpoint returns quickly and always clears the importing flag.
+#[tokio::test]
+#[ignore]
+async fn test_sync_empty_repo_does_not_hang_when_borg_info_hangs() {
+    let _borg_lock = borg_binary_lock().await;
+    // SAFETY: serialised by borg_binary_lock.
+    unsafe { std::env::set_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS", "1") };
+
+    let (_borg_dir, _borg_guard) = install_borg_empty_list_hanging_info().await;
+
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+    let repo_id = insert_test_repo(&pool, "empty-repo-hanging-info").await;
+
+    let started = std::time::Instant::now();
+    let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
+
+    // Without the fix the handler blocks on `borg info` until killed; the outer
+    // timeout catches that hang and fails the test.
+    let resp = tokio::time::timeout(std::time::Duration::from_secs(15), oneshot(&mut app, req))
+        .await
+        .expect("sync must complete within 15 s even when borg info hangs");
+
+    // SAFETY: serialised by borg_binary_lock.
+    unsafe { std::env::remove_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS") };
+
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "sync should return quickly once borg info times out, took {elapsed:?}"
+    );
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "empty-repo sync should succeed even when borg info is slow"
+    );
+
+    let importing: bool = sqlx::query_scalar("SELECT importing FROM repos WHERE id = $1")
+        .bind(repo_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        !importing,
+        "importing must be cleared even when borg info hangs"
+    );
+}
+
+/// Regression test for: the scheduled-sync loop blocking on each repo sequentially.
+///
+/// `run_repo_sync` previously called `sync_existing_archives` inline in a `for`
+/// loop, so a slow repo held up every subsequent repo. With two repos that each
+/// take BORG_DELAY_SECS seconds, sequential processing would block for at least
+/// BORG_DELAY_SECS * 2; concurrent dispatching should return almost immediately
+/// and let both syncs run in parallel.
+#[tokio::test]
+#[ignore]
+async fn test_scheduler_dispatches_repo_syncs_concurrently() {
+    let _borg_lock = borg_binary_lock().await;
+
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    // Each borg call sleeps for this long, simulating a slow network / large repo.
+    const BORG_DELAY_SECS: u64 = 2;
+    let (_borg_dir, _borg_guard) = install_slow_borg_list(BORG_DELAY_SECS).await;
+
+    let repo_a = insert_test_repo(&pool, "concurrent-sync-repo-a").await;
+    let repo_b = insert_test_repo(&pool, "concurrent-sync-repo-b").await;
+
+    // Both repos are enabled and have a sync schedule that is already due.
+    for repo_id in [repo_a, repo_b] {
+        sqlx::query(
+            "UPDATE repos SET enabled = true, sync_schedule = '* * * * *', last_synced_at = \
+             '1970-01-01T00:00:00Z' WHERE id = $1",
+        )
+        .bind(repo_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-integration").unwrap();
+    let ui_broadcast = server::ws::ui_broadcast::UiBroadcast::new();
+    let repo_op_tracker = server::repo_op_tracker::RepoOpTracker::default();
+
+    let started = std::time::Instant::now();
+    server::scheduler::run_repo_sync(&pool, &encryption_key, &ui_broadcast, &repo_op_tracker).await;
+    let dispatch_elapsed = started.elapsed();
+
+    // Sequential (buggy): run_repo_sync blocks for >= BORG_DELAY_SECS per repo.
+    // Concurrent (fixed): run_repo_sync dispatches tasks and returns immediately.
+    assert!(
+        dispatch_elapsed < std::time::Duration::from_secs(BORG_DELAY_SECS),
+        "run_repo_sync should dispatch all syncs without blocking on each one; took \
+         {dispatch_elapsed:?} (sequential would take >={}s)",
+        BORG_DELAY_SECS * 2,
+    );
+
+    // Wait for both background tasks to finish and verify the importing flag is cleared.
+    for repo_id in [repo_a, repo_b] {
+        tokio::time::timeout(std::time::Duration::from_secs(BORG_DELAY_SECS + 5), async {
+            loop {
+                let importing: bool =
+                    sqlx::query_scalar("SELECT importing FROM repos WHERE id = $1")
+                        .bind(repo_id)
+                        .fetch_one(&pool)
+                        .await
+                        .unwrap();
+                if !importing {
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("repo {repo_id} sync did not complete within expected time"));
+    }
 }

@@ -1389,10 +1389,19 @@ async fn refresh_repo_info_stats(
     archive_count: i64,
 ) {
     let args = ["info", "--json", "--lock-wait", LOCK_WAIT_SECS, borg_repo];
-    let output = match Borg::new().run(&args, env).await {
-        Ok(output) => output,
-        Err(e) => {
+    let output = match tokio::time::timeout(borg_query_timeout(), Borg::new().run(&args, env)).await
+    {
+        Ok(Ok(output)) => output,
+        Ok(Err(e)) => {
             warn!(repo_id, error = %e, "failed to run borg info for repo stats");
+            return;
+        }
+        Err(_) => {
+            warn!(
+                repo_id,
+                timeout_secs = borg_query_timeout().as_secs(),
+                "borg info timed out refreshing repo stats"
+            );
             return;
         }
     };

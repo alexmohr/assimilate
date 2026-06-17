@@ -108,7 +108,7 @@ pub async fn run(state: AppState) {
     );
 }
 
-async fn run_repo_sync(
+pub async fn run_repo_sync(
     pool: &PgPool,
     encryption_key: &[u8; 32],
     ui_broadcast: &UiBroadcast,

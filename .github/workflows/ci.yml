@@ -220,14 +220,31 @@ jobs:
             -f .devcontainer/demo/docker-compose.demo.yml \
             -f .devcontainer/demo/docker-compose.coverage-override.yml \
             up -d
-          echo "Waiting for demo seed to complete..."
-          for i in $(seq 1 120); do
+          echo "Waiting for demo seed to complete (up to 20 min)..."
+          DEMO_READY=false
+          for i in $(seq 1 240); do
             if docker compose -f .devcontainer/demo/docker-compose.demo.yml logs demo 2>&1 | grep -q "Demo ready:"; then
               echo "Demo is seeded and ready"
+              DEMO_READY=true
               break
+            fi
+            CONTAINER_ID=$(docker compose -f .devcontainer/demo/docker-compose.demo.yml ps -q demo 2>/dev/null | head -1)
+            if [ -n "$CONTAINER_ID" ]; then
+              STATE=$(docker inspect --format '{{.State.Status}}' "$CONTAINER_ID" 2>/dev/null || echo "unknown")
+              if [ "$STATE" = "exited" ] || [ "$STATE" = "dead" ]; then
+                echo "ERROR: Demo container stopped unexpectedly (state: $STATE)"
+                docker logs "$CONTAINER_ID" --tail 100
+                exit 1
+              fi
             fi
             sleep 5
           done
+          if [ "$DEMO_READY" != "true" ]; then
+            echo "ERROR: Timed out waiting for demo to be ready"
+            CONTAINER_ID=$(docker compose -f .devcontainer/demo/docker-compose.demo.yml ps -q demo 2>/dev/null | head -1)
+            [ -n "$CONTAINER_ID" ] && docker logs "$CONTAINER_ID" --tail 100
+            exit 1
+          fi
       - name: Run Playwright tests
         run: npm run e2e
         working-directory: frontend

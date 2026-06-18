@@ -1335,7 +1335,6 @@ watch(wsStatus, (newStatus, oldStatus) => {
             <div class="card-top">
               <div class="card-info">
                 <span class="card-hostname">{{ s.name || repoNameForSchedule(s) }}</span>
-                <span class="card-repo">Sequential</span>
               </div>
               <div class="card-badges">
                 <span

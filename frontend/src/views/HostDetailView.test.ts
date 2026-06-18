@@ -153,6 +153,12 @@ async function openBackupsTab(wrapper: VueWrapper<ComponentPublicInstance>): Pro
   await flushPromises()
 }
 
+async function openSchedulesTab(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
+  const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
+  await router.push({ query: { tab: 'schedules' } })
+  await flushPromises()
+}
+
 describe('HostDetailView — backups tab', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -363,7 +369,6 @@ describe('HostDetailView — schedules tab', () => {
         schedule_type: 'backup',
         cron_expression: '0 2 * * *',
         enabled: true,
-        execution_mode: 'parallel',
       },
       {
         id: 2,
@@ -373,7 +378,6 @@ describe('HostDetailView — schedules tab', () => {
         schedule_type: 'backup',
         cron_expression: '0 3 * * *',
         enabled: true,
-        execution_mode: 'parallel',
       },
     ]
     setupApi(mockReports, [{ id: 10, target_name: 'shared-repo' }], schedules)
@@ -387,5 +391,43 @@ describe('HostDetailView — schedules tab', () => {
       wrapper.vm as unknown as { agentSchedules: Array<{ id: number; name: string }> }
     ).agentSchedules
     expect(agentSchedules).toEqual([{ ...schedules[0] }])
+  })
+
+  it('renders schedule cards on the schedules tab', async () => {
+    const schedules = [
+      {
+        id: 1,
+        repo_id: 10,
+        name: 'Nightly Backup',
+        target_hostnames: ['test-host'],
+        schedule_type: 'backup',
+        cron_expression: '0 2 * * *',
+        enabled: true,
+        next_run_at: null,
+      },
+    ]
+    setupApi(mockReports, [{ id: 10, target_name: 'shared-repo' }], schedules)
+    const wrapper = renderWithPlugins(HostDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await openSchedulesTab(wrapper)
+
+    expect(wrapper.text()).toContain('Nightly Backup')
+    expect(wrapper.text()).toContain('Enabled')
+    expect(wrapper.text()).not.toContain('Sequential')
+  })
+
+  it('shows empty state when no schedules target the agent', async () => {
+    setupApi(mockReports, [{ id: 10, target_name: 'shared-repo' }], [])
+    const wrapper = renderWithPlugins(HostDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await openSchedulesTab(wrapper)
+
+    expect(wrapper.text()).toContain('No schedules for this agent.')
   })
 })

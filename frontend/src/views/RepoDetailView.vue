@@ -50,7 +50,6 @@ interface ScheduleRow {
   canary_enabled: boolean
   last_run_at: string | null
   next_run_at: string | null
-  execution_mode: string
   on_failure: string
   target_hostnames: string[]
 }
@@ -2040,9 +2039,6 @@ async function resetImport(): Promise<void> {
               >
                 {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
               </span>
-              <span class="execution-badge">
-                {{ s.execution_mode === 'sequential' ? 'Sequential' : 'Parallel' }}
-              </span>
             </div>
             <div
               v-if="s.health?.last_error_message"
@@ -3691,24 +3687,15 @@ async function resetImport(): Promise<void> {
   flex-wrap: wrap;
 }
 
-.host-count,
-.execution-badge {
+.host-count {
   display: inline-block;
   padding: 0.1rem 0.45rem;
   border-radius: 999px;
   font-size: 0.65rem;
   font-weight: 600;
   letter-spacing: 0.02em;
-}
-
-.host-count {
   background: var(--bg-hover);
   color: var(--text-secondary);
-}
-
-.execution-badge {
-  background: var(--info-subtle);
-  color: var(--info);
 }
 
 .type-badge {

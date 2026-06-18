@@ -399,7 +399,12 @@ impl TunnelManager {
     }
 
     pub async fn stop_tunnel(&self, tunnel_id: i64) {
-        if let Some(state) = self.tunnels.write().await.remove(&tunnel_id) {
+        // Extract the state in a separate let binding so the write guard is
+        // dropped before awaiting completion. Holding it across notified().await
+        // would deadlock: the task's cancellation path calls set_status() which
+        // also needs the write lock.
+        let maybe_state = self.tunnels.write().await.remove(&tunnel_id);
+        if let Some(state) = maybe_state {
             state.cancel.cancel();
             state.completion.notified().await;
         }
@@ -595,5 +600,40 @@ mod tests {
 
         assert!(task_finished.load(Ordering::SeqCst));
         assert!(mgr.tunnel_status(1).await.is_none());
+    }
+
+    /// Regression: stop_tunnel must release the write lock before awaiting
+    /// task completion so that the task's cancellation path (which calls
+    /// set_status and needs the write lock) can proceed without deadlocking.
+    #[tokio::test]
+    async fn stop_tunnel_does_not_deadlock_when_task_acquires_write_lock_on_cancel() {
+        let mgr = dummy_manager();
+        let cancel = CancellationToken::new();
+        let completion = Arc::new(Notify::new());
+
+        mgr.tunnels.write().await.insert(
+            42,
+            TunnelState {
+                agent_id: 7,
+                status: shared::protocol::TunnelStatus::Connected,
+                cancel: cancel.clone(),
+                completion: completion.clone(),
+            },
+        );
+
+        let mgr2 = mgr.clone();
+        tokio::spawn(async move {
+            let _completion = TunnelTaskCompletion(completion);
+            cancel.cancelled().await;
+            // Simulate what the connected-tunnel cancel path does: acquire the
+            // write lock to update status. This would deadlock if stop_tunnel
+            // were still holding the write lock here.
+            mgr2.tunnels.write().await.remove(&42);
+        });
+
+        // Must complete without deadlocking (use a timeout to catch regressions).
+        tokio::time::timeout(Duration::from_secs(5), mgr.stop_tunnel(42))
+            .await
+            .expect("stop_tunnel deadlocked while holding the write lock");
     }
 }

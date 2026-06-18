@@ -229,6 +229,13 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     }
 
     state.registry.unregister(&hostname).await;
+    let cleared = state.repo_op_tracker.clear_for_agent(&hostname).await;
+    for repo_id in cleared {
+        state.ui_broadcast.send(ServerToUi::RepoOpChanged {
+            repo_id,
+            op: state.repo_op_tracker.get(repo_id).await,
+        });
+    }
     state.ui_broadcast.send(ServerToUi::AgentDisconnected {
         hostname: hostname.clone(),
     });

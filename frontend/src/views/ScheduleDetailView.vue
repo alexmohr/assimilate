@@ -144,8 +144,8 @@ const backupStartedAt = ref<number | null>(null)
 const backupElapsedSecs = ref(0)
 let elapsedTimer: ReturnType<typeof setInterval> | null = null
 
-const lastSuccessfulReport = computed<ReportRow | null>(() =>
-  reports.value.find((r) => r.status === 'success' || r.status === 'warning') ?? null,
+const lastSuccessfulReport = computed<ReportRow | null>(
+  () => reports.value.find((r) => r.status === 'success' || r.status === 'warning') ?? null,
 )
 
 const estimatedRemainingSecs = computed<number | null>(() => {
@@ -654,7 +654,8 @@ watch(activeTab, (tab) => {
         <span
           v-if="archiveProgress"
           class="live-log-host-badge"
-        >{{ archiveProgress.hostname }}</span>
+          >{{ archiveProgress.hostname }}</span
+        >
       </div>
       <div class="progress-body">
         <div

@@ -5,6 +5,10 @@ use std::path::PathBuf;
 
 use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
+use shared::{
+    protocol::{ServerToAgent, ServerToUi},
+    types::RepoId,
+};
 use ssh_key::{Algorithm, LineEnding, rand_core::OsRng};
 
 use super::deploy::{agent_binary_dir, query_available_agent_version};
@@ -299,5 +303,76 @@ pub async fn get_version(_admin: RequireAdmin) -> Result<Json<VersionResponse>, 
         build_timestamp: build_timestamp.to_owned(),
         server_commit_count,
         agent_version,
+    }))
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct SystemResetResponse {
+    pub cancelled_backups: u64,
+    pub notified_agents: usize,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/system/reset",
+    tag = "System",
+    operation_id = "resetSystem",
+    summary = "Cancel all running and pending backups on all agents",
+    responses(
+        (status = 200, description = "Reset complete", body = SystemResetResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden -- admin only"),
+    )
+)]
+pub async fn reset_system(
+    _admin: RequireAdmin,
+    State(state): State<AppState>,
+) -> Result<Json<SystemResetResponse>, ApiError> {
+    let repos = db::list_all_repos(&state.pool).await?;
+    let agents = state.registry.connected_agents().await;
+    let notified_agents = agents.len();
+
+    for hostname in &agents {
+        for repo in &repos {
+            let msg = ServerToAgent::CancelBackup {
+                repo_id: RepoId(repo.id),
+            };
+            if let Err(e) = state.registry.send_to(hostname, msg).await {
+                tracing::warn!(
+                    hostname = %hostname,
+                    repo_id = repo.id,
+                    error = %e,
+                    "failed to send CancelBackup during system reset"
+                );
+            }
+        }
+    }
+
+    let cancelled_backups = db::cancel_all_active_backups(&state.pool).await?;
+
+    // Force-clear the in-memory op tracker so the UI stops showing stuck
+    // spinners, then broadcast the idle state for every affected repo.
+    let cleared_repos = state.repo_op_tracker.clear_all().await;
+    for repo_id in cleared_repos {
+        state
+            .ui_broadcast
+            .send(ServerToUi::RepoOpChanged { repo_id, op: None });
+    }
+
+    // Replace the per-repo lock map with a clean slate. Tasks that are stuck
+    // waiting inside a borg operation continue to hold their old OwnedMutexGuard
+    // (which is now orphaned), but any new acquire() call gets a fresh mutex,
+    // so new schedule runs are no longer blocked by the stuck tasks.
+    state.repo_lock.force_reset().await;
+
+    tracing::info!(
+        cancelled_backups,
+        notified_agents,
+        "system reset performed by admin"
+    );
+
+    Ok(Json(SystemResetResponse {
+        cancelled_backups,
+        notified_agents,
     }))
 }

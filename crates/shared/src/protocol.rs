@@ -241,6 +241,12 @@ pub enum AgentToServer {
     BackupCancelled {
         repo_id: RepoId,
     },
+    BackupLog {
+        repo_id: RepoId,
+        #[serde(default)]
+        schedule_id: Option<i64>,
+        line: String,
+    },
     Pong,
 }
 
@@ -307,6 +313,13 @@ pub enum ServerToUi {
     RepoOpChanged {
         repo_id: i64,
         op: Option<ActiveRepoOp>,
+    },
+    BackupLog {
+        hostname: String,
+        #[serde(default)]
+        schedule_id: Option<i64>,
+        repo_id: i64,
+        line: String,
     },
 }
 
@@ -687,6 +700,35 @@ mod tests {
         };
         let json = serde_json::to_string(&msg).unwrap();
         let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn agent_to_server_backup_log_round_trips() {
+        let msg = AgentToServer::BackupLog {
+            repo_id: RepoId(7),
+            schedule_id: Some(3),
+            line: r#"{"type":"log_message","levelname":"INFO","message":"Creating archive"}"#
+                .to_owned(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn server_to_ui_backup_log_round_trips() {
+        let msg = ServerToUi::BackupLog {
+            hostname: "web-01".to_owned(),
+            schedule_id: Some(3),
+            repo_id: 7,
+            line: r#"{"type":"log_message","levelname":"WARNING","message":"File changed"}"#
+                .to_owned(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let msg2: ServerToUi = serde_json::from_str(&json).unwrap();
         let json2 = serde_json::to_string(&msg2).unwrap();
         assert_eq!(json, json2);
     }

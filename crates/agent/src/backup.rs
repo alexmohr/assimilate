@@ -12,7 +12,7 @@ use shared::{
     ssh::{borg_rsh, borg_rsh_with_known_hosts},
     types::{BackupStatus, Compression, build_repo_url},
 };
-use tokio::process::Command;
+use tokio::{process::Command, sync::mpsc};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -149,7 +149,11 @@ impl BackupEngine {
         }
     }
 
-    pub async fn run_backup(&self, target: &BackupTarget) -> Result<BackupResult, BackupError> {
+    pub async fn run_backup(
+        &self,
+        target: &BackupTarget,
+        log_tx: Option<mpsc::Sender<String>>,
+    ) -> Result<BackupResult, BackupError> {
         let start = Instant::now();
         let target_name = &target.target_name;
 
@@ -171,7 +175,7 @@ impl BackupEngine {
         let exclude_file = Self::write_exclude_file(&target.exclude_patterns)?;
 
         let create_result = self
-            .run_borg_create(target, &target.backup_sources, exclude_file.path())
+            .run_borg_create(target, &target.backup_sources, exclude_file.path(), log_tx)
             .await?;
 
         self.run_borg_prune(target).await?;
@@ -281,6 +285,7 @@ impl BackupEngine {
         target: &BackupTarget,
         backup_sources: &[String],
         exclude_file: &Path,
+        log_tx: Option<mpsc::Sender<String>>,
     ) -> Result<CreateResult, BackupError> {
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%S");
         let archive_name = format!("{hostname}-{now}", hostname = target.hostname);
@@ -292,7 +297,11 @@ impl BackupEngine {
 
         info!("Running borg create for archive {archive_name}");
 
-        let output = self.borg.run(&args, &env_vars).await?;
+        let output = if let Some(tx) = log_tx {
+            self.borg.run_with_log_channel(&args, &env_vars, tx).await?
+        } else {
+            self.borg.run(&args, &env_vars).await?
+        };
 
         let exit_code = output.status.code().unwrap_or(-1);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -996,7 +1005,7 @@ mod tests {
         let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
         let target = test_target();
 
-        let result = engine.run_backup(&target).await.unwrap();
+        let result = engine.run_backup(&target, None).await.unwrap();
 
         assert_eq!(result.status, BackupStatus::Success);
         assert_eq!(result.original_size, 1_073_741_824);
@@ -1016,7 +1025,7 @@ mod tests {
         );
         let target = test_target();
 
-        let result = engine.run_backup(&target).await.unwrap();
+        let result = engine.run_backup(&target, None).await.unwrap();
 
         assert_eq!(result.status, BackupStatus::Warning);
         assert!(result.error_message.is_some());
@@ -1040,7 +1049,7 @@ mod tests {
         );
         let target = test_target();
 
-        let result = engine.run_backup(&target).await;
+        let result = engine.run_backup(&target, None).await;
         assert!(result.is_err());
 
         let err = result.unwrap_err();
@@ -1056,7 +1065,7 @@ mod tests {
         let mut target = test_target();
         target.pre_backup_commands = vec!["true".to_owned()];
 
-        let result = engine.run_backup(&target).await.unwrap();
+        let result = engine.run_backup(&target, None).await.unwrap();
         assert_eq!(result.status, BackupStatus::Success);
     }
 
@@ -1066,7 +1075,7 @@ mod tests {
         let mut target = test_target();
         target.pre_backup_commands = vec!["false".to_owned()];
 
-        let result = engine.run_backup(&target).await;
+        let result = engine.run_backup(&target, None).await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), BackupError::BorgFailed(_)));
     }
@@ -1077,7 +1086,7 @@ mod tests {
         let mut target = test_target();
         target.pre_backup_commands = vec!["echo 'connection refused' >&2 && exit 1".to_owned()];
 
-        let result = engine.run_backup(&target).await;
+        let result = engine.run_backup(&target, None).await;
         let err = result.unwrap_err();
         let BackupError::BorgFailed(msg) = err else {
             panic!("expected BorgFailed, got {err:?}");
@@ -1094,7 +1103,7 @@ mod tests {
         let mut target = test_target();
         target.skip_targets = vec![target.target_name.clone()];
 
-        let result = engine.run_backup(&target).await;
+        let result = engine.run_backup(&target, None).await;
         assert!(matches!(result.unwrap_err(), BackupError::Skipped(_)));
     }
 
@@ -1251,7 +1260,7 @@ mod tests {
         );
         let target = test_target();
 
-        let result = engine.run_backup(&target).await;
+        let result = engine.run_backup(&target, None).await;
         let err = result.unwrap_err();
         let BackupError::BorgFailed(msg) = err else {
             panic!("expected BorgFailed, got {err:?}");
@@ -1283,7 +1292,7 @@ mod tests {
         target.keep_monthly = 0;
         target.keep_yearly = 0;
 
-        let result = engine.run_backup(&target).await.unwrap();
+        let result = engine.run_backup(&target, None).await.unwrap();
         assert_eq!(result.status, BackupStatus::Success);
 
         let log = std::fs::read_to_string(log_file.path()).unwrap();
@@ -1311,7 +1320,7 @@ mod tests {
         target.keep_monthly = 3;
         target.keep_yearly = 0;
 
-        let result = engine.run_backup(&target).await.unwrap();
+        let result = engine.run_backup(&target, None).await.unwrap();
         assert_eq!(result.status, BackupStatus::Success);
 
         let log = std::fs::read_to_string(log_file.path()).unwrap();

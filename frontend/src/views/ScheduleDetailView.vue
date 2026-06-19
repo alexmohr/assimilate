@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiClient } from '../api/client'
 import { formatDateShort, formatDuration, formatBytes } from '../utils/format'
@@ -132,6 +132,14 @@ const perHostExcludes = ref<Record<number, string>>({})
 
 const showAgentDropdown = ref(false)
 const agentDropdownRef = ref<HTMLElement | null>(null)
+
+interface LiveLogLine {
+  hostname: string
+  text: string
+}
+const liveLogLines = ref<LiveLogLine[]>([])
+const liveLogEl = ref<HTMLElement | null>(null)
+const MAX_LIVE_LOG_LINES = 500
 
 type TabId = 'settings' | 'advanced' | 'logs'
 const activeTab = computed<TabId>({
@@ -476,9 +484,32 @@ interface BackupPayload {
   target_name: string
 }
 
+interface BackupLogPayload {
+  hostname: string
+  schedule_id: number | null
+  repo_id: number
+  line: string
+}
+
+function formatBorgLine(raw: string): string | null {
+  try {
+    const obj = JSON.parse(raw) as Record<string, unknown>
+    if (obj['type'] === 'log_message') {
+      const level = (obj['levelname'] as string | undefined) ?? 'INFO'
+      const message = (obj['message'] as string | undefined) ?? ''
+      if (!message) return null
+      return `[${level}] ${message}`
+    }
+    return null
+  } catch {
+    return raw || null
+  }
+}
+
 onMessage<BackupPayload>('BackupStarted', (payload) => {
   if (repo.value && payload.target_name === repo.value.name) {
     backupRunning.value = true
+    liveLogLines.value = []
   }
 })
 
@@ -486,6 +517,21 @@ onMessage<BackupPayload>('BackupCompleted', (payload) => {
   if (repo.value && payload.target_name === repo.value.name) {
     backupRunning.value = false
   }
+})
+
+onMessage<BackupLogPayload>('BackupLog', (payload) => {
+  if (selectedRepoId.value == null || payload.repo_id !== selectedRepoId.value) return
+  const text = formatBorgLine(payload.line)
+  if (text == null) return
+  liveLogLines.value.push({ hostname: payload.hostname, text })
+  if (liveLogLines.value.length > MAX_LIVE_LOG_LINES) {
+    liveLogLines.value = liveLogLines.value.slice(-MAX_LIVE_LOG_LINES)
+  }
+  nextTick(() => {
+    if (liveLogEl.value) {
+      liveLogEl.value.scrollTop = liveLogEl.value.scrollHeight
+    }
+  }).catch(() => undefined)
 })
 
 onMessage<{ repo_id: number }>('DataChanged', () => {
@@ -566,6 +612,45 @@ watch(activeTab, (tab) => {
       class="error-banner"
     >
       {{ error }}
+    </div>
+
+    <div
+      v-if="!isCreate && (backupRunning || liveLogLines.length > 0)"
+      class="live-log-card"
+    >
+      <div class="live-log-header">
+        <span class="live-log-title">Live Output</span>
+        <span
+          v-if="backupRunning"
+          class="live-log-pulse"
+        />
+        <button
+          v-if="liveLogLines.length > 0"
+          class="live-log-clear"
+          @click="liveLogLines = []"
+        >
+          Clear
+        </button>
+      </div>
+      <div
+        ref="liveLogEl"
+        class="live-log-body"
+      >
+        <div
+          v-if="liveLogLines.length === 0"
+          class="live-log-empty"
+        >
+          Waiting for output&hellip;
+        </div>
+        <div
+          v-for="(entry, idx) in liveLogLines"
+          :key="idx"
+          class="live-log-line"
+        >
+          <span class="live-log-host">{{ entry.hostname }}</span>
+          <span class="live-log-text">{{ entry.text }}</span>
+        </div>
+      </div>
     </div>
 
     <BaseSpinner
@@ -2103,5 +2188,108 @@ watch(activeTab, (tab) => {
 
 .btn-danger:hover:not(:disabled) {
   background: var(--danger-hover, color-mix(in srgb, var(--danger) 85%, #000));
+}
+
+.live-log-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 1rem;
+  overflow: hidden;
+}
+
+.live-log-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-base);
+}
+
+.live-log-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.live-log-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.live-log-clear {
+  margin-left: auto;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition:
+    color 0.1s,
+    background 0.1s;
+}
+
+.live-log-clear:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.live-log-body {
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 0.5rem 0;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.live-log-empty {
+  padding: 0.5rem 1rem;
+  color: var(--text-muted);
+  font-style: italic;
+  font-family: inherit;
+}
+
+.live-log-line {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.05rem 1rem;
+}
+
+.live-log-line:hover {
+  background: var(--bg-hover);
+}
+
+.live-log-host {
+  color: var(--accent);
+  flex-shrink: 0;
+  min-width: 8rem;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-log-text {
+  color: var(--text-secondary);
+  word-break: break-all;
 }
 </style>

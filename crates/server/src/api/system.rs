@@ -5,7 +5,10 @@ use std::path::PathBuf;
 
 use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
-use shared::{protocol::{ServerToAgent, ServerToUi}, types::RepoId};
+use shared::{
+    protocol::{ServerToAgent, ServerToUi},
+    types::RepoId,
+};
 use ssh_key::{Algorithm, LineEnding, rand_core::OsRng};
 
 use super::deploy::{agent_binary_dir, query_available_agent_version};

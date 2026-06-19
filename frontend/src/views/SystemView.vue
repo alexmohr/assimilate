@@ -594,8 +594,8 @@ async function resetSystem(): Promise<void> {
         <div class="danger-action-info">
           <div class="danger-action-name">Cancel All Running Backups</div>
           <div class="danger-action-desc">
-            Cancels all running and pending backup operations and notifies connected agents to
-            abort immediately. Schedules are left unchanged.
+            Cancels all running and pending backup operations and notifies connected agents to abort
+            immediately. Schedules are left unchanged.
           </div>
         </div>
         <button

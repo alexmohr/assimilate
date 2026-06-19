@@ -306,7 +306,6 @@ pub async fn get_version(_admin: RequireAdmin) -> Result<Json<VersionResponse>, 
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct SystemResetResponse {
     pub cancelled_backups: u64,
-    pub disabled_schedules: u64,
     pub notified_agents: usize,
 }
 
@@ -315,7 +314,7 @@ pub struct SystemResetResponse {
     path = "/api/system/reset",
     tag = "System",
     operation_id = "resetSystem",
-    summary = "Cancel all running backups and disable all schedules",
+    summary = "Cancel all running and pending backups on all agents",
     responses(
         (status = 200, description = "Reset complete", body = SystemResetResponse),
         (status = 401, description = "Unauthorized"),
@@ -347,18 +346,15 @@ pub async fn reset_system(
     }
 
     let cancelled_backups = db::cancel_all_active_backups(&state.pool).await?;
-    let disabled_schedules = db::disable_all_schedules(&state.pool).await?;
 
     tracing::info!(
         cancelled_backups,
-        disabled_schedules,
         notified_agents,
         "system reset performed by admin"
     );
 
     Ok(Json(SystemResetResponse {
         cancelled_backups,
-        disabled_schedules,
         notified_agents,
     }))
 }

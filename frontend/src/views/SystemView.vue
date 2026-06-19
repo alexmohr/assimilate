@@ -219,7 +219,6 @@ async function saveSettings(): Promise<void> {
 
 interface SystemResetResponse {
   cancelled_backups: number
-  disabled_schedules: number
   notified_agents: number
 }
 
@@ -593,10 +592,10 @@ async function resetSystem(): Promise<void> {
 
       <div class="danger-action">
         <div class="danger-action-info">
-          <div class="danger-action-name">Reset System State</div>
+          <div class="danger-action-name">Cancel All Running Backups</div>
           <div class="danger-action-desc">
-            Cancels all running and pending backups, notifies connected agents to abort, and
-            disables all schedules.
+            Cancels all running and pending backup operations and notifies connected agents to
+            abort immediately. Schedules are left unchanged.
           </div>
         </div>
         <button
@@ -612,7 +611,6 @@ async function resetSystem(): Promise<void> {
         class="reset-result"
       >
         <span>Cancelled backups: {{ resetResult.cancelled_backups }}</span>
-        <span>Disabled schedules: {{ resetResult.disabled_schedules }}</span>
         <span>Agents notified: {{ resetResult.notified_agents }}</span>
       </div>
     </div>
@@ -688,13 +686,10 @@ async function resetSystem(): Promise<void> {
           <div class="dialog-body">
             <p class="warning-text">This will immediately:</p>
             <ul class="reset-list">
-              <li>Cancel all running and pending backup operations</li>
-              <li>Send abort signals to all connected agents</li>
-              <li>Disable all schedules (re-enable manually after recovery)</li>
+              <li>Cancel all running and pending backup operations in the database</li>
+              <li>Send abort signals to all currently connected agents</li>
             </ul>
-            <p class="warning-text warning-bold">
-              Schedules will not run again until you re-enable them individually.
-            </p>
+            <p class="warning-text warning-bold">Schedules are left unchanged.</p>
             <div
               v-if="resetError"
               class="form-error"

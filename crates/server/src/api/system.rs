@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
-use shared::{protocol::ServerToAgent, types::RepoId};
+use shared::{protocol::{ServerToAgent, ServerToUi}, types::RepoId};
 use ssh_key::{Algorithm, LineEnding, rand_core::OsRng};
 
 use super::deploy::{agent_binary_dir, query_available_agent_version};
@@ -346,6 +346,21 @@ pub async fn reset_system(
     }
 
     let cancelled_backups = db::cancel_all_active_backups(&state.pool).await?;
+
+    // Force-clear the in-memory op tracker so the UI stops showing stuck
+    // spinners, then broadcast the idle state for every affected repo.
+    let cleared_repos = state.repo_op_tracker.clear_all().await;
+    for repo_id in cleared_repos {
+        state
+            .ui_broadcast
+            .send(ServerToUi::RepoOpChanged { repo_id, op: None });
+    }
+
+    // Replace the per-repo lock map with a clean slate. Tasks that are stuck
+    // waiting inside a borg operation continue to hold their old OwnedMutexGuard
+    // (which is now orphaned), but any new acquire() call gets a fresh mutex,
+    // so new schedule runs are no longer blocked by the stuck tasks.
+    state.repo_lock.force_reset().await;
 
     tracing::info!(
         cancelled_backups,

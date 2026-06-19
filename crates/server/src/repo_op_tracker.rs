@@ -108,6 +108,16 @@ impl RepoOpTracker {
         map.retain(|_, state| state.active.is_some() || state.queued > 0);
         cleared
     }
+
+    /// Forcibly clear all tracked operations and return the affected repo IDs
+    /// so callers can broadcast UI updates. Used by the emergency system reset
+    /// to unstick repos whose agents will never send a completion signal.
+    pub async fn clear_all(&self) -> Vec<i64> {
+        let mut map = self.state.write().await;
+        let repo_ids: Vec<i64> = map.keys().copied().collect();
+        map.clear();
+        repo_ids
+    }
 }
 
 #[cfg(test)]

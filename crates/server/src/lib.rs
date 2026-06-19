@@ -48,6 +48,14 @@ impl RepoLock {
         };
         mutex.lock_owned().await
     }
+
+    /// Drop all per-repo mutex entries so subsequent `acquire` calls get fresh,
+    /// unlocked mutexes. Stuck tasks that hold an `OwnedMutexGuard` from before
+    /// this call continue to own their (now orphaned) guard; they cannot block
+    /// any new operations because new callers will receive a different `Arc`.
+    pub async fn force_reset(&self) {
+        self.locks.lock().await.clear();
+    }
 }
 
 pub type PendingDryRuns =

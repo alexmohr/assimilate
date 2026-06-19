@@ -216,6 +216,32 @@ async function saveSettings(): Promise<void> {
     settingsSaving.value = false
   }
 }
+
+interface SystemResetResponse {
+  cancelled_backups: number
+  disabled_schedules: number
+  notified_agents: number
+}
+
+const showResetConfirm = ref(false)
+const resetting = ref(false)
+const resetError = ref('')
+const resetResult = ref<SystemResetResponse | null>(null)
+
+async function resetSystem(): Promise<void> {
+  resetting.value = true
+  resetError.value = ''
+  resetResult.value = null
+  try {
+    const res = await apiClient.post<SystemResetResponse>('/system/reset')
+    resetResult.value = res.data
+    showResetConfirm.value = false
+  } catch (e: unknown) {
+    resetError.value = extractError(e, 'Reset failed')
+  } finally {
+    resetting.value = false
+  }
+}
 </script>
 
 <template>
@@ -556,6 +582,41 @@ async function saveSettings(): Promise<void> {
       </div>
     </div>
 
+    <div class="info-card danger-zone-card">
+      <div class="card-header">
+        <h3 class="info-title danger-title">Danger Zone</h3>
+      </div>
+      <p class="info-description">
+        Emergency actions to bring the system back to a safe state. Use when backups are stuck or
+        the system is in an inconsistent state.
+      </p>
+
+      <div class="danger-action">
+        <div class="danger-action-info">
+          <div class="danger-action-name">Reset System State</div>
+          <div class="danger-action-desc">
+            Cancels all running and pending backups, notifies connected agents to abort, and
+            disables all schedules.
+          </div>
+        </div>
+        <button
+          class="btn btn-sm btn-danger"
+          @click="showResetConfirm = true"
+        >
+          Reset
+        </button>
+      </div>
+
+      <div
+        v-if="resetResult"
+        class="reset-result"
+      >
+        <span>Cancelled backups: {{ resetResult.cancelled_backups }}</span>
+        <span>Disabled schedules: {{ resetResult.disabled_schedules }}</span>
+        <span>Agents notified: {{ resetResult.notified_agents }}</span>
+      </div>
+    </div>
+
     <!-- Regenerate Confirmation -->
     <Teleport to="body">
       <div
@@ -601,6 +662,59 @@ async function saveSettings(): Promise<void> {
               @click="regenerateKey"
             >
               {{ regenerating ? 'Regenerating...' : 'Regenerate Key' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Reset Confirmation -->
+    <Teleport to="body">
+      <div
+        v-if="showResetConfirm"
+        class="overlay"
+        @click.self="showResetConfirm = false"
+      >
+        <div class="dialog">
+          <div class="dialog-header">
+            <h2 class="dialog-title">Reset System State</h2>
+            <button
+              class="close-btn"
+              @click="showResetConfirm = false"
+            >
+              &times;
+            </button>
+          </div>
+          <div class="dialog-body">
+            <p class="warning-text">This will immediately:</p>
+            <ul class="reset-list">
+              <li>Cancel all running and pending backup operations</li>
+              <li>Send abort signals to all connected agents</li>
+              <li>Disable all schedules (re-enable manually after recovery)</li>
+            </ul>
+            <p class="warning-text warning-bold">
+              Schedules will not run again until you re-enable them individually.
+            </p>
+            <div
+              v-if="resetError"
+              class="form-error"
+            >
+              {{ resetError }}
+            </div>
+          </div>
+          <div class="dialog-footer">
+            <button
+              class="btn btn-ghost"
+              @click="showResetConfirm = false"
+            >
+              Cancel
+            </button>
+            <button
+              class="btn btn-danger"
+              :disabled="resetting"
+              @click="resetSystem"
+            >
+              {{ resetting ? 'Resetting...' : 'Reset System' }}
             </button>
           </div>
         </div>
@@ -933,5 +1047,61 @@ async function saveSettings(): Promise<void> {
   padding-left: 1.25rem;
   color: var(--warning, #e6a817);
   font-size: 0.8125rem;
+}
+
+.danger-zone-card {
+  border-color: var(--danger, #dc2626);
+}
+
+.danger-title {
+  color: var(--danger, #dc2626);
+}
+
+.danger-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.danger-action-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.danger-action-name {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.danger-action-desc {
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.reset-result {
+  display: flex;
+  gap: 1.25rem;
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+
+.reset-list {
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+
+  & li {
+    margin-bottom: 0.25rem;
+  }
 }
 </style>

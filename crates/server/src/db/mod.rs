@@ -2102,6 +2102,25 @@ pub async fn cancel_backup_report(
     Ok(())
 }
 
+pub async fn cancel_all_active_backups(pool: &PgPool) -> Result<u64, ApiError> {
+    let result = sqlx::query(
+        "UPDATE backup_reports SET status = 'cancelled', finished_at = NOW() WHERE status IN \
+         ('pending', 'started')",
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(result.rows_affected())
+}
+
+pub async fn disable_all_schedules(pool: &PgPool) -> Result<u64, ApiError> {
+    let result = sqlx::query("UPDATE schedules SET enabled = false WHERE enabled = true")
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(result.rows_affected())
+}
+
 pub async fn insert_backup_report(
     pool: &PgPool,
     params: &InsertReportParams,

@@ -373,6 +373,7 @@ async fn main() -> Result<(), StartupError> {
             get(api::system::get_database_storage),
         )
         .route("/api/system/version", get(api::system::get_version))
+        .route("/api/system/reset", post(api::system::reset_system))
         .route("/api/ssh/test-connection", post(api::ssh::test_connection))
         .route("/api/ssh/deploy-key", post(api::ssh::deploy_key))
         .route("/api/ssh/list-dir", post(api::ssh::list_dir))

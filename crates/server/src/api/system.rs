@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
+use shared::{protocol::ServerToAgent, types::RepoId};
 use ssh_key::{Algorithm, LineEnding, rand_core::OsRng};
 
 use super::deploy::{agent_binary_dir, query_available_agent_version};
@@ -299,5 +300,65 @@ pub async fn get_version(_admin: RequireAdmin) -> Result<Json<VersionResponse>, 
         build_timestamp: build_timestamp.to_owned(),
         server_commit_count,
         agent_version,
+    }))
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct SystemResetResponse {
+    pub cancelled_backups: u64,
+    pub disabled_schedules: u64,
+    pub notified_agents: usize,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/system/reset",
+    tag = "System",
+    operation_id = "resetSystem",
+    summary = "Cancel all running backups and disable all schedules",
+    responses(
+        (status = 200, description = "Reset complete", body = SystemResetResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden -- admin only"),
+    )
+)]
+pub async fn reset_system(
+    _admin: RequireAdmin,
+    State(state): State<AppState>,
+) -> Result<Json<SystemResetResponse>, ApiError> {
+    let repos = db::list_all_repos(&state.pool).await?;
+    let agents = state.registry.connected_agents().await;
+    let notified_agents = agents.len();
+
+    for hostname in &agents {
+        for repo in &repos {
+            let msg = ServerToAgent::CancelBackup {
+                repo_id: RepoId(repo.id),
+            };
+            if let Err(e) = state.registry.send_to(hostname, msg).await {
+                tracing::warn!(
+                    hostname = %hostname,
+                    repo_id = repo.id,
+                    error = %e,
+                    "failed to send CancelBackup during system reset"
+                );
+            }
+        }
+    }
+
+    let cancelled_backups = db::cancel_all_active_backups(&state.pool).await?;
+    let disabled_schedules = db::disable_all_schedules(&state.pool).await?;
+
+    tracing::info!(
+        cancelled_backups,
+        disabled_schedules,
+        notified_agents,
+        "system reset performed by admin"
+    );
+
+    Ok(Json(SystemResetResponse {
+        cancelled_backups,
+        disabled_schedules,
+        notified_agents,
     }))
 }

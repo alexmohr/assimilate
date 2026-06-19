@@ -451,6 +451,7 @@ async function loadReports(): Promise<void> {
       params: { limit: 100 },
     })
     reports.value = res.data
+    backupRunning.value = res.data.some((r) => r.status === 'pending' || r.status === 'started')
   } catch (e: unknown) {
     reportsError.value = extractError(e, 'Failed to load reports')
   } finally {
@@ -488,7 +489,7 @@ onMessage<BackupPayload>('BackupCompleted', (payload) => {
 })
 
 onMessage<{ repo_id: number }>('DataChanged', () => {
-  if (activeTab.value === 'logs' && !isCreate.value) {
+  if (!isCreate.value) {
     loadReports().catch(() => undefined)
   }
 })

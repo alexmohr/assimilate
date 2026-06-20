@@ -140,6 +140,7 @@ interface ArchiveProgressData {
   currentPath: string
 }
 const archiveProgress = ref<ArchiveProgressData | null>(null)
+const backupHostname = ref<string | null>(null)
 const backupStartedAt = ref<number | null>(null)
 const backupElapsedSecs = ref(0)
 let elapsedTimer: ReturnType<typeof setInterval> | null = null
@@ -530,6 +531,7 @@ function parseArchiveProgress(raw: string): BorgArchiveProgress | null {
 onMessage<BackupPayload>('BackupStarted', (payload) => {
   if (repo.value && payload.target_name === repo.value.name) {
     backupRunning.value = true
+    backupHostname.value = payload.hostname
     archiveProgress.value = null
     backupStartedAt.value = Date.now()
     backupElapsedSecs.value = 0
@@ -545,6 +547,7 @@ onMessage<BackupPayload>('BackupStarted', (payload) => {
 onMessage<BackupPayload>('BackupCompleted', (payload) => {
   if (repo.value && payload.target_name === repo.value.name) {
     backupRunning.value = false
+    backupHostname.value = null
     if (elapsedTimer !== null) {
       clearInterval(elapsedTimer)
       elapsedTimer = null
@@ -652,9 +655,9 @@ watch(activeTab, (tab) => {
         <span class="live-log-pulse" />
         <span class="live-log-title">Backup in progress</span>
         <span
-          v-if="archiveProgress"
+          v-if="backupHostname"
           class="live-log-host-badge"
-          >{{ archiveProgress.hostname }}</span
+          >{{ backupHostname }}</span
         >
       </div>
       <div class="progress-body">

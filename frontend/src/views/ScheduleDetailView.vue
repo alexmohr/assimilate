@@ -332,6 +332,7 @@ async function loadData(): Promise<void> {
       repos.value = reposRes.data
       scheduleTargets.value = targetsRes.data
       selectedRepoId.value = schedRes.data.repo_id ?? null
+      reports.value = recentReportsRes.data
       backupRunning.value = recentReportsRes.data.some(
         (r) => r.status === 'pending' || r.status === 'started',
       )

@@ -161,7 +161,7 @@ test.describe('backup progress card', () => {
 
     await expect(page.locator('.live-log-empty')).not.toBeVisible({ timeout: 3_000 })
     await expect(page.locator('.progress-body')).toContainText('24,567')
-    await expect(page.locator('.progress-body')).toContainText('2 GB')
+    await expect(page.locator('.progress-body')).toContainText('2.0 GB')
     await expect(page.locator('.progress-body')).toContainText('report.pdf')
   })
 

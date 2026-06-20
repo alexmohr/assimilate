@@ -4229,6 +4229,103 @@ async fn repo_relocation_pending_test(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn repo_relocation_per_host_single_agent(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    let _ = (agent, schedule);
+
+    db::set_relocation_pending(&pool, repo.id).await.unwrap();
+    let row = db::get_repo_with_passphrase(&pool, repo.id).await.unwrap();
+    assert!(row.relocation_pending);
+
+    // Confirming the single agent clears the repo-level flag.
+    db::clear_relocation_for_host(&pool, repo.id, "sched-host")
+        .await
+        .unwrap();
+    let row = db::get_repo_with_passphrase(&pool, repo.id).await.unwrap();
+    assert!(!row.relocation_pending);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_relocation_per_host_multi_agent(pool: PgPool) {
+    // Build a repo used by two agents via separate schedules.
+    let agent_a = db::insert_agent(&pool, "host-a", None, "hash-a", None)
+        .await
+        .unwrap();
+    let agent_b = db::insert_agent(&pool, "host-b", None, "hash-b", None)
+        .await
+        .unwrap();
+    let repo = db::insert_repo(
+        &pool,
+        &InsertRepoParams {
+            name: "multi-agent-repo",
+            repo_path: "/backups/multi",
+            ssh_user: "user",
+            ssh_host: "host.local",
+            ssh_port: 22,
+            passphrase_encrypted: b"enc",
+            compression: "none",
+            encryption: "none",
+            owner_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    let sched = db::insert_schedule(
+        &pool,
+        repo.id,
+        &ScheduleParams {
+            name: "multi-sched",
+            schedule_type: "backup",
+            cron_expression: "0 3 * * *",
+            enabled: true,
+            canary_enabled: false,
+            exclude_patterns_raw: "",
+            ignore_global_excludes: false,
+            keep_hourly: 24,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 1,
+            compact_enabled: true,
+            rate_limit_kbps: None,
+            pre_backup_commands: "",
+            post_backup_commands: "",
+            on_failure: "stop",
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    db::insert_schedule_targets(&pool, sched.id, &[(agent_a.id, 0), (agent_b.id, 1)])
+        .await
+        .unwrap();
+
+    db::set_relocation_pending(&pool, repo.id).await.unwrap();
+    let row = db::get_repo_with_passphrase(&pool, repo.id).await.unwrap();
+    assert!(row.relocation_pending);
+
+    // First agent confirms - flag must stay set while the second is still pending.
+    db::clear_relocation_for_host(&pool, repo.id, "host-a")
+        .await
+        .unwrap();
+    let row = db::get_repo_with_passphrase(&pool, repo.id).await.unwrap();
+    assert!(
+        row.relocation_pending,
+        "relocation_pending must remain true until all agents confirm"
+    );
+
+    // Second agent confirms - now the flag should be cleared.
+    db::clear_relocation_for_host(&pool, repo.id, "host-b")
+        .await
+        .unwrap();
+    let row = db::get_repo_with_passphrase(&pool, repo.id).await.unwrap();
+    assert!(
+        !row.relocation_pending,
+        "relocation_pending must be cleared once all agents have confirmed"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn repo_encryption_update(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
 
@@ -5241,4 +5338,91 @@ async fn dismissed_findings_are_per_user(pool: PgPool) {
 
     assert_eq!(a_ids.len(), 1);
     assert!(b_ids.is_empty());
+}
+
+/// `update_repo_and_set_relocation_pending` atomically updates the repo path AND sets
+/// `relocation_pending = true` AND registers all scheduled agents in the pending-hosts table.
+/// There is no observable intermediate state where the path is updated but the flag is false.
+/// This eliminates the race window that caused the first agent in a sequential schedule to
+/// fail with borg exit code 2.
+#[sqlx::test(migrations = "./migrations")]
+async fn update_repo_and_set_relocation_pending_is_atomic(pool: PgPool) {
+    let (agent, repo, _schedule) = create_test_schedule(&pool).await;
+
+    let row = db::get_repo_with_passphrase(&pool, repo.id).await.unwrap();
+    assert!(!row.relocation_pending, "flag must start false");
+
+    let updated = db::update_repo_and_set_relocation_pending(
+        &pool,
+        &UpdateRepoParams {
+            repo_id: repo.id,
+            name: "sched-repo",
+            repo_path: "/backups/relocated",
+            ssh_user: "user",
+            ssh_host: "new-host.local",
+            ssh_port: 22,
+            compression: "none",
+            encryption: "none",
+            enabled: true,
+            sync_schedule: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(updated.repo_path, "/backups/relocated");
+    assert_eq!(updated.ssh_host, "new-host.local");
+
+    let row = db::get_repo_with_passphrase(&pool, repo.id).await.unwrap();
+    assert!(
+        row.relocation_pending,
+        "relocation_pending must be true after atomic update"
+    );
+
+    // The scheduled agent must appear in the pending-hosts table.
+    let count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM repo_relocation_pending_hosts WHERE repo_id = $1 AND hostname = $2",
+    )
+    .bind(repo.id)
+    .bind(&agent.hostname)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count.0, 1,
+        "the scheduled agent must be registered as pending"
+    );
+}
+
+/// `clear_relocation_for_host` must NOT clear `relocation_pending` when the given hostname
+/// was never registered in `repo_relocation_pending_hosts`. This guards against a spurious
+/// flag clear when an unregistered host (e.g. added after `set_relocation_pending`) finishes.
+#[sqlx::test(migrations = "./migrations")]
+async fn clear_relocation_for_host_ignores_unregistered_host(pool: PgPool) {
+    let (_agent, repo, _schedule) = create_test_schedule(&pool).await;
+
+    // Set relocation pending - this registers "sched-host" in the pending table.
+    db::set_relocation_pending(&pool, repo.id).await.unwrap();
+    let row = db::get_repo_with_passphrase(&pool, repo.id).await.unwrap();
+    assert!(row.relocation_pending);
+
+    // A different host that was NOT registered calls clear - must be a no-op.
+    db::clear_relocation_for_host(&pool, repo.id, "unknown-host")
+        .await
+        .unwrap();
+
+    let row = db::get_repo_with_passphrase(&pool, repo.id).await.unwrap();
+    assert!(
+        row.relocation_pending,
+        "relocation_pending must stay true when an unregistered host reports completion"
+    );
+
+    // The original registered host still remains in the pending table.
+    let count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM repo_relocation_pending_hosts WHERE repo_id = $1")
+            .bind(repo.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count.0, 1, "pending table must be unchanged");
 }

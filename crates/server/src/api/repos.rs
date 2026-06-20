@@ -327,26 +327,24 @@ pub async fn update_repo(
     let name = req.name.unwrap_or(existing.name);
     let ssh_port = req.ssh_port.unwrap_or(22);
 
-    let repo = db::update_repo(
-        &state.pool,
-        &UpdateRepoParams {
-            repo_id,
-            name: &name,
-            repo_path: &req.repo_path,
-            ssh_user: &req.ssh_user,
-            ssh_host: &req.ssh_host,
-            ssh_port,
-            compression: &compression,
-            encryption: &encryption,
-            enabled: req.enabled.unwrap_or(true),
-            sync_schedule: sync_schedule.as_deref(),
-        },
-    )
-    .await?;
+    let update_params = UpdateRepoParams {
+        repo_id,
+        name: &name,
+        repo_path: &req.repo_path,
+        ssh_user: &req.ssh_user,
+        ssh_host: &req.ssh_host,
+        ssh_port,
+        compression: &compression,
+        encryption: &encryption,
+        enabled: req.enabled.unwrap_or(true),
+        sync_schedule: sync_schedule.as_deref(),
+    };
 
-    if location_changed {
-        db::set_relocation_pending(&state.pool, repo_id).await?;
-    }
+    let repo = if location_changed {
+        db::update_repo_and_set_relocation_pending(&state.pool, &update_params).await?
+    } else {
+        db::update_repo(&state.pool, &update_params).await?
+    };
 
     Ok(Json(repo))
 }

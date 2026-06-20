@@ -811,20 +811,79 @@ pub async fn update_repo_info_stats(
 }
 
 pub async fn clear_relocation_pending(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
-    sqlx::query("UPDATE repos SET relocation_pending = false WHERE id = $1")
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+    sqlx::query("DELETE FROM repo_relocation_pending_hosts WHERE repo_id = $1")
         .bind(repo_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(ApiError::Database)?;
+    sqlx::query("UPDATE repos SET relocation_pending = false WHERE id = $1")
+        .bind(repo_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
+    tx.commit().await.map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// Remove `hostname` from the pending-hosts set for this repo. Clears `relocation_pending`
+/// on the repo itself once every registered host has confirmed the new location.
+///
+/// Only clears the flag when this host's entry was actually present (rows_affected > 0) AND
+/// no other hosts remain pending. This prevents spurious clears when a host that was never
+/// registered in the pending table completes a backup.
+pub async fn clear_relocation_for_host(
+    pool: &PgPool,
+    repo_id: i64,
+    hostname: &str,
+) -> Result<(), ApiError> {
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+    let deleted = sqlx::query(
+        "DELETE FROM repo_relocation_pending_hosts WHERE repo_id = $1 AND hostname = $2",
+    )
+    .bind(repo_id)
+    .bind(hostname)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+
+    if deleted.rows_affected() > 0 {
+        let remaining: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM repo_relocation_pending_hosts WHERE repo_id = $1")
+                .bind(repo_id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(ApiError::Database)?;
+
+        if remaining.0 == 0 {
+            sqlx::query("UPDATE repos SET relocation_pending = false WHERE id = $1")
+                .bind(repo_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(ApiError::Database)?;
+        }
+    }
+    tx.commit().await.map_err(ApiError::Database)?;
     Ok(())
 }
 
 pub async fn set_relocation_pending(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
     sqlx::query("UPDATE repos SET relocation_pending = true WHERE id = $1")
         .bind(repo_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(ApiError::Database)?;
+    sqlx::query(
+        "INSERT INTO repo_relocation_pending_hosts (repo_id, hostname) SELECT $1, a.hostname FROM \
+         agents a JOIN schedule_targets st ON st.agent_id = a.id JOIN schedules s ON s.id = \
+         st.schedule_id WHERE s.repo_id = $1 ON CONFLICT DO NOTHING",
+    )
+    .bind(repo_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+    tx.commit().await.map_err(ApiError::Database)?;
     Ok(())
 }
 
@@ -910,6 +969,55 @@ pub async fn update_repo(
         }
         other => ApiError::Database(other),
     })
+}
+
+/// Like [`update_repo`] but atomically sets `relocation_pending = true` and registers all
+/// currently-scheduled agents as pending confirmation in the same transaction. Use this when
+/// the repository location (host, port, or path) has changed so the scheduler never observes
+/// the new path with the flag still `false`.
+pub async fn update_repo_and_set_relocation_pending(
+    pool: &PgPool,
+    params: &UpdateRepoParams<'_>,
+) -> Result<RepoRow, ApiError> {
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+
+    let repo = sqlx::query_as::<_, RepoRow>(
+        "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = $6, \
+         compression = $7, encryption = $8, enabled = $9, sync_schedule = $10, relocation_pending \
+         = true WHERE id = $1 RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, \
+         compression, encryption, enabled, owner_id, visibility, sync_schedule, last_synced_at",
+    )
+    .bind(params.repo_id)
+    .bind(params.name)
+    .bind(params.repo_path)
+    .bind(params.ssh_user)
+    .bind(params.ssh_host)
+    .bind(params.ssh_port)
+    .bind(params.compression)
+    .bind(params.encryption)
+    .bind(params.enabled)
+    .bind(params.sync_schedule)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| match e {
+        sqlx::Error::RowNotFound => {
+            ApiError::NotFound(format!("repo {} not found", params.repo_id))
+        }
+        other => ApiError::Database(other),
+    })?;
+
+    sqlx::query(
+        "INSERT INTO repo_relocation_pending_hosts (repo_id, hostname) SELECT $1, a.hostname FROM \
+         agents a JOIN schedule_targets st ON st.agent_id = a.id JOIN schedules s ON s.id = \
+         st.schedule_id WHERE s.repo_id = $1 ON CONFLICT DO NOTHING",
+    )
+    .bind(params.repo_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+
+    tx.commit().await.map_err(ApiError::Database)?;
+    Ok(repo)
 }
 
 pub async fn delete_repo(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {

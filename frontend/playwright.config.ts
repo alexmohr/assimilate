@@ -14,6 +14,7 @@ export default defineConfig({
   use: {
     baseURL: process.env.E2E_BASE_URL || 'http://localhost:4173',
     trace: 'on-first-retry',
+    navigationTimeout: process.env.CI ? 120_000 : 30_000,
   },
   projects: [
     {

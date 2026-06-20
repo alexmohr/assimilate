@@ -5,6 +5,14 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test as base, expect, type Page } from '@playwright/test'
 
+export async function loginAsAdmin(page: Page): Promise<void> {
+  await page.goto('/login')
+  await page.locator('input[type="text"], input[name="username"]').fill('admin')
+  await page.locator('input[type="password"]').fill('admin')
+  await page.locator('button[type="submit"]').click()
+  await page.waitForURL((url) => !new URL(url).pathname.startsWith('/login'))
+}
+
 // Wraps the built-in `page` fixture to collect Istanbul coverage after each
 // test when VITE_COVERAGE=true. The browser accumulates `window.__coverage__`
 // throughout the test; we read it out just before Playwright closes the page

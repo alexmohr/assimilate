@@ -133,6 +133,31 @@ const perHostExcludes = ref<Record<number, string>>({})
 const showAgentDropdown = ref(false)
 const agentDropdownRef = ref<HTMLElement | null>(null)
 
+interface ArchiveProgressData {
+  hostname: string
+  nfiles: number
+  originalSize: number
+  currentPath: string
+}
+const archiveProgress = ref<ArchiveProgressData | null>(null)
+const backupHostname = ref<string | null>(null)
+const backupStartedAt = ref<number | null>(null)
+const backupElapsedSecs = ref(0)
+let elapsedTimer: ReturnType<typeof setInterval> | null = null
+
+const lastSuccessfulReport = computed<ReportRow | null>(
+  () => reports.value.find((r) => r.status === 'success' || r.status === 'warning') ?? null,
+)
+
+const estimatedRemainingSecs = computed<number | null>(() => {
+  const ref = lastSuccessfulReport.value
+  if (!ref || !archiveProgress.value || ref.original_size === 0) return null
+  const fraction = archiveProgress.value.originalSize / ref.original_size
+  if (fraction <= 0) return null
+  const estimatedTotal = backupElapsedSecs.value / fraction
+  return Math.max(0, Math.round(estimatedTotal - backupElapsedSecs.value))
+})
+
 type TabId = 'settings' | 'advanced' | 'logs'
 const activeTab = computed<TabId>({
   get() {
@@ -232,6 +257,9 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
+  if (elapsedTimer !== null) {
+    clearInterval(elapsedTimer)
+  }
 })
 
 function populateForm(s: ScheduleRow): void {
@@ -304,6 +332,7 @@ async function loadData(): Promise<void> {
       repos.value = reposRes.data
       scheduleTargets.value = targetsRes.data
       selectedRepoId.value = schedRes.data.repo_id ?? null
+      reports.value = recentReportsRes.data
       backupRunning.value = recentReportsRes.data.some(
         (r) => r.status === 'pending' || r.status === 'started',
       )
@@ -476,15 +505,66 @@ interface BackupPayload {
   target_name: string
 }
 
+interface BackupLogPayload {
+  hostname: string
+  schedule_id: number | null
+  repo_id: number
+  line: string
+}
+
+interface BorgArchiveProgress {
+  type: 'archive_progress'
+  nfiles: number
+  original_size: number
+  path: string
+}
+
+function parseArchiveProgress(raw: string): BorgArchiveProgress | null {
+  try {
+    const obj = JSON.parse(raw) as Record<string, unknown>
+    if (obj['type'] === 'archive_progress') return obj as unknown as BorgArchiveProgress
+    return null
+  } catch {
+    return null
+  }
+}
+
 onMessage<BackupPayload>('BackupStarted', (payload) => {
   if (repo.value && payload.target_name === repo.value.name) {
     backupRunning.value = true
+    backupHostname.value = payload.hostname
+    archiveProgress.value = null
+    backupStartedAt.value = Date.now()
+    backupElapsedSecs.value = 0
+    if (elapsedTimer !== null) clearInterval(elapsedTimer)
+    elapsedTimer = setInterval(() => {
+      if (backupStartedAt.value !== null) {
+        backupElapsedSecs.value = Math.floor((Date.now() - backupStartedAt.value) / 1000)
+      }
+    }, 1000)
   }
 })
 
 onMessage<BackupPayload>('BackupCompleted', (payload) => {
   if (repo.value && payload.target_name === repo.value.name) {
     backupRunning.value = false
+    backupHostname.value = null
+    if (elapsedTimer !== null) {
+      clearInterval(elapsedTimer)
+      elapsedTimer = null
+    }
+  }
+})
+
+onMessage<BackupLogPayload>('BackupLog', (payload) => {
+  if (selectedRepoId.value == null || payload.repo_id !== selectedRepoId.value) return
+  const progress = parseArchiveProgress(payload.line)
+  if (progress === null) return
+  archiveProgress.value = {
+    hostname: payload.hostname,
+    nfiles: progress.nfiles,
+    originalSize: progress.original_size,
+    currentPath: progress.path ?? '',
   }
 })
 
@@ -566,6 +646,57 @@ watch(activeTab, (tab) => {
       class="error-banner"
     >
       {{ error }}
+    </div>
+
+    <div
+      v-if="!isCreate && backupRunning"
+      class="live-log-card"
+    >
+      <div class="live-log-header">
+        <span class="live-log-pulse" />
+        <span class="live-log-title">Backup in progress</span>
+        <span
+          v-if="backupHostname"
+          class="live-log-host-badge"
+          >{{ backupHostname }}</span
+        >
+      </div>
+      <div class="progress-body">
+        <div
+          v-if="!archiveProgress"
+          class="live-log-empty"
+        >
+          Waiting for progress&hellip;
+        </div>
+        <template v-else>
+          <div class="progress-row">
+            <span class="progress-label">Elapsed</span>
+            <span class="progress-value">{{ formatDuration(backupElapsedSecs) }}</span>
+          </div>
+          <div
+            v-if="estimatedRemainingSecs !== null"
+            class="progress-row"
+          >
+            <span class="progress-label">Est. remaining</span>
+            <span class="progress-value">{{ formatDuration(estimatedRemainingSecs) }}</span>
+          </div>
+          <div class="progress-row">
+            <span class="progress-label">Files</span>
+            <span class="progress-value">{{ archiveProgress.nfiles.toLocaleString() }}</span>
+          </div>
+          <div class="progress-row">
+            <span class="progress-label">Data</span>
+            <span class="progress-value">{{ formatBytes(archiveProgress.originalSize) }}</span>
+          </div>
+          <div
+            v-if="archiveProgress.currentPath"
+            class="progress-row"
+          >
+            <span class="progress-label">Current file</span>
+            <span class="progress-value progress-path">{{ archiveProgress.currentPath }}</span>
+          </div>
+        </template>
+      </div>
     </div>
 
     <BaseSpinner
@@ -2103,5 +2234,92 @@ watch(activeTab, (tab) => {
 
 .btn-danger:hover:not(:disabled) {
   background: var(--danger-hover, color-mix(in srgb, var(--danger) 85%, #000));
+}
+
+.live-log-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 1rem;
+  overflow: hidden;
+}
+
+.live-log-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-base);
+}
+
+.live-log-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.live-log-host-badge {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--accent);
+  font-family: var(--mono);
+}
+
+.live-log-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  animation: pulse 1.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.live-log-empty {
+  padding: 0.75rem 1rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.progress-body {
+  padding: 0.5rem 0;
+}
+
+.progress-row {
+  display: flex;
+  gap: 1rem;
+  padding: 0.2rem 1rem;
+  font-size: 0.85rem;
+}
+
+.progress-label {
+  color: var(--text-muted);
+  min-width: 9rem;
+  flex-shrink: 0;
+}
+
+.progress-value {
+  color: var(--text-primary);
+}
+
+.progress-path {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40ch;
 }
 </style>

@@ -831,6 +831,18 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
             }
             state.ui_broadcast.send(ServerToUi::DataChanged);
         }
+        AgentToServer::BackupLog {
+            repo_id,
+            schedule_id,
+            line,
+        } => {
+            state.ui_broadcast.send(ServerToUi::BackupLog {
+                hostname: hostname.to_owned(),
+                schedule_id,
+                repo_id: repo_id.0,
+                line,
+            });
+        }
         AgentToServer::Hello { .. } => {
             tracing::warn!(hostname = %hostname, "unexpected Hello after handshake");
         }

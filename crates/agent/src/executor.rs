@@ -853,6 +853,27 @@ struct BackupTaskContext {
     run_id: Option<String>,
 }
 
+fn spawn_log_forwarder(
+    repo_id: RepoId,
+    schedule_id: Option<i64>,
+    outbound_tx: mpsc::Sender<AgentToServer>,
+) -> mpsc::Sender<String> {
+    let (log_tx, mut log_rx) = mpsc::channel::<String>(256);
+    tokio::spawn(async move {
+        while let Some(line) = log_rx.recv().await {
+            let msg = AgentToServer::BackupLog {
+                repo_id,
+                schedule_id,
+                line,
+            };
+            if outbound_tx.send(msg).await.is_err() {
+                break;
+            }
+        }
+    });
+    log_tx
+}
+
 async fn run_backup_task(
     repo_id: RepoId,
     mut target: BackupTarget,
@@ -894,7 +915,8 @@ async fn run_backup_task(
         None
     };
 
-    let (report, run_canary) = match engine.run_backup(&target).await {
+    let log_tx = spawn_log_forwarder(repo_id, schedule_id, outbound_tx.clone());
+    let (report, run_canary) = match engine.run_backup(&target, Some(log_tx)).await {
         Ok(result) => {
             let finished_at = Utc::now();
             let report = shared::types::BackupReport {

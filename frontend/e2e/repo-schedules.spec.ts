@@ -1,16 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, test } from './fixtures'
-import type { Page } from '@playwright/test'
-
-async function loginAsAdmin(page: Page): Promise<void> {
-  await page.goto('/login')
-  await page.locator('input[type="text"], input[name="username"]').fill('admin')
-  await page.locator('input[type="password"]').fill('admin')
-  await page.locator('button[type="submit"]').click()
-  await page.waitForURL((url) => !new URL(url).pathname.startsWith('/login'), { timeout: 30_000 })
-}
+import { expect, loginAsAdmin, test } from './fixtures'
 
 test('repo schedules tab loads without redirecting to the error page', async ({ page }) => {
   await loginAsAdmin(page)

@@ -5343,7 +5343,8 @@ async fn dismissed_findings_are_per_user(pool: PgPool) {
 /// `update_repo_and_set_relocation_pending` atomically updates the repo path AND sets
 /// `relocation_pending = true` AND registers all scheduled agents in the pending-hosts table.
 /// There is no observable intermediate state where the path is updated but the flag is false.
-/// This eliminates the race window that caused the first agent in a sequential schedule to fail with code 2.
+/// This eliminates the race window that caused the first agent in a sequential schedule to
+/// fail with borg exit code 2.
 #[sqlx::test(migrations = "./migrations")]
 async fn update_repo_and_set_relocation_pending_is_atomic(pool: PgPool) {
     let (agent, repo, _schedule) = create_test_schedule(&pool).await;

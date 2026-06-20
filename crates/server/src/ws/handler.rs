@@ -414,7 +414,7 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 report.status,
                 shared::types::BackupStatus::Success | shared::types::BackupStatus::Warning
             ) && let Err(e) =
-                db::clear_relocation_for_host(&state.pool, report.repo_id.0, &hostname).await
+                db::clear_relocation_for_host(&state.pool, report.repo_id.0, hostname).await
             {
                 tracing::error!(
                     hostname = %hostname,

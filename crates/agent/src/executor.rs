@@ -24,7 +24,7 @@ use tokio::{
 use tracing::{error, info, warn};
 
 use crate::{
-    backup::{BackupEngine, BackupError, BackupTarget, CanaryToken},
+    backup::{BackupEngine, BackupError, BackupResult, BackupTarget, CanaryResult},
     borg::Borg,
     ssh_forward::{SshForwardError, SshForwardSocket, run_ssh_forward},
 };
@@ -916,37 +916,16 @@ async fn run_backup_task(
     };
 
     let log_tx = spawn_log_forwarder(repo_id, schedule_id, outbound_tx.clone());
-    let (report, run_canary) = match engine.run_backup(&target, Some(log_tx)).await {
-        Ok(result) => {
-            let finished_at = Utc::now();
-            let report = shared::types::BackupReport {
-                id: shared::types::ReportId(0),
-                agent_id: shared::types::AgentId(0),
-                repo_id,
-                schedule_id,
-                started_at,
-                finished_at,
-                status: result.status,
-                original_size: result.original_size,
-                compressed_size: result.compressed_size,
-                deduplicated_size: result.deduplicated_size,
-                repo_unique_csize: result.repo_unique_csize,
-                files_processed: result.files_processed,
-                duration_secs: result.duration_secs,
-                error_message: result.error_message,
-                warnings: result.warnings,
-                borg_version: None,
-                archive_name: result.archive_name,
-                borg_command: result.borg_command,
-                run_id: run_id.clone(),
-            };
-            (report, true)
-        }
+    let (report, canary_result) = match engine
+        .run_backup(&target, canary.as_ref(), Some(log_tx))
+        .await
+    {
+        Ok(result) => build_backup_report(repo_id, schedule_id, started_at, run_id.clone(), result),
         Err(BackupError::Skipped(reason)) => {
             error!(repo_id = ?repo_id, reason = %reason, "backup skipped, treating as failure");
             (
                 make_failed_report(repo_id, schedule_id, started_at, reason, run_id.clone()),
-                false,
+                None,
             )
         }
         Err(e) => {
@@ -959,7 +938,7 @@ async fn run_backup_task(
                     e.to_string(),
                     run_id.clone(),
                 ),
-                false,
+                None,
             )
         }
     };
@@ -970,11 +949,60 @@ async fn run_backup_task(
     }
 
     if let Some(canary) = &canary {
-        if run_canary {
-            run_canary_verification(repo_id, &target, engine, canary, outbound_tx).await;
-        }
+        send_canary_result(repo_id, canary.nonce.clone(), canary_result, outbound_tx).await;
         BackupEngine::cleanup_canary(canary);
     }
+}
+
+async fn send_canary_result(
+    repo_id: RepoId,
+    nonce: String,
+    result: Option<CanaryResult>,
+    outbound_tx: &mpsc::Sender<AgentToServer>,
+) {
+    let Some(result) = result else { return };
+    let msg = AgentToServer::CanaryVerified {
+        repo_id,
+        success: result.success,
+        nonce,
+        archive_name: result.archive_name,
+        error_message: result.error_message,
+    };
+    if let Err(e) = outbound_tx.send(msg).await {
+        tracing::debug!(error = %e, "outbound send failed");
+    }
+}
+
+fn build_backup_report(
+    repo_id: RepoId,
+    schedule_id: Option<i64>,
+    started_at: chrono::DateTime<Utc>,
+    run_id: Option<String>,
+    result: BackupResult,
+) -> (shared::types::BackupReport, Option<CanaryResult>) {
+    let finished_at = Utc::now();
+    let report = shared::types::BackupReport {
+        id: shared::types::ReportId(0),
+        agent_id: shared::types::AgentId(0),
+        repo_id,
+        schedule_id,
+        started_at,
+        finished_at,
+        status: result.status,
+        original_size: result.original_size,
+        compressed_size: result.compressed_size,
+        deduplicated_size: result.deduplicated_size,
+        repo_unique_csize: result.repo_unique_csize,
+        files_processed: result.files_processed,
+        duration_secs: result.duration_secs,
+        error_message: result.error_message,
+        warnings: result.warnings,
+        borg_version: None,
+        archive_name: result.archive_name,
+        borg_command: result.borg_command,
+        run_id,
+    };
+    (report, result.canary_result)
 }
 
 struct RepoTransport {
@@ -1042,33 +1070,6 @@ fn write_known_hosts(
     file.flush()?;
     target.known_hosts_path = Some(file.path().to_path_buf());
     Ok(Some(file))
-}
-
-async fn run_canary_verification(
-    repo_id: RepoId,
-    target: &BackupTarget,
-    engine: &BackupEngine,
-    canary: &CanaryToken,
-    outbound_tx: &mpsc::Sender<AgentToServer>,
-) {
-    let (success, archive_name, error_message) = match engine.verify_canary(target, canary).await {
-        Ok(archive) => (true, archive, None),
-        Err(e) => {
-            error!(repo_id = ?repo_id, error = %e, "canary verification failed");
-            (false, String::new(), Some(e.to_string()))
-        }
-    };
-
-    let msg = AgentToServer::CanaryVerified {
-        repo_id,
-        success,
-        nonce: canary.nonce.clone(),
-        archive_name,
-        error_message,
-    };
-    if let Err(e) = outbound_tx.send(msg).await {
-        tracing::debug!(error = %e, "outbound send failed");
-    }
 }
 
 pub fn backup_target_from_repo(

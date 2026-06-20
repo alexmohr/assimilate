@@ -811,20 +811,75 @@ pub async fn update_repo_info_stats(
 }
 
 pub async fn clear_relocation_pending(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
-    sqlx::query("UPDATE repos SET relocation_pending = false WHERE id = $1")
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+    sqlx::query("DELETE FROM repo_relocation_pending_hosts WHERE repo_id = $1")
         .bind(repo_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(ApiError::Database)?;
+    sqlx::query("UPDATE repos SET relocation_pending = false WHERE id = $1")
+        .bind(repo_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
+    tx.commit().await.map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// Remove `hostname` from the pending-hosts set for this repo. Clears `relocation_pending`
+/// on the repo itself once every registered host has confirmed the new location.
+pub async fn clear_relocation_for_host(
+    pool: &PgPool,
+    repo_id: i64,
+    hostname: &str,
+) -> Result<(), ApiError> {
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+    sqlx::query("DELETE FROM repo_relocation_pending_hosts WHERE repo_id = $1 AND hostname = $2")
+        .bind(repo_id)
+        .bind(hostname)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
+
+    let remaining: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM repo_relocation_pending_hosts WHERE repo_id = $1")
+            .bind(repo_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(ApiError::Database)?;
+
+    if remaining.0 == 0 {
+        sqlx::query("UPDATE repos SET relocation_pending = false WHERE id = $1")
+            .bind(repo_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(ApiError::Database)?;
+    }
+    tx.commit().await.map_err(ApiError::Database)?;
     Ok(())
 }
 
 pub async fn set_relocation_pending(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
     sqlx::query("UPDATE repos SET relocation_pending = true WHERE id = $1")
         .bind(repo_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(ApiError::Database)?;
+    sqlx::query(
+        "INSERT INTO repo_relocation_pending_hosts (repo_id, hostname) \
+         SELECT $1, a.hostname \
+         FROM agents a \
+         JOIN schedule_targets st ON st.agent_id = a.id \
+         JOIN schedules s ON s.id = st.schedule_id \
+         WHERE s.repo_id = $1 \
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(repo_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+    tx.commit().await.map_err(ApiError::Database)?;
     Ok(())
 }
 

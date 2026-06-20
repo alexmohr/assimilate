@@ -4229,6 +4229,103 @@ async fn repo_relocation_pending_test(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn repo_relocation_per_host_single_agent(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    let _ = (agent, schedule);
+
+    db::set_relocation_pending(&pool, repo.id).await.unwrap();
+    let row = db::get_repo_with_passphrase(&pool, repo.id).await.unwrap();
+    assert!(row.relocation_pending);
+
+    // Confirming the single agent clears the repo-level flag.
+    db::clear_relocation_for_host(&pool, repo.id, "sched-host")
+        .await
+        .unwrap();
+    let row = db::get_repo_with_passphrase(&pool, repo.id).await.unwrap();
+    assert!(!row.relocation_pending);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_relocation_per_host_multi_agent(pool: PgPool) {
+    // Build a repo used by two agents via separate schedules.
+    let agent_a = db::insert_agent(&pool, "host-a", None, "hash-a", None)
+        .await
+        .unwrap();
+    let agent_b = db::insert_agent(&pool, "host-b", None, "hash-b", None)
+        .await
+        .unwrap();
+    let repo = db::insert_repo(
+        &pool,
+        &InsertRepoParams {
+            name: "multi-agent-repo",
+            repo_path: "/backups/multi",
+            ssh_user: "user",
+            ssh_host: "host.local",
+            ssh_port: 22,
+            passphrase_encrypted: b"enc",
+            compression: "none",
+            encryption: "none",
+            owner_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    let sched = db::insert_schedule(
+        &pool,
+        repo.id,
+        &ScheduleParams {
+            name: "multi-sched",
+            schedule_type: "backup",
+            cron_expression: "0 3 * * *",
+            enabled: true,
+            canary_enabled: false,
+            exclude_patterns_raw: "",
+            ignore_global_excludes: false,
+            keep_hourly: 24,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 1,
+            compact_enabled: true,
+            rate_limit_kbps: None,
+            pre_backup_commands: "",
+            post_backup_commands: "",
+            on_failure: "stop",
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    db::insert_schedule_targets(&pool, sched.id, &[(agent_a.id, 0), (agent_b.id, 1)])
+        .await
+        .unwrap();
+
+    db::set_relocation_pending(&pool, repo.id).await.unwrap();
+    let row = db::get_repo_with_passphrase(&pool, repo.id).await.unwrap();
+    assert!(row.relocation_pending);
+
+    // First agent confirms — flag must stay set while the second is still pending.
+    db::clear_relocation_for_host(&pool, repo.id, "host-a")
+        .await
+        .unwrap();
+    let row = db::get_repo_with_passphrase(&pool, repo.id).await.unwrap();
+    assert!(
+        row.relocation_pending,
+        "relocation_pending must remain true until all agents confirm"
+    );
+
+    // Second agent confirms — now the flag should be cleared.
+    db::clear_relocation_for_host(&pool, repo.id, "host-b")
+        .await
+        .unwrap();
+    let row = db::get_repo_with_passphrase(&pool, repo.id).await.unwrap();
+    assert!(
+        !row.relocation_pending,
+        "relocation_pending must be cleared once all agents have confirmed"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn repo_encryption_update(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
 

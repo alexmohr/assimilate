@@ -252,6 +252,14 @@ async fn ping_loop(sender: mpsc::Sender<ServerToAgent>) {
     }
 }
 
+fn extract_archive_name(borg_command: &str) -> Option<String> {
+    borg_command
+        .split_whitespace()
+        .find(|s| s.starts_with("::"))
+        .map(|s| s.trim_start_matches("::").to_owned())
+        .filter(|s| !s.is_empty())
+}
+
 async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: &AppState) {
     let msg = match serde_json::from_str::<AgentToServer>(text) {
         Ok(m) => m,
@@ -317,6 +325,8 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 state.ui_broadcast.send(ServerToUi::BackupStarted {
                     hostname: hostname.to_owned(),
                     target_name,
+                    archive_name: borg_command.as_deref().and_then(extract_archive_name),
+                    schedule_id,
                 });
             }
             state.ui_broadcast.send(ServerToUi::DataChanged);

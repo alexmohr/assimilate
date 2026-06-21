@@ -313,6 +313,12 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 repo_id: repo_id.0,
                 op: state.repo_op_tracker.get(repo_id.0).await,
             });
+            if let Ok(target_name) = db::get_repo_name(&state.pool, repo_id.0).await {
+                state.ui_broadcast.send(ServerToUi::BackupStarted {
+                    hostname: hostname.to_owned(),
+                    target_name,
+                });
+            }
             state.ui_broadcast.send(ServerToUi::DataChanged);
         }
         AgentToServer::BackupCompleted { report } => {

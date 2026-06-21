@@ -271,6 +271,10 @@ pub enum ServerToUi {
     BackupStarted {
         hostname: String,
         target_name: String,
+        #[serde(default)]
+        archive_name: Option<String>,
+        #[serde(default)]
+        schedule_id: Option<i64>,
     },
     BackupCompleted {
         hostname: String,

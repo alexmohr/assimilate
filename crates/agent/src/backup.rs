@@ -404,6 +404,7 @@ impl BackupEngine {
             "--show-rc".to_owned(),
             "--json".to_owned(),
             "--log-json".to_owned(),
+            "--progress".to_owned(),
             "--compression".to_owned(),
             Self::compression_arg(&target.compression),
             "--exclude-caches".to_owned(),

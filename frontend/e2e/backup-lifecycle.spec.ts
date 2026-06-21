@@ -106,6 +106,42 @@ test('after cancel the Run Now button is restored on next report poll', async ({
 
 // ── Completion flow ──────────────────────────────────────────────────────────
 
+test('Run Now shows a success toast when the API accepts the request', async ({ page }) => {
+  await loginAsAdmin(page)
+  const id = await openFirstSchedule(page)
+
+  await page.route(`**/api/schedules/${id}/run`, (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }),
+  )
+
+  const runNowBtn = page.getByRole('button', { name: 'Run Now' })
+  await expect(runNowBtn).toBeVisible({ timeout: 10_000 })
+  await runNowBtn.click()
+
+  await expect(page.getByText(/started\./i)).toBeVisible({ timeout: 5_000 })
+})
+
+test('Run Now shows an error toast when the API rejects the request', async ({ page }) => {
+  await loginAsAdmin(page)
+  const id = await openFirstSchedule(page)
+
+  await page.route(`**/api/schedules/${id}/run`, (route) =>
+    route.fulfill({
+      status: 409,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: 'backup already in progress' }),
+    }),
+  )
+
+  const runNowBtn = page.getByRole('button', { name: 'Run Now' })
+  await expect(runNowBtn).toBeVisible({ timeout: 10_000 })
+  await runNowBtn.click()
+
+  await expect(page.getByText(/backup already in progress/i)).toBeVisible({ timeout: 5_000 })
+  // Button must be re-enabled after the error (runNowLoading reset in finally)
+  await expect(runNowBtn).toBeEnabled({ timeout: 5_000 })
+})
+
 test('Run Now triggers a backup that eventually completes', async ({ page }) => {
   await loginAsAdmin(page)
   await openFirstSchedule(page)

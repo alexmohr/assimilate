@@ -499,9 +499,8 @@ function deployButtonLabel(agent: AgentRow): string | null {
   if (serverCommitCount.value !== null && agent.agent_commit_count !== null) {
     return agent.agent_commit_count >= serverCommitCount.value ? null : 'Upgrade'
   }
-  if (availableAgentVersion.value && agent.agent_version === availableAgentVersion.value)
-    return null
-  return 'Upgrade'
+  if (!availableAgentVersion.value) return null
+  return agent.agent_version === availableAgentVersion.value ? null : 'Upgrade'
 }
 
 watch(wsStatus, (newStatus, oldStatus) => {

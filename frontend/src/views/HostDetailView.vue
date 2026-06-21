@@ -198,9 +198,8 @@ function deployButtonLabel(): string | null {
   if (serverCommitCount.value !== null && agent.value.agent_commit_count !== null) {
     return agent.value.agent_commit_count >= serverCommitCount.value ? null : 'Upgrade'
   }
-  if (availableAgentVersion.value && agent.value.agent_version === availableAgentVersion.value)
-    return null
-  return 'Upgrade'
+  if (!availableAgentVersion.value) return null
+  return agent.value.agent_version === availableAgentVersion.value ? null : 'Upgrade'
 }
 
 // Default backup paths

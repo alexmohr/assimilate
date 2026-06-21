@@ -141,8 +141,11 @@ interface ArchiveProgressData {
 }
 const archiveProgress = ref<ArchiveProgressData | null>(null)
 const backupHostname = ref<string | null>(null)
+const backupArchiveName = ref<string | null>(null)
 const backupStartedAt = ref<number | null>(null)
 const backupElapsedSecs = ref(0)
+const liveLogLines = ref<string[]>([])
+const MAX_LIVE_LOG_LINES = 200
 let elapsedTimer: ReturnType<typeof setInterval> | null = null
 
 const lastSuccessfulReport = computed<ReportRow | null>(
@@ -333,9 +336,22 @@ async function loadData(): Promise<void> {
       scheduleTargets.value = targetsRes.data
       selectedRepoId.value = schedRes.data.repo_id ?? null
       reports.value = recentReportsRes.data
-      backupRunning.value = recentReportsRes.data.some(
+      const runningReport = recentReportsRes.data.find(
         (r) => r.status === 'pending' || r.status === 'started',
       )
+      backupRunning.value = runningReport !== undefined
+      if (runningReport) {
+        const agent = agentMap.value.get(runningReport.agent_id)
+        backupHostname.value = agent?.display_name ?? agent?.hostname ?? null
+        backupStartedAt.value = new Date(runningReport.started_at).getTime()
+        backupElapsedSecs.value = Math.floor((Date.now() - backupStartedAt.value) / 1000)
+        if (elapsedTimer !== null) clearInterval(elapsedTimer)
+        elapsedTimer = setInterval(() => {
+          if (backupStartedAt.value !== null) {
+            backupElapsedSecs.value = Math.floor((Date.now() - backupStartedAt.value) / 1000)
+          }
+        }, 1000)
+      }
       const sorted = [...targetsRes.data].sort((a, b) => a.execution_order - b.execution_order)
       selectedAgentIds.value = sorted.map((t) => t.agent_id)
       populateForm(schedRes.data)
@@ -503,6 +519,8 @@ async function cancelBackup(): Promise<void> {
 interface BackupPayload {
   hostname: string
   target_name: string
+  archive_name?: string | null
+  schedule_id?: number | null
 }
 
 interface BackupLogPayload {
@@ -533,7 +551,9 @@ onMessage<BackupPayload>('BackupStarted', (payload) => {
   if (repo.value && payload.target_name === repo.value.name) {
     backupRunning.value = true
     backupHostname.value = payload.hostname
+    backupArchiveName.value = payload.archive_name ?? null
     archiveProgress.value = null
+    liveLogLines.value = []
     backupStartedAt.value = Date.now()
     backupElapsedSecs.value = 0
     if (elapsedTimer !== null) clearInterval(elapsedTimer)
@@ -549,6 +569,8 @@ onMessage<BackupPayload>('BackupCompleted', (payload) => {
   if (repo.value && payload.target_name === repo.value.name) {
     backupRunning.value = false
     backupHostname.value = null
+    backupArchiveName.value = null
+    liveLogLines.value = []
     if (elapsedTimer !== null) {
       clearInterval(elapsedTimer)
       elapsedTimer = null
@@ -559,12 +581,15 @@ onMessage<BackupPayload>('BackupCompleted', (payload) => {
 onMessage<BackupLogPayload>('BackupLog', (payload) => {
   if (selectedRepoId.value == null || payload.repo_id !== selectedRepoId.value) return
   const progress = parseArchiveProgress(payload.line)
-  if (progress === null) return
-  archiveProgress.value = {
-    hostname: payload.hostname,
-    nfiles: progress.nfiles,
-    originalSize: progress.original_size,
-    currentPath: progress.path ?? '',
+  if (progress !== null) {
+    archiveProgress.value = {
+      hostname: payload.hostname,
+      nfiles: progress.nfiles,
+      originalSize: progress.original_size,
+      currentPath: progress.path ?? '',
+    }
+  } else {
+    liveLogLines.value = [...liveLogLines.value.slice(-(MAX_LIVE_LOG_LINES - 1)), payload.line]
   }
 })
 
@@ -689,13 +714,32 @@ watch(activeTab, (tab) => {
             <span class="progress-value">{{ formatBytes(archiveProgress.originalSize) }}</span>
           </div>
           <div
-            v-if="archiveProgress.currentPath"
+            v-if="backupArchiveName"
             class="progress-row"
+          >
+            <span class="progress-label">Archive</span>
+            <span class="progress-value progress-mono">{{ backupArchiveName }}</span>
+          </div>
+          <div
+            v-if="archiveProgress.currentPath"
+            class="progress-row progress-row-wrap"
           >
             <span class="progress-label">Current file</span>
             <span class="progress-value progress-path">{{ archiveProgress.currentPath }}</span>
           </div>
         </template>
+      </div>
+      <div
+        v-if="liveLogLines.length > 0"
+        class="live-log-output"
+      >
+        <div
+          v-for="(line, i) in liveLogLines"
+          :key="i"
+          class="live-log-line"
+        >
+          {{ line }}
+        </div>
       </div>
     </div>
 
@@ -2314,12 +2358,39 @@ watch(activeTab, (tab) => {
   color: var(--text-primary);
 }
 
+.progress-row-wrap {
+  align-items: flex-start;
+}
+
 .progress-path {
   font-family: var(--mono);
   font-size: 0.78rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 40ch;
+  word-break: break-all;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+  min-width: 0;
+}
+
+.progress-mono {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.live-log-output {
+  border-top: 1px solid var(--border);
+  background: var(--bg-base);
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 0.5rem 1rem;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.live-log-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.5;
+  padding: 0.05rem 0;
 }
 </style>

@@ -174,10 +174,64 @@ onMounted(async () => {
   await Promise.all([fetchMachines(), fetchSchedules(), fetchData(true)])
 })
 
+interface LiveBackupSession {
+  hostname: string
+  target_name: string
+  lines: string[]
+}
+
+const MAX_ACTIVITY_LOG_LINES = 200
+const liveBackupSessions = ref<Map<string, LiveBackupSession>>(new Map())
+
+function liveSessionKey(hostname: string, target: string): string {
+  return `${hostname}::${target}`
+}
+
 const { onMessage } = useWebSocket()
 onMessage('DataChanged', () => fetchData(true).catch(logger.error))
 onMessage('AgentConnected', () => fetchData(true).catch(logger.error))
 onMessage('AgentDisconnected', () => fetchData(true).catch(logger.error))
+
+onMessage<{ hostname: string; target_name: string }>('BackupStarted', (payload) => {
+  const key = liveSessionKey(payload.hostname, payload.target_name)
+  const next = new Map(liveBackupSessions.value)
+  next.set(key, { hostname: payload.hostname, target_name: payload.target_name, lines: [] })
+  liveBackupSessions.value = next
+})
+
+onMessage<{ hostname: string; target_name: string }>('BackupCompleted', (payload) => {
+  const key = liveSessionKey(payload.hostname, payload.target_name)
+  const next = new Map(liveBackupSessions.value)
+  next.delete(key)
+  liveBackupSessions.value = next
+})
+
+onMessage<{ hostname: string; repo_id: number; schedule_id: number | null; line: string }>(
+  'BackupLog',
+  (payload) => {
+    try {
+      const obj = JSON.parse(payload.line) as Record<string, unknown>
+      if (obj['type'] === 'archive_progress') return
+    } catch {
+      // non-JSON line — show it
+    }
+    const sessions = new Map(liveBackupSessions.value)
+    for (const [key, session] of sessions) {
+      if (session.hostname === payload.hostname) {
+        sessions.set(key, {
+          ...session,
+          lines: [...session.lines.slice(-(MAX_ACTIVITY_LOG_LINES - 1)), payload.line],
+        })
+        break
+      }
+    }
+    liveBackupSessions.value = sessions
+  },
+)
+
+const activeLiveSessions = computed<LiveBackupSession[]>(() =>
+  [...liveBackupSessions.value.values()].filter((s) => s.lines.length > 0),
+)
 
 watch(activeCategory, (cat) => {
   router.replace({ query: { ...route.query, category: cat } }).catch(() => {})
@@ -456,6 +510,32 @@ function filterByRun(runId: string): void {
             ? `${logEntries.length} entries`
             : `${unifiedRows.length} entries`
         }}</span>
+      </div>
+    </div>
+
+    <div
+      v-if="activeLiveSessions.length > 0 && activeCategory !== 'logs'"
+      class="live-sessions"
+    >
+      <div
+        v-for="session in activeLiveSessions"
+        :key="liveSessionKey(session.hostname, session.target_name)"
+        class="live-session-card"
+      >
+        <div class="live-session-header">
+          <span class="live-session-pulse" />
+          <span class="live-session-title">Live backup output</span>
+          <span class="live-session-meta">{{ session.hostname }} → {{ session.target_name }}</span>
+        </div>
+        <div class="live-session-output">
+          <div
+            v-for="(line, i) in session.lines"
+            :key="i"
+            class="live-session-line"
+          >
+            {{ line }}
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1488,5 +1568,78 @@ function filterByRun(runId: string): void {
 
 .btn-clear-run:hover {
   color: var(--text-primary);
+}
+
+.live-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.live-session-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.live-session-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-base);
+}
+
+.live-session-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  animation: session-pulse 1.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes session-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.live-session-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.live-session-meta {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--accent);
+  font-family: var(--mono);
+}
+
+.live-session-output {
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 0.5rem 1rem;
+  background: var(--bg-base);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.live-session-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.5;
+  padding: 0.05rem 0;
 }
 </style>

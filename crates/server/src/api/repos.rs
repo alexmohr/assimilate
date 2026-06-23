@@ -1198,7 +1198,9 @@ async fn run_borg_info_with_retry(
             }
         }
     }
-    unreachable!()
+    Err(ApiError::Internal(
+        "borg info failed after maximum retries".to_owned(),
+    ))
 }
 
 async fn run_borg_info_once(repo_url: &str, passphrase: &str) -> Result<BorgInfoResult, ApiError> {
@@ -1476,7 +1478,9 @@ async fn run_borg_list_with_retry(
             }
         }
     }
-    unreachable!()
+    Err(ApiError::Internal(
+        "borg list failed after maximum retries".to_owned(),
+    ))
 }
 
 /// Extracts lock holder info from borg's LockTimeout stderr output.
@@ -2614,5 +2618,30 @@ mod tests {
     fn parse_borg_timestamp_invalid_returns_none() {
         assert!(parse_borg_timestamp("not-a-date").is_none());
         assert!(parse_borg_timestamp("2024-13-01T00:00:00").is_none());
+    }
+
+    #[test]
+    fn extract_borg_error_returns_first_line_when_no_traceback() {
+        let stderr = "Repository does not exist.\nsome extra context\n";
+        assert_eq!(extract_borg_error(stderr), "Repository does not exist.");
+    }
+
+    #[test]
+    fn extract_borg_error_returns_whole_input_when_single_line() {
+        assert_eq!(extract_borg_error("boom"), "boom");
+    }
+
+    #[test]
+    fn extract_borg_error_picks_exception_line_from_traceback() {
+        let stderr = "Traceback (most recent call last):\n  File \"borg/archiver.py\", line 1, in \
+                      main\n    do_thing()\nValueError: invalid passphrase\nPlatform: Linux x86_64";
+        assert_eq!(extract_borg_error(stderr), "ValueError: invalid passphrase");
+    }
+
+    #[test]
+    fn extract_borg_error_stops_at_platform_marker() {
+        let stderr = "Traceback (most recent call last):\n  File \"x.py\", line 2\nRuntimeError: \
+                      lock timeout\nPlatform: Linux\nLater: noise";
+        assert_eq!(extract_borg_error(stderr), "RuntimeError: lock timeout");
     }
 }

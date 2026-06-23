@@ -28,19 +28,28 @@ pub enum Role {
     User,
 }
 
-impl Role {
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "admin" => Some(Self::Admin),
-            "user" => Some(Self::User),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
+impl std::fmt::Display for Role {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
             Self::Admin => "admin",
             Self::User => "user",
+        };
+        f.write_str(s)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("invalid role: {0}")]
+pub struct InvalidRole(pub String);
+
+impl std::str::FromStr for Role {
+    type Err = InvalidRole;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "admin" => Ok(Self::Admin),
+            "user" => Ok(Self::User),
+            other => Err(InvalidRole(other.to_owned())),
         }
     }
 }
@@ -73,9 +82,10 @@ impl FromRequestParts<AppState> for AuthUser {
         let session_id = extract_session_cookie(parts)?;
         let session = db::get_session(&state.pool, &session_id).await?;
         let user = db::get_user_by_id(&state.pool, session.user_id).await?;
-        let role = Role::parse(&user.role).ok_or_else(|| {
-            ApiError::Internal(format!("invalid role in database: {}", user.role))
-        })?;
+        let role = user
+            .role
+            .parse::<Role>()
+            .map_err(|_| ApiError::Internal(format!("invalid role in database: {}", user.role)))?;
 
         if user.must_change_password {
             let path = parts.uri.path();
@@ -111,8 +121,10 @@ async fn try_bearer_auth(parts: &Parts, state: &AppState) -> Result<Option<AuthU
     db::update_api_token_last_used(&state.pool, &token_hash).await?;
 
     let user = db::get_user_by_id(&state.pool, lookup.user_id).await?;
-    let role = Role::parse(&user.role)
-        .ok_or_else(|| ApiError::Internal(format!("invalid role in database: {}", user.role)))?;
+    let role = user
+        .role
+        .parse::<Role>()
+        .map_err(|_| ApiError::Internal(format!("invalid role in database: {}", user.role)))?;
 
     Ok(Some(AuthUser {
         user_id: user.id,
@@ -315,7 +327,7 @@ pub async fn me(
     Ok(Json(MeResponse {
         id: auth.user_id,
         username: auth.username,
-        role: auth.role.as_str().to_string(),
+        role: auth.role.to_string(),
         must_change_password: user.must_change_password,
     }))
 }

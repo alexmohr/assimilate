@@ -152,15 +152,12 @@ fn validate_channel_config(
 }
 
 fn validate_event_type(t: &str) -> Result<(), ApiError> {
-    EventType::from_db_str(t).map_or_else(
-        || {
-            Err(ApiError::BadRequest(format!(
-                "event_type must be one of: {:?}",
-                EventType::ALL_DB_STRS
-            )))
-        },
-        |_| Ok(()),
-    )
+    t.parse::<EventType>().map(|_| ()).map_err(|_| {
+        ApiError::BadRequest(format!(
+            "event_type must be one of: {:?}",
+            EventType::ALL_DB_STRS
+        ))
+    })
 }
 
 pub async fn list_channels(

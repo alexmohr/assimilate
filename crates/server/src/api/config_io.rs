@@ -10,12 +10,11 @@ use serde::{Deserialize, Serialize};
 use super::auth::RequireAdmin;
 use crate::{
     AppState,
-    db::{self, ScheduleParams},
+    db::{self, IMPORTED_TOKEN_HASH, ScheduleParams},
     error::{ApiError, ApiJson},
 };
 
 const EXPORT_VERSION: u32 = 1;
-const IMPORTED_TOKEN: &str = "imported:no-auth";
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct HostExport {
@@ -97,7 +96,7 @@ pub async fn export_config(
 
     let mut hosts = Vec::new();
     for agent in &agents {
-        if agent.agent_token_hash == IMPORTED_TOKEN {
+        if agent.agent_token_hash == IMPORTED_TOKEN_HASH {
             continue;
         }
         let patterns = db::patterns::list_patterns_for_agent(&state.pool, agent.id).await?;
@@ -265,7 +264,7 @@ pub async fn import_config(
                 &state.pool,
                 &host.hostname,
                 host.display_name.as_deref(),
-                IMPORTED_TOKEN,
+                IMPORTED_TOKEN_HASH,
                 &host.default_backup_paths,
                 &host.default_exclude_patterns,
             )
@@ -311,9 +310,14 @@ pub async fn import_config(
             let agent_id = if let Some(&cid) = hostname_to_id.get(&target.hostname) {
                 cid
             } else {
-                let agent =
-                    db::insert_agent(&state.pool, &target.hostname, None, IMPORTED_TOKEN, None)
-                        .await?;
+                let agent = db::insert_agent(
+                    &state.pool,
+                    &target.hostname,
+                    None,
+                    IMPORTED_TOKEN_HASH,
+                    None,
+                )
+                .await?;
                 result.warnings.push(format!(
                     "created placeholder agent {:?} referenced by schedule {:?}",
                     target.hostname, sched.name

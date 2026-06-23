@@ -131,6 +131,14 @@ pub struct BackupResult {
     pub warnings: Vec<String>,
     pub archive_name: Option<String>,
     pub borg_command: Option<String>,
+    pub canary_result: Option<CanaryResult>,
+}
+
+#[derive(Debug)]
+pub struct CanaryResult {
+    pub success: bool,
+    pub archive_name: String,
+    pub error_message: Option<String>,
 }
 
 pub struct BackupEngine {
@@ -152,6 +160,7 @@ impl BackupEngine {
     pub async fn run_backup(
         &self,
         target: &BackupTarget,
+        canary: Option<&CanaryToken>,
         log_tx: Option<mpsc::Sender<String>>,
     ) -> Result<BackupResult, BackupError> {
         let start = Instant::now();
@@ -178,6 +187,15 @@ impl BackupEngine {
             .run_borg_create(target, &target.backup_sources, exclude_file.path(), log_tx)
             .await?;
 
+        let canary_result = if let Some(canary) = canary {
+            Some(
+                self.verify_canary(target, canary, &create_result.archive_name)
+                    .await,
+            )
+        } else {
+            None
+        };
+
         self.run_borg_prune(target).await?;
 
         if target.compact_enabled {
@@ -202,6 +220,7 @@ impl BackupEngine {
             warnings: create_result.warnings,
             archive_name: Some(create_result.archive_name),
             borg_command: Some(create_result.borg_command),
+            canary_result,
         })
     }
 
@@ -664,41 +683,38 @@ impl BackupEngine {
         &self,
         target: &BackupTarget,
         canary: &CanaryToken,
-    ) -> Result<String, BackupError> {
+        archive_name: &str,
+    ) -> CanaryResult {
+        match self
+            .extract_and_verify_canary(target, canary, archive_name)
+            .await
+        {
+            Ok(()) => {
+                info!(archive = %archive_name, "canary verification passed");
+                CanaryResult {
+                    success: true,
+                    archive_name: archive_name.to_owned(),
+                    error_message: None,
+                }
+            }
+            Err(e) => {
+                error!(archive = %archive_name, error = %e, "canary verification failed");
+                CanaryResult {
+                    success: false,
+                    archive_name: archive_name.to_owned(),
+                    error_message: Some(e.to_string()),
+                }
+            }
+        }
+    }
+
+    async fn extract_and_verify_canary(
+        &self,
+        target: &BackupTarget,
+        canary: &CanaryToken,
+        archive_name: &str,
+    ) -> Result<(), BackupError> {
         let env_vars = Self::borg_env(target);
-        let hostname = &target.hostname;
-
-        let glob_pattern = format!("*{hostname}-*");
-        let list_args = [
-            "list",
-            "--lock-wait",
-            "600",
-            "--short",
-            "--last",
-            "1",
-            "-a",
-            glob_pattern.as_str(),
-        ];
-        let output =
-            tokio::time::timeout(Duration::from_mins(5), self.borg.run(&list_args, &env_vars))
-                .await
-                .map_err(|_| BackupError::Timeout(300))??;
-
-        let exit_code = output.status.code().unwrap_or(-1);
-        if exit_code != 0 {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(BackupError::BorgFailed(format!(
-                "borg list for canary exited with code {exit_code}: {stderr}"
-            )));
-        }
-
-        let archive_name = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        if archive_name.is_empty() {
-            return Err(BackupError::BorgFailed(
-                "no archives found for canary verification".to_owned(),
-            ));
-        }
-
         let extract_dir = tempfile::tempdir()?;
         let archive_ref = format!("::{archive_name}");
 
@@ -746,8 +762,7 @@ impl BackupEngine {
             )));
         }
 
-        info!(archive = %archive_name, "canary verification passed");
-        Ok(archive_name)
+        Ok(())
     }
 
     pub fn cleanup_canary(canary: &CanaryToken) {
@@ -1006,7 +1021,7 @@ mod tests {
         let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
         let target = test_target();
 
-        let result = engine.run_backup(&target, None).await.unwrap();
+        let result = engine.run_backup(&target, None, None).await.unwrap();
 
         assert_eq!(result.status, BackupStatus::Success);
         assert_eq!(result.original_size, 1_073_741_824);
@@ -1026,7 +1041,7 @@ mod tests {
         );
         let target = test_target();
 
-        let result = engine.run_backup(&target, None).await.unwrap();
+        let result = engine.run_backup(&target, None, None).await.unwrap();
 
         assert_eq!(result.status, BackupStatus::Warning);
         assert!(result.error_message.is_some());
@@ -1050,7 +1065,7 @@ mod tests {
         );
         let target = test_target();
 
-        let result = engine.run_backup(&target, None).await;
+        let result = engine.run_backup(&target, None, None).await;
         assert!(result.is_err());
 
         let err = result.unwrap_err();
@@ -1066,7 +1081,7 @@ mod tests {
         let mut target = test_target();
         target.pre_backup_commands = vec!["true".to_owned()];
 
-        let result = engine.run_backup(&target, None).await.unwrap();
+        let result = engine.run_backup(&target, None, None).await.unwrap();
         assert_eq!(result.status, BackupStatus::Success);
     }
 
@@ -1076,7 +1091,7 @@ mod tests {
         let mut target = test_target();
         target.pre_backup_commands = vec!["false".to_owned()];
 
-        let result = engine.run_backup(&target, None).await;
+        let result = engine.run_backup(&target, None, None).await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), BackupError::BorgFailed(_)));
     }
@@ -1087,7 +1102,7 @@ mod tests {
         let mut target = test_target();
         target.pre_backup_commands = vec!["echo 'connection refused' >&2 && exit 1".to_owned()];
 
-        let result = engine.run_backup(&target, None).await;
+        let result = engine.run_backup(&target, None, None).await;
         let err = result.unwrap_err();
         let BackupError::BorgFailed(msg) = err else {
             panic!("expected BorgFailed, got {err:?}");
@@ -1104,7 +1119,7 @@ mod tests {
         let mut target = test_target();
         target.skip_targets = vec![target.target_name.clone()];
 
-        let result = engine.run_backup(&target, None).await;
+        let result = engine.run_backup(&target, None, None).await;
         assert!(matches!(result.unwrap_err(), BackupError::Skipped(_)));
     }
 
@@ -1261,7 +1276,7 @@ mod tests {
         );
         let target = test_target();
 
-        let result = engine.run_backup(&target, None).await;
+        let result = engine.run_backup(&target, None, None).await;
         let err = result.unwrap_err();
         let BackupError::BorgFailed(msg) = err else {
             panic!("expected BorgFailed, got {err:?}");
@@ -1293,7 +1308,7 @@ mod tests {
         target.keep_monthly = 0;
         target.keep_yearly = 0;
 
-        let result = engine.run_backup(&target, None).await.unwrap();
+        let result = engine.run_backup(&target, None, None).await.unwrap();
         assert_eq!(result.status, BackupStatus::Success);
 
         let log = std::fs::read_to_string(log_file.path()).unwrap();
@@ -1321,7 +1336,7 @@ mod tests {
         target.keep_monthly = 3;
         target.keep_yearly = 0;
 
-        let result = engine.run_backup(&target, None).await.unwrap();
+        let result = engine.run_backup(&target, None, None).await.unwrap();
         assert_eq!(result.status, BackupStatus::Success);
 
         let log = std::fs::read_to_string(log_file.path()).unwrap();

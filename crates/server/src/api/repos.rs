@@ -13,7 +13,6 @@ use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use shared::{
     crypto::encrypt_passphrase,
-    ssh::borg_rsh,
     types::{BorgEncryption, build_repo_url},
 };
 use sqlx::PgPool;
@@ -928,14 +927,8 @@ pub async fn exec_borg(
         &repo.repo_path,
     );
 
-    let mut env = HashMap::from([
-        ("BORG_PASSPHRASE".to_owned(), passphrase),
-        ("BORG_REPO".to_owned(), repo_url),
-        ("BORG_RSH".to_owned(), borg_rsh()),
-    ]);
-    if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
-        env.insert("SSH_AUTH_SOCK".to_owned(), sock);
-    }
+    let mut env = helpers::borg_base_env(&passphrase);
+    env.insert("BORG_REPO".to_owned(), repo_url);
 
     info!(repo_id, name = %repo.name, subcommand, "admin executing borg command");
 
@@ -1204,13 +1197,7 @@ async fn run_borg_info_with_retry(
 }
 
 async fn run_borg_info_once(repo_url: &str, passphrase: &str) -> Result<BorgInfoResult, ApiError> {
-    let mut env = HashMap::from([
-        ("BORG_PASSPHRASE".to_owned(), passphrase.to_owned()),
-        ("BORG_RSH".to_owned(), borg_rsh()),
-    ]);
-    if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
-        env.insert("SSH_AUTH_SOCK".to_owned(), sock);
-    }
+    let env = helpers::borg_base_env(passphrase);
 
     let output = Borg::new()
         .run(&["info", "--json", repo_url], &env)
@@ -1264,13 +1251,7 @@ async fn run_borg_info_once(repo_url: &str, passphrase: &str) -> Result<BorgInfo
 }
 
 async fn run_borg_break_lock(repo_url: &str, passphrase: &str) -> Result<String, ApiError> {
-    let mut env = HashMap::from([
-        ("BORG_PASSPHRASE".to_owned(), passphrase.to_owned()),
-        ("BORG_RSH".to_owned(), borg_rsh()),
-    ]);
-    if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
-        env.insert("SSH_AUTH_SOCK".to_owned(), sock);
-    }
+    let env = helpers::borg_base_env(passphrase);
 
     let output = Borg::new()
         .run(
@@ -1306,13 +1287,7 @@ async fn run_borg_init(
     passphrase: &str,
     encryption: BorgEncryption,
 ) -> Result<String, ApiError> {
-    let mut env = HashMap::from([
-        ("BORG_PASSPHRASE".to_owned(), passphrase.to_owned()),
-        ("BORG_RSH".to_owned(), borg_rsh()),
-    ]);
-    if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
-        env.insert("SSH_AUTH_SOCK".to_owned(), sock);
-    }
+    let env = helpers::borg_base_env(passphrase);
 
     let output = Borg::new()
         .run(

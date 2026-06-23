@@ -2259,7 +2259,7 @@ async fn test_sync_returns_error_on_malformed_borg_list_json() {
 /// Regression test: borg list exits 0 with valid JSON but no `archives` key.
 ///
 /// The `archives` array is required; a missing key must be a hard error for the
-/// same reason as malformed JSON — silently treating it as empty would prune
+/// same reason as malformed JSON - silently treating it as empty would prune
 /// all existing archive records.
 #[tokio::test]
 #[ignore]

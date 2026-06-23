@@ -115,10 +115,25 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     };
 
-    let token_valid = match bcrypt::verify(&token, &token_hash) {
-        Ok(valid) => valid,
-        Err(e) => {
+    let verify_result = tokio::task::spawn_blocking(move || bcrypt::verify(&token, &token_hash))
+        .await
+        .map_err(|e| {
+            tracing::error!(hostname = %hostname, error = %e, "bcrypt task panicked");
+        });
+    let token_valid = match verify_result {
+        Ok(Ok(valid)) => valid,
+        Ok(Err(e)) => {
             tracing::error!(hostname = %hostname, error = %e, "bcrypt verification failed");
+            let close = Message::Close(Some(CloseFrame {
+                code: 4001,
+                reason: "authentication failed".into(),
+            }));
+            if let Err(e) = ws_sink.send(close).await {
+                tracing::debug!(error = %e, "ws send failed");
+            }
+            return;
+        }
+        Err(()) => {
             let close = Message::Close(Some(CloseFrame {
                 code: 4001,
                 reason: "authentication failed".into(),
@@ -332,6 +347,7 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
             state.ui_broadcast.send(ServerToUi::DataChanged);
         }
         AgentToServer::BackupCompleted { report } => {
+            let report_for_ui = report.clone();
             tracing::info!(
                 hostname = %hostname,
                 repo_id = ?report.repo_id,
@@ -442,6 +458,7 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
             let repo_name = db::get_repo_name(&state.pool, report.repo_id.0)
                 .await
                 .unwrap_or_else(|_| report.repo_id.0.to_string());
+            let completed_repo_name = repo_name.clone();
 
             if let Ok(Some(quota)) = db::quota::get_quota(&state.pool, report.repo_id.0).await {
                 let quota_status = db::quota::evaluate_quota(&quota, report.deduplicated_size);
@@ -655,6 +672,11 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
             state.ui_broadcast.send(ServerToUi::RepoOpChanged {
                 repo_id: finished_repo_id,
                 op: None,
+            });
+            state.ui_broadcast.send(ServerToUi::BackupCompleted {
+                hostname: hostname.to_owned(),
+                target_name: completed_repo_name,
+                report: Box::new(report_for_ui),
             });
             state.ui_broadcast.send(ServerToUi::DataChanged);
         }

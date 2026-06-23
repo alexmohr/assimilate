@@ -27,8 +27,11 @@ test('logout redirects to login', async ({ page }) => {
   await loginAsAdmin(page)
   // Trigger logout via the API directly so we don't depend on nav UI details
   await page.request.post('/api/auth/logout')
-  await page.goto('/')
-  await expect(page).toHaveURL(/\/login/)
+  // waitUntil: 'commit' resolves on response headers; without it Playwright
+  // throws ERR_ABORTED when the SPA route guard fires a client-side redirect
+  // before the page finishes loading.
+  await page.goto('/', { waitUntil: 'commit' })
+  await expect(page).toHaveURL(/\/login/, { timeout: 10_000 })
 })
 
 // ── Dashboard renders without errors ────────────────────────────────────────

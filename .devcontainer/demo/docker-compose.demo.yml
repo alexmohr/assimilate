@@ -2,8 +2,9 @@
 # SPDX-FileCopyrightText: 2026 Alexander Mohr
 #
 # Demo environment for documentation screenshots.
-# Starts server + postgres + borg-repo, spawns 3 agents inside the dev container,
-# and seeds realistic demo data.
+# The server container runs the server, postgres, sshd, and seeds data.
+# Each agent/placeholder container sets its own hostname so borg naturally
+# records the correct archive hostname - no kernel capabilities required.
 #
 # Usage:
 #   docker compose -f .devcontainer/demo/docker-compose.demo.yml up --build
@@ -17,6 +18,7 @@ services:
     volumes:
       - demo-ssh-keys:/ssh-keys
       - demo-borg-repos:/backup/repos
+      - demo-seeds:/seeds
     environment:
       DATABASE_URL: postgres://borg:borg_demo@postgres:5432/borg
       ASSIMILATE_SECRET_KEY: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
@@ -29,6 +31,72 @@ services:
       postgres:
         condition: service_healthy
     entrypoint: ["/app/start-demo.sh"]
+
+  web-server-01:
+    build:
+      context: ../..
+      dockerfile: .devcontainer/demo/Dockerfile.demo
+    hostname: web-server-01
+    volumes:
+      - demo-ssh-keys:/ssh-keys
+      - demo-seeds:/seeds
+    environment:
+      BORG_SERVER_URL: http://demo:8080
+    depends_on:
+      - demo
+    entrypoint: ["/app/start-agent.sh"]
+
+  db-server-01:
+    build:
+      context: ../..
+      dockerfile: .devcontainer/demo/Dockerfile.demo
+    hostname: db-server-01
+    volumes:
+      - demo-ssh-keys:/ssh-keys
+      - demo-seeds:/seeds
+    environment:
+      BORG_SERVER_URL: http://demo:8080
+    depends_on:
+      - demo
+    entrypoint: ["/app/start-agent.sh"]
+
+  media-store-01:
+    build:
+      context: ../..
+      dockerfile: .devcontainer/demo/Dockerfile.demo
+    hostname: media-store-01
+    volumes:
+      - demo-ssh-keys:/ssh-keys
+      - demo-seeds:/seeds
+    environment:
+      BORG_SERVER_URL: http://demo:8080
+    depends_on:
+      - demo
+    entrypoint: ["/app/start-agent.sh"]
+
+  old-webserver:
+    build:
+      context: ../..
+      dockerfile: .devcontainer/demo/Dockerfile.demo
+    hostname: old-webserver
+    volumes:
+      - demo-ssh-keys:/ssh-keys
+      - demo-seeds:/seeds
+    depends_on:
+      - demo
+    entrypoint: ["/app/start-placeholder.sh"]
+
+  legacy-db-prod:
+    build:
+      context: ../..
+      dockerfile: .devcontainer/demo/Dockerfile.demo
+    hostname: legacy-db-prod
+    volumes:
+      - demo-ssh-keys:/ssh-keys
+      - demo-seeds:/seeds
+    depends_on:
+      - demo
+    entrypoint: ["/app/start-placeholder.sh"]
 
   postgres:
     image: postgres:latest
@@ -48,3 +116,4 @@ volumes:
   demo-pgdata:
   demo-ssh-keys:
   demo-borg-repos:
+  demo-seeds:

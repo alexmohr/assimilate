@@ -245,6 +245,7 @@ async fn install_fake_borg(
     list_json: &str,
     info_all_json: &str,
     info_repo_json: &str,
+    repo_list_lines: &str,
     json_lines: &str,
 ) -> (TempDir, BorgBinaryGuard) {
     let tempdir = tempfile::tempdir().unwrap();
@@ -254,9 +255,18 @@ set -eu
 case "$1" in
   list)
     case " $* " in
-      *" --json-lines "*) cat <<'EOF'
+      *" --json-lines "*)
+        for _a; do _last="$_a"; done
+        case "$_last" in
+          *::*) cat <<'EOF'
 {json_lines}
 EOF
+            ;;
+          *) cat <<'EOF'
+{repo_list_lines}
+EOF
+            ;;
+        esac
         ;;
       *) cat <<'EOF'
 {list_json}
@@ -307,8 +317,18 @@ esac
 /// to hang forever with `importing = true`.
 async fn install_borg_empty_list_hanging_info() -> (TempDir, BorgBinaryGuard) {
     let tempdir = tempfile::tempdir().unwrap();
-    let script = "#!/bin/sh\ncase \"$1\" in\n  list) echo '{\"archives\":[]}';;  \n  info) sleep \
-                  120;;\n  *) exit 1;;\nesac\n";
+    let script = concat!(
+        "#!/bin/sh\n",
+        "case \"$1\" in\n",
+        "  list)\n",
+        "    case \" $* \" in\n",
+        "      *\" --json-lines \"*) ;;\n",
+        "      *) echo '{\"archives\":[]}'  ;;\n",
+        "    esac;;\n",
+        "  info) sleep 120;;\n",
+        "  *) exit 1;;\n",
+        "esac\n",
+    );
     let borg_path = tempdir.path().join("borg");
     tokio::fs::write(&borg_path, script).await.unwrap();
     let mut permissions = tokio::fs::metadata(&borg_path).await.unwrap().permissions();
@@ -332,8 +352,17 @@ async fn install_slow_borg_list(delay_secs: u64) -> (TempDir, BorgBinaryGuard) {
         r#""unique_csize":0,"total_chunks":0,"total_unique_chunks":0}}}"#
     );
     let script = format!(
-        "#!/bin/sh\ncase \"$1\" in\n  list) sleep {delay_secs}; echo '{{\"archives\":[]}}';;  \n  \
-         info) echo '{info_json}';;\n  *) exit 1;;\nesac\n"
+        r#"#!/bin/sh
+case "$1" in
+  list)
+    case " $* " in
+      *" --json-lines "*) sleep {delay_secs} ;;
+      *) sleep {delay_secs}; echo '{{"archives":[]}}' ;;
+    esac ;;
+  info) echo '{info_json}' ;;
+  *) exit 1 ;;
+esac
+"#
     );
     let borg_path = tempdir.path().join("borg");
     tokio::fs::write(&borg_path, script).await.unwrap();
@@ -863,7 +892,7 @@ async fn test_delete_archive_runs_in_background() {
   }
 }"#;
     let (_borg_dir, _borg_guard) =
-        install_fake_borg(empty_list, empty_list, info_repo_json, "").await;
+        install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
 
     let mut app = build_test_app(pool.clone()).await;
     let agent_id: i64 = sqlx::query_scalar(
@@ -975,7 +1004,7 @@ async fn test_delete_multiple_archives_queues_without_conflict() {
   }
 }"#;
     let (_borg_dir, _borg_guard) =
-        install_fake_borg(empty_list, empty_list, info_repo_json, "").await;
+        install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
 
     let mut app = build_test_app(pool.clone()).await;
     let agent_id: i64 = sqlx::query_scalar(
@@ -1114,9 +1143,21 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
         r#"{"type":"f","path":"docs/manual.txt","size":12,"mtime":"2026-06-05T10:00:00Z","#,
         r#""mode":"-rw-r--r--"}"#,
     );
+    let repo_list_lines = concat!(
+        r#"{"name":"sync-archive-1","hostname":"web-server-01","#,
+        r#""start":"2026-06-05T10:00:00Z","end":"2026-06-05T10:05:00Z","#,
+        r#""duration":300.0,"stats":{"original_size":1000,"compressed_size":500,"#,
+        r#""deduplicated_size":250,"nfiles":2}}"#,
+    );
 
-    let (_borg_dir, _borg_guard) =
-        install_fake_borg(list_json, info_all_json, info_repo_json, json_lines).await;
+    let (_borg_dir, _borg_guard) = install_fake_borg(
+        list_json,
+        info_all_json,
+        info_repo_json,
+        repo_list_lines,
+        json_lines,
+    )
+    .await;
 
     let mut app = build_test_app(pool.clone()).await;
     let agent_id: i64 = sqlx::query_scalar(
@@ -2073,4 +2114,181 @@ async fn test_scheduler_dispatches_repo_syncs_concurrently() {
         .await
         .unwrap_or_else(|_| panic!("repo {repo_id} sync did not complete within expected time"));
     }
+}
+
+/// Regression test for: archives attributed to "unknown" when borg list --json omits hostname.
+///
+/// Some borg versions (1.1.x on Debian trixie) omit the `hostname` field from
+/// `borg list --json` per-archive output. The fix issues a single
+/// `borg info --glob-archives * --json` call as a fallback, which always includes
+/// hostname, and uses the resulting map during import.
+///
+/// This test verifies that when list omits hostname but info provides it, the
+/// imported placeholder agent is created with the correct hostname rather than "unknown".
+#[tokio::test]
+#[ignore]
+async fn test_sync_uses_borg_info_fallback_when_list_omits_hostname() {
+    let _borg_lock = borg_binary_lock().await;
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    // borg list --json without hostname field (simulates borg 1.1.x behaviour)
+    let list_json = r#"{
+  "archives": [
+    {
+      "name": "fallback-archive-1",
+      "start": "2026-06-05T10:00:00Z",
+      "end": "2026-06-05T10:05:00Z",
+      "duration": 300.0,
+      "stats": {
+        "original_size": 1000,
+        "compressed_size": 500,
+        "deduplicated_size": 250,
+        "nfiles": 2
+      }
+    }
+  ]
+}"#;
+    // borg info --glob-archives * --json always includes hostname
+    let info_all_json = r#"{
+  "archives": [
+    {
+      "name": "fallback-archive-1",
+      "hostname": "fallback-host",
+      "start": "2026-06-05T10:00:00Z",
+      "end": "2026-06-05T10:05:00Z",
+      "duration": 300.0,
+      "stats": {
+        "original_size": 1000,
+        "compressed_size": 500,
+        "deduplicated_size": 250,
+        "nfiles": 2
+      }
+    }
+  ]
+}"#;
+    let info_repo_json = r#"{
+  "cache": {
+    "stats": {
+      "total_size": 1000,
+      "total_csize": 600,
+      "unique_csize": 500,
+      "total_chunks": 10,
+      "unique_chunks": 8
+    }
+  }
+}"#;
+
+    let (_borg_dir, _borg_guard) =
+        install_fake_borg(list_json, info_all_json, info_repo_json, "", "").await;
+
+    let mut app = build_test_app(pool.clone()).await;
+    let repo_id = insert_test_repo(&pool, "hostname-fallback-repo").await;
+
+    let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = body_json(resp).await;
+    assert_eq!(body["imported"], 1, "archive should have been imported");
+
+    let unknown_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM agents WHERE hostname = 'unknown'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        unknown_count, 0,
+        "no agent should be created with hostname 'unknown' when the fallback supplies the real \
+         hostname"
+    );
+
+    let correct_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM agents WHERE hostname = 'fallback-host'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        correct_count, 1,
+        "placeholder agent should be created with the correct hostname from borg info fallback"
+    );
+
+    let token_hash: String =
+        sqlx::query_scalar("SELECT agent_token_hash FROM agents WHERE hostname = 'fallback-host'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        token_hash, "imported:no-auth",
+        "placeholder agent should carry the imported sentinel token"
+    );
+}
+
+/// Regression test: borg list exits 0 but outputs unparseable text.
+///
+/// Previously, a parse failure was silently treated as an empty archive list,
+/// which would prune all existing archive records. Now it must be a hard error
+/// so no records are touched.
+#[tokio::test]
+#[ignore]
+async fn test_sync_returns_error_on_malformed_borg_list_json() {
+    let _borg_lock = borg_binary_lock().await;
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let info_repo_json = r#"{"cache": {"stats": {"total_size": 0, "total_csize": 0}}}"#;
+
+    // borg list exits 0 but stdout is not valid JSON
+    let (_borg_dir, _borg_guard) =
+        install_fake_borg("this is not valid json", "{}", info_repo_json, "", "").await;
+
+    let mut app = build_test_app(pool.clone()).await;
+    let repo_id = insert_test_repo(&pool, "malformed-json-repo").await;
+
+    let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "malformed borg list JSON should propagate as a server error, not silently prune records"
+    );
+}
+
+/// Regression test: borg list exits 0 with valid JSON but no `archives` key.
+///
+/// The `archives` array is required; a missing key must be a hard error for the
+/// same reason as malformed JSON - silently treating it as empty would prune
+/// all existing archive records.
+#[tokio::test]
+#[ignore]
+async fn test_sync_returns_error_when_borg_list_json_has_no_archives_key() {
+    let _borg_lock = borg_binary_lock().await;
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+
+    let info_repo_json = r#"{"cache": {"stats": {"total_size": 0, "total_csize": 0}}}"#;
+
+    // borg list exits 0 with valid JSON but no `archives` field
+    let (_borg_dir, _borg_guard) = install_fake_borg(
+        r#"{"encryption": {"mode": "none"}}"#,
+        "{}",
+        info_repo_json,
+        "",
+        "",
+    )
+    .await;
+
+    let mut app = build_test_app(pool.clone()).await;
+    let repo_id = insert_test_repo(&pool, "missing-archives-key-repo").await;
+
+    let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "borg list JSON missing 'archives' key should propagate as a server error"
+    );
 }

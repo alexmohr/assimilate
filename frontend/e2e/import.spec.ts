@@ -1,8 +1,36 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+import { execSync } from 'node:child_process'
+
 import { expect, loginAsAdmin, test } from './fixtures'
 import type { Page } from '@playwright/test'
+
+/** Find the running demo server container by its compose service label. */
+function demoContainer(): string {
+  const out = execSync(
+    "docker ps --filter 'label=com.docker.compose.service=demo' --format '{{.Names}}'",
+    { timeout: 10_000 },
+  )
+    .toString()
+    .trim()
+  const name = out.split('\n').find((n) => n.trim())
+  if (!name) throw new Error('demo container not found — is the demo environment running?')
+  return name.trim()
+}
+
+/** Run a borg command inside the demo container as the borg user. */
+function borgRun(container: string, borgCmd: string): string {
+  const full = `BORG_PASSPHRASE=demo-passphrase-123 ${borgCmd}`
+  return execSync(`docker exec ${container} su -c '${full}' borg`, {
+    timeout: 30_000,
+  }).toString()
+}
+
+/** Run an arbitrary shell command inside the demo container as root. */
+function dockerExec(container: string, cmd: string): void {
+  execSync(`docker exec ${container} sh -c '${cmd}'`, { timeout: 10_000 })
+}
 
 async function navigateToRepo(page: Page, repoName: string, tab?: string): Promise<void> {
   await page.goto('/repos')
@@ -74,23 +102,27 @@ test('database-hourly shows unmatched-banner for legacy-db-prod archives', async
 test('agents page shows imported placeholder agents', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/agents')
-  // Demo creates imported agents for old-webserver and legacy-db-prod
+  // On a cold DB the /api/agents call can take several minutes. The 270 s
+  // toBeVisible timeout covers both the API latency and Vue render time.
   await expect(
-    page.getByText('old-webserver').or(page.getByText('legacy-db-prod')).first(),
-  ).toBeVisible({ timeout: 10_000 })
+    page
+      .locator('.card-hostname')
+      .filter({ hasText: /old-webserver|legacy-db-prod/ })
+      .first(),
+  ).toBeVisible({ timeout: 270_000 })
 })
 
 test('imported agents have the Imported badge', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/agents')
   // At least one .badge-imported must be present (old-webserver and legacy-db-prod)
-  await expect(page.locator('.badge-imported').first()).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('.badge-imported').first()).toBeVisible({ timeout: 270_000 })
 })
 
 test('imported agents show Merge into... and Adopt action buttons', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/agents')
-  await expect(page.locator('.badge-imported').first()).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('.badge-imported').first()).toBeVisible({ timeout: 270_000 })
   // Merge and Adopt must be visible for at least one imported agent
   await expect(page.getByRole('button', { name: /merge into/i }).first()).toBeVisible()
   await expect(page.getByRole('button', { name: /adopt/i }).first()).toBeVisible()
@@ -242,7 +274,10 @@ test('import-status-msg appears with live status text during resync', async ({ p
   // WebSocket ImportProgress messages must populate the status message element
   const statusMsg = page.locator('.import-status-msg')
   await expect(statusMsg).toBeVisible({ timeout: 30_000 })
-  await expect(statusMsg).toHaveText(/listing|importing|saving|refreshing/i, { timeout: 30_000 })
+  // "listing" = initial, "discovering" = streaming count, "importing" = per-archive loop
+  await expect(statusMsg).toHaveText(/listing|discovering|importing|saving|refreshing/i, {
+    timeout: 30_000,
+  })
 
   // Message must disappear once importing finishes (v-if="repo.importing && ...")
   await expect(statusMsg).not.toBeVisible({ timeout: 120_000 })
@@ -283,6 +318,77 @@ test('status badge shows Enabled and no importing elements after resync complete
   await expect(page.locator('.import-status-msg')).not.toBeVisible()
   await expect(page.locator('.import-progress')).not.toBeVisible()
   await expect(statusBadge).toHaveText(/enabled/i)
+})
+
+// ── Stale archive pruning ────────────────────────────────────────────────────
+
+test('full resync removes archive deleted from borg', async ({ page }) => {
+  await loginAsAdmin(page)
+
+  const container = demoContainer()
+
+  // Pick a web-server-01 archive to delete from borg (not old-webserver — that one drives
+  // the unmatched-banner tests).
+  const listing = borgRun(container, 'borg list /backup/repos/server-daily --short')
+  const toDelete = listing
+    .trim()
+    .split('\n')
+    .map((l) => l.trim())
+    .find((n) => n.startsWith('web-server-01-'))
+  if (!toDelete) throw new Error('no web-server-01 archive found in server-daily')
+
+  // Delete it from borg — the DB record still exists until the next resync prunes it.
+  borgRun(container, `borg delete /backup/repos/server-daily::${toDelete}`)
+
+  // Full resync should prune the stale record.
+  await navigateToRepo(page, 'server-daily', 'Archives')
+  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  // Resync button is in the Overview tab toolbar; switch back to trigger it.
+  await page.getByRole('button', { name: 'Overview', exact: true }).click()
+  await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
+  await resyncBtn.click()
+
+  await expect(page.getByText('Full resync started.')).toBeVisible({ timeout: 120_000 })
+  await expect(resyncBtn).toBeVisible({ timeout: 30_000 })
+
+  // Switch to Archives tab and confirm the deleted archive is no longer listed.
+  await page.getByRole('button', { name: 'Archives', exact: true }).click()
+  await expect(page.locator('.archive-row').first()).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('.archive-name', { hasText: toDelete })).not.toBeVisible()
+})
+
+// ── Lock contention ──────────────────────────────────────────────────────────
+
+test('import-status-msg shows waiting-for-lock during borg lock contention', async ({ page }) => {
+  // This test blocks borg for LOCK_WAIT_SECS (60 s) then waits for the retry
+  // sleep ticker (~5 s into the 30 s wait) — budget at least 2 minutes.
+  test.setTimeout(180_000)
+
+  await loginAsAdmin(page)
+
+  const container = demoContainer()
+  const lockFile = '/backup/repos/server-daily/lock.exclusive'
+
+  // Pre-create the lock file to prevent borg from acquiring the exclusive lock.
+  dockerExec(container, `touch ${lockFile}`)
+
+  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  try {
+    await navigateToRepo(page, 'server-daily')
+    await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
+    await resyncBtn.click()
+
+    // Borg holds --lock-wait 60 s before giving up; after that the server enters
+    // a 30 s retry sleep and publishes "Waiting for lock…" every 5 s.
+    const statusMsg = page.locator('.import-status-msg')
+    await expect(statusMsg).toHaveText(/waiting for lock/i, { timeout: 90_000 })
+  } finally {
+    // Release the lock so the next borg attempt succeeds regardless of test outcome.
+    dockerExec(container, `rm -f ${lockFile}`)
+  }
+
+  // After lock release the next retry should complete the resync.
+  await expect(resyncBtn).toBeVisible({ timeout: 120_000 })
 })
 
 // ── Archive browsing ─────────────────────────────────────────────────────────

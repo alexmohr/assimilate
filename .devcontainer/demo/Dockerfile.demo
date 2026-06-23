@@ -46,8 +46,10 @@ COPY --from=frontend /app/dist /app/static
 COPY --from=docs /docs-build/docs_html /app/docs_html
 COPY .devcontainer/demo/start-demo.sh /app/start-demo.sh
 COPY .devcontainer/demo/seed-demo.sh /app/seed-demo.sh
+COPY .devcontainer/demo/start-agent.sh /app/start-agent.sh
+COPY .devcontainer/demo/start-placeholder.sh /app/start-placeholder.sh
 COPY .devcontainer/demo/test-archive-restore.sh /app/test-archive-restore.sh
-RUN chmod +x /app/start-demo.sh /app/seed-demo.sh /app/test-archive-restore.sh
+RUN chmod +x /app/start-demo.sh /app/seed-demo.sh /app/start-agent.sh /app/start-placeholder.sh /app/test-archive-restore.sh
 
 ENV ASSIMILATE_STATIC_DIR=/app/static
 ENV ASSIMILATE_DOCS_DIR=/app/docs_html

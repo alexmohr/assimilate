@@ -21,7 +21,7 @@ pub async fn run_ws_client(
     exec_cmd_tx: mpsc::Sender<ExecutorCommand>,
     mut outbound_rx: mpsc::Receiver<AgentToServer>,
     restart_capability: &RestartCapability,
-) {
+) -> Result<(), WsError> {
     let mut backoff = BACKOFF_BASE;
 
     loop {
@@ -31,7 +31,7 @@ pub async fn run_ws_client(
             }
             Err(WsError::AuthRejected(reason)) => {
                 error!("Authentication rejected by server: {reason}");
-                process::exit(1);
+                return Err(WsError::AuthRejected(reason));
             }
             Err(e) => {
                 error!("WebSocket connection error: {e}");
@@ -336,7 +336,7 @@ async fn handle_text_message(
 }
 
 #[derive(Debug, thiserror::Error)]
-enum WsError {
+pub enum WsError {
     #[error("connection failed: {0}")]
     Connect(Box<tokio_tungstenite::tungstenite::Error>),
     #[error("send failed: {0}")]
@@ -349,4 +349,45 @@ enum WsError {
     Deserialize(serde_json::Error),
     #[error("authentication rejected: {0}")]
     AuthRejected(String),
+}
+
+/// Returns `true` for errors that should terminate the agent process rather
+/// than trigger a reconnect. Authentication rejection is fatal because retrying
+/// with the same credentials would loop indefinitely.
+pub(crate) fn is_fatal(err: &WsError) -> bool {
+    matches!(err, WsError::AuthRejected(_))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_rejected_is_fatal() {
+        assert!(is_fatal(&WsError::AuthRejected("invalid token".into())));
+    }
+
+    #[test]
+    fn serialization_errors_are_not_fatal() {
+        let serde_err = serde_json::from_str::<AgentToServer>("not json").unwrap_err();
+        assert!(!is_fatal(&WsError::Deserialize(serde_err)));
+    }
+
+    #[test]
+    fn protocol_errors_are_not_fatal() {
+        let proto_err = tokio_tungstenite::tungstenite::Error::ConnectionClosed;
+        assert!(!is_fatal(&WsError::Send(Box::new(proto_err))));
+    }
+
+    #[test]
+    fn auth_rejected_display_includes_reason() {
+        let err = WsError::AuthRejected("token expired".into());
+        assert_eq!(err.to_string(), "authentication rejected: token expired");
+    }
+
+    #[test]
+    fn auth_rejected_debug_includes_variant() {
+        let err = WsError::AuthRejected("nope".into());
+        assert!(format!("{err:?}").contains("AuthRejected"));
+    }
 }

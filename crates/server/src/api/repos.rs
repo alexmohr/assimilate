@@ -31,6 +31,7 @@ use crate::{
     config_assembler,
     db::{self, InsertRepoParams, RepoRow, RepoWithStatsRow, UpdateRepoParams},
     error::{ApiError, ApiJson},
+    ssh::shell_escape,
     ws::ui_broadcast::UiBroadcast,
 };
 
@@ -1023,7 +1024,11 @@ pub async fn migrate_encryption(
         &repo.ssh_user,
         &repo.ssh_host,
         repo.ssh_port,
-        &format!("mv {} {migrated_path}", repo.repo_path),
+        &format!(
+            "mv {} {}",
+            shell_escape(&repo.repo_path),
+            shell_escape(&migrated_path)
+        ),
         repo.ssh_host_key.clone(),
     )
     .await;
@@ -1043,7 +1048,11 @@ pub async fn migrate_encryption(
             &repo.ssh_user,
             &repo.ssh_host,
             repo.ssh_port,
-            &format!("mv {migrated_path} {}", repo.repo_path),
+            &format!(
+                "mv {} {}",
+                shell_escape(&migrated_path),
+                shell_escape(&repo.repo_path)
+            ),
             repo.ssh_host_key.clone(),
         )
         .await;

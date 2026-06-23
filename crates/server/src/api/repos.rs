@@ -1830,11 +1830,22 @@ async fn build_import_reports(
     Ok(report_params)
 }
 
-pub async fn sync_existing_archives(
+#[derive(Clone, Copy)]
+enum SyncMode<'a> {
+    /// Full sync: import every archive and prune DB records for archives no
+    /// longer present in the repository.
+    Existing,
+    /// Incremental sync: import only archives not already known, and queue
+    /// content indexing for the newly imported archives.
+    New { repo_lock: &'a RepoLock },
+}
+
+async fn sync_archives(
     pool: &PgPool,
     encryption_key: &[u8; 32],
     repo_id: i64,
     ui_broadcast: &UiBroadcast,
+    mode: SyncMode<'_>,
 ) -> Result<(u64, u64), ApiError> {
     let (borg_repo, env) = super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
 
@@ -1858,126 +1869,43 @@ pub async fn sync_existing_archives(
         .collect();
 
     let known_names = db::list_archive_names_for_repo(pool, repo_id).await?;
-    let stale: Vec<String> = known_names.difference(&borg_names).cloned().collect();
-    let removed = db::delete_archive_records_by_names(pool, repo_id, &stale).await?;
-    if removed > 0 {
-        info!(repo_id, removed, "removed stale archives during full sync");
-    }
 
-    if archives.is_empty() {
-        refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, 0).await;
+    let removed = match mode {
+        SyncMode::Existing => {
+            let stale: Vec<String> = known_names.difference(&borg_names).cloned().collect();
+            let removed = db::delete_archive_records_by_names(pool, repo_id, &stale).await?;
+            if removed > 0 {
+                info!(repo_id, removed, "removed stale archives during full sync");
+            }
+            removed
+        }
+        SyncMode::New { .. } => 0,
+    };
+
+    let to_import: Vec<&serde_json::Value> = match mode {
+        SyncMode::Existing => archives.iter().collect(),
+        SyncMode::New { .. } => archives
+            .iter()
+            .filter(|a| {
+                a["name"]
+                    .as_str()
+                    .is_some_and(|n| !n.is_empty() && !known_names.contains(n))
+            })
+            .collect(),
+    };
+
+    let repo_archive_count = i64::try_from(borg_names.len()).unwrap_or(i64::MAX);
+
+    if to_import.is_empty() {
+        refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, repo_archive_count).await;
         return Ok((0, removed));
     }
 
-    let total = archives.len();
-    let importing_msg = format!("Importing {total} archives\u{2026}");
-    publish_import_progress(
-        pool,
-        ui_broadcast,
-        repo_id,
-        0,
-        i32::try_from(total).unwrap_or(i32::MAX),
-        Some(&importing_msg),
-    )
-    .await;
-
-    let archive_refs: Vec<&serde_json::Value> = archives.iter().collect();
-    let report_params =
-        build_import_reports(pool, ui_broadcast, repo_id, &borg_repo, &env, &archive_refs).await?;
-
-    let imported = u64::try_from(report_params.len()).unwrap_or(u64::MAX);
-    let total_i32 = i32::try_from(total).unwrap_or(i32::MAX);
-    let save_msg = format!("Saving {imported} backup reports\u{2026}");
-    publish_import_progress(
-        pool,
-        ui_broadcast,
-        repo_id,
-        total_i32,
-        total_i32,
-        Some(&save_msg),
-    )
-    .await;
-    db::bulk_insert_backup_reports(pool, &report_params).await?;
-    enrich_archive_stats_background(pool.clone(), borg_repo.clone(), env.clone(), repo_id, {
-        report_params
-            .iter()
-            .filter_map(|params| params.archive_name.clone())
-            .collect()
-    });
-    publish_import_progress(
-        pool,
-        ui_broadcast,
-        repo_id,
-        total_i32,
-        total_i32,
-        Some("Refreshing repository statistics\u{2026}"),
-    )
-    .await;
-    refresh_repo_info_stats(
-        pool,
-        &borg_repo,
-        &env,
-        repo_id,
-        i64::try_from(borg_names.len()).unwrap_or(i64::MAX),
-    )
-    .await;
-    info!(repo_id, imported, total, "synced existing archives");
-    Ok((imported, removed))
-}
-
-pub async fn sync_new_archives(
-    pool: &PgPool,
-    encryption_key: &[u8; 32],
-    repo_id: i64,
-    ui_broadcast: &UiBroadcast,
-    repo_lock: &RepoLock,
-) -> Result<(u64, u64), ApiError> {
-    let (borg_repo, env) = super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
-
-    publish_import_progress(
-        pool,
-        ui_broadcast,
-        repo_id,
-        0,
-        0,
-        Some("Listing archives\u{2026}"),
-    )
-    .await;
-
-    let archives = run_borg_list_with_retry(&borg_repo, &env, pool, ui_broadcast, repo_id).await?;
-
-    let borg_names: std::collections::HashSet<String> = archives
-        .iter()
-        .filter_map(|a| a["name"].as_str())
-        .filter(|n| !n.is_empty())
-        .map(String::from)
-        .collect();
-
-    let known_names = db::list_archive_names_for_repo(pool, repo_id).await?;
-
-    let new_archives: Vec<&serde_json::Value> = archives
-        .iter()
-        .filter(|a| {
-            a["name"]
-                .as_str()
-                .is_some_and(|n| !n.is_empty() && !known_names.contains(n))
-        })
-        .collect();
-
-    if new_archives.is_empty() {
-        refresh_repo_info_stats(
-            pool,
-            &borg_repo,
-            &env,
-            repo_id,
-            i64::try_from(borg_names.len()).unwrap_or(i64::MAX),
-        )
-        .await;
-        return Ok((0, 0));
-    }
-
-    let total = new_archives.len();
-    let importing_msg = format!("Importing {total} new archives\u{2026}");
+    let total = to_import.len();
+    let importing_msg = match mode {
+        SyncMode::Existing => format!("Importing {total} archives\u{2026}"),
+        SyncMode::New { .. } => format!("Importing {total} new archives\u{2026}"),
+    };
     publish_import_progress(
         pool,
         ui_broadcast,
@@ -1989,11 +1917,11 @@ pub async fn sync_new_archives(
     .await;
 
     let report_params =
-        build_import_reports(pool, ui_broadcast, repo_id, &borg_repo, &env, &new_archives).await?;
+        build_import_reports(pool, ui_broadcast, repo_id, &borg_repo, &env, &to_import).await?;
 
-    let added = u64::try_from(report_params.len()).unwrap_or(u64::MAX);
+    let processed = u64::try_from(report_params.len()).unwrap_or(u64::MAX);
     let total_i32 = i32::try_from(total).unwrap_or(i32::MAX);
-    let save_msg = format!("Saving {added} backup reports\u{2026}");
+    let save_msg = format!("Saving {processed} backup reports\u{2026}");
     publish_import_progress(
         pool,
         ui_broadcast,
@@ -2003,6 +1931,7 @@ pub async fn sync_new_archives(
         Some(&save_msg),
     )
     .await;
+
     let archive_names: Vec<String> = report_params
         .iter()
         .filter_map(|params| params.archive_name.clone())
@@ -2015,15 +1944,19 @@ pub async fn sync_new_archives(
         repo_id,
         archive_names.clone(),
     );
-    queue_archive_indexing(
-        pool,
-        encryption_key,
-        repo_id,
-        &archive_names,
-        repo_lock,
-        "incremental sync",
-    )
-    .await;
+
+    if let SyncMode::New { repo_lock } = mode {
+        queue_archive_indexing(
+            pool,
+            encryption_key,
+            repo_id,
+            &archive_names,
+            repo_lock,
+            "incremental sync",
+        )
+        .await;
+    }
+
     publish_import_progress(
         pool,
         ui_broadcast,
@@ -2033,16 +1966,60 @@ pub async fn sync_new_archives(
         Some("Refreshing repository statistics\u{2026}"),
     )
     .await;
-    refresh_repo_info_stats(
+    refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, repo_archive_count).await;
+
+    match mode {
+        SyncMode::Existing => {
+            info!(
+                repo_id,
+                imported = processed,
+                total,
+                "synced existing archives"
+            );
+        }
+        SyncMode::New { .. } => {
+            info!(
+                repo_id,
+                added = processed,
+                total,
+                "incremental sync complete"
+            );
+        }
+    }
+    Ok((processed, removed))
+}
+
+pub async fn sync_existing_archives(
+    pool: &PgPool,
+    encryption_key: &[u8; 32],
+    repo_id: i64,
+    ui_broadcast: &UiBroadcast,
+) -> Result<(u64, u64), ApiError> {
+    sync_archives(
         pool,
-        &borg_repo,
-        &env,
+        encryption_key,
         repo_id,
-        i64::try_from(borg_names.len()).unwrap_or(i64::MAX),
+        ui_broadcast,
+        SyncMode::Existing,
     )
-    .await;
-    info!(repo_id, added, total, "incremental sync complete");
-    Ok((added, 0))
+    .await
+}
+
+pub async fn sync_new_archives(
+    pool: &PgPool,
+    encryption_key: &[u8; 32],
+    repo_id: i64,
+    ui_broadcast: &UiBroadcast,
+    repo_lock: &RepoLock,
+) -> Result<(u64, u64), ApiError> {
+    sync_archives(
+        pool,
+        encryption_key,
+        repo_id,
+        ui_broadcast,
+        SyncMode::New { repo_lock },
+    )
+    .await
 }
 
 fn enrich_archive_stats_background(

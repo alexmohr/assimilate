@@ -1871,6 +1871,102 @@ async fn test_export_then_import_roundtrip(pool: sqlx::PgPool) {
     assert_eq!(paths, vec!["/etc"]);
 }
 
+// -- admin-only enforcement on agent-mutating endpoints --
+
+const NON_ADMIN_SESSION_ID: &str = "non-admin-session-id-000000000000000";
+
+async fn create_non_admin_user_and_session(pool: &PgPool) {
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash, role) VALUES ('integration-viewer', \
+         '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'user') ON CONFLICT \
+         (username) DO UPDATE SET role = 'user' RETURNING id",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+
+    let expires = chrono::Utc::now() + chrono::Duration::hours(24);
+    sqlx::query(
+        "INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3) ON CONFLICT (id) DO \
+         UPDATE SET expires_at = EXCLUDED.expires_at",
+    )
+    .bind(NON_ADMIN_SESSION_ID)
+    .bind(user_id)
+    .bind(expires)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+fn non_admin_delete_request(uri: &str) -> Request<Body> {
+    Request::builder()
+        .uri(uri)
+        .method("DELETE")
+        .header("cookie", format!("session={NON_ADMIN_SESSION_ID}"))
+        .body(Body::empty())
+        .unwrap()
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_agent_forbidden_for_non_admin(pool: sqlx::PgPool) {
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    sqlx::query("INSERT INTO agents (hostname, agent_token_hash) VALUES ('guarded-host', 'hash')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let resp = oneshot(
+        &mut app,
+        non_admin_delete_request("/api/agents/guarded-host"),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "a non-admin user must not be able to delete an agent"
+    );
+
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM agents WHERE hostname = 'guarded-host'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        remaining, 1,
+        "the agent must still exist after a rejected delete"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_agent_allowed_for_admin(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone()).await;
+
+    sqlx::query("INSERT INTO agents (hostname, agent_token_hash) VALUES ('admin-host', 'hash')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let resp = oneshot(&mut app, delete_request("/api/agents/admin-host")).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NO_CONTENT,
+        "an admin user must be able to delete an agent"
+    );
+
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM agents WHERE hostname = 'admin-host'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        remaining, 0,
+        "the agent should be removed by an admin delete"
+    );
+}
+
 // -- must_change_password enforcement --
 
 const MCP_SESSION_ID: &str = "must-change-password-session-0000000";

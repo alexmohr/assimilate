@@ -2686,4 +2686,33 @@ mod tests {
                       lock timeout\nPlatform: Linux\nLater: noise";
         assert_eq!(extract_borg_error(stderr), "RuntimeError: lock timeout");
     }
+
+    #[test]
+    fn borg_subcommand_from_str_round_trips_all_variants() {
+        for sub in BorgSubcommand::ALL {
+            let parsed: BorgSubcommand = sub.as_str().parse().unwrap();
+            assert_eq!(parsed, sub);
+            assert_eq!(sub.to_string(), sub.as_str());
+        }
+    }
+
+    #[test]
+    fn borg_subcommand_from_str_rejects_unknown() {
+        assert!("rm".parse::<BorgSubcommand>().is_err());
+        assert!("".parse::<BorgSubcommand>().is_err());
+        assert!("INFO".parse::<BorgSubcommand>().is_err());
+    }
+
+    #[test]
+    fn borg_subcommand_permitted_list_contains_all() {
+        let list = BorgSubcommand::permitted_list();
+        for sub in BorgSubcommand::ALL {
+            assert!(
+                list.contains(sub.as_str()),
+                "missing {} in {list}",
+                sub.as_str()
+            );
+        }
+        assert_eq!(list.matches(',').count(), BorgSubcommand::ALL.len() - 1);
+    }
 }

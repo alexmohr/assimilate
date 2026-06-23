@@ -276,23 +276,58 @@ function toggleTagFilter(tagId: number): void {
 }
 
 async function loadAgents(): Promise<void> {
-  loading.value = true
-  error.value = null
+  if (agents.value.length === 0) {
+    loading.value = true
+    error.value = null
+  }
   try {
-    const [agentsRes, agentTagAssocRes, agentTagsRes, healthRes, scheduleCountsRes, overviewRes] =
-      await Promise.all([
-        apiClient.get<AgentRow[]>('/agents', {
-          params: showHidden.value ? { include_hidden: true } : undefined,
-        }),
-        apiClient.get<AgentTagRow[]>('/agent-tags').catch(() => ({ data: [] as AgentTagRow[] })),
-        apiClient
-          .get<TagRow[]>('/tags', { params: { scope: 'host' } })
-          .catch(() => ({ data: [] as TagRow[] })),
-        apiClient.get<HealthEntry[]>('/stats/health'),
-        apiClient.get<{ agent_id: number; count: number }[]>('/stats/schedule-counts'),
-        apiClient.get<DashboardOverview>('/stats/dashboard-overview'),
-      ])
+    const agentsRes = await apiClient.get<AgentRow[]>('/agents', {
+      params: showHidden.value ? { include_hidden: true } : undefined,
+    })
     agents.value = agentsRes.data
+    error.value = null
+    loading.value = false
+
+    const emptyOverview: DashboardOverview = {
+      summary: {
+        protected_hosts: 0,
+        eligible_hosts: 0,
+        needs_attention: 0,
+        running_operations: 0,
+        total_storage_bytes: 0,
+      },
+      findings: [],
+      protection: {
+        protected_hosts: 0,
+        eligible_hosts: 0,
+        protected_agent_links: [],
+        unassigned_agents: [],
+        never_succeeded_targets: 0,
+        never_succeeded_agents: [],
+        disabled_only_agents: [],
+      },
+      running_operations: [],
+      upcoming_schedules: [],
+      repository_capacity: [],
+    }
+    const [agentTagAssocRes, agentTagsRes, healthRes, scheduleCountsRes, overviewRes] =
+      await Promise.all([
+        apiClient
+          .get<AgentTagRow[]>('/agent-tags', { timeout: 8000 })
+          .catch(() => ({ data: [] as AgentTagRow[] })),
+        apiClient
+          .get<TagRow[]>('/tags', { params: { scope: 'host' }, timeout: 8000 })
+          .catch(() => ({ data: [] as TagRow[] })),
+        apiClient
+          .get<HealthEntry[]>('/stats/health', { timeout: 8000 })
+          .catch(() => ({ data: [] as HealthEntry[] })),
+        apiClient
+          .get<{ agent_id: number; count: number }[]>('/stats/schedule-counts', { timeout: 8000 })
+          .catch(() => ({ data: [] as { agent_id: number; count: number }[] })),
+        apiClient
+          .get<DashboardOverview>('/stats/dashboard-overview', { timeout: 8000 })
+          .catch(() => ({ data: emptyOverview })),
+      ])
     machineScheduleCount.value = {}
     scheduleCountsRes.data.forEach((entry) => {
       machineScheduleCount.value[entry.agent_id] = entry.count
@@ -343,7 +378,9 @@ async function loadAgents(): Promise<void> {
       ),
     }
   } catch (e: unknown) {
-    error.value = extractError(e)
+    if (agents.value.length === 0) {
+      error.value = extractError(e)
+    }
   } finally {
     loading.value = false
   }

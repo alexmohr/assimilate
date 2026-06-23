@@ -39,9 +39,14 @@ async fn handle_ssh_relay(mut socket: WebSocket, hostname: String, state: AppSta
         };
 
     let authenticated = match db::get_agent_token_hash(&state.pool, &hostname).await {
-        Ok((_, hash)) => bcrypt::verify(&token, &hash)
-            .inspect_err(|e| {
-                tracing::error!(hostname = %hostname, error = %e, "bcrypt verify failed");
+        Ok((_, hash)) => tokio::task::spawn_blocking(move || bcrypt::verify(&token, &hash))
+            .await
+            .map_err(|e| tracing::error!(hostname = %hostname, error = %e, "bcrypt task panicked"))
+            .and_then(|r| {
+                r.inspect_err(|e| {
+                    tracing::error!(hostname = %hostname, error = %e, "bcrypt verify failed");
+                })
+                .map_err(|_| ())
             })
             .unwrap_or(false),
         Err(e) => {

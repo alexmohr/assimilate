@@ -775,11 +775,11 @@ set -eu
 case "$1" in
   list)
     case " $* " in
-      *" --json-lines "*) exit 1 ;;
-      *) cat <<'EOF'
+      *" --json "*) cat <<'EOF'
 {list_json}
 EOF
         ;;
+      *) ;;
     esac
     ;;
   info)
@@ -853,23 +853,12 @@ esac
     #[sqlx::test(migrations = "./migrations")]
     async fn run_repo_sync_full_reimports_and_prunes_stale_archives(pool: sqlx::PgPool) {
         let _borg_lock = borg_binary_lock().await;
-        let list_json = r#"{
-  "archives": [
-    {
-      "name": "fresh-archive",
-      "hostname": "scheduler-test-host",
-      "start": "2026-06-05T10:00:00Z",
-      "end": "2026-06-05T10:05:00Z",
-      "duration": 300.0,
-      "stats": {
-        "original_size": 1000,
-        "compressed_size": 500,
-        "deduplicated_size": 250,
-        "nfiles": 2
-      }
-    }
-  ]
-}"#;
+        let list_json: &str = concat!(
+            r#"{"archives":[{"name":"fresh-archive","hostname":"scheduler-test-host","#,
+            r#""start":"2026-06-05T10:00:00Z","end":"2026-06-05T10:05:00Z","#,
+            r#""duration":300.0,"stats":{"original_size":1000,"compressed_size":500,"#,
+            r#""deduplicated_size":250,"nfiles":2}}]}"#,
+        );
         let info_repo_json = r#"{
   "cache": {
     "stats": {

@@ -5426,3 +5426,81 @@ async fn clear_relocation_for_host_ignores_unregistered_host(pool: PgPool) {
             .unwrap();
     assert_eq!(count.0, 1, "pending table must be unchanged");
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn check_repo_permission_view_all_is_view_only(pool: PgPool) {
+    use server::{
+        api::{
+            auth::{AuthUser, Role},
+            permissions::check_repo_permission,
+        },
+        error::ApiError,
+    };
+
+    let user = db::insert_user(&pool, "view-all-user", "hash", "user")
+        .await
+        .unwrap();
+
+    let role = db::insert_role(
+        &pool,
+        &InsertRoleParams {
+            name: "test-view-all",
+            can_create_agent: false,
+            can_delete_agent: false,
+            can_delete_own_agent: false,
+            can_create_repo: false,
+            can_delete_repo: false,
+            can_delete_own_repo: false,
+            can_create_schedule: false,
+            can_delete_schedule: false,
+            can_delete_own_schedule: false,
+            can_manage_tags: false,
+            can_view_all_repos: true,
+            can_manage_tunnels: false,
+        },
+    )
+    .await
+    .unwrap();
+
+    db::set_user_roles(&pool, user.id, &[role.id])
+        .await
+        .unwrap();
+
+    let repo = db::insert_repo(
+        &pool,
+        &InsertRepoParams {
+            name: "view-all-repo",
+            repo_path: "/backups/view-all",
+            ssh_user: "user",
+            ssh_host: "host.local",
+            ssh_port: 22,
+            passphrase_encrypted: b"enc",
+            compression: "none",
+            encryption: "none",
+            owner_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        db::get_repo_permission(&pool, user.id, repo.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let auth = AuthUser {
+        user_id: user.id,
+        username: "view-all-user".to_string(),
+        role: Role::User,
+        session_id: None,
+    };
+
+    check_repo_permission(&pool, &auth, repo.id, |p| p.can_view)
+        .await
+        .unwrap();
+
+    let denied = check_repo_permission(&pool, &auth, repo.id, |p| p.can_delete).await;
+    assert!(matches!(denied, Err(ApiError::Forbidden(_))));
+}

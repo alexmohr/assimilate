@@ -13,7 +13,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt as _;
 use serde::{Deserialize, Serialize};
-use shared::{ssh::borg_rsh, types::build_repo_url};
+use shared::types::build_repo_url;
 use sqlx::PgPool;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, BufReader},
@@ -87,9 +87,7 @@ pub async fn get_repo_env(
         &repo.repo_path,
     );
 
-    let mut env = HashMap::new();
-    env.insert("BORG_PASSPHRASE".to_string(), passphrase);
-    env.insert("BORG_RSH".to_string(), borg_rsh());
+    let mut env = super::helpers::borg_base_env(&passphrase);
 
     if repo.relocation_pending {
         env.insert(

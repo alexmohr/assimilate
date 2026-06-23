@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, fmt, time::Duration};
 
 use axum::{
     Json,
@@ -859,9 +859,79 @@ pub async fn break_lock(
     }))
 }
 
-const ALLOWED_BORG_SUBCOMMANDS: &[&str] = &[
-    "info", "list", "check", "compact", "prune", "delete", "diff", "rename", "recreate",
-];
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BorgSubcommand {
+    Info,
+    List,
+    Check,
+    Compact,
+    Prune,
+    Delete,
+    Diff,
+    Rename,
+    Recreate,
+}
+
+impl BorgSubcommand {
+    const ALL: [BorgSubcommand; 9] = [
+        BorgSubcommand::Info,
+        BorgSubcommand::List,
+        BorgSubcommand::Check,
+        BorgSubcommand::Compact,
+        BorgSubcommand::Prune,
+        BorgSubcommand::Delete,
+        BorgSubcommand::Diff,
+        BorgSubcommand::Rename,
+        BorgSubcommand::Recreate,
+    ];
+
+    fn as_str(self) -> &'static str {
+        match self {
+            BorgSubcommand::Info => "info",
+            BorgSubcommand::List => "list",
+            BorgSubcommand::Check => "check",
+            BorgSubcommand::Compact => "compact",
+            BorgSubcommand::Prune => "prune",
+            BorgSubcommand::Delete => "delete",
+            BorgSubcommand::Diff => "diff",
+            BorgSubcommand::Rename => "rename",
+            BorgSubcommand::Recreate => "recreate",
+        }
+    }
+
+    fn permitted_list() -> String {
+        Self::ALL
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+impl fmt::Display for BorgSubcommand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for BorgSubcommand {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "info" => Ok(BorgSubcommand::Info),
+            "list" => Ok(BorgSubcommand::List),
+            "check" => Ok(BorgSubcommand::Check),
+            "compact" => Ok(BorgSubcommand::Compact),
+            "prune" => Ok(BorgSubcommand::Prune),
+            "delete" => Ok(BorgSubcommand::Delete),
+            "diff" => Ok(BorgSubcommand::Diff),
+            "rename" => Ok(BorgSubcommand::Rename),
+            "recreate" => Ok(BorgSubcommand::Recreate),
+            _ => Err(()),
+        }
+    }
+}
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ExecBorgRequest {
@@ -899,18 +969,17 @@ pub async fn exec_borg(
     Path(repo_id): Path<i64>,
     ApiJson(req): ApiJson<ExecBorgRequest>,
 ) -> Result<Json<ExecBorgResponse>, ApiError> {
-    let subcommand = req
+    let raw_subcommand = req
         .args
         .first()
         .ok_or_else(|| ApiError::BadRequest("args must not be empty".to_owned()))?;
 
-    if !ALLOWED_BORG_SUBCOMMANDS.contains(&subcommand.as_str()) {
-        return Err(ApiError::BadRequest(format!(
-            "subcommand '{}' is not allowed; permitted: {}",
-            subcommand,
-            ALLOWED_BORG_SUBCOMMANDS.join(", ")
-        )));
-    }
+    let subcommand = raw_subcommand.parse::<BorgSubcommand>().map_err(|()| {
+        ApiError::BadRequest(format!(
+            "subcommand '{raw_subcommand}' is not allowed; permitted: {}",
+            BorgSubcommand::permitted_list()
+        ))
+    })?;
 
     if req.args.len() > 32 {
         return Err(ApiError::BadRequest("too many arguments".to_owned()));
@@ -930,7 +999,7 @@ pub async fn exec_borg(
     let mut env = helpers::borg_base_env(&passphrase);
     env.insert("BORG_REPO".to_owned(), repo_url);
 
-    info!(repo_id, name = %repo.name, subcommand, "admin executing borg command");
+    info!(repo_id, name = %repo.name, subcommand = %subcommand, "admin executing borg command");
 
     let output = Borg::new()
         .run(&req.args, &env)

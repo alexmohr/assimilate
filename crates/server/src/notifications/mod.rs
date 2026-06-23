@@ -29,15 +29,22 @@ impl fmt::Display for ChannelType {
     }
 }
 
-impl ChannelType {
-    fn as_db_str(self) -> &'static str {
-        match self {
-            Self::Email => "email",
-            Self::Webhook => "webhook",
-            Self::WebPush => "web_push",
+impl std::str::FromStr for ChannelType {
+    type Err = UnknownChannelType;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "email" => Ok(Self::Email),
+            "webhook" => Ok(Self::Webhook),
+            "web_push" => Ok(Self::WebPush),
+            other => Err(UnknownChannelType(other.to_owned())),
         }
     }
 }
+
+#[derive(Debug, thiserror::Error)]
+#[error("unknown channel type: {0}")]
+pub struct UnknownChannelType(pub String);
 
 impl sqlx::Type<sqlx::Postgres> for ChannelType {
     fn type_info() -> sqlx::postgres::PgTypeInfo {
@@ -48,12 +55,7 @@ impl sqlx::Type<sqlx::Postgres> for ChannelType {
 impl<'r> sqlx::Decode<'r, sqlx::Postgres> for ChannelType {
     fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
         let s = <&str as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        match s {
-            "email" => Ok(Self::Email),
-            "webhook" => Ok(Self::Webhook),
-            "web_push" => Ok(Self::WebPush),
-            other => Err(format!("unknown channel type: {other}").into()),
-        }
+        Ok(s.parse::<ChannelType>()?)
     }
 }
 
@@ -62,7 +64,7 @@ impl<'q> sqlx::Encode<'q, sqlx::Postgres> for ChannelType {
         &self,
         buf: &mut sqlx::postgres::PgArgumentBuffer,
     ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
-        <&str as sqlx::Encode<sqlx::Postgres>>::encode(self.as_db_str(), buf)
+        <String as sqlx::Encode<sqlx::Postgres>>::encode(self.to_string(), buf)
     }
 }
 
@@ -104,22 +106,11 @@ impl EventType {
         "agent_connected",
         "agent_disconnected",
     ];
+}
 
-    pub fn from_db_str(s: &str) -> Option<Self> {
-        match s {
-            "backup_success" => Some(Self::BackupSuccess),
-            "backup_warning" => Some(Self::BackupWarning),
-            "backup_failed" => Some(Self::BackupFailed),
-            "check_success" => Some(Self::CheckSuccess),
-            "check_failed" => Some(Self::CheckFailed),
-            "agent_connected" => Some(Self::AgentConnected),
-            "agent_disconnected" => Some(Self::AgentDisconnected),
-            _ => None,
-        }
-    }
-
-    fn as_db_str(self) -> &'static str {
-        match self {
+impl fmt::Display for EventType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
             Self::BackupSuccess => "backup_success",
             Self::BackupWarning => "backup_warning",
             Self::BackupFailed => "backup_failed",
@@ -127,9 +118,31 @@ impl EventType {
             Self::CheckFailed => "check_failed",
             Self::AgentConnected => "agent_connected",
             Self::AgentDisconnected => "agent_disconnected",
+        };
+        f.write_str(s)
+    }
+}
+
+impl std::str::FromStr for EventType {
+    type Err = UnknownEventType;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "backup_success" => Ok(Self::BackupSuccess),
+            "backup_warning" => Ok(Self::BackupWarning),
+            "backup_failed" => Ok(Self::BackupFailed),
+            "check_success" => Ok(Self::CheckSuccess),
+            "check_failed" => Ok(Self::CheckFailed),
+            "agent_connected" => Ok(Self::AgentConnected),
+            "agent_disconnected" => Ok(Self::AgentDisconnected),
+            other => Err(UnknownEventType(other.to_owned())),
         }
     }
 }
+
+#[derive(Debug, thiserror::Error)]
+#[error("unknown event type: {0}")]
+pub struct UnknownEventType(pub String);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationEvent {
@@ -249,7 +262,7 @@ pub async fn dispatch(
                     OR nc.scope->'schedule_ids' @> to_jsonb($4::bigint))))
         "#,
     )
-    .bind(event.event_type.as_db_str())
+    .bind(event.event_type.to_string())
     .bind(event.repo_id)
     .bind(event.agent_id)
     .bind(event.schedule_id)
@@ -264,7 +277,7 @@ pub async fn dispatch(
         let payload = payload.clone();
         let channel_config = channel.config.clone();
         let channel_id = channel.id;
-        let event_type_str = event.event_type.as_db_str().to_owned();
+        let event_type_str = event.event_type.to_string();
 
         tokio::spawn(async move {
             let result = deliver_to_channel(

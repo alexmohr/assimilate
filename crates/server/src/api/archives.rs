@@ -11,10 +11,14 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::{DateTime, Utc};
+use futures_util::StreamExt as _;
 use serde::{Deserialize, Serialize};
 use shared::{ssh::borg_rsh, types::build_repo_url};
 use sqlx::PgPool;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncReadExt, BufReader},
+    sync::oneshot,
+};
 use tokio_util::io::ReaderStream;
 
 use super::{auth::AuthUser, permissions::check_repo_permission};
@@ -863,6 +867,14 @@ pub async fn get_archive_index_status(
     Ok(Json(response))
 }
 
+/// Resolves to `true` if the timeout elapsed before completion was signalled.
+async fn timed_out_before_done(done_rx: oneshot::Receiver<()>, timeout: Duration) -> bool {
+    tokio::select! {
+        () = tokio::time::sleep(timeout) => true,
+        _ = done_rx => false,
+    }
+}
+
 #[utoipa::path(
     get,
     path = "/api/repos/{repo_id}/archives/{archive_name}/extract",
@@ -923,12 +935,21 @@ pub async fn extract_file(
     let content_type = content_type_for_extension(basename);
     let disposition = format!("attachment; filename=\"{basename}\"");
 
-    let stream = ReaderStream::new(stdout);
+    let (done_tx, done_rx) = oneshot::channel::<()>();
+
+    // Wrap the stream so the sender is dropped (signalling completion) when the
+    // stream is exhausted or the connection is closed.
+    let stream = ReaderStream::new(stdout).inspect(move |_| {
+        // kept alive until the closure is dropped; no-op on each chunk
+        let _ = &done_tx;
+    });
     let body = Body::from_stream(stream);
 
+    // Kill the child only if the stream did not complete within the timeout.
     tokio::spawn(async move {
-        tokio::time::sleep(EXTRACT_TIMEOUT).await;
-        let _kill_result = child.kill().await;
+        if timed_out_before_done(done_rx, EXTRACT_TIMEOUT).await {
+            let _ = child.kill().await;
+        }
     });
 
     Ok((
@@ -1180,5 +1201,20 @@ mod tests {
         cases.iter().for_each(|(filename, expected)| {
             assert_eq!(content_type_for_extension(filename), *expected);
         });
+    }
+
+    #[tokio::test]
+    async fn timed_out_before_done_returns_false_when_signalled_first() {
+        let (done_tx, done_rx) = oneshot::channel::<()>();
+        drop(done_tx);
+
+        assert!(!timed_out_before_done(done_rx, Duration::from_secs(60)).await);
+    }
+
+    #[tokio::test]
+    async fn timed_out_before_done_returns_true_when_timeout_elapses() {
+        let (_done_tx, done_rx) = oneshot::channel::<()>();
+
+        assert!(timed_out_before_done(done_rx, Duration::from_millis(10)).await);
     }
 }

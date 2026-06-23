@@ -156,6 +156,69 @@ describe('HostsView', () => {
     expect(wrapper.text()).toContain('never-succeeded-host')
     expect(wrapper.text()).not.toContain('protected-host')
   })
+
+  it('formats relative last-seen times and agent versions', async () => {
+    const recent = new Date(Date.now() - 90 * 60 * 1000).toISOString()
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') {
+        return Promise.resolve({
+          data: [
+            {
+              id: 1,
+              hostname: 'versioned-host',
+              display_name: null,
+              agent_version: 'v1.2.3',
+              agent_git_sha: null,
+              agent_build_time: null,
+              created_at: '2026-06-01T00:00:00Z',
+              last_seen_at: recent,
+              is_connected: true,
+              is_imported: false,
+              is_hidden: false,
+              default_backup_paths: [],
+            },
+          ],
+        })
+      }
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({
+          data: {
+            protection: {
+              protected_agent_links: [],
+              unassigned_agents: [],
+              never_succeeded_agents: [],
+              disabled_only_agents: [],
+            },
+          },
+        })
+      }
+      if (url === '/system/version') {
+        return Promise.resolve({ data: { agent_version: null } })
+      }
+      return Promise.resolve({ data: [] })
+    })
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        {
+          path: '/:pathMatch(.*)*',
+          component: defineComponent({ render: (): null => null }),
+        },
+      ],
+    })
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, {
+      global: { plugins: [createPinia(), router] },
+    })
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('versioned-host')
+    expect(text).toContain('v1.2.3')
+    expect(text).toContain('h ago')
+  })
 })
 
 describe('HostsView deploy button label', () => {

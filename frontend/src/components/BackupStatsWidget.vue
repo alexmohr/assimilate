@@ -204,11 +204,9 @@ function navigateToActivity(status?: string): void {
 }
 
 .panel-title {
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
+  color: var(--text-primary);
   margin: 0;
 }
 

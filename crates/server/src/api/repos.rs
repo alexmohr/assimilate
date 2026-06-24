@@ -1840,6 +1840,18 @@ enum SyncMode<'a> {
     New { repo_lock: &'a RepoLock },
 }
 
+/// Returns `true` when a borg archive JSON entry has a non-empty name that is
+/// not already recorded for the repository (i.e. it is new and should be
+/// imported during an incremental sync).
+fn is_unknown_archive(
+    archive: &serde_json::Value,
+    known_names: &std::collections::HashSet<String>,
+) -> bool {
+    archive["name"]
+        .as_str()
+        .is_some_and(|n| !n.is_empty() && !known_names.contains(n))
+}
+
 async fn sync_archives(
     pool: &PgPool,
     encryption_key: &[u8; 32],
@@ -1886,11 +1898,7 @@ async fn sync_archives(
         SyncMode::Existing => archives.iter().collect(),
         SyncMode::New { .. } => archives
             .iter()
-            .filter(|a| {
-                a["name"]
-                    .as_str()
-                    .is_some_and(|n| !n.is_empty() && !known_names.contains(n))
-            })
+            .filter(|a| is_unknown_archive(a, &known_names))
             .collect(),
     };
 
@@ -2714,5 +2722,30 @@ mod tests {
             );
         }
         assert_eq!(list.matches(',').count(), BorgSubcommand::ALL.len() - 1);
+    }
+
+    #[test]
+    fn is_unknown_archive_detects_new_and_known() {
+        use std::collections::HashSet;
+        let known: HashSet<String> = ["host-2024-01-01".to_string()].into_iter().collect();
+        assert!(is_unknown_archive(
+            &serde_json::json!({"name": "host-2024-02-02"}),
+            &known
+        ));
+        assert!(!is_unknown_archive(
+            &serde_json::json!({"name": "host-2024-01-01"}),
+            &known
+        ));
+    }
+
+    #[test]
+    fn is_unknown_archive_rejects_empty_or_missing_name() {
+        use std::collections::HashSet;
+        let known: HashSet<String> = HashSet::new();
+        assert!(!is_unknown_archive(
+            &serde_json::json!({"name": ""}),
+            &known
+        ));
+        assert!(!is_unknown_archive(&serde_json::json!({"size": 1}), &known));
     }
 }

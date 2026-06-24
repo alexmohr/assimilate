@@ -16,31 +16,9 @@ import { parseLines } from '../utils/validation'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import CronBuilder from '../components/CronBuilder.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
-
-type ScheduleType = 'backup' | 'check' | 'verify'
-
-interface ScheduleRow {
-  id: number
-  repo_id: number | null
-  name: string
-  schedule_type: string
-  cron_expression: string
-  enabled: boolean
-  canary_enabled: boolean
-  last_run_at: string | null
-  next_run_at: string | null
-  exclude_patterns_raw: string
-  ignore_global_excludes: boolean
-  keep_hourly: number
-  keep_daily: number
-  keep_weekly: number
-  keep_monthly: number
-  keep_yearly: number
-  compact_enabled: boolean
-  pre_backup_commands: string
-  post_backup_commands: string
-  on_failure: string
-}
+import type { AgentRow } from '../types/agent'
+import type { ReportRow } from '../types/report'
+import type { ScheduleRow, ScheduleType } from '../types/schedule'
 
 interface ScheduleTarget {
   agent_id: number
@@ -63,34 +41,10 @@ interface ScheduleBackupSourcesResponse {
   exclude_patterns_per_agent: PerHostExcludePatterns[] | null
 }
 
-interface AgentRow {
-  id: number
-  hostname: string
-  display_name: string | null
-}
-
 interface RepoRow {
   id: number
   name: string
   repo_path: string
-}
-
-interface ReportRow {
-  id: number
-  agent_id: number
-  repo_id: number
-  started_at: string
-  finished_at: string
-  status: string
-  original_size: number
-  compressed_size: number
-  deduplicated_size: number
-  files_processed: number
-  duration_secs: number
-  error_message: string | null
-  warnings: string[]
-  borg_version: string | null
-  archive_name: string | null
 }
 
 const props = defineProps<{ id: string }>()
@@ -271,9 +225,9 @@ function populateForm(s: ScheduleRow): void {
     cron_expression: s.cron_expression,
     enabled: s.enabled,
     canary_enabled: s.canary_enabled,
-    exclude_patterns: s.exclude_patterns_raw,
+    exclude_patterns: s.exclude_patterns_raw ?? '',
     ignore_global_excludes: s.ignore_global_excludes,
-    keep_hourly: s.keep_hourly,
+    keep_hourly: s.keep_hourly ?? 0,
     keep_daily: s.keep_daily,
     keep_weekly: s.keep_weekly,
     keep_monthly: s.keep_monthly,
@@ -341,7 +295,7 @@ async function loadData(): Promise<void> {
       )
       backupRunning.value = runningReport !== undefined
       if (runningReport) {
-        const agent = agentMap.value.get(runningReport.agent_id)
+        const agent = agentMap.value.get(runningReport.agent_id ?? 0)
         backupHostname.value = agent?.display_name ?? agent?.hostname ?? null
         backupStartedAt.value = new Date(runningReport.started_at).getTime()
         backupElapsedSecs.value = Math.floor((Date.now() - backupStartedAt.value) / 1000)
@@ -1392,9 +1346,9 @@ watch(activeTab, (tab) => {
                 <td class="cell-ts">{{ formatDateShort(r.started_at) }}</td>
                 <td class="cell-host">
                   {{
-                    agentMap.get(r.agent_id)?.display_name ??
-                    agentMap.get(r.agent_id)?.hostname ??
-                    `#${r.agent_id}`
+                    agentMap.get(r.agent_id ?? 0)?.display_name ??
+                    agentMap.get(r.agent_id ?? 0)?.hostname ??
+                    `#${r.agent_id ?? 0}`
                   }}
                 </td>
                 <td>

@@ -7,13 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref, computed } from 'vue'
 import { apiClient } from '../api/client'
 import { extractError } from '../utils/error'
-
-interface AgentRow {
-  id: number
-  hostname: string
-  display_name: string | null
-  is_imported: boolean
-}
+import type { AgentRow } from '../types/agent'
 
 interface MergeResult {
   merged: boolean

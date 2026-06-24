@@ -12,7 +12,7 @@ import { useEscapeKey } from '../composables/useEscapeKey'
 import { useMobile } from '../composables/useMobile'
 import { useWebSocket } from '../composables/useWebSocket'
 import { logger } from '../utils/logger'
-import { formatBytes } from '../utils/format'
+import { formatBytes, relativeTime } from '../utils/format'
 import { extractError } from '../utils/error'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import { Plus, Download, SlidersHorizontal, Database, Folder, FolderPlus } from '@lucide/vue'
@@ -228,20 +228,6 @@ function repoTags(repo: RepoWithStats): { name: string; color: string }[] {
 
 function repoImportPhaseVerb(repo: RepoWithStats): string {
   return (repo.import_status_message ?? '').startsWith('Indexing') ? 'Indexing' : 'Importing'
-}
-
-function formatLastBackup(iso: string | null): string {
-  if (!iso) return 'Never'
-  const ts = new Date(iso).getTime()
-  if (isNaN(ts) || ts === 0) return 'Never'
-  const diff = Date.now() - ts
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return 'Just now'
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  const days = Math.floor(hrs / 24)
-  return `${days}d ago`
 }
 
 const defaultRepoForm = (): RepoForm => ({
@@ -887,7 +873,7 @@ onMounted(loadRepos)
             <span class="stat-label">Deduplicated</span>
           </div>
           <div class="stat">
-            <span class="stat-value">{{ formatLastBackup(repo.last_backup_at) }}</span>
+            <span class="stat-value">{{ relativeTime(repo.last_backup_at ?? '') }}</span>
             <span class="stat-label">Last backup</span>
           </div>
         </div>
@@ -1010,7 +996,7 @@ onMounted(loadRepos)
                 <span class="stat-label">Deduplicated</span>
               </div>
               <div class="stat">
-                <span class="stat-value">{{ formatLastBackup(repo.last_backup_at) }}</span>
+                <span class="stat-value">{{ relativeTime(repo.last_backup_at ?? '') }}</span>
                 <span class="stat-label">Last backup</span>
               </div>
             </div>

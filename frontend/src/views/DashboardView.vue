@@ -98,7 +98,6 @@ interface RepoOption {
 const summary = ref<DashboardSummary | null>(null)
 const overview = ref<DashboardOverview | null>(null)
 const health = ref<HealthEntry[]>([])
-const activity = ref<ActivityEntry[]>([])
 const repoOptions = ref<RepoOption[]>([])
 const loading = ref(true)
 
@@ -112,8 +111,6 @@ interface ActiveBackup {
 
 const activeBackups = ref<ActiveBackup[]>([])
 
-const activityDaysFilter = ref<number>(14)
-const activityRepoFilter = ref<number | undefined>(undefined)
 const successDaysFilter = ref<number>(30)
 const successRepoFilter = ref<number | undefined>(undefined)
 
@@ -129,15 +126,6 @@ const DONUT_COLORS = [
 ]
 
 const successActivity = ref<ActivityEntry[]>([])
-
-async function fetchActivity(): Promise<void> {
-  const params = new URLSearchParams({ days: String(activityDaysFilter.value) })
-  if (activityRepoFilter.value !== undefined) {
-    params.set('repo_id', String(activityRepoFilter.value))
-  }
-  const response = await apiClient.get<ActivityEntry[]>(`/stats/activity?${params.toString()}`)
-  activity.value = response.data
-}
 
 async function fetchSuccessActivity(): Promise<void> {
   const params = new URLSearchParams({ days: String(successDaysFilter.value) })
@@ -161,7 +149,7 @@ async function fetchAll(): Promise<void> {
     overview.value = o.data
     repoOptions.value = r.data.map((repo) => ({ id: repo.id, name: repo.name }))
     storageBreakdown.value = s.data.storage_by_repo
-    await Promise.all([fetchActivity(), fetchSuccessActivity()])
+    await fetchSuccessActivity()
   } finally {
     loading.value = false
   }
@@ -213,10 +201,6 @@ watch(wsStatus, (newStatus, oldStatus) => {
 
 onMounted(() => {
   fetchAll().catch(logger.error)
-})
-
-watch([activityDaysFilter, activityRepoFilter], () => {
-  fetchActivity().catch(logger.error)
 })
 
 watch([successDaysFilter, successRepoFilter], () => {
@@ -310,84 +294,6 @@ const storageLegendItems = computed(
     }))
   },
 )
-
-const activityDays = computed((): string[] => {
-  const days: string[] = []
-  const count = activityDaysFilter.value
-  for (let i = count - 1; i >= 0; i--) {
-    const d = new Date()
-    d.setDate(d.getDate() - i)
-    days.push(d.toISOString().slice(0, 10))
-  }
-  return days
-})
-
-const activityHourRange = computed((): { min: number; max: number } => {
-  if (activity.value.length === 0) return { min: 0, max: 24 }
-  let min = 24
-  let max = 0
-  for (const entry of activity.value) {
-    const d = new Date(entry.started_at)
-    const hour = d.getHours() + d.getMinutes() / 60
-    if (hour < min) min = hour
-    if (hour > max) max = hour
-  }
-  // Add 1h padding on each side, clamped to 0–24
-  min = Math.max(0, Math.floor(min) - 1)
-  max = Math.min(24, Math.ceil(max) + 1)
-  // Ensure at least 2h range
-  if (max - min < 2) {
-    min = Math.max(0, min - 1)
-    max = Math.min(24, max + 1)
-  }
-  return { min, max }
-})
-
-const activityYTicks = computed((): Array<{ hour: number; y: number }> => {
-  const { min, max } = activityHourRange.value
-  const range = max - min
-  const padY = 30
-  const plotH = 200 - padY * 2
-  // Choose step: 1h, 2h, 3h, 4h, 6h depending on range
-  let step = 1
-  if (range > 12) step = 4
-  else if (range > 8) step = 3
-  else if (range > 4) step = 2
-
-  const ticks: Array<{ hour: number; y: number }> = []
-  const startHour = Math.ceil(min / step) * step
-  for (let h = startHour; h <= max; h += step) {
-    const y = padY + ((h - min) / range) * plotH
-    ticks.push({ hour: h, y })
-  }
-  return ticks
-})
-
-const activityDots = computed((): Array<{ x: number; y: number; color: string; key: number }> => {
-  const days = activityDays.value
-  if (days.length === 0) return []
-  const padX = 60
-  const padY = 30
-  const plotW = 900 - padX * 2
-  const plotH = 200 - padY * 2
-  const { min, max } = activityHourRange.value
-  const range = max - min
-
-  return activity.value.map((entry) => {
-    const date = entry.started_at.slice(0, 10)
-    const dayIndex = days.indexOf(date)
-    const x = dayIndex >= 0 ? padX + (dayIndex / Math.max(days.length - 1, 1)) * plotW : padX
-    const hour =
-      new Date(entry.started_at).getHours() + new Date(entry.started_at).getMinutes() / 60
-    const y = padY + ((hour - min) / range) * plotH
-
-    let color = 'var(--success)'
-    if (entry.status === 'warning') color = 'var(--warning)'
-    else if (entry.status !== 'success') color = 'var(--danger)'
-
-    return { x, y, color, key: entry.id }
-  })
-})
 
 function navigateToLastBackup(): void {
   if (!summary.value?.last_backup_repo_id) return
@@ -570,21 +476,44 @@ async function fetchOverview(): Promise<void> {
         </div>
       </section>
 
+      <div class="stats-coverage-row">
+        <BackupStatsWidget :repos="repoOptions" />
+        <ProtectionCoverage
+          :protection="
+            overview?.protection ?? {
+              protected_hosts: 0,
+              eligible_hosts: 0,
+              protected_agent_links: [],
+              unassigned_agents: [],
+              never_succeeded_targets: 0,
+              never_succeeded_agents: [],
+              disabled_only_agents: [],
+            }
+          "
+        />
+        <div class="calendar-cell">
+          <BackupCalendar :repos="repoOptions" />
+        </div>
+      </div>
+
       <div class="attention-row">
         <NeedsAttention
           :findings="overview?.findings ?? []"
           @dismissed="fetchOverview().catch(logger.error)"
         />
-        <UpcomingWork
-          :operations="overview?.running_operations ?? []"
-          :schedules="overview?.upcoming_schedules ?? []"
-        />
+        <div class="attention-sidebar">
+          <UpcomingWork
+            :operations="overview?.running_operations ?? []"
+            :schedules="overview?.upcoming_schedules ?? []"
+          />
+          <RecentActivityWidget />
+        </div>
       </div>
 
-      <!-- Main Grid: 2 columns -->
+      <!-- Main Grid: rings side by side, capacity below -->
       <div class="main-grid">
-        <!-- Left Column: Rings -->
-        <div class="left-col">
+        <RepositoryCapacity :repositories="overview?.repository_capacity ?? []" />
+        <div class="rings-row">
           <!-- Section 2: 30-Day Success Ring -->
           <section class="panel">
             <div class="panel-header">
@@ -760,154 +689,11 @@ async function fetchOverview(): Promise<void> {
             </div>
           </section>
         </div>
-
-        <div class="right-col">
-          <ProtectionCoverage
-            :protection="
-              overview?.protection ?? {
-                protected_hosts: 0,
-                eligible_hosts: 0,
-                protected_agent_links: [],
-                unassigned_agents: [],
-                never_succeeded_targets: 0,
-                never_succeeded_agents: [],
-                disabled_only_agents: [],
-              }
-            "
-          />
-          <RepositoryCapacity :repositories="overview?.repository_capacity ?? []" />
-        </div>
       </div>
 
-      <div class="activity-row">
-        <section class="panel panel-timeline">
-          <div class="panel-header">
-            <h2 class="panel-title">Activity</h2>
-            <div class="trends-controls">
-              <select
-                v-model="activityRepoFilter"
-                class="trends-select"
-              >
-                <option :value="undefined">All Repos</option>
-                <option
-                  v-for="repo in repoOptions"
-                  :key="repo.id"
-                  :value="repo.id"
-                >
-                  {{ repo.name }}
-                </option>
-              </select>
-              <div class="view-toggle">
-                <button
-                  class="toggle-btn"
-                  :class="{ active: activityDaysFilter === 7 }"
-                  @click="activityDaysFilter = 7"
-                >
-                  7d
-                </button>
-                <button
-                  class="toggle-btn"
-                  :class="{ active: activityDaysFilter === 14 }"
-                  @click="activityDaysFilter = 14"
-                >
-                  14d
-                </button>
-                <button
-                  class="toggle-btn"
-                  :class="{ active: activityDaysFilter === 30 }"
-                  @click="activityDaysFilter = 30"
-                >
-                  30d
-                </button>
-                <button
-                  class="toggle-btn"
-                  :class="{ active: activityDaysFilter === 90 }"
-                  @click="activityDaysFilter = 90"
-                >
-                  90d
-                </button>
-              </div>
-            </div>
-          </div>
-          <div
-            v-if="activity.length === 0 && !loading"
-            class="state-msg"
-          >
-            No activity in the selected period.
-          </div>
-          <div
-            v-else
-            class="timeline-wrap"
-          >
-            <svg
-              viewBox="0 0 900 200"
-              class="timeline-svg"
-              preserveAspectRatio="xMidYMid meet"
-            >
-              <!-- Y-axis labels -->
-              <text
-                v-for="tick in activityYTicks"
-                :key="`y-${tick.hour}`"
-                x="50"
-                :y="tick.y + 4"
-                class="axis-label"
-              >
-                {{ tick.hour }}h
-              </text>
-              <!-- Grid lines -->
-              <line
-                v-for="tick in activityYTicks"
-                :key="`g-${tick.hour}`"
-                x1="60"
-                :y1="tick.y"
-                x2="840"
-                :y2="tick.y"
-                class="grid-line"
-              />
-              <!-- X-axis labels -->
-              <template
-                v-for="(day, idx) in activityDays"
-                :key="day"
-              >
-                <text
-                  v-if="idx % Math.max(1, Math.floor(activityDays.length / 14)) === 0"
-                  :x="60 + (idx / Math.max(activityDays.length - 1, 1)) * 780"
-                  y="195"
-                  class="axis-label axis-label-x"
-                >
-                  {{ day.slice(5) }}
-                </text>
-              </template>
-              <!-- Dots -->
-              <circle
-                v-for="dot in activityDots"
-                :key="dot.key"
-                :cx="dot.x"
-                :cy="dot.y"
-                r="4"
-                :fill="dot.color"
-                opacity="0.85"
-              />
-            </svg>
-          </div>
-        </section>
-      </div>
-
-      <!-- Section 5b: Widget Row -->
-      <div class="widgets-row">
-        <BackupStatsWidget :repos="repoOptions" />
+      <div class="trends-row">
         <StorageTrendWidget :repos="repoOptions" />
-      </div>
-
-      <!-- Section 6: Trends Chart -->
-      <TrendsChart :repos="repoOptions" />
-
-      <!-- Section 7: Calendar + Sidebar -->
-      <div class="calendar-row">
-        <BackupCalendar :repos="repoOptions" />
-        <div class="calendar-sidebar">
-          <RecentActivityWidget />
-        </div>
+        <TrendsChart :repos="repoOptions" />
       </div>
     </template>
   </div>
@@ -920,11 +706,56 @@ async function fetchOverview(): Promise<void> {
   gap: 1.5rem;
 }
 
+.stats-coverage-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 1.5rem;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.calendar-cell {
+  min-width: 0;
+  overflow: hidden;
+}
+
+@media (max-width: 1100px) {
+  .stats-coverage-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .calendar-cell {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 700px) {
+  .stats-coverage-row {
+    grid-template-columns: 1fr;
+  }
+
+  .calendar-cell {
+    grid-column: auto;
+  }
+}
+
 .attention-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 3fr 2fr;
   gap: 1.5rem;
-  align-items: start;
+  align-items: stretch;
+}
+
+.attention-left {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.attention-sidebar {
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  gap: 1.5rem;
 }
 
 @media (max-width: 900px) {
@@ -936,14 +767,8 @@ async function fetchOverview(): Promise<void> {
 /* Section 1: Status Banner */
 .status-banner {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 0.75rem;
-}
-
-@media (max-width: 900px) {
-  .status-banner {
-    grid-template-columns: repeat(3, 1fr);
-  }
 }
 
 @media (max-width: 500px) {
@@ -1010,30 +835,23 @@ async function fetchOverview(): Promise<void> {
   flex-shrink: 0;
 }
 
-/* Main 2-col grid */
+/* Main grid: rings row + full-width capacity */
 .main-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.rings-row {
   display: grid;
-  grid-template-columns: 1fr 1.5fr;
+  grid-template-columns: 1fr 1fr;
   gap: 1.5rem;
 }
 
 @media (max-width: 900px) {
-  .main-grid {
+  .rings-row {
     grid-template-columns: 1fr;
   }
-}
-
-.left-col {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-}
-
-.right-col {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-  min-width: 0;
 }
 
 /* Panel */
@@ -1049,11 +867,9 @@ async function fetchOverview(): Promise<void> {
 }
 
 .panel-title {
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
+  color: var(--text-primary);
   margin: 0 0 1rem;
 }
 
@@ -1342,106 +1158,16 @@ async function fetchOverview(): Promise<void> {
   color: var(--text-muted);
 }
 
-/* Timeline */
-.panel-timeline {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-}
-
-.timeline-wrap {
-  overflow-x: auto;
-}
-
-.timeline-svg {
-  width: 100%;
-  height: auto;
-}
-
-@media (max-width: 600px) {
-  .timeline-wrap {
-    overflow-x: auto;
-  }
-
-  .timeline-svg {
-    min-width: 500px;
-  }
-}
-
-.axis-label {
-  font-size: 8px;
-  fill: var(--text-muted);
-  text-anchor: end;
-}
-
-.axis-label-x {
-  text-anchor: middle;
-  font-size: 8px;
-}
-
-@media (max-width: 600px) {
-  .axis-label {
-    font-size: 18px;
-  }
-
-  .axis-label-x {
-    font-size: 18px;
-  }
-
-  .timeline-svg {
-    min-width: 500px;
-    min-height: 180px;
-  }
-}
-
-.grid-line {
-  stroke: var(--border);
-  stroke-width: 0.5;
-  stroke-dasharray: 3 3;
-}
-
-/* Calendar Row */
-.calendar-row {
+/* Trends Row */
+.trends-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1.5rem;
+  align-items: start;
 }
 
-@media (max-width: 900px) {
-  .calendar-row {
-    grid-template-columns: 1fr;
-  }
-}
-
-.calendar-sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-}
-
-/* Widgets Row */
-.widgets-row {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 1.5rem;
-}
-
-@media (max-width: 900px) {
-  .widgets-row {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* Activity Row */
-.activity-row {
-  display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 1.5rem;
-}
-
-@media (max-width: 900px) {
-  .activity-row {
+@media (max-width: 1100px) {
+  .trends-row {
     grid-template-columns: 1fr;
   }
 }

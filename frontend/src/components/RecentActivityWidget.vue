@@ -32,7 +32,7 @@ let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 async function fetchActivity(): Promise<void> {
   try {
-    const response = await apiClient.get<ActivityEntry[]>('/stats/activity?limit=10')
+    const response = await apiClient.get<ActivityEntry[]>('/stats/activity?limit=5')
     items.value = response.data
     now.value = Date.now()
   } finally {
@@ -133,11 +133,9 @@ function liveRelativeTime(iso: string): string {
 }
 
 .panel-title {
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
+  color: var(--text-primary);
   margin: 0 0 0.75rem;
 }
 
@@ -151,6 +149,8 @@ function liveRelativeTime(iso: string): string {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .activity-item {

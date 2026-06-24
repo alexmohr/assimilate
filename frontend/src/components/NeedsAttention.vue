@@ -127,7 +127,7 @@ async function dismiss(finding: DashboardFinding): Promise<void> {
 
 h2 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 0.875rem;
 }
 
 p {

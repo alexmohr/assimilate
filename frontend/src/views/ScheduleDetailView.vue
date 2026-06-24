@@ -295,7 +295,7 @@ async function loadData(): Promise<void> {
       )
       backupRunning.value = runningReport !== undefined
       if (runningReport) {
-        const agent = agentMap.value.get(runningReport.agent_id)
+        const agent = agentMap.value.get(runningReport.agent_id ?? 0)
         backupHostname.value = agent?.display_name ?? agent?.hostname ?? null
         backupStartedAt.value = new Date(runningReport.started_at).getTime()
         backupElapsedSecs.value = Math.floor((Date.now() - backupStartedAt.value) / 1000)
@@ -1346,9 +1346,9 @@ watch(activeTab, (tab) => {
                 <td class="cell-ts">{{ formatDateShort(r.started_at) }}</td>
                 <td class="cell-host">
                   {{
-                    agentMap.get(r.agent_id)?.display_name ??
-                    agentMap.get(r.agent_id)?.hostname ??
-                    `#${r.agent_id}`
+                    agentMap.get(r.agent_id ?? 0)?.display_name ??
+                    agentMap.get(r.agent_id ?? 0)?.hostname ??
+                    `#${r.agent_id ?? 0}`
                   }}
                 </td>
                 <td>

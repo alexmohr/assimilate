@@ -6,6 +6,9 @@ export interface ReportRow {
   agent_id?: number
   machine_id?: number
   repo_id: number
+  repo_name?: string
+  schedule_id?: number | null
+  schedule_name?: string | null
   started_at: string
   finished_at: string
   status: string

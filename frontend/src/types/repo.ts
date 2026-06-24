@@ -33,7 +33,7 @@ export interface RepoWithStats {
   total_original_size: number
   total_compressed_size: number
   total_deduplicated_size: number
-  client_count: number
+  agent_count: number
   unmatched_count: number
   relocation_pending?: boolean
   last_op_kind?: string | null

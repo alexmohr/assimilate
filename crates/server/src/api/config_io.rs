@@ -22,6 +22,8 @@ pub struct HostExport {
     pub display_name: Option<String>,
     pub default_backup_paths: Vec<String>,
     pub default_exclude_patterns: Vec<String>,
+    pub default_pre_backup_commands: String,
+    pub default_post_backup_commands: String,
     pub hostname_patterns: Vec<String>,
 }
 
@@ -105,6 +107,8 @@ pub async fn export_config(
             display_name: agent.display_name.clone(),
             default_backup_paths: agent.default_backup_paths.clone(),
             default_exclude_patterns: agent.default_exclude_patterns.clone(),
+            default_pre_backup_commands: agent.default_pre_backup_commands.clone(),
+            default_post_backup_commands: agent.default_post_backup_commands.clone(),
             hostname_patterns: patterns.into_iter().map(|p| p.pattern).collect(),
         });
     }
@@ -240,9 +244,13 @@ pub async fn import_config(
                 &state.pool,
                 &host.hostname,
                 &host.hostname,
-                host.display_name.as_deref(),
-                &host.default_backup_paths,
-                &host.default_exclude_patterns,
+                db::AgentDefaults {
+                    display_name: host.display_name.as_deref(),
+                    default_backup_paths: &host.default_backup_paths,
+                    default_exclude_patterns: &host.default_exclude_patterns,
+                    default_pre_backup_commands: &host.default_pre_backup_commands,
+                    default_post_backup_commands: &host.default_post_backup_commands,
+                },
             )
             .await?;
 
@@ -263,10 +271,14 @@ pub async fn import_config(
             let agent = db::insert_agent_with_paths(
                 &state.pool,
                 &host.hostname,
-                host.display_name.as_deref(),
                 IMPORTED_TOKEN_HASH,
-                &host.default_backup_paths,
-                &host.default_exclude_patterns,
+                db::AgentDefaults {
+                    display_name: host.display_name.as_deref(),
+                    default_backup_paths: &host.default_backup_paths,
+                    default_exclude_patterns: &host.default_exclude_patterns,
+                    default_pre_backup_commands: &host.default_pre_backup_commands,
+                    default_post_backup_commands: &host.default_post_backup_commands,
+                },
             )
             .await?;
             for pattern in &host.hostname_patterns {

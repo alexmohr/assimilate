@@ -18,4 +18,6 @@ export interface AgentRow {
   restart_unavailable_reason?: string | null
   default_backup_paths?: string[]
   default_exclude_patterns?: string[]
+  default_pre_backup_commands?: string
+  default_post_backup_commands?: string
 }

@@ -135,9 +135,20 @@ async fn agent_update(pool: PgPool) {
         .await
         .unwrap();
 
-    let updated = db::update_agent(&pool, "upd-host", "upd-host", Some("New Name"), &[], &[])
-        .await
-        .unwrap();
+    let updated = db::update_agent(
+        &pool,
+        "upd-host",
+        "upd-host",
+        db::AgentDefaults {
+            display_name: Some("New Name"),
+            default_backup_paths: &[],
+            default_exclude_patterns: &[],
+            default_pre_backup_commands: "[]",
+            default_post_backup_commands: "[]",
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(updated.display_name.as_deref(), Some("New Name"));
 }
 
@@ -5159,10 +5170,14 @@ async fn agent_insert_with_paths(pool: PgPool) {
     let agent = db::insert_agent_with_paths(
         &pool,
         "paths-host",
-        Some("Paths Host"),
         "hash",
-        &paths,
-        &excludes,
+        db::AgentDefaults {
+            display_name: Some("Paths Host"),
+            default_backup_paths: &paths,
+            default_exclude_patterns: &excludes,
+            default_pre_backup_commands: "[]",
+            default_post_backup_commands: "[]",
+        },
     )
     .await
     .unwrap();

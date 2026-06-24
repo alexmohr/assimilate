@@ -94,15 +94,23 @@ pub async fn assemble_config(
             backup_sources.extend(agent.default_backup_paths.iter().cloned());
         }
 
+        let per_agent_excludes_raw =
+            db::get_per_agent_excludes_raw(pool, schedule.id, agent.id).await?;
+        let effective_excludes_raw = per_agent_excludes_raw
+            .as_deref()
+            .unwrap_or(&schedule.exclude_patterns_raw);
+
         let mut exclude_patterns: Vec<String> = Vec::new();
         if !schedule.ignore_global_excludes {
             exclude_patterns.extend(global_excludes.iter().cloned());
         }
         exclude_patterns.extend(agent.default_exclude_patterns.iter().cloned());
-        exclude_patterns.extend(parse_raw_excludes(&schedule.exclude_patterns_raw));
+        exclude_patterns.extend(parse_raw_excludes(effective_excludes_raw));
 
         let mut seen = std::collections::HashSet::new();
         exclude_patterns.retain(|p| seen.insert(p.clone()));
+
+        let per_agent_cmds = db::get_per_agent_commands(pool, schedule.id, agent.id).await?;
 
         let schedule_config = ScheduleConfig {
             id: schedule.id,
@@ -120,24 +128,58 @@ pub async fn assemble_config(
             keep_monthly,
             keep_yearly,
             compact_enabled: schedule.compact_enabled,
-            pre_backup_commands: serde_json::from_str(&schedule.pre_backup_commands)
-                .inspect_err(|e| {
-                    tracing::warn!(
-                        schedule_id = schedule.id,
-                        error = %e,
-                        "failed to parse pre_backup_commands, defaulting to empty"
-                    );
-                })
-                .unwrap_or_default(),
-            post_backup_commands: serde_json::from_str(&schedule.post_backup_commands)
-                .inspect_err(|e| {
-                    tracing::warn!(
-                        schedule_id = schedule.id,
-                        error = %e,
-                        "failed to parse post_backup_commands, defaulting to empty"
-                    );
-                })
-                .unwrap_or_default(),
+            pre_backup_commands: {
+                let agent_defaults: Vec<String> =
+                    serde_json::from_str(&agent.default_pre_backup_commands)
+                        .inspect_err(|e| {
+                            tracing::warn!(
+                                agent_id = agent.id,
+                                error = %e,
+                                "failed to parse agent default_pre_backup_commands"
+                            );
+                        })
+                        .unwrap_or_default();
+                let effective_pre = per_agent_cmds
+                    .as_ref()
+                    .map(|c| c.pre_backup_commands.as_str())
+                    .unwrap_or(&schedule.pre_backup_commands);
+                let schedule_cmds: Vec<String> = serde_json::from_str(effective_pre)
+                    .inspect_err(|e| {
+                        tracing::warn!(
+                            schedule_id = schedule.id,
+                            error = %e,
+                            "failed to parse pre_backup_commands, defaulting to empty"
+                        );
+                    })
+                    .unwrap_or_default();
+                agent_defaults.into_iter().chain(schedule_cmds).collect()
+            },
+            post_backup_commands: {
+                let effective_post = per_agent_cmds
+                    .as_ref()
+                    .map(|c| c.post_backup_commands.as_str())
+                    .unwrap_or(&schedule.post_backup_commands);
+                let schedule_cmds: Vec<String> = serde_json::from_str(effective_post)
+                    .inspect_err(|e| {
+                        tracing::warn!(
+                            schedule_id = schedule.id,
+                            error = %e,
+                            "failed to parse post_backup_commands, defaulting to empty"
+                        );
+                    })
+                    .unwrap_or_default();
+                let agent_defaults: Vec<String> =
+                    serde_json::from_str(&agent.default_post_backup_commands)
+                        .inspect_err(|e| {
+                            tracing::warn!(
+                                agent_id = agent.id,
+                                error = %e,
+                                "failed to parse agent default_post_backup_commands"
+                            );
+                        })
+                        .unwrap_or_default();
+                schedule_cmds.into_iter().chain(agent_defaults).collect()
+            },
         };
 
         if let Some((_, schedules)) = repo_map.get_mut(&repo_id) {

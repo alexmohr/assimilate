@@ -17,7 +17,7 @@ import {
 } from '../composables/useArchiveBrowser'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useToast } from '../composables/useToast'
-import { formatBytes, formatDate } from '../utils/format'
+import { formatBytes, formatDate, relativeTime } from '../utils/format'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
@@ -612,20 +612,6 @@ const availableTags = computed<TagRow[]>(() =>
   allTags.value.filter((t) => !repoTagIds.value.includes(t.id)),
 )
 
-function formatLastBackup(iso: string | null): string {
-  if (!iso) return 'Never'
-  const ts = new Date(iso).getTime()
-  if (isNaN(ts) || ts === 0) return 'Never'
-  const diff = Date.now() - ts
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return 'Just now'
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  const days = Math.floor(hrs / 24)
-  return `${days}d ago`
-}
-
 function repoOpLabel(op: ActiveRepoOp): string {
   const queued = op.queued && op.queued > 0 ? ` (+${op.queued} queued)` : ''
   switch (op.kind) {
@@ -1141,7 +1127,7 @@ async function resetImport(): Promise<void> {
               <dt>Deduplicated</dt>
               <dd>{{ formatBytes(repo.total_deduplicated_size) }}</dd>
               <dt>Last Backup</dt>
-              <dd>{{ formatLastBackup(repo.last_backup_at) }}</dd>
+              <dd>{{ relativeTime(repo.last_backup_at ?? '') }}</dd>
               <dt>Disk Sync</dt>
               <dd>
                 <template v-if="repo.sync_schedule">
@@ -1159,7 +1145,7 @@ async function resetImport(): Promise<void> {
                     by {{ repo.last_op_by }}
                   </template>
                   <template v-if="repo.last_op_at">
-                    — {{ formatLastBackup(repo.last_op_at) }}
+                    — {{ relativeTime(repo.last_op_at ?? '') }}
                   </template>
                 </template>
                 <template v-else>Never</template>

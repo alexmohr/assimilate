@@ -8,6 +8,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { extractError } from '../utils/error'
+import { formatDate } from '../utils/format'
 import { logger } from '../utils/logger'
 import {
   listChannels,
@@ -631,10 +632,6 @@ async function ensurePushSubscription(): Promise<void> {
   })
   await subscribePush(subscription.toJSON())
   currentPushSubscription.value = subscription
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleString()
 }
 
 useEscapeKey(showAddChannelDialog, () => {

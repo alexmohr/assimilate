@@ -133,6 +133,10 @@ function selectDay(cell: GridCell): void {
     selectedDay.value = null
     return
   }
+  if (selectedDay.value?.date === cell.date) {
+    selectedDay.value = null
+    return
+  }
   selectedDay.value = { date: cell.date, events: cell.events }
 }
 
@@ -380,6 +384,10 @@ function navigateToScheduleAndClose(scheduleId: number): void {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 1.25rem;
+  min-width: 0;
+  overflow: hidden;
+  height: 100%;
+  box-sizing: border-box;
 }
 
 .panel-header {
@@ -389,15 +397,18 @@ function navigateToScheduleAndClose(scheduleId: number): void {
   flex-wrap: wrap;
   gap: 0.5rem;
   margin-bottom: 0.75rem;
+  min-width: 0;
 }
 
 .panel-title {
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
+  color: var(--text-primary);
   margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cal-select {
@@ -453,15 +464,14 @@ function navigateToScheduleAndClose(scheduleId: number): void {
 }
 
 .cal-cell {
-  aspect-ratio: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.15rem;
+  gap: 0.1rem;
   border-radius: var(--radius-sm);
-  padding: 0.2rem;
-  min-height: 2.5rem;
+  padding: 0.15rem;
+  height: 2.25rem;
 }
 
 .cal-cell-active {

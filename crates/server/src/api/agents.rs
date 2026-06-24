@@ -50,6 +50,21 @@ pub struct AgentResponse {
     pub restart_unavailable_reason: Option<String>,
 }
 
+/// Builds an [`AgentResponse`] for `agent`, resolving live connection and
+/// restart capability from the registry by the agent's own hostname.
+async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentResponse {
+    let is_connected = state.registry.is_connected(&agent.hostname).await;
+    let (supports_restart, restart_unavailable_reason) =
+        state.registry.restart_capability(&agent.hostname).await;
+    AgentResponse {
+        is_imported: agent.agent_token_hash == IMPORTED_TOKEN_HASH,
+        agent,
+        is_connected,
+        supports_restart,
+        restart_unavailable_reason,
+    }
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CreateAgentResponse {
     pub agent: AgentRow,
@@ -136,16 +151,7 @@ pub async fn list_agents(
         {
             continue;
         }
-        let is_connected = state.registry.is_connected(&a.hostname).await;
-        let (supports_restart, restart_unavailable_reason) =
-            state.registry.restart_capability(&a.hostname).await;
-        responses.push(AgentResponse {
-            is_imported: a.agent_token_hash == IMPORTED_TOKEN_HASH,
-            agent: a,
-            is_connected,
-            supports_restart,
-            restart_unavailable_reason,
-        });
+        responses.push(build_agent_response(&state, a).await);
     }
     Ok(Json(responses))
 }
@@ -171,16 +177,7 @@ pub async fn get_agent(
     Path(hostname): Path<String>,
 ) -> Result<Json<AgentResponse>, ApiError> {
     let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
-    let is_connected = state.registry.is_connected(&hostname).await;
-    let (supports_restart, restart_unavailable_reason) =
-        state.registry.restart_capability(&hostname).await;
-    Ok(Json(AgentResponse {
-        is_imported: agent.agent_token_hash == IMPORTED_TOKEN_HASH,
-        agent,
-        is_connected,
-        supports_restart,
-        restart_unavailable_reason,
-    }))
+    Ok(Json(build_agent_response(&state, agent).await))
 }
 
 #[utoipa::path(
@@ -487,16 +484,7 @@ pub async fn hide_agent(
     Path(hostname): Path<String>,
 ) -> Result<Json<AgentResponse>, ApiError> {
     let a = db::set_agent_hidden(&state.pool, &hostname, true).await?;
-    let is_connected = state.registry.is_connected(&a.hostname).await;
-    let (supports_restart, restart_unavailable_reason) =
-        state.registry.restart_capability(&a.hostname).await;
-    Ok(Json(AgentResponse {
-        is_imported: a.agent_token_hash == IMPORTED_TOKEN_HASH,
-        agent: a,
-        is_connected,
-        supports_restart,
-        restart_unavailable_reason,
-    }))
+    Ok(Json(build_agent_response(&state, a).await))
 }
 
 #[utoipa::path(
@@ -520,16 +508,7 @@ pub async fn unhide_agent(
     Path(hostname): Path<String>,
 ) -> Result<Json<AgentResponse>, ApiError> {
     let a = db::set_agent_hidden(&state.pool, &hostname, false).await?;
-    let is_connected = state.registry.is_connected(&a.hostname).await;
-    let (supports_restart, restart_unavailable_reason) =
-        state.registry.restart_capability(&a.hostname).await;
-    Ok(Json(AgentResponse {
-        is_imported: a.agent_token_hash == IMPORTED_TOKEN_HASH,
-        agent: a,
-        is_connected,
-        supports_restart,
-        restart_unavailable_reason,
-    }))
+    Ok(Json(build_agent_response(&state, a).await))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

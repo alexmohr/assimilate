@@ -707,5 +707,6 @@ When adding a new user-facing feature or documentation page, update `seed-demo.s
 * Do not change, delete, or weaken tests to make CI pass without explicit human approval.
 * Changing test assertions requires human approval when the goal is unclear or test expectations conflict with task requirements.
 * New features must include tests, and test coverage must not decrease.
+* Every new feature **must** have at least one Playwright e2e test covering the happy path. Unit tests for both frontend (Vitest) and backend (Rust `#[cfg(test)]`) are strongly preferred and should be added wherever non-trivial logic is introduced.
 * If a legitimate refactor changes observable behavior, update the tests and explain why in the commit message.
 * When in doubt, stop and ask; never silently "fix" a test to unblock work.

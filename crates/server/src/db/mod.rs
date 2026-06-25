@@ -1061,6 +1061,24 @@ pub async fn delete_repo(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
     Ok(())
 }
 
+pub async fn disable_schedule(pool: &PgPool, schedule_id: i64) -> Result<(), ApiError> {
+    sqlx::query("UPDATE schedules SET enabled = false WHERE id = $1")
+        .bind(schedule_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+pub async fn disable_all_schedules_for_repo(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
+    sqlx::query("UPDATE schedules SET enabled = false WHERE repo_id = $1")
+        .bind(repo_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(())
+}
+
 pub async fn list_enabled_tunnels(pool: &PgPool) -> Result<Vec<SshTunnel>, ApiError> {
     sqlx::query_as::<_, SshTunnel>(
         "SELECT id, agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, enabled, created_at FROM \

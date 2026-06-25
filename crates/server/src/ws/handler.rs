@@ -468,13 +468,27 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                         db::quota::QuotaStatus::Warning => "warning",
                         db::quota::QuotaStatus::Critical => "critical",
                     };
+                    let action = match quota_status {
+                        db::quota::QuotaStatus::Ok => db::quota::QuotaAction::NotifyOnly,
+                        db::quota::QuotaStatus::Warning => quota.warn_action_parsed(),
+                        db::quota::QuotaStatus::Critical => quota.critical_action_parsed(),
+                    };
                     tracing::warn!(
                         hostname = %hostname,
                         repo_id = ?report.repo_id,
                         deduplicated_size = report.deduplicated_size,
                         quota_status = quota_label,
+                        quota_action = %action,
                         "repository quota exceeded"
                     );
+                    enforce_quota_action(
+                        state,
+                        action,
+                        report.repo_id.0,
+                        report.schedule_id,
+                        hostname,
+                    )
+                    .await;
 
                     let event_type = match quota_status {
                         db::quota::QuotaStatus::Ok => EventType::BackupSuccess,
@@ -502,6 +516,72 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                     let service = state.notification_service.clone();
                     tokio::spawn(async move {
                         if let Err(e) = notifications::dispatch(&service, quota_event).await {
+                            tracing::error!(error = %e, "notification dispatch failed");
+                        }
+                    });
+                }
+            }
+
+            if let Ok(conn) = db::get_repo_connection(&state.pool, report.repo_id.0).await
+                && let Ok(Some(server_quota)) =
+                    db::quota::get_server_quota(&state.pool, &conn.ssh_host).await
+                && let Ok(total_size) =
+                    db::quota::get_server_total_size(&state.pool, &conn.ssh_host).await
+            {
+                let sq_status = db::quota::evaluate_server_quota(&server_quota, total_size);
+                if !matches!(sq_status, db::quota::QuotaStatus::Ok) {
+                    let sq_label = match sq_status {
+                        db::quota::QuotaStatus::Ok => "ok",
+                        db::quota::QuotaStatus::Warning => "warning",
+                        db::quota::QuotaStatus::Critical => "critical",
+                    };
+                    let action = match sq_status {
+                        db::quota::QuotaStatus::Ok => db::quota::QuotaAction::NotifyOnly,
+                        db::quota::QuotaStatus::Warning => server_quota.warn_action_parsed(),
+                        db::quota::QuotaStatus::Critical => server_quota.critical_action_parsed(),
+                    };
+                    tracing::warn!(
+                        ssh_host = %conn.ssh_host,
+                        total_size,
+                        quota_status = sq_label,
+                        quota_action = %action,
+                        "server quota exceeded"
+                    );
+                    enforce_quota_action(
+                        state,
+                        action,
+                        report.repo_id.0,
+                        report.schedule_id,
+                        hostname,
+                    )
+                    .await;
+
+                    let event_type = match sq_status {
+                        db::quota::QuotaStatus::Ok => EventType::BackupSuccess,
+                        db::quota::QuotaStatus::Warning => EventType::BackupWarning,
+                        db::quota::QuotaStatus::Critical => EventType::BackupFailed,
+                    };
+                    let message = format!(
+                        "Server quota {sq_label} for {}: total deduplicated size {} bytes exceeds \
+                         configured limits",
+                        conn.ssh_host, total_size,
+                    );
+                    let sq_event = NotificationEvent {
+                        event_type,
+                        hostname: hostname.to_owned(),
+                        repo_name: repo_name.clone(),
+                        status: sq_label.to_owned(),
+                        error_message: Some(message),
+                        timestamp: chrono::Utc::now(),
+                        repo_id: Some(report.repo_id.0),
+                        agent_id: Some(agent_id),
+                        schedule_id: None,
+                        schedule_name: None,
+                        archive_name: None,
+                    };
+                    let service = state.notification_service.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = notifications::dispatch(&service, sq_event).await {
                             tracing::error!(error = %e, "notification dispatch failed");
                         }
                     });
@@ -1010,6 +1090,62 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 );
             }
             state.ui_broadcast.send(ServerToUi::DataChanged);
+        }
+    }
+}
+
+async fn enforce_quota_action(
+    state: &AppState,
+    action: db::quota::QuotaAction,
+    repo_id: i64,
+    schedule_id: Option<i64>,
+    hostname: &str,
+) {
+    match action {
+        db::quota::QuotaAction::NotifyOnly => {}
+        db::quota::QuotaAction::DisableSchedule => {
+            if let Some(sid) = schedule_id {
+                if let Err(e) = db::disable_schedule(&state.pool, sid).await {
+                    tracing::error!(schedule_id = sid, error = %e, "failed to disable schedule");
+                    return;
+                }
+                tracing::info!(schedule_id = sid, "disabled schedule due to quota action");
+            } else {
+                if let Err(e) = db::disable_all_schedules_for_repo(&state.pool, repo_id).await {
+                    tracing::error!(repo_id, error = %e, "failed to disable schedules for repo");
+                    return;
+                }
+                tracing::info!(
+                    repo_id,
+                    "disabled all schedules for repo due to quota action"
+                );
+            }
+            push_config_update(state, hostname).await;
+        }
+        db::quota::QuotaAction::BlockBackups => {
+            if let Err(e) = db::disable_all_schedules_for_repo(&state.pool, repo_id).await {
+                tracing::error!(repo_id, error = %e, "failed to block backups for repo");
+                return;
+            }
+            tracing::info!(repo_id, "blocked all backups for repo due to quota action");
+            push_config_update(state, hostname).await;
+        }
+    }
+}
+
+async fn push_config_update(state: &AppState, hostname: &str) {
+    match config_assembler::assemble_config(&state.pool, &state.encryption_key, hostname).await {
+        Ok(config) => {
+            if let Err(e) = state
+                .registry
+                .send_to(hostname, ServerToAgent::ConfigUpdate(config))
+                .await
+            {
+                tracing::warn!(hostname, error = %e, "failed to push config update to agent");
+            }
+        }
+        Err(e) => {
+            tracing::error!(hostname, error = %e, "failed to assemble config for update");
         }
     }
 }

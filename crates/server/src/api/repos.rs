@@ -1217,8 +1217,8 @@ const DEFAULT_BORG_QUERY_TIMEOUT_SECS: u64 = 300;
 /// archives". On timeout the process is killed and the operation fails so the
 /// importing state is cleared.
 ///
-/// Resolution order: DB setting `borg_query_timeout_secs` → env var
-/// `ASSIMILATE_BORG_QUERY_TIMEOUT_SECS` → 300 s default.
+/// Resolution order: DB setting `borg_query_timeout_secs`, then env var
+/// `ASSIMILATE_BORG_QUERY_TIMEOUT_SECS`, then 300 s default.
 async fn get_borg_timeout(pool: &PgPool) -> Duration {
     if let Ok(Some(v)) = db::get_setting(pool, "borg_query_timeout_secs").await
         && let Ok(secs) = v.parse::<u64>()

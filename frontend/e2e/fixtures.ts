@@ -9,8 +9,18 @@ export async function loginAsAdmin(page: Page): Promise<void> {
   await page.goto('/login')
   await page.locator('input[type="text"], input[name="username"]').fill('admin')
   await page.locator('input[type="password"]').fill('admin')
-  await page.locator('button[type="submit"]').click()
-  await page.waitForURL((url) => !new URL(url).pathname.startsWith('/login'))
+  // Wait for the login API response before checking the URL, so a slow server
+  // round-trip does not cause waitForURL to race against an in-flight request.
+  await Promise.all([
+    page.waitForResponse(
+      (resp) => resp.url().includes('/api/auth/login') && resp.status() === 200,
+      { timeout: 30_000 },
+    ),
+    page.locator('button[type="submit"]').click(),
+  ])
+  await page.waitForURL((url) => !new URL(url).pathname.startsWith('/login'), {
+    timeout: 30_000,
+  })
 }
 
 // Wraps the built-in `page` fixture to collect Istanbul coverage after each

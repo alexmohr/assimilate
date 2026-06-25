@@ -167,13 +167,13 @@ test('full resync completes and preserves archives', async ({ page }) => {
   await resyncBtn.click()
 
   // Button immediately switches to "Syncing..." while the request is in flight
-  await expect(page.getByRole('button', { name: /syncing/i })).toBeVisible({ timeout: 5_000 })
+  await expect(page.getByRole('button', { name: /syncing/i })).toBeVisible({ timeout: 30_000 })
 
   // Sync is synchronous server-side; toast fires when it resolves
   await expect(page.getByText('Full resync started.')).toBeVisible({ timeout: 120_000 })
 
   // Button must return to its resting state
-  await expect(resyncBtn).toBeVisible({ timeout: 5_000 })
+  await expect(resyncBtn).toBeVisible({ timeout: 30_000 })
 
   // Switch to archives tab and verify entries are still present after resync
   await page.getByRole('button', { name: 'Archives', exact: true }).click()

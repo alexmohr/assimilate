@@ -100,15 +100,23 @@ watch([selectedRepoId, selectedDays], () => {
   fetchTrends().catch(logger.error)
 })
 
-const compressedData = computed(() => ({
+const combinedSizeData = computed(() => ({
   labels: trends.value.map((t) => t.date.slice(5)),
   datasets: [
+    {
+      label: 'Original',
+      data: trends.value.map((t) => t.original_size),
+      borderColor: 'oklch(0.75 0.16 75)',
+      backgroundColor: 'oklch(0.75 0.16 75 / 0.0)',
+      fill: false,
+      tension: 0.3,
+    },
     {
       label: 'Compressed',
       data: trends.value.map((t) => t.compressed_size),
       borderColor: 'oklch(0.62 0.19 255)',
-      backgroundColor: 'oklch(0.62 0.19 255 / 0.1)',
-      fill: true,
+      backgroundColor: 'oklch(0.62 0.19 255 / 0.0)',
+      fill: false,
       tension: 0.3,
     },
   ],
@@ -127,6 +135,48 @@ const deduplicatedData = computed(() => ({
     },
   ],
 }))
+
+const combinedOptions = computed(() => {
+  void themeGeneration.value
+  const textMuted = cssVar('--text-muted')
+  const border = cssVar('--border')
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {
+      intersect: false,
+      mode: 'index' as const,
+    },
+    plugins: {
+      legend: {
+        display: true,
+        labels: { color: textMuted, boxWidth: 12, font: { size: 10 } },
+      },
+      tooltip: {
+        callbacks: {
+          label: (context: TooltipItem<'line'>): string => {
+            return `${context.dataset.label ?? ''}: ${formatBytes(context.parsed.y ?? 0)}`
+          },
+        },
+      },
+    },
+    scales: {
+      x: {
+        grid: { display: false },
+        ticks: { color: textMuted, font: { size: 10 } },
+      },
+      y: {
+        grace: '10%',
+        grid: { color: border },
+        ticks: {
+          color: textMuted,
+          font: { size: 10 },
+          callback: (value: string | number): string => formatBytes(Number(value)),
+        },
+      },
+    },
+  }
+})
 
 const chartOptions = computed(() => {
   void themeGeneration.value
@@ -305,11 +355,11 @@ const dedupOptions = computed(() => {
       class="charts-row"
     >
       <div class="chart-cell">
-        <span class="metric-label">Compressed</span>
+        <span class="metric-label">Original &amp; Compressed</span>
         <div class="chart-container">
           <Line
-            :data="compressedData"
-            :options="chartOptions"
+            :data="combinedSizeData"
+            :options="combinedOptions"
           />
         </div>
       </div>

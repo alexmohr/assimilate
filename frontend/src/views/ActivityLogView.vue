@@ -44,7 +44,6 @@ interface SystemEvent {
   message: string
 }
 
-
 interface Agent {
   id: number
   hostname: string

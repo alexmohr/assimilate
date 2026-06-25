@@ -2216,55 +2216,28 @@ async fn test_scheduler_dispatches_repo_syncs_concurrently() {
     }
 }
 
-/// Regression test for: archives attributed to "unknown" when borg list --json omits hostname.
+/// Regression test: borg list --json must include hostname via --format so archives are
+/// never imported with "unknown" hostname regardless of the borg version's default fields.
 ///
-/// Some borg versions (1.1.x on Debian trixie) omit the `hostname` field from
-/// `borg list --json` per-archive output. The fix issues a single
-/// `borg info --glob-archives * --json` call as a fallback, which always includes
-/// hostname, and uses the resulting map during import.
-///
-/// This test verifies that when list omits hostname but info provides it, the
-/// imported placeholder agent is created with the correct hostname rather than "unknown".
+/// The fake borg script includes hostname in list_json (matching what real borg produces
+/// when called with --format '{hostname}{end}'). The imported placeholder agent must carry
+/// the correct hostname, not "unknown".
 #[tokio::test]
 #[ignore]
-async fn test_sync_uses_borg_info_fallback_when_list_omits_hostname() {
+async fn test_sync_hostname_extracted_from_borg_list_format() {
     let _borg_lock = borg_binary_lock().await;
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
 
-    // borg list --json without hostname field (simulates borg 1.1.x behaviour)
     let list_json = r#"{
   "archives": [
     {
-      "name": "fallback-archive-1",
-      "start": "2026-06-05T10:00:00Z",
-      "end": "2026-06-05T10:05:00Z",
-      "duration": 300.0,
-      "stats": {
-        "original_size": 1000,
-        "compressed_size": 500,
-        "deduplicated_size": 250,
-        "nfiles": 2
-      }
-    }
-  ]
-}"#;
-    // borg info --glob-archives * --json always includes hostname
-    let info_all_json = r#"{
-  "archives": [
-    {
-      "name": "fallback-archive-1",
-      "hostname": "fallback-host",
-      "start": "2026-06-05T10:00:00Z",
-      "end": "2026-06-05T10:05:00Z",
-      "duration": 300.0,
-      "stats": {
-        "original_size": 1000,
-        "compressed_size": 500,
-        "deduplicated_size": 250,
-        "nfiles": 2
-      }
+      "name": "web-server-01-backup-2026-06-05T02:00:00",
+      "hostname": "web-server-01",
+      "start": "2026-06-05T02:00:00Z",
+      "end": "2026-06-05T02:05:00Z",
+      "duration": 300.0
     }
   ]
 }"#;
@@ -2281,10 +2254,10 @@ async fn test_sync_uses_borg_info_fallback_when_list_omits_hostname() {
 }"#;
 
     let (_borg_dir, _borg_guard) =
-        install_fake_borg(list_json, info_all_json, info_repo_json, "", "").await;
+        install_fake_borg(list_json, list_json, info_repo_json, "", "").await;
 
     let mut app = build_test_app(pool.clone()).await;
-    let repo_id = insert_test_repo(&pool, "hostname-fallback-repo").await;
+    let repo_id = insert_test_repo(&pool, "hostname-format-repo").await;
 
     let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
     let resp = oneshot(&mut app, req).await;
@@ -2300,22 +2273,21 @@ async fn test_sync_uses_borg_info_fallback_when_list_omits_hostname() {
             .unwrap();
     assert_eq!(
         unknown_count, 0,
-        "no agent should be created with hostname 'unknown' when the fallback supplies the real \
-         hostname"
+        "no placeholder agent should be created with hostname 'unknown'"
     );
 
     let correct_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM agents WHERE hostname = 'fallback-host'")
+        sqlx::query_scalar("SELECT COUNT(*) FROM agents WHERE hostname = 'web-server-01'")
             .fetch_one(&pool)
             .await
             .unwrap();
     assert_eq!(
         correct_count, 1,
-        "placeholder agent should be created with the correct hostname from borg info fallback"
+        "placeholder agent should be created with hostname from borg list --format output"
     );
 
     let token_hash: String =
-        sqlx::query_scalar("SELECT agent_token_hash FROM agents WHERE hostname = 'fallback-host'")
+        sqlx::query_scalar("SELECT agent_token_hash FROM agents WHERE hostname = 'web-server-01'")
             .fetch_one(&pool)
             .await
             .unwrap();

@@ -35,10 +35,17 @@ interface PerHostExcludePatterns {
   raw_text: string
 }
 
+interface PerAgentCommands {
+  agent_id: number
+  pre_backup_commands: string
+  post_backup_commands: string
+}
+
 interface ScheduleBackupSourcesResponse {
   backup_sources: string[] | null
   backup_sources_per_agent: PerHostBackupSources[] | null
   exclude_patterns_per_agent: PerHostExcludePatterns[] | null
+  commands_per_agent: PerAgentCommands[] | null
 }
 
 interface RepoRow {
@@ -83,6 +90,9 @@ const usePerHostPaths = ref(false)
 const perHostSources = ref<Record<number, string>>({})
 const usePerHostExcludes = ref(false)
 const perHostExcludes = ref<Record<number, string>>({})
+const usePerAgentCmds = ref(false)
+const perAgentPreCmds = ref<Record<number, string>>({})
+const perAgentPostCmds = ref<Record<number, string>>({})
 
 const showAgentDropdown = ref(false)
 const agentDropdownRef = ref<HTMLElement | null>(null)
@@ -170,9 +180,9 @@ function agentLabel(id: number): string {
 }
 
 function multiSelectLabel(): string {
-  if (selectedAgentIds.value.length === 0) return 'Select hosts...'
+  if (selectedAgentIds.value.length === 0) return 'Select agents...'
   if (selectedAgentIds.value.length === 1) return agentLabel(selectedAgentIds.value[0])
-  return `${selectedAgentIds.value.length} hosts selected`
+  return `${selectedAgentIds.value.length} agents selected`
 }
 
 function toggleAgentSelection(id: number): void {
@@ -330,6 +340,22 @@ async function loadData(): Promise<void> {
         }
         perHostExcludes.value = map
       }
+      const perAgentCmdEntries = sources.commands_per_agent ?? []
+      if (perAgentCmdEntries.length > 0) {
+        usePerAgentCmds.value = true
+        const preMap: Record<number, string> = {}
+        const postMap: Record<number, string> = {}
+        for (const entry of perAgentCmdEntries) {
+          preMap[entry.agent_id] = (JSON.parse(entry.pre_backup_commands || '[]') as string[]).join(
+            '\n',
+          )
+          postMap[entry.agent_id] = (
+            JSON.parse(entry.post_backup_commands || '[]') as string[]
+          ).join('\n')
+        }
+        perAgentPreCmds.value = preMap
+        perAgentPostCmds.value = postMap
+      }
     }
   } catch (e: unknown) {
     error.value = extractError(e, 'Failed to load schedule')
@@ -383,9 +409,27 @@ async function save(): Promise<void> {
       payload.exclude_patterns_per_agent = perHost
     }
 
+    if (usePerAgentCmds.value) {
+      payload.pre_backup_commands = []
+      payload.post_backup_commands = []
+      const perAgent: {
+        agent_id: number
+        pre_backup_commands: string[]
+        post_backup_commands: string[]
+      }[] = []
+      for (const id of selectedAgentIds.value) {
+        perAgent.push({
+          agent_id: id,
+          pre_backup_commands: parseLines(perAgentPreCmds.value[id] ?? ''),
+          post_backup_commands: parseLines(perAgentPostCmds.value[id] ?? ''),
+        })
+      }
+      payload.commands_per_agent = perAgent
+    }
+
     if (isCreate.value) {
       if (selectedAgentIds.value.length === 0 || !selectedRepoId.value) {
-        saveError.value = 'Please select at least one host and a repository.'
+        saveError.value = 'Please select at least one agent and a repository.'
         return
       }
       const res = await apiClient.post<ScheduleRow>('/schedules', {
@@ -804,7 +848,7 @@ watch(activeTab, (tab) => {
                 <option value="continue">Continue</option>
               </select>
               <span class="field-hint">
-                Whether to stop or continue to the next host when one fails.
+                Whether to stop or continue to the next agent when one fails.
               </span>
             </div>
 
@@ -1057,7 +1101,7 @@ watch(activeTab, (tab) => {
                 v-if="selectedAgentIds.length > 1"
                 class="form-group form-group-inline"
               >
-                <label class="form-label">Configure per host</label>
+                <label class="form-label">Configure per agent</label>
                 <ToggleSwitch v-model="usePerHostPaths" />
               </div>
 
@@ -1072,7 +1116,7 @@ watch(activeTab, (tab) => {
                   spellcheck="false"
                 />
                 <span class="field-hint">
-                  Leave empty to use the default paths configured for this host.
+                  Leave empty to use the default paths configured for this agent.
                 </span>
               </div>
 
@@ -1098,7 +1142,7 @@ watch(activeTab, (tab) => {
                   />
                 </div>
                 <span class="field-hint">
-                  Leave a host empty to use its default backup paths.
+                  Leave an agent empty to use its default backup paths.
                 </span>
               </div>
             </div>
@@ -1185,7 +1229,7 @@ watch(activeTab, (tab) => {
               v-if="selectedAgentIds.length > 1"
               class="form-group form-group-inline"
             >
-              <label class="form-label">Configure per host</label>
+              <label class="form-label">Configure per agent</label>
               <ToggleSwitch v-model="usePerHostExcludes" />
             </div>
             <div class="form-group">
@@ -1228,14 +1272,14 @@ watch(activeTab, (tab) => {
                   />
                 </div>
                 <span class="field-hint">
-                  Leave a host empty to use only global and host-level default excludes.
+                  Leave an agent empty to use only global and agent-level default excludes.
                 </span>
               </div>
               <span
                 v-if="!usePerHostExcludes"
                 class="field-hint"
               >
-                Leave empty to use only global and host-level default excludes. Lines starting with
+                Leave empty to use only global and agent-level default excludes. Lines starting with
                 <code>#</code> are treated as comments.
               </span>
               <div
@@ -1277,24 +1321,69 @@ watch(activeTab, (tab) => {
 
           <div class="form-card">
             <h3 class="info-title">Commands</h3>
-            <div class="form-group">
-              <label class="form-label">Pre-backup Commands</label>
-              <textarea
-                v-model="form.pre_backup_commands"
-                class="form-input cmd-area"
-                placeholder="One command per line, e.g.&#10;docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"
-                spellcheck="false"
-              />
+            <div
+              v-if="selectedAgentIds.length > 1"
+              class="form-group form-group-inline"
+            >
+              <label class="form-label">Configure per agent</label>
+              <ToggleSwitch v-model="usePerAgentCmds" />
             </div>
-            <div class="form-group">
-              <label class="form-label">Post-backup Commands</label>
-              <textarea
-                v-model="form.post_backup_commands"
-                class="form-input cmd-area"
-                placeholder="One command per line (optional)"
-                spellcheck="false"
-              />
-            </div>
+            <template v-if="!usePerAgentCmds">
+              <div class="form-group">
+                <label class="form-label">Pre-backup Commands</label>
+                <textarea
+                  v-model="form.pre_backup_commands"
+                  class="form-input cmd-area"
+                  placeholder="One command per line, e.g.&#10;docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"
+                  spellcheck="false"
+                />
+              </div>
+              <div class="form-group">
+                <label class="form-label">Post-backup Commands</label>
+                <textarea
+                  v-model="form.post_backup_commands"
+                  class="form-input cmd-area"
+                  placeholder="One command per line (optional)"
+                  spellcheck="false"
+                />
+              </div>
+            </template>
+            <template v-else>
+              <div class="per-host-paths">
+                <div
+                  v-for="agentId in selectedAgentIds"
+                  :key="agentId"
+                  class="per-host-entry"
+                >
+                  <label class="form-label">{{ agentLabel(agentId) }}</label>
+                  <label class="form-sublabel">Pre-backup</label>
+                  <textarea
+                    :value="perAgentPreCmds[agentId] ?? ''"
+                    class="form-input cmd-area"
+                    placeholder="One command per line"
+                    spellcheck="false"
+                    @input="
+                      ($event) =>
+                        (perAgentPreCmds[agentId] = ($event.target as HTMLTextAreaElement).value)
+                    "
+                  />
+                  <label class="form-sublabel">Post-backup</label>
+                  <textarea
+                    :value="perAgentPostCmds[agentId] ?? ''"
+                    class="form-input cmd-area"
+                    placeholder="One command per line (optional)"
+                    spellcheck="false"
+                    @input="
+                      ($event) =>
+                        (perAgentPostCmds[agentId] = ($event.target as HTMLTextAreaElement).value)
+                    "
+                  />
+                </div>
+                <span class="field-hint"
+                  >Leave an agent empty to run no schedule-level commands.</span
+                >
+              </div>
+            </template>
           </div>
         </div>
       </div>
@@ -1697,6 +1786,16 @@ watch(activeTab, (tab) => {
   font-family: var(--mono);
   font-size: 0.82rem;
   line-height: 1.5;
+}
+
+.form-sublabel {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 0.5rem;
+  display: block;
 }
 
 .retention-grid {

@@ -38,6 +38,10 @@ pub struct UpdateAgentRequest {
     pub default_backup_paths: Vec<String>,
     #[serde(default)]
     pub default_exclude_patterns: Vec<String>,
+    #[serde(default)]
+    pub default_pre_backup_commands: Vec<String>,
+    #[serde(default)]
+    pub default_post_backup_commands: Vec<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -203,13 +207,21 @@ pub async fn update_agent(
     ApiJson(req): ApiJson<UpdateAgentRequest>,
 ) -> Result<Json<AgentResponse>, ApiError> {
     let new_hostname = req.hostname.as_deref().unwrap_or(&hostname);
+    let pre_cmds = serde_json::to_string(&req.default_pre_backup_commands)
+        .unwrap_or_else(|_| "[]".to_string());
+    let post_cmds = serde_json::to_string(&req.default_post_backup_commands)
+        .unwrap_or_else(|_| "[]".to_string());
     let agent = db::update_agent(
         &state.pool,
         &hostname,
         new_hostname,
-        req.display_name.as_deref(),
-        &req.default_backup_paths,
-        &req.default_exclude_patterns,
+        db::AgentDefaults {
+            display_name: req.display_name.as_deref(),
+            default_backup_paths: &req.default_backup_paths,
+            default_exclude_patterns: &req.default_exclude_patterns,
+            default_pre_backup_commands: &pre_cmds,
+            default_post_backup_commands: &post_cmds,
+        },
     )
     .await?;
     config_assembler::push_config_to_agent(&state, new_hostname).await;

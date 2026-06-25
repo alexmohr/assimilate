@@ -233,7 +233,8 @@ pub async fn create_repo(
         // info and the sync's borg list contend for the same repository lock, so
         // running them in parallel would force the list into the lock-retry path.
         if need_borg_info {
-            match run_borg_info_with_retry(&bg_repo_url, &bg_passphrase).await {
+            let timeout = get_borg_timeout(&pool).await;
+            match run_borg_info_with_retry(&bg_repo_url, &bg_passphrase, timeout).await {
                 Ok(info) => {
                     if let Err(e) =
                         db::update_repo_encryption(&pool, repo_id, &info.encryption.to_string())
@@ -1214,8 +1215,17 @@ const DEFAULT_BORG_QUERY_TIMEOUT_SECS: u64 = 300;
 /// only bounds lock contention; a hung SSH connection would otherwise keep the
 /// process (and the import) waiting forever, leaving the repo stuck at "Listing
 /// archives". On timeout the process is killed and the operation fails so the
-/// importing state is cleared. Tunable via `ASSIMILATE_BORG_QUERY_TIMEOUT_SECS`.
-fn borg_query_timeout() -> Duration {
+/// importing state is cleared.
+///
+/// Resolution order: DB setting `borg_query_timeout_secs` → env var
+/// `ASSIMILATE_BORG_QUERY_TIMEOUT_SECS` → 300 s default.
+async fn get_borg_timeout(pool: &PgPool) -> Duration {
+    if let Ok(Some(v)) = db::get_setting(pool, "borg_query_timeout_secs").await
+        && let Ok(secs) = v.parse::<u64>()
+        && secs > 0
+    {
+        return Duration::from_secs(secs);
+    }
     std::env::var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
@@ -1229,20 +1239,17 @@ fn borg_query_timeout() -> Duration {
 async fn run_borg_info_with_retry(
     repo_url: &str,
     passphrase: &str,
+    timeout: Duration,
 ) -> Result<BorgInfoResult, ApiError> {
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
-        let attempt_result = match tokio::time::timeout(
-            borg_query_timeout(),
-            run_borg_info_once(repo_url, passphrase),
-        )
-        .await
-        {
-            Ok(result) => result,
-            Err(_) => Err(ApiError::Internal(format!(
-                "borg info timed out after {}s; the repository may be unreachable",
-                borg_query_timeout().as_secs()
-            ))),
-        };
+        let attempt_result =
+            match tokio::time::timeout(timeout, run_borg_info_once(repo_url, passphrase)).await {
+                Ok(result) => result,
+                Err(_) => Err(ApiError::Internal(format!(
+                    "borg info timed out after {}s; the repository may be unreachable",
+                    timeout.as_secs()
+                ))),
+            };
         match attempt_result {
             Ok(result) => return Ok(result),
             Err(e) => {
@@ -1397,6 +1404,7 @@ async fn run_borg_init(
 async fn run_borg_list_with_retry(
     borg_repo: &str,
     env: &std::collections::HashMap<String, String>,
+    timeout: Duration,
 ) -> Result<Vec<serde_json::Value>, ApiError> {
     let borg = Borg::new();
     // --format ensures hostname and end are always present in the per-archive JSON
@@ -1413,7 +1421,7 @@ async fn run_borg_list_with_retry(
     ];
 
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
-        let output = match tokio::time::timeout(borg_query_timeout(), borg.run(&args, env)).await {
+        let output = match tokio::time::timeout(timeout, borg.run(&args, env)).await {
             Ok(Ok(output)) => output,
             Ok(Err(e)) => {
                 return Err(ApiError::Internal(format!(
@@ -1423,7 +1431,7 @@ async fn run_borg_list_with_retry(
             Err(_) => {
                 return Err(ApiError::Internal(format!(
                     "borg list timed out after {}s; the repository may be unreachable",
-                    borg_query_timeout().as_secs()
+                    timeout.as_secs()
                 )));
             }
         };
@@ -1471,10 +1479,10 @@ async fn refresh_repo_info_stats(
     env: &std::collections::HashMap<String, String>,
     repo_id: i64,
     archive_count: i64,
+    timeout: Duration,
 ) {
     let args = ["info", "--json", "--lock-wait", LOCK_WAIT_SECS, borg_repo];
-    let output = match tokio::time::timeout(borg_query_timeout(), Borg::new().run(&args, env)).await
-    {
+    let output = match tokio::time::timeout(timeout, Borg::new().run(&args, env)).await {
         Ok(Ok(output)) => output,
         Ok(Err(e)) => {
             warn!(repo_id, error = %e, "failed to run borg info for repo stats");
@@ -1483,7 +1491,7 @@ async fn refresh_repo_info_stats(
         Err(_) => {
             warn!(
                 repo_id,
-                timeout_secs = borg_query_timeout().as_secs(),
+                timeout_secs = timeout.as_secs(),
                 "borg info timed out refreshing repo stats"
             );
             return;
@@ -1683,6 +1691,7 @@ async fn sync_archives(
     mode: SyncMode<'_>,
 ) -> Result<(u64, u64), ApiError> {
     let (borg_repo, env) = super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
+    let timeout = get_borg_timeout(pool).await;
 
     publish_import_progress(
         pool,
@@ -1694,7 +1703,7 @@ async fn sync_archives(
     )
     .await;
 
-    let archives = run_borg_list_with_retry(&borg_repo, &env).await?;
+    let archives = run_borg_list_with_retry(&borg_repo, &env, timeout).await?;
 
     let borg_names: std::collections::HashSet<String> = archives
         .iter()
@@ -1728,7 +1737,7 @@ async fn sync_archives(
     let repo_archive_count = i64::try_from(borg_names.len()).unwrap_or(i64::MAX);
 
     if to_import.is_empty() {
-        refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, repo_archive_count).await;
+        refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, repo_archive_count, timeout).await;
         return Ok((0, removed));
     }
 
@@ -1796,7 +1805,7 @@ async fn sync_archives(
         Some("Refreshing repository statistics\u{2026}"),
     )
     .await;
-    refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, repo_archive_count).await;
+    refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, repo_archive_count, timeout).await;
 
     match mode {
         SyncMode::Existing => {

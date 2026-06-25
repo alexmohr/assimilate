@@ -1621,6 +1621,8 @@ async fn test_import_config_creates_hosts(pool: sqlx::PgPool) {
                 "display_name": "New Host 1",
                 "default_backup_paths": ["/etc", "/home"],
                 "default_exclude_patterns": ["*.log"],
+                "default_pre_backup_commands": "[]",
+                "default_post_backup_commands": "[]",
                 "hostname_patterns": []
             }
         ],
@@ -1667,6 +1669,8 @@ async fn test_import_config_updates_existing_host(pool: sqlx::PgPool) {
                 "display_name": "Updated Name",
                 "default_backup_paths": ["/var"],
                 "default_exclude_patterns": [],
+                "default_pre_backup_commands": "[]",
+                "default_post_backup_commands": "[]",
                 "hostname_patterns": []
             }
         ],

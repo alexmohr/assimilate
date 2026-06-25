@@ -385,7 +385,7 @@ describe('ScheduleDetailView - create mode', () => {
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Select hosts...')
+    expect(wrapper.text()).toContain('Select agents...')
     expect(wrapper.text()).toContain('server-daily')
   })
 

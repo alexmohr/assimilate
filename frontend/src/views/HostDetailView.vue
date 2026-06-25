@@ -155,6 +155,14 @@ function cancelEditPaths(): void {
   editingPaths.value = false
 }
 
+function parseAgentCommands(json: string | undefined): string[] {
+  try {
+    return JSON.parse(json ?? '[]') as string[]
+  } catch {
+    return []
+  }
+}
+
 async function savePaths(): Promise<void> {
   if (!agent.value) return
   pathsSaving.value = true
@@ -164,6 +172,8 @@ async function savePaths(): Promise<void> {
       display_name: agent.value.display_name,
       default_backup_paths: parseLines(pathsText.value),
       default_exclude_patterns: agent.value.default_exclude_patterns,
+      default_pre_backup_commands: parseAgentCommands(agent.value.default_pre_backup_commands),
+      default_post_backup_commands: parseAgentCommands(agent.value.default_post_backup_commands),
     })
     agent.value = { ...agent.value, ...res.data }
     editingPaths.value = false
@@ -375,6 +385,8 @@ async function saveExcludes(): Promise<void> {
       display_name: agent.value.display_name,
       default_backup_paths: agent.value.default_backup_paths,
       default_exclude_patterns: parseLines(excludesText.value),
+      default_pre_backup_commands: parseAgentCommands(agent.value.default_pre_backup_commands),
+      default_post_backup_commands: parseAgentCommands(agent.value.default_post_backup_commands),
     })
     agent.value = { ...agent.value, ...res.data }
     editingExcludes.value = false
@@ -382,6 +394,45 @@ async function saveExcludes(): Promise<void> {
     excludesError.value = extractError(e)
   } finally {
     excludesSaving.value = false
+  }
+}
+
+// Default pre/post backup commands
+const editingHookCmds = ref(false)
+const preCmdsText = ref('')
+const postCmdsText = ref('')
+const hookCmdsSaving = ref(false)
+const hookCmdsError = ref<string | null>(null)
+
+function startEditHookCmds(): void {
+  preCmdsText.value = parseAgentCommands(agent.value?.default_pre_backup_commands).join('\n')
+  postCmdsText.value = parseAgentCommands(agent.value?.default_post_backup_commands).join('\n')
+  hookCmdsError.value = null
+  editingHookCmds.value = true
+}
+
+function cancelEditHookCmds(): void {
+  editingHookCmds.value = false
+}
+
+async function saveHookCmds(): Promise<void> {
+  if (!agent.value) return
+  hookCmdsSaving.value = true
+  hookCmdsError.value = null
+  try {
+    const res = await apiClient.put<AgentRow>(`/agents/${agent.value.hostname}`, {
+      display_name: agent.value.display_name,
+      default_backup_paths: agent.value.default_backup_paths,
+      default_exclude_patterns: agent.value.default_exclude_patterns,
+      default_pre_backup_commands: parseLines(preCmdsText.value),
+      default_post_backup_commands: parseLines(postCmdsText.value),
+    })
+    agent.value = { ...agent.value, ...res.data }
+    editingHookCmds.value = false
+  } catch (e: unknown) {
+    hookCmdsError.value = extractError(e)
+  } finally {
+    hookCmdsSaving.value = false
   }
 }
 
@@ -1111,6 +1162,106 @@ watch(wsStatus, (newStatus, oldStatus) => {
                 @click="saveExcludes"
               >
                 {{ excludesSaving ? 'Saving...' : 'Save' }}
+              </button>
+            </div>
+          </template>
+        </div>
+
+        <!-- Default Hook Commands -->
+        <div class="info-card">
+          <h3 class="info-title">Default Hook Commands</h3>
+          <template v-if="!editingHookCmds">
+            <div class="field-hint">
+              Run before and after every backup on this host. Schedule-specific commands are
+              appended after the agent-level ones (pre) or prepended before them (post).
+            </div>
+            <div class="hook-cmds-view">
+              <div class="hook-cmds-group">
+                <span class="hook-cmds-label">Pre-backup</span>
+                <div
+                  v-if="parseAgentCommands(agent.default_pre_backup_commands).length > 0"
+                  class="paths-list"
+                >
+                  <code
+                    v-for="(cmd, idx) in parseAgentCommands(agent.default_pre_backup_commands)"
+                    :key="idx"
+                    class="path-item mono"
+                  >
+                    {{ cmd }}
+                  </code>
+                </div>
+                <span
+                  v-else
+                  class="muted"
+                  >None configured.</span
+                >
+              </div>
+              <div class="hook-cmds-group">
+                <span class="hook-cmds-label">Post-backup</span>
+                <div
+                  v-if="parseAgentCommands(agent.default_post_backup_commands).length > 0"
+                  class="paths-list"
+                >
+                  <code
+                    v-for="(cmd, idx) in parseAgentCommands(agent.default_post_backup_commands)"
+                    :key="idx"
+                    class="path-item mono"
+                  >
+                    {{ cmd }}
+                  </code>
+                </div>
+                <span
+                  v-else
+                  class="muted"
+                  >None configured.</span
+                >
+              </div>
+            </div>
+            <div class="info-actions">
+              <button
+                v-if="!isImported"
+                class="btn btn-sm btn-ghost"
+                @click="startEditHookCmds"
+              >
+                Edit
+              </button>
+            </div>
+          </template>
+          <template v-else>
+            <label class="hook-cmds-label">Pre-backup Commands</label>
+            <textarea
+              v-model="preCmdsText"
+              class="input exclude-area"
+              placeholder="Commands run before each backup, one per line&#10;e.g. systemctl stop myapp"
+              spellcheck="false"
+            />
+            <label class="hook-cmds-label">Post-backup Commands</label>
+            <textarea
+              v-model="postCmdsText"
+              class="input exclude-area"
+              placeholder="Commands run after each backup, one per line&#10;e.g. systemctl start myapp"
+              spellcheck="false"
+            />
+            <div
+              v-if="hookCmdsError"
+              class="form-error"
+            >
+              {{ hookCmdsError }}
+            </div>
+            <div class="info-actions">
+              <button
+                class="btn btn-sm btn-ghost"
+                :disabled="hookCmdsSaving"
+                @click="cancelEditHookCmds"
+              >
+                Cancel
+              </button>
+              <button
+                class="btn btn-sm btn-primary"
+                :disabled="hookCmdsSaving"
+                @click="saveHookCmds"
+              >
+                {{ hookCmdsSaving ? 'Saving...' : 'Save' }}
               </button>
             </div>
           </template>
@@ -2389,6 +2540,29 @@ watch(wsStatus, (newStatus, oldStatus) => {
   font-family: var(--mono);
   font-size: 0.82rem;
   line-height: 1.5;
+}
+
+.hook-cmds-view {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.hook-cmds-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.hook-cmds-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.25rem;
+  display: block;
 }
 
 .pattern-row {

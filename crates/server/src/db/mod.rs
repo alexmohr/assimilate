@@ -32,8 +32,9 @@ pub async fn resolve_agent_for_hostname(
     let exact = sqlx::query_as::<_, AgentRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM agents \
-         WHERE hostname = $1 AND agent_token_hash != 'imported:no-auth'",
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
+         default_post_backup_commands, agent_token_hash, is_hidden FROM agents WHERE hostname = \
+         $1 AND agent_token_hash != 'imported:no-auth'",
     )
     .bind(hostname)
     .fetch_optional(pool)
@@ -57,8 +58,8 @@ pub async fn merge_agent(pool: &PgPool, source_id: i64, target_id: i64) -> Resul
     let source = sqlx::query_as::<_, AgentRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM agents \
-         WHERE id = $1",
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
+         default_post_backup_commands, agent_token_hash, is_hidden FROM agents WHERE id = $1",
     )
     .bind(source_id)
     .fetch_optional(&mut *tx)
@@ -141,6 +142,8 @@ pub struct AgentRow {
     pub default_backup_paths: Vec<String>,
     #[serde(default)]
     pub default_exclude_patterns: Vec<String>,
+    pub default_pre_backup_commands: String,
+    pub default_post_backup_commands: String,
     #[serde(skip)]
     pub agent_token_hash: String,
     #[serde(default)]
@@ -266,8 +269,8 @@ pub async fn get_agent_by_hostname(pool: &PgPool, hostname: &str) -> Result<Agen
     sqlx::query_as::<_, AgentRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM agents \
-         WHERE hostname = $1",
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
+         default_post_backup_commands, agent_token_hash, is_hidden FROM agents WHERE hostname = $1",
     )
     .bind(hostname)
     .fetch_one(pool)
@@ -282,8 +285,8 @@ pub async fn get_agent_by_id(pool: &PgPool, agent_id: i64) -> Result<AgentRow, A
     sqlx::query_as::<_, AgentRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM agents \
-         WHERE id = $1",
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
+         default_post_backup_commands, agent_token_hash, is_hidden FROM agents WHERE id = $1",
     )
     .bind(agent_id)
     .fetch_one(pool)
@@ -364,12 +367,13 @@ pub async fn list_agents(pool: &PgPool, include_hidden: bool) -> Result<Vec<Agen
     let sql = if include_hidden {
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, agent_token_hash, is_hidden FROM agents ORDER BY hostname"
+         default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, \
+         agent_token_hash, is_hidden FROM agents ORDER BY hostname"
     } else {
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, agent_token_hash, is_hidden FROM agents WHERE is_hidden = false \
-         ORDER BY hostname"
+         default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, \
+         agent_token_hash, is_hidden FROM agents WHERE is_hidden = false ORDER BY hostname"
     };
     sqlx::query_as::<_, AgentRow>(sql)
         .fetch_all(pool)
@@ -386,7 +390,8 @@ pub async fn set_agent_hidden(
         "UPDATE agents SET is_hidden = $2 WHERE hostname = $1 RETURNING id, hostname, \
          display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, agent_token_hash, is_hidden",
+         default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, \
+         agent_token_hash, is_hidden",
     )
     .bind(hostname)
     .bind(hidden)
@@ -407,8 +412,8 @@ pub async fn get_or_create_agent_by_hostname(
     let existing = sqlx::query_as::<_, AgentRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM agents \
-         WHERE hostname = $1",
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
+         default_post_backup_commands, agent_token_hash, is_hidden FROM agents WHERE hostname = $1",
     )
     .bind(hostname)
     .fetch_optional(pool)
@@ -423,7 +428,8 @@ pub async fn get_or_create_agent_by_hostname(
         "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, \
          $3, NULL) RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
          agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden",
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
+         default_post_backup_commands, agent_token_hash, is_hidden",
     )
     .bind(hostname)
     .bind(Some(format!("{hostname} (imported)")))
@@ -444,7 +450,8 @@ pub async fn insert_agent(
         "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, \
          $3, $4) RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
          agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden",
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
+         default_post_backup_commands, agent_token_hash, is_hidden",
     )
     .bind(hostname)
     .bind(display_name)
@@ -455,26 +462,35 @@ pub async fn insert_agent(
     .map_err(ApiError::Database)
 }
 
+pub struct AgentDefaults<'a> {
+    pub display_name: Option<&'a str>,
+    pub default_backup_paths: &'a [String],
+    pub default_exclude_patterns: &'a [String],
+    pub default_pre_backup_commands: &'a str,
+    pub default_post_backup_commands: &'a str,
+}
+
 pub async fn insert_agent_with_paths(
     pool: &PgPool,
     hostname: &str,
-    display_name: Option<&str>,
     token_hash: &str,
-    default_backup_paths: &[String],
-    default_exclude_patterns: &[String],
+    defaults: AgentDefaults<'_>,
 ) -> Result<AgentRow, ApiError> {
     sqlx::query_as::<_, AgentRow>(
         "INSERT INTO agents (hostname, display_name, agent_token_hash, default_backup_paths, \
-         default_exclude_patterns) VALUES ($1, $2, $3, $4, $5) RETURNING id, hostname, \
-         display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
-         created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, agent_token_hash, is_hidden",
+         default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, hostname, display_name, agent_version, \
+         agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, \
+         visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
+         default_post_backup_commands, agent_token_hash, is_hidden",
     )
     .bind(hostname)
-    .bind(display_name)
+    .bind(defaults.display_name)
     .bind(token_hash)
-    .bind(default_backup_paths)
-    .bind(default_exclude_patterns)
+    .bind(defaults.default_backup_paths)
+    .bind(defaults.default_exclude_patterns)
+    .bind(defaults.default_pre_backup_commands)
+    .bind(defaults.default_post_backup_commands)
     .fetch_one(pool)
     .await
     .map_err(ApiError::Database)
@@ -484,22 +500,24 @@ pub async fn update_agent(
     pool: &PgPool,
     hostname: &str,
     new_hostname: &str,
-    display_name: Option<&str>,
-    default_backup_paths: &[String],
-    default_exclude_patterns: &[String],
+    defaults: AgentDefaults<'_>,
 ) -> Result<AgentRow, ApiError> {
     sqlx::query_as::<_, AgentRow>(
         "UPDATE agents SET hostname = $2, display_name = $3, default_backup_paths = $4, \
-         default_exclude_patterns = $5 WHERE hostname = $1 RETURNING id, hostname, display_name, \
-         agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, \
-         last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, \
+         default_exclude_patterns = $5, default_pre_backup_commands = $6, \
+         default_post_backup_commands = $7 WHERE hostname = $1 RETURNING id, hostname, \
+         display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
+         created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
+         default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, \
          agent_token_hash, is_hidden",
     )
     .bind(hostname)
     .bind(new_hostname)
-    .bind(display_name)
-    .bind(default_backup_paths)
-    .bind(default_exclude_patterns)
+    .bind(defaults.display_name)
+    .bind(defaults.default_backup_paths)
+    .bind(defaults.default_exclude_patterns)
+    .bind(defaults.default_pre_backup_commands)
+    .bind(defaults.default_post_backup_commands)
     .fetch_one(pool)
     .await
     .map_err(|e| match e {
@@ -517,7 +535,8 @@ pub async fn regenerate_agent_token(
         "UPDATE agents SET agent_token_hash = $2 WHERE hostname = $1 RETURNING id, hostname, \
          display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, agent_token_hash, is_hidden",
+         default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, \
+         agent_token_hash, is_hidden",
     )
     .bind(hostname)
     .bind(token_hash)
@@ -1666,6 +1685,121 @@ pub async fn delete_per_agent_excludes_for_schedule(
     schedule_id: i64,
 ) -> Result<(), ApiError> {
     sqlx::query("DELETE FROM per_agent_excludes WHERE schedule_id = $1")
+        .bind(schedule_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+pub async fn get_per_agent_excludes_raw(
+    pool: &PgPool,
+    schedule_id: i64,
+    agent_id: i64,
+) -> Result<Option<String>, ApiError> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT raw_text FROM per_agent_excludes WHERE schedule_id = $1 AND agent_id = $2",
+    )
+    .bind(schedule_id)
+    .bind(agent_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct PerAgentCommands {
+    pub agent_id: i64,
+    pub pre_backup_commands: String,
+    pub post_backup_commands: String,
+}
+
+pub async fn list_all_per_agent_commands_for_schedule(
+    pool: &PgPool,
+    schedule_id: i64,
+) -> Result<Vec<PerAgentCommands>, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        agent_id: i64,
+        pre_backup_commands: String,
+        post_backup_commands: String,
+    }
+
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT agent_id, pre_backup_commands, post_backup_commands FROM per_agent_commands WHERE \
+         schedule_id = $1 ORDER BY agent_id",
+    )
+    .bind(schedule_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| PerAgentCommands {
+            agent_id: r.agent_id,
+            pre_backup_commands: r.pre_backup_commands,
+            post_backup_commands: r.post_backup_commands,
+        })
+        .collect())
+}
+
+pub async fn get_per_agent_commands(
+    pool: &PgPool,
+    schedule_id: i64,
+    agent_id: i64,
+) -> Result<Option<PerAgentCommands>, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        pre_backup_commands: String,
+        post_backup_commands: String,
+    }
+
+    let row = sqlx::query_as::<_, Row>(
+        "SELECT pre_backup_commands, post_backup_commands FROM per_agent_commands WHERE \
+         schedule_id = $1 AND agent_id = $2",
+    )
+    .bind(schedule_id)
+    .bind(agent_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    Ok(row.map(|r| PerAgentCommands {
+        agent_id,
+        pre_backup_commands: r.pre_backup_commands,
+        post_backup_commands: r.post_backup_commands,
+    }))
+}
+
+pub async fn upsert_per_agent_commands(
+    pool: &PgPool,
+    schedule_id: i64,
+    agent_id: i64,
+    pre_backup_commands: &str,
+    post_backup_commands: &str,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "INSERT INTO per_agent_commands (schedule_id, agent_id, pre_backup_commands, \
+         post_backup_commands) VALUES ($1, $2, $3, $4) ON CONFLICT (schedule_id, agent_id) DO \
+         UPDATE SET pre_backup_commands = EXCLUDED.pre_backup_commands, post_backup_commands = \
+         EXCLUDED.post_backup_commands",
+    )
+    .bind(schedule_id)
+    .bind(agent_id)
+    .bind(pre_backup_commands)
+    .bind(post_backup_commands)
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+pub async fn delete_per_agent_commands_for_schedule(
+    pool: &PgPool,
+    schedule_id: i64,
+) -> Result<(), ApiError> {
+    sqlx::query("DELETE FROM per_agent_commands WHERE schedule_id = $1")
         .bind(schedule_id)
         .execute(pool)
         .await

@@ -40,6 +40,13 @@ pub struct AgentExcludePatterns {
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct AgentCommands {
+    pub agent_id: i64,
+    pub pre_backup_commands: Vec<String>,
+    pub post_backup_commands: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateScheduleRequest {
     pub agent_ids: Vec<i64>,
     pub repo_id: i64,
@@ -63,6 +70,7 @@ pub struct CreateScheduleRequest {
     pub backup_sources: Option<Vec<String>>,
     pub backup_sources_per_agent: Option<Vec<AgentBackupSources>>,
     pub exclude_patterns_per_agent: Option<Vec<AgentExcludePatterns>>,
+    pub commands_per_agent: Option<Vec<AgentCommands>>,
     #[schema(value_type = Option<String>)]
     pub on_failure: Option<OnFailure>,
 }
@@ -88,6 +96,7 @@ pub struct UpdateScheduleRequest {
     pub backup_sources: Option<Vec<String>>,
     pub backup_sources_per_agent: Option<Vec<AgentBackupSources>>,
     pub exclude_patterns_per_agent: Option<Vec<AgentExcludePatterns>>,
+    pub commands_per_agent: Option<Vec<AgentCommands>>,
     pub agent_ids: Option<Vec<i64>>,
     #[schema(value_type = Option<String>)]
     pub on_failure: Option<OnFailure>,
@@ -228,6 +237,10 @@ pub async fn create_schedule(
 
     if let Some(per_agent) = &req.exclude_patterns_per_agent {
         insert_per_agent_excludes(&state.pool, schedule.id, per_agent).await?;
+    }
+
+    if let Some(per_agent) = &req.commands_per_agent {
+        insert_per_agent_commands(&state.pool, schedule.id, per_agent).await?;
     }
 
     if enabled {
@@ -390,6 +403,11 @@ pub async fn update_schedule(
         insert_per_agent_excludes(&state.pool, schedule.id, per_agent).await?;
     }
 
+    if let Some(per_agent) = &req.commands_per_agent {
+        db::delete_per_agent_commands_for_schedule(&state.pool, schedule.id).await?;
+        insert_per_agent_commands(&state.pool, schedule.id, per_agent).await?;
+    }
+
     if enabled {
         refresh_next_run(&state.pool, schedule.id, &req.cron_expression).await?;
     } else {
@@ -526,6 +544,21 @@ async fn insert_per_agent_excludes(
     for entry in per_agent {
         db::upsert_per_agent_excludes_raw(pool, schedule_id, entry.agent_id, &entry.raw_text)
             .await?;
+    }
+    Ok(())
+}
+
+async fn insert_per_agent_commands(
+    pool: &PgPool,
+    schedule_id: i64,
+    per_agent: &[AgentCommands],
+) -> Result<(), ApiError> {
+    for entry in per_agent {
+        let pre =
+            serde_json::to_string(&entry.pre_backup_commands).unwrap_or_else(|_| "[]".to_owned());
+        let post =
+            serde_json::to_string(&entry.post_backup_commands).unwrap_or_else(|_| "[]".to_owned());
+        db::upsert_per_agent_commands(pool, schedule_id, entry.agent_id, &pre, &post).await?;
     }
     Ok(())
 }
@@ -720,6 +753,7 @@ pub struct ScheduleBackupSourcesResponse {
     pub backup_sources: Vec<String>,
     pub backup_sources_per_agent: Vec<db::PerAgentBackupSources>,
     pub exclude_patterns_per_agent: Vec<db::PerAgentExcludePatterns>,
+    pub commands_per_agent: Vec<db::PerAgentCommands>,
 }
 
 #[utoipa::path(
@@ -746,10 +780,12 @@ pub async fn list_schedule_backup_sources(
         db::list_all_per_agent_backup_sources_for_schedule(&state.pool, id).await?;
     let exclude_patterns_per_agent =
         db::list_all_per_agent_excludes_for_schedule(&state.pool, id).await?;
+    let commands_per_agent = db::list_all_per_agent_commands_for_schedule(&state.pool, id).await?;
     Ok(Json(ScheduleBackupSourcesResponse {
         backup_sources,
         backup_sources_per_agent,
         exclude_patterns_per_agent,
+        commands_per_agent,
     }))
 }
 

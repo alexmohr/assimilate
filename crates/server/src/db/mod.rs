@@ -2721,6 +2721,7 @@ pub struct SessionRow {
     pub user_id: i64,
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
+    pub remember_me: bool,
 }
 
 pub async fn insert_user(
@@ -2883,21 +2884,25 @@ pub async fn insert_session(
     session_id: &str,
     user_id: i64,
     expires_at: DateTime<Utc>,
+    remember_me: bool,
 ) -> Result<(), ApiError> {
-    sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3)")
-        .bind(session_id)
-        .bind(user_id)
-        .bind(expires_at)
-        .execute(pool)
-        .await
-        .map_err(ApiError::Database)?;
+    sqlx::query(
+        "INSERT INTO sessions (id, user_id, expires_at, remember_me) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(session_id)
+    .bind(user_id)
+    .bind(expires_at)
+    .bind(remember_me)
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
     Ok(())
 }
 
 pub async fn get_session(pool: &PgPool, session_id: &str) -> Result<SessionRow, ApiError> {
     sqlx::query_as::<_, SessionRow>(
-        "SELECT id, user_id, created_at, expires_at FROM sessions WHERE id = $1 AND expires_at > \
-         NOW()",
+        "SELECT id, user_id, created_at, expires_at, remember_me FROM sessions WHERE id = $1 \
+         AND expires_at > NOW()",
     )
     .bind(session_id)
     .fetch_one(pool)
@@ -2908,6 +2913,20 @@ pub async fn get_session(pool: &PgPool, session_id: &str) -> Result<SessionRow, 
         }
         other => ApiError::Database(other),
     })
+}
+
+pub async fn extend_session(
+    pool: &PgPool,
+    session_id: &str,
+    new_expires_at: DateTime<Utc>,
+) -> Result<(), ApiError> {
+    sqlx::query("UPDATE sessions SET expires_at = $1 WHERE id = $2")
+        .bind(new_expires_at)
+        .bind(session_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(())
 }
 
 pub async fn delete_session(pool: &PgPool, session_id: &str) -> Result<(), ApiError> {

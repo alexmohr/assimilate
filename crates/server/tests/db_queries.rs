@@ -2074,13 +2074,14 @@ async fn session_crud(pool: PgPool) {
         .unwrap();
 
     let expires = Utc::now() + Duration::hours(24);
-    db::insert_session(&pool, "sess_abc123", user.id, expires)
+    db::insert_session(&pool, "sess_abc123", user.id, expires, false)
         .await
         .unwrap();
 
     let session = db::get_session(&pool, "sess_abc123").await.unwrap();
     assert_eq!(session.user_id, user.id);
     assert_eq!(session.id, "sess_abc123");
+    assert!(!session.remember_me);
 
     db::delete_session(&pool, "sess_abc123").await.unwrap();
 
@@ -2095,7 +2096,7 @@ async fn session_expired(pool: PgPool) {
         .unwrap();
 
     let expired = Utc::now() - Duration::hours(1);
-    db::insert_session(&pool, "sess_expired", user.id, expired)
+    db::insert_session(&pool, "sess_expired", user.id, expired, false)
         .await
         .unwrap();
 
@@ -2110,7 +2111,7 @@ async fn session_delete_expired(pool: PgPool) {
         .unwrap();
 
     let expired = Utc::now() - Duration::hours(1);
-    db::insert_session(&pool, "sess_old", user.id, expired)
+    db::insert_session(&pool, "sess_old", user.id, expired, false)
         .await
         .unwrap();
 

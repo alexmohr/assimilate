@@ -181,6 +181,13 @@ pub struct LoginRequest {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct LoginResponse {
     pub user: db::UserRow,
+    pub session_expires_at: chrono::DateTime<chrono::Utc>,
+    pub remember_me: bool,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RefreshResponse {
+    pub session_expires_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[utoipa::path(
@@ -232,13 +239,20 @@ pub async fn login(
 
     let session_id = Uuid::new_v4().to_string();
     let (ttl_hours, max_age_secs) = if req.remember_me {
-        (24 * 30, 30 * 86400)
+        (24 * 7, 7 * 86400)
     } else {
         (24, 86400)
     };
     let expires_at = Utc::now() + Duration::hours(ttl_hours);
 
-    db::insert_session(&state.pool, &session_id, user.id, expires_at).await?;
+    db::insert_session(
+        &state.pool,
+        &session_id,
+        user.id,
+        expires_at,
+        req.remember_me,
+    )
+    .await?;
     db::update_last_login(&state.pool, user.id).await?;
 
     let secure_flag = if std::env::var("ASSIMILATE_SECURE_COOKIES").map_or(true, |v| v != "false") {
@@ -250,7 +264,11 @@ pub async fn login(
         "session={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age_secs}{secure_flag}"
     );
 
-    let body = Json(LoginResponse { user });
+    let body = Json(LoginResponse {
+        user,
+        session_expires_at: expires_at,
+        remember_me: req.remember_me,
+    });
     let mut response = body.into_response();
     response.headers_mut().insert(
         header::SET_COOKIE,
@@ -324,11 +342,19 @@ pub async fn me(
     auth: AuthUser,
 ) -> Result<Json<MeResponse>, ApiError> {
     let user = db::get_user_by_id(&state.pool, auth.user_id).await?;
+    let (session_expires_at, remember_me) = if let Some(ref session_id) = auth.session_id {
+        let session = db::get_session(&state.pool, session_id).await?;
+        (Some(session.expires_at), session.remember_me)
+    } else {
+        (None, false)
+    };
     Ok(Json(MeResponse {
         id: auth.user_id,
         username: auth.username,
         role: auth.role.to_string(),
         must_change_password: user.must_change_password,
+        session_expires_at,
+        remember_me,
     }))
 }
 
@@ -338,6 +364,64 @@ pub struct MeResponse {
     pub username: String,
     pub role: String,
     pub must_change_password: bool,
+    pub session_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub remember_me: bool,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/auth/refresh",
+    tag = "Authentication",
+    operation_id = "refresh_session",
+    summary = "Extend a remember-me session before it expires",
+    responses(
+        (status = 200, description = "Session extended", body = RefreshResponse),
+        (status = 400, description = "Not a remember-me session or token auth"),
+        (status = 401, description = "Not authenticated"),
+        (status = 500, description = "Internal server error"),
+    )
+)]
+pub async fn refresh_session(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Response, ApiError> {
+    let Some(ref session_id) = auth.session_id else {
+        return Err(ApiError::BadRequest(
+            "cannot refresh with token auth".to_string(),
+        ));
+    };
+
+    let session = db::get_session(&state.pool, session_id).await?;
+    if !session.remember_me {
+        return Err(ApiError::BadRequest(
+            "not a remember-me session".to_string(),
+        ));
+    }
+
+    let new_expires_at = Utc::now() + Duration::days(7);
+    db::extend_session(&state.pool, session_id, new_expires_at).await?;
+
+    let secure_flag = if std::env::var("ASSIMILATE_SECURE_COOKIES").map_or(true, |v| v != "false") {
+        "; Secure"
+    } else {
+        ""
+    };
+    let max_age_secs = 7 * 86400_i64;
+    let cookie = format!(
+        "session={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age_secs}{secure_flag}"
+    );
+
+    let mut response = Json(RefreshResponse {
+        session_expires_at: new_expires_at,
+    })
+    .into_response();
+    response.headers_mut().insert(
+        header::SET_COOKIE,
+        cookie
+            .parse()
+            .map_err(|e| ApiError::Internal(format!("failed to build cookie header: {e}")))?,
+    );
+    Ok(response)
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]

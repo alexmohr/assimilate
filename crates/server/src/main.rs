@@ -175,6 +175,7 @@ async fn main() -> Result<(), StartupError> {
         .route("/api/health", get(api::health::health))
         .route("/api/auth/logout", post(api::auth::logout))
         .route("/api/auth/me", get(api::auth::me))
+        .route("/api/auth/refresh", post(api::auth::refresh_session))
         .route(
             "/api/auth/change-password",
             post(api::auth::change_password),

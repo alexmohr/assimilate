@@ -95,29 +95,23 @@ watch([selectedDays, selectedRepoId], () => {
   fetchTrends().catch(logger.error)
 })
 
-const originalData = computed(() => ({
+const combinedSizeData = computed(() => ({
   labels: entries.value.map((t) => t.date.slice(5)),
   datasets: [
     {
       label: 'Original',
       data: entries.value.map((t) => t.original_size),
       borderColor: 'oklch(0.75 0.16 75)',
-      backgroundColor: 'oklch(0.75 0.16 75 / 0.15)',
-      fill: true,
+      backgroundColor: 'oklch(0.75 0.16 75 / 0.0)',
+      fill: false,
       tension: 0.3,
     },
-  ],
-}))
-
-const compressedData = computed(() => ({
-  labels: entries.value.map((t) => t.date.slice(5)),
-  datasets: [
     {
       label: 'Compressed',
       data: entries.value.map((t) => t.compressed_size),
       borderColor: 'oklch(0.62 0.19 255)',
-      backgroundColor: 'oklch(0.62 0.19 255 / 0.15)',
-      fill: true,
+      backgroundColor: 'oklch(0.62 0.19 255 / 0.0)',
+      fill: false,
       tension: 0.3,
     },
   ],
@@ -136,6 +130,41 @@ const deduplicatedData = computed(() => ({
     },
   ],
 }))
+
+const combinedOptions = computed(() => {
+  void themeGeneration.value
+  const textMuted = cssVar('--text-muted')
+  const border = cssVar('--border')
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { intersect: false, mode: 'index' as const },
+    plugins: {
+      legend: {
+        display: true,
+        labels: { color: textMuted, boxWidth: 12, font: { size: 10 } },
+      },
+      tooltip: {
+        callbacks: {
+          label: (context: TooltipItem<'line'>): string =>
+            `${context.dataset.label ?? ''}: ${formatBytes(context.parsed.y ?? 0)}`,
+        },
+      },
+    },
+    scales: {
+      x: { grid: { display: false }, ticks: { color: textMuted, font: { size: 10 } } },
+      y: {
+        grace: '10%',
+        grid: { color: border },
+        ticks: {
+          color: textMuted,
+          font: { size: 10 },
+          callback: (value: string | number): string => formatBytes(Number(value)),
+        },
+      },
+    },
+  }
+})
 
 const singleSeriesOptions = computed(() => {
   void themeGeneration.value
@@ -243,20 +272,11 @@ const hasData = computed((): boolean => entries.value.length >= 2)
       class="charts-col"
     >
       <div class="chart-cell">
-        <span class="metric-label">Original</span>
+        <span class="metric-label">Original &amp; Compressed</span>
         <div class="chart-container">
           <Line
-            :data="originalData"
-            :options="singleSeriesOptions"
-          />
-        </div>
-      </div>
-      <div class="chart-cell">
-        <span class="metric-label">Compressed</span>
-        <div class="chart-container">
-          <Line
-            :data="compressedData"
-            :options="singleSeriesOptions"
+            :data="combinedSizeData"
+            :options="combinedOptions"
           />
         </div>
       </div>

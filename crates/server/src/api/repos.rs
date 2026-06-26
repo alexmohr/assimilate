@@ -1405,6 +1405,9 @@ async fn run_borg_list_with_retry(
     borg_repo: &str,
     env: &std::collections::HashMap<String, String>,
     timeout: Duration,
+    pool: &PgPool,
+    ui_broadcast: &UiBroadcast,
+    repo_id: i64,
 ) -> Result<Vec<serde_json::Value>, ApiError> {
     let borg = Borg::new();
     // --format ensures hostname and end are always present in the per-archive JSON
@@ -1461,6 +1464,8 @@ async fn run_borg_list_with_retry(
             "borg list lock contention, retrying in {}s",
             LOCK_RETRY_INTERVAL.as_secs()
         );
+        publish_import_progress(pool, ui_broadcast, repo_id, 0, 0, Some("Waiting for lock\u{2026}"))
+            .await;
         tokio::time::sleep(LOCK_RETRY_INTERVAL).await;
     }
 
@@ -1703,7 +1708,8 @@ async fn sync_archives(
     )
     .await;
 
-    let archives = run_borg_list_with_retry(&borg_repo, &env, timeout).await?;
+    let archives =
+        run_borg_list_with_retry(&borg_repo, &env, timeout, pool, ui_broadcast, repo_id).await?;
 
     let borg_names: std::collections::HashSet<String> = archives
         .iter()

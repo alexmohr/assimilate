@@ -14,7 +14,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 ## Pre-commit
 
-* Run `uv run pre-commit run --all-files --show-diff-on-failure` before committing. All hooks MUST pass.
+* **Every commit must be validated with pre-commit after staging.** Stage your files first, then run `uv run pre-commit run --all-files --show-diff-on-failure` before committing. All hooks MUST pass.
 * This validates formatting, linting, license headers, secrets detection, shell scripts, markdown, and more.
 * If hooks modify files (e.g., trailing whitespace fixes), stage the changes and re-run until clean.
 

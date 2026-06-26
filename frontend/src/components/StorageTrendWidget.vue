@@ -37,7 +37,7 @@ interface TrendEntry {
   date: string
   original_size: number
   compressed_size: number
-  deduplicated_size: number | null
+  deduplicated_size: number
 }
 
 interface RepoOption {

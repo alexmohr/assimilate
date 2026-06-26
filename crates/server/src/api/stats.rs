@@ -969,7 +969,7 @@ pub struct StorageTrendEntry {
     pub date: String,
     pub original_size: i64,
     pub compressed_size: i64,
-    pub deduplicated_size: Option<i64>,
+    pub deduplicated_size: i64,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -979,7 +979,7 @@ pub struct StorageTrendByRepoEntry {
     pub repo_name: String,
     pub original_size: i64,
     pub compressed_size: i64,
-    pub deduplicated_size: Option<i64>,
+    pub deduplicated_size: i64,
 }
 
 #[utoipa::path(

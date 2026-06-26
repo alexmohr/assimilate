@@ -4678,7 +4678,7 @@ fn compression_round_trip() {
 #[sqlx::test(migrations = "./migrations")]
 async fn storage_trends_test(pool: PgPool) {
     let empty_trends = db::get_storage_trends(&pool, None, 7).await.unwrap();
-    assert!(empty_trends.iter().all(|t| t.deduplicated_size.is_none()));
+    assert!(empty_trends.iter().all(|t| t.deduplicated_size == 0));
 
     let agent = db::insert_agent(&pool, "strend-host", None, "hash", None)
         .await
@@ -4688,25 +4688,17 @@ async fn storage_trends_test(pool: PgPool) {
     insert_test_report(&pool, agent.id, repo.id).await;
 
     let trends = db::get_storage_trends(&pool, None, 7).await.unwrap();
-    assert!(
-        trends
-            .iter()
-            .any(|t| t.deduplicated_size.is_some_and(|v| v > 0))
-    );
+    assert!(trends.iter().any(|t| t.deduplicated_size > 0));
 
     let trends_repo = db::get_storage_trends(&pool, Some(repo.id), 7)
         .await
         .unwrap();
-    assert!(
-        trends_repo
-            .iter()
-            .any(|t| t.deduplicated_size.is_some_and(|v| v > 0))
-    );
+    assert!(trends_repo.iter().any(|t| t.deduplicated_size > 0));
 
     let trends_other = db::get_storage_trends(&pool, Some(repo.id + 999), 7)
         .await
         .unwrap();
-    assert!(trends_other.iter().all(|t| t.deduplicated_size.is_none()));
+    assert!(trends_other.iter().all(|t| t.deduplicated_size == 0));
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -4726,7 +4718,7 @@ async fn storage_trends_by_repo_test(pool: PgPool) {
     assert!(
         trends
             .iter()
-            .any(|t| t.repo_name == "test-repo" && t.deduplicated_size.is_some_and(|v| v > 0))
+            .any(|t| t.repo_name == "test-repo" && t.deduplicated_size > 0)
     );
 }
 
@@ -4854,22 +4846,7 @@ async fn list_archive_names_needing_stats_filters_enriched(pool: PgPool) {
             original_size: 1_000,
             compressed_size: 500,
             deduplicated_size: 250,
-            repo_unique_csize: 0,
-            archive_name: Some("missing-repo-csize".to_string()),
-            ..base.clone()
-        },
-    )
-    .await
-    .unwrap();
-    db::insert_backup_report(
-        &pool,
-        &InsertReportParams {
-            started_at: now - Duration::minutes(30),
-            original_size: 1_000,
-            compressed_size: 500,
-            deduplicated_size: 250,
-            repo_unique_csize: 800,
-            archive_name: Some("fully-enriched".to_string()),
+            archive_name: Some("already-enriched".to_string()),
             ..base.clone()
         },
     )
@@ -4879,9 +4856,8 @@ async fn list_archive_names_needing_stats_filters_enriched(pool: PgPool) {
     let needing = db::list_archive_names_needing_stats(&pool, repo.id)
         .await
         .unwrap();
-    assert_eq!(needing.len(), 2);
+    assert_eq!(needing.len(), 1);
     assert!(needing.contains("needs-stats"));
-    assert!(needing.contains("missing-repo-csize"));
 }
 
 #[sqlx::test(migrations = "./migrations")]

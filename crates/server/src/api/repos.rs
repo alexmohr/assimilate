@@ -2133,9 +2133,6 @@ fn enrich_archive_stats_background(
                         deduplicated_size: raw_stats["deduplicated_size"].as_i64().unwrap_or(0),
                         files_processed: raw_stats["nfiles"].as_i64().unwrap_or(0),
                         duration_secs: info["duration"].as_f64().unwrap_or(0.0) as i64,
-                        repo_unique_csize: json["cache"]["stats"]["unique_csize"]
-                            .as_i64()
-                            .unwrap_or(0),
                     };
 
                     if let Err(e) = db::update_backup_report_stats(

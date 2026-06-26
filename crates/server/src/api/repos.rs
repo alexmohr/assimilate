@@ -1210,6 +1210,7 @@ async fn run_borg_info(repo_url: &str, passphrase: &str) -> Result<BorgInfoResul
 const LOCK_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 const LOCK_RETRY_MAX_ATTEMPTS: u32 = 60;
 const DEFAULT_BORG_QUERY_TIMEOUT_SECS: u64 = 300;
+const DEFAULT_BORG_LIST_STAGE_TIMEOUT_SECS: u64 = 1800;
 
 /// Upper bound for a single `borg list`/`borg info` invocation. `--lock-wait`
 /// only bounds lock contention; a hung SSH connection would otherwise keep the
@@ -1232,6 +1233,30 @@ async fn get_borg_timeout(pool: &PgPool) -> Duration {
         .filter(|secs| *secs > 0)
         .map_or_else(
             || Duration::from_secs(DEFAULT_BORG_QUERY_TIMEOUT_SECS),
+            Duration::from_secs,
+        )
+}
+
+/// Upper bound on the *total* duration of all `borg list` attempts in a single
+/// listing stage, including per-attempt timeouts and lock-retry sleeps. Without
+/// this, a repository locked by a long-running backup can keep the import stuck
+/// at "Listing archives…" for up to 90 minutes (60 retries × ~90 s each).
+///
+/// Resolution order: DB setting `borg_list_stage_timeout_secs`, then env var
+/// `ASSIMILATE_BORG_LIST_STAGE_TIMEOUT_SECS`, then 1800 s default.
+async fn get_borg_list_stage_timeout(pool: &PgPool) -> Duration {
+    if let Ok(Some(v)) = db::get_setting(pool, "borg_list_stage_timeout_secs").await
+        && let Ok(secs) = v.parse::<u64>()
+        && secs > 0
+    {
+        return Duration::from_secs(secs);
+    }
+    std::env::var("ASSIMILATE_BORG_LIST_STAGE_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .map_or_else(
+            || Duration::from_secs(DEFAULT_BORG_LIST_STAGE_TIMEOUT_SECS),
             Duration::from_secs,
         )
 }
@@ -1405,6 +1430,7 @@ async fn run_borg_list_with_retry(
     borg_repo: &str,
     env: &std::collections::HashMap<String, String>,
     timeout: Duration,
+    stage_timeout: Duration,
     pool: &PgPool,
     ui_broadcast: &UiBroadcast,
     repo_id: i64,
@@ -1422,9 +1448,19 @@ async fn run_borg_list_with_retry(
         LOCK_WAIT_SECS,
         borg_repo,
     ];
+    let stage_deadline = tokio::time::Instant::now() + stage_timeout;
 
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
-        let output = match tokio::time::timeout(timeout, borg.run(&args, env)).await {
+        let remaining = stage_deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(ApiError::Internal(format!(
+                "borg list stage timed out after {}s; repository may be locked by a long-running backup",
+                stage_timeout.as_secs()
+            )));
+        }
+        let attempt_timeout = timeout.min(remaining);
+
+        let output = match tokio::time::timeout(attempt_timeout, borg.run(&args, env)).await {
             Ok(Ok(output)) => output,
             Ok(Err(e)) => {
                 return Err(ApiError::Internal(format!(
@@ -1434,7 +1470,7 @@ async fn run_borg_list_with_retry(
             Err(_) => {
                 return Err(ApiError::Internal(format!(
                     "borg list timed out after {}s; the repository may be unreachable",
-                    timeout.as_secs()
+                    attempt_timeout.as_secs()
                 )));
             }
         };
@@ -1455,6 +1491,14 @@ async fn run_borg_list_with_retry(
         if !is_lock_error(&stderr_str) || attempt == LOCK_RETRY_MAX_ATTEMPTS {
             return Err(ApiError::Internal(format!(
                 "borg list failed: {stderr_str}"
+            )));
+        }
+
+        let now = tokio::time::Instant::now();
+        if now + LOCK_RETRY_INTERVAL >= stage_deadline {
+            return Err(ApiError::Internal(format!(
+                "borg list stage timed out after {}s; repository may be locked by a long-running backup",
+                stage_timeout.as_secs()
             )));
         }
 
@@ -1704,6 +1748,7 @@ async fn sync_archives(
 ) -> Result<(u64, u64), ApiError> {
     let (borg_repo, env) = super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
     let timeout = get_borg_timeout(pool).await;
+    let stage_timeout = get_borg_list_stage_timeout(pool).await;
 
     publish_import_progress(
         pool,
@@ -1715,8 +1760,16 @@ async fn sync_archives(
     )
     .await;
 
-    let archives =
-        run_borg_list_with_retry(&borg_repo, &env, timeout, pool, ui_broadcast, repo_id).await?;
+    let archives = run_borg_list_with_retry(
+        &borg_repo,
+        &env,
+        timeout,
+        stage_timeout,
+        pool,
+        ui_broadcast,
+        repo_id,
+    )
+    .await?;
 
     let borg_names: std::collections::HashSet<String> = archives
         .iter()

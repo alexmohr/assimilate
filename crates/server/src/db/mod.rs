@@ -2901,8 +2901,8 @@ pub async fn insert_session(
 
 pub async fn get_session(pool: &PgPool, session_id: &str) -> Result<SessionRow, ApiError> {
     sqlx::query_as::<_, SessionRow>(
-        "SELECT id, user_id, created_at, expires_at, remember_me FROM sessions WHERE id = $1 \
-         AND expires_at > NOW()",
+        "SELECT id, user_id, created_at, expires_at, remember_me FROM sessions WHERE id = $1 AND \
+         expires_at > NOW()",
     )
     .bind(session_id)
     .fetch_one(pool)

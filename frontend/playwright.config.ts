@@ -2,6 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { defineConfig, devices } from '@playwright/test'
+import { existsSync } from 'fs'
+
+// In the Claude Code web environment, Playwright's bundled chromium version may
+// differ from what's pre-installed. Fall back to the pre-installed binary when
+// the env var is set or when the known path exists and we're not in CI.
+const PREINSTALLED_CHROMIUM = '/opt/pw-browsers/chromium'
+const chromiumExecutablePath =
+  process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ||
+  (!process.env.CI && existsSync(PREINSTALLED_CHROMIUM) ? PREINSTALLED_CHROMIUM : undefined)
 
 const usePreviewServer = process.env.PLAYWRIGHT_WEB_SERVER === 'preview'
 const baseURL = process.env.E2E_BASE_URL || 'http://localhost:8080'
@@ -22,7 +31,12 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        ...devices['Desktop Chrome'],
+        ...(chromiumExecutablePath
+          ? { launchOptions: { executablePath: chromiumExecutablePath } }
+          : {}),
+      },
     },
   ],
   webServer:

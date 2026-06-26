@@ -565,7 +565,12 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
       hostname: 'web-server-01',
       schedule_id: 999,
       repo_id: 20,
-      line: JSON.stringify({ type: 'archive_progress', nfiles: 1, original_size: 100, path: '/tmp/file' }),
+      line: JSON.stringify({
+        type: 'archive_progress',
+        nfiles: 1,
+        original_size: 100,
+        path: '/tmp/file',
+      }),
     })
     await nextTick()
 
@@ -589,7 +594,12 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
       hostname: 'web-server-01',
       schedule_id: null,
       repo_id: 20,
-      line: JSON.stringify({ type: 'archive_progress', nfiles: 500, original_size: 1073741824, path: '' }),
+      line: JSON.stringify({
+        type: 'archive_progress',
+        nfiles: 500,
+        original_size: 1073741824,
+        path: '',
+      }),
     })
     await nextTick()
 
@@ -614,7 +624,12 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
       hostname: 'web-server-01',
       schedule_id: null,
       repo_id: 999,
-      line: JSON.stringify({ type: 'archive_progress', nfiles: 100, original_size: 100, path: '/tmp/file' }),
+      line: JSON.stringify({
+        type: 'archive_progress',
+        nfiles: 100,
+        original_size: 100,
+        path: '/tmp/file',
+      }),
     })
     await nextTick()
 

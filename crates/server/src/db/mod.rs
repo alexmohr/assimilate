@@ -2533,6 +2533,7 @@ pub struct ArchiveStats {
     pub deduplicated_size: i64,
     pub files_processed: i64,
     pub duration_secs: i64,
+    pub repo_unique_csize: i64,
 }
 
 pub async fn update_backup_report_stats(
@@ -2556,6 +2557,20 @@ pub async fn update_backup_report_stats(
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
+
+    if stats.repo_unique_csize > 0 {
+        sqlx::query(
+            "UPDATE backup_reports SET repo_unique_csize = $3 WHERE repo_id = $1 AND archive_name \
+             = $2 AND repo_unique_csize = 0",
+        )
+        .bind(repo_id)
+        .bind(archive_name)
+        .bind(stats.repo_unique_csize)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    }
+
     Ok(())
 }
 
@@ -4265,7 +4280,7 @@ pub struct StorageTrendRow {
     pub date: chrono::NaiveDate,
     pub original_size: i64,
     pub compressed_size: i64,
-    pub deduplicated_size: i64,
+    pub deduplicated_size: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -4275,7 +4290,7 @@ pub struct StorageTrendByRepoRow {
     pub repo_name: String,
     pub original_size: i64,
     pub compressed_size: i64,
-    pub deduplicated_size: i64,
+    pub deduplicated_size: Option<i64>,
 }
 
 pub async fn get_storage_trends(
@@ -4292,11 +4307,11 @@ pub async fn get_storage_trends(
              $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ) SELECT d.date, \
              COALESCE(latest.original_size, 0)::INT8 AS original_size, \
              COALESCE(latest.compressed_size, 0)::INT8 AS compressed_size, \
-             COALESCE(latest.repo_unique_csize, 0)::INT8 AS deduplicated_size FROM days d LEFT \
-             JOIN LATERAL ( SELECT br.original_size, br.compressed_size, br.repo_unique_csize \
-             FROM backup_reports br WHERE br.repo_id = $2 AND br.started_at::date <= d.date AND \
-             br.status = 'success' ORDER BY br.started_at DESC LIMIT 1 ) latest ON true ORDER BY \
-             d.date",
+             NULLIF(COALESCE(latest.repo_unique_csize, 0), 0)::INT8 AS deduplicated_size FROM \
+             days d LEFT JOIN LATERAL ( SELECT br.original_size, br.compressed_size, \
+             br.repo_unique_csize FROM backup_reports br WHERE br.repo_id = $2 AND \
+             br.started_at::date <= d.date AND br.status = 'success' ORDER BY br.started_at DESC \
+             LIMIT 1 ) latest ON true ORDER BY d.date",
         )
         .bind(days_i32)
         .bind(rid)
@@ -4309,8 +4324,8 @@ pub async fn get_storage_trends(
              $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ) SELECT d.date, \
              COALESCE(SUM(latest.original_size), 0)::INT8 AS original_size, \
              COALESCE(SUM(latest.compressed_size), 0)::INT8 AS compressed_size, \
-             COALESCE(SUM(latest.repo_unique_csize), 0)::INT8 AS deduplicated_size FROM days d \
-             LEFT JOIN LATERAL ( SELECT DISTINCT ON (br.repo_id) br.original_size, \
+             NULLIF(COALESCE(SUM(latest.repo_unique_csize), 0), 0)::INT8 AS deduplicated_size \
+             FROM days d LEFT JOIN LATERAL ( SELECT DISTINCT ON (br.repo_id) br.original_size, \
              br.compressed_size, br.repo_unique_csize FROM backup_reports br WHERE \
              br.started_at::date <= d.date AND br.status = 'success' ORDER BY br.repo_id, \
              br.started_at DESC ) latest ON true GROUP BY d.date ORDER BY d.date",
@@ -4336,16 +4351,20 @@ pub async fn list_archive_names_for_repo(
     Ok(names.into_iter().collect())
 }
 
-/// Archive names whose stats have not been filled in yet (all sizes still zero).
-/// A resync only re-runs `borg info` for these: immutable archives that already
-/// carry stats never need to be queried again.
+/// Archive names that need a `borg info` run.
+///
+/// Covers two cases:
+/// - All sizes are still zero (archive was imported but never enriched).
+/// - `repo_unique_csize` is zero even though other sizes are populated (archive was enriched
+///   before `repo_unique_csize` was tracked).
 pub async fn list_archive_names_needing_stats(
     pool: &PgPool,
     repo_id: i64,
 ) -> Result<std::collections::HashSet<String>, ApiError> {
     let names = sqlx::query_scalar::<_, String>(
         "SELECT DISTINCT archive_name FROM backup_reports WHERE repo_id = $1 AND archive_name IS \
-         NOT NULL AND original_size = 0 AND compressed_size = 0 AND deduplicated_size = 0",
+         NOT NULL AND ((original_size = 0 AND compressed_size = 0 AND deduplicated_size = 0) OR \
+         repo_unique_csize = 0)",
     )
     .bind(repo_id)
     .fetch_all(pool)
@@ -4440,11 +4459,11 @@ pub async fn get_storage_trends_by_repo(
          AS repo_id, r.name AS repo_name FROM repos r JOIN backup_reports br ON br.repo_id = r.id \
          ) SELECT d.date, rl.repo_id, rl.repo_name, COALESCE(latest.original_size, 0)::INT8 AS \
          original_size, COALESCE(latest.compressed_size, 0)::INT8 AS compressed_size, \
-         COALESCE(latest.repo_unique_csize, 0)::INT8 AS deduplicated_size FROM days d CROSS JOIN \
-         repos_list rl LEFT JOIN LATERAL ( SELECT br.original_size, br.compressed_size, \
-         br.repo_unique_csize FROM backup_reports br WHERE br.repo_id = rl.repo_id AND \
-         br.started_at::date <= d.date AND br.status = 'success' ORDER BY br.started_at DESC \
-         LIMIT 1 ) latest ON true ORDER BY d.date, rl.repo_name",
+         NULLIF(COALESCE(latest.repo_unique_csize, 0), 0)::INT8 AS deduplicated_size FROM days d \
+         CROSS JOIN repos_list rl LEFT JOIN LATERAL ( SELECT br.original_size, \
+         br.compressed_size, br.repo_unique_csize FROM backup_reports br WHERE br.repo_id = \
+         rl.repo_id AND br.started_at::date <= d.date AND br.status = 'success' ORDER BY \
+         br.started_at DESC LIMIT 1 ) latest ON true ORDER BY d.date, rl.repo_name",
     )
     .bind(days_i32)
     .fetch_all(pool)

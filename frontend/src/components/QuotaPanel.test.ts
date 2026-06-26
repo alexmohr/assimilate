@@ -28,6 +28,7 @@ vi.mock('./ToggleSwitch.vue', () => ({
 }))
 
 const mockGet = vi.mocked(apiClient.get)
+const mockPut = vi.mocked(apiClient.put)
 
 describe('QuotaPanel', () => {
   beforeEach(() => {
@@ -139,5 +140,114 @@ describe('QuotaPanel', () => {
     })
     await flushPromises()
     expect(wrapper.text()).toContain('API error')
+  })
+
+  it('displays warn and critical action labels', async () => {
+    mockGet.mockResolvedValue({
+      data: {
+        warn_bytes: 10_737_418_240,
+        critical_bytes: 21_474_836_480,
+        warn_action: 'block_backups',
+        critical_action: 'disable_schedule',
+        enabled: true,
+      },
+    })
+    const wrapper = renderWithPlugins(QuotaPanel, {
+      props: { repoId: 1, isAdmin: false, currentUsageBytes: 1_073_741_824 },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('Block all backups + notify')
+    expect(wrapper.text()).toContain('Disable schedule + notify')
+  })
+
+  it('displays notify_only action label', async () => {
+    mockGet.mockResolvedValue({
+      data: {
+        warn_bytes: 10_737_418_240,
+        critical_bytes: 21_474_836_480,
+        warn_action: 'notify_only',
+        critical_action: 'notify_only',
+        enabled: true,
+      },
+    })
+    const wrapper = renderWithPlugins(QuotaPanel, {
+      props: { repoId: 1, isAdmin: false, currentUsageBytes: 1_073_741_824 },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('Notify only')
+  })
+
+  it('edit form initializes action dropdowns from quota data', async () => {
+    mockGet.mockResolvedValue({
+      data: {
+        warn_bytes: 10_737_418_240,
+        critical_bytes: 21_474_836_480,
+        warn_action: 'block_backups',
+        critical_action: 'disable_schedule',
+        enabled: true,
+      },
+    })
+    const wrapper = renderWithPlugins(QuotaPanel, {
+      props: { repoId: 1, isAdmin: true, currentUsageBytes: 0 },
+    })
+    await flushPromises()
+
+    const editBtn = wrapper.findAll('button').find((b) => b.text() === 'Edit')
+    expect(editBtn).toBeTruthy()
+    await editBtn!.trigger('click')
+    await nextTick()
+
+    const selects = wrapper.findAll('select')
+    expect(selects).toHaveLength(2)
+    expect((selects[0].element as HTMLSelectElement).value).toBe('block_backups')
+    expect((selects[1].element as HTMLSelectElement).value).toBe('disable_schedule')
+  })
+
+  it('save sends warn_action and critical_action in PUT request', async () => {
+    mockGet
+      .mockResolvedValueOnce({
+        data: {
+          warn_bytes: 10_737_418_240,
+          critical_bytes: 21_474_836_480,
+          warn_action: 'notify_only',
+          critical_action: 'notify_only',
+          enabled: true,
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          warn_bytes: 10_737_418_240,
+          critical_bytes: 21_474_836_480,
+          warn_action: 'block_backups',
+          critical_action: 'disable_schedule',
+          enabled: true,
+        },
+      })
+    mockPut.mockResolvedValue({ data: {} })
+
+    const wrapper = renderWithPlugins(QuotaPanel, {
+      props: { repoId: 1, isAdmin: true, currentUsageBytes: 0 },
+    })
+    await flushPromises()
+
+    const editBtn = wrapper.findAll('button').find((b) => b.text() === 'Edit')
+    await editBtn!.trigger('click')
+    await nextTick()
+
+    const selects = wrapper.findAll('select')
+    await selects[0].setValue('block_backups')
+    await selects[1].setValue('disable_schedule')
+
+    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save')
+    await saveBtn!.trigger('click')
+    await flushPromises()
+
+    expect(mockPut).toHaveBeenCalledWith(
+      '/repos/1/quota',
+      expect.objectContaining({
+        warn_action: 'block_backups',
+        critical_action: 'disable_schedule',
+      }),
+    )
   })
 })

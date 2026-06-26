@@ -79,6 +79,7 @@ pub async fn run(state: AppState) {
                 &sync_state.encryption_key,
                 &sync_state.ui_broadcast,
                 &sync_state.repo_op_tracker,
+                &sync_state.repo_lock,
             )
             .await;
         }
@@ -113,6 +114,7 @@ pub async fn run_repo_sync(
     encryption_key: &[u8; 32],
     ui_broadcast: &UiBroadcast,
     repo_op_tracker: &RepoOpTracker,
+    repo_lock: &RepoLock,
 ) {
     let repos = match db::list_all_repos(pool).await {
         Ok(r) => r,
@@ -192,12 +194,19 @@ pub async fn run_repo_sync(
         let task_key = *encryption_key;
         let task_broadcast = ui_broadcast.clone();
         let task_op_tracker = repo_op_tracker.clone();
+        let task_repo_lock = repo_lock.clone();
         let repo_id = repo.id;
         let repo_name = repo.name.clone();
         tokio::spawn(async move {
             let start = std::time::Instant::now();
-            let sync_result =
-                sync_existing_archives(&task_pool, &task_key, repo_id, &task_broadcast).await;
+            let sync_result = sync_existing_archives(
+                &task_pool,
+                &task_key,
+                repo_id,
+                &task_broadcast,
+                &task_repo_lock,
+            )
+            .await;
 
             task_op_tracker.clear(repo_id).await;
             task_broadcast.send(ServerToUi::RepoOpChanged { repo_id, op: None });
@@ -920,9 +929,15 @@ esac
         .await
         .unwrap();
 
-        sync_existing_archives(&pool, &encryption_key, repo.id, &UiBroadcast::new())
-            .await
-            .expect("sync_existing_archives failed");
+        sync_existing_archives(
+            &pool,
+            &encryption_key,
+            repo.id,
+            &UiBroadcast::new(),
+            &RepoLock::default(),
+        )
+        .await
+        .expect("sync_existing_archives failed");
 
         let stale_count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",

@@ -533,6 +533,7 @@ async fn run_archive_deletion(
             &state.encryption_key,
             repo_id,
             &state.ui_broadcast,
+            &state.repo_lock,
         )
         .await
         {

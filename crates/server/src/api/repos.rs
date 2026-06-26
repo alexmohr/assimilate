@@ -257,8 +257,14 @@ pub async fn create_repo(
             }
         }
 
-        let sync_ok = match sync_existing_archives(&pool, &encryption_key, repo_id, &ui_broadcast)
-            .await
+        let sync_ok = match sync_existing_archives(
+            &pool,
+            &encryption_key,
+            repo_id,
+            &ui_broadcast,
+            &state_repo_lock,
+        )
+        .await
         {
             Ok(_) => {
                 if let Err(e) = db::update_repo_last_synced(&pool, repo_id).await {
@@ -1745,6 +1751,7 @@ async fn sync_archives(
     repo_id: i64,
     ui_broadcast: &UiBroadcast,
     mode: SyncMode<'_>,
+    repo_lock: &RepoLock,
 ) -> Result<(u64, u64), ApiError> {
     let (borg_repo, env) = super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
     let timeout = get_borg_timeout(pool).await;
@@ -1760,16 +1767,24 @@ async fn sync_archives(
     )
     .await;
 
-    let archives = run_borg_list_with_retry(
-        &borg_repo,
-        &env,
-        timeout,
-        stage_timeout,
-        pool,
-        ui_broadcast,
-        repo_id,
-    )
-    .await?;
+    // Hold the per-repo lock only for the borg list call. A scheduled backup
+    // holds this lock for its full duration, so waiting here ensures the borg
+    // repository is unlocked before we attempt to read it. The guard is released
+    // before the DB import work so the next backup can start as soon as listing
+    // is done.
+    let archives = {
+        let _guard = repo_lock.acquire(repo_id).await;
+        run_borg_list_with_retry(
+            &borg_repo,
+            &env,
+            timeout,
+            stage_timeout,
+            pool,
+            ui_broadcast,
+            repo_id,
+        )
+        .await?
+    };
 
     let borg_names: std::collections::HashSet<String> = archives
         .iter()
@@ -1899,6 +1914,7 @@ pub async fn sync_existing_archives(
     encryption_key: &[u8; 32],
     repo_id: i64,
     ui_broadcast: &UiBroadcast,
+    repo_lock: &RepoLock,
 ) -> Result<(u64, u64), ApiError> {
     sync_archives(
         pool,
@@ -1906,6 +1922,7 @@ pub async fn sync_existing_archives(
         repo_id,
         ui_broadcast,
         SyncMode::Existing,
+        repo_lock,
     )
     .await
 }
@@ -1923,6 +1940,7 @@ pub async fn sync_new_archives(
         repo_id,
         ui_broadcast,
         SyncMode::New { repo_lock },
+        repo_lock,
     )
     .await
 }
@@ -2345,6 +2363,7 @@ pub async fn sync_repo(
         &state.encryption_key,
         repo_id,
         &state.ui_broadcast,
+        &state.repo_lock,
     )
     .await;
     let elapsed = start.elapsed();

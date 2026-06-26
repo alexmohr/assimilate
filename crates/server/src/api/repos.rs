@@ -1464,8 +1464,15 @@ async fn run_borg_list_with_retry(
             "borg list lock contention, retrying in {}s",
             LOCK_RETRY_INTERVAL.as_secs()
         );
-        publish_import_progress(pool, ui_broadcast, repo_id, 0, 0, Some("Waiting for lock\u{2026}"))
-            .await;
+        publish_import_progress(
+            pool,
+            ui_broadcast,
+            repo_id,
+            0,
+            0,
+            Some("Waiting for lock\u{2026}"),
+        )
+        .await;
         tokio::time::sleep(LOCK_RETRY_INTERVAL).await;
     }
 

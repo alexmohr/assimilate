@@ -33,9 +33,11 @@ function dockerExec(container: string, cmd: string): void {
 }
 
 async function navigateToRepo(page: Page, repoName: string, tab?: string): Promise<void> {
-  await page.goto('/repos')
+  // 'commit' resolves on response headers without waiting for all API data to
+  // load, so slow CI runners do not exhaust the test budget on navigation alone.
+  await page.goto('/repos', { waitUntil: 'commit' })
   await page.getByText(repoName).first().click()
-  await page.waitForURL(/\/repos\/\d+/)
+  await page.waitForURL(/\/repos\/\d+/, { waitUntil: 'commit' })
   if (tab) {
     await page.getByRole('button', { name: tab, exact: true }).click()
   }

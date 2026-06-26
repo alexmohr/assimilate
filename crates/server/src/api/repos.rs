@@ -233,7 +233,8 @@ pub async fn create_repo(
         // info and the sync's borg list contend for the same repository lock, so
         // running them in parallel would force the list into the lock-retry path.
         if need_borg_info {
-            match run_borg_info_with_retry(&bg_repo_url, &bg_passphrase).await {
+            let timeout = get_borg_timeout(&pool).await;
+            match run_borg_info_with_retry(&bg_repo_url, &bg_passphrase, timeout).await {
                 Ok(info) => {
                     if let Err(e) =
                         db::update_repo_encryption(&pool, repo_id, &info.encryption.to_string())
@@ -1214,8 +1215,17 @@ const DEFAULT_BORG_QUERY_TIMEOUT_SECS: u64 = 300;
 /// only bounds lock contention; a hung SSH connection would otherwise keep the
 /// process (and the import) waiting forever, leaving the repo stuck at "Listing
 /// archives". On timeout the process is killed and the operation fails so the
-/// importing state is cleared. Tunable via `ASSIMILATE_BORG_QUERY_TIMEOUT_SECS`.
-fn borg_query_timeout() -> Duration {
+/// importing state is cleared.
+///
+/// Resolution order: DB setting `borg_query_timeout_secs`, then env var
+/// `ASSIMILATE_BORG_QUERY_TIMEOUT_SECS`, then 300 s default.
+async fn get_borg_timeout(pool: &PgPool) -> Duration {
+    if let Ok(Some(v)) = db::get_setting(pool, "borg_query_timeout_secs").await
+        && let Ok(secs) = v.parse::<u64>()
+        && secs > 0
+    {
+        return Duration::from_secs(secs);
+    }
     std::env::var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
@@ -1229,20 +1239,17 @@ fn borg_query_timeout() -> Duration {
 async fn run_borg_info_with_retry(
     repo_url: &str,
     passphrase: &str,
+    timeout: Duration,
 ) -> Result<BorgInfoResult, ApiError> {
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
-        let attempt_result = match tokio::time::timeout(
-            borg_query_timeout(),
-            run_borg_info_once(repo_url, passphrase),
-        )
-        .await
-        {
-            Ok(result) => result,
-            Err(_) => Err(ApiError::Internal(format!(
-                "borg info timed out after {}s; the repository may be unreachable",
-                borg_query_timeout().as_secs()
-            ))),
-        };
+        let attempt_result =
+            match tokio::time::timeout(timeout, run_borg_info_once(repo_url, passphrase)).await {
+                Ok(result) => result,
+                Err(_) => Err(ApiError::Internal(format!(
+                    "borg info timed out after {}s; the repository may be unreachable",
+                    timeout.as_secs()
+                ))),
+            };
         match attempt_result {
             Ok(result) => return Ok(result),
             Err(e) => {
@@ -1397,84 +1404,45 @@ async fn run_borg_init(
 async fn run_borg_list_with_retry(
     borg_repo: &str,
     env: &std::collections::HashMap<String, String>,
+    timeout: Duration,
     pool: &PgPool,
     ui_broadcast: &UiBroadcast,
     repo_id: i64,
 ) -> Result<Vec<serde_json::Value>, ApiError> {
-    use tokio::io::AsyncReadExt as _;
-
     let borg = Borg::new();
-    // --json (not --json-lines) is the correct flag for listing archives in a repo;
-    // --json-lines is only valid when listing the contents of a specific archive.
-    let args = ["list", "--json", "--lock-wait", LOCK_WAIT_SECS, borg_repo];
-    let overall_start = std::time::Instant::now();
+    // --format ensures hostname and end are always present in the per-archive JSON
+    // objects regardless of the borg version's default output fields.
+    // --json (not --json-lines) is the correct flag for listing archives in a repo.
+    let args = [
+        "list",
+        "--json",
+        "--format",
+        "{hostname}{end}",
+        "--lock-wait",
+        LOCK_WAIT_SECS,
+        borg_repo,
+    ];
 
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
-        let mut child = borg
-            .spawn(&args, env)
-            .map_err(|e| ApiError::Internal(format!("failed to spawn borg list: {e}")))?;
-
-        let mut stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| ApiError::Internal("borg list: no stdout pipe".into()))?;
-        let mut stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| ApiError::Internal("borg list: no stderr pipe".into()))?;
-
-        let timed = tokio::time::timeout(borg_query_timeout(), async move {
-            let stdout_task = async {
-                let mut buf = String::new();
-                stdout.read_to_string(&mut buf).await?;
-                Ok::<String, std::io::Error>(buf)
-            };
-            let stderr_task = async {
-                let mut buf = Vec::new();
-                stderr.read_to_end(&mut buf).await?;
-                Ok::<Vec<u8>, std::io::Error>(buf)
-            };
-            tokio::join!(stdout_task, stderr_task)
-        })
-        .await;
-
-        let (json_str, stderr_bytes) = match timed {
+        let output = match tokio::time::timeout(timeout, borg.run(&args, env)).await {
+            Ok(Ok(output)) => output,
+            Ok(Err(e)) => {
+                return Err(ApiError::Internal(format!(
+                    "failed to execute borg list: {e}"
+                )));
+            }
             Err(_) => {
-                let _ = child.kill().await;
                 return Err(ApiError::Internal(format!(
                     "borg list timed out after {}s; the repository may be unreachable",
-                    borg_query_timeout().as_secs()
-                )));
-            }
-            Ok((Ok(j), Ok(s))) => (j, s),
-            Ok((Err(e), _)) | Ok((_, Err(e))) => {
-                let _ = child.kill().await;
-                return Err(ApiError::Internal(format!("borg list IO error: {e}")));
-            }
-        };
-
-        // Bound the wait too: borg may close its pipes (reads hit EOF above) yet
-        // fail to exit, e.g. a defunct ssh child keeping the session open. Without
-        // this guard the import would hang forever with importing = true.
-        let status = match tokio::time::timeout(borg_query_timeout(), child.wait()).await {
-            Ok(Ok(status)) => status,
-            Ok(Err(e)) => {
-                return Err(ApiError::Internal(format!("failed to wait for borg: {e}")));
-            }
-            Err(_) => {
-                let _ = child.kill().await;
-                return Err(ApiError::Internal(format!(
-                    "borg list timed out after {}s waiting for process exit; the repository may \
-                     be unreachable",
-                    borg_query_timeout().as_secs()
+                    timeout.as_secs()
                 )));
             }
         };
 
-        if status.success() {
-            // A successful exit with unparseable output must be a hard error: silently
-            // treating it as an empty repo would prune every existing archive record.
-            let json: serde_json::Value = serde_json::from_str(&json_str).map_err(|e| {
+        if output.status.success() {
+            // A successful exit with unparseable output is a hard error: silently
+            // treating it as empty would prune every existing archive record.
+            let json: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| {
                 ApiError::Internal(format!("borg list returned malformed JSON: {e}"))
             })?;
             let archives = json["archives"].as_array().cloned().ok_or_else(|| {
@@ -1483,86 +1451,34 @@ async fn run_borg_list_with_retry(
             return Ok(archives);
         }
 
-        let stderr_str = String::from_utf8_lossy(&stderr_bytes);
+        let stderr_str = String::from_utf8_lossy(&output.stderr);
         if !is_lock_error(&stderr_str) || attempt == LOCK_RETRY_MAX_ATTEMPTS {
             return Err(ApiError::Internal(format!(
                 "borg list failed: {stderr_str}"
             )));
         }
 
-        let holder = parse_lock_holder(&stderr_str);
         warn!(
             attempt,
             max = LOCK_RETRY_MAX_ATTEMPTS,
-            holder = holder.as_deref().unwrap_or("unknown"),
             "borg list lock contention, retrying in {}s",
             LOCK_RETRY_INTERVAL.as_secs()
         );
-
-        let wait_start = std::time::Instant::now();
-        let mut ticker = tokio::time::interval(Duration::from_secs(5));
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        ticker.tick().await;
-        loop {
-            tokio::select! {
-                _ = ticker.tick() => {
-                    let elapsed = overall_start.elapsed().as_secs();
-                    let max = LOCK_RETRY_MAX_ATTEMPTS;
-                    let holder_part = holder
-                        .as_deref()
-                        .map_or_else(String::new, |h| format!(", held by {h}"));
-                    let msg = format!(
-                        "Waiting for lock\u{2026} attempt {attempt}/{max}, {elapsed}s{holder_part}"
-                    );
-                    publish_import_progress(pool, ui_broadcast, repo_id, 0, 0, Some(&msg)).await;
-                }
-                _ = tokio::time::sleep(
-                    LOCK_RETRY_INTERVAL.saturating_sub(wait_start.elapsed())
-                ) => break,
-            }
-        }
+        publish_import_progress(
+            pool,
+            ui_broadcast,
+            repo_id,
+            0,
+            0,
+            Some("Waiting for lock\u{2026}"),
+        )
+        .await;
+        tokio::time::sleep(LOCK_RETRY_INTERVAL).await;
     }
+
     Err(ApiError::Internal(
         "borg list failed after maximum retries".to_owned(),
     ))
-}
-
-/// Extracts lock holder info from borg's LockTimeout stderr output.
-///
-/// Borg may include a Python-dict-style `Holder:` entry, e.g.:
-/// `Holder: {'hostname': 'web-01', 'pid': 1234, ...}`
-fn parse_lock_holder(stderr: &str) -> Option<String> {
-    let line = stderr.lines().find(|l| l.contains("Holder:"))?;
-    let dict = line.split("Holder:").nth(1)?.trim();
-    let hostname = extract_py_str(dict, "hostname");
-    let pid = extract_py_num(dict, "pid");
-    match (hostname, pid) {
-        (Some(h), Some(p)) => Some(format!("{h} (PID {p})")),
-        (Some(h), None) => Some(h),
-        (None, Some(p)) => Some(format!("PID {p}")),
-        (None, None) => None,
-    }
-}
-
-fn extract_py_str(dict: &str, key: &str) -> Option<String> {
-    let prefix = format!("'{key}': '");
-    let pos = dict.find(&prefix)?;
-    let rest = &dict[pos + prefix.len()..];
-    let end = rest.find('\'')?;
-    Some(rest[..end].to_string())
-}
-
-fn extract_py_num(dict: &str, key: &str) -> Option<String> {
-    let prefix = format!("'{key}': ");
-    let pos = dict.find(&prefix)?;
-    let rest = &dict[pos + prefix.len()..];
-    let end = rest
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(rest.len());
-    if end == 0 {
-        return None;
-    }
-    Some(rest[..end].to_string())
 }
 
 /// Refreshes the authoritative repo statistics from `borg info --json`
@@ -1575,10 +1491,10 @@ async fn refresh_repo_info_stats(
     env: &std::collections::HashMap<String, String>,
     repo_id: i64,
     archive_count: i64,
+    timeout: Duration,
 ) {
     let args = ["info", "--json", "--lock-wait", LOCK_WAIT_SECS, borg_repo];
-    let output = match tokio::time::timeout(borg_query_timeout(), Borg::new().run(&args, env)).await
-    {
+    let output = match tokio::time::timeout(timeout, Borg::new().run(&args, env)).await {
         Ok(Ok(output)) => output,
         Ok(Err(e)) => {
             warn!(repo_id, error = %e, "failed to run borg info for repo stats");
@@ -1587,7 +1503,7 @@ async fn refresh_repo_info_stats(
         Err(_) => {
             warn!(
                 repo_id,
-                timeout_secs = borg_query_timeout().as_secs(),
+                timeout_secs = timeout.as_secs(),
                 "borg info timed out refreshing repo stats"
             );
             return;
@@ -1663,92 +1579,20 @@ pub async fn clear_import_progress_state(pool: &PgPool, ui_broadcast: &UiBroadca
     let _ = db::set_import_status_message(pool, repo_id, None).await;
 }
 
-/// Fetches per-archive hostname metadata via `borg info --glob-archives * --json`.
-///
-/// Some borg versions omit the `hostname` field from `borg list --json` output.
-/// This fallback issues a single `borg info` call that always populates hostname,
-/// and returns a map of archive-name to hostname for use during archive import.
-async fn fetch_hostname_fallback(
-    borg_repo: &str,
-    env: &HashMap<String, String>,
-    repo_id: i64,
-) -> HashMap<String, String> {
-    let args = [
-        "info",
-        "--glob-archives",
-        "*",
-        "--json",
-        "--lock-wait",
-        LOCK_WAIT_SECS,
-        borg_repo,
-    ];
-    let output = match tokio::time::timeout(borg_query_timeout(), Borg::new().run(&args, env)).await
-    {
-        Ok(Ok(output)) if output.status.success() => output,
-        Ok(Ok(output)) => {
-            warn!(
-                repo_id,
-                stderr = %String::from_utf8_lossy(&output.stderr),
-                "borg info hostname fallback exited non-zero"
-            );
-            return HashMap::new();
-        }
-        Ok(Err(e)) => {
-            warn!(repo_id, error = %e, "borg info hostname fallback failed to run");
-            return HashMap::new();
-        }
-        Err(_) => {
-            warn!(
-                repo_id,
-                timeout_secs = borg_query_timeout().as_secs(),
-                "borg info hostname fallback timed out"
-            );
-            return HashMap::new();
-        }
-    };
-
-    serde_json::from_slice::<serde_json::Value>(&output.stdout)
-        .ok()
-        .and_then(|v| v["archives"].as_array().cloned())
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|a| {
-            let name = a["name"].as_str()?.to_string();
-            let hostname = a["hostname"].as_str()?.to_string();
-            (!hostname.is_empty()).then_some((name, hostname))
-        })
-        .collect()
-}
-
 /// Builds backup-report rows for a set of borg archives, resolving each archive's
 /// owning agent by hostname (creating an imported placeholder when unmatched).
 ///
-/// Shared by full and incremental sync so the hostname-fallback handling and agent
-/// resolution live in one place. `archives` are borg `list --json` entries; progress
-/// is published per archive against `total = archives.len()`.
+/// Shared by full and incremental sync so agent resolution lives in one place.
+/// `archives` are borg `list --json` entries (produced with `--format '{hostname}{end}'`
+/// so hostname is always present); progress is published per archive against
+/// `total = archives.len()`.
 async fn build_import_reports(
     pool: &PgPool,
     ui_broadcast: &UiBroadcast,
     repo_id: i64,
-    borg_repo: &str,
-    env: &HashMap<String, String>,
     archives: &[&serde_json::Value],
 ) -> Result<Vec<db::InsertReportParams>, ApiError> {
     let total = archives.len();
-
-    // Some borg versions omit hostname from `list --json`; fetch it via `info` if needed.
-    let hostname_fallback = if archives
-        .iter()
-        .any(|a| a["hostname"].as_str().is_none_or(|h| h.is_empty()))
-    {
-        warn!(
-            repo_id,
-            "borg list --json omitted hostname; running borg info fallback"
-        );
-        fetch_hostname_fallback(borg_repo, env, repo_id).await
-    } else {
-        HashMap::new()
-    };
 
     let mut hostname_cache: HashMap<String, (i64, bool)> = HashMap::new();
     let mut report_params = Vec::with_capacity(total);
@@ -1760,7 +1604,6 @@ async fn build_import_reports(
         let hostname = archive["hostname"]
             .as_str()
             .filter(|h| !h.is_empty())
-            .or_else(|| hostname_fallback.get(name).map(String::as_str))
             .unwrap_or("unknown");
 
         let (agent_id, matched) = if let Some(&cached) = hostname_cache.get(hostname) {
@@ -1860,6 +1703,7 @@ async fn sync_archives(
     mode: SyncMode<'_>,
 ) -> Result<(u64, u64), ApiError> {
     let (borg_repo, env) = super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
+    let timeout = get_borg_timeout(pool).await;
 
     publish_import_progress(
         pool,
@@ -1871,7 +1715,8 @@ async fn sync_archives(
     )
     .await;
 
-    let archives = run_borg_list_with_retry(&borg_repo, &env, pool, ui_broadcast, repo_id).await?;
+    let archives =
+        run_borg_list_with_retry(&borg_repo, &env, timeout, pool, ui_broadcast, repo_id).await?;
 
     let borg_names: std::collections::HashSet<String> = archives
         .iter()
@@ -1905,7 +1750,7 @@ async fn sync_archives(
     let repo_archive_count = i64::try_from(borg_names.len()).unwrap_or(i64::MAX);
 
     if to_import.is_empty() {
-        refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, repo_archive_count).await;
+        refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, repo_archive_count, timeout).await;
         return Ok((0, removed));
     }
 
@@ -1924,8 +1769,7 @@ async fn sync_archives(
     )
     .await;
 
-    let report_params =
-        build_import_reports(pool, ui_broadcast, repo_id, &borg_repo, &env, &to_import).await?;
+    let report_params = build_import_reports(pool, ui_broadcast, repo_id, &to_import).await?;
 
     let processed = u64::try_from(report_params.len()).unwrap_or(u64::MAX);
     let total_i32 = i32::try_from(total).unwrap_or(i32::MAX);
@@ -1974,7 +1818,7 @@ async fn sync_archives(
         Some("Refreshing repository statistics\u{2026}"),
     )
     .await;
-    refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, repo_archive_count).await;
+    refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, repo_archive_count, timeout).await;
 
     match mode {
         SyncMode::Existing => {
@@ -2615,29 +2459,6 @@ mod tests {
     fn is_lock_error_returns_false_for_partial_matches() {
         assert!(!is_lock_error("lock timeout after 60 seconds"));
         assert!(!is_lock_error("unlock successful"));
-    }
-
-    #[test]
-    fn parse_lock_holder_extracts_hostname_and_pid() {
-        let stderr = concat!(
-            "borgbackup.locking.LockTimeout: Failed to create/acquire the lock\n",
-            "Holder: {'exclusive': True, 'hostname': 'web-01', 'pid': 4567, 'time': 0.0}",
-        );
-        let result = parse_lock_holder(stderr);
-        assert_eq!(result.as_deref(), Some("web-01 (PID 4567)"));
-    }
-
-    #[test]
-    fn parse_lock_holder_hostname_only_when_no_pid() {
-        let stderr = "Holder: {'hostname': 'db-server', 'description': 'borg list'}";
-        let result = parse_lock_holder(stderr);
-        assert_eq!(result.as_deref(), Some("db-server"));
-    }
-
-    #[test]
-    fn parse_lock_holder_returns_none_without_holder_line() {
-        let stderr = "Failed to create/acquire the lock /repo/lock.exclusive (timeout).";
-        assert!(parse_lock_holder(stderr).is_none());
     }
 
     #[test]

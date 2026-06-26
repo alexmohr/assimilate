@@ -2074,13 +2074,14 @@ async fn session_crud(pool: PgPool) {
         .unwrap();
 
     let expires = Utc::now() + Duration::hours(24);
-    db::insert_session(&pool, "sess_abc123", user.id, expires)
+    db::insert_session(&pool, "sess_abc123", user.id, expires, false)
         .await
         .unwrap();
 
     let session = db::get_session(&pool, "sess_abc123").await.unwrap();
     assert_eq!(session.user_id, user.id);
     assert_eq!(session.id, "sess_abc123");
+    assert!(!session.remember_me);
 
     db::delete_session(&pool, "sess_abc123").await.unwrap();
 
@@ -2095,7 +2096,7 @@ async fn session_expired(pool: PgPool) {
         .unwrap();
 
     let expired = Utc::now() - Duration::hours(1);
-    db::insert_session(&pool, "sess_expired", user.id, expired)
+    db::insert_session(&pool, "sess_expired", user.id, expired, false)
         .await
         .unwrap();
 
@@ -2110,12 +2111,49 @@ async fn session_delete_expired(pool: PgPool) {
         .unwrap();
 
     let expired = Utc::now() - Duration::hours(1);
-    db::insert_session(&pool, "sess_old", user.id, expired)
+    db::insert_session(&pool, "sess_old", user.id, expired, false)
         .await
         .unwrap();
 
     let deleted = db::delete_expired_sessions(&pool).await.unwrap();
     assert_eq!(deleted, 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_remember_me(pool: PgPool) {
+    let user = db::insert_user(&pool, "rememberuser", "hash", "user")
+        .await
+        .unwrap();
+
+    let expires = Utc::now() + Duration::days(7);
+    db::insert_session(&pool, "sess_remember", user.id, expires, true)
+        .await
+        .unwrap();
+
+    let session = db::get_session(&pool, "sess_remember").await.unwrap();
+    assert_eq!(session.user_id, user.id);
+    assert!(session.remember_me);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_extend(pool: PgPool) {
+    let user = db::insert_user(&pool, "extenduser", "hash", "user")
+        .await
+        .unwrap();
+
+    let original_expires = Utc::now() + Duration::hours(1);
+    db::insert_session(&pool, "sess_extend", user.id, original_expires, true)
+        .await
+        .unwrap();
+
+    let new_expires = Utc::now() + Duration::days(7);
+    db::extend_session(&pool, "sess_extend", new_expires)
+        .await
+        .unwrap();
+
+    let session = db::get_session(&pool, "sess_extend").await.unwrap();
+    assert!(session.expires_at > original_expires);
+    assert!(session.remember_me);
 }
 
 #[sqlx::test(migrations = "./migrations")]

@@ -8,13 +8,12 @@ import { ref, computed, onMounted } from 'vue'
 import { FilterMatchMode } from '@primevue/core/api'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
-import { Folder, File, Download } from '@lucide/vue'
 import { apiClient } from '../api/client'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useClipboard } from '../composables/useClipboard'
 import { formatBytes, formatDate } from '../utils/format'
 import { extractError } from '../utils/error'
-import BaseSpinner from '../components/BaseSpinner.vue'
+import ArchiveFileBrowser from '../components/ArchiveFileBrowser.vue'
 import RestoreWizard from '../components/RestoreWizard.vue'
 import ArchiveDiff from '../components/ArchiveDiff.vue'
 import FileSearch from '../components/FileSearch.vue'
@@ -38,19 +37,6 @@ interface ArchiveEntry {
   agent_hostname: string | null
 }
 
-interface ContentEntry {
-  type: string
-  path: string
-  size: number
-  mtime: string
-  mode: string
-}
-
-interface BreadcrumbSegment {
-  label: string
-  path: string
-}
-
 const repos = ref<RepoOption[]>([])
 const reposLoading = ref(false)
 const reposError = ref<string | null>(null)
@@ -61,46 +47,7 @@ const archivesLoading = ref(false)
 const archivesError = ref<string | null>(null)
 const selectedArchive = ref<ArchiveEntry | null>(null)
 
-const currentPath = ref('/')
-const contents = ref<ContentEntry[]>([])
-const contentsLoading = ref(false)
-const contentsError = ref<string | null>(null)
-const indexing = ref(false)
 const showPassphraseDialog = ref(false)
-
-let pollTimer: ReturnType<typeof setInterval> | null = null
-
-function stopPolling(): void {
-  if (pollTimer !== null) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
-}
-
-function startPolling(archiveName: string, pendingPath: string): void {
-  stopPolling()
-  pollTimer = setInterval(async () => {
-    if (selectedRepoId.value === null) return
-    try {
-      const res = await apiClient.get<{ status: string; error?: string }>(
-        `/repos/${selectedRepoId.value}/archives/${encodeURIComponent(archiveName)}/index-status`,
-      )
-      if (res.data.status === 'done') {
-        stopPolling()
-        indexing.value = false
-        await loadContents(pendingPath)
-      } else if (res.data.status === 'failed') {
-        stopPolling()
-        indexing.value = false
-        contentsError.value = res.data.error ?? 'Archive indexing failed'
-      }
-    } catch (e: unknown) {
-      stopPolling()
-      indexing.value = false
-      contentsError.value = extractError(e)
-    }
-  }, 2000)
-}
 
 const sortedArchives = computed(() =>
   [...archives.value].sort((a, b) => b.start.localeCompare(a.start)),
@@ -111,83 +58,6 @@ const archiveFilters = ref({
   start: { value: '', matchMode: FilterMatchMode.CONTAINS },
   hostname: { value: '', matchMode: FilterMatchMode.CONTAINS },
   original_size: { value: '', matchMode: FilterMatchMode.CONTAINS },
-})
-
-const breadcrumbs = computed<BreadcrumbSegment[]>(() => {
-  const path = currentPath.value
-  if (path === '/') return [{ label: '/', path: '/' }]
-  const parts = path.replace(/^\//, '').split('/')
-  const segments: BreadcrumbSegment[] = [{ label: '~', path: '/' }]
-  let accumulated = ''
-  for (const part of parts) {
-    accumulated += `/${part}`
-    segments.push({ label: part, path: accumulated })
-  }
-  return segments
-})
-
-interface DisplayEntry extends ContentEntry {
-  displayName: string
-  isDir: boolean
-}
-
-const browserEntries = computed<DisplayEntry[]>(() => {
-  const currentDir = currentPath.value.replace(/^\//, '')
-  const dirList = contents.value
-    .filter((e) => e.type === 'd' && e.path !== currentDir)
-    .sort((a, b) => a.path.localeCompare(b.path))
-  const fileList = contents.value
-    .filter((e) => e.type !== 'd')
-    .sort((a, b) => a.path.localeCompare(b.path))
-
-  const entries: DisplayEntry[] = []
-
-  const currentEntry = contents.value.find((e) => e.type === 'd' && e.path === currentDir)
-  if (currentEntry) {
-    entries.push({
-      ...currentEntry,
-      displayName: '.',
-      isDir: true,
-    })
-  } else if (currentPath.value === '/') {
-    entries.push({
-      type: 'd',
-      path: '',
-      size: 0,
-      mtime: '',
-      mode: '',
-      displayName: '.',
-      isDir: true,
-    })
-  }
-
-  if (currentPath.value !== '/') {
-    const parentPath = currentPath.value.replace(/\/[^/]+$/, '') || '/'
-    entries.push({
-      type: 'd',
-      path: parentPath,
-      size: 0,
-      mtime: '',
-      mode: '',
-      displayName: '..',
-      isDir: true,
-    })
-  }
-
-  return [
-    ...entries,
-    ...[...dirList, ...fileList].map((e) => ({
-      ...e,
-      displayName: e.path.split('/').pop() ?? e.path,
-      isDir: e.type === 'd',
-    })),
-  ]
-})
-
-const browserFilters = ref({
-  displayName: { value: '', matchMode: FilterMatchMode.CONTAINS },
-  size: { value: '', matchMode: FilterMatchMode.CONTAINS },
-  mtime: { value: '', matchMode: FilterMatchMode.CONTAINS },
 })
 
 async function loadRepos(): Promise<void> {
@@ -206,10 +76,7 @@ async function loadRepos(): Promise<void> {
 async function onRepoChange(): Promise<void> {
   archives.value = []
   selectedArchive.value = null
-  contents.value = []
-  currentPath.value = '/'
   archivesError.value = null
-  contentsError.value = null
   if (selectedRepoId.value === null) return
   await loadArchives()
 }
@@ -228,71 +95,8 @@ async function loadArchives(): Promise<void> {
   }
 }
 
-async function selectArchive(archive: ArchiveEntry): Promise<void> {
-  stopPolling()
-  indexing.value = false
+function selectArchive(archive: ArchiveEntry): void {
   selectedArchive.value = archive
-  currentPath.value = '/'
-  contents.value = []
-  contentsError.value = null
-  await loadContents('/')
-}
-
-interface ContentsResponse {
-  index_status: 'pending' | 'indexing' | 'done' | 'failed'
-  entries: ContentEntry[]
-}
-
-async function loadContents(path: string): Promise<void> {
-  if (selectedRepoId.value === null || !selectedArchive.value) return
-  contentsLoading.value = true
-  contentsError.value = null
-  const normalizedPath = path === '/' ? '/' : `/${path.replace(/^\//, '')}`
-  currentPath.value = normalizedPath
-  try {
-    const apiPath = normalizedPath === '/' ? undefined : normalizedPath.replace(/^\//, '')
-    const res = await apiClient.get<ContentsResponse>(
-      `/repos/${selectedRepoId.value}/archives/${encodeURIComponent(selectedArchive.value.name)}/contents`,
-      { params: apiPath ? { path: apiPath } : {} },
-    )
-    const { index_status, entries } = res.data
-    if (index_status === 'done' || index_status === 'failed') {
-      indexing.value = false
-      contents.value = entries.filter((e) => e.path !== '.' && e.path !== '..')
-    } else {
-      indexing.value = true
-      contents.value = []
-      startPolling(selectedArchive.value.name, path)
-    }
-  } catch (e: unknown) {
-    contentsError.value = extractError(e)
-  } finally {
-    contentsLoading.value = false
-  }
-}
-
-function navigateTo(path: string): void {
-  loadContents(path)
-}
-
-function entryName(entry: ContentEntry): string {
-  return entry.path.split('/').pop() ?? entry.path
-}
-
-function downloadEntry(entry: ContentEntry): void {
-  if (selectedRepoId.value === null || !selectedArchive.value) return
-  const archiveName = encodeURIComponent(selectedArchive.value.name)
-  const encodedPath = encodeURIComponent(entry.path)
-  const isDir = entry.type === 'd'
-  const url = isDir
-    ? `/api/repos/${selectedRepoId.value}/archives/${archiveName}/export?path=${encodedPath}`
-    : `/api/repos/${selectedRepoId.value}/archives/${archiveName}/extract?path=${encodedPath}`
-  const a = document.createElement('a')
-  a.href = url
-  a.download = isDir ? `${entryName(entry)}.tar.lz4` : entryName(entry)
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
 }
 
 const showRestoreWizard = ref(false)
@@ -565,152 +369,10 @@ onMounted(loadRepos)
         </div>
 
         <!-- File browser -->
-        <div
-          v-if="selectedArchive"
-          class="panel browser-panel"
-        >
-          <div class="panel-header">
-            <span class="panel-title">Files — {{ selectedArchive.name }}</span>
-          </div>
-
-          <div class="breadcrumb">
-            <button
-              v-for="(seg, i) in breadcrumbs"
-              :key="seg.path"
-              class="crumb"
-              :class="{ 'crumb-last': i === breadcrumbs.length - 1 }"
-              @click="navigateTo(seg.path)"
-            >
-              {{ seg.label }}
-            </button>
-          </div>
-
-          <BaseSpinner
-            v-if="contentsLoading"
-            size="sm"
-          />
-          <div
-            v-else-if="indexing"
-            class="state-msg"
-          >
-            <BaseSpinner size="sm" />
-            Indexing archive contents — this only happens once…
-          </div>
-          <div
-            v-else-if="contentsError"
-            class="state-msg state-error"
-          >
-            {{ contentsError }}
-          </div>
-          <div
-            v-else-if="contents.length === 0"
-            class="state-msg"
-          >
-            Empty directory.
-          </div>
-          <DataTable
-            v-else
-            v-model:filters="browserFilters"
-            :value="browserEntries"
-            :row-class="(data: DisplayEntry) => (data.isDir ? 'clickable' : '')"
-            filter-display="row"
-            table-class="data-table"
-            @row-click="
-              (e: { data: DisplayEntry }) =>
-                e.data.isDir && e.data.displayName !== '.' && navigateTo(e.data.path)
-            "
-          >
-            <Column
-              field="displayName"
-              header="Name"
-              :sortable="true"
-              :show-filter-menu="false"
-            >
-              <template #filter="{ filterModel, filterCallback }">
-                <input
-                  v-model="filterModel.value"
-                  class="filter-input"
-                  type="text"
-                  placeholder="Filter name..."
-                  @input="filterCallback()"
-                />
-              </template>
-              <template #body="{ data }">
-                <span class="td-name">
-                  <Folder
-                    v-if="data.isDir"
-                    :size="16"
-                    class="entry-icon"
-                  />
-                  <File
-                    v-else
-                    :size="16"
-                    class="entry-icon"
-                  />
-                  {{ data.displayName }}
-                </span>
-              </template>
-            </Column>
-            <Column
-              field="size"
-              header="Size"
-              :sortable="true"
-              :show-filter-menu="false"
-            >
-              <template #filter="{ filterModel, filterCallback }">
-                <input
-                  v-model="filterModel.value"
-                  class="filter-input"
-                  type="text"
-                  placeholder="Filter size..."
-                  @input="filterCallback()"
-                />
-              </template>
-              <template #body="{ data }">
-                <span class="td-size">{{ data.isDir ? '—' : formatBytes(data.size) }}</span>
-              </template>
-            </Column>
-            <Column
-              field="mtime"
-              header="Modified"
-              :sortable="true"
-              :show-filter-menu="false"
-            >
-              <template #filter="{ filterModel, filterCallback }">
-                <input
-                  v-model="filterModel.value"
-                  class="filter-input"
-                  type="text"
-                  placeholder="Filter date..."
-                  @input="filterCallback()"
-                />
-              </template>
-              <template #body="{ data }">
-                <span class="td-date">{{ formatDate(data.mtime) }}</span>
-              </template>
-            </Column>
-            <Column header="">
-              <template #body="{ data }">
-                <span class="td-action">
-                  <button
-                    class="btn btn-sm btn-ghost"
-                    :title="data.isDir ? 'Download as .tar.lz4' : 'Download'"
-                    @click.stop="downloadEntry(data)"
-                  >
-                    <Download :size="14" />
-                  </button>
-                </span>
-              </template>
-            </Column>
-          </DataTable>
-        </div>
-
-        <div
-          v-else
-          class="panel browser-panel empty-browser"
-        >
-          <span class="muted">Select an archive to browse its contents.</span>
-        </div>
+        <ArchiveFileBrowser
+          :repo-id="selectedRepoId"
+          :archive-name="selectedArchive?.name ?? null"
+        />
       </div>
 
       <FileSearch
@@ -804,10 +466,6 @@ onMounted(loadRepos)
 
 .state-error {
   color: var(--danger);
-}
-
-.muted {
-  color: var(--text-muted);
 }
 
 .repo-selector {
@@ -975,22 +633,10 @@ onMounted(loadRepos)
   color: var(--warning);
 }
 
-.td-name {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-family: var(--mono);
-  font-size: 0.82rem;
-}
-
 .td-size {
   font-size: 0.8rem;
   color: var(--text-muted);
   white-space: nowrap;
-}
-
-.td-action {
-  text-align: right;
 }
 
 .filter-input {
@@ -1006,64 +652,6 @@ onMounted(loadRepos)
 .filter-input:focus {
   outline: none;
   border-color: var(--accent);
-}
-
-.entry-icon {
-  flex-shrink: 0;
-  color: var(--text-muted);
-}
-
-.breadcrumb {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.1rem;
-  padding: 0.6rem 1rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-base);
-}
-
-.crumb {
-  background: none;
-  border: none;
-  color: var(--accent);
-  cursor: pointer;
-  font-size: 0.82rem;
-  font-family: var(--mono);
-  padding: 0.15rem 0.3rem;
-  border-radius: var(--radius-sm);
-  transition:
-    background 0.1s,
-    color 0.1s;
-}
-
-.crumb:hover {
-  background: var(--accent-subtle);
-  color: var(--accent-hover);
-}
-
-.crumb-last {
-  color: var(--text-primary);
-  cursor: default;
-}
-
-.crumb-last:hover {
-  background: none;
-  color: var(--text-primary);
-}
-
-.crumb:not(.crumb-last)::after {
-  content: ' /';
-  color: var(--text-muted);
-  margin-left: 0.2rem;
-}
-
-.empty-browser {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 200px;
-  font-size: 0.875rem;
 }
 
 .spinner {

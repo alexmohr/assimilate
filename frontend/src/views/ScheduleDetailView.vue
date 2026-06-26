@@ -16,7 +16,7 @@ import { parseLines } from '../utils/validation'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import CronBuilder from '../components/CronBuilder.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
-import { Folder, File } from '@lucide/vue'
+import ArchiveFileBrowser from '../components/ArchiveFileBrowser.vue'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
@@ -53,24 +53,6 @@ interface RepoRow {
   id: number
   name: string
   repo_path: string
-}
-
-interface ArchiveContentEntry {
-  type: string
-  path: string
-  size: number
-  mtime: string
-  mode: string
-}
-
-interface ArchiveBrowserEntry extends ArchiveContentEntry {
-  displayName: string
-  isDir: boolean
-}
-
-interface ArchiveContentsApiResponse {
-  index_status: 'pending' | 'indexing' | 'done' | 'failed'
-  entries: ArchiveContentEntry[]
 }
 
 const props = defineProps<{ id: string }>()
@@ -145,12 +127,6 @@ const estimatedRemainingSecs = computed<number | null>(() => {
 })
 
 const selectedBackupReport = ref<ReportRow | null>(null)
-const archivePath = ref('/')
-const archiveContents = ref<ArchiveContentEntry[]>([])
-const archiveContentsLoading = ref(false)
-const archiveContentsError = ref<string | null>(null)
-const archiveIndexing = ref(false)
-let archivePollTimer: ReturnType<typeof setInterval> | null = null
 
 type TabId = 'settings' | 'advanced' | 'logs' | 'backups'
 const activeTab = computed<TabId>({
@@ -255,7 +231,6 @@ onBeforeUnmount(() => {
   if (elapsedTimer !== null) {
     clearInterval(elapsedTimer)
   }
-  stopArchivePolling()
 })
 
 function populateForm(s: ScheduleRow): void {
@@ -650,157 +625,8 @@ const scheduleArchives = computed(() =>
     .sort((a, b) => b.started_at.localeCompare(a.started_at)),
 )
 
-const archiveBreadcrumbs = computed(() => {
-  const path = archivePath.value
-  if (path === '/') return [{ label: '/', path: '/' }]
-  const parts = path.replace(/^\//, '').split('/')
-  const segments: { label: string; path: string }[] = [{ label: '~', path: '/' }]
-  let accumulated = ''
-  for (const part of parts) {
-    accumulated += `/${part}`
-    segments.push({ label: part, path: accumulated })
-  }
-  return segments
-})
-
-const archiveBrowserEntries = computed<ArchiveBrowserEntry[]>(() => {
-  const currentDir = archivePath.value.replace(/^\//, '')
-  const dirList = archiveContents.value
-    .filter((e) => e.type === 'd' && e.path !== currentDir)
-    .sort((a, b) => a.path.localeCompare(b.path))
-  const fileList = archiveContents.value
-    .filter((e) => e.type !== 'd')
-    .sort((a, b) => a.path.localeCompare(b.path))
-
-  const entries: ArchiveBrowserEntry[] = []
-
-  const currentEntry = archiveContents.value.find((e) => e.type === 'd' && e.path === currentDir)
-  if (currentEntry) {
-    entries.push({ ...currentEntry, displayName: '.', isDir: true })
-  } else if (archivePath.value === '/') {
-    entries.push({
-      type: 'd',
-      path: '',
-      size: 0,
-      mtime: '',
-      mode: '',
-      displayName: '.',
-      isDir: true,
-    })
-  }
-
-  if (archivePath.value !== '/') {
-    const parentPath = archivePath.value.replace(/\/[^/]+$/, '') || '/'
-    entries.push({
-      type: 'd',
-      path: parentPath,
-      size: 0,
-      mtime: '',
-      mode: '',
-      displayName: '..',
-      isDir: true,
-    })
-  }
-
-  return [
-    ...entries,
-    ...[...dirList, ...fileList].map((e) => ({
-      ...e,
-      displayName: e.path.split('/').pop() ?? e.path,
-      isDir: e.type === 'd',
-    })),
-  ]
-})
-
-function stopArchivePolling(): void {
-  if (archivePollTimer !== null) {
-    clearInterval(archivePollTimer)
-    archivePollTimer = null
-  }
-}
-
-function startArchivePolling(archiveName: string, pendingPath: string): void {
-  stopArchivePolling()
-  archivePollTimer = setInterval(async () => {
-    if (selectedRepoId.value === null) return
-    try {
-      const res = await apiClient.get<{ status: string; error?: string }>(
-        `/repos/${selectedRepoId.value}/archives/${encodeURIComponent(archiveName)}/index-status`,
-      )
-      if (res.data.status === 'done') {
-        stopArchivePolling()
-        archiveIndexing.value = false
-        await loadArchiveContents(pendingPath)
-      } else if (res.data.status === 'failed') {
-        stopArchivePolling()
-        archiveIndexing.value = false
-        archiveContentsError.value = res.data.error ?? 'Archive indexing failed'
-      }
-    } catch (e: unknown) {
-      stopArchivePolling()
-      archiveIndexing.value = false
-      archiveContentsError.value = extractError(e)
-    }
-  }, 2000)
-}
-
-async function selectScheduleArchive(report: ReportRow): Promise<void> {
-  stopArchivePolling()
-  archiveIndexing.value = false
+function selectScheduleArchive(report: ReportRow): void {
   selectedBackupReport.value = report
-  archivePath.value = '/'
-  archiveContents.value = []
-  archiveContentsError.value = null
-  await loadArchiveContents('/')
-}
-
-async function loadArchiveContents(path: string): Promise<void> {
-  if (selectedRepoId.value === null || !selectedBackupReport.value?.archive_name) return
-  archiveContentsLoading.value = true
-  archiveContentsError.value = null
-  const normalizedPath = path === '/' ? '/' : `/${path.replace(/^\//, '')}`
-  archivePath.value = normalizedPath
-  try {
-    const apiPath = normalizedPath === '/' ? undefined : normalizedPath.replace(/^\//, '')
-    const res = await apiClient.get<ArchiveContentsApiResponse>(
-      `/repos/${selectedRepoId.value}/archives/${encodeURIComponent(selectedBackupReport.value.archive_name)}/contents`,
-      { params: apiPath ? { path: apiPath } : {} },
-    )
-    const { index_status, entries } = res.data
-    if (index_status === 'done' || index_status === 'failed') {
-      archiveIndexing.value = false
-      archiveContents.value = entries.filter((e) => e.path !== '.' && e.path !== '..')
-    } else {
-      archiveIndexing.value = true
-      archiveContents.value = []
-      startArchivePolling(selectedBackupReport.value.archive_name, path)
-    }
-  } catch (e: unknown) {
-    archiveContentsError.value = extractError(e)
-  } finally {
-    archiveContentsLoading.value = false
-  }
-}
-
-function navigateToArchivePath(path: string): void {
-  loadArchiveContents(path).catch(() => undefined)
-}
-
-function downloadArchiveEntry(entry: ArchiveContentEntry): void {
-  if (selectedRepoId.value === null || !selectedBackupReport.value?.archive_name) return
-  const archiveName = encodeURIComponent(selectedBackupReport.value.archive_name)
-  const encodedPath = encodeURIComponent(entry.path)
-  const url =
-    entry.type === 'd'
-      ? `/api/repos/${selectedRepoId.value}/archives/${archiveName}/export?path=${encodedPath}`
-      : `/api/repos/${selectedRepoId.value}/archives/${archiveName}/extract?path=${encodedPath}`
-  const filename = entry.path.split('/').pop() ?? entry.path
-  const a = document.createElement('a')
-  a.href = url
-  a.download = entry.type === 'd' ? `${filename}.tar.lz4` : filename
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
 }
 
 watch(() => props.id, loadData)
@@ -1734,108 +1560,10 @@ watch(activeTab, (tab) => {
             </table>
           </div>
 
-          <div
-            v-if="selectedBackupReport"
-            class="archive-browser-panel"
-          >
-            <div class="archive-browser-header">
-              <span class="archive-browser-title">{{ selectedBackupReport.archive_name }}</span>
-            </div>
-            <div class="archive-breadcrumb">
-              <button
-                v-for="(seg, i) in archiveBreadcrumbs"
-                :key="seg.path"
-                class="archive-crumb"
-                :class="{ 'archive-crumb-last': i === archiveBreadcrumbs.length - 1 }"
-                @click="navigateToArchivePath(seg.path)"
-              >
-                {{ seg.label }}
-              </button>
-            </div>
-            <div
-              v-if="archiveContentsLoading"
-              class="archive-state"
-            >
-              <BaseSpinner size="sm" />
-            </div>
-            <div
-              v-else-if="archiveIndexing"
-              class="archive-state"
-            >
-              <BaseSpinner size="sm" />
-              Indexing archive — this only happens once…
-            </div>
-            <div
-              v-else-if="archiveContentsError"
-              class="error-banner"
-              style="margin: 0.75rem"
-            >
-              {{ archiveContentsError }}
-            </div>
-            <div
-              v-else-if="archiveBrowserEntries.length === 0"
-              class="archive-state"
-            >
-              Empty directory.
-            </div>
-            <table
-              v-else
-              class="reports-table"
-            >
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Size</th>
-                  <th>Modified</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="entry in archiveBrowserEntries"
-                  :key="entry.path + entry.displayName"
-                  class="report-row"
-                  :class="{ 'archive-dir-row': entry.isDir }"
-                  @click="
-                    entry.isDir && entry.displayName !== '.' && navigateToArchivePath(entry.path)
-                  "
-                >
-                  <td class="cell-name">
-                    <Folder
-                      v-if="entry.isDir"
-                      :size="14"
-                      class="entry-icon"
-                    />
-                    <File
-                      v-else
-                      :size="14"
-                      class="entry-icon"
-                    />
-                    <span class="cell-mono">{{ entry.displayName }}</span>
-                  </td>
-                  <td class="cell-size">{{ entry.isDir ? '—' : formatBytes(entry.size) }}</td>
-                  <td class="cell-ts">{{ entry.mtime ? formatDateShort(entry.mtime) : '—' }}</td>
-                  <td class="cell-action">
-                    <button
-                      v-if="entry.displayName !== '.' && entry.displayName !== '..'"
-                      class="btn btn-sm btn-ghost"
-                      :title="entry.isDir ? 'Download as .tar.lz4' : 'Download'"
-                      @click.stop="downloadArchiveEntry(entry)"
-                    >
-                      ↓
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div
-            v-else
-            class="archive-browser-panel archive-browser-empty"
-          >
-            Select an archive to browse its contents.
-          </div>
+          <ArchiveFileBrowser
+            :repo-id="selectedRepoId"
+            :archive-name="selectedBackupReport?.archive_name ?? null"
+          />
         </div>
       </div>
 
@@ -2824,8 +2552,7 @@ watch(activeTab, (tab) => {
   align-items: start;
 }
 
-.archive-list-panel,
-.archive-browser-panel {
+.archive-list-panel {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -2843,112 +2570,5 @@ watch(activeTab, (tab) => {
 .archive-row-selected td {
   background: var(--accent-subtle);
   color: var(--text-primary);
-}
-
-.archive-dir-row {
-  cursor: pointer;
-}
-
-.archive-dir-row:hover td {
-  background: var(--bg-hover);
-}
-
-.archive-browser-header {
-  padding: 0.6rem 0.875rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-base);
-}
-
-.archive-browser-title {
-  font-family: var(--mono);
-  font-size: 0.78rem;
-  color: var(--text-secondary);
-  font-weight: 500;
-}
-
-.archive-breadcrumb {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.1rem;
-  padding: 0.4rem 0.75rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-base);
-}
-
-.archive-crumb {
-  background: none;
-  border: none;
-  color: var(--accent);
-  cursor: pointer;
-  font-size: 0.78rem;
-  font-family: var(--mono);
-  padding: 0.1rem 0.3rem;
-  border-radius: var(--radius-sm);
-  transition:
-    background 0.1s,
-    color 0.1s;
-}
-
-.archive-crumb:hover {
-  background: var(--accent-subtle);
-}
-
-.archive-crumb-last {
-  color: var(--text-primary);
-  cursor: default;
-}
-
-.archive-crumb-last:hover {
-  background: none;
-}
-
-.archive-crumb:not(.archive-crumb-last)::after {
-  content: ' /';
-  color: var(--text-muted);
-  margin-left: 0.15rem;
-}
-
-.archive-state {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 1rem 0.875rem;
-  color: var(--text-muted);
-  font-size: 0.875rem;
-}
-
-.archive-browser-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 160px;
-  color: var(--text-muted);
-  font-size: 0.875rem;
-}
-
-.cell-name {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.cell-mono {
-  font-family: var(--mono);
-  font-size: 0.78rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 160px;
-}
-
-.entry-icon {
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.cell-action {
-  text-align: right;
-  padding-right: 0.5rem;
 }
 </style>

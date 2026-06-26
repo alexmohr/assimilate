@@ -65,17 +65,6 @@ test.describe.serial('backup progress card', () => {
     }
   })
 
-  test.afterAll(async ({ browser }) => {
-    if (!progressScheduleId) return
-    const page = await browser.newPage()
-    try {
-      await loginAsAdmin(page)
-      await page.request.delete(`/api/schedules/${progressScheduleId}`)
-    } finally {
-      await page.close()
-    }
-  })
-
   test('card appears when a backup is triggered', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto(`/schedules/${progressScheduleId}`)
@@ -210,6 +199,17 @@ test.describe.serial('activity log — live backup log', () => {
     try {
       await loginAsAdmin(page)
       progressScheduleId = await createProgressScheduleViaUI(page)
+    } finally {
+      await page.close()
+    }
+  })
+
+  test.afterAll(async ({ browser }) => {
+    if (!progressScheduleId) return
+    const page = await browser.newPage()
+    try {
+      await loginAsAdmin(page)
+      await page.request.delete(`/api/schedules/${progressScheduleId}`)
     } finally {
       await page.close()
     }

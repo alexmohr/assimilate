@@ -10,6 +10,7 @@ async function openFirstSchedule(page: Page): Promise<string> {
   await page.locator('.schedule-card').first().waitFor({ timeout: 10_000 })
   await page.locator('.schedule-card').first().click()
   await page.waitForURL(/\/schedules\/\d+/, { timeout: 10_000 })
+  await page.locator('.tab-bar').waitFor({ timeout: 30_000 })
   const match = page.url().match(/\/schedules\/(\d+)/)
   if (!match) throw new Error(`unexpected schedule URL: ${page.url()}`)
   return match[1]

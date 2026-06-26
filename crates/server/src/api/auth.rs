@@ -7,7 +7,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header, request::Parts},
     response::{IntoResponse, Response},
 };
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -181,13 +181,13 @@ pub struct LoginRequest {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct LoginResponse {
     pub user: db::UserRow,
-    pub session_expires_at: chrono::DateTime<chrono::Utc>,
+    pub session_expires_at: DateTime<Utc>,
     pub remember_me: bool,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RefreshResponse {
-    pub session_expires_at: chrono::DateTime<chrono::Utc>,
+    pub session_expires_at: DateTime<Utc>,
 }
 
 #[utoipa::path(
@@ -364,7 +364,7 @@ pub struct MeResponse {
     pub username: String,
     pub role: String,
     pub must_change_password: bool,
-    pub session_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub session_expires_at: Option<DateTime<Utc>>,
     pub remember_me: bool,
 }
 

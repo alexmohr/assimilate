@@ -2120,6 +2120,43 @@ async fn session_delete_expired(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn session_remember_me(pool: PgPool) {
+    let user = db::insert_user(&pool, "rememberuser", "hash", "user")
+        .await
+        .unwrap();
+
+    let expires = Utc::now() + Duration::days(7);
+    db::insert_session(&pool, "sess_remember", user.id, expires, true)
+        .await
+        .unwrap();
+
+    let session = db::get_session(&pool, "sess_remember").await.unwrap();
+    assert_eq!(session.user_id, user.id);
+    assert!(session.remember_me);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_extend(pool: PgPool) {
+    let user = db::insert_user(&pool, "extenduser", "hash", "user")
+        .await
+        .unwrap();
+
+    let original_expires = Utc::now() + Duration::hours(1);
+    db::insert_session(&pool, "sess_extend", user.id, original_expires, true)
+        .await
+        .unwrap();
+
+    let new_expires = Utc::now() + Duration::days(7);
+    db::extend_session(&pool, "sess_extend", new_expires)
+        .await
+        .unwrap();
+
+    let session = db::get_session(&pool, "sess_extend").await.unwrap();
+    assert!(session.expires_at > original_expires);
+    assert!(session.remember_me);
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn login_attempts(pool: PgPool) {
     db::insert_login_attempt(&pool, "user1", "192.168.1.1", false)
         .await

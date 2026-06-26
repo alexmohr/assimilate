@@ -261,7 +261,7 @@ onBeforeUnmount(stopPolling)
       v-else
       v-model:filters="browserFilters"
       :value="browserEntries"
-      :row-class="(data: DisplayEntry) => (data.isDir ? 'archive-dir-row' : '')"
+      :row-class="(data: DisplayEntry) => (data.isDir ? 'archive-dir-row' : 'archive-file-row')"
       filter-display="row"
       table-class="archive-browser-table"
       @row-click="

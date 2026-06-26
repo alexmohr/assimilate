@@ -121,7 +121,7 @@ test('download button is present for each entry in the file browser', async ({ p
   await expect(page.locator('.archive-browser-panel')).toBeVisible({ timeout: 5_000 })
 
   // Wait for at least one entry row to appear.
-  await expect(page.locator('.archive-browser-panel .report-row').first()).toBeVisible({
+  await expect(page.locator('.archive-dir-row, .archive-file-row').first()).toBeVisible({
     timeout: 20_000,
   })
 

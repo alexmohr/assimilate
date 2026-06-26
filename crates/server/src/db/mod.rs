@@ -2369,8 +2369,8 @@ pub async fn insert_backup_report(
              status = $3, original_size = $4, compressed_size = $5, deduplicated_size = $6, \
              repo_unique_csize = $7, files_processed = $8, duration_secs = $9, error_message = \
              $10, warnings = $11, borg_version = $12, matched = $13, archive_name = $14, \
-             borg_command = $15, started_at = $16 WHERE run_id = $17 AND agent_id = $18 AND \
-             status IN ('pending', 'started')",
+             borg_command = COALESCE($15, borg_command), started_at = $16 WHERE run_id = $17 AND \
+             agent_id = $18 AND status IN ('pending', 'started')",
         )
         .bind(params.schedule_id)
         .bind(params.finished_at)
@@ -2416,7 +2416,7 @@ pub async fn insert_backup_report(
              duration_secs = EXCLUDED.duration_secs, error_message = EXCLUDED.error_message, \
              warnings = EXCLUDED.warnings, borg_version = EXCLUDED.borg_version, matched = \
              EXCLUDED.matched, archive_name = EXCLUDED.archive_name, borg_command = \
-             EXCLUDED.borg_command"
+             COALESCE(EXCLUDED.borg_command, backup_reports.borg_command)"
         );
         sqlx::query(&sql)
             .bind(params.agent_id)

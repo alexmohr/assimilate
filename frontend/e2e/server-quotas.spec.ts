@@ -26,7 +26,9 @@ test('server quotas page loads for admin without error', async ({ page }) => {
 test('server quotas page shows the page title', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/server-quotas')
-  await expect(page.getByText('Server Quotas')).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByRole('heading', { name: 'Server Quotas', exact: true })).toBeVisible({
+    timeout: 10_000,
+  })
 })
 
 test('server quotas page shows Add Quota button for admin', async ({ page }) => {
@@ -84,7 +86,9 @@ test('deleted quota disappears from the list', async ({ page }) => {
     await expect(page.getByText('Delete Server Quota')).toBeVisible({ timeout: 5_000 })
     await page.locator('.dialog-overlay .btn-danger').click()
 
-    await expect(page.getByText(TEST_HOST)).not.toBeVisible({ timeout: 5_000 })
+    await expect(page.locator('.quota-card').filter({ hasText: TEST_HOST })).not.toBeVisible({
+      timeout: 5_000,
+    })
   } finally {
     await page.request.delete(`/api/server-quotas/${encodeURIComponent(TEST_HOST)}`).catch(() => {})
   }
@@ -118,7 +122,7 @@ test('can open add dialog and cancel', async ({ page }) => {
 
   await page.getByRole('button', { name: /Add Quota/i }).click()
   await expect(page.getByText('Add Server Quota')).toBeVisible({ timeout: 5_000 })
-  await expect(page.getByText('available-host.local')).toBeVisible()
+  await expect(page.locator('select')).toContainText('available-host.local')
 
   await page.getByRole('button', { name: 'Cancel' }).first().click()
   await expect(page.getByText('Add Server Quota')).not.toBeVisible()

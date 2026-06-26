@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
+import { nextTick } from 'vue'
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -40,6 +41,19 @@ vi.mock('../utils/cron', () => ({
 
 vi.mock('../composables/useTimezone', () => ({
   getConfiguredTimezone: (): string | undefined => undefined,
+}))
+
+// Captured WebSocket message handlers — populated during component setup().
+// Accessing wsHandlers here is safe because onMessage is only CALLED during
+// component setup(), which happens inside test functions after module evaluation.
+const wsHandlers: Record<string, (payload: unknown) => void> = {}
+
+vi.mock('../composables/useWebSocket', () => ({
+  useWebSocket: () => ({
+    onMessage: (type: string, cb: (p: unknown) => void) => {
+      wsHandlers[type] = cb
+    },
+  }),
 }))
 
 import { apiClient } from '../api/client'
@@ -414,5 +428,221 @@ describe('ScheduleDetailView - create mode', () => {
     await flushPromises()
 
     expect(wrapper.find('.info-card').exists()).toBe(false)
+  })
+})
+
+describe('ScheduleDetailView - WebSocket handlers', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    for (const key of Object.keys(wsHandlers)) {
+      delete wsHandlers[key]
+    }
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('BackupStarted with matching schedule_id shows BACKUP IN PROGRESS card', async () => {
+    setupEditMode()
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    wsHandlers['BackupStarted']?.({
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      archive_name: 'server-daily-2026-06-26',
+      schedule_id: 1,
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-card').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Backup in progress')
+  })
+
+  it('BackupStarted with non-matching schedule_id does not activate progress card', async () => {
+    setupEditMode()
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    wsHandlers['BackupStarted']?.({
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      archive_name: null,
+      schedule_id: 999,
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-card').exists()).toBe(false)
+  })
+
+  it('BackupStarted with null schedule_id and matching repo name activates progress card', async () => {
+    setupEditMode()
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    wsHandlers['BackupStarted']?.({
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      archive_name: null,
+      schedule_id: null,
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-card').exists()).toBe(true)
+  })
+
+  it('BackupCompleted with matching schedule_id hides BACKUP IN PROGRESS card', async () => {
+    setupEditMode()
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    wsHandlers['BackupStarted']?.({
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      archive_name: null,
+      schedule_id: 1,
+    })
+    await nextTick()
+    expect(wrapper.find('.live-log-card').exists()).toBe(true)
+
+    wsHandlers['BackupCompleted']?.({
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      archive_name: null,
+      schedule_id: 1,
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-card').exists()).toBe(false)
+  })
+
+  it('BackupLog with matching schedule_id and archive_progress JSON updates progress data', async () => {
+    setupEditMode()
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    wsHandlers['BackupStarted']?.({
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      archive_name: null,
+      schedule_id: 1,
+    })
+    await nextTick()
+
+    wsHandlers['BackupLog']?.({
+      hostname: 'web-server-01',
+      schedule_id: 1,
+      repo_id: 20,
+      line: JSON.stringify({
+        type: 'archive_progress',
+        nfiles: 1234,
+        original_size: 5368709120,
+        path: '/home/user/important.txt',
+      }),
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-empty').exists()).toBe(false)
+    expect(wrapper.text()).toContain('1,234')
+    expect(wrapper.text()).toContain('/home/user/important.txt')
+  })
+
+  it('BackupLog with wrong schedule_id does not update progress', async () => {
+    setupEditMode()
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    wsHandlers['BackupStarted']?.({
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      archive_name: null,
+      schedule_id: 1,
+    })
+    await nextTick()
+
+    wsHandlers['BackupLog']?.({
+      hostname: 'web-server-01',
+      schedule_id: 999,
+      repo_id: 20,
+      line: JSON.stringify({ type: 'archive_progress', nfiles: 1, original_size: 100, path: '/tmp/file' }),
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-empty').exists()).toBe(true)
+  })
+
+  it('BackupLog with null schedule_id and matching repo_id updates progress', async () => {
+    setupEditMode()
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    wsHandlers['BackupStarted']?.({
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      archive_name: null,
+      schedule_id: 1,
+    })
+    await nextTick()
+
+    wsHandlers['BackupLog']?.({
+      hostname: 'web-server-01',
+      schedule_id: null,
+      repo_id: 20,
+      line: JSON.stringify({ type: 'archive_progress', nfiles: 500, original_size: 1073741824, path: '' }),
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-empty').exists()).toBe(false)
+    expect(wrapper.text()).toContain('500')
+  })
+
+  it('BackupLog with null schedule_id and wrong repo_id does not update progress', async () => {
+    setupEditMode()
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    wsHandlers['BackupStarted']?.({
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      archive_name: null,
+      schedule_id: 1,
+    })
+    await nextTick()
+
+    wsHandlers['BackupLog']?.({
+      hostname: 'web-server-01',
+      schedule_id: null,
+      repo_id: 999,
+      line: JSON.stringify({ type: 'archive_progress', nfiles: 100, original_size: 100, path: '/tmp/file' }),
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-empty').exists()).toBe(true)
+  })
+
+  it('BackupLog with non-JSON line adds text to live log output', async () => {
+    setupEditMode()
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    wsHandlers['BackupStarted']?.({
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      archive_name: null,
+      schedule_id: 1,
+    })
+    await nextTick()
+
+    wsHandlers['BackupLog']?.({
+      hostname: 'web-server-01',
+      schedule_id: 1,
+      repo_id: 20,
+      line: 'Creating archive server-daily-2026-06-26...',
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-output').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Creating archive server-daily-2026-06-26...')
   })
 })

@@ -43,10 +43,9 @@ test('can create, view, and delete a server quota', async ({ page }) => {
   await loginAsAdmin(page)
 
   // Create quota via the API
-  const createRes = await page.request.put(
-    `/api/server-quotas/${encodeURIComponent(TEST_HOST)}`,
-    { data: TEST_QUOTA },
-  )
+  const createRes = await page.request.put(`/api/server-quotas/${encodeURIComponent(TEST_HOST)}`, {
+    data: TEST_QUOTA,
+  })
   expect(createRes.ok()).toBe(true)
 
   try {
@@ -71,10 +70,9 @@ test('can create, view, and delete a server quota', async ({ page }) => {
 test('deleted quota disappears from the list', async ({ page }) => {
   await loginAsAdmin(page)
 
-  const createRes = await page.request.put(
-    `/api/server-quotas/${encodeURIComponent(TEST_HOST)}`,
-    { data: TEST_QUOTA },
-  )
+  const createRes = await page.request.put(`/api/server-quotas/${encodeURIComponent(TEST_HOST)}`, {
+    data: TEST_QUOTA,
+  })
   expect(createRes.ok()).toBe(true)
 
   try {

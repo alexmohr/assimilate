@@ -67,10 +67,7 @@ const MOCK_QUOTAS = [
 
 const MOCK_HOSTS = ['backup.example.com', 'storage.local', 'new-server.local']
 
-function setupSuccessMocks(
-  quotas = MOCK_QUOTAS,
-  hosts = MOCK_HOSTS,
-): void {
+function setupSuccessMocks(quotas = MOCK_QUOTAS, hosts = MOCK_HOSTS): void {
   mockGet.mockImplementation((url: string) => {
     if (url === '/server-quotas') return Promise.resolve({ data: quotas })
     if (url === '/server-quotas/hosts') return Promise.resolve({ data: hosts })
@@ -279,9 +276,7 @@ describe('ServerQuotasView', () => {
     await confirmBtn.trigger('click')
     await flushPromises()
 
-    expect(mockDelete).toHaveBeenCalledWith(
-      expect.stringContaining('/server-quotas/'),
-    )
+    expect(mockDelete).toHaveBeenCalledWith(expect.stringContaining('/server-quotas/'))
   })
 
   it('availableHosts excludes already-configured hosts', async () => {

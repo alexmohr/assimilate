@@ -219,7 +219,7 @@ pub async fn delete_server_quota(pool: &PgPool, ssh_host: &str) -> Result<bool, 
 
 pub async fn get_server_total_size(pool: &PgPool, ssh_host: &str) -> Result<i64, sqlx::Error> {
     let row: (i64,) = sqlx::query_as(
-        "SELECT COALESCE(SUM(info_deduplicated_size), 0) FROM repos WHERE ssh_host = $1",
+        "SELECT COALESCE(SUM(info_deduplicated_size), 0)::BIGINT FROM repos WHERE ssh_host = $1",
     )
     .bind(ssh_host)
     .fetch_one(pool)

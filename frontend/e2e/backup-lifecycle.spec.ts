@@ -48,9 +48,12 @@ async function createSlowScheduleViaUI(page: Page): Promise<string> {
   // Set a minimal backup source so borg has something to process.
   await page.locator('textarea[placeholder="Directories to back up, one per line"]').fill('/tmp')
 
+  // Pre-backup commands are on the Advanced tab — click it first.
+  await page.getByRole('button', { name: 'Advanced' }).click()
+
   // Add a pre-backup sleep so the in-progress state is observable.
   const preCmdArea = page.locator('textarea[placeholder*="One command per line, e.g."]')
-  await preCmdArea.scrollIntoViewIfNeeded()
+  await preCmdArea.waitFor({ timeout: 5_000 })
   await preCmdArea.fill('sleep 5')
 
   // Submit the form.

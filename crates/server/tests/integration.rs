@@ -280,6 +280,10 @@ EOF
 {info_all_json}
 EOF
         ;;
+      *"::"*) cat <<'EOF'
+{info_all_json}
+EOF
+        ;;
       *) cat <<'EOF'
 {info_repo_json}
 EOF
@@ -2216,21 +2220,26 @@ async fn test_scheduler_dispatches_repo_syncs_concurrently() {
     }
 }
 
-/// Regression test: borg list --json must include hostname via --format so archives are
-/// never imported with "unknown" hostname regardless of the borg version's default fields.
-///
-/// The fake borg script includes hostname in list_json (matching what real borg produces
-/// when called with --format '{hostname}{end}'). The imported placeholder agent must carry
-/// the correct hostname, not "unknown".
+/// Regression test: full sync must keep the fast manifest-only `borg list`
+/// path, then fetch authoritative per-archive metadata only after discovery.
 #[tokio::test]
 #[ignore]
-async fn test_sync_hostname_extracted_from_borg_list_format() {
+async fn test_sync_fetches_missing_hostname_via_borg_info() {
     let _borg_lock = borg_binary_lock().await;
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
 
     let list_json = r#"{
+  "archives": [
+    {
+      "name": "web-server-01-backup-2026-06-05T02:00:00",
+      "start": "2026-06-05T02:00:00Z",
+      "duration": 300.0
+    }
+  ]
+}"#;
+    let info_all_json = r#"{
   "archives": [
     {
       "name": "web-server-01-backup-2026-06-05T02:00:00",
@@ -2254,7 +2263,7 @@ async fn test_sync_hostname_extracted_from_borg_list_format() {
 }"#;
 
     let (_borg_dir, _borg_guard) =
-        install_fake_borg(list_json, list_json, info_repo_json, "", "").await;
+        install_fake_borg(list_json, info_all_json, info_repo_json, "", "").await;
 
     let mut app = build_test_app(pool.clone()).await;
     let repo_id = insert_test_repo(&pool, "hostname-format-repo").await;

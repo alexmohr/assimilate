@@ -788,6 +788,10 @@ EOF
 {info_all_json}
 EOF
         ;;
+      *"::"*) cat <<'EOF'
+{info_all_json}
+EOF
+        ;;
       *) cat <<'EOF'
 {info_repo_json}
 EOF

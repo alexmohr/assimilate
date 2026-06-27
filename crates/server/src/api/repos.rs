@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::{collections::HashMap, fmt, time::Duration};
+use std::{collections::HashMap, fmt, sync::Arc, time::Duration};
 
 use axum::{
     Json,
@@ -1410,18 +1410,10 @@ async fn run_borg_list_with_retry(
     repo_id: i64,
 ) -> Result<Vec<serde_json::Value>, ApiError> {
     let borg = Borg::new();
-    // --format ensures hostname and end are always present in the per-archive JSON
-    // objects regardless of the borg version's default output fields.
-    // --json (not --json-lines) is the correct flag for listing archives in a repo.
-    let args = [
-        "list",
-        "--json",
-        "--format",
-        "{hostname}{end}",
-        "--lock-wait",
-        LOCK_WAIT_SECS,
-        borg_repo,
-    ];
+    // Plain `borg list --json` reads the repository manifest and returns
+    // immediately; adding `--format` forces per-archive metadata loads and
+    // makes full resyncs crawl on large repositories.
+    let args = borg_list_args(borg_repo);
 
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
         let output = match tokio::time::timeout(timeout, borg.run(&args, env)).await {
@@ -1479,6 +1471,10 @@ async fn run_borg_list_with_retry(
     Err(ApiError::Internal(
         "borg list failed after maximum retries".to_owned(),
     ))
+}
+
+fn borg_list_args(borg_repo: &str) -> [&str; 5] {
+    ["list", "--json", "--lock-wait", LOCK_WAIT_SECS, borg_repo]
 }
 
 /// Refreshes the authoritative repo statistics from `borg info --json`
@@ -1554,6 +1550,187 @@ fn parse_borg_timestamp(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
         .ok()
 }
 
+fn archive_hostname(archive: &serde_json::Value) -> Option<&str> {
+    archive["hostname"]
+        .as_str()
+        .filter(|hostname| !hostname.is_empty())
+}
+
+fn archive_finish_time(
+    archive: &serde_json::Value,
+    started_at: chrono::DateTime<chrono::Utc>,
+) -> chrono::DateTime<chrono::Utc> {
+    parse_borg_timestamp(archive["end"].as_str().unwrap_or_default()).unwrap_or_else(|| {
+        archive["duration"]
+            .as_f64()
+            .and_then(|duration| std::time::Duration::try_from_secs_f64(duration).ok())
+            .and_then(|duration| chrono::Duration::from_std(duration).ok())
+            .map_or(started_at, |duration| started_at + duration)
+    })
+}
+
+fn archive_metadata_missing(archive: &serde_json::Value) -> bool {
+    archive_hostname(archive).is_none() || archive["end"].as_str().is_none_or(str::is_empty)
+}
+
+async fn fetch_archive_metadata_with_retry(
+    borg_repo: &str,
+    env: &HashMap<String, String>,
+    archive_name: &str,
+    timeout: Duration,
+) -> Result<serde_json::Value, ApiError> {
+    let repo_archive = format!("{borg_repo}::{archive_name}");
+    let args = [
+        "info",
+        "--json",
+        "--lock-wait",
+        LOCK_WAIT_SECS,
+        repo_archive.as_str(),
+    ];
+
+    for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
+        let output = match tokio::time::timeout(timeout, Borg::new().run(&args, env)).await {
+            Ok(Ok(output)) => output,
+            Ok(Err(e)) => {
+                return Err(ApiError::Internal(format!(
+                    "failed to execute borg info for archive '{archive_name}': {e}"
+                )));
+            }
+            Err(_) => {
+                return Err(ApiError::Internal(format!(
+                    "borg info timed out after {}s while reading archive '{archive_name}'",
+                    timeout.as_secs()
+                )));
+            }
+        };
+
+        if output.status.success() {
+            let json: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| {
+                ApiError::Internal(format!(
+                    "borg info returned malformed JSON for archive '{archive_name}': {e}"
+                ))
+            })?;
+            return json["archives"]
+                .as_array()
+                .and_then(|archives| archives.first())
+                .cloned()
+                .ok_or_else(|| {
+                    ApiError::Internal(format!(
+                        "borg info JSON missing archive entry for '{archive_name}'"
+                    ))
+                });
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !is_lock_error(&stderr) || attempt == LOCK_RETRY_MAX_ATTEMPTS {
+            let summary = extract_borg_error(&stderr);
+            return Err(ApiError::Internal(format!(
+                "borg info failed for archive '{archive_name}': {summary}"
+            )));
+        }
+
+        warn!(
+            attempt,
+            max = LOCK_RETRY_MAX_ATTEMPTS,
+            archive = archive_name,
+            "borg info lock contention, retrying in {}s",
+            LOCK_RETRY_INTERVAL.as_secs()
+        );
+        tokio::time::sleep(LOCK_RETRY_INTERVAL).await;
+    }
+
+    Err(ApiError::Internal(format!(
+        "borg info failed after maximum retries for archive '{archive_name}'"
+    )))
+}
+
+async fn hydrate_archives_with_metadata(
+    pool: &PgPool,
+    ui_broadcast: &UiBroadcast,
+    repo_id: i64,
+    borg_repo: &str,
+    env: &HashMap<String, String>,
+    timeout: Duration,
+    archives: &[&serde_json::Value],
+) -> Result<Vec<serde_json::Value>, ApiError> {
+    let borg_repo = Arc::new(borg_repo.to_owned());
+    let env = Arc::new(env.clone());
+    let total = archives.len();
+    let total_i32 = i32::try_from(total).unwrap_or(i32::MAX);
+
+    let mut hydrated = Vec::with_capacity(total);
+    let mut completed = 0usize;
+    for archive in archives.iter().copied() {
+        let archive_name = archive["name"].as_str().unwrap_or_default();
+        let loading_msg = if archive_name.is_empty() {
+            format!("Loading archive metadata... ({}/{total})", completed + 1)
+        } else {
+            format!(
+                "Loading metadata for '{archive_name}' ({}/{total})",
+                completed + 1
+            )
+        };
+        publish_import_progress(
+            pool,
+            ui_broadcast,
+            repo_id,
+            i32::try_from(completed).unwrap_or(i32::MAX),
+            total_i32,
+            Some(&loading_msg),
+        )
+        .await;
+
+        let archive = {
+            let borg_repo = Arc::clone(&borg_repo);
+            let env = Arc::clone(&env);
+            async move {
+                let archive = archive.clone();
+                if !archive_metadata_missing(&archive) {
+                    return Ok::<serde_json::Value, ApiError>(archive);
+                }
+
+                let archive_name = archive["name"].as_str().unwrap_or_default();
+                if archive_name.is_empty() {
+                    return Ok::<serde_json::Value, ApiError>(archive);
+                }
+
+                let metadata =
+                    fetch_archive_metadata_with_retry(&borg_repo, &env, archive_name, timeout)
+                        .await?;
+
+                let mut merged = archive;
+                for field in ["hostname", "end"] {
+                    if merged[field].is_null() || merged[field].as_str().is_some_and(str::is_empty)
+                    {
+                        merged[field] = metadata[field].clone();
+                    }
+                }
+                Ok::<serde_json::Value, ApiError>(merged)
+            }
+        }
+        .await?;
+
+        completed += 1;
+        let loaded_msg = if archive_name.is_empty() {
+            format!("Loading archive metadata... ({completed}/{total})")
+        } else {
+            format!("Loaded metadata for '{archive_name}' ({completed}/{total})")
+        };
+        publish_import_progress(
+            pool,
+            ui_broadcast,
+            repo_id,
+            i32::try_from(completed).unwrap_or(i32::MAX),
+            total_i32,
+            Some(&loaded_msg),
+        )
+        .await;
+        hydrated.push(archive);
+    }
+
+    Ok(hydrated)
+}
+
 async fn publish_import_progress(
     pool: &PgPool,
     ui_broadcast: &UiBroadcast,
@@ -1583,9 +1760,8 @@ pub async fn clear_import_progress_state(pool: &PgPool, ui_broadcast: &UiBroadca
 /// owning agent by hostname (creating an imported placeholder when unmatched).
 ///
 /// Shared by full and incremental sync so agent resolution lives in one place.
-/// `archives` are borg `list --json` entries (produced with `--format '{hostname}{end}'`
-/// so hostname is always present); progress is published per archive against
-/// `total = archives.len()`.
+/// Hostname and end time are expected to be present by the time this runs.
+/// Progress is published per archive against `total = archives.len()`.
 async fn build_import_reports(
     pool: &PgPool,
     ui_broadcast: &UiBroadcast,
@@ -1601,10 +1777,10 @@ async fn build_import_reports(
         if name.is_empty() {
             continue;
         }
-        let hostname = archive["hostname"]
-            .as_str()
-            .filter(|h| !h.is_empty())
-            .unwrap_or("unknown");
+        let Some(hostname) = archive_hostname(archive) else {
+            warn!(repo_id, archive = %name, "skipping archive with missing hostname metadata");
+            continue;
+        };
 
         let (agent_id, matched) = if let Some(&cached) = hostname_cache.get(hostname) {
             cached
@@ -1622,17 +1798,16 @@ async fn build_import_reports(
             entry
         };
 
-        let start = parse_borg_timestamp(archive["start"].as_str().unwrap_or_default());
-        let end = parse_borg_timestamp(archive["end"].as_str().unwrap_or_default());
-        let duration_secs = end
-            .zip(start)
-            .map_or(0, |(e, s)| e.signed_duration_since(s).num_seconds().max(0));
-
-        let Some(started_at) = start else {
+        let Some(started_at) = parse_borg_timestamp(archive["start"].as_str().unwrap_or_default())
+        else {
             warn!(repo_id, archive = %name, "skipping archive with unparseable start timestamp");
             continue;
         };
-        let finished_at = end.unwrap_or(started_at);
+        let finished_at = archive_finish_time(archive, started_at);
+        let duration_secs = finished_at
+            .signed_duration_since(started_at)
+            .num_seconds()
+            .max(0);
 
         let processed_count = i32::try_from(processed + 1).unwrap_or(i32::MAX);
         info!(repo_id, archive = %name, processed = processed_count, total, "archive imported");
@@ -1769,7 +1944,28 @@ async fn sync_archives(
     )
     .await;
 
-    let report_params = build_import_reports(pool, ui_broadcast, repo_id, &to_import).await?;
+    publish_import_progress(
+        pool,
+        ui_broadcast,
+        repo_id,
+        0,
+        i32::try_from(total).unwrap_or(i32::MAX),
+        Some("Loading archive metadata..."),
+    )
+    .await;
+    let hydrated_archives = hydrate_archives_with_metadata(
+        pool,
+        ui_broadcast,
+        repo_id,
+        &borg_repo,
+        &env,
+        timeout,
+        &to_import,
+    )
+    .await?;
+    let hydrated_refs: Vec<&serde_json::Value> = hydrated_archives.iter().collect();
+
+    let report_params = build_import_reports(pool, ui_broadcast, repo_id, &hydrated_refs).await?;
 
     let processed = u64::try_from(report_params.len()).unwrap_or(u64::MAX);
     let total_i32 = i32::try_from(total).unwrap_or(i32::MAX);
@@ -2492,6 +2688,21 @@ mod tests {
     fn parse_borg_timestamp_invalid_returns_none() {
         assert!(parse_borg_timestamp("not-a-date").is_none());
         assert!(parse_borg_timestamp("2024-13-01T00:00:00").is_none());
+    }
+
+    #[test]
+    fn borg_list_args_do_not_request_archive_metadata_format() {
+        let args = borg_list_args("ssh://borg@example.test/repo");
+        assert_eq!(
+            args,
+            [
+                "list",
+                "--json",
+                "--lock-wait",
+                LOCK_WAIT_SECS,
+                "ssh://borg@example.test/repo"
+            ]
+        );
     }
 
     #[test]

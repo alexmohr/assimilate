@@ -227,4 +227,56 @@ describe('DashboardView success ring', () => {
     // this would read 33% instead.
     expect(wrapper.text()).toContain('67%')
   })
+
+  it('hydrates active backups from running operations after reload', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({
+          data: {
+            summary: {
+              protected_hosts: 0,
+              eligible_hosts: 0,
+              needs_attention: 0,
+              running_operations: 1,
+              total_storage_bytes: 0,
+            },
+            findings: [],
+            protection: {
+              protected_hosts: 0,
+              eligible_hosts: 0,
+              protected_agent_links: [],
+              unassigned_agents: [],
+              never_succeeded_targets: 0,
+              never_succeeded_agents: [],
+              disabled_only_agents: [],
+            },
+            running_operations: [
+              {
+                report_id: 11,
+                status: 'running',
+                hostname: 'web-server-01',
+                schedule_id: 7,
+                schedule_name: 'daily-web',
+                repo_id: 3,
+                repo_name: 'server-daily',
+                started_at: '2026-06-01T10:00:00Z',
+                destination: { kind: 'schedule', schedule_id: 7 },
+              },
+            ],
+            upcoming_schedules: [],
+            repository_capacity: [],
+          },
+        })
+      }
+      return defaultApiHandler(url)
+    })
+
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Backups In Progress')
+    expect(wrapper.text()).toContain('web-server-01')
+    expect(wrapper.text()).toContain('server-daily')
+    expect(wrapper.text()).toContain('Active')
+  })
 })

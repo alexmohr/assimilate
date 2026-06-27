@@ -20,7 +20,7 @@ import NeedsAttention from '../components/NeedsAttention.vue'
 import ProtectionCoverage from '../components/ProtectionCoverage.vue'
 import UpcomingWork from '../components/UpcomingWork.vue'
 import RepositoryCapacity from '../components/RepositoryCapacity.vue'
-import type { DashboardOverview } from '../types/dashboard'
+import type { DashboardOperation, DashboardOverview } from '../types/dashboard'
 
 interface StorageRepoEntry {
   name: string
@@ -127,6 +127,21 @@ const DONUT_COLORS = [
 
 const successActivity = ref<ActivityEntry[]>([])
 
+function mergeActiveBackups(operations: DashboardOperation[]): void {
+  const existingByKey = new Map(
+    activeBackups.value.map((backup) => [`${backup.hostname}::${backup.target_name}`, backup]),
+  )
+  activeBackups.value = operations.map((operation) => {
+    const key = `${operation.hostname}::${operation.repo_name}`
+    const existing = existingByKey.get(key)
+    return {
+      hostname: operation.hostname,
+      target_name: operation.repo_name,
+      started_at: existing?.started_at ?? Date.parse(operation.started_at),
+    }
+  })
+}
+
 async function fetchSuccessActivity(): Promise<void> {
   const params = new URLSearchParams({ days: String(successDaysFilter.value) })
   if (successRepoFilter.value !== undefined) {
@@ -147,6 +162,7 @@ async function fetchAll(): Promise<void> {
     summary.value = s.data
     health.value = h.data
     overview.value = o.data
+    mergeActiveBackups(o.data.running_operations)
     repoOptions.value = r.data.map((repo) => ({ id: repo.id, name: repo.name }))
     storageBreakdown.value = s.data.storage_by_repo
     await fetchSuccessActivity()
@@ -704,6 +720,8 @@ async function fetchOverview(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  max-width: 1100px;
+  margin: 0 auto;
 }
 
 .stats-coverage-row {

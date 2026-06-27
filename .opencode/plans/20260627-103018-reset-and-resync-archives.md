@@ -1,3 +1,15 @@
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: 2026 The Contributors to Eclipse OpenSOVD (see CONTRIBUTORS)
+
+See the NOTICE file(s) distributed with this work for additional
+information regarding copyright ownership.
+
+This program and the accompanying materials are made available under the
+terms of the Apache License Version 2.0 which is available at
+https://www.apache.org/licenses/LICENSE-2.0
+-->
+
 # Reset & Re-import: Destroy metadata and full sync from disk
 
 ## Objective
@@ -41,6 +53,7 @@ Four background loops in `run()`:
 | `session_cleanup_task` | 3600s | Delete expired sessions |
 
 `run_repo_sync` (lines 111–315):
+
 - Queries repos with a `sync_schedule` cron expression
 - Skips repos currently importing (DB flag check)
 - Calculates next run time from `last_synced_at` + cron
@@ -60,7 +73,7 @@ Four background loops in `run()`:
 
 ### FK chain for deletions
 
-```
+```text
 repos(id) ON DELETE CASCADE
   ├── backup_reports.repo_id
   ├── archives.repo_id
@@ -80,9 +93,11 @@ repos(id) ON DELETE CASCADE
 
 - Add `repo_lock: &RepoLock` parameter to `run_repo_sync` function signature
 - Before calling `sync_existing_archives`, acquire the lock:
+
   ```rust
   let _repo_guard = repo_lock.acquire(repo_id).await;
   ```
+
 - Update the caller in `run()` to pass `&state.repo_lock`
 
 ### 2. Acquire `RepoLock` in `sync_repo` (API handler)
@@ -90,9 +105,11 @@ repos(id) ON DELETE CASCADE
 **File:** `crates/server/src/api/repos.rs`
 
 - In `sync_repo`, after the `importing` check and before `sync_existing_archives`:
+
   ```rust
   let _repo_guard = state.repo_lock.acquire(repo_id).await;
   ```
+
 - This ensures API-triggered full resync waits for any concurrent backup on the same repo.
 
 ### 3. Acquire `RepoLock` in initial import path
@@ -101,6 +118,7 @@ repos(id) ON DELETE CASCADE
 
 - At line 260, spawned task already has `state_repo_lock` captured (line 223).
 - Acquire the lock before `sync_existing_archives`:
+
   ```rust
   let _repo_guard = state_repo_lock.acquire(repo_id).await;
   ```
@@ -114,15 +132,18 @@ pub async fn delete_all_repo_archive_data(pool: &PgPool, repo_id: i64) -> Result
 ```
 
 Transaction body:
+
 1. Collect candidate `path_id`s from `archive_files` for the repo (same pattern as `delete_archive_records_by_names` lines 4412–4423)
 2. `DELETE FROM backup_reports WHERE repo_id = $1`
 3. `DELETE FROM archives WHERE repo_id = $1` (CASCADES to archive_files, archive_index_jobs, archive_tags)
 4. GC orphaned `archive_paths`:
+
    ```sql
    DELETE FROM archive_paths WHERE repo_id = $1
      AND NOT EXISTS (SELECT 1 FROM archive_files WHERE path_id = archive_paths.id)
      AND NOT EXISTS (SELECT 1 FROM archive_files WHERE parent_path_id = archive_paths.id)
    ```
+
 5. Return count of deleted backup_reports
 
 ### 5. Add DB function: `delete_orphaned_placeholder_agents`
@@ -164,6 +185,7 @@ pub async fn reset_and_sync_repo(
 ```
 
 Logic:
+
 1. Fetch repo and verify `!repo.importing` (return 409 if importing)
 2. Acquire `RepoLock`: `let _repo_guard = state.repo_lock.acquire(repo_id).await;`
 3. Set `importing = true`
@@ -182,6 +204,7 @@ Reuse `SyncQuery` and `SyncResponse` structs already defined near `sync_repo`.
 **File:** `crates/server/src/main.rs`
 
 After the existing sync route (line 309):
+
 ```rust
 .route("/api/repos/{repo_id}/reset-and-sync", post(api::repos::reset_and_sync_repo))
 ```
@@ -191,12 +214,14 @@ After the existing sync route (line 309):
 **File:** `frontend/src/views/RepoDetailView.vue`
 
 **a) State variables:**
+
 ```typescript
 const resetAndSyncLoading = ref(false)
 const showResetAndSyncDialog = ref(false)
 ```
 
 **b) Handler function** (following `syncRepo` pattern at line 940):
+
 ```typescript
 async function resetAndSync(): Promise<void> {
   showResetAndSyncDialog.value = false
@@ -214,6 +239,7 @@ async function resetAndSync(): Promise<void> {
 ```
 
 **c) Danger Zone entry** (Overview tab, after "Delete Repository" at line 1534):
+
 ```html
 <div class="danger-body">
   <div class="danger-info">
@@ -232,6 +258,7 @@ async function resetAndSync(): Promise<void> {
 ```
 
 **d) Simple confirmation dialog** (following the existing dialog pattern e.g. `showConfirmRelocationDialog`):
+
 - Title: "Reset & Re-import?"
 - Body: "This will permanently delete ALL archive metadata for this repository and re-import from borg. This operation cannot be undone. Are you sure?"
 - Two buttons: **Cancel** (closes dialog) and **Confirm Reset** (calls `resetAndSync()`)

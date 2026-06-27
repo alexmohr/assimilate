@@ -39,7 +39,7 @@ fn log_run_result(
 }
 
 /// Wraps a borg child process. On drop:
-/// 1. Sends SIGTERM (graceful shutdown — borg releases its lock)
+/// 1. Sends SIGTERM (graceful shutdown -- borg releases its lock)
 /// 2. Spawns a reaper thread that waits 30 s, then SIGKILL, then `borg break-lock`
 ///
 /// This replaces `kill_on_drop(true)` which sends immediate SIGKILL with no lock cleanup,

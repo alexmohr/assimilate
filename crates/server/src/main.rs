@@ -106,6 +106,7 @@ async fn main() -> Result<(), StartupError> {
         completion_bus: server::ws::completion_bus::CompletionBus::new(),
         repo_op_tracker: server::repo_op_tracker::RepoOpTracker::default(),
         repo_lock: server::RepoLock::default(),
+        import_tasks: server::ImportTaskRegistry::default(),
         pending_dryruns: std::sync::Arc::new(tokio::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),
@@ -129,6 +130,7 @@ async fn main() -> Result<(), StartupError> {
         let recovery_pool = state.pool.clone();
         let recovery_key = state.encryption_key;
         let recovery_broadcast = state.ui_broadcast.clone();
+        let recovery_state = state.clone();
         tokio::spawn(async move {
             let repo_ids = match db::list_importing_repo_ids(&recovery_pool).await {
                 Ok(ids) => ids,
@@ -139,22 +141,50 @@ async fn main() -> Result<(), StartupError> {
             };
             for repo_id in repo_ids {
                 tracing::info!(repo_id, "resuming interrupted import");
+                let state = recovery_state.clone();
                 let pool = recovery_pool.clone();
-                let key = recovery_key;
                 let broadcast = recovery_broadcast.clone();
                 tokio::spawn(async move {
-                    if let Err(e) =
-                        server::api::repos::sync_existing_archives(&pool, &key, repo_id, &broadcast)
+                    let key = recovery_key;
+                    let (task_id, cancel) = state.import_tasks.start(repo_id).await;
+
+                    server::api::repos::set_server_sync_op(&state, repo_id).await;
+                    tokio::select! {
+                        () = cancel.cancelled() => {
+                            tracing::info!(repo_id, "resumed import cancelled");
+                        }
+                        () = async {
+                            if let Err(e) = server::api::repos::sync_existing_archives(
+                                &pool,
+                                &key,
+                                repo_id,
+                                &broadcast,
+                            )
                             .await
-                    {
-                        tracing::warn!(repo_id, error = %e, "failed to resume import");
-                        let _ =
-                            db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await;
+                            {
+                                tracing::warn!(repo_id, error = %e, "failed to resume import");
+                                if state.import_tasks.is_current(repo_id, task_id).await {
+                                    let _ = db::set_repo_import_error(
+                                        &pool,
+                                        repo_id,
+                                        Some(&format!("{e}")),
+                                    )
+                                    .await;
+                                }
+                            }
+                            if state.import_tasks.is_current(repo_id, task_id).await {
+                                let _ = db::set_repo_importing(&pool, repo_id, false).await;
+                                server::api::repos::clear_import_progress_state(
+                                    &pool, &broadcast, repo_id,
+                                )
+                                .await;
+                                broadcast.send(shared::protocol::ServerToUi::DataChanged);
+                            }
+                        } => {}
                     }
-                    let _ = db::set_repo_importing(&pool, repo_id, false).await;
-                    server::api::repos::clear_import_progress_state(&pool, &broadcast, repo_id)
-                        .await;
-                    broadcast.send(shared::protocol::ServerToUi::DataChanged);
+
+                    state.import_tasks.finish(repo_id, task_id).await;
+                    server::api::repos::clear_server_sync_op(&state, repo_id).await;
                 });
             }
         });

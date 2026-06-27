@@ -4448,6 +4448,64 @@ pub async fn delete_archive_records_by_names(
     Ok(result.rows_affected())
 }
 
+pub async fn delete_all_repo_archive_data(pool: &PgPool, repo_id: i64) -> Result<u64, ApiError> {
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+
+    // Collect candidate path IDs before the cascade delete removes archive_files.
+    let candidate_ids: Vec<i64> = sqlx::query_scalar::<_, i64>(
+        "SELECT path_id FROM archive_files WHERE archive_id IN (SELECT id FROM archives WHERE \
+         repo_id = $1) UNION SELECT parent_path_id FROM archive_files WHERE archive_id IN (SELECT \
+         id FROM archives WHERE repo_id = $1)",
+    )
+    .bind(repo_id)
+    .bind(repo_id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+
+    // Delete all backup_reports for the repo.
+    let result = sqlx::query("DELETE FROM backup_reports WHERE repo_id = $1")
+        .bind(repo_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
+
+    // Deleting from archives cascades to archive_files, archive_index_jobs, and archive_tags.
+    sqlx::query("DELETE FROM archives WHERE repo_id = $1")
+        .bind(repo_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
+
+    // GC paths that are now orphaned, checking only the candidates from the deleted archives.
+    if !candidate_ids.is_empty() {
+        sqlx::query(
+            "DELETE FROM archive_paths WHERE repo_id = $1 AND id = ANY($2) AND NOT EXISTS (SELECT \
+             1 FROM archive_files WHERE path_id = archive_paths.id) AND NOT EXISTS (SELECT 1 FROM \
+             archive_files WHERE parent_path_id = archive_paths.id)",
+        )
+        .bind(repo_id)
+        .bind(&candidate_ids)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
+    }
+
+    tx.commit().await.map_err(ApiError::Database)?;
+    Ok(result.rows_affected())
+}
+
+pub async fn delete_orphaned_placeholder_agents(pool: &PgPool) -> Result<u64, ApiError> {
+    let result = sqlx::query(
+        "DELETE FROM agents WHERE agent_token_hash = 'imported:no-auth' AND NOT EXISTS (SELECT 1 \
+         FROM backup_reports WHERE agent_id = agents.id)",
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(result.rows_affected())
+}
+
 pub async fn get_storage_trends_by_repo(
     pool: &PgPool,
     days: i64,

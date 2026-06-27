@@ -79,6 +79,7 @@ pub async fn run(state: AppState) {
                 &sync_state.encryption_key,
                 &sync_state.ui_broadcast,
                 &sync_state.repo_op_tracker,
+                &sync_state.repo_lock,
             )
             .await;
         }
@@ -113,6 +114,7 @@ pub async fn run_repo_sync(
     encryption_key: &[u8; 32],
     ui_broadcast: &UiBroadcast,
     repo_op_tracker: &RepoOpTracker,
+    repo_lock: &RepoLock,
 ) {
     let repos = match db::list_all_repos(pool).await {
         Ok(r) => r,
@@ -192,9 +194,11 @@ pub async fn run_repo_sync(
         let task_key = *encryption_key;
         let task_broadcast = ui_broadcast.clone();
         let task_op_tracker = repo_op_tracker.clone();
+        let task_repo_lock = repo_lock.clone();
         let repo_id = repo.id;
         let repo_name = repo.name.clone();
         tokio::spawn(async move {
+            let _repo_guard = task_repo_lock.acquire(repo_id).await;
             let start = std::time::Instant::now();
             let sync_result =
                 sync_existing_archives(&task_pool, &task_key, repo_id, &task_broadcast).await;

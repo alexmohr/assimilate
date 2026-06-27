@@ -1675,7 +1675,7 @@ async fn hydrate_archives_with_metadata(
             pool,
             ui_broadcast,
             repo_id,
-            i32::try_from(completed).unwrap_or(i32::MAX),
+            i32::try_from(completed + 1).unwrap_or(i32::MAX),
             total_i32,
             Some(&loading_msg),
         )

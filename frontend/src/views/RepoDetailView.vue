@@ -439,6 +439,8 @@ onMessage<ImportProgressPayload>('ImportProgress', (payload) => {
     repo.value.import_status_message = payload.message
     if (payload.message !== null) {
       repo.value.importing = true
+    } else {
+      repo.value.importing = false
     }
   }
 })
@@ -960,8 +962,7 @@ async function resetAndSync(): Promise<void> {
   resetAndSyncLoading.value = true
   try {
     await apiClient.post(`/repos/${repoId.value}/reset-and-sync?build_index=true`)
-    toastSuccess('Archive metadata reset and re-import started.')
-    await loadArchives()
+    toastSuccess('Archive metadata reset and re-import started. Progress is shown via WebSocket.')
   } catch (e: unknown) {
     toastError(extractError(e))
   } finally {

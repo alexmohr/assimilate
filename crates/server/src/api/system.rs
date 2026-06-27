@@ -316,9 +316,9 @@ pub async fn get_version(_admin: RequireAdmin) -> Result<Json<VersionResponse>, 
 
     let git_sha = option_env!("GIT_SHA").unwrap_or_default();
     let server_version = if git_sha.is_empty() {
-        env!("CARGO_PKG_VERSION").to_owned()
+        env!("APP_VERSION").to_owned()
     } else {
-        format!("{}+{}", env!("CARGO_PKG_VERSION"), git_sha)
+        format!("{}+{}", env!("APP_VERSION"), git_sha)
     };
     let build_timestamp = option_env!("BUILD_TIMESTAMP").unwrap_or("unknown");
     let server_commit_count = option_env!("GIT_COMMIT_COUNT")

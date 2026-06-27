@@ -2464,7 +2464,7 @@ const SYNC_WARN_DURATION: Duration = Duration::from_secs(300);
         ("build_index" = bool, Query, description = "Also build archive indexes while syncing"),
     ),
     responses(
-        (status = 200, description = "Sync results", body = SyncResponse),
+        (status = 202, description = "Sync accepted, progress via WebSocket", body = SyncResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
         (status = 409, description = "Sync already in progress"),
@@ -2475,114 +2475,110 @@ pub async fn sync_repo(
     _admin: RequireAdmin,
     Query(query): Query<SyncQuery>,
     Path(repo_id): Path<i64>,
-) -> Result<Json<SyncResponse>, ApiError> {
+) -> Result<(StatusCode, Json<SyncResponse>), ApiError> {
     let repo = db::get_repo_with_stats(&state.pool, repo_id).await?;
     if repo.importing {
         return Err(ApiError::Conflict("sync already in progress".to_string()));
     }
 
-    let _sync_lock = state.repo_lock.acquire(repo_id).await;
+    // Set importing immediately so the scheduler and other callers know.
     db::set_repo_importing(&state.pool, repo_id, true).await?;
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::DataChanged);
 
-    let start = std::time::Instant::now();
-    let result = sync_existing_archives(
-        &state.pool,
-        &state.encryption_key,
-        repo_id,
-        &state.ui_broadcast,
-    )
-    .await;
-    let elapsed = start.elapsed();
+    let pool = state.pool.clone();
+    let encryption_key = state.encryption_key;
+    let ui_broadcast = state.ui_broadcast.clone();
+    let repo_lock = state.repo_lock.clone();
+    let build_index = query.build_index;
+    let repo_name = repo.name.clone();
 
-    db::update_repo_last_synced(&state.pool, repo_id).await?;
+    // Spawn the sync in a background task so client/proxy disconnects (e.g.
+    // nginx 504 after 60s) do not cancel the cleanup — the task owns the full
+    // lifecycle and always clears importing + broadcasts DataChanged.
+    tokio::spawn(async move {
+        let _sync_guard = repo_lock.acquire(repo_id).await;
+        let start = std::time::Instant::now();
 
-    let (imported, removed) = match result {
-        Ok(counts) => counts,
-        Err(e) => {
-            db::set_repo_importing(&state.pool, repo_id, false).await?;
-            clear_import_progress_state(&state.pool, &state.ui_broadcast, repo_id).await;
-            let msg = format!(
-                "repo sync failed for '{}' after {:.1}s: {e}",
-                repo.name,
-                elapsed.as_secs_f64()
-            );
-            error!("{msg}");
-            if let Err(log_err) =
-                db::insert_system_event(&state.pool, "repo_sync_failed", None, &msg).await
-            {
-                error!(error = %log_err, "failed to log sync event");
+        let result = sync_existing_archives(&pool, &encryption_key, repo_id, &ui_broadcast).await;
+        let elapsed = start.elapsed();
+
+        let (imported, removed) = match result {
+            Ok(counts) => {
+                let _ = db::update_repo_last_synced(&pool, repo_id).await;
+                counts
             }
-            return Err(e);
-        }
-    };
+            Err(e) => {
+                let msg = format!(
+                    "repo sync failed for '{}' after {:.1}s: {e}",
+                    repo_name,
+                    elapsed.as_secs_f64()
+                );
+                error!("{msg}");
+                let _ = db::insert_system_event(&pool, "repo_sync_failed", None, &msg).await;
+                let _ = db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await;
+                let _ = db::set_repo_importing(&pool, repo_id, false).await;
+                clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
+                ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
+                return;
+            }
+        };
 
-    let duration_secs = elapsed.as_secs();
-    let msg = format!(
-        "repo sync completed for '{}': imported {imported}, removed {removed} archives in \
-         {duration_secs}s",
-        repo.name
-    );
-
-    if elapsed > SYNC_WARN_DURATION {
-        error!(
-            repo_id,
-            duration_secs,
-            "repo sync exceeded {}s threshold",
-            SYNC_WARN_DURATION.as_secs()
+        let duration_secs = elapsed.as_secs();
+        let msg = format!(
+            "repo sync completed for '{}': imported {imported}, removed {removed} archives in \
+             {duration_secs}s",
+            repo_name
         );
-        let warn_msg = format!(
-            "repo sync for '{}' took {duration_secs}s (exceeds {}s threshold)",
-            repo.name,
-            SYNC_WARN_DURATION.as_secs()
-        );
-        if let Err(log_err) =
-            db::insert_system_event(&state.pool, "repo_sync_slow", None, &warn_msg).await
-        {
-            error!(error = %log_err, "failed to log slow sync event");
+
+        if elapsed > SYNC_WARN_DURATION {
+            error!(
+                repo_id,
+                duration_secs,
+                "repo sync exceeded {}s threshold",
+                SYNC_WARN_DURATION.as_secs()
+            );
+            let warn_msg = format!(
+                "repo sync for '{}' took {duration_secs}s (exceeds {}s threshold)",
+                repo_name,
+                SYNC_WARN_DURATION.as_secs()
+            );
+            let _ = db::insert_system_event(&pool, "repo_sync_slow", None, &warn_msg).await;
         }
-    }
 
-    info!("{msg}");
-    if let Err(log_err) = db::insert_system_event(&state.pool, "repo_sync", None, &msg).await {
-        error!(error = %log_err, "failed to log sync event");
-    }
+        info!("{msg}");
+        let _ = db::insert_system_event(&pool, "repo_sync", None, &msg).await;
 
-    if query.build_index {
-        // Index the archive contents in the background, keeping the repository
-        // flagged as importing so the UI shows live per-archive progress. The
-        // importing flag and progress state are cleared once indexing finishes.
-        let pool = state.pool.clone();
-        let key = state.encryption_key;
-        let ui_broadcast = state.ui_broadcast.clone();
-        let repo_lock = state.repo_lock.clone();
-        tokio::spawn(async move {
+        // Clear import error on success, then mark sync complete.
+        let _ = db::set_repo_import_error(&pool, repo_id, None).await;
+        let _ = db::set_repo_importing(&pool, repo_id, false).await;
+        clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
+        ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
+
+        if build_index {
             index_archives_with_progress(
                 pool.clone(),
-                key,
+                encryption_key,
                 repo_id,
                 ui_broadcast.clone(),
                 repo_lock,
             )
             .await;
-            if let Err(e) = db::set_repo_importing(&pool, repo_id, false).await {
-                error!(repo_id, error = %e, "failed to clear importing flag after indexing");
-            }
+            let _ = db::set_repo_importing(&pool, repo_id, false).await;
             clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
             ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
-        });
-    } else {
-        db::set_repo_importing(&state.pool, repo_id, false).await?;
-        clear_import_progress_state(&state.pool, &state.ui_broadcast, repo_id).await;
-        state
-            .ui_broadcast
-            .send(shared::protocol::ServerToUi::DataChanged);
-    }
+        }
+    });
 
-    Ok(Json(SyncResponse {
-        imported,
-        removed,
-        duration_secs,
-    }))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(SyncResponse {
+            imported: 0,
+            removed: 0,
+            duration_secs: 0,
+        }),
+    ))
 }
 
 #[utoipa::path(
@@ -2626,7 +2622,7 @@ pub async fn reset_import(
         ("build_index" = bool, Query, description = "Also build archive indexes while syncing"),
     ),
     responses(
-        (status = 200, description = "Sync results", body = SyncResponse),
+        (status = 202, description = "Reset accepted, progress via WebSocket", body = SyncResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
         (status = 409, description = "Sync already in progress"),
@@ -2637,128 +2633,124 @@ pub async fn reset_and_sync_repo(
     _admin: RequireAdmin,
     Query(query): Query<SyncQuery>,
     Path(repo_id): Path<i64>,
-) -> Result<Json<SyncResponse>, ApiError> {
+) -> Result<(StatusCode, Json<SyncResponse>), ApiError> {
     let repo = db::get_repo_with_stats(&state.pool, repo_id).await?;
     if repo.importing {
         return Err(ApiError::Conflict("sync already in progress".to_string()));
     }
 
-    let _reset_lock = state.repo_lock.acquire(repo_id).await;
+    // Set importing immediately so the scheduler and other callers know.
     db::set_repo_importing(&state.pool, repo_id, true).await?;
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::DataChanged);
 
-    let start = std::time::Instant::now();
+    let pool = state.pool.clone();
+    let encryption_key = state.encryption_key;
+    let ui_broadcast = state.ui_broadcast.clone();
+    let repo_lock = state.repo_lock.clone();
+    let build_index = query.build_index;
+    let repo_name = repo.name.clone();
 
-    // Delete all archive metadata for this repo.
-    if let Err(e) = db::delete_all_repo_archive_data(&state.pool, repo_id).await {
-        error!(repo_id, error = %e, "failed to delete archive data for reset-and-sync");
-        let _ = db::set_repo_importing(&state.pool, repo_id, false).await;
-        clear_import_progress_state(&state.pool, &state.ui_broadcast, repo_id).await;
-        state
-            .ui_broadcast
-            .send(shared::protocol::ServerToUi::DataChanged);
-        return Err(e);
-    }
+    // Spawn the reset + sync in a background task so client/proxy disconnects
+    // do not cancel the cleanup.
+    tokio::spawn(async move {
+        let _reset_guard = repo_lock.acquire(repo_id).await;
+        let start = std::time::Instant::now();
 
-    // Clean up orphaned placeholder agents that may have been left behind.
-    if let Err(e) = db::delete_orphaned_placeholder_agents(&state.pool).await {
-        warn!(repo_id, error = %e, "failed to clean up orphaned placeholder agents");
-    }
+        // Delete all archive metadata for this repo.
+        if let Err(e) = db::delete_all_repo_archive_data(&pool, repo_id).await {
+            error!(repo_id, error = %e, "failed to delete archive data for reset-and-sync");
+            let _ = db::set_repo_importing(&pool, repo_id, false).await;
+            let _ = db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await;
+            clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
+            ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
+            return;
+        }
 
-    let result = sync_existing_archives(
-        &state.pool,
-        &state.encryption_key,
-        repo_id,
-        &state.ui_broadcast,
-    )
-    .await;
-    let elapsed = start.elapsed();
+        // Clean up orphaned placeholder agents that may have been left behind.
+        if let Err(e) = db::delete_orphaned_placeholder_agents(&pool).await {
+            warn!(repo_id, error = %e, "failed to clean up orphaned placeholder agents");
+        }
 
-    db::update_repo_last_synced(&state.pool, repo_id).await?;
+        let result = sync_existing_archives(&pool, &encryption_key, repo_id, &ui_broadcast).await;
+        let elapsed = start.elapsed();
 
-    let (imported, removed) = match result {
-        Ok(counts) => counts,
-        Err(e) => {
-            db::set_repo_importing(&state.pool, repo_id, false).await?;
-            clear_import_progress_state(&state.pool, &state.ui_broadcast, repo_id).await;
-            let msg = format!(
-                "reset-and-sync failed for '{}' after {:.1}s: {e}",
-                repo.name,
-                elapsed.as_secs_f64()
-            );
-            error!("{msg}");
-            if let Err(log_err) =
-                db::insert_system_event(&state.pool, "repo_sync_failed", None, &msg).await
-            {
-                error!(error = %log_err, "failed to log sync event");
+        let (imported, removed) = match result {
+            Ok(counts) => {
+                let _ = db::update_repo_last_synced(&pool, repo_id).await;
+                counts
             }
-            return Err(e);
-        }
-    };
+            Err(e) => {
+                let msg = format!(
+                    "reset-and-sync failed for '{}' after {:.1}s: {e}",
+                    repo_name,
+                    elapsed.as_secs_f64()
+                );
+                error!("{msg}");
+                let _ = db::insert_system_event(&pool, "repo_sync_failed", None, &msg).await;
+                let _ = db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await;
+                let _ = db::set_repo_importing(&pool, repo_id, false).await;
+                clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
+                ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
+                return;
+            }
+        };
 
-    let duration_secs = elapsed.as_secs();
-    let msg = format!(
-        "reset-and-sync completed for '{}': imported {imported}, removed {removed} archives in \
-         {duration_secs}s",
-        repo.name
-    );
-
-    if elapsed > SYNC_WARN_DURATION {
-        error!(
-            repo_id,
-            duration_secs,
-            "reset-and-sync exceeded {}s threshold",
-            SYNC_WARN_DURATION.as_secs()
+        let duration_secs = elapsed.as_secs();
+        let msg = format!(
+            "reset-and-sync completed for '{}': imported {imported}, removed {removed} archives \
+             in {duration_secs}s",
+            repo_name
         );
-        let warn_msg = format!(
-            "reset-and-sync for '{}' took {duration_secs}s (exceeds {}s threshold)",
-            repo.name,
-            SYNC_WARN_DURATION.as_secs()
-        );
-        if let Err(log_err) =
-            db::insert_system_event(&state.pool, "repo_sync_slow", None, &warn_msg).await
-        {
-            error!(error = %log_err, "failed to log slow sync event");
+
+        if elapsed > SYNC_WARN_DURATION {
+            error!(
+                repo_id,
+                duration_secs,
+                "reset-and-sync exceeded {}s threshold",
+                SYNC_WARN_DURATION.as_secs()
+            );
+            let warn_msg = format!(
+                "reset-and-sync for '{}' took {duration_secs}s (exceeds {}s threshold)",
+                repo_name,
+                SYNC_WARN_DURATION.as_secs()
+            );
+            let _ = db::insert_system_event(&pool, "repo_sync_slow", None, &warn_msg).await;
         }
-    }
 
-    info!("{msg}");
-    if let Err(log_err) = db::insert_system_event(&state.pool, "repo_sync", None, &msg).await {
-        error!(error = %log_err, "failed to log sync event");
-    }
+        info!("{msg}");
+        let _ = db::insert_system_event(&pool, "repo_sync", None, &msg).await;
 
-    if query.build_index {
-        let pool = state.pool.clone();
-        let key = state.encryption_key;
-        let ui_broadcast = state.ui_broadcast.clone();
-        let repo_lock = state.repo_lock.clone();
-        tokio::spawn(async move {
+        // Clear import error on success, then mark sync complete.
+        let _ = db::set_repo_import_error(&pool, repo_id, None).await;
+        let _ = db::set_repo_importing(&pool, repo_id, false).await;
+        clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
+        ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
+
+        if build_index {
             index_archives_with_progress(
                 pool.clone(),
-                key,
+                encryption_key,
                 repo_id,
                 ui_broadcast.clone(),
                 repo_lock,
             )
             .await;
-            if let Err(e) = db::set_repo_importing(&pool, repo_id, false).await {
-                error!(repo_id, error = %e, "failed to clear importing flag after indexing");
-            }
+            let _ = db::set_repo_importing(&pool, repo_id, false).await;
             clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
             ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
-        });
-    } else {
-        db::set_repo_importing(&state.pool, repo_id, false).await?;
-        clear_import_progress_state(&state.pool, &state.ui_broadcast, repo_id).await;
-        state
-            .ui_broadcast
-            .send(shared::protocol::ServerToUi::DataChanged);
-    }
+        }
+    });
 
-    Ok(Json(SyncResponse {
-        imported,
-        removed,
-        duration_secs,
-    }))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(SyncResponse {
+            imported: 0,
+            removed: 0,
+            duration_secs: 0,
+        }),
+    ))
 }
 
 #[cfg(test)]

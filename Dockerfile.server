@@ -18,6 +18,8 @@ RUN pip install --no-cache-dir -r docs/requirements.txt && mkdocs build --strict
 
 # Stage 3: Build Rust server binary
 FROM rust:trixie AS rust-builder
+ARG SERVER_VERSION
+ENV APP_VERSION_OVERRIDE=$SERVER_VERSION
 WORKDIR /app
 RUN rustup default nightly
 

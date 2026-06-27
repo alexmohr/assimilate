@@ -281,6 +281,7 @@ pub async fn create_repo(
                 repo_id,
                 ui_broadcast.clone(),
                 state_repo_lock,
+                false,
             )
             .await;
         }
@@ -2254,6 +2255,7 @@ async fn index_archives_with_progress(
     repo_id: i64,
     ui_broadcast: UiBroadcast,
     repo_lock: RepoLock,
+    repo_lock_held: bool,
 ) {
     let all = match db::list_archive_names_for_repo(&pool, repo_id).await {
         Ok(names) => names,
@@ -2330,16 +2332,28 @@ async fn index_archives_with_progress(
             });
         };
 
-        if let Err(e) = archive_index::run_indexing(
-            &pool,
-            &encryption_key,
-            repo_id,
-            archive_name,
-            &repo_lock,
-            &mut on_progress,
-        )
-        .await
-        {
+        let result = if repo_lock_held {
+            archive_index::run_indexing_with_lock_held(
+                &pool,
+                &encryption_key,
+                repo_id,
+                archive_name,
+                &mut on_progress,
+            )
+            .await
+        } else {
+            archive_index::run_indexing(
+                &pool,
+                &encryption_key,
+                repo_id,
+                archive_name,
+                &repo_lock,
+                &mut on_progress,
+            )
+            .await
+        };
+
+        if let Err(e) = result {
             warn!(repo_id, archive = %archive_name, error = %e, "content indexing: archive failed");
         }
     }
@@ -2495,12 +2509,11 @@ pub async fn sync_repo(
     let repo_name = repo.name.clone();
 
     // Spawn the sync in a background task so client/proxy disconnects (e.g.
-    // nginx 504 after 60s) do not cancel the cleanup — the task owns the full
+    // nginx 504 after 60s) do not cancel the cleanup -- the task owns the full
     // lifecycle and always clears importing + broadcasts DataChanged.
     tokio::spawn(async move {
         let _sync_guard = repo_lock.acquire(repo_id).await;
         let start = std::time::Instant::now();
-
         let result = sync_existing_archives(&pool, &encryption_key, repo_id, &ui_broadcast).await;
         let elapsed = start.elapsed();
 
@@ -2550,12 +2563,7 @@ pub async fn sync_repo(
         info!("{msg}");
         let _ = db::insert_system_event(&pool, "repo_sync", None, &msg).await;
 
-        // Clear import error on success, then mark sync complete.
         let _ = db::set_repo_import_error(&pool, repo_id, None).await;
-        let _ = db::set_repo_importing(&pool, repo_id, false).await;
-        clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
-        ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
-
         if build_index {
             index_archives_with_progress(
                 pool.clone(),
@@ -2563,12 +2571,14 @@ pub async fn sync_repo(
                 repo_id,
                 ui_broadcast.clone(),
                 repo_lock,
+                true,
             )
             .await;
-            let _ = db::set_repo_importing(&pool, repo_id, false).await;
-            clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
-            ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
         }
+
+        let _ = db::set_repo_importing(&pool, repo_id, false).await;
+        clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
+        ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
     });
 
     Ok((
@@ -2657,7 +2667,6 @@ pub async fn reset_and_sync_repo(
     tokio::spawn(async move {
         let _reset_guard = repo_lock.acquire(repo_id).await;
         let start = std::time::Instant::now();
-
         // Delete all archive metadata for this repo.
         if let Err(e) = db::delete_all_repo_archive_data(&pool, repo_id).await {
             error!(repo_id, error = %e, "failed to delete archive data for reset-and-sync");
@@ -2722,12 +2731,7 @@ pub async fn reset_and_sync_repo(
         info!("{msg}");
         let _ = db::insert_system_event(&pool, "repo_sync", None, &msg).await;
 
-        // Clear import error on success, then mark sync complete.
         let _ = db::set_repo_import_error(&pool, repo_id, None).await;
-        let _ = db::set_repo_importing(&pool, repo_id, false).await;
-        clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
-        ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
-
         if build_index {
             index_archives_with_progress(
                 pool.clone(),
@@ -2735,12 +2739,14 @@ pub async fn reset_and_sync_repo(
                 repo_id,
                 ui_broadcast.clone(),
                 repo_lock,
+                true,
             )
             .await;
-            let _ = db::set_repo_importing(&pool, repo_id, false).await;
-            clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
-            ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
         }
+
+        let _ = db::set_repo_importing(&pool, repo_id, false).await;
+        clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
+        ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
     });
 
     Ok((

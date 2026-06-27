@@ -750,18 +750,22 @@ pub async fn list_contents(
         .spawn(&args, &env)
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
 
-    let Some(stdout) = child.stdout.take() else {
+    let Some(stdout) = child.take_stdout() else {
         return Err(ApiError::Internal("no stdout from borg".to_string()));
     };
 
     let mut lines = BufReader::new(stdout).lines();
     let mut raw_entries: Vec<ContentEntry> = Vec::new();
+    const LINE_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
-    while let Some(line) = lines
-        .next_line()
-        .await
-        .map_err(|e| ApiError::Internal(format!("reading borg output: {e}")))?
-    {
+    loop {
+        let line = tokio::time::timeout(LINE_READ_TIMEOUT, lines.next_line())
+            .await
+            .map_err(|_| ApiError::Internal("timed out reading borg output".to_string()))?
+            .map_err(|e| ApiError::Internal(format!("reading borg output: {e}")))?;
+
+        let Some(line) = line else { break };
+
         if line.is_empty() {
             continue;
         }
@@ -779,13 +783,13 @@ pub async fn list_contents(
         });
     }
 
-    let status = child
-        .wait()
+    let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
         .await
+        .map_err(|_| ApiError::Internal("borg wait timed out".to_string()))?
         .map_err(|e| ApiError::Internal(format!("borg wait failed: {e}")))?;
     if !status.success() {
         let mut stderr_str = String::new();
-        if let Some(mut se) = child.stderr.take() {
+        if let Some(mut se) = child.take_stderr() {
             let _ = se.read_to_string(&mut stderr_str).await;
         }
         let code = status.code().unwrap_or(1);
@@ -921,8 +925,7 @@ pub async fn extract_file(
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
 
     let stdout = child
-        .stdout
-        .take()
+        .take_stdout()
         .ok_or_else(|| ApiError::Internal("failed to capture borg stdout".to_string()))?;
 
     let basename = Path::new(&query.path)
@@ -944,9 +947,11 @@ pub async fn extract_file(
     let body = Body::from_stream(stream);
 
     // Kill the child only if the stream did not complete within the timeout.
+    // Dropping ServerChild sends SIGTERM first (graceful lock release), escalating
+    // to SIGKILL + break-lock after 30 seconds if the process does not exit.
     tokio::spawn(async move {
         if timed_out_before_done(done_rx, EXTRACT_TIMEOUT).await {
-            let _ = child.kill().await;
+            drop(child);
         }
     });
 

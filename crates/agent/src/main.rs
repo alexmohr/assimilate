@@ -18,7 +18,11 @@ use tracing_subscriber::EnvFilter;
 
 #[must_use]
 pub fn agent_version_string() -> &'static str {
-    concat!(env!("APP_VERSION"), "+", env!("GIT_SHA"))
+    if env!("GIT_SHA").is_empty() {
+        env!("APP_VERSION")
+    } else {
+        concat!(env!("APP_VERSION"), "+", env!("GIT_SHA"))
+    }
 }
 
 #[derive(Parser)]

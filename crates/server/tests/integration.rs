@@ -2186,8 +2186,16 @@ async fn test_scheduler_dispatches_repo_syncs_concurrently() {
     let ui_broadcast = server::ws::ui_broadcast::UiBroadcast::new();
     let repo_op_tracker = server::repo_op_tracker::RepoOpTracker::default();
 
+    let repo_lock = server::RepoLock::default();
     let started = std::time::Instant::now();
-    server::scheduler::run_repo_sync(&pool, &encryption_key, &ui_broadcast, &repo_op_tracker).await;
+    server::scheduler::run_repo_sync(
+        &pool,
+        &encryption_key,
+        &ui_broadcast,
+        &repo_op_tracker,
+        &repo_lock,
+    )
+    .await;
     let dispatch_elapsed = started.elapsed();
 
     // Sequential (buggy): run_repo_sync blocks for >= BORG_DELAY_SECS per repo.

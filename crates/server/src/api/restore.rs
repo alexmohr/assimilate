@@ -87,8 +87,7 @@ pub async fn download_files(
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
 
     let borg_stdout = child
-        .stdout
-        .take()
+        .take_stdout()
         .ok_or_else(|| ApiError::Internal("failed to capture borg stdout".to_string()))?;
 
     let (reader, writer) = tokio::io::duplex(64 * 1024);
@@ -96,10 +95,11 @@ pub async fn download_files(
     tokio::spawn(async move {
         let mut stdout = borg_stdout;
         let mut buf = Vec::new();
-        let read_result = stdout.read_to_end(&mut buf).await;
-        let _r = child.wait().await;
+        let read_result =
+            tokio::time::timeout(Duration::from_secs(300), stdout.read_to_end(&mut buf)).await;
+        let _r = tokio::time::timeout(Duration::from_secs(30), child.wait()).await;
 
-        if read_result.is_ok() {
+        if matches!(read_result, Ok(Ok(_))) {
             let bridge = SyncIoBridge::new(writer);
             tokio::task::spawn_blocking(move || {
                 let mut encoder = FrameEncoder::new(bridge);

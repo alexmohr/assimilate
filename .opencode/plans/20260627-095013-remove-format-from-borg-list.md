@@ -1,3 +1,15 @@
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: 2026 The Contributors to Eclipse OpenSOVD (see CONTRIBUTORS)
+
+See the NOTICE file(s) distributed with this work for additional
+information regarding copyright ownership.
+
+This program and the accompanying materials are made available under the
+terms of the Apache License Version 2.0 which is available at
+https://www.apache.org/licenses/LICENSE-2.0
+-->
+
 # Plan: Remove `--format` from `borg list` in full resync to fix hang with many archives
 
 ## Objective
@@ -7,15 +19,19 @@ Fix the full-resync "Listing archives…" hang by removing the redundant `--form
 ## Codebase context
 
 - **`crates/server/src/api/repos.rs`** — `run_borg_list_with_retry()` (line 1404) runs:
-  ```
+
+  ```bash
   borg list --json --format '{hostname}{end}' --lock-wait 60 <repo>
   ```
+
   This command is used by `sync_archives()` during full resync to enumerate all archives in the repository. The `--format` flag was added to ensure `hostname` and `end` fields are present in the JSON output (line 1413-1414).
 
 - **`crates/server/src/api/search.rs`** — `list_archives_sorted()` (line 285) runs the same command **without `--format`**:
-  ```
+
+  ```bash
   borg list --json --lock-wait 60 <repo>
   ```
+
   This works fine — no hang, instant with 142+ archives.
 
 - **`build_import_reports()`** (repos.rs:1589) consumes the JSON and accesses fields `name`, `hostname`, `start`, `end` from each archive entry. These fields are already included in borg's default `--json` output in all widely-used borg versions (1.1+, 1.2+, 2.x).

@@ -301,6 +301,26 @@ test('import-progress bar appears when archive count is known', async ({ page })
   await expect(progressBar).not.toBeVisible({ timeout: 120_000 })
 })
 
+test('import badge count starts at 1 not 0', async ({ page }) => {
+  await loginAsAdmin(page)
+  await navigateToRepo(page, 'server-daily')
+
+  const resyncBtn = page.getByRole('button', { name: /full resync/i })
+  await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
+  await resyncBtn.click()
+
+  // Wait for the badge to show a numeric count (import_total > 0)
+  const statusBadge = page.locator('.repo-status-badge')
+  await expect(statusBadge).toHaveText(/importing/i, { timeout: 30_000 })
+
+  // The progress must start at 1/N, not 0/N — assert the count before the
+  // slash begins with a non-zero digit
+  await expect(statusBadge).toHaveText(/[1-9]\d*\/\d+/, { timeout: 60_000 })
+
+  // Wait for completion
+  await expect(statusBadge).toHaveText(/enabled/i, { timeout: 120_000 })
+})
+
 test('status badge shows Enabled and no importing elements after resync completes', async ({
   page,
 }) => {

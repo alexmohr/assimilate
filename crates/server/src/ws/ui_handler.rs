@@ -61,6 +61,33 @@ async fn handle_ui_socket(socket: WebSocket, state: AppState) {
         }
     }
 
+    for snap in state.ui_broadcast.current_active_backups() {
+        let started = shared::protocol::ServerToUi::BackupStarted {
+            hostname: snap.hostname.clone(),
+            target_name: snap.target_name.clone(),
+            archive_name: snap.archive_name.clone(),
+            schedule_id: snap.schedule_id,
+        };
+        if let Ok(json) = serde_json::to_string(&started)
+            && sink.send(Message::Text(json.into())).await.is_err()
+        {
+            return;
+        }
+        if let Some(line) = snap.progress_line {
+            let progress = shared::protocol::ServerToUi::BackupLog {
+                hostname: snap.hostname,
+                schedule_id: snap.schedule_id,
+                repo_id: snap.repo_id,
+                line,
+            };
+            if let Ok(json) = serde_json::to_string(&progress)
+                && sink.send(Message::Text(json.into())).await.is_err()
+            {
+                return;
+            }
+        }
+    }
+
     let recv_task = async {
         while let Some(Ok(msg)) = stream.next().await {
             if matches!(msg, Message::Close(_)) {

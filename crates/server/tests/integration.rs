@@ -431,6 +431,27 @@ async fn wait_for_archive_index(
     .unwrap()
 }
 
+/// Poll the `importing` flag until the background sync/reset task finishes.
+async fn wait_for_import_completion(pool: &PgPool, repo_id: i64) {
+    use tokio::time::{Duration, timeout};
+
+    timeout(Duration::from_secs(30), async move {
+        loop {
+            let importing: bool = sqlx::query_scalar("SELECT importing FROM repos WHERE id = $1")
+                .bind(repo_id)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            if !importing {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("import did not complete within 30 seconds");
+}
+
 async fn clean_tables(pool: &PgPool) {
     sqlx::query("DELETE FROM backup_reports")
         .execute(pool)
@@ -804,9 +825,9 @@ async fn test_list_archives_deduplicates_archive_names() {
 #[tokio::test]
 #[ignore]
 async fn test_sync_repo_unreachable_returns_error_and_clears_importing() {
-    // sync_repo runs synchronously. The test repo points at an unreachable host
-    // ("storage.local"), so the borg list fails and the endpoint returns an
-    // error -- but the importing flag must be cleared again before it returns.
+    // sync_repo now accepts the sync request immediately (202) and runs the
+    // actual sync in a background task. The test verifies that the background
+    // task clears importing and stores the error message.
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
@@ -816,20 +837,25 @@ async fn test_sync_repo_unreachable_returns_error_and_clears_importing() {
 
     let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
     let resp = oneshot(&mut app, req).await;
-    assert!(
-        resp.status().is_server_error(),
-        "expected a server error for an unreachable repo, got {}",
+    assert_eq!(
+        resp.status(),
+        StatusCode::ACCEPTED,
+        "sync should be accepted immediately, got {}",
         resp.status()
     );
 
-    let importing: bool = sqlx::query_scalar("SELECT importing FROM repos WHERE id = $1")
-        .bind(repo_id)
-        .fetch_one(&pool)
+    wait_for_import_completion(&pool, repo_id).await;
+
+    let stats = server::db::get_repo_with_stats(&pool, repo_id)
         .await
         .unwrap();
     assert!(
-        !importing,
-        "importing should be cleared after the synchronous sync returns"
+        !stats.importing,
+        "importing should be cleared after sync fails"
+    );
+    assert!(
+        stats.import_error.is_some(),
+        "import_error should be set after sync fails"
     );
 }
 
@@ -854,25 +880,33 @@ async fn test_sync_repo_times_out_on_hanging_borg_and_clears_importing() {
     let resp = oneshot(&mut app, req).await;
     let elapsed = started.elapsed();
 
-    // SAFETY: serialised by borg_binary_lock.
-    unsafe { std::env::remove_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS") };
-
-    assert!(
-        resp.status().is_server_error(),
-        "a hanging borg list should fail the sync, got {}",
+    assert_eq!(
+        resp.status(),
+        StatusCode::ACCEPTED,
+        "sync should be accepted immediately, got {}",
         resp.status()
     );
     assert!(
-        elapsed < std::time::Duration::from_secs(20),
-        "sync should time out quickly, took {elapsed:?}"
+        elapsed < std::time::Duration::from_secs(5),
+        "sync should return quickly, took {elapsed:?}"
     );
 
-    let importing: bool = sqlx::query_scalar("SELECT importing FROM repos WHERE id = $1")
-        .bind(repo_id)
-        .fetch_one(&pool)
+    wait_for_import_completion(&pool, repo_id).await;
+
+    // SAFETY: env var must remain set until the background task finishes.
+    unsafe { std::env::remove_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS") };
+
+    let stats = server::db::get_repo_with_stats(&pool, repo_id)
         .await
         .unwrap();
-    assert!(!importing, "importing must be cleared after a timeout");
+    assert!(
+        !stats.importing,
+        "importing must be cleared after a timeout"
+    );
+    assert!(
+        stats.import_error.is_some(),
+        "import_error should be set after a timeout"
+    );
 }
 
 #[tokio::test]
@@ -1234,10 +1268,9 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
         None,
     );
     let resp = oneshot(&mut app, req).await;
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body = body_json(resp).await;
-    assert_eq!(body["imported"], 1);
-    assert_eq!(body["removed"], 1);
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    wait_for_import_completion(&pool, repo_id).await;
 
     let (status, file_count) = wait_for_archive_index(&pool, repo_id, "sync-archive-1").await;
     assert_eq!(status, "done");
@@ -2122,19 +2155,22 @@ async fn test_sync_empty_repo_does_not_hang_when_borg_info_hangs() {
         .await
         .expect("sync must complete within 15 s even when borg info hangs");
 
-    // SAFETY: serialised by borg_binary_lock.
-    unsafe { std::env::remove_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS") };
-
     let elapsed = started.elapsed();
     assert!(
-        elapsed < std::time::Duration::from_secs(10),
+        elapsed < std::time::Duration::from_secs(5),
         "sync should return quickly once borg info times out, took {elapsed:?}"
     );
     assert_eq!(
         resp.status(),
-        StatusCode::OK,
-        "empty-repo sync should succeed even when borg info is slow"
+        StatusCode::ACCEPTED,
+        "sync should be accepted immediately, got {}",
+        resp.status()
     );
+
+    wait_for_import_completion(&pool, repo_id).await;
+
+    // SAFETY: env var must remain set until the background task finishes.
+    unsafe { std::env::remove_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS") };
 
     let importing: bool = sqlx::query_scalar("SELECT importing FROM repos WHERE id = $1")
         .bind(repo_id)
@@ -2278,10 +2314,18 @@ async fn test_sync_fetches_missing_hostname_via_borg_info() {
 
     let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
     let resp = oneshot(&mut app, req).await;
-    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
 
-    let body = body_json(resp).await;
-    assert_eq!(body["imported"], 1, "archive should have been imported");
+    wait_for_import_completion(&pool, repo_id).await;
+
+    let imported_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM backup_reports WHERE repo_id = $1 AND archive_name IS NOT NULL",
+    )
+    .bind(repo_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(imported_count, 1, "archive should have been imported");
 
     let unknown_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM agents WHERE hostname = 'unknown'")
@@ -2340,8 +2384,19 @@ async fn test_sync_returns_error_on_malformed_borg_list_json() {
     let resp = oneshot(&mut app, req).await;
     assert_eq!(
         resp.status(),
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "malformed borg list JSON should propagate as a server error, not silently prune records"
+        StatusCode::ACCEPTED,
+        "sync should be accepted immediately, got {}",
+        resp.status()
+    );
+
+    wait_for_import_completion(&pool, repo_id).await;
+
+    let stats = server::db::get_repo_with_stats(&pool, repo_id)
+        .await
+        .unwrap();
+    assert!(
+        stats.import_error.is_some(),
+        "import_error should be set after malformed JSON sync fails"
     );
 }
 
@@ -2377,7 +2432,18 @@ async fn test_sync_returns_error_when_borg_list_json_has_no_archives_key() {
     let resp = oneshot(&mut app, req).await;
     assert_eq!(
         resp.status(),
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "borg list JSON missing 'archives' key should propagate as a server error"
+        StatusCode::ACCEPTED,
+        "sync should be accepted immediately, got {}",
+        resp.status()
+    );
+
+    wait_for_import_completion(&pool, repo_id).await;
+
+    let stats = server::db::get_repo_with_stats(&pool, repo_id)
+        .await
+        .unwrap();
+    assert!(
+        stats.import_error.is_some(),
+        "import_error should be set after no-archives-key sync fails"
     );
 }

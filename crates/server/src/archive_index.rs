@@ -219,6 +219,45 @@ pub async fn run_indexing<F: FnMut(u64, Option<&str>)>(
     // indexing, deletes, syncs and backups never contend for the repository lock.
     let _repo_guard = repo_lock.acquire(repo_id).await;
 
+    run_indexing_impl(
+        pool,
+        encryption_key,
+        repo_id,
+        archive_id,
+        archive_name,
+        on_progress,
+    )
+    .await
+}
+
+pub async fn run_indexing_with_lock_held<F: FnMut(u64, Option<&str>)>(
+    pool: &PgPool,
+    encryption_key: &[u8; 32],
+    repo_id: i64,
+    archive_name: &str,
+    on_progress: &mut F,
+) -> Result<(), ApiError> {
+    let archive_id = get_or_create_archive_id(pool, repo_id, archive_name).await?;
+
+    run_indexing_impl(
+        pool,
+        encryption_key,
+        repo_id,
+        archive_id,
+        archive_name,
+        on_progress,
+    )
+    .await
+}
+
+async fn run_indexing_impl<F: FnMut(u64, Option<&str>)>(
+    pool: &PgPool,
+    encryption_key: &[u8; 32],
+    repo_id: i64,
+    archive_id: i64,
+    archive_name: &str,
+    on_progress: &mut F,
+) -> Result<(), ApiError> {
     sqlx::query(
         "UPDATE archive_index_jobs SET status = 'indexing', started_at = NOW() WHERE archive_id = \
          $1",

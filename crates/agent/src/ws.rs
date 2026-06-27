@@ -62,7 +62,7 @@ async fn connect_and_run(
     let hostname = std::env::var("BORG_HOSTNAME")
         .unwrap_or_else(|_| gethostname::gethostname().to_string_lossy().into_owned());
 
-    let version = env!("CARGO_PKG_VERSION");
+    let version = env!("APP_VERSION");
     let git_sha = env!("GIT_SHA");
     let build_timestamp = env!("BUILD_TIMESTAMP");
     let commit_count_str = env!("GIT_COMMIT_COUNT");

@@ -308,6 +308,10 @@ async fn main() -> Result<(), StartupError> {
         .route("/api/repos/{repo_id}/rescan", post(api::repos::rescan_repo))
         .route("/api/repos/{repo_id}/sync", post(api::repos::sync_repo))
         .route(
+            "/api/repos/{repo_id}/reset-and-sync",
+            post(api::repos::reset_and_sync_repo),
+        )
+        .route(
             "/api/repos/{repo_id}/reset-import",
             post(api::repos::reset_import),
         )

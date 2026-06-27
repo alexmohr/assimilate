@@ -125,8 +125,7 @@ pub async fn import_key(
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
 
     let mut stdin = child
-        .stdin
-        .take()
+        .take_stdin()
         .ok_or_else(|| ApiError::Internal("failed to capture borg stdin".to_string()))?;
 
     stdin

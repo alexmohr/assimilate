@@ -290,11 +290,30 @@ jobs:
             runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compute agent version
+        id: version
+        run: |
+          FULL_VERSION=$(grep '^version = ' crates/agent/Cargo.toml | sed 's/.*"\(.*\)"/\1/')
+          MAJOR=$(printf '%s' "$FULL_VERSION" | cut -d. -f1)
+          MINOR=$(printf '%s' "$FULL_VERSION" | cut -d. -f2)
+          VERSION_COMMIT=$(git log -1 --pretty=format:"%H" -S "version = \"${FULL_VERSION}\"" -- crates/agent/Cargo.toml HEAD)
+
+          if [ -n "$VERSION_COMMIT" ]; then
+            PATCH=$(git rev-list --count "${VERSION_COMMIT}..HEAD" -- crates/agent/ crates/shared/ crates/agent/Cargo.toml)
+          else
+            PATCH=$(git rev-list --count HEAD -- crates/agent/ crates/shared/ crates/agent/Cargo.toml)
+          fi
+
+          echo "version=${MAJOR}.${MINOR}.${PATCH}" >> "$GITHUB_OUTPUT"
       - name: Install Rust nightly
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: nightly
       - name: Build agent
+        env:
+          APP_VERSION_OVERRIDE: ${{ steps.version.outputs.version }}
         run: cargo +nightly build --release -p agent
       - name: Upload agent binary
         uses: actions/upload-artifact@v4
@@ -310,6 +329,8 @@ jobs:
       ASSIMILATE_SECRET_KEY: ci_test_key_not_real
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Download agent-x86_64
         uses: actions/download-artifact@v4
         with:
@@ -379,6 +400,8 @@ jobs:
             platform: linux/arm64
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Download agent-x86_64
         if: matrix.dockerfile == 'Dockerfile.server'
         uses: actions/download-artifact@v4

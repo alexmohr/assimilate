@@ -3,6 +3,9 @@
 
 import { defineConfig, devices } from '@playwright/test'
 
+const usePreviewServer = process.env.PLAYWRIGHT_WEB_SERVER === 'preview'
+const baseURL = process.env.E2E_BASE_URL || 'http://localhost:8080'
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
@@ -12,7 +15,7 @@ export default defineConfig({
   reporter: 'html',
   timeout: process.env.CI ? 300_000 : 60_000,
   use: {
-    baseURL: process.env.E2E_BASE_URL || 'http://localhost:4173',
+    baseURL,
     trace: 'on-first-retry',
     navigationTimeout: process.env.CI ? 120_000 : 30_000,
   },
@@ -22,11 +25,12 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-  webServer: process.env.CI
-    ? undefined
-    : {
-        command: 'npm run preview',
-        url: 'http://localhost:4173',
-        reuseExistingServer: !process.env.CI,
-      },
+  webServer:
+    process.env.CI || !usePreviewServer
+      ? undefined
+      : {
+          command: 'npm run preview',
+          url: 'http://localhost:4173',
+          reuseExistingServer: !process.env.CI,
+        },
 })

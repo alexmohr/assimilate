@@ -157,6 +157,48 @@ test('Cancel Import button appears when repo is in importing state', async ({ pa
   await expect(resyncBtn).toBeVisible({ timeout: 120_000 })
 })
 
+test('Cancel Import cancels a live resync under borg lock contention', async ({ page }) => {
+  test.setTimeout(180_000)
+
+  await loginAsAdmin(page)
+
+  const container = demoContainer()
+  const lockFile = '/backup/repos/server-daily/lock.exclusive'
+
+  const reposRes = await page.request.get('/api/repos')
+  const repos = (await reposRes.json()) as Array<{ id: number; name: string }>
+  const repo = repos.find((r) => r.name === 'server-daily')
+  if (!repo) throw new Error('server-daily repo not found')
+
+  dockerExec(container, `touch ${lockFile}`)
+
+  try {
+    await page.goto(`/repos/${repo.id}`)
+
+    const resyncBtn = page.getByRole('button', { name: /full resync/i })
+    await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
+    await resyncBtn.click()
+
+    const cancelBtn = page.getByRole('button', { name: /cancel import/i })
+    await expect(cancelBtn).toBeVisible({ timeout: 30_000 })
+    await expect(page.locator('.repo-status-badge')).toHaveText(/importing/i, { timeout: 30_000 })
+
+    await cancelBtn.click()
+
+    await expect(page.getByText('Import state reset.')).toBeVisible({ timeout: 30_000 })
+    await expect(resyncBtn).toBeVisible({ timeout: 30_000 })
+    await expect(page.locator('.import-status-msg')).not.toBeVisible()
+    await expect(page.locator('.repo-status-badge')).toHaveText(/enabled/i, { timeout: 30_000 })
+
+    const logsRes = await page.request.get('/api/logs?limit=200&search=repo%20sync%20cancelled')
+    expect(logsRes.ok()).toBeTruthy()
+    const logs = (await logsRes.json()) as Array<{ message: string }>
+    expect(logs.some((entry) => entry.message.includes('repo sync cancelled'))).toBeTruthy()
+  } finally {
+    dockerExec(container, `rm -f ${lockFile}`)
+  }
+})
+
 // ── Full resync ──────────────────────────────────────────────────────────────
 
 test('full resync completes and preserves archives', async ({ page }) => {
@@ -168,10 +210,9 @@ test('full resync completes and preserves archives', async ({ page }) => {
   await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
   await resyncBtn.click()
 
-  // Button immediately switches to "Syncing..." while the request is in flight
-  await expect(page.getByRole('button', { name: /syncing/i })).toBeVisible({ timeout: 30_000 })
-
-  // Sync is synchronous server-side; toast fires when it resolves
+  // The request resolves quickly on CI, so the transient "Syncing..." label is
+  // not a stable contract. Assert the accepted action via toast and the final
+  // steady-state button label instead.
   await expect(page.getByText('Full resync started.')).toBeVisible({ timeout: 120_000 })
 
   // Button must return to its resting state

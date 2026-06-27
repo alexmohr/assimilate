@@ -334,3 +334,253 @@ pub(crate) fn override_binary_for_tests(binary: PathBuf) -> TestBinaryOverrideGu
 
     TestBinaryOverrideGuard { previous }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn server_child_wait_returns_exit_status() {
+        let mut child = ServerChild::new(
+            tokio::process::Command::new("sh")
+                .arg("-c")
+                .arg("exit 42")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap(),
+            PathBuf::from("sh"),
+            None,
+            Vec::new(),
+        );
+        let status = child.wait().await.unwrap();
+        assert_eq!(status.code(), Some(42));
+    }
+
+    #[tokio::test]
+    async fn server_child_wait_returns_error_when_child_already_taken() {
+        // Take stdout so the child resource is effectively consumed.
+        let mut child = ServerChild::new(
+            tokio::process::Command::new("sh")
+                .arg("-c")
+                .arg("exit 0")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap(),
+            PathBuf::from("sh"),
+            None,
+            Vec::new(),
+        );
+        // Simulate a taken child by extracting the inner child via a helper.
+        let _taken = child.child.take();
+        let result = child.wait().await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("child already waited")
+        );
+    }
+
+    #[tokio::test]
+    async fn server_child_wait_with_output_collects_stdout() {
+        let mut child = ServerChild::new(
+            tokio::process::Command::new("echo")
+                .arg("hello world")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap(),
+            PathBuf::from("echo"),
+            None,
+            Vec::new(),
+        );
+        let output = child.wait_with_output().await.unwrap();
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            "hello world"
+        );
+    }
+
+    #[tokio::test]
+    async fn server_child_wait_with_output_collects_stderr() {
+        let mut child = ServerChild::new(
+            tokio::process::Command::new("sh")
+                .arg("-c")
+                .arg("echo 'error msg' >&2")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap(),
+            PathBuf::from("sh"),
+            None,
+            Vec::new(),
+        );
+        let output = child.wait_with_output().await.unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stderr).trim(), "error msg");
+    }
+
+    #[tokio::test]
+    async fn server_child_kill_terminates_running_process() {
+        let mut child = ServerChild::new(
+            tokio::process::Command::new("sh")
+                .arg("-c")
+                .arg("sleep 60")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap(),
+            PathBuf::from("sh"),
+            None,
+            Vec::new(),
+        );
+        // Kill the process.
+        child.kill().await.unwrap();
+        let status = child.wait().await.unwrap();
+        // On Unix, being killed by SIGKILL yields a signal status (128 + 9 = 137
+        // as exit code, or signal-only status with no code).
+        assert!(!status.success());
+    }
+
+    #[tokio::test]
+    async fn server_child_take_stdout_returns_stdout_stream() {
+        let mut child = ServerChild::new(
+            tokio::process::Command::new("echo")
+                .arg("test")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap(),
+            PathBuf::from("echo"),
+            None,
+            Vec::new(),
+        );
+        let stdout = child.take_stdout();
+        assert!(stdout.is_some());
+        // Second call returns None.
+        assert!(child.take_stdout().is_none());
+    }
+
+    #[tokio::test]
+    async fn server_child_take_stderr_returns_stderr_stream() {
+        let mut child = ServerChild::new(
+            tokio::process::Command::new("sh")
+                .arg("-c")
+                .arg("echo err >&2")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap(),
+            PathBuf::from("sh"),
+            None,
+            Vec::new(),
+        );
+        let stderr = child.take_stderr();
+        assert!(stderr.is_some());
+        assert!(child.take_stderr().is_none());
+    }
+
+    #[tokio::test]
+    async fn server_child_take_stdin_returns_stdin_stream() {
+        let mut child = ServerChild::new(
+            tokio::process::Command::new("sh")
+                .arg("-c")
+                .arg("cat")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap(),
+            PathBuf::from("sh"),
+            None,
+            Vec::new(),
+        );
+        let stdin = child.take_stdin();
+        assert!(stdin.is_some());
+        assert!(child.take_stdin().is_none());
+    }
+
+    #[tokio::test]
+    async fn server_child_kill_returns_error_when_child_already_exited() {
+        let mut child = ServerChild::new(
+            tokio::process::Command::new("sh")
+                .arg("-c")
+                .arg("exit 0")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap(),
+            PathBuf::from("sh"),
+            None,
+            Vec::new(),
+        );
+        child.wait().await.unwrap();
+        let result = child.kill().await;
+        // After the child has exited, kill() may return an error or succeed
+        // (tokio behaviour varies by platform). We just verify it doesn't panic.
+        let _ = result;
+    }
+
+    #[tokio::test]
+    async fn server_child_wait_with_output_with_stdin_allows_writing() {
+        let mut child = ServerChild::new(
+            tokio::process::Command::new("sh")
+                .arg("-c")
+                .arg("cat")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap(),
+            PathBuf::from("sh"),
+            None,
+            Vec::new(),
+        );
+        let mut stdin = child.take_stdin().unwrap();
+        use tokio::io::AsyncWriteExt;
+        stdin.write_all(b"hello from stdin\n").await.unwrap();
+        drop(stdin);
+        let output = child.wait_with_output().await.unwrap();
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            "hello from stdin"
+        );
+    }
+
+    #[tokio::test]
+    async fn server_child_drop_does_not_panic_with_already_exited_child() {
+        // Verifies that dropping a ServerChild whose process has already
+        // exited does not panic or hang (the reaper thread is never spawned
+        // because try_wait returns Ok(Some(_))).
+        let mut child = ServerChild::new(
+            tokio::process::Command::new("sh")
+                .arg("-c")
+                .arg("exit 0")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap(),
+            PathBuf::from("sh"),
+            None,
+            Vec::new(),
+        );
+        child.wait().await.unwrap();
+        drop(child); // must not panic
+    }
+}

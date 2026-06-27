@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
 use serde::Serialize;
 use sqlx::PgPool;
@@ -287,7 +290,7 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
         )
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
 
-    let Some(stdout) = child.stdout.take() else {
+    let Some(stdout) = child.take_stdout() else {
         return Err(ApiError::Internal("no stdout from borg".to_string()));
     };
 
@@ -295,7 +298,7 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
     // stderr; if that pipe fills (~64 KiB) while we are still reading stdout, borg
     // blocks on the write, stdout stalls, and `child.wait()` deadlocks with the
     // repository lock held. Reading both streams concurrently avoids that.
-    let stderr = child.stderr.take();
+    let stderr = child.take_stderr();
     let stderr_task = tokio::spawn(async move {
         let mut buf = String::new();
         if let Some(mut se) = stderr {
@@ -308,11 +311,14 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
     let mut raw: Vec<ContentEntry> = Vec::new();
     let mut lines = BufReader::new(stdout).lines();
     let mut last_emit = std::time::Instant::now();
-    while let Some(line) = lines
-        .next_line()
-        .await
-        .map_err(|e| ApiError::Internal(format!("reading borg output: {e}")))?
-    {
+    const LINE_READ_TIMEOUT: Duration = Duration::from_secs(30);
+    loop {
+        let line = tokio::time::timeout(LINE_READ_TIMEOUT, lines.next_line())
+            .await
+            .map_err(|_| ApiError::Internal("timed out reading borg output".to_string()))?
+            .map_err(|e| ApiError::Internal(format!("reading borg output: {e}")))?;
+
+        let Some(line) = line else { break };
         if line.is_empty() {
             continue;
         }
@@ -339,9 +345,9 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
         raw.last().map(|entry| entry.path.as_str()),
     );
 
-    let status = child
-        .wait()
+    let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
         .await
+        .map_err(|_| ApiError::Internal("borg wait timed out".to_string()))?
         .map_err(|e| ApiError::Internal(format!("borg wait failed: {e}")))?;
     let stderr_str = stderr_task.await.unwrap_or_default();
     if !status.success() {

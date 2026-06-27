@@ -2931,4 +2931,69 @@ mod tests {
         ));
         assert!(!is_unknown_archive(&serde_json::json!({"size": 1}), &known));
     }
+
+    #[test]
+    fn archive_hostname_returns_hostname_when_present() {
+        let archive = serde_json::json!({"hostname": "web-01.example.com"});
+        assert_eq!(archive_hostname(&archive), Some("web-01.example.com"));
+    }
+
+    #[test]
+    fn archive_hostname_returns_none_when_missing_or_empty() {
+        assert_eq!(archive_hostname(&serde_json::json!({})), None);
+        assert_eq!(archive_hostname(&serde_json::json!({"hostname": ""})), None);
+        assert_eq!(
+            archive_hostname(&serde_json::json!({"hostname": null})),
+            None
+        );
+    }
+
+    #[test]
+    fn archive_finish_time_uses_end_timestamp_when_present() {
+        let archive = serde_json::json!({"end": "2024-06-01T08:00:00+00:00"});
+        let started_at = chrono::DateTime::parse_from_rfc3339("2024-06-01T07:00:00+00:00")
+            .unwrap()
+            .to_utc();
+        let finished = archive_finish_time(&archive, started_at);
+        assert_eq!(finished, started_at + chrono::Duration::hours(1));
+    }
+
+    #[test]
+    fn archive_finish_time_falls_back_to_duration_when_end_missing() {
+        let archive = serde_json::json!({"duration": 3600.0});
+        let started_at = chrono::DateTime::parse_from_rfc3339("2024-06-01T07:00:00+00:00")
+            .unwrap()
+            .to_utc();
+        let finished = archive_finish_time(&archive, started_at);
+        assert_eq!(finished, started_at + chrono::Duration::hours(1));
+    }
+
+    #[test]
+    fn archive_finish_time_falls_back_to_started_at_when_no_end_or_duration() {
+        let archive = serde_json::json!({});
+        let started_at = chrono::DateTime::parse_from_rfc3339("2024-06-01T07:00:00+00:00")
+            .unwrap()
+            .to_utc();
+        let finished = archive_finish_time(&archive, started_at);
+        assert_eq!(finished, started_at);
+    }
+
+    #[test]
+    fn archive_metadata_missing_true_when_hostname_or_end_missing() {
+        assert!(archive_metadata_missing(&serde_json::json!({})));
+        assert!(archive_metadata_missing(
+            &serde_json::json!({"hostname": "h1"})
+        ));
+        assert!(archive_metadata_missing(
+            &serde_json::json!({"end": "2024-01-01T00:00:00Z"})
+        ));
+    }
+
+    #[test]
+    fn archive_metadata_missing_false_when_hostname_and_end_present() {
+        assert!(!archive_metadata_missing(&serde_json::json!({
+            "hostname": "h1",
+            "end": "2024-01-01T00:00:00Z"
+        })));
+    }
 }

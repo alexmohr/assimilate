@@ -22,7 +22,7 @@ use crate::{
     api::repos::sync_new_archives,
     archive_index, config_assembler, db,
     notifications::{self, EventType, NotificationEvent},
-    ws::completion_bus::OperationOutcome,
+    ws::{completion_bus::OperationOutcome, ui_broadcast::ActiveBackupSnapshot},
 };
 
 const PING_INTERVAL: Duration = Duration::from_secs(30);
@@ -337,10 +337,19 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 op: state.repo_op_tracker.get(repo_id.0).await,
             });
             if let Ok(target_name) = db::get_repo_name(&state.pool, repo_id.0).await {
+                let archive_name = borg_command.as_deref().and_then(extract_archive_name);
+                state.ui_broadcast.set_active_backup(ActiveBackupSnapshot {
+                    hostname: hostname.to_owned(),
+                    target_name: target_name.clone(),
+                    archive_name: archive_name.clone(),
+                    schedule_id,
+                    repo_id: repo_id.0,
+                    progress_line: None,
+                });
                 state.ui_broadcast.send(ServerToUi::BackupStarted {
                     hostname: hostname.to_owned(),
                     target_name,
-                    archive_name: borg_command.as_deref().and_then(extract_archive_name),
+                    archive_name,
                     schedule_id,
                 });
             }
@@ -667,7 +676,11 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
             )
             .await
             {
-                tracing::warn!(repo_id = finished_repo_id, error = %e, "failed to persist last_op for backup");
+                tracing::warn!(
+                    repo_id = finished_repo_id,
+                    error = %e,
+                    "failed to persist last_op for backup"
+                );
             }
             state.ui_broadcast.send(ServerToUi::RepoOpChanged {
                 repo_id: finished_repo_id,
@@ -1058,6 +1071,7 @@ mod tests {
             completion_bus: crate::ws::completion_bus::CompletionBus::new(),
             repo_op_tracker: crate::repo_op_tracker::RepoOpTracker::default(),
             repo_lock: crate::RepoLock::default(),
+            import_tasks: crate::ImportTaskRegistry::default(),
             pending_dryruns: std::sync::Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),

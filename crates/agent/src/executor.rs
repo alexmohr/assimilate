@@ -938,6 +938,10 @@ async fn run_backup_task(
         }
         Err(e) => {
             error!(repo_id = ?repo_id, error = %e, "backup failed");
+            let failed_command = e
+                .borg_command()
+                .map(std::borrow::ToOwned::to_owned)
+                .or_else(|| Some(borg_command.clone()));
             (
                 make_failed_report(
                     repo_id,
@@ -945,7 +949,7 @@ async fn run_backup_task(
                     started_at,
                     e.to_string(),
                     run_id.clone(),
-                    Some(borg_command),
+                    failed_command,
                 ),
                 None,
             )

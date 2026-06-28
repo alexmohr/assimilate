@@ -247,8 +247,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     // this agent was offline. The backup_report is already in the DB as 'pending'
     // and will be updated to 'started' when the agent reports BackupStarted.
     if let Ok(rows) = sqlx::query_as::<_, (i64, Option<i64>, Option<String>)>(
-        "SELECT repo_id, schedule_id, run_id FROM backup_reports WHERE agent_id = $1 AND \
-         status = 'pending' ORDER BY started_at ASC",
+        "SELECT repo_id, schedule_id, run_id FROM backup_reports WHERE agent_id = $1 AND status = \
+         'pending' ORDER BY started_at ASC",
     )
     .bind(agent_id)
     .fetch_all(&state.pool)

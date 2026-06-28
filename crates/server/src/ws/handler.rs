@@ -324,6 +324,23 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                     "failed to insert backup started row"
                 );
             }
+            // If the agent restarted and is starting a new backup, any existing
+            // 'started' rows for this agent+repo are orphaned - fail them.
+            if let Err(e) = db::fail_other_started_backups(
+                &state.pool,
+                agent_id,
+                repo_id.0,
+                run_id.as_deref(),
+                hostname,
+            )
+            .await
+            {
+                tracing::error!(
+                    hostname = %hostname,
+                    error = %e,
+                    "failed to clean up orphaned backup rows"
+                );
+            }
             state
                 .repo_op_tracker
                 .set(

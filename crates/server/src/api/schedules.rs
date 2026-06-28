@@ -686,6 +686,35 @@ pub async fn cancel_running_backup(
                 error = %e,
                 "agent not connected for cancel_running_backup"
             );
+            // Agent is offline - cancel the backup directly in the DB
+            if let Some(target) = db::resolve_agent_for_hostname(&state.pool, hostname)
+                .await
+                .ok()
+                .and_then(|r| match r {
+                    db::ResolveResult::ExactMatch(a) | db::ResolveResult::PatternMatch(a) => {
+                        Some(a)
+                    }
+                    db::ResolveResult::Unmatched => None,
+                })
+            {
+                if let Err(e) =
+                    db::cancel_backup_report(&state.pool, target.id, schedule_repo_id).await
+                {
+                    tracing::error!(
+                        hostname = %hostname,
+                        error = %e,
+                        "failed to cancel backup in DB after agent not connected"
+                    );
+                }
+                state
+                    .completion_bus
+                    .publish(crate::ws::completion_bus::OperationOutcome {
+                        hostname: hostname.clone(),
+                        repo_id: schedule_repo_id,
+                        success: false,
+                    });
+                state.ui_broadcast.clear_active_backup(schedule_repo_id);
+            }
         }
     }
 

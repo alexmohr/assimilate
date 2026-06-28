@@ -161,3 +161,30 @@ test('Run Now triggers a backup that eventually completes', async ({ page }) => 
   await expect(page.getByRole('button', { name: 'Run Now' })).toBeVisible({ timeout: 120_000 })
   await expect(page.getByRole('button', { name: 'Cancel Backup' })).not.toBeVisible()
 })
+
+test('cancel running backup and verify it is marked cancelled', async ({ page }) => {
+  await loginAsAdmin(page)
+  const id = await openFirstSchedule(page)
+
+  const runNowBtn = page.getByRole('button', { name: 'Run Now' })
+  await expect(runNowBtn).toBeVisible({ timeout: 10_000 })
+  await runNowBtn.click()
+
+  // Wait for the agent to pick up the job.
+  const cancelBtn = page.getByRole('button', { name: 'Cancel Backup' })
+  await expect(cancelBtn).toBeVisible({ timeout: 15_000 })
+
+  // Click cancel and wait for confirmation.
+  await cancelBtn.click()
+  await expect(page.getByText(/cancel request sent/i)).toBeVisible({ timeout: 5_000 })
+
+  // Wait for the backup to be cancelled and the button to go back to Run Now.
+  await expect(page.getByRole('button', { name: 'Run Now' })).toBeVisible({ timeout: 30_000 })
+  await expect(cancelBtn).not.toBeVisible()
+
+  // Verify the latest backup report for this schedule has status 'cancelled'.
+  const reportsRes = await page.request.get(`/api/schedules/${id}/reports?limit=1`)
+  const reports = (await reportsRes.json()) as Array<{ status: string }>
+  expect(reports.length).toBeGreaterThanOrEqual(1)
+  expect(reports[0].status).toBe('cancelled')
+})

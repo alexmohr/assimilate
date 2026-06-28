@@ -2338,8 +2338,8 @@ pub async fn cancel_backup_report(
 ) -> Result<(), ApiError> {
     sqlx::query(
         "UPDATE backup_reports SET status = 'cancelled', finished_at = NOW(), \
-         cancellation_acknowledged = false WHERE agent_id = $1 AND repo_id = $2 AND status = \
-         'started'",
+         cancellation_acknowledged = false WHERE agent_id = $1 AND repo_id = $2 AND status IN \
+         ('pending', 'started')",
     )
     .bind(agent_id)
     .bind(repo_id)

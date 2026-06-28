@@ -81,6 +81,7 @@ const reportsLoading = ref(false)
 const reportsError = ref<string | null>(null)
 const { success: toastSuccess, error: toastError } = useToast()
 const { onMessage } = useWebSocket()
+let cancelPollTimer: ReturnType<typeof setInterval> | null = null
 
 const selectedAgentIds = ref<number[]>([])
 const selectedRepoId = ref<number | null>(null)
@@ -224,6 +225,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
+  stopCancelPolling()
   if (elapsedTimer !== null) {
     clearInterval(elapsedTimer)
   }
@@ -479,6 +481,7 @@ async function runNow(): Promise<void> {
   try {
     await apiClient.post(`/schedules/${props.id}/run`)
     toastSuccess(`${scheduleTypeLabel(schedule.value?.schedule_type ?? 'backup')} started.`)
+    await loadReports()
   } catch (e: unknown) {
     toastError(extractError(e))
   } finally {
@@ -507,11 +510,30 @@ async function cancelBackup(): Promise<void> {
   try {
     await apiClient.post(`/schedules/${props.id}/cancel`)
     toastSuccess('Cancel request sent.')
+    startCancelPolling()
   } catch (e: unknown) {
     toastError(extractError(e))
   } finally {
     cancelLoading.value = false
   }
+}
+
+function stopCancelPolling(): void {
+  if (cancelPollTimer !== null) {
+    clearInterval(cancelPollTimer)
+    cancelPollTimer = null
+  }
+}
+
+function startCancelPolling(): void {
+  stopCancelPolling()
+  cancelPollTimer = setInterval(() => {
+    loadReports().catch(() => undefined)
+    if (!backupRunning.value) {
+      stopCancelPolling()
+    }
+  }, 2_000)
+  loadReports().catch(() => undefined)
 }
 
 interface BackupPayload {

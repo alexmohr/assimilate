@@ -270,7 +270,6 @@ async function runNow(s: ScheduleRow): Promise<void> {
   try {
     await apiClient.post(`/schedules/${s.id}/run`)
     toastSuccess(`${scheduleTypeLabel(s.schedule_type)} started.`)
-    await fetchAll()
   } catch (e: unknown) {
     toastError(extractError(e))
   } finally {

@@ -478,7 +478,6 @@ async function runNow(): Promise<void> {
   try {
     await apiClient.post(`/schedules/${props.id}/run`)
     toastSuccess(`${scheduleTypeLabel(schedule.value?.schedule_type ?? 'backup')} started.`)
-    await loadReports()
   } catch (e: unknown) {
     toastError(extractError(e))
   } finally {

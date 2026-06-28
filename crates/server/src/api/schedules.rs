@@ -714,6 +714,7 @@ pub async fn cancel_running_backup(
                         success: false,
                     });
                 state.ui_broadcast.clear_active_backup(schedule_repo_id);
+                state.ui_broadcast.send(ServerToUi::DataChanged);
             }
         }
     }

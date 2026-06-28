@@ -216,6 +216,33 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     }
 
+    // If the user cancelled a backup while this agent was offline, notify the
+    // agent now so it can kill the corresponding borg process.
+    if let Ok(rows) = sqlx::query_scalar::<_, i64>(
+        "SELECT DISTINCT repo_id FROM backup_reports WHERE agent_id = $1 AND status = 'cancelled' \
+         AND NOT cancellation_acknowledged",
+    )
+    .bind(agent_id)
+    .fetch_all(&state.pool)
+    .await
+    {
+        for repo_id in rows {
+            let msg = ServerToAgent::CancelBackup {
+                repo_id: shared::types::RepoId(repo_id),
+            };
+            if let Ok(json) = serde_json::to_string(&msg)
+                && let Err(e) = ws_sink.send(Message::Text(json.into())).await
+            {
+                tracing::warn!(
+                    hostname = %hostname,
+                    repo_id,
+                    error = %e,
+                    "failed to notify agent of cancelled backup on reconnect"
+                );
+            }
+        }
+    }
+
     tokio::spawn(ping_loop(ping_tx));
 
     loop {
@@ -1037,6 +1064,14 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                     repo_id = ?repo_id,
                     error = %e,
                     "failed to update cancelled backup report"
+                );
+            }
+            if let Err(e) = db::acknowledge_cancellation(&state.pool, agent_id, repo_id.0).await {
+                tracing::error!(
+                    hostname = %hostname,
+                    repo_id = ?repo_id,
+                    error = %e,
+                    "failed to acknowledge cancellation"
                 );
             }
             state.ui_broadcast.send(ServerToUi::DataChanged);

@@ -243,6 +243,44 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     }
 
+    // Execute any pending backup runs that were triggered (e.g. "Run Now") while
+    // this agent was offline. The backup_report is already in the DB as 'pending'
+    // and will be updated to 'started' when the agent reports BackupStarted.
+    if let Ok(rows) = sqlx::query_as::<_, (i64, Option<i64>, Option<String>)>(
+        "SELECT repo_id, schedule_id, run_id FROM backup_reports WHERE agent_id = $1 AND \
+         status = 'pending' ORDER BY started_at ASC",
+    )
+    .bind(agent_id)
+    .fetch_all(&state.pool)
+    .await
+    {
+        for (repo_id, schedule_id, run_id) in rows {
+            let msg = ServerToAgent::RunBackupNow {
+                repo_id: shared::types::RepoId(repo_id),
+                schedule_id,
+                request_id: None,
+                run_id,
+            };
+            if let Ok(json) = serde_json::to_string(&msg)
+                && let Err(e) = ws_sink.send(Message::Text(json.into())).await
+            {
+                tracing::warn!(
+                    hostname = %hostname,
+                    repo_id,
+                    error = %e,
+                    "failed to send pending RunBackupNow on reconnect"
+                );
+            } else {
+                tracing::info!(
+                    hostname = %hostname,
+                    repo_id,
+                    schedule_id,
+                    "sent pending RunBackupNow on reconnect"
+                );
+            }
+        }
+    }
+
     tokio::spawn(ping_loop(ping_tx));
 
     loop {

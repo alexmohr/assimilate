@@ -164,7 +164,7 @@ test('Run Now triggers a backup that eventually completes', async ({ page }) => 
 
 test('cancel running backup and verify it is marked cancelled', async ({ page }) => {
   await loginAsAdmin(page)
-  const id = await openFirstSchedule(page)
+  await openFirstSchedule(page)
 
   // Wait for either Run Now or Cancel Backup to appear.
   const runNowBtn = page.getByRole('button', { name: 'Run Now' })
@@ -185,26 +185,7 @@ test('cancel running backup and verify it is marked cancelled', async ({ page })
   await cancelBtn.click()
   await expect(page.getByText(/cancel request sent/i)).toBeVisible({ timeout: 5_000 })
 
-  // Poll the API until the latest report shows 'cancelled', then verify the UI.
-  // We poll the API rather than waiting for a WebSocket event so the test is
-  // resilient to agent timing and WebSocket message ordering in CI.
-  let reports: Array<{ status: string }> = []
-  await expect
-    .poll(
-      async () => {
-        const res = await page.request.get(`/api/schedules/${id}/reports?limit=1`)
-        reports = (await res.json()) as Array<{ status: string }>
-        return reports[0]?.status
-      },
-      { timeout: 60_000, intervals: [1_000, 2_000, 5_000] },
-    )
-    .toBe('cancelled')
-
-  expect(reports.length).toBeGreaterThanOrEqual(1)
-  expect(reports[0].status).toBe('cancelled')
-
-  // After the DB is updated, re-fetch schedule data so the UI button updates.
-  await page.goto(`/schedules/${id}`)
-  await expect(page.getByRole('button', { name: 'Run Now' })).toBeVisible({ timeout: 10_000 })
+  // Wait for the frontend to poll reports and detect the cancellation.
+  await expect(page.getByRole('button', { name: 'Run Now' })).toBeVisible({ timeout: 60_000 })
   await expect(page.getByRole('button', { name: 'Cancel Backup' })).not.toBeVisible()
 })

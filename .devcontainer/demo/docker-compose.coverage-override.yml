@@ -19,6 +19,10 @@
 
 services:
   demo:
+    # Distinct tag: this image carries the coverage-instrumented server binary,
+    # so it must not collide with the non-instrumented assimilate-demo:local
+    # image used by the agent/placeholder services.
+    image: assimilate-demo:coverage
     build:
       args:
         COVERAGE: "true"

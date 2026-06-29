@@ -264,6 +264,11 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Build demo image (GitHub Actions build cache)
+        env:
+          # The docker-container buildx driver checks filesystem entitlements
+          # when the bake context resolves outside CWD (compose uses ../..),
+          # which requires an explicit --allow flag or disabling the check.
+          BUILDX_BAKE_ENTITLEMENTS_FS: "0"
         run: |
           # Build via buildx bake so the cargo-chef dependency layers are
           # restored from / persisted to the GitHub Actions cache (type=gha),

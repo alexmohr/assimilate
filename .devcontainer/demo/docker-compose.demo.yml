@@ -12,6 +12,7 @@
 
 services:
   demo:
+    image: assimilate-demo:local
     build:
       context: ../..
       dockerfile: .devcontainer/demo/Dockerfile.demo
@@ -33,6 +34,7 @@ services:
     entrypoint: ["/app/start-demo.sh"]
 
   web-server-01:
+    image: assimilate-demo:local
     build:
       context: ../..
       dockerfile: .devcontainer/demo/Dockerfile.demo
@@ -47,6 +49,7 @@ services:
     entrypoint: ["/app/start-agent.sh"]
 
   db-server-01:
+    image: assimilate-demo:local
     build:
       context: ../..
       dockerfile: .devcontainer/demo/Dockerfile.demo
@@ -61,6 +64,7 @@ services:
     entrypoint: ["/app/start-agent.sh"]
 
   media-store-01:
+    image: assimilate-demo:local
     build:
       context: ../..
       dockerfile: .devcontainer/demo/Dockerfile.demo
@@ -75,6 +79,7 @@ services:
     entrypoint: ["/app/start-agent.sh"]
 
   old-webserver:
+    image: assimilate-demo:local
     build:
       context: ../..
       dockerfile: .devcontainer/demo/Dockerfile.demo
@@ -87,6 +92,7 @@ services:
     entrypoint: ["/app/start-placeholder.sh"]
 
   legacy-db-prod:
+    image: assimilate-demo:local
     build:
       context: ../..
       dockerfile: .devcontainer/demo/Dockerfile.demo

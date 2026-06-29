@@ -330,9 +330,35 @@ jobs:
           VITE_COVERAGE: "true"
       - name: Prepare coverage directories
         run: mkdir -p .coverage frontend/.nyc_output
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build demo image (GitHub Actions build cache)
+        run: |
+          # Build the coverage-instrumented server image (assimilate-demo:coverage)
+          # used by the demo service, then the non-instrumented image
+          # (assimilate-demo:local) used by all agent/placeholder services.
+          # Using direct `docker buildx build` avoids the path-resolution
+          # ambiguity that `docker buildx bake` has with compose files that use
+          # relative context paths (context: ../.. from the compose file dir).
+          # The cargo-chef dependency layer is keyed on recipe.json and shared
+          # between both builds; cache-to persists it on the first run so
+          # subsequent runs restore it instead of recompiling all dependencies.
+          docker buildx build \
+            --file .devcontainer/demo/Dockerfile.demo \
+            --build-arg COVERAGE=true \
+            --cache-from type=gha,scope=demo-e2e \
+            --cache-to type=gha,mode=max,scope=demo-e2e \
+            --load \
+            --tag assimilate-demo:coverage \
+            .
+          docker buildx build \
+            --file .devcontainer/demo/Dockerfile.demo \
+            --cache-from type=gha,scope=demo-e2e \
+            --load \
+            --tag assimilate-demo:local \
+            .
       - name: Start demo environment (with instrumented frontend)
         run: |
-          docker compose $COMPOSE_FILES build --pull demo && \
           docker compose $COMPOSE_FILES up -d
           echo "Waiting for demo seed to complete (up to 40 min)..."
           DEMO_READY=false

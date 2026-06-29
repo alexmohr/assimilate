@@ -2,11 +2,16 @@
 # SPDX-FileCopyrightText: 2026 Alexander Mohr
 #
 # Overlay for coverage-instrumented e2e runs.
-# Mounts a locally-built (Istanbul-instrumented) frontend dist directory over
-# the image's /app/static so Playwright tests hit instrumented code.
+# 1. Mounts a locally-built (Istanbul-instrumented) frontend dist directory over
+#    the image's /app/static so Playwright tests hit instrumented code.
+# 2. Rebuilds the demo service with a coverage-instrumented server binary
+#    (COVERAGE=true build arg to Dockerfile.demo).
+# 3. Mounts a .coverage directory to capture LLVM profraw files from the server
+#    process for backend code coverage.
 #
 # Usage (from repo root):
 #   VITE_COVERAGE=true npm --prefix frontend run build
+#   mkdir -p .coverage
 #   docker compose \
 #     -f .devcontainer/demo/docker-compose.demo.yml \
 #     -f .devcontainer/demo/docker-compose.coverage-override.yml \
@@ -14,5 +19,11 @@
 
 services:
   demo:
+    build:
+      args:
+        COVERAGE: "true"
     volumes:
       - ../../frontend/dist:/app/static:ro
+      - ../../.coverage:/tmp/coverage
+    environment:
+      LLVM_PROFILE_FILE: /tmp/coverage/server.profraw

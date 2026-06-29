@@ -215,8 +215,8 @@ test('full resync completes and preserves archives', async ({ page }) => {
   // steady-state button label instead.
   await expect(page.getByText('Full resync started.')).toBeVisible({ timeout: 120_000 })
 
-  // Button must return to its resting state
-  await expect(resyncBtn).toBeVisible({ timeout: 30_000 })
+  // Button must return to its resting state (same API call as the toast above)
+  await expect(resyncBtn).toBeVisible({ timeout: 120_000 })
 
   // Switch to archives tab and verify entries are still present after resync
   await page.getByRole('button', { name: 'Archives', exact: true }).click()

@@ -2337,9 +2337,8 @@ pub async fn cancel_backup_report(
     repo_id: i64,
 ) -> Result<(), ApiError> {
     sqlx::query(
-        "UPDATE backup_reports SET status = 'cancelled', finished_at = NOW(), \
-         cancellation_acknowledged = false WHERE agent_id = $1 AND repo_id = $2 AND status IN \
-         ('pending', 'started')",
+        "UPDATE backup_reports SET status = 'cancelled', finished_at = NOW() WHERE agent_id = $1 \
+         AND repo_id = $2 AND status = 'started'",
     )
     .bind(agent_id)
     .bind(repo_id)
@@ -2351,48 +2350,9 @@ pub async fn cancel_backup_report(
 
 pub async fn cancel_all_active_backups(pool: &PgPool) -> Result<u64, ApiError> {
     let result = sqlx::query(
-        "UPDATE backup_reports SET status = 'cancelled', finished_at = NOW(), \
-         cancellation_acknowledged = false WHERE status IN ('pending', 'started')",
+        "UPDATE backup_reports SET status = 'cancelled', finished_at = NOW() WHERE status IN \
+         ('pending', 'started')",
     )
-    .execute(pool)
-    .await
-    .map_err(ApiError::Database)?;
-    Ok(result.rows_affected())
-}
-
-pub async fn acknowledge_cancellation(
-    pool: &PgPool,
-    agent_id: i64,
-    repo_id: i64,
-) -> Result<(), ApiError> {
-    sqlx::query(
-        "UPDATE backup_reports SET cancellation_acknowledged = true WHERE agent_id = $1 AND \
-         repo_id = $2 AND status = 'cancelled'",
-    )
-    .bind(agent_id)
-    .bind(repo_id)
-    .execute(pool)
-    .await
-    .map_err(ApiError::Database)?;
-    Ok(())
-}
-
-pub async fn fail_other_started_backups(
-    pool: &PgPool,
-    agent_id: i64,
-    repo_id: i64,
-    current_run_id: Option<&str>,
-    hostname: &str,
-) -> Result<u64, ApiError> {
-    let result = sqlx::query(
-        "UPDATE backup_reports SET status = 'failed', finished_at = NOW(), error_message = $1 \
-         WHERE agent_id = $2 AND repo_id = $3 AND status IN ('pending', 'started') AND ($4::text \
-         IS NULL OR run_id IS DISTINCT FROM $4)",
-    )
-    .bind(format!("Agent '{hostname}' restarted; backup abandoned"))
-    .bind(agent_id)
-    .bind(repo_id)
-    .bind(current_run_id)
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
@@ -4485,64 +4445,6 @@ pub async fn delete_archive_records_by_names(
     }
 
     tx.commit().await.map_err(ApiError::Database)?;
-    Ok(result.rows_affected())
-}
-
-pub async fn delete_all_repo_archive_data(pool: &PgPool, repo_id: i64) -> Result<u64, ApiError> {
-    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
-
-    // Collect candidate path IDs before the cascade delete removes archive_files.
-    let candidate_ids: Vec<i64> = sqlx::query_scalar::<_, i64>(
-        "SELECT path_id FROM archive_files WHERE archive_id IN (SELECT id FROM archives WHERE \
-         repo_id = $1) UNION SELECT parent_path_id FROM archive_files WHERE archive_id IN (SELECT \
-         id FROM archives WHERE repo_id = $1)",
-    )
-    .bind(repo_id)
-    .bind(repo_id)
-    .fetch_all(&mut *tx)
-    .await
-    .map_err(ApiError::Database)?;
-
-    // Delete all backup_reports for the repo.
-    let result = sqlx::query("DELETE FROM backup_reports WHERE repo_id = $1")
-        .bind(repo_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::Database)?;
-
-    // Deleting from archives cascades to archive_files, archive_index_jobs, and archive_tags.
-    sqlx::query("DELETE FROM archives WHERE repo_id = $1")
-        .bind(repo_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::Database)?;
-
-    // GC paths that are now orphaned, checking only the candidates from the deleted archives.
-    if !candidate_ids.is_empty() {
-        sqlx::query(
-            "DELETE FROM archive_paths WHERE repo_id = $1 AND id = ANY($2) AND NOT EXISTS (SELECT \
-             1 FROM archive_files WHERE path_id = archive_paths.id) AND NOT EXISTS (SELECT 1 FROM \
-             archive_files WHERE parent_path_id = archive_paths.id)",
-        )
-        .bind(repo_id)
-        .bind(&candidate_ids)
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::Database)?;
-    }
-
-    tx.commit().await.map_err(ApiError::Database)?;
-    Ok(result.rows_affected())
-}
-
-pub async fn delete_orphaned_placeholder_agents(pool: &PgPool) -> Result<u64, ApiError> {
-    let result = sqlx::query(
-        "DELETE FROM agents WHERE agent_token_hash = 'imported:no-auth' AND NOT EXISTS (SELECT 1 \
-         FROM backup_reports WHERE agent_id = agents.id)",
-    )
-    .execute(pool)
-    .await
-    .map_err(ApiError::Database)?;
     Ok(result.rows_affected())
 }
 

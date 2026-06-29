@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::{
-    collections::{HashMap, HashSet},
-    time::Duration,
-};
+use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 use sqlx::PgPool;
@@ -219,45 +216,6 @@ pub async fn run_indexing<F: FnMut(u64, Option<&str>)>(
     // indexing, deletes, syncs and backups never contend for the repository lock.
     let _repo_guard = repo_lock.acquire(repo_id).await;
 
-    run_indexing_impl(
-        pool,
-        encryption_key,
-        repo_id,
-        archive_id,
-        archive_name,
-        on_progress,
-    )
-    .await
-}
-
-pub async fn run_indexing_with_lock_held<F: FnMut(u64, Option<&str>)>(
-    pool: &PgPool,
-    encryption_key: &[u8; 32],
-    repo_id: i64,
-    archive_name: &str,
-    on_progress: &mut F,
-) -> Result<(), ApiError> {
-    let archive_id = get_or_create_archive_id(pool, repo_id, archive_name).await?;
-
-    run_indexing_impl(
-        pool,
-        encryption_key,
-        repo_id,
-        archive_id,
-        archive_name,
-        on_progress,
-    )
-    .await
-}
-
-async fn run_indexing_impl<F: FnMut(u64, Option<&str>)>(
-    pool: &PgPool,
-    encryption_key: &[u8; 32],
-    repo_id: i64,
-    archive_id: i64,
-    archive_name: &str,
-    on_progress: &mut F,
-) -> Result<(), ApiError> {
     sqlx::query(
         "UPDATE archive_index_jobs SET status = 'indexing', started_at = NOW() WHERE archive_id = \
          $1",
@@ -329,7 +287,7 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
         )
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
 
-    let Some(stdout) = child.take_stdout() else {
+    let Some(stdout) = child.stdout.take() else {
         return Err(ApiError::Internal("no stdout from borg".to_string()));
     };
 
@@ -337,7 +295,7 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
     // stderr; if that pipe fills (~64 KiB) while we are still reading stdout, borg
     // blocks on the write, stdout stalls, and `child.wait()` deadlocks with the
     // repository lock held. Reading both streams concurrently avoids that.
-    let stderr = child.take_stderr();
+    let stderr = child.stderr.take();
     let stderr_task = tokio::spawn(async move {
         let mut buf = String::new();
         if let Some(mut se) = stderr {
@@ -350,14 +308,11 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
     let mut raw: Vec<ContentEntry> = Vec::new();
     let mut lines = BufReader::new(stdout).lines();
     let mut last_emit = std::time::Instant::now();
-    const LINE_READ_TIMEOUT: Duration = Duration::from_secs(30);
-    loop {
-        let line = tokio::time::timeout(LINE_READ_TIMEOUT, lines.next_line())
-            .await
-            .map_err(|_| ApiError::Internal("timed out reading borg output".to_string()))?
-            .map_err(|e| ApiError::Internal(format!("reading borg output: {e}")))?;
-
-        let Some(line) = line else { break };
+    while let Some(line) = lines
+        .next_line()
+        .await
+        .map_err(|e| ApiError::Internal(format!("reading borg output: {e}")))?
+    {
         if line.is_empty() {
             continue;
         }
@@ -384,9 +339,9 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
         raw.last().map(|entry| entry.path.as_str()),
     );
 
-    let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
+    let status = child
+        .wait()
         .await
-        .map_err(|_| ApiError::Internal("borg wait timed out".to_string()))?
         .map_err(|e| ApiError::Internal(format!("borg wait failed: {e}")))?;
     let stderr_str = stderr_task.await.unwrap_or_default();
     if !status.success() {

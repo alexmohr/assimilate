@@ -548,53 +548,6 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
     expect(wrapper.text()).toContain('/home/user/important.txt')
   })
 
-  it('replayed BackupLog updates a running backup after reload', async () => {
-    mockApiClient.get.mockImplementation((url: string) => {
-      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
-      if (url === '/schedules/1/targets')
-        return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
-      if (url === '/schedules/1/sources')
-        return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_host: [] } })
-      if (url === '/schedules/1/reports')
-        return Promise.resolve({
-          data: [
-            {
-              id: 1,
-              status: 'started',
-              started_at: '2026-06-27T10:00:00Z',
-              agent_id: 10,
-              original_size: 0,
-            },
-          ],
-        })
-      if (url === '/agents') return Promise.resolve({ data: mockAgents })
-      if (url === '/repos') return Promise.resolve({ data: mockRepos })
-      return Promise.resolve({ data: [] })
-    })
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-
-    expect(wrapper.find('.live-log-card').exists()).toBe(true)
-    expect(wrapper.find('.live-log-empty').exists()).toBe(true)
-
-    wsHandlers['BackupLog']?.({
-      hostname: 'web-server-01',
-      schedule_id: 1,
-      repo_id: 20,
-      line: JSON.stringify({
-        type: 'archive_progress',
-        nfiles: 321,
-        original_size: 4096,
-        path: '/srv/data.tar',
-      }),
-    })
-    await nextTick()
-
-    expect(wrapper.find('.live-log-empty').exists()).toBe(false)
-    expect(wrapper.text()).toContain('321')
-    expect(wrapper.text()).toContain('/srv/data.tar')
-  })
-
   it('BackupLog with wrong schedule_id does not update progress', async () => {
     setupEditMode()
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })

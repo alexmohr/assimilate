@@ -19,7 +19,6 @@ vi.mock('../composables/useWebSocket', () => ({
   useWebSocket: () => ({
     status: { value: 'connected' },
     onMessage: vi.fn(),
-    forceReconnect: vi.fn(),
   }),
 }))
 

@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::time::Duration;
-
 use axum::{
     body::Body,
     extract::{Path as AxumPath, Query, State},
@@ -110,7 +108,8 @@ pub async fn export_archive(
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
 
     let borg_stdout = child
-        .take_stdout()
+        .stdout
+        .take()
         .ok_or_else(|| ApiError::Internal("failed to capture borg stdout".to_string()))?;
 
     let (reader, writer) = tokio::io::duplex(64 * 1024);
@@ -118,11 +117,10 @@ pub async fn export_archive(
     tokio::spawn(async move {
         let mut stdout = borg_stdout;
         let mut buf = Vec::new();
-        let read_result =
-            tokio::time::timeout(Duration::from_secs(300), stdout.read_to_end(&mut buf)).await;
-        let _r = tokio::time::timeout(Duration::from_secs(30), child.wait()).await;
+        let read_result = stdout.read_to_end(&mut buf).await;
+        let _r = child.wait().await;
 
-        if matches!(read_result, Ok(Ok(_))) {
+        if read_result.is_ok() {
             let bridge = SyncIoBridge::new(writer);
             tokio::task::spawn_blocking(move || {
                 let mut encoder = FrameEncoder::new(bridge);

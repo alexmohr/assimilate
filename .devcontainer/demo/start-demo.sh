@@ -39,7 +39,7 @@ until PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -c "SELECT 1" > /dev
     sleep 1
 done
 
-echo "==> Starting temporary server for seeding..."
+echo "==> Starting server..."
 /app/server &
 SERVER_PID=$!
 
@@ -51,14 +51,10 @@ done
 echo "==> Seeding demo data..."
 /app/seed-demo.sh
 
-echo "==> Stopping seed server..."
-kill $SERVER_PID 2>/dev/null
-wait $SERVER_PID 2>/dev/null || true
-
 echo ""
 echo "Demo ready: http://localhost:8080"
 echo "Login: admin / admin"
 echo ""
 
-echo "==> Starting server as PID 1..."
-exec /app/server
+trap 'kill $SERVER_PID 2>/dev/null; ssh-agent -k > /dev/null 2>&1' EXIT INT TERM
+wait $SERVER_PID

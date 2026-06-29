@@ -4,18 +4,6 @@
 import { expect, loginAsAdmin, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
-// Navigate to the first schedule card and return its numeric ID.
-async function openFirstSchedule(page: Page): Promise<string> {
-  await page.goto('/schedules')
-  await page.locator('.schedule-card').first().waitFor({ timeout: 10_000 })
-  await page.locator('.schedule-card').first().click()
-  await page.waitForURL(/\/schedules\/\d+/, { timeout: 10_000 })
-  await page.locator('.tab-bar').waitFor({ timeout: 30_000 })
-  const match = page.url().match(/\/schedules\/(\d+)/)
-  if (!match) throw new Error(`unexpected schedule URL: ${page.url()}`)
-  return match[1]
-}
-
 // Create a schedule with a sleep pre-backup command so backups take long
 // enough to observe in-progress UI state. The schedule is created via the
 // browser UI as required. Returns the numeric schedule ID.
@@ -66,9 +54,11 @@ async function createSlowScheduleViaUI(page: Page): Promise<string> {
   return match[1]
 }
 
-// ── Cancel-flow tests ─────────────────────────────────────────────────────────
-// These tests need a backup that stays in-progress long enough to interact
-// with it.  They share a single slow schedule and must run serially.
+// ── Cancel-flow tests and Run-now flow tests ──────────────────────────────────
+// Both describe blocks share the same slow schedule (web-server-01, /tmp,
+// sleep 5 pre-backup) so the backup completes quickly in both suites.
+// The schedule is created in cancel-flow's beforeAll and deleted in
+// run-now-flow's afterAll, after both suites have used it.
 
 let slowScheduleId: string | null = null
 
@@ -78,17 +68,6 @@ test.describe.serial('cancel flow', () => {
     try {
       await loginAsAdmin(page)
       slowScheduleId = await createSlowScheduleViaUI(page)
-    } finally {
-      await page.close()
-    }
-  })
-
-  test.afterAll(async ({ browser }) => {
-    if (!slowScheduleId) return
-    const page = await browser.newPage()
-    try {
-      await loginAsAdmin(page)
-      await page.request.delete(`/api/schedules/${slowScheduleId}`)
     } finally {
       await page.close()
     }
@@ -150,11 +129,25 @@ test.describe.serial('cancel flow', () => {
 })
 
 // ── Run-now flow tests ────────────────────────────────────────────────────────
+// Reuses slowScheduleId (web-server-01, /tmp, sleep 5) created above so the
+// backup completes well within the 120 s timeout.  Cleanup happens here.
 
 test.describe('run now flow', () => {
+  test.afterAll(async ({ browser }) => {
+    if (!slowScheduleId) return
+    const page = await browser.newPage()
+    try {
+      await loginAsAdmin(page)
+      await page.request.delete(`/api/schedules/${slowScheduleId}`)
+    } finally {
+      await page.close()
+    }
+  })
+
   test('Run Now shows a success toast when the API accepts the request', async ({ page }) => {
     await loginAsAdmin(page)
-    await openFirstSchedule(page)
+    await page.goto(`/schedules/${slowScheduleId}`)
+    await page.locator('.tab-bar').waitFor({ timeout: 10_000 })
 
     const runNowBtn = page.getByRole('button', { name: 'Run Now' })
     await expect(runNowBtn).toBeVisible({ timeout: 10_000 })
@@ -168,7 +161,8 @@ test.describe('run now flow', () => {
 
   test('Run Now triggers a backup that eventually completes', async ({ page }) => {
     await loginAsAdmin(page)
-    await openFirstSchedule(page)
+    await page.goto(`/schedules/${slowScheduleId}`)
+    await page.locator('.tab-bar').waitFor({ timeout: 10_000 })
 
     const runNowBtn = page.getByRole('button', { name: 'Run Now' })
     await expect(runNowBtn).toBeVisible({ timeout: 10_000 })

@@ -2,15 +2,33 @@
 # SPDX-FileCopyrightText: 2026 Alexander Mohr
 ARG COVERAGE=false
 
-FROM rust:1.96 AS builder
-
+# cargo-chef splits dependency compilation from source compilation so the
+# (expensive, rarely-changing) dependency layer can be restored from the
+# GitHub Actions build cache instead of recompiling on every CI run.
+FROM rust:1.96 AS chef
+RUN cargo install cargo-chef --locked
 WORKDIR /src
+
+FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
+RUN cargo chef prepare --recipe-path recipe.json
 
+FROM chef AS builder
+COPY --from=planner /src/recipe.json recipe.json
+# Build only the dependencies. This layer is keyed on recipe.json (the
+# dependency graph), not on our source, so it survives ordinary code changes
+# and is restored from cache on subsequent builds.
+RUN cargo chef cook --release --recipe-path recipe.json
+ARG COVERAGE
+RUN if [ "$COVERAGE" = "true" ]; then \
+      RUSTFLAGS="-C instrument-coverage" cargo chef cook --recipe-path recipe.json; \
+    fi
+
+COPY Cargo.toml Cargo.lock ./
+COPY crates/ crates/
 RUN cargo build --release -p server -p agent
 
-ARG COVERAGE
 RUN if [ "$COVERAGE" = "true" ]; then \
       rustc --version && \
       RUSTFLAGS="-C instrument-coverage" cargo build -p server && \

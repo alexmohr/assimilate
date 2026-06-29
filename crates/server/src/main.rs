@@ -20,6 +20,7 @@ use server::{
     tunnel::TunnelManager,
     ws,
 };
+use shared::protocol::ServerToAgent;
 use sqlx::PgPool;
 use tower_http::services::{ServeDir, ServeFile};
 use tracing_subscriber::{EnvFilter, Layer as _, layer::SubscriberExt, util::SubscriberInitExt};
@@ -95,6 +96,8 @@ async fn main() -> Result<(), StartupError> {
         tracing::warn!("failed to ensure VAPID keys: {e}");
     }
 
+    let shutdown_token = tokio_util::sync::CancellationToken::new();
+
     let state = AppState {
         pool,
         encryption_key,
@@ -119,6 +122,7 @@ async fn main() -> Result<(), StartupError> {
         pending_deletes: std::sync::Arc::new(tokio::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),
+        shutdown_token: shutdown_token.clone(),
     };
 
     tokio::spawn(server::scheduler::run(state.clone()));
@@ -632,7 +636,9 @@ async fn main() -> Result<(), StartupError> {
             "/api/openapi.json",
             get(|| async { Json(ApiDoc::openapi()) }),
         )
-        .merge(Scalar::with_url("/api/docs", ApiDoc::openapi()))
+        .merge(Scalar::with_url("/api/docs", ApiDoc::openapi()));
+    let registry = state.registry.clone();
+    let app = app
         .with_state(state)
         .layer(axum_middleware::from_fn(csp_headers))
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024));
@@ -662,9 +668,22 @@ async fn main() -> Result<(), StartupError> {
     tracing::info!("listening on {addr}");
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+    let server = axum::serve(listener, app).with_graceful_shutdown(async move {
+        shutdown_signal(registry, shutdown_token.clone()).await;
+        let _ = shutdown_tx.send(());
+    });
+
+    tokio::select! {
+        result = server => { result?; }
+        () = async {
+            let _ = shutdown_rx.await;
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        } => {
+            tracing::warn!("graceful shutdown timed out after 10s, exiting");
+        }
+    }
 
     tunnel_manager.shutdown().await;
     Ok(())
@@ -701,7 +720,10 @@ async fn connect_with_retry(url: &str, max_connections: u32) -> Result<PgPool, S
     unreachable!()
 }
 
-async fn shutdown_signal() {
+async fn shutdown_signal(
+    registry: ws::registry::AgentRegistry,
+    shutdown_token: tokio_util::sync::CancellationToken,
+) {
     let ctrl_c = tokio::signal::ctrl_c();
 
     #[cfg(unix)]
@@ -724,7 +746,25 @@ async fn shutdown_signal() {
         () = terminate => {}
     }
 
-    tracing::info!("shutdown signal received, shutting down gracefully");
+    tracing::info!("shutdown signal received, notifying agents");
+
+    let agents = registry.connected_agents().await;
+    for hostname in &agents {
+        if let Err(e) = registry
+            .send_to(hostname, ServerToAgent::ShuttingDown)
+            .await
+        {
+            tracing::debug!(hostname = %hostname, error = %e, "failed to send shutdown message to agent");
+        }
+    }
+
+    if !agents.is_empty() {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+
+    shutdown_token.cancel();
+
+    tracing::info!("shutting down gracefully");
 }
 
 async fn bootstrap_admin(pool: &PgPool) -> Result<(), StartupError> {

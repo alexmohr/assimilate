@@ -3,8 +3,6 @@
 
 # Stage 1: Build Rust agent binary
 FROM rust:trixie AS rust-builder
-ARG AGENT_VERSION
-ENV APP_VERSION_OVERRIDE=$AGENT_VERSION
 WORKDIR /app
 RUN rustup default nightly
 

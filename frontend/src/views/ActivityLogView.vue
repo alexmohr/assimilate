@@ -902,6 +902,13 @@ function filterByRun(runId: string): void {
                         <pre class="command-pre">{{ expandedDetail.borg_command }}</pre>
                       </div>
                       <div
+                        v-if="expandedDetail.warnings && expandedDetail.warnings.length > 0"
+                        class="detail-section detail-warning-section"
+                      >
+                        <h3 class="detail-heading warning-heading">Warnings</h3>
+                        <pre class="warning-pre">{{ expandedDetail.warnings.join('\n') }}</pre>
+                      </div>
+                      <div
                         v-if="expandedDetail.error_message"
                         class="detail-section detail-error-section"
                       >
@@ -1259,7 +1266,8 @@ function filterByRun(runId: string): void {
   min-width: 180px;
 }
 
-.detail-error-section {
+.detail-error-section,
+.detail-warning-section {
   flex: 1 1 100%;
 }
 
@@ -1274,6 +1282,10 @@ function filterByRun(runId: string): void {
 
 .error-heading {
   color: var(--danger);
+}
+
+.warning-heading {
+  color: var(--warning);
 }
 
 .detail-dl {
@@ -1302,6 +1314,18 @@ function filterByRun(runId: string): void {
   border: 1px solid var(--danger);
   border-radius: var(--radius-sm);
   color: var(--danger);
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.warning-pre {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  background: var(--warning-subtle);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-sm);
+  color: var(--warning);
   font-size: 0.8rem;
   white-space: pre-wrap;
   word-break: break-word;

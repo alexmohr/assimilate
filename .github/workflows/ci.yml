@@ -9,6 +9,40 @@ on:
 env:
   CARGO_TERM_COLOR: always
 jobs:
+  no-ai-banners:
+    name: No AI Banners
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check commits for AI banners
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin "${{ github.base_ref }}" --depth=1
+            COMMITS=$(git log "origin/${{ github.base_ref }}..HEAD" --format=%B)
+          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            COMMITS=$(git log -1 --format=%B)
+          else
+            COMMITS=$(git log "${{ github.event.before }}..${{ github.sha }}" --format=%B)
+          fi
+          if echo "$COMMITS" | grep -iEq 'co-authored-by:.*claude|claude-session:|generated with.*claude|claude\.ai/code'; then
+            echo "AI banner found in commit messages:"
+            echo "$COMMITS" | grep -iE 'co-authored-by:.*claude|claude-session:|generated with.*claude|claude\.ai/code'
+            exit 1
+          fi
+          echo "No AI banners found in commits."
+      - name: Check PR description for AI banners
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if echo "$PR_BODY" | grep -iEq 'co-authored-by:.*claude|claude-session:|generated with.*claude|claude\.ai/code'; then
+            echo "AI banner found in PR description:"
+            echo "$PR_BODY" | grep -iE 'co-authored-by:.*claude|claude-session:|generated with.*claude|claude\.ai/code'
+            exit 1
+          fi
+          echo "No AI banners found in PR description."
   rust:
     name: Rust (fmt + clippy + test)
     runs-on: ubuntu-latest

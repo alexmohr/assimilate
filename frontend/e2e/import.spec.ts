@@ -33,11 +33,9 @@ function dockerExec(container: string, cmd: string): void {
 }
 
 async function navigateToRepo(page: Page, repoName: string, tab?: string): Promise<void> {
-  // 'commit' resolves on response headers without waiting for all API data to
-  // load, so slow CI runners do not exhaust the test budget on navigation alone.
-  await page.goto('/repos', { waitUntil: 'commit' })
+  await page.goto('/repos')
   await page.getByText(repoName).first().click()
-  await page.waitForURL(/\/repos\/\d+/, { waitUntil: 'commit' })
+  await page.waitForURL(/\/repos\/\d+/)
   if (tab) {
     await page.getByRole('button', { name: tab, exact: true }).click()
   }
@@ -157,48 +155,6 @@ test('Cancel Import button appears when repo is in importing state', async ({ pa
   await expect(resyncBtn).toBeVisible({ timeout: 120_000 })
 })
 
-test('Cancel Import cancels a live resync under borg lock contention', async ({ page }) => {
-  test.setTimeout(180_000)
-
-  await loginAsAdmin(page)
-
-  const container = demoContainer()
-  const lockFile = '/backup/repos/server-daily/lock.exclusive'
-
-  const reposRes = await page.request.get('/api/repos')
-  const repos = (await reposRes.json()) as Array<{ id: number; name: string }>
-  const repo = repos.find((r) => r.name === 'server-daily')
-  if (!repo) throw new Error('server-daily repo not found')
-
-  dockerExec(container, `touch ${lockFile}`)
-
-  try {
-    await page.goto(`/repos/${repo.id}`)
-
-    const resyncBtn = page.getByRole('button', { name: /full resync/i })
-    await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
-    await resyncBtn.click()
-
-    const cancelBtn = page.getByRole('button', { name: /cancel import/i })
-    await expect(cancelBtn).toBeVisible({ timeout: 30_000 })
-    await expect(page.locator('.repo-status-badge')).toHaveText(/importing/i, { timeout: 30_000 })
-
-    await cancelBtn.click()
-
-    await expect(page.getByText('Import state reset.')).toBeVisible({ timeout: 30_000 })
-    await expect(resyncBtn).toBeVisible({ timeout: 30_000 })
-    await expect(page.locator('.import-status-msg')).not.toBeVisible()
-    await expect(page.locator('.repo-status-badge')).toHaveText(/enabled/i, { timeout: 30_000 })
-
-    const logsRes = await page.request.get('/api/logs?limit=200&search=repo%20sync%20cancelled')
-    expect(logsRes.ok()).toBeTruthy()
-    const logs = (await logsRes.json()) as Array<{ message: string }>
-    expect(logs.some((entry) => entry.message.includes('repo sync cancelled'))).toBeTruthy()
-  } finally {
-    dockerExec(container, `rm -f ${lockFile}`)
-  }
-})
-
 // ── Full resync ──────────────────────────────────────────────────────────────
 
 test('full resync completes and preserves archives', async ({ page }) => {
@@ -210,13 +166,14 @@ test('full resync completes and preserves archives', async ({ page }) => {
   await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
   await resyncBtn.click()
 
-  // The request resolves quickly on CI, so the transient "Syncing..." label is
-  // not a stable contract. Assert the accepted action via toast and the final
-  // steady-state button label instead.
+  // Button immediately switches to "Syncing..." while the request is in flight
+  await expect(page.getByRole('button', { name: /syncing/i })).toBeVisible({ timeout: 30_000 })
+
+  // Sync is synchronous server-side; toast fires when it resolves
   await expect(page.getByText('Full resync started.')).toBeVisible({ timeout: 120_000 })
 
-  // Button must return to its resting state (same API call as the toast above)
-  await expect(resyncBtn).toBeVisible({ timeout: 120_000 })
+  // Button must return to its resting state
+  await expect(resyncBtn).toBeVisible({ timeout: 30_000 })
 
   // Switch to archives tab and verify entries are still present after resync
   await page.getByRole('button', { name: 'Archives', exact: true }).click()
@@ -340,26 +297,6 @@ test('import-progress bar appears when archive count is known', async ({ page })
 
   // Bar must disappear after sync completes
   await expect(progressBar).not.toBeVisible({ timeout: 120_000 })
-})
-
-test('import badge count starts at 1 not 0', async ({ page }) => {
-  await loginAsAdmin(page)
-  await navigateToRepo(page, 'server-daily')
-
-  const resyncBtn = page.getByRole('button', { name: /full resync/i })
-  await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
-  await resyncBtn.click()
-
-  // Wait for the badge to show a numeric count (import_total > 0)
-  const statusBadge = page.locator('.repo-status-badge')
-  await expect(statusBadge).toHaveText(/importing/i, { timeout: 30_000 })
-
-  // The progress must start at 1/N, not 0/N — assert the count before the
-  // slash begins with a non-zero digit
-  await expect(statusBadge).toHaveText(/[1-9]\d*\/\d+/, { timeout: 60_000 })
-
-  // Wait for completion
-  await expect(statusBadge).toHaveText(/enabled/i, { timeout: 120_000 })
 })
 
 test('status badge shows Enabled and no importing elements after resync completes', async ({

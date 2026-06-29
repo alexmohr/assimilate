@@ -18,18 +18,11 @@ pub mod ssh;
 pub mod tunnel;
 pub mod ws;
 
-use std::{
-    collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-};
+use std::{collections::HashMap, sync::Arc};
 
 use shared::types::DryRunFile;
 use sqlx::PgPool;
 use tokio::sync::{Mutex, oneshot};
-use tokio_util::sync::CancellationToken;
 
 use crate::{
     log_buffer::LogBuffer,
@@ -78,58 +71,6 @@ pub type PendingMigrations = Arc<Mutex<HashMap<String, oneshot::Sender<(bool, Op
 pub type PendingDeletes = Arc<Mutex<HashMap<String, oneshot::Sender<(bool, u32, Option<String>)>>>>;
 
 #[derive(Clone)]
-struct ImportTaskEntry {
-    id: u64,
-    cancel: CancellationToken,
-}
-
-#[derive(Clone, Default)]
-pub struct ImportTaskRegistry {
-    tasks: Arc<Mutex<HashMap<i64, ImportTaskEntry>>>,
-    next_id: Arc<AtomicU64>,
-}
-
-impl ImportTaskRegistry {
-    pub async fn start(&self, repo_id: i64) -> (u64, CancellationToken) {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
-        let cancel = CancellationToken::new();
-        self.tasks.lock().await.insert(
-            repo_id,
-            ImportTaskEntry {
-                id,
-                cancel: cancel.clone(),
-            },
-        );
-        (id, cancel)
-    }
-
-    pub async fn cancel(&self, repo_id: i64) -> bool {
-        let entry = self.tasks.lock().await.remove(&repo_id);
-        if let Some(entry) = entry {
-            entry.cancel.cancel();
-            true
-        } else {
-            false
-        }
-    }
-
-    pub async fn is_current(&self, repo_id: i64, task_id: u64) -> bool {
-        self.tasks
-            .lock()
-            .await
-            .get(&repo_id)
-            .is_some_and(|entry| entry.id == task_id)
-    }
-
-    pub async fn finish(&self, repo_id: i64, task_id: u64) {
-        let mut tasks = self.tasks.lock().await;
-        if tasks.get(&repo_id).is_some_and(|entry| entry.id == task_id) {
-            tasks.remove(&repo_id);
-        }
-    }
-}
-
-#[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
     pub encryption_key: [u8; 32],
@@ -141,10 +82,8 @@ pub struct AppState {
     pub completion_bus: CompletionBus,
     pub repo_op_tracker: RepoOpTracker,
     pub repo_lock: RepoLock,
-    pub import_tasks: ImportTaskRegistry,
     pub pending_dryruns: PendingDryRuns,
     pub pending_restores: PendingRestores,
     pub pending_migrations: PendingMigrations,
     pub pending_deletes: PendingDeletes,
-    pub shutdown_token: CancellationToken,
 }

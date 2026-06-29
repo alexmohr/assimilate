@@ -31,7 +31,5 @@ docs_html/
 # Git worktrees
 .worktrees/
 
-.opencode
-
 # Claude Code
 .claude/

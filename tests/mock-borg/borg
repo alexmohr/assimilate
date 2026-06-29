@@ -14,10 +14,6 @@ fi
 
 SUBCOMMAND="${1:-}"
 
-if [[ -n "${MOCK_BORG_SLEEP_SUBCOMMAND:-}" && "$SUBCOMMAND" == "$MOCK_BORG_SLEEP_SUBCOMMAND" ]]; then
-  sleep "${MOCK_BORG_SLEEP_SECS:-1}"
-fi
-
 case "$SUBCOMMAND" in
   create)
     if [[ "${MOCK_BORG_SIMULATE_WARNING:-0}" == "1" ]]; then

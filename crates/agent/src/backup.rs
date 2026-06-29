@@ -28,17 +28,8 @@ pub enum BackupError {
     Io(#[from] std::io::Error),
     #[error("stats parse error: {0}")]
     StatsParse(String),
-    #[error("borg command timed out after {seconds} seconds: {command}")]
-    Timeout { seconds: u64, command: String },
-}
-
-impl BackupError {
-    pub fn borg_command(&self) -> Option<&str> {
-        match self {
-            Self::Timeout { command, .. } => Some(command.as_str()),
-            Self::Skipped(_) | Self::BorgFailed(_) | Self::Io(_) | Self::StatsParse(_) => None,
-        }
-    }
+    #[error("borg command timed out after {0} seconds")]
+    Timeout(u64),
 }
 
 #[derive(Clone)]
@@ -152,34 +143,17 @@ pub struct CanaryResult {
 
 pub struct BackupEngine {
     borg: Borg,
-    borg_timeout: Option<Duration>,
 }
 
 impl BackupEngine {
     pub fn new() -> Self {
-        Self {
-            borg: Borg::new(),
-            borg_timeout: None,
-        }
+        Self { borg: Borg::new() }
     }
 
     #[cfg(test)]
     fn with_config(borg_binary: PathBuf, extra_env: Vec<(String, String)>) -> Self {
         Self {
             borg: Borg::with_extra_env(borg_binary, extra_env),
-            borg_timeout: None,
-        }
-    }
-
-    #[cfg(test)]
-    fn with_config_and_timeout(
-        borg_binary: PathBuf,
-        extra_env: Vec<(String, String)>,
-        borg_timeout: Option<Duration>,
-    ) -> Self {
-        Self {
-            borg: Borg::with_extra_env(borg_binary, extra_env),
-            borg_timeout,
         }
     }
 
@@ -258,9 +232,7 @@ impl BackupEngine {
             Command::new("sh").arg("-c").arg(cmd).output(),
         )
         .await
-        .map_err(|_| {
-            BackupError::BorgFailed(format!("{label} hook command timed out after 60 seconds"))
-        })??;
+        .map_err(|_| BackupError::Timeout(60))??;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -278,46 +250,6 @@ impl BackupEngine {
         }
 
         Ok(())
-    }
-
-    async fn run_borg_command(
-        &self,
-        target: &BackupTarget,
-        args: &[&str],
-        env_vars: &[(String, String)],
-    ) -> Result<std::process::Output, BackupError> {
-        let command = Self::format_command_slice(target, args);
-        match self.borg_timeout {
-            Some(timeout) => Ok(tokio::time::timeout(timeout, self.borg.run(args, env_vars))
-                .await
-                .map_err(|_| BackupError::Timeout {
-                    seconds: timeout_secs(timeout),
-                    command: command.clone(),
-                })??),
-            None => Ok(self.borg.run(args, env_vars).await?),
-        }
-    }
-
-    async fn run_borg_command_in_dir(
-        &self,
-        target: &BackupTarget,
-        args: &[&str],
-        env_vars: &[(String, String)],
-        dir: &Path,
-    ) -> Result<std::process::Output, BackupError> {
-        let command = Self::format_command_slice(target, args);
-        match self.borg_timeout {
-            Some(timeout) => Ok(tokio::time::timeout(
-                timeout,
-                self.borg.run_in_dir(args, env_vars, dir),
-            )
-            .await
-            .map_err(|_| BackupError::Timeout {
-                seconds: timeout_secs(timeout),
-                command: command.clone(),
-            })??),
-            None => Ok(self.borg.run_in_dir(args, env_vars, dir).await?),
-        }
     }
 
     fn write_exclude_file(patterns: &[String]) -> Result<tempfile::NamedTempFile, BackupError> {
@@ -476,17 +408,6 @@ impl BackupEngine {
         format!("BORG_REPO={repo_url} borg {args_str}")
     }
 
-    fn format_command_slice(target: &BackupTarget, args: &[&str]) -> String {
-        let repo_url = build_repo_url(
-            &target.ssh_user,
-            &target.ssh_host,
-            target.ssh_port,
-            &target.repo_path,
-        );
-        let args_str = args.join(" ");
-        format!("BORG_REPO={repo_url} borg {args_str}")
-    }
-
     fn borg_create_args(
         target: &BackupTarget,
         backup_sources: &[String],
@@ -581,7 +502,9 @@ impl BackupEngine {
 
         info!("Running borg prune");
 
-        let output = self.run_borg_command(target, &args, &env_vars).await?;
+        let output = tokio::time::timeout(Duration::from_mins(5), self.borg.run(&args, &env_vars))
+            .await
+            .map_err(|_| BackupError::Timeout(300))??;
 
         let exit_code = output.status.code().unwrap_or(-1);
         if exit_code >= 2 {
@@ -608,9 +531,12 @@ impl BackupEngine {
         info!("Running borg compact");
 
         let compact_args = ["compact", "--lock-wait", "600", "--log-json"];
-        let output = self
-            .run_borg_command(target, &compact_args, &env_vars)
-            .await?;
+        let output = tokio::time::timeout(
+            Duration::from_mins(5),
+            self.borg.run(&compact_args, &env_vars),
+        )
+        .await
+        .map_err(|_| BackupError::Timeout(300))??;
 
         let exit_code = output.status.code().unwrap_or(-1);
         if exit_code >= 2 {
@@ -637,9 +563,12 @@ impl BackupEngine {
         info!(target = %target.target_name, "Running borg check");
 
         let check_args = ["check", "--lock-wait", "600", "--show-rc", "--log-json"];
-        let output = self
-            .run_borg_command(target, &check_args, &env_vars)
-            .await?;
+        let output = tokio::time::timeout(
+            Duration::from_mins(5),
+            self.borg.run(&check_args, &env_vars),
+        )
+        .await
+        .map_err(|_| BackupError::Timeout(300))??;
 
         let exit_code = output.status.code().unwrap_or(-1);
         if exit_code >= 2 {
@@ -678,7 +607,10 @@ impl BackupEngine {
             "-a",
             glob_pattern.as_str(),
         ];
-        let output = self.run_borg_command(target, &list_args, &env_vars).await?;
+        let output =
+            tokio::time::timeout(Duration::from_mins(5), self.borg.run(&list_args, &env_vars))
+                .await
+                .map_err(|_| BackupError::Timeout(300))??;
 
         let exit_code = output.status.code().unwrap_or(-1);
         if exit_code != 0 {
@@ -704,9 +636,12 @@ impl BackupEngine {
             "600",
             archive_ref.as_str(),
         ];
-        let output = self
-            .run_borg_command(target, &extract_args, &env_vars)
-            .await?;
+        let output = tokio::time::timeout(
+            Duration::from_mins(5),
+            self.borg.run(&extract_args, &env_vars),
+        )
+        .await
+        .map_err(|_| BackupError::Timeout(300))??;
 
         let exit_code = output.status.code().unwrap_or(-1);
         if exit_code >= 2 {
@@ -797,9 +732,13 @@ impl BackupEngine {
             archive_ref.as_str(),
             canary_relative.as_str(),
         ];
-        let output = self
-            .run_borg_command_in_dir(target, &extract_args, &env_vars, extract_dir.path())
-            .await?;
+        let output = tokio::time::timeout(
+            Duration::from_mins(5),
+            self.borg
+                .run_in_dir(&extract_args, &env_vars, extract_dir.path()),
+        )
+        .await
+        .map_err(|_| BackupError::Timeout(300))??;
 
         let exit_code = output.status.code().unwrap_or(-1);
         if exit_code != 0 {
@@ -844,10 +783,6 @@ fn borg_rsh_for_target(target: &BackupTarget) -> String {
         },
         |path| borg_rsh_with_known_hosts(path),
     )
-}
-
-fn timeout_secs(timeout: Duration) -> u64 {
-    timeout.as_secs().max(1)
 }
 
 pub struct CanaryToken {
@@ -1426,27 +1361,5 @@ mod tests {
             !log.contains("--keep-yearly"),
             "keep-yearly should not appear when zero, but found in: {log}"
         );
-    }
-
-    #[tokio::test]
-    async fn test_borg_timeout_is_only_applied_when_configured() {
-        let engine = BackupEngine::with_config_and_timeout(
-            mock_borg_path(),
-            vec![
-                ("MOCK_BORG_SLEEP_SUBCOMMAND".to_owned(), "prune".to_owned()),
-                ("MOCK_BORG_SLEEP_SECS".to_owned(), "0.1".to_owned()),
-            ],
-            Some(Duration::from_millis(10)),
-        );
-        let target = test_target();
-
-        let result = engine.run_backup(&target, None, None).await;
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("borg prune"));
-        let BackupError::Timeout { seconds, command } = err else {
-            panic!("expected timeout error");
-        };
-        assert_eq!(seconds, 1);
-        assert!(command.contains(" borg prune "));
     }
 }

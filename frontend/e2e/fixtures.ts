@@ -5,42 +5,6 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test as base, expect, type Page } from '@playwright/test'
 
-export async function loginAsAdmin(page: Page): Promise<void> {
-  // Retry the full login flow up to 3 times to handle transient CI slowness.
-  let lastErr: unknown
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      await page.goto('/login')
-      await page.locator('input[type="text"], input[name="username"]').fill('admin')
-      await page.locator('input[type="password"]').fill('admin')
-      // Wait for the login API response before checking the URL, so a slow
-      // server round-trip does not cause waitForURL to race.
-      await Promise.all([
-        page.waitForResponse(
-          (resp) => resp.url().includes('/api/auth/login') && resp.status() === 200,
-          { timeout: 60_000 },
-        ),
-        page.locator('button[type="submit"]').click(),
-      ])
-      // 'commit' resolves as soon as the response headers arrive, without
-      // waiting for the full dashboard to load. This avoids a race where a
-      // slow CI runner can't load all dashboard API responses within the
-      // navigation timeout, even though the URL has already changed.
-      await page.waitForURL((url) => !new URL(url).pathname.startsWith('/login'), {
-        timeout: 60_000,
-        waitUntil: 'commit',
-      })
-      return
-    } catch (err) {
-      lastErr = err
-      if (attempt < 3) {
-        await page.waitForTimeout(2_000)
-      }
-    }
-  }
-  throw lastErr
-}
-
 // Wraps the built-in `page` fixture to collect Istanbul coverage after each
 // test when VITE_COVERAGE=true. The browser accumulates `window.__coverage__`
 // throughout the test; we read it out just before Playwright closes the page

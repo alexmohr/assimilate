@@ -1,33 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::collections::HashMap;
-
-use shared::ssh::borg_rsh;
-
 use crate::{error::ApiError, ssh};
 
 const VALID_COMPRESSIONS: &[&str] = &["none", "lz4", "zstd", "zlib"];
-
-/// Builds the base borg environment shared by all server-side borg invocations:
-/// the repository passphrase, the SSH command, and the server's `SSH_AUTH_SOCK`
-/// when one is present so borg can use the forwarded agent.
-///
-/// `SSH_AUTH_SOCK` is always forwarded when set, because the server reaches the
-/// repository over its own SSH agent. The relocation override
-/// (`BORG_RELOCATED_REPO_ACCESS_IS_OK`) is intentionally *not* part of the base:
-/// it is added only by callers that have a confirmed pending relocation, so that
-/// unrelated operations never silently accept a moved repository.
-pub fn borg_base_env(passphrase: &str) -> HashMap<String, String> {
-    let mut env = HashMap::from([
-        ("BORG_PASSPHRASE".to_owned(), passphrase.to_owned()),
-        ("BORG_RSH".to_owned(), borg_rsh()),
-    ]);
-    if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
-        env.insert("SSH_AUTH_SOCK".to_owned(), sock);
-    }
-    env
-}
 
 pub fn default_ssh_user() -> String {
     "borg".to_string()

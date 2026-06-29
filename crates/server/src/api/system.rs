@@ -5,10 +5,6 @@ use std::path::PathBuf;
 
 use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
-use shared::{
-    protocol::{ServerToAgent, ServerToUi},
-    types::RepoId,
-};
 use ssh_key::{Algorithm, LineEnding, rand_core::OsRng};
 
 use super::deploy::{agent_binary_dir, query_available_agent_version};
@@ -135,7 +131,6 @@ pub async fn ssh_regenerate_key(
 pub struct SettingsResponse {
     pub retention_days: i64,
     pub timezone: String,
-    pub borg_query_timeout_secs: u64,
 }
 
 #[utoipa::path(
@@ -165,20 +160,9 @@ pub async fn get_settings(
 
     let timezone = db::get_schedule_timezone(&state.pool).await?;
 
-    let borg_query_timeout_secs = db::get_setting(&state.pool, "borg_query_timeout_secs")
-        .await?
-        .and_then(|v| {
-            v.parse::<u64>().inspect_err(|e| {
-                tracing::warn!(value = %v, error = %e, "failed to parse borg_query_timeout_secs setting");
-            }).ok()
-        })
-        .filter(|&s| s > 0)
-        .unwrap_or(300);
-
     Ok(Json(SettingsResponse {
         retention_days,
         timezone: timezone.name().to_owned(),
-        borg_query_timeout_secs,
     }))
 }
 
@@ -186,7 +170,6 @@ pub async fn get_settings(
 pub struct UpdateSettingsRequest {
     pub retention_days: i64,
     pub timezone: Option<String>,
-    pub borg_query_timeout_secs: Option<u64>,
 }
 
 #[utoipa::path(
@@ -221,13 +204,6 @@ pub async fn update_settings(
             .map_err(|_| ApiError::BadRequest(format!("invalid timezone: {timezone}")))?;
     }
 
-    let borg_query_timeout_secs = body.borg_query_timeout_secs.unwrap_or(300);
-    if borg_query_timeout_secs == 0 {
-        return Err(ApiError::BadRequest(
-            "borg_query_timeout_secs must be greater than zero".to_string(),
-        ));
-    }
-
     db::set_setting(
         &state.pool,
         "retention_days",
@@ -237,19 +213,11 @@ pub async fn update_settings(
 
     db::set_setting(&state.pool, "timezone", &timezone).await?;
 
-    db::set_setting(
-        &state.pool,
-        "borg_query_timeout_secs",
-        &borg_query_timeout_secs.to_string(),
-    )
-    .await?;
-
     let effective_tz = db::get_schedule_timezone(&state.pool).await?;
 
     Ok(Json(SettingsResponse {
         retention_days: body.retention_days,
         timezone: effective_tz.name().to_owned(),
-        borg_query_timeout_secs,
     }))
 }
 
@@ -316,9 +284,9 @@ pub async fn get_version(_admin: RequireAdmin) -> Result<Json<VersionResponse>, 
 
     let git_sha = option_env!("GIT_SHA").unwrap_or_default();
     let server_version = if git_sha.is_empty() {
-        env!("APP_VERSION").to_owned()
+        env!("CARGO_PKG_VERSION").to_owned()
     } else {
-        format!("{}+{}", env!("APP_VERSION"), git_sha)
+        format!("{}+{}", env!("CARGO_PKG_VERSION"), git_sha)
     };
     let build_timestamp = option_env!("BUILD_TIMESTAMP").unwrap_or("unknown");
     let server_commit_count = option_env!("GIT_COMMIT_COUNT")
@@ -331,76 +299,5 @@ pub async fn get_version(_admin: RequireAdmin) -> Result<Json<VersionResponse>, 
         build_timestamp: build_timestamp.to_owned(),
         server_commit_count,
         agent_version,
-    }))
-}
-
-#[derive(Serialize, utoipa::ToSchema)]
-pub struct SystemResetResponse {
-    pub cancelled_backups: u64,
-    pub notified_agents: usize,
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/system/reset",
-    tag = "System",
-    operation_id = "resetSystem",
-    summary = "Cancel all running and pending backups on all agents",
-    responses(
-        (status = 200, description = "Reset complete", body = SystemResetResponse),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden -- admin only"),
-    )
-)]
-pub async fn reset_system(
-    _admin: RequireAdmin,
-    State(state): State<AppState>,
-) -> Result<Json<SystemResetResponse>, ApiError> {
-    let repos = db::list_all_repos(&state.pool).await?;
-    let agents = state.registry.connected_agents().await;
-    let notified_agents = agents.len();
-
-    for hostname in &agents {
-        for repo in &repos {
-            let msg = ServerToAgent::CancelBackup {
-                repo_id: RepoId(repo.id),
-            };
-            if let Err(e) = state.registry.send_to(hostname, msg).await {
-                tracing::warn!(
-                    hostname = %hostname,
-                    repo_id = repo.id,
-                    error = %e,
-                    "failed to send CancelBackup during system reset"
-                );
-            }
-        }
-    }
-
-    let cancelled_backups = db::cancel_all_active_backups(&state.pool).await?;
-
-    // Force-clear the in-memory op tracker so the UI stops showing stuck
-    // spinners, then broadcast the idle state for every affected repo.
-    let cleared_repos = state.repo_op_tracker.clear_all().await;
-    for repo_id in cleared_repos {
-        state
-            .ui_broadcast
-            .send(ServerToUi::RepoOpChanged { repo_id, op: None });
-    }
-
-    // Replace the per-repo lock map with a clean slate. Tasks that are stuck
-    // waiting inside a borg operation continue to hold their old OwnedMutexGuard
-    // (which is now orphaned), but any new acquire() call gets a fresh mutex,
-    // so new schedule runs are no longer blocked by the stuck tasks.
-    state.repo_lock.force_reset().await;
-
-    tracing::info!(
-        cancelled_backups,
-        notified_agents,
-        "system reset performed by admin"
-    );
-
-    Ok(Json(SystemResetResponse {
-        cancelled_backups,
-        notified_agents,
     }))
 }

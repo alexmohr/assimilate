@@ -77,10 +77,10 @@ test.describe('Dashboard', () => {
 });
 
 test.describe('Navigation sidebar', () => {
-  test('Agents link navigates to /agents', async ({ page }) => {
+  test('Clients link navigates to /clients', async ({ page }) => {
     await page.goto('/');
-    await page.getByRole('link', { name: 'Agents' }).click();
-    await expect(page).toHaveURL(/\/agents/);
+    await page.getByRole('link', { name: 'Clients' }).click();
+    await expect(page).toHaveURL(/\/clients/);
   });
 
   test('Repos link navigates to /repos', async ({ page }) => {
@@ -102,7 +102,7 @@ test.describe('Navigation sidebar', () => {
   });
 
   test('Dashboard link returns to root', async ({ page }) => {
-    await page.goto('/agents');
+    await page.goto('/clients');
     await page.getByRole('link', { name: 'Dashboard' }).click();
     await expect(page).toHaveURL('/');
   });

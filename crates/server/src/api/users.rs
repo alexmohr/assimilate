@@ -194,7 +194,7 @@ pub async fn delete_user(
 }
 
 fn validate_role(role: &str) -> Result<(), ApiError> {
-    role.parse::<super::auth::Role>().map_err(|_| {
+    super::auth::Role::parse(role).ok_or_else(|| {
         ApiError::BadRequest(format!("invalid role '{role}', must be 'admin' or 'user'"))
     })?;
     Ok(())

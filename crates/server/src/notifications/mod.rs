@@ -29,22 +29,15 @@ impl fmt::Display for ChannelType {
     }
 }
 
-impl std::str::FromStr for ChannelType {
-    type Err = UnknownChannelType;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "email" => Ok(Self::Email),
-            "webhook" => Ok(Self::Webhook),
-            "web_push" => Ok(Self::WebPush),
-            other => Err(UnknownChannelType(other.to_owned())),
+impl ChannelType {
+    fn as_db_str(self) -> &'static str {
+        match self {
+            Self::Email => "email",
+            Self::Webhook => "webhook",
+            Self::WebPush => "web_push",
         }
     }
 }
-
-#[derive(Debug, thiserror::Error)]
-#[error("unknown channel type: {0}")]
-pub struct UnknownChannelType(pub String);
 
 impl sqlx::Type<sqlx::Postgres> for ChannelType {
     fn type_info() -> sqlx::postgres::PgTypeInfo {
@@ -55,7 +48,12 @@ impl sqlx::Type<sqlx::Postgres> for ChannelType {
 impl<'r> sqlx::Decode<'r, sqlx::Postgres> for ChannelType {
     fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
         let s = <&str as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(s.parse::<ChannelType>()?)
+        match s {
+            "email" => Ok(Self::Email),
+            "webhook" => Ok(Self::Webhook),
+            "web_push" => Ok(Self::WebPush),
+            other => Err(format!("unknown channel type: {other}").into()),
+        }
     }
 }
 
@@ -64,7 +62,7 @@ impl<'q> sqlx::Encode<'q, sqlx::Postgres> for ChannelType {
         &self,
         buf: &mut sqlx::postgres::PgArgumentBuffer,
     ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
-        <String as sqlx::Encode<sqlx::Postgres>>::encode(self.to_string(), buf)
+        <&str as sqlx::Encode<sqlx::Postgres>>::encode(self.as_db_str(), buf)
     }
 }
 
@@ -106,11 +104,22 @@ impl EventType {
         "agent_connected",
         "agent_disconnected",
     ];
-}
 
-impl fmt::Display for EventType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
+    pub fn from_db_str(s: &str) -> Option<Self> {
+        match s {
+            "backup_success" => Some(Self::BackupSuccess),
+            "backup_warning" => Some(Self::BackupWarning),
+            "backup_failed" => Some(Self::BackupFailed),
+            "check_success" => Some(Self::CheckSuccess),
+            "check_failed" => Some(Self::CheckFailed),
+            "agent_connected" => Some(Self::AgentConnected),
+            "agent_disconnected" => Some(Self::AgentDisconnected),
+            _ => None,
+        }
+    }
+
+    fn as_db_str(self) -> &'static str {
+        match self {
             Self::BackupSuccess => "backup_success",
             Self::BackupWarning => "backup_warning",
             Self::BackupFailed => "backup_failed",
@@ -118,31 +127,9 @@ impl fmt::Display for EventType {
             Self::CheckFailed => "check_failed",
             Self::AgentConnected => "agent_connected",
             Self::AgentDisconnected => "agent_disconnected",
-        };
-        f.write_str(s)
-    }
-}
-
-impl std::str::FromStr for EventType {
-    type Err = UnknownEventType;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "backup_success" => Ok(Self::BackupSuccess),
-            "backup_warning" => Ok(Self::BackupWarning),
-            "backup_failed" => Ok(Self::BackupFailed),
-            "check_success" => Ok(Self::CheckSuccess),
-            "check_failed" => Ok(Self::CheckFailed),
-            "agent_connected" => Ok(Self::AgentConnected),
-            "agent_disconnected" => Ok(Self::AgentDisconnected),
-            other => Err(UnknownEventType(other.to_owned())),
         }
     }
 }
-
-#[derive(Debug, thiserror::Error)]
-#[error("unknown event type: {0}")]
-pub struct UnknownEventType(pub String);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationEvent {
@@ -155,7 +142,6 @@ pub struct NotificationEvent {
     pub repo_id: Option<i64>,
     pub agent_id: Option<i64>,
     pub schedule_id: Option<i64>,
-    pub schedule_name: Option<String>,
     pub archive_name: Option<String>,
 }
 
@@ -253,16 +239,16 @@ pub async fn dispatch(
                     OR nc.scope->'repo_ids' = '[]'::jsonb
                     OR nc.scope->'repo_ids' @> to_jsonb($2::bigint))
                AND ($3::bigint IS NULL
-                    OR NOT nc.scope ? 'agent_ids'
-                    OR nc.scope->'agent_ids' = '[]'::jsonb
-                    OR nc.scope->'agent_ids' @> to_jsonb($3::bigint))
+                    OR NOT nc.scope ? 'client_ids'
+                    OR nc.scope->'client_ids' = '[]'::jsonb
+                    OR nc.scope->'client_ids' @> to_jsonb($3::bigint))
                AND ($4::bigint IS NULL
                     OR NOT nc.scope ? 'schedule_ids'
                     OR nc.scope->'schedule_ids' = '[]'::jsonb
                     OR nc.scope->'schedule_ids' @> to_jsonb($4::bigint))))
         "#,
     )
-    .bind(event.event_type.to_string())
+    .bind(event.event_type.as_db_str())
     .bind(event.repo_id)
     .bind(event.agent_id)
     .bind(event.schedule_id)
@@ -277,7 +263,7 @@ pub async fn dispatch(
         let payload = payload.clone();
         let channel_config = channel.config.clone();
         let channel_id = channel.id;
-        let event_type_str = event.event_type.to_string();
+        let event_type_str = event.event_type.as_db_str().to_owned();
 
         tokio::spawn(async move {
             let result = deliver_to_channel(
@@ -531,7 +517,7 @@ mod tests {
     }
 
     #[test]
-    fn backup_success_goes_to_agent_overview() {
+    fn backup_success_goes_to_client_overview() {
         let p = payload(serde_json::json!({
             "event_type": "backup_success",
             "hostname": "myhost",

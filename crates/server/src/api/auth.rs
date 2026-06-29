@@ -7,7 +7,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header, request::Parts},
     response::{IntoResponse, Response},
 };
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -28,28 +28,19 @@ pub enum Role {
     User,
 }
 
-impl std::fmt::Display for Role {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
+impl Role {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "admin" => Some(Self::Admin),
+            "user" => Some(Self::User),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
             Self::Admin => "admin",
             Self::User => "user",
-        };
-        f.write_str(s)
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("invalid role: {0}")]
-pub struct InvalidRole(pub String);
-
-impl std::str::FromStr for Role {
-    type Err = InvalidRole;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "admin" => Ok(Self::Admin),
-            "user" => Ok(Self::User),
-            other => Err(InvalidRole(other.to_owned())),
         }
     }
 }
@@ -82,10 +73,9 @@ impl FromRequestParts<AppState> for AuthUser {
         let session_id = extract_session_cookie(parts)?;
         let session = db::get_session(&state.pool, &session_id).await?;
         let user = db::get_user_by_id(&state.pool, session.user_id).await?;
-        let role = user
-            .role
-            .parse::<Role>()
-            .map_err(|_| ApiError::Internal(format!("invalid role in database: {}", user.role)))?;
+        let role = Role::parse(&user.role).ok_or_else(|| {
+            ApiError::Internal(format!("invalid role in database: {}", user.role))
+        })?;
 
         if user.must_change_password {
             let path = parts.uri.path();
@@ -121,10 +111,8 @@ async fn try_bearer_auth(parts: &Parts, state: &AppState) -> Result<Option<AuthU
     db::update_api_token_last_used(&state.pool, &token_hash).await?;
 
     let user = db::get_user_by_id(&state.pool, lookup.user_id).await?;
-    let role = user
-        .role
-        .parse::<Role>()
-        .map_err(|_| ApiError::Internal(format!("invalid role in database: {}", user.role)))?;
+    let role = Role::parse(&user.role)
+        .ok_or_else(|| ApiError::Internal(format!("invalid role in database: {}", user.role)))?;
 
     Ok(Some(AuthUser {
         user_id: user.id,
@@ -181,13 +169,6 @@ pub struct LoginRequest {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct LoginResponse {
     pub user: db::UserRow,
-    pub session_expires_at: DateTime<Utc>,
-    pub remember_me: bool,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct RefreshResponse {
-    pub session_expires_at: DateTime<Utc>,
 }
 
 #[utoipa::path(
@@ -239,20 +220,13 @@ pub async fn login(
 
     let session_id = Uuid::new_v4().to_string();
     let (ttl_hours, max_age_secs) = if req.remember_me {
-        (24 * 7, 7 * 86400)
+        (24 * 30, 30 * 86400)
     } else {
         (24, 86400)
     };
     let expires_at = Utc::now() + Duration::hours(ttl_hours);
 
-    db::insert_session(
-        &state.pool,
-        &session_id,
-        user.id,
-        expires_at,
-        req.remember_me,
-    )
-    .await?;
+    db::insert_session(&state.pool, &session_id, user.id, expires_at).await?;
     db::update_last_login(&state.pool, user.id).await?;
 
     let secure_flag = if std::env::var("ASSIMILATE_SECURE_COOKIES").map_or(true, |v| v != "false") {
@@ -264,11 +238,7 @@ pub async fn login(
         "session={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age_secs}{secure_flag}"
     );
 
-    let body = Json(LoginResponse {
-        user,
-        session_expires_at: expires_at,
-        remember_me: req.remember_me,
-    });
+    let body = Json(LoginResponse { user });
     let mut response = body.into_response();
     response.headers_mut().insert(
         header::SET_COOKIE,
@@ -342,19 +312,11 @@ pub async fn me(
     auth: AuthUser,
 ) -> Result<Json<MeResponse>, ApiError> {
     let user = db::get_user_by_id(&state.pool, auth.user_id).await?;
-    let (session_expires_at, remember_me) = if let Some(ref session_id) = auth.session_id {
-        let session = db::get_session(&state.pool, session_id).await?;
-        (Some(session.expires_at), session.remember_me)
-    } else {
-        (None, false)
-    };
     Ok(Json(MeResponse {
         id: auth.user_id,
         username: auth.username,
-        role: auth.role.to_string(),
+        role: auth.role.as_str().to_string(),
         must_change_password: user.must_change_password,
-        session_expires_at,
-        remember_me,
     }))
 }
 
@@ -364,64 +326,6 @@ pub struct MeResponse {
     pub username: String,
     pub role: String,
     pub must_change_password: bool,
-    pub session_expires_at: Option<DateTime<Utc>>,
-    pub remember_me: bool,
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/auth/refresh",
-    tag = "Authentication",
-    operation_id = "refresh_session",
-    summary = "Extend a remember-me session before it expires",
-    responses(
-        (status = 200, description = "Session extended", body = RefreshResponse),
-        (status = 400, description = "Not a remember-me session or token auth"),
-        (status = 401, description = "Not authenticated"),
-        (status = 500, description = "Internal server error"),
-    )
-)]
-pub async fn refresh_session(
-    State(state): State<AppState>,
-    auth: AuthUser,
-) -> Result<Response, ApiError> {
-    let Some(ref session_id) = auth.session_id else {
-        return Err(ApiError::BadRequest(
-            "cannot refresh with token auth".to_string(),
-        ));
-    };
-
-    let session = db::get_session(&state.pool, session_id).await?;
-    if !session.remember_me {
-        return Err(ApiError::BadRequest(
-            "not a remember-me session".to_string(),
-        ));
-    }
-
-    let new_expires_at = Utc::now() + Duration::days(7);
-    db::extend_session(&state.pool, session_id, new_expires_at).await?;
-
-    let secure_flag = if std::env::var("ASSIMILATE_SECURE_COOKIES").map_or(true, |v| v != "false") {
-        "; Secure"
-    } else {
-        ""
-    };
-    let max_age_secs = 7 * 86400_i64;
-    let cookie = format!(
-        "session={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age_secs}{secure_flag}"
-    );
-
-    let mut response = Json(RefreshResponse {
-        session_expires_at: new_expires_at,
-    })
-    .into_response();
-    response.headers_mut().insert(
-        header::SET_COOKIE,
-        cookie
-            .parse()
-            .map_err(|e| ApiError::Internal(format!("failed to build cookie header: {e}")))?,
-    );
-    Ok(response)
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]

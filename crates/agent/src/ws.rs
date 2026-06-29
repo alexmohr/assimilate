@@ -21,7 +21,7 @@ pub async fn run_ws_client(
     exec_cmd_tx: mpsc::Sender<ExecutorCommand>,
     mut outbound_rx: mpsc::Receiver<AgentToServer>,
     restart_capability: &RestartCapability,
-) -> Result<(), WsError> {
+) {
     let mut backoff = BACKOFF_BASE;
 
     loop {
@@ -31,13 +31,7 @@ pub async fn run_ws_client(
             }
             Err(WsError::AuthRejected(reason)) => {
                 error!("Authentication rejected by server: {reason}");
-                return Err(WsError::AuthRejected(reason));
-            }
-            Err(WsError::ServerShutdown) => {
-                info!("Server shutting down, reconnecting in 60s");
-                tokio::time::sleep(Duration::from_mins(1)).await;
-                backoff = BACKOFF_BASE;
-                continue;
+                process::exit(1);
             }
             Err(e) => {
                 error!("WebSocket connection error: {e}");
@@ -68,7 +62,7 @@ async fn connect_and_run(
     let hostname = std::env::var("BORG_HOSTNAME")
         .unwrap_or_else(|_| gethostname::gethostname().to_string_lossy().into_owned());
 
-    let version = env!("APP_VERSION");
+    let version = env!("CARGO_PKG_VERSION");
     let git_sha = env!("GIT_SHA");
     let build_timestamp = env!("BUILD_TIMESTAMP");
     let commit_count_str = env!("GIT_COMMIT_COUNT");
@@ -250,10 +244,6 @@ async fn handle_text_message(
                 .await
                 .map_err(|e| WsError::Send(Box::new(e)))?;
         }
-        ServerToAgent::ShuttingDown => {
-            info!("Server shutting down, disconnecting");
-            return Err(WsError::ServerShutdown);
-        }
         ServerToAgent::RestartAgent => {
             info!("Received RestartAgent command, exiting for systemd restart");
             process::exit(0);
@@ -346,7 +336,7 @@ async fn handle_text_message(
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum WsError {
+enum WsError {
     #[error("connection failed: {0}")]
     Connect(Box<tokio_tungstenite::tungstenite::Error>),
     #[error("send failed: {0}")]
@@ -359,58 +349,4 @@ pub enum WsError {
     Deserialize(serde_json::Error),
     #[error("authentication rejected: {0}")]
     AuthRejected(String),
-    #[error("server is shutting down")]
-    ServerShutdown,
-}
-
-/// Returns `true` for errors that should terminate the agent process rather
-/// than trigger a reconnect. Authentication rejection is fatal because retrying
-/// with the same credentials would loop indefinitely.
-pub(crate) fn is_fatal(err: &WsError) -> bool {
-    matches!(err, WsError::AuthRejected(_))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn auth_rejected_is_fatal() {
-        assert!(is_fatal(&WsError::AuthRejected("invalid token".into())));
-    }
-
-    #[test]
-    fn serialization_errors_are_not_fatal() {
-        let serde_err = serde_json::from_str::<AgentToServer>("not json").unwrap_err();
-        assert!(!is_fatal(&WsError::Deserialize(serde_err)));
-    }
-
-    #[test]
-    fn protocol_errors_are_not_fatal() {
-        let proto_err = tokio_tungstenite::tungstenite::Error::ConnectionClosed;
-        assert!(!is_fatal(&WsError::Send(Box::new(proto_err))));
-    }
-
-    #[test]
-    fn auth_rejected_display_includes_reason() {
-        let err = WsError::AuthRejected("token expired".into());
-        assert_eq!(err.to_string(), "authentication rejected: token expired");
-    }
-
-    #[test]
-    fn auth_rejected_debug_includes_variant() {
-        let err = WsError::AuthRejected("nope".into());
-        assert!(format!("{err:?}").contains("AuthRejected"));
-    }
-
-    #[test]
-    fn server_shutdown_is_not_fatal() {
-        assert!(!is_fatal(&WsError::ServerShutdown));
-    }
-
-    #[test]
-    fn server_shutdown_display() {
-        let err = WsError::ServerShutdown;
-        assert_eq!(err.to_string(), "server is shutting down");
-    }
 }

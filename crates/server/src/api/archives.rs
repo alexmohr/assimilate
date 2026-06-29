@@ -11,14 +11,10 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::{DateTime, Utc};
-use futures_util::StreamExt as _;
 use serde::{Deserialize, Serialize};
-use shared::types::build_repo_url;
+use shared::{ssh::borg_rsh, types::build_repo_url};
 use sqlx::PgPool;
-use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, BufReader},
-    sync::oneshot,
-};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio_util::io::ReaderStream;
 
 use super::{auth::AuthUser, permissions::check_repo_permission};
@@ -87,7 +83,9 @@ pub async fn get_repo_env(
         &repo.repo_path,
     );
 
-    let mut env = super::helpers::borg_base_env(&passphrase);
+    let mut env = HashMap::new();
+    env.insert("BORG_PASSPHRASE".to_string(), passphrase);
+    env.insert("BORG_RSH".to_string(), borg_rsh());
 
     if repo.relocation_pending {
         env.insert(
@@ -750,22 +748,18 @@ pub async fn list_contents(
         .spawn(&args, &env)
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
 
-    let Some(stdout) = child.take_stdout() else {
+    let Some(stdout) = child.stdout.take() else {
         return Err(ApiError::Internal("no stdout from borg".to_string()));
     };
 
     let mut lines = BufReader::new(stdout).lines();
     let mut raw_entries: Vec<ContentEntry> = Vec::new();
-    const LINE_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
-    loop {
-        let line = tokio::time::timeout(LINE_READ_TIMEOUT, lines.next_line())
-            .await
-            .map_err(|_| ApiError::Internal("timed out reading borg output".to_string()))?
-            .map_err(|e| ApiError::Internal(format!("reading borg output: {e}")))?;
-
-        let Some(line) = line else { break };
-
+    while let Some(line) = lines
+        .next_line()
+        .await
+        .map_err(|e| ApiError::Internal(format!("reading borg output: {e}")))?
+    {
         if line.is_empty() {
             continue;
         }
@@ -783,13 +777,13 @@ pub async fn list_contents(
         });
     }
 
-    let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
+    let status = child
+        .wait()
         .await
-        .map_err(|_| ApiError::Internal("borg wait timed out".to_string()))?
         .map_err(|e| ApiError::Internal(format!("borg wait failed: {e}")))?;
     if !status.success() {
         let mut stderr_str = String::new();
-        if let Some(mut se) = child.take_stderr() {
+        if let Some(mut se) = child.stderr.take() {
             let _ = se.read_to_string(&mut stderr_str).await;
         }
         let code = status.code().unwrap_or(1);
@@ -869,14 +863,6 @@ pub async fn get_archive_index_status(
     Ok(Json(response))
 }
 
-/// Resolves to `true` if the timeout elapsed before completion was signalled.
-async fn timed_out_before_done(done_rx: oneshot::Receiver<()>, timeout: Duration) -> bool {
-    tokio::select! {
-        () = tokio::time::sleep(timeout) => true,
-        _ = done_rx => false,
-    }
-}
-
 #[utoipa::path(
     get,
     path = "/api/repos/{repo_id}/archives/{archive_name}/extract",
@@ -925,7 +911,8 @@ pub async fn extract_file(
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
 
     let stdout = child
-        .take_stdout()
+        .stdout
+        .take()
         .ok_or_else(|| ApiError::Internal("failed to capture borg stdout".to_string()))?;
 
     let basename = Path::new(&query.path)
@@ -936,23 +923,12 @@ pub async fn extract_file(
     let content_type = content_type_for_extension(basename);
     let disposition = format!("attachment; filename=\"{basename}\"");
 
-    let (done_tx, done_rx) = oneshot::channel::<()>();
-
-    // Wrap the stream so the sender is dropped (signalling completion) when the
-    // stream is exhausted or the connection is closed.
-    let stream = ReaderStream::new(stdout).inspect(move |_| {
-        // kept alive until the closure is dropped; no-op on each chunk
-        let _ = &done_tx;
-    });
+    let stream = ReaderStream::new(stdout);
     let body = Body::from_stream(stream);
 
-    // Kill the child only if the stream did not complete within the timeout.
-    // Dropping ServerChild sends SIGTERM first (graceful lock release), escalating
-    // to SIGKILL + break-lock after 30 seconds if the process does not exit.
     tokio::spawn(async move {
-        if timed_out_before_done(done_rx, EXTRACT_TIMEOUT).await {
-            drop(child);
-        }
+        tokio::time::sleep(EXTRACT_TIMEOUT).await;
+        let _kill_result = child.kill().await;
     });
 
     Ok((
@@ -1204,20 +1180,5 @@ mod tests {
         cases.iter().for_each(|(filename, expected)| {
             assert_eq!(content_type_for_extension(filename), *expected);
         });
-    }
-
-    #[tokio::test]
-    async fn timed_out_before_done_returns_false_when_signalled_first() {
-        let (done_tx, done_rx) = oneshot::channel::<()>();
-        drop(done_tx);
-
-        assert!(!timed_out_before_done(done_rx, Duration::from_secs(60)).await);
-    }
-
-    #[tokio::test]
-    async fn timed_out_before_done_returns_true_when_timeout_elapses() {
-        let (_done_tx, done_rx) = oneshot::channel::<()>();
-
-        assert!(timed_out_before_done(done_rx, Duration::from_millis(10)).await);
     }
 }

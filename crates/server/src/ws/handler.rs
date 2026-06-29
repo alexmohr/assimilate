@@ -11,10 +11,7 @@ use axum::{
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
-use shared::{
-    protocol::{AgentToServer, ServerToAgent, ServerToUi},
-    types::ScheduleType,
-};
+use shared::protocol::{AgentToServer, ServerToAgent, ServerToUi};
 use tokio::sync::mpsc;
 
 use crate::{
@@ -22,7 +19,7 @@ use crate::{
     api::repos::sync_new_archives,
     archive_index, config_assembler, db,
     notifications::{self, EventType, NotificationEvent},
-    ws::{completion_bus::OperationOutcome, ui_broadcast::ActiveBackupSnapshot},
+    ws::completion_bus::OperationOutcome,
 };
 
 const PING_INTERVAL: Duration = Duration::from_secs(30);
@@ -115,25 +112,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     };
 
-    let verify_result = tokio::task::spawn_blocking(move || bcrypt::verify(&token, &token_hash))
-        .await
-        .map_err(|e| {
-            tracing::error!(hostname = %hostname, error = %e, "bcrypt task panicked");
-        });
-    let token_valid = match verify_result {
-        Ok(Ok(valid)) => valid,
-        Ok(Err(e)) => {
+    let token_valid = match bcrypt::verify(&token, &token_hash) {
+        Ok(valid) => valid,
+        Err(e) => {
             tracing::error!(hostname = %hostname, error = %e, "bcrypt verification failed");
-            let close = Message::Close(Some(CloseFrame {
-                code: 4001,
-                reason: "authentication failed".into(),
-            }));
-            if let Err(e) = ws_sink.send(close).await {
-                tracing::debug!(error = %e, "ws send failed");
-            }
-            return;
-        }
-        Err(()) => {
             let close = Message::Close(Some(CloseFrame {
                 code: 4001,
                 reason: "authentication failed".into(),
@@ -216,71 +198,6 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     }
 
-    // If the user cancelled a backup while this agent was offline, notify the
-    // agent now so it can kill the corresponding borg process.
-    if let Ok(rows) = sqlx::query_scalar::<_, i64>(
-        "SELECT DISTINCT repo_id FROM backup_reports WHERE agent_id = $1 AND status = 'cancelled' \
-         AND NOT cancellation_acknowledged",
-    )
-    .bind(agent_id)
-    .fetch_all(&state.pool)
-    .await
-    {
-        for repo_id in rows {
-            let msg = ServerToAgent::CancelBackup {
-                repo_id: shared::types::RepoId(repo_id),
-            };
-            if let Ok(json) = serde_json::to_string(&msg)
-                && let Err(e) = ws_sink.send(Message::Text(json.into())).await
-            {
-                tracing::warn!(
-                    hostname = %hostname,
-                    repo_id,
-                    error = %e,
-                    "failed to notify agent of cancelled backup on reconnect"
-                );
-            }
-        }
-    }
-
-    // Execute any pending backup runs that were triggered (e.g. "Run Now") while
-    // this agent was offline. The backup_report is already in the DB as 'pending'
-    // and will be updated to 'started' when the agent reports BackupStarted.
-    if let Ok(rows) = sqlx::query_as::<_, (i64, Option<i64>, Option<String>)>(
-        "SELECT repo_id, schedule_id, run_id FROM backup_reports WHERE agent_id = $1 AND status = \
-         'pending' ORDER BY started_at ASC",
-    )
-    .bind(agent_id)
-    .fetch_all(&state.pool)
-    .await
-    {
-        for (repo_id, schedule_id, run_id) in rows {
-            let msg = ServerToAgent::RunBackupNow {
-                repo_id: shared::types::RepoId(repo_id),
-                schedule_id,
-                request_id: None,
-                run_id,
-            };
-            if let Ok(json) = serde_json::to_string(&msg)
-                && let Err(e) = ws_sink.send(Message::Text(json.into())).await
-            {
-                tracing::warn!(
-                    hostname = %hostname,
-                    repo_id,
-                    error = %e,
-                    "failed to send pending RunBackupNow on reconnect"
-                );
-            } else {
-                tracing::info!(
-                    hostname = %hostname,
-                    repo_id,
-                    schedule_id,
-                    "sent pending RunBackupNow on reconnect"
-                );
-            }
-        }
-    }
-
     tokio::spawn(ping_loop(ping_tx));
 
     loop {
@@ -309,13 +226,6 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     }
 
     state.registry.unregister(&hostname).await;
-    let cleared = state.repo_op_tracker.clear_for_agent(&hostname).await;
-    for repo_id in cleared {
-        state.ui_broadcast.send(ServerToUi::RepoOpChanged {
-            repo_id,
-            op: state.repo_op_tracker.get(repo_id).await,
-        });
-    }
     state.ui_broadcast.send(ServerToUi::AgentDisconnected {
         hostname: hostname.clone(),
     });
@@ -330,14 +240,6 @@ async fn ping_loop(sender: mpsc::Sender<ServerToAgent>) {
             break;
         }
     }
-}
-
-fn extract_archive_name(borg_command: &str) -> Option<String> {
-    borg_command
-        .split_whitespace()
-        .find(|s| s.starts_with("::"))
-        .map(|s| s.trim_start_matches("::").to_owned())
-        .filter(|s| !s.is_empty())
 }
 
 async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: &AppState) {
@@ -389,23 +291,6 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                     "failed to insert backup started row"
                 );
             }
-            // If the agent restarted and is starting a new backup, any existing
-            // 'started' rows for this agent+repo are orphaned - fail them.
-            if let Err(e) = db::fail_other_started_backups(
-                &state.pool,
-                agent_id,
-                repo_id.0,
-                run_id.as_deref(),
-                hostname,
-            )
-            .await
-            {
-                tracing::error!(
-                    hostname = %hostname,
-                    error = %e,
-                    "failed to clean up orphaned backup rows"
-                );
-            }
             state
                 .repo_op_tracker
                 .set(
@@ -418,27 +303,9 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 repo_id: repo_id.0,
                 op: state.repo_op_tracker.get(repo_id.0).await,
             });
-            if let Ok(target_name) = db::get_repo_name(&state.pool, repo_id.0).await {
-                let archive_name = borg_command.as_deref().and_then(extract_archive_name);
-                state.ui_broadcast.set_active_backup(ActiveBackupSnapshot {
-                    hostname: hostname.to_owned(),
-                    target_name: target_name.clone(),
-                    archive_name: archive_name.clone(),
-                    schedule_id,
-                    repo_id: repo_id.0,
-                    progress_line: None,
-                });
-                state.ui_broadcast.send(ServerToUi::BackupStarted {
-                    hostname: hostname.to_owned(),
-                    target_name,
-                    archive_name,
-                    schedule_id,
-                });
-            }
             state.ui_broadcast.send(ServerToUi::DataChanged);
         }
         AgentToServer::BackupCompleted { report } => {
-            let report_for_ui = report.clone();
             tracing::info!(
                 hostname = %hostname,
                 repo_id = ?report.repo_id,
@@ -536,20 +403,18 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
             if matches!(
                 report.status,
                 shared::types::BackupStatus::Success | shared::types::BackupStatus::Warning
-            ) && let Err(e) =
-                db::clear_relocation_for_host(&state.pool, report.repo_id.0, hostname).await
+            ) && let Err(e) = db::clear_relocation_pending(&state.pool, report.repo_id.0).await
             {
                 tracing::error!(
                     hostname = %hostname,
                     error = %e,
-                    "failed to clear relocation_pending for host"
+                    "failed to clear relocation_pending"
                 );
             }
 
             let repo_name = db::get_repo_name(&state.pool, report.repo_id.0)
                 .await
                 .unwrap_or_else(|_| report.repo_id.0.to_string());
-            let completed_repo_name = repo_name.clone();
 
             if let Ok(Some(quota)) = db::quota::get_quota(&state.pool, report.repo_id.0).await {
                 let quota_status = db::quota::evaluate_quota(&quota, report.deduplicated_size);
@@ -587,7 +452,6 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                         repo_id: Some(report.repo_id.0),
                         agent_id: Some(agent_id),
                         schedule_id: None,
-                        schedule_name: None,
                         archive_name: None,
                     };
                     let service = state.notification_service.clone();
@@ -604,12 +468,6 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 shared::types::BackupStatus::Warning => EventType::BackupWarning,
                 shared::types::BackupStatus::Failed => EventType::BackupFailed,
             };
-            let schedule_name = match report.schedule_id {
-                Some(sid) => db::get_schedule_display_name(&state.pool, sid, &repo_name)
-                    .await
-                    .ok(),
-                None => None,
-            };
             let event = NotificationEvent {
                 event_type,
                 hostname: hostname.to_owned(),
@@ -619,8 +477,7 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 timestamp: chrono::Utc::now(),
                 repo_id: Some(report.repo_id.0),
                 agent_id: Some(agent_id),
-                schedule_id: report.schedule_id,
-                schedule_name,
+                schedule_id: None,
                 archive_name: notification_archive_name,
             };
             let service = state.notification_service.clone();
@@ -758,20 +615,11 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
             )
             .await
             {
-                tracing::warn!(
-                    repo_id = finished_repo_id,
-                    error = %e,
-                    "failed to persist last_op for backup"
-                );
+                tracing::warn!(repo_id = finished_repo_id, error = %e, "failed to persist last_op for backup");
             }
             state.ui_broadcast.send(ServerToUi::RepoOpChanged {
                 repo_id: finished_repo_id,
                 op: None,
-            });
-            state.ui_broadcast.send(ServerToUi::BackupCompleted {
-                hostname: hostname.to_owned(),
-                target_name: completed_repo_name,
-                report: Box::new(report_for_ui),
             });
             state.ui_broadcast.send(ServerToUi::DataChanged);
         }
@@ -814,32 +662,14 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 repo_id: repo_id.0,
                 success,
             });
-            let repo_name = db::get_repo_name(&state.pool, repo_id.0)
-                .await
-                .unwrap_or_else(|_| repo_id.0.to_string());
-            state.ui_broadcast.send(ServerToUi::CheckCompleted {
-                hostname: hostname.to_owned(),
-                target_name: repo_name.clone(),
-                success,
-                error_message: error_message.clone(),
-            });
-
-            // The agent only reports a repo id, not which schedule triggered the
-            // check, so infer it from the host/repo/type combination.
-            let schedule = db::get_schedule_for_hostname_repo(
-                &state.pool,
-                hostname,
-                repo_id.0,
-                ScheduleType::Check,
-            )
-            .await
-            .ok()
-            .flatten();
-            let schedule_name = match &schedule {
-                Some(s) if !s.name.trim().is_empty() => Some(s.name.clone()),
-                Some(_) => Some(repo_name.clone()),
-                None => None,
-            };
+            if let Ok(target_name) = db::get_repo_name(&state.pool, repo_id.0).await {
+                state.ui_broadcast.send(ServerToUi::CheckCompleted {
+                    hostname: hostname.to_owned(),
+                    target_name,
+                    success,
+                    error_message: error_message.clone(),
+                });
+            }
 
             let event_type = if success {
                 EventType::CheckSuccess
@@ -849,14 +679,13 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
             let event = NotificationEvent {
                 event_type,
                 hostname: hostname.to_owned(),
-                repo_name,
+                repo_name: repo_id.0.to_string(),
                 status: if success { "success" } else { "failed" }.to_owned(),
                 error_message,
                 timestamp: chrono::Utc::now(),
                 repo_id: Some(repo_id.0),
                 agent_id: Some(agent_id),
-                schedule_id: schedule.map(|s| s.id),
-                schedule_name,
+                schedule_id: None,
                 archive_name: None,
             };
             let service = state.notification_service.clone();
@@ -911,24 +740,20 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 success,
                 "canary verification completed"
             );
-            let schedule_id = db::get_schedule_for_hostname_repo(
-                &state.pool,
-                hostname,
-                repo_id.0,
-                ScheduleType::Backup,
-            )
-            .await
-            .map_err(|e| {
-                tracing::warn!(
-                    hostname = %hostname,
-                    repo_id = ?repo_id,
-                    error = %e,
-                    "failed to look up schedule for canary result"
-                );
-            })
-            .ok()
-            .flatten()
-            .map(|s| s.id);
+            let schedule_id =
+                db::get_backup_schedule_for_hostname_repo(&state.pool, hostname, repo_id.0)
+                    .await
+                    .map_err(|e| {
+                        tracing::warn!(
+                            hostname = %hostname,
+                            repo_id = ?repo_id,
+                            error = %e,
+                            "failed to look up schedule for canary result"
+                        );
+                    })
+                    .ok()
+                    .flatten()
+                    .map(|s| s.id);
 
             if let Some(sid) = schedule_id {
                 if let Err(e) = db::insert_canary_result(
@@ -963,18 +788,6 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 });
             }
             state.ui_broadcast.send(ServerToUi::DataChanged);
-        }
-        AgentToServer::BackupLog {
-            repo_id,
-            schedule_id,
-            line,
-        } => {
-            state.ui_broadcast.send(ServerToUi::BackupLog {
-                hostname: hostname.to_owned(),
-                schedule_id,
-                repo_id: repo_id.0,
-                line,
-            });
         }
         AgentToServer::Hello { .. } => {
             tracing::warn!(hostname = %hostname, "unexpected Hello after handshake");
@@ -1104,14 +917,6 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                     "failed to update cancelled backup report"
                 );
             }
-            if let Err(e) = db::acknowledge_cancellation(&state.pool, agent_id, repo_id.0).await {
-                tracing::error!(
-                    hostname = %hostname,
-                    repo_id = ?repo_id,
-                    error = %e,
-                    "failed to acknowledge cancellation"
-                );
-            }
             state.ui_broadcast.send(ServerToUi::DataChanged);
         }
     }
@@ -1161,7 +966,6 @@ mod tests {
             completion_bus: crate::ws::completion_bus::CompletionBus::new(),
             repo_op_tracker: crate::repo_op_tracker::RepoOpTracker::default(),
             repo_lock: crate::RepoLock::default(),
-            import_tasks: crate::ImportTaskRegistry::default(),
             pending_dryruns: std::sync::Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),
@@ -1174,7 +978,6 @@ mod tests {
             pending_deletes: std::sync::Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),
-            shutdown_token: tokio_util::sync::CancellationToken::new(),
         }
     }
 

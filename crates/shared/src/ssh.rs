@@ -4,28 +4,14 @@
 use std::path::Path;
 
 pub fn borg_rsh() -> String {
-    [
-        "ssh",
-        "-o BatchMode=yes",
-        "-o StrictHostKeyChecking=accept-new",
-        "-o ServerAliveInterval=15",
-        "-o ServerAliveCountMax=3",
-        "-o ConnectTimeout=30",
-    ]
-    .join(" ")
+    "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new".to_owned()
 }
 
 pub fn borg_rsh_with_known_hosts(path: &Path) -> String {
-    [
-        "ssh",
-        "-o BatchMode=yes",
-        "-o StrictHostKeyChecking=yes",
-        "-o ServerAliveInterval=15",
-        "-o ServerAliveCountMax=3",
-        "-o ConnectTimeout=30",
-        &format!("-o UserKnownHostsFile={}", path.display()),
-    ]
-    .join(" ")
+    format!(
+        "ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile={}",
+        path.display()
+    )
 }
 
 pub fn known_hosts_host(host: &str, port: u16) -> String {
@@ -46,9 +32,6 @@ mod tests {
 
         assert!(ssh.contains("BatchMode=yes"));
         assert!(ssh.contains("StrictHostKeyChecking=accept-new"));
-        assert!(ssh.contains("ServerAliveInterval=15"));
-        assert!(ssh.contains("ServerAliveCountMax=3"));
-        assert!(ssh.contains("ConnectTimeout=30"));
         assert!(!ssh.contains("UserKnownHostsFile"));
     }
 
@@ -57,7 +40,6 @@ mod tests {
         let ssh = borg_rsh_with_known_hosts(Path::new("/tmp/known-hosts"));
 
         assert!(ssh.contains("StrictHostKeyChecking=yes"));
-        assert!(ssh.contains("ServerAliveInterval=15"));
         assert!(ssh.contains("UserKnownHostsFile=/tmp/known-hosts"));
     }
 

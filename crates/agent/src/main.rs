@@ -8,8 +8,6 @@ mod ssh_forward;
 mod systemd;
 mod ws;
 
-use std::process;
-
 use clap::Parser;
 use executor::{Executor, ExecutorCommand};
 use shared::protocol::AgentToServer;
@@ -18,11 +16,7 @@ use tracing_subscriber::EnvFilter;
 
 #[must_use]
 pub fn agent_version_string() -> &'static str {
-    if env!("GIT_SHA").is_empty() {
-        env!("APP_VERSION")
-    } else {
-        concat!(env!("APP_VERSION"), "+", env!("GIT_SHA"))
-    }
+    concat!(env!("CARGO_PKG_VERSION"), "+", env!("GIT_SHA"))
 }
 
 #[derive(Parser)]
@@ -62,11 +56,7 @@ async fn main() {
     });
 
     tokio::select! {
-        result = ws::run_ws_client(&args, exec_cmd_tx, outbound_rx, &restart_capability) => {
-            if result.as_ref().err().is_some_and(ws::is_fatal) {
-                process::exit(1);
-            }
-        }
+        () = ws::run_ws_client(&args, exec_cmd_tx, outbound_rx, &restart_capability) => {}
         res = tokio::signal::ctrl_c() => {
             if let Err(e) = res {
                 tracing::error!("Failed to listen for Ctrl+C: {e}");

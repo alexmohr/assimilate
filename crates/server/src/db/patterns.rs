@@ -55,7 +55,7 @@ pub async fn delete_hostname_pattern(pool: &PgPool, pattern_id: i64) -> Result<(
 }
 
 #[derive(Debug, sqlx::FromRow)]
-struct PatternAgentJoinRow {
+struct PatternClientJoinRow {
     pub pattern: String,
     pub id: i64,
     pub hostname: String,
@@ -70,8 +70,6 @@ struct PatternAgentJoinRow {
     pub visibility: String,
     pub default_backup_paths: Vec<String>,
     pub default_exclude_patterns: Vec<String>,
-    pub default_pre_backup_commands: String,
-    pub default_post_backup_commands: String,
     pub agent_token_hash: String,
     pub is_hidden: bool,
 }
@@ -80,11 +78,10 @@ pub async fn find_agent_by_pattern(
     pool: &PgPool,
     hostname: &str,
 ) -> Result<Option<super::AgentRow>, ApiError> {
-    let rows = sqlx::query_as::<_, PatternAgentJoinRow>(
+    let rows = sqlx::query_as::<_, PatternClientJoinRow>(
         "SELECT p.pattern, a.id, a.hostname, a.display_name, a.agent_version, a.agent_git_sha, \
          a.agent_build_time, a.agent_commit_count, a.created_at, a.last_seen_at, a.owner_id, \
-         a.visibility, a.default_backup_paths, a.default_exclude_patterns, \
-         a.default_pre_backup_commands, a.default_post_backup_commands, a.agent_token_hash, \
+         a.visibility, a.default_backup_paths, a.default_exclude_patterns, a.agent_token_hash, \
          a.is_hidden FROM agent_hostname_patterns p JOIN agents a ON a.id = p.agent_id ORDER BY \
          p.pattern",
     )
@@ -110,8 +107,6 @@ pub async fn find_agent_by_pattern(
         visibility: row.visibility.clone(),
         default_backup_paths: row.default_backup_paths.clone(),
         default_exclude_patterns: row.default_exclude_patterns.clone(),
-        default_pre_backup_commands: row.default_pre_backup_commands.clone(),
-        default_post_backup_commands: row.default_post_backup_commands.clone(),
         agent_token_hash: row.agent_token_hash.clone(),
         is_hidden: row.is_hidden,
     }))

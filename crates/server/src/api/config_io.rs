@@ -10,11 +10,12 @@ use serde::{Deserialize, Serialize};
 use super::auth::RequireAdmin;
 use crate::{
     AppState,
-    db::{self, IMPORTED_TOKEN_HASH, ScheduleParams},
+    db::{self, ScheduleParams},
     error::{ApiError, ApiJson},
 };
 
 const EXPORT_VERSION: u32 = 1;
+const IMPORTED_TOKEN: &str = "imported:no-auth";
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct HostExport {
@@ -22,8 +23,6 @@ pub struct HostExport {
     pub display_name: Option<String>,
     pub default_backup_paths: Vec<String>,
     pub default_exclude_patterns: Vec<String>,
-    pub default_pre_backup_commands: String,
-    pub default_post_backup_commands: String,
     pub hostname_patterns: Vec<String>,
 }
 
@@ -98,7 +97,7 @@ pub async fn export_config(
 
     let mut hosts = Vec::new();
     for agent in &agents {
-        if agent.agent_token_hash == IMPORTED_TOKEN_HASH {
+        if agent.agent_token_hash == IMPORTED_TOKEN {
             continue;
         }
         let patterns = db::patterns::list_patterns_for_agent(&state.pool, agent.id).await?;
@@ -107,8 +106,6 @@ pub async fn export_config(
             display_name: agent.display_name.clone(),
             default_backup_paths: agent.default_backup_paths.clone(),
             default_exclude_patterns: agent.default_exclude_patterns.clone(),
-            default_pre_backup_commands: agent.default_pre_backup_commands.clone(),
-            default_post_backup_commands: agent.default_post_backup_commands.clone(),
             hostname_patterns: patterns.into_iter().map(|p| p.pattern).collect(),
         });
     }
@@ -232,10 +229,10 @@ pub async fn import_config(
         warnings: Vec::new(),
     };
 
-    let existing_agents = db::list_agents(&state.pool, true).await?;
-    let mut hostname_to_id: HashMap<String, i64> = existing_agents
+    let existing_clients = db::list_agents(&state.pool, true).await?;
+    let mut hostname_to_id: HashMap<String, i64> = existing_clients
         .iter()
-        .map(|a| (a.hostname.clone(), a.id))
+        .map(|c| (c.hostname.clone(), c.id))
         .collect();
 
     for host in &payload.hosts {
@@ -244,13 +241,9 @@ pub async fn import_config(
                 &state.pool,
                 &host.hostname,
                 &host.hostname,
-                db::AgentDefaults {
-                    display_name: host.display_name.as_deref(),
-                    default_backup_paths: &host.default_backup_paths,
-                    default_exclude_patterns: &host.default_exclude_patterns,
-                    default_pre_backup_commands: &host.default_pre_backup_commands,
-                    default_post_backup_commands: &host.default_post_backup_commands,
-                },
+                host.display_name.as_deref(),
+                &host.default_backup_paths,
+                &host.default_exclude_patterns,
             )
             .await?;
 
@@ -271,14 +264,10 @@ pub async fn import_config(
             let agent = db::insert_agent_with_paths(
                 &state.pool,
                 &host.hostname,
-                IMPORTED_TOKEN_HASH,
-                db::AgentDefaults {
-                    display_name: host.display_name.as_deref(),
-                    default_backup_paths: &host.default_backup_paths,
-                    default_exclude_patterns: &host.default_exclude_patterns,
-                    default_pre_backup_commands: &host.default_pre_backup_commands,
-                    default_post_backup_commands: &host.default_post_backup_commands,
-                },
+                host.display_name.as_deref(),
+                IMPORTED_TOKEN,
+                &host.default_backup_paths,
+                &host.default_exclude_patterns,
             )
             .await?;
             for pattern in &host.hostname_patterns {
@@ -322,14 +311,9 @@ pub async fn import_config(
             let agent_id = if let Some(&cid) = hostname_to_id.get(&target.hostname) {
                 cid
             } else {
-                let agent = db::insert_agent(
-                    &state.pool,
-                    &target.hostname,
-                    None,
-                    IMPORTED_TOKEN_HASH,
-                    None,
-                )
-                .await?;
+                let agent =
+                    db::insert_agent(&state.pool, &target.hostname, None, IMPORTED_TOKEN, None)
+                        .await?;
                 result.warnings.push(format!(
                     "created placeholder agent {:?} referenced by schedule {:?}",
                     target.hostname, sched.name

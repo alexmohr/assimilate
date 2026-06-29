@@ -9,14 +9,10 @@ pub mod tags;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use shared::types::{Compression, ScheduleType};
+use shared::types::Compression;
 use sqlx::PgPool;
 
 use crate::error::ApiError;
-
-/// Sentinel `agent_token_hash` value for imported placeholder agents that have
-/// no real authentication token.
-pub const IMPORTED_TOKEN_HASH: &str = "imported:no-auth";
 
 #[derive(Debug, Clone, Serialize)]
 pub enum ResolveResult {
@@ -32,9 +28,8 @@ pub async fn resolve_agent_for_hostname(
     let exact = sqlx::query_as::<_, AgentRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, agent_token_hash, is_hidden FROM agents WHERE hostname = \
-         $1 AND agent_token_hash != 'imported:no-auth'",
+         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM agents \
+         WHERE hostname = $1 AND agent_token_hash != 'imported:no-auth'",
     )
     .bind(hostname)
     .fetch_optional(pool)
@@ -58,8 +53,8 @@ pub async fn merge_agent(pool: &PgPool, source_id: i64, target_id: i64) -> Resul
     let source = sqlx::query_as::<_, AgentRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, agent_token_hash, is_hidden FROM agents WHERE id = $1",
+         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM agents \
+         WHERE id = $1",
     )
     .bind(source_id)
     .fetch_optional(&mut *tx)
@@ -79,7 +74,7 @@ pub async fn merge_agent(pool: &PgPool, source_id: i64, target_id: i64) -> Resul
             .await
             .map_err(ApiError::Database)?;
 
-    if has_imported_token != IMPORTED_TOKEN_HASH {
+    if has_imported_token != "imported:no-auth" {
         return Err(ApiError::BadRequest(
             "source agent does not have imported:no-auth token".to_string(),
         ));
@@ -142,8 +137,6 @@ pub struct AgentRow {
     pub default_backup_paths: Vec<String>,
     #[serde(default)]
     pub default_exclude_patterns: Vec<String>,
-    pub default_pre_backup_commands: String,
-    pub default_post_backup_commands: String,
     #[serde(skip)]
     pub agent_token_hash: String,
     #[serde(default)]
@@ -269,8 +262,8 @@ pub async fn get_agent_by_hostname(pool: &PgPool, hostname: &str) -> Result<Agen
     sqlx::query_as::<_, AgentRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, agent_token_hash, is_hidden FROM agents WHERE hostname = $1",
+         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM agents \
+         WHERE hostname = $1",
     )
     .bind(hostname)
     .fetch_one(pool)
@@ -285,8 +278,8 @@ pub async fn get_agent_by_id(pool: &PgPool, agent_id: i64) -> Result<AgentRow, A
     sqlx::query_as::<_, AgentRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, agent_token_hash, is_hidden FROM agents WHERE id = $1",
+         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM agents \
+         WHERE id = $1",
     )
     .bind(agent_id)
     .fetch_one(pool)
@@ -367,13 +360,12 @@ pub async fn list_agents(pool: &PgPool, include_hidden: bool) -> Result<Vec<Agen
     let sql = if include_hidden {
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, \
-         agent_token_hash, is_hidden FROM agents ORDER BY hostname"
+         default_exclude_patterns, agent_token_hash, is_hidden FROM agents ORDER BY hostname"
     } else {
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, \
-         agent_token_hash, is_hidden FROM agents WHERE is_hidden = false ORDER BY hostname"
+         default_exclude_patterns, agent_token_hash, is_hidden FROM agents WHERE is_hidden = false \
+         ORDER BY hostname"
     };
     sqlx::query_as::<_, AgentRow>(sql)
         .fetch_all(pool)
@@ -390,8 +382,7 @@ pub async fn set_agent_hidden(
         "UPDATE agents SET is_hidden = $2 WHERE hostname = $1 RETURNING id, hostname, \
          display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, \
-         agent_token_hash, is_hidden",
+         default_exclude_patterns, agent_token_hash, is_hidden",
     )
     .bind(hostname)
     .bind(hidden)
@@ -412,8 +403,8 @@ pub async fn get_or_create_agent_by_hostname(
     let existing = sqlx::query_as::<_, AgentRow>(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, agent_token_hash, is_hidden FROM agents WHERE hostname = $1",
+         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden FROM agents \
+         WHERE hostname = $1",
     )
     .bind(hostname)
     .fetch_optional(pool)
@@ -428,8 +419,7 @@ pub async fn get_or_create_agent_by_hostname(
         "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, \
          $3, NULL) RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
          agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, agent_token_hash, is_hidden",
+         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden",
     )
     .bind(hostname)
     .bind(Some(format!("{hostname} (imported)")))
@@ -450,8 +440,7 @@ pub async fn insert_agent(
         "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, \
          $3, $4) RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
          agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
-         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, agent_token_hash, is_hidden",
+         default_backup_paths, default_exclude_patterns, agent_token_hash, is_hidden",
     )
     .bind(hostname)
     .bind(display_name)
@@ -462,35 +451,26 @@ pub async fn insert_agent(
     .map_err(ApiError::Database)
 }
 
-pub struct AgentDefaults<'a> {
-    pub display_name: Option<&'a str>,
-    pub default_backup_paths: &'a [String],
-    pub default_exclude_patterns: &'a [String],
-    pub default_pre_backup_commands: &'a str,
-    pub default_post_backup_commands: &'a str,
-}
-
 pub async fn insert_agent_with_paths(
     pool: &PgPool,
     hostname: &str,
+    display_name: Option<&str>,
     token_hash: &str,
-    defaults: AgentDefaults<'_>,
+    default_backup_paths: &[String],
+    default_exclude_patterns: &[String],
 ) -> Result<AgentRow, ApiError> {
     sqlx::query_as::<_, AgentRow>(
         "INSERT INTO agents (hostname, display_name, agent_token_hash, default_backup_paths, \
-         default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, hostname, display_name, agent_version, \
-         agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, \
-         visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, agent_token_hash, is_hidden",
+         default_exclude_patterns) VALUES ($1, $2, $3, $4, $5) RETURNING id, hostname, \
+         display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
+         created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
+         default_exclude_patterns, agent_token_hash, is_hidden",
     )
     .bind(hostname)
-    .bind(defaults.display_name)
+    .bind(display_name)
     .bind(token_hash)
-    .bind(defaults.default_backup_paths)
-    .bind(defaults.default_exclude_patterns)
-    .bind(defaults.default_pre_backup_commands)
-    .bind(defaults.default_post_backup_commands)
+    .bind(default_backup_paths)
+    .bind(default_exclude_patterns)
     .fetch_one(pool)
     .await
     .map_err(ApiError::Database)
@@ -500,24 +480,22 @@ pub async fn update_agent(
     pool: &PgPool,
     hostname: &str,
     new_hostname: &str,
-    defaults: AgentDefaults<'_>,
+    display_name: Option<&str>,
+    default_backup_paths: &[String],
+    default_exclude_patterns: &[String],
 ) -> Result<AgentRow, ApiError> {
     sqlx::query_as::<_, AgentRow>(
         "UPDATE agents SET hostname = $2, display_name = $3, default_backup_paths = $4, \
-         default_exclude_patterns = $5, default_pre_backup_commands = $6, \
-         default_post_backup_commands = $7 WHERE hostname = $1 RETURNING id, hostname, \
-         display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
-         created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, \
+         default_exclude_patterns = $5 WHERE hostname = $1 RETURNING id, hostname, display_name, \
+         agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, \
+         last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, \
          agent_token_hash, is_hidden",
     )
     .bind(hostname)
     .bind(new_hostname)
-    .bind(defaults.display_name)
-    .bind(defaults.default_backup_paths)
-    .bind(defaults.default_exclude_patterns)
-    .bind(defaults.default_pre_backup_commands)
-    .bind(defaults.default_post_backup_commands)
+    .bind(display_name)
+    .bind(default_backup_paths)
+    .bind(default_exclude_patterns)
     .fetch_one(pool)
     .await
     .map_err(|e| match e {
@@ -535,8 +513,7 @@ pub async fn regenerate_agent_token(
         "UPDATE agents SET agent_token_hash = $2 WHERE hostname = $1 RETURNING id, hostname, \
          display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, \
-         agent_token_hash, is_hidden",
+         default_exclude_patterns, agent_token_hash, is_hidden",
     )
     .bind(hostname)
     .bind(token_hash)
@@ -834,79 +811,20 @@ pub async fn update_repo_info_stats(
 }
 
 pub async fn clear_relocation_pending(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
-    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
-    sqlx::query("DELETE FROM repo_relocation_pending_hosts WHERE repo_id = $1")
-        .bind(repo_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::Database)?;
     sqlx::query("UPDATE repos SET relocation_pending = false WHERE id = $1")
         .bind(repo_id)
-        .execute(&mut *tx)
+        .execute(pool)
         .await
         .map_err(ApiError::Database)?;
-    tx.commit().await.map_err(ApiError::Database)?;
-    Ok(())
-}
-
-/// Remove `hostname` from the pending-hosts set for this repo. Clears `relocation_pending`
-/// on the repo itself once every registered host has confirmed the new location.
-///
-/// Only clears the flag when this host's entry was actually present (rows_affected > 0) AND
-/// no other hosts remain pending. This prevents spurious clears when a host that was never
-/// registered in the pending table completes a backup.
-pub async fn clear_relocation_for_host(
-    pool: &PgPool,
-    repo_id: i64,
-    hostname: &str,
-) -> Result<(), ApiError> {
-    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
-    let deleted = sqlx::query(
-        "DELETE FROM repo_relocation_pending_hosts WHERE repo_id = $1 AND hostname = $2",
-    )
-    .bind(repo_id)
-    .bind(hostname)
-    .execute(&mut *tx)
-    .await
-    .map_err(ApiError::Database)?;
-
-    if deleted.rows_affected() > 0 {
-        let remaining: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM repo_relocation_pending_hosts WHERE repo_id = $1")
-                .bind(repo_id)
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(ApiError::Database)?;
-
-        if remaining.0 == 0 {
-            sqlx::query("UPDATE repos SET relocation_pending = false WHERE id = $1")
-                .bind(repo_id)
-                .execute(&mut *tx)
-                .await
-                .map_err(ApiError::Database)?;
-        }
-    }
-    tx.commit().await.map_err(ApiError::Database)?;
     Ok(())
 }
 
 pub async fn set_relocation_pending(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
-    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
     sqlx::query("UPDATE repos SET relocation_pending = true WHERE id = $1")
         .bind(repo_id)
-        .execute(&mut *tx)
+        .execute(pool)
         .await
         .map_err(ApiError::Database)?;
-    sqlx::query(
-        "INSERT INTO repo_relocation_pending_hosts (repo_id, hostname) SELECT $1, a.hostname FROM \
-         agents a JOIN schedule_targets st ON st.agent_id = a.id JOIN schedules s ON s.id = \
-         st.schedule_id WHERE s.repo_id = $1 ON CONFLICT DO NOTHING",
-    )
-    .bind(repo_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(ApiError::Database)?;
-    tx.commit().await.map_err(ApiError::Database)?;
     Ok(())
 }
 
@@ -992,55 +910,6 @@ pub async fn update_repo(
         }
         other => ApiError::Database(other),
     })
-}
-
-/// Like [`update_repo`] but atomically sets `relocation_pending = true` and registers all
-/// currently-scheduled agents as pending confirmation in the same transaction. Use this when
-/// the repository location (host, port, or path) has changed so the scheduler never observes
-/// the new path with the flag still `false`.
-pub async fn update_repo_and_set_relocation_pending(
-    pool: &PgPool,
-    params: &UpdateRepoParams<'_>,
-) -> Result<RepoRow, ApiError> {
-    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
-
-    let repo = sqlx::query_as::<_, RepoRow>(
-        "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = $6, \
-         compression = $7, encryption = $8, enabled = $9, sync_schedule = $10, relocation_pending \
-         = true WHERE id = $1 RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, \
-         compression, encryption, enabled, owner_id, visibility, sync_schedule, last_synced_at",
-    )
-    .bind(params.repo_id)
-    .bind(params.name)
-    .bind(params.repo_path)
-    .bind(params.ssh_user)
-    .bind(params.ssh_host)
-    .bind(params.ssh_port)
-    .bind(params.compression)
-    .bind(params.encryption)
-    .bind(params.enabled)
-    .bind(params.sync_schedule)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(|e| match e {
-        sqlx::Error::RowNotFound => {
-            ApiError::NotFound(format!("repo {} not found", params.repo_id))
-        }
-        other => ApiError::Database(other),
-    })?;
-
-    sqlx::query(
-        "INSERT INTO repo_relocation_pending_hosts (repo_id, hostname) SELECT $1, a.hostname FROM \
-         agents a JOIN schedule_targets st ON st.agent_id = a.id JOIN schedules s ON s.id = \
-         st.schedule_id WHERE s.repo_id = $1 ON CONFLICT DO NOTHING",
-    )
-    .bind(params.repo_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(ApiError::Database)?;
-
-    tx.commit().await.map_err(ApiError::Database)?;
-    Ok(repo)
 }
 
 pub async fn delete_repo(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
@@ -1692,121 +1561,6 @@ pub async fn delete_per_agent_excludes_for_schedule(
     Ok(())
 }
 
-pub async fn get_per_agent_excludes_raw(
-    pool: &PgPool,
-    schedule_id: i64,
-    agent_id: i64,
-) -> Result<Option<String>, ApiError> {
-    sqlx::query_scalar::<_, String>(
-        "SELECT raw_text FROM per_agent_excludes WHERE schedule_id = $1 AND agent_id = $2",
-    )
-    .bind(schedule_id)
-    .bind(agent_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(ApiError::Database)
-}
-
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
-pub struct PerAgentCommands {
-    pub agent_id: i64,
-    pub pre_backup_commands: String,
-    pub post_backup_commands: String,
-}
-
-pub async fn list_all_per_agent_commands_for_schedule(
-    pool: &PgPool,
-    schedule_id: i64,
-) -> Result<Vec<PerAgentCommands>, ApiError> {
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        agent_id: i64,
-        pre_backup_commands: String,
-        post_backup_commands: String,
-    }
-
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT agent_id, pre_backup_commands, post_backup_commands FROM per_agent_commands WHERE \
-         schedule_id = $1 ORDER BY agent_id",
-    )
-    .bind(schedule_id)
-    .fetch_all(pool)
-    .await
-    .map_err(ApiError::Database)?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| PerAgentCommands {
-            agent_id: r.agent_id,
-            pre_backup_commands: r.pre_backup_commands,
-            post_backup_commands: r.post_backup_commands,
-        })
-        .collect())
-}
-
-pub async fn get_per_agent_commands(
-    pool: &PgPool,
-    schedule_id: i64,
-    agent_id: i64,
-) -> Result<Option<PerAgentCommands>, ApiError> {
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        pre_backup_commands: String,
-        post_backup_commands: String,
-    }
-
-    let row = sqlx::query_as::<_, Row>(
-        "SELECT pre_backup_commands, post_backup_commands FROM per_agent_commands WHERE \
-         schedule_id = $1 AND agent_id = $2",
-    )
-    .bind(schedule_id)
-    .bind(agent_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(ApiError::Database)?;
-
-    Ok(row.map(|r| PerAgentCommands {
-        agent_id,
-        pre_backup_commands: r.pre_backup_commands,
-        post_backup_commands: r.post_backup_commands,
-    }))
-}
-
-pub async fn upsert_per_agent_commands(
-    pool: &PgPool,
-    schedule_id: i64,
-    agent_id: i64,
-    pre_backup_commands: &str,
-    post_backup_commands: &str,
-) -> Result<(), ApiError> {
-    sqlx::query(
-        "INSERT INTO per_agent_commands (schedule_id, agent_id, pre_backup_commands, \
-         post_backup_commands) VALUES ($1, $2, $3, $4) ON CONFLICT (schedule_id, agent_id) DO \
-         UPDATE SET pre_backup_commands = EXCLUDED.pre_backup_commands, post_backup_commands = \
-         EXCLUDED.post_backup_commands",
-    )
-    .bind(schedule_id)
-    .bind(agent_id)
-    .bind(pre_backup_commands)
-    .bind(post_backup_commands)
-    .execute(pool)
-    .await
-    .map_err(ApiError::Database)?;
-    Ok(())
-}
-
-pub async fn delete_per_agent_commands_for_schedule(
-    pool: &PgPool,
-    schedule_id: i64,
-) -> Result<(), ApiError> {
-    sqlx::query("DELETE FROM per_agent_commands WHERE schedule_id = $1")
-        .bind(schedule_id)
-        .execute(pool)
-        .await
-        .map_err(ApiError::Database)?;
-    Ok(())
-}
-
 pub async fn get_schedule_for_repo(
     pool: &PgPool,
     repo_id: i64,
@@ -1824,16 +1578,10 @@ pub async fn get_schedule_for_repo(
     .map_err(ApiError::Database)
 }
 
-/// Finds the schedule (of the given type) that targets `hostname` and `repo_id`.
-/// Used to attribute a completion reported by the agent (which only carries a
-/// repo id, not a schedule id) back to the schedule that most likely triggered
-/// it. If multiple schedules of the same type target the same host/repo pair,
-/// an arbitrary one is returned.
-pub async fn get_schedule_for_hostname_repo(
+pub async fn get_backup_schedule_for_hostname_repo(
     pool: &PgPool,
     hostname: &str,
     repo_id: i64,
-    schedule_type: ScheduleType,
 ) -> Result<Option<ScheduleRow>, ApiError> {
     sqlx::query_as::<_, ScheduleRow>(
         "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
@@ -1842,12 +1590,11 @@ pub async fn get_schedule_for_hostname_repo(
          s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands, \
          s.post_backup_commands, s.execution_mode, s.on_failure, s.owner_id, s.visibility FROM \
          schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents m ON \
-         st.agent_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = $3 \
-         LIMIT 1",
+         st.agent_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = \
+         'backup' LIMIT 1",
     )
     .bind(hostname)
     .bind(repo_id)
-    .bind(schedule_type.to_string())
     .fetch_optional(pool)
     .await
     .map_err(ApiError::Database)
@@ -2084,37 +1831,6 @@ pub async fn get_repo_name(pool: &PgPool, repo_id: i64) -> Result<String, ApiErr
     Ok(row.name)
 }
 
-/// Resolves a schedule's display name, falling back to `default_name` (typically
-/// the repo name) when the schedule has no custom name set, mirroring the
-/// `COALESCE(NULLIF(s.name, ''), r.name)` convention used elsewhere.
-pub async fn get_schedule_display_name(
-    pool: &PgPool,
-    schedule_id: i64,
-    default_name: &str,
-) -> Result<String, ApiError> {
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        name: String,
-    }
-
-    let row = sqlx::query_as::<_, Row>("SELECT name FROM schedules WHERE id = $1")
-        .bind(schedule_id)
-        .fetch_one(pool)
-        .await
-        .map_err(|e| match e {
-            sqlx::Error::RowNotFound => {
-                ApiError::NotFound(format!("schedule {schedule_id} not found"))
-            }
-            other => ApiError::Database(other),
-        })?;
-
-    Ok(if row.name.trim().is_empty() {
-        default_name.to_owned()
-    } else {
-        row.name
-    })
-}
-
 pub async fn insert_canary_result(
     pool: &PgPool,
     schedule_id: i64,
@@ -2184,9 +1900,6 @@ pub struct ReportRow {
     pub id: i64,
     pub agent_id: i64,
     pub repo_id: i64,
-    pub repo_name: String,
-    pub schedule_id: Option<i64>,
-    pub schedule_name: Option<String>,
     pub started_at: DateTime<Utc>,
     pub finished_at: DateTime<Utc>,
     pub status: String,
@@ -2337,9 +2050,8 @@ pub async fn cancel_backup_report(
     repo_id: i64,
 ) -> Result<(), ApiError> {
     sqlx::query(
-        "UPDATE backup_reports SET status = 'cancelled', finished_at = NOW(), \
-         cancellation_acknowledged = false WHERE agent_id = $1 AND repo_id = $2 AND status IN \
-         ('pending', 'started')",
+        "UPDATE backup_reports SET status = 'cancelled', finished_at = NOW() WHERE agent_id = $1 \
+         AND repo_id = $2 AND status = 'started'",
     )
     .bind(agent_id)
     .bind(repo_id)
@@ -2347,56 +2059,6 @@ pub async fn cancel_backup_report(
     .await
     .map_err(ApiError::Database)?;
     Ok(())
-}
-
-pub async fn cancel_all_active_backups(pool: &PgPool) -> Result<u64, ApiError> {
-    let result = sqlx::query(
-        "UPDATE backup_reports SET status = 'cancelled', finished_at = NOW(), \
-         cancellation_acknowledged = false WHERE status IN ('pending', 'started')",
-    )
-    .execute(pool)
-    .await
-    .map_err(ApiError::Database)?;
-    Ok(result.rows_affected())
-}
-
-pub async fn acknowledge_cancellation(
-    pool: &PgPool,
-    agent_id: i64,
-    repo_id: i64,
-) -> Result<(), ApiError> {
-    sqlx::query(
-        "UPDATE backup_reports SET cancellation_acknowledged = true WHERE agent_id = $1 AND \
-         repo_id = $2 AND status = 'cancelled'",
-    )
-    .bind(agent_id)
-    .bind(repo_id)
-    .execute(pool)
-    .await
-    .map_err(ApiError::Database)?;
-    Ok(())
-}
-
-pub async fn fail_other_started_backups(
-    pool: &PgPool,
-    agent_id: i64,
-    repo_id: i64,
-    current_run_id: Option<&str>,
-    hostname: &str,
-) -> Result<u64, ApiError> {
-    let result = sqlx::query(
-        "UPDATE backup_reports SET status = 'failed', finished_at = NOW(), error_message = $1 \
-         WHERE agent_id = $2 AND repo_id = $3 AND status IN ('pending', 'started') AND ($4::text \
-         IS NULL OR run_id IS DISTINCT FROM $4)",
-    )
-    .bind(format!("Agent '{hostname}' restarted; backup abandoned"))
-    .bind(agent_id)
-    .bind(repo_id)
-    .bind(current_run_id)
-    .execute(pool)
-    .await
-    .map_err(ApiError::Database)?;
-    Ok(result.rows_affected())
 }
 
 pub async fn insert_backup_report(
@@ -2409,8 +2071,8 @@ pub async fn insert_backup_report(
              status = $3, original_size = $4, compressed_size = $5, deduplicated_size = $6, \
              repo_unique_csize = $7, files_processed = $8, duration_secs = $9, error_message = \
              $10, warnings = $11, borg_version = $12, matched = $13, archive_name = $14, \
-             borg_command = COALESCE($15, borg_command), started_at = $16 WHERE run_id = $17 AND \
-             agent_id = $18 AND status IN ('pending', 'started')",
+             borg_command = $15, started_at = $16 WHERE run_id = $17 AND agent_id = $18 AND \
+             status IN ('pending', 'started')",
         )
         .bind(params.schedule_id)
         .bind(params.finished_at)
@@ -2456,7 +2118,7 @@ pub async fn insert_backup_report(
              duration_secs = EXCLUDED.duration_secs, error_message = EXCLUDED.error_message, \
              warnings = EXCLUDED.warnings, borg_version = EXCLUDED.borg_version, matched = \
              EXCLUDED.matched, archive_name = EXCLUDED.archive_name, borg_command = \
-             COALESCE(EXCLUDED.borg_command, backup_reports.borg_command)"
+             EXCLUDED.borg_command"
         );
         sqlx::query(&sql)
             .bind(params.agent_id)
@@ -2573,7 +2235,6 @@ pub struct ArchiveStats {
     pub deduplicated_size: i64,
     pub files_processed: i64,
     pub duration_secs: i64,
-    pub repo_unique_csize: i64,
 }
 
 pub async fn update_backup_report_stats(
@@ -2597,20 +2258,6 @@ pub async fn update_backup_report_stats(
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
-
-    if stats.repo_unique_csize > 0 {
-        sqlx::query(
-            "UPDATE backup_reports SET repo_unique_csize = $3 WHERE repo_id = $1 AND archive_name \
-             = $2 AND repo_unique_csize = 0",
-        )
-        .bind(repo_id)
-        .bind(archive_name)
-        .bind(stats.repo_unique_csize)
-        .execute(pool)
-        .await
-        .map_err(ApiError::Database)?;
-    }
-
     Ok(())
 }
 
@@ -2622,14 +2269,11 @@ pub async fn list_reports_for_agent(
 ) -> Result<Vec<ReportRow>, ApiError> {
     if let Some(target_name) = target {
         sqlx::query_as::<_, ReportRow>(
-            "SELECT br.id, br.agent_id, br.repo_id, r.name AS repo_name, br.schedule_id, CASE \
-             WHEN s.id IS NOT NULL THEN COALESCE(NULLIF(s.name, ''), r.name) END AS \
-             schedule_name, br.started_at, br.finished_at, br.status, br.original_size, \
-             br.compressed_size, br.deduplicated_size, br.files_processed, br.duration_secs, \
-             br.error_message, br.warnings, br.borg_version, br.archive_name, br.borg_command \
-             FROM backup_reports br JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON \
-             s.id = br.schedule_id WHERE br.agent_id = $1 AND r.name = $2 ORDER by br.started_at \
-             DESC LIMIT $3",
+            "SELECT br.id, br.agent_id, br.repo_id, br.started_at, br.finished_at, br.status, \
+             br.original_size, br.compressed_size, br.deduplicated_size, br.files_processed, \
+             br.duration_secs, br.error_message, br.warnings, br.borg_version, br.archive_name, \
+             br.borg_command FROM backup_reports br JOIN repos r ON r.id = br.repo_id WHERE \
+             br.agent_id = $1 AND r.name = $2 ORDER by br.started_at DESC LIMIT $3",
         )
         .bind(agent_id)
         .bind(target_name)
@@ -2639,13 +2283,10 @@ pub async fn list_reports_for_agent(
         .map_err(ApiError::Database)
     } else {
         sqlx::query_as::<_, ReportRow>(
-            "SELECT br.id, br.agent_id, br.repo_id, r.name AS repo_name, br.schedule_id, CASE \
-             WHEN s.id IS NOT NULL THEN COALESCE(NULLIF(s.name, ''), r.name) END AS \
-             schedule_name, br.started_at, br.finished_at, br.status, br.original_size, \
-             br.compressed_size, br.deduplicated_size, br.files_processed, br.duration_secs, \
-             br.error_message, br.warnings, br.borg_version, br.archive_name, br.borg_command \
-             FROM backup_reports br JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON \
-             s.id = br.schedule_id WHERE br.agent_id = $1 ORDER BY br.started_at DESC LIMIT $2",
+            "SELECT id, agent_id, repo_id, started_at, finished_at, status, original_size, \
+             compressed_size, deduplicated_size, files_processed, duration_secs, error_message, \
+             warnings, borg_version, archive_name, borg_command FROM backup_reports WHERE \
+             agent_id = $1 ORDER BY started_at DESC LIMIT $2",
         )
         .bind(agent_id)
         .bind(limit)
@@ -2661,13 +2302,10 @@ pub async fn list_reports_for_schedule(
     limit: i64,
 ) -> Result<Vec<ReportRow>, ApiError> {
     sqlx::query_as::<_, ReportRow>(
-        "SELECT br.id, br.agent_id, br.repo_id, r.name AS repo_name, br.schedule_id, CASE WHEN \
-         s.id IS NOT NULL THEN COALESCE(NULLIF(s.name, ''), r.name) END AS schedule_name, \
-         br.started_at, br.finished_at, br.status, br.original_size, br.compressed_size, \
-         br.deduplicated_size, br.files_processed, br.duration_secs, br.error_message, \
-         br.warnings, br.borg_version, br.archive_name, br.borg_command FROM backup_reports br \
-         JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = br.schedule_id WHERE \
-         br.schedule_id = $1 ORDER BY br.started_at DESC LIMIT $2",
+        "SELECT id, agent_id, repo_id, started_at, finished_at, status, original_size, \
+         compressed_size, deduplicated_size, files_processed, duration_secs, error_message, \
+         warnings, borg_version, archive_name, borg_command FROM backup_reports WHERE schedule_id \
+         = $1 ORDER BY started_at DESC LIMIT $2",
     )
     .bind(schedule_id)
     .bind(limit)
@@ -2776,7 +2414,6 @@ pub struct SessionRow {
     pub user_id: i64,
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
-    pub remember_me: bool,
 }
 
 pub async fn insert_user(
@@ -2939,25 +2576,21 @@ pub async fn insert_session(
     session_id: &str,
     user_id: i64,
     expires_at: DateTime<Utc>,
-    remember_me: bool,
 ) -> Result<(), ApiError> {
-    sqlx::query(
-        "INSERT INTO sessions (id, user_id, expires_at, remember_me) VALUES ($1, $2, $3, $4)",
-    )
-    .bind(session_id)
-    .bind(user_id)
-    .bind(expires_at)
-    .bind(remember_me)
-    .execute(pool)
-    .await
-    .map_err(ApiError::Database)?;
+    sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3)")
+        .bind(session_id)
+        .bind(user_id)
+        .bind(expires_at)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
     Ok(())
 }
 
 pub async fn get_session(pool: &PgPool, session_id: &str) -> Result<SessionRow, ApiError> {
     sqlx::query_as::<_, SessionRow>(
-        "SELECT id, user_id, created_at, expires_at, remember_me FROM sessions WHERE id = $1 AND \
-         expires_at > NOW()",
+        "SELECT id, user_id, created_at, expires_at FROM sessions WHERE id = $1 AND expires_at > \
+         NOW()",
     )
     .bind(session_id)
     .fetch_one(pool)
@@ -2968,20 +2601,6 @@ pub async fn get_session(pool: &PgPool, session_id: &str) -> Result<SessionRow, 
         }
         other => ApiError::Database(other),
     })
-}
-
-pub async fn extend_session(
-    pool: &PgPool,
-    session_id: &str,
-    new_expires_at: DateTime<Utc>,
-) -> Result<(), ApiError> {
-    sqlx::query("UPDATE sessions SET expires_at = $1 WHERE id = $2")
-        .bind(new_expires_at)
-        .bind(session_id)
-        .execute(pool)
-        .await
-        .map_err(ApiError::Database)?;
-    Ok(())
 }
 
 pub async fn delete_session(pool: &PgPool, session_id: &str) -> Result<(), ApiError> {
@@ -3439,7 +3058,7 @@ pub struct RepoWithStatsRow {
     pub total_original_size: i64,
     pub total_compressed_size: i64,
     pub total_deduplicated_size: i64,
-    pub agent_count: i64,
+    pub client_count: i64,
     pub unmatched_count: i64,
     pub last_op_kind: Option<String>,
     pub last_op_at: Option<DateTime<Utc>>,
@@ -3454,10 +3073,10 @@ pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow
          r.last_synced_at, r.info_archive_count::INT8 AS archive_count, agg.last_backup_at, \
          r.info_original_size AS total_original_size, r.info_compressed_size AS \
          total_compressed_size, r.info_deduplicated_size AS total_deduplicated_size, \
-         COALESCE(agg.agent_count, 0) AS agent_count, COALESCE(agg.unmatched_count, 0) AS \
+         COALESCE(agg.client_count, 0) AS client_count, COALESCE(agg.unmatched_count, 0) AS \
          unmatched_count, r.last_op_kind, r.last_op_at, r.last_op_by FROM repos r LEFT JOIN \
          LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' THEN \
-         br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, \
+         br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS client_count, \
          COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM \
          backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true ORDER \
          BY r.name",
@@ -3478,10 +3097,10 @@ pub async fn get_repo_with_stats(
          r.last_synced_at, r.info_archive_count::INT8 AS archive_count, agg.last_backup_at, \
          r.info_original_size AS total_original_size, r.info_compressed_size AS \
          total_compressed_size, r.info_deduplicated_size AS total_deduplicated_size, \
-         COALESCE(agg.agent_count, 0) AS agent_count, COALESCE(agg.unmatched_count, 0) AS \
+         COALESCE(agg.client_count, 0) AS client_count, COALESCE(agg.unmatched_count, 0) AS \
          unmatched_count, r.last_op_kind, r.last_op_at, r.last_op_by FROM repos r LEFT JOIN \
          LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' THEN \
-         br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, \
+         br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS client_count, \
          COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM \
          backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true WHERE \
          r.id = $1",
@@ -4320,7 +3939,7 @@ pub struct StorageTrendRow {
     pub date: chrono::NaiveDate,
     pub original_size: i64,
     pub compressed_size: i64,
-    pub deduplicated_size: Option<i64>,
+    pub deduplicated_size: i64,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -4330,7 +3949,7 @@ pub struct StorageTrendByRepoRow {
     pub repo_name: String,
     pub original_size: i64,
     pub compressed_size: i64,
-    pub deduplicated_size: Option<i64>,
+    pub deduplicated_size: i64,
 }
 
 pub async fn get_storage_trends(
@@ -4347,11 +3966,11 @@ pub async fn get_storage_trends(
              $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ) SELECT d.date, \
              COALESCE(latest.original_size, 0)::INT8 AS original_size, \
              COALESCE(latest.compressed_size, 0)::INT8 AS compressed_size, \
-             NULLIF(COALESCE(latest.repo_unique_csize, 0), 0)::INT8 AS deduplicated_size FROM \
-             days d LEFT JOIN LATERAL ( SELECT br.original_size, br.compressed_size, \
-             br.repo_unique_csize FROM backup_reports br WHERE br.repo_id = $2 AND \
-             br.started_at::date <= d.date AND br.status = 'success' ORDER BY br.started_at DESC \
-             LIMIT 1 ) latest ON true ORDER BY d.date",
+             COALESCE(latest.repo_unique_csize, 0)::INT8 AS deduplicated_size FROM days d LEFT \
+             JOIN LATERAL ( SELECT br.original_size, br.compressed_size, br.repo_unique_csize \
+             FROM backup_reports br WHERE br.repo_id = $2 AND br.started_at::date <= d.date AND \
+             br.status = 'success' ORDER BY br.started_at DESC LIMIT 1 ) latest ON true ORDER BY \
+             d.date",
         )
         .bind(days_i32)
         .bind(rid)
@@ -4364,8 +3983,8 @@ pub async fn get_storage_trends(
              $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ) SELECT d.date, \
              COALESCE(SUM(latest.original_size), 0)::INT8 AS original_size, \
              COALESCE(SUM(latest.compressed_size), 0)::INT8 AS compressed_size, \
-             NULLIF(COALESCE(SUM(latest.repo_unique_csize), 0), 0)::INT8 AS deduplicated_size \
-             FROM days d LEFT JOIN LATERAL ( SELECT DISTINCT ON (br.repo_id) br.original_size, \
+             COALESCE(SUM(latest.repo_unique_csize), 0)::INT8 AS deduplicated_size FROM days d \
+             LEFT JOIN LATERAL ( SELECT DISTINCT ON (br.repo_id) br.original_size, \
              br.compressed_size, br.repo_unique_csize FROM backup_reports br WHERE \
              br.started_at::date <= d.date AND br.status = 'success' ORDER BY br.repo_id, \
              br.started_at DESC ) latest ON true GROUP BY d.date ORDER BY d.date",
@@ -4391,20 +4010,16 @@ pub async fn list_archive_names_for_repo(
     Ok(names.into_iter().collect())
 }
 
-/// Archive names that need a `borg info` run.
-///
-/// Covers two cases:
-/// - All sizes are still zero (archive was imported but never enriched).
-/// - `repo_unique_csize` is zero even though other sizes are populated (archive was enriched
-///   before `repo_unique_csize` was tracked).
+/// Archive names whose stats have not been filled in yet (all sizes still zero).
+/// A resync only re-runs `borg info` for these: immutable archives that already
+/// carry stats never need to be queried again.
 pub async fn list_archive_names_needing_stats(
     pool: &PgPool,
     repo_id: i64,
 ) -> Result<std::collections::HashSet<String>, ApiError> {
     let names = sqlx::query_scalar::<_, String>(
         "SELECT DISTINCT archive_name FROM backup_reports WHERE repo_id = $1 AND archive_name IS \
-         NOT NULL AND ((original_size = 0 AND compressed_size = 0 AND deduplicated_size = 0) OR \
-         repo_unique_csize = 0)",
+         NOT NULL AND original_size = 0 AND compressed_size = 0 AND deduplicated_size = 0",
     )
     .bind(repo_id)
     .fetch_all(pool)
@@ -4488,64 +4103,6 @@ pub async fn delete_archive_records_by_names(
     Ok(result.rows_affected())
 }
 
-pub async fn delete_all_repo_archive_data(pool: &PgPool, repo_id: i64) -> Result<u64, ApiError> {
-    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
-
-    // Collect candidate path IDs before the cascade delete removes archive_files.
-    let candidate_ids: Vec<i64> = sqlx::query_scalar::<_, i64>(
-        "SELECT path_id FROM archive_files WHERE archive_id IN (SELECT id FROM archives WHERE \
-         repo_id = $1) UNION SELECT parent_path_id FROM archive_files WHERE archive_id IN (SELECT \
-         id FROM archives WHERE repo_id = $1)",
-    )
-    .bind(repo_id)
-    .bind(repo_id)
-    .fetch_all(&mut *tx)
-    .await
-    .map_err(ApiError::Database)?;
-
-    // Delete all backup_reports for the repo.
-    let result = sqlx::query("DELETE FROM backup_reports WHERE repo_id = $1")
-        .bind(repo_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::Database)?;
-
-    // Deleting from archives cascades to archive_files, archive_index_jobs, and archive_tags.
-    sqlx::query("DELETE FROM archives WHERE repo_id = $1")
-        .bind(repo_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::Database)?;
-
-    // GC paths that are now orphaned, checking only the candidates from the deleted archives.
-    if !candidate_ids.is_empty() {
-        sqlx::query(
-            "DELETE FROM archive_paths WHERE repo_id = $1 AND id = ANY($2) AND NOT EXISTS (SELECT \
-             1 FROM archive_files WHERE path_id = archive_paths.id) AND NOT EXISTS (SELECT 1 FROM \
-             archive_files WHERE parent_path_id = archive_paths.id)",
-        )
-        .bind(repo_id)
-        .bind(&candidate_ids)
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::Database)?;
-    }
-
-    tx.commit().await.map_err(ApiError::Database)?;
-    Ok(result.rows_affected())
-}
-
-pub async fn delete_orphaned_placeholder_agents(pool: &PgPool) -> Result<u64, ApiError> {
-    let result = sqlx::query(
-        "DELETE FROM agents WHERE agent_token_hash = 'imported:no-auth' AND NOT EXISTS (SELECT 1 \
-         FROM backup_reports WHERE agent_id = agents.id)",
-    )
-    .execute(pool)
-    .await
-    .map_err(ApiError::Database)?;
-    Ok(result.rows_affected())
-}
-
 pub async fn get_storage_trends_by_repo(
     pool: &PgPool,
     days: i64,
@@ -4557,11 +4114,11 @@ pub async fn get_storage_trends_by_repo(
          AS repo_id, r.name AS repo_name FROM repos r JOIN backup_reports br ON br.repo_id = r.id \
          ) SELECT d.date, rl.repo_id, rl.repo_name, COALESCE(latest.original_size, 0)::INT8 AS \
          original_size, COALESCE(latest.compressed_size, 0)::INT8 AS compressed_size, \
-         NULLIF(COALESCE(latest.repo_unique_csize, 0), 0)::INT8 AS deduplicated_size FROM days d \
-         CROSS JOIN repos_list rl LEFT JOIN LATERAL ( SELECT br.original_size, \
-         br.compressed_size, br.repo_unique_csize FROM backup_reports br WHERE br.repo_id = \
-         rl.repo_id AND br.started_at::date <= d.date AND br.status = 'success' ORDER BY \
-         br.started_at DESC LIMIT 1 ) latest ON true ORDER BY d.date, rl.repo_name",
+         COALESCE(latest.repo_unique_csize, 0)::INT8 AS deduplicated_size FROM days d CROSS JOIN \
+         repos_list rl LEFT JOIN LATERAL ( SELECT br.original_size, br.compressed_size, \
+         br.repo_unique_csize FROM backup_reports br WHERE br.repo_id = rl.repo_id AND \
+         br.started_at::date <= d.date AND br.status = 'success' ORDER BY br.started_at DESC \
+         LIMIT 1 ) latest ON true ORDER BY d.date, rl.repo_name",
     )
     .bind(days_i32)
     .fetch_all(pool)

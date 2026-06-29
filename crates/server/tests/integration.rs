@@ -83,8 +83,6 @@ async fn build_test_app(pool: PgPool) -> Router {
         completion_bus: server::ws::completion_bus::CompletionBus::new(),
         repo_op_tracker: server::repo_op_tracker::RepoOpTracker::default(),
         repo_lock: server::RepoLock::default(),
-        import_tasks: server::ImportTaskRegistry::default(),
-        shutdown_token: tokio_util::sync::CancellationToken::new(),
     };
 
     Router::new()
@@ -247,7 +245,6 @@ async fn install_fake_borg(
     list_json: &str,
     info_all_json: &str,
     info_repo_json: &str,
-    repo_list_lines: &str,
     json_lines: &str,
 ) -> (TempDir, BorgBinaryGuard) {
     let tempdir = tempfile::tempdir().unwrap();
@@ -257,18 +254,9 @@ set -eu
 case "$1" in
   list)
     case " $* " in
-      *" --json-lines "*)
-        for _a; do _last="$_a"; done
-        case "$_last" in
-          *::*) cat <<'EOF'
+      *" --json-lines "*) cat <<'EOF'
 {json_lines}
 EOF
-            ;;
-          *) cat <<'EOF'
-{repo_list_lines}
-EOF
-            ;;
-        esac
         ;;
       *) cat <<'EOF'
 {list_json}
@@ -279,10 +267,6 @@ EOF
   info)
     case " $* " in
       *" --glob-archives "*) cat <<'EOF'
-{info_all_json}
-EOF
-        ;;
-      *"::"*) cat <<'EOF'
 {info_all_json}
 EOF
         ;;
@@ -314,72 +298,6 @@ esac
     // SAFETY: tests serialize BORG_BINARY changes with a process-local lock.
     unsafe { std::env::set_var("BORG_BINARY", &borg_path) };
 
-    (tempdir, BorgBinaryGuard { previous })
-}
-
-/// Installs a fake borg where `list` returns an empty archive set immediately
-/// but `info` sleeps indefinitely. Used to reproduce the bug where
-/// `refresh_repo_info_stats` had no timeout, causing repos with no archives
-/// to hang forever with `importing = true`.
-async fn install_borg_empty_list_hanging_info() -> (TempDir, BorgBinaryGuard) {
-    let tempdir = tempfile::tempdir().unwrap();
-    let script = concat!(
-        "#!/bin/sh\n",
-        "case \"$1\" in\n",
-        "  list)\n",
-        "    case \" $* \" in\n",
-        "      *\" --json-lines \"*) ;;\n",
-        "      *) echo '{\"archives\":[]}'  ;;\n",
-        "    esac;;\n",
-        "  info) sleep 120;;\n",
-        "  *) exit 1;;\n",
-        "esac\n",
-    );
-    let borg_path = tempdir.path().join("borg");
-    tokio::fs::write(&borg_path, script).await.unwrap();
-    let mut permissions = tokio::fs::metadata(&borg_path).await.unwrap().permissions();
-    permissions.set_mode(0o755);
-    tokio::fs::set_permissions(&borg_path, permissions)
-        .await
-        .unwrap();
-    let previous = std::env::var("BORG_BINARY").ok();
-    // SAFETY: tests serialise BORG_BINARY changes with a process-local lock.
-    unsafe { std::env::set_var("BORG_BINARY", &borg_path) };
-    (tempdir, BorgBinaryGuard { previous })
-}
-
-/// Installs a fake borg whose `list` returns an empty archive list after
-/// sleeping for `delay_secs`. Used to verify that the scheduler dispatches
-/// repo syncs concurrently instead of sequentially.
-async fn install_slow_borg_list(delay_secs: u64) -> (TempDir, BorgBinaryGuard) {
-    let tempdir = tempfile::tempdir().unwrap();
-    let info_json = concat!(
-        r#"{"cache":{"stats":{"total_size":0,"total_csize":0,"#,
-        r#""unique_csize":0,"total_chunks":0,"total_unique_chunks":0}}}"#
-    );
-    let script = format!(
-        r#"#!/bin/sh
-case "$1" in
-  list)
-    case " $* " in
-      *" --json-lines "*) sleep {delay_secs} ;;
-      *) sleep {delay_secs}; echo '{{"archives":[]}}' ;;
-    esac ;;
-  info) echo '{info_json}' ;;
-  *) exit 1 ;;
-esac
-"#
-    );
-    let borg_path = tempdir.path().join("borg");
-    tokio::fs::write(&borg_path, script).await.unwrap();
-    let mut permissions = tokio::fs::metadata(&borg_path).await.unwrap().permissions();
-    permissions.set_mode(0o755);
-    tokio::fs::set_permissions(&borg_path, permissions)
-        .await
-        .unwrap();
-    let previous = std::env::var("BORG_BINARY").ok();
-    // SAFETY: tests serialise BORG_BINARY changes with a process-local lock.
-    unsafe { std::env::set_var("BORG_BINARY", &borg_path) };
     (tempdir, BorgBinaryGuard { previous })
 }
 
@@ -431,27 +349,6 @@ async fn wait_for_archive_index(
     })
     .await
     .unwrap()
-}
-
-/// Poll the `importing` flag until the background sync/reset task finishes.
-async fn wait_for_import_completion(pool: &PgPool, repo_id: i64) {
-    use tokio::time::{Duration, timeout};
-
-    timeout(Duration::from_secs(30), async move {
-        loop {
-            let importing: bool = sqlx::query_scalar("SELECT importing FROM repos WHERE id = $1")
-                .bind(repo_id)
-                .fetch_one(pool)
-                .await
-                .unwrap();
-            if !importing {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    })
-    .await
-    .expect("import did not complete within 30 seconds");
 }
 
 async fn clean_tables(pool: &PgPool) {
@@ -627,7 +524,7 @@ async fn test_tunnel_create() {
     create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone()).await;
 
-    let agent_id: i64 = sqlx::query_scalar(
+    let client_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, display_name, agent_token_hash) VALUES ('tunnel-host', \
          'Tunnel Host', 'fakehash') RETURNING id",
     )
@@ -639,7 +536,7 @@ async fn test_tunnel_create() {
         "POST",
         "/api/tunnels",
         Some(json!({
-            "agent_id": agent_id,
+            "agent_id": client_id,
             "ssh_host": "remote.example.com",
             "ssh_user": "backup",
             "ssh_port": 22,
@@ -761,7 +658,7 @@ async fn test_list_archives_deduplicates_archive_names() {
     let mut app = build_test_app(pool.clone()).await;
 
     let repo_id = insert_test_repo(&pool, "archive-list-repo").await;
-    let agent_id: i64 = sqlx::query_scalar(
+    let client_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('archive-host', 'hash') \
          RETURNING id",
     )
@@ -796,7 +693,7 @@ async fn test_list_archives_deduplicates_archive_names() {
              archive_name, borg_command) VALUES ($1, $2, $3, $4, 'success', $5, $6, $7, $8, $9, \
              $10, NULL, ARRAY[]::text[], NULL, true, $11, NULL)",
         )
-        .bind(agent_id)
+        .bind(client_id)
         .bind(repo_id)
         .bind(chrono::DateTime::parse_from_rfc3339(started_at).unwrap())
         .bind(chrono::DateTime::parse_from_rfc3339(finished_at).unwrap())
@@ -827,9 +724,9 @@ async fn test_list_archives_deduplicates_archive_names() {
 #[tokio::test]
 #[ignore]
 async fn test_sync_repo_unreachable_returns_error_and_clears_importing() {
-    // sync_repo now accepts the sync request immediately (202) and runs the
-    // actual sync in a background task. The test verifies that the background
-    // task clears importing and stores the error message.
+    // sync_repo runs synchronously. The test repo points at an unreachable host
+    // ("storage.local"), so the borg list fails and the endpoint returns an
+    // error -- but the importing flag must be cleared again before it returns.
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
@@ -839,25 +736,20 @@ async fn test_sync_repo_unreachable_returns_error_and_clears_importing() {
 
     let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
     let resp = oneshot(&mut app, req).await;
-    assert_eq!(
-        resp.status(),
-        StatusCode::ACCEPTED,
-        "sync should be accepted immediately, got {}",
+    assert!(
+        resp.status().is_server_error(),
+        "expected a server error for an unreachable repo, got {}",
         resp.status()
     );
 
-    wait_for_import_completion(&pool, repo_id).await;
-
-    let stats = server::db::get_repo_with_stats(&pool, repo_id)
+    let importing: bool = sqlx::query_scalar("SELECT importing FROM repos WHERE id = $1")
+        .bind(repo_id)
+        .fetch_one(&pool)
         .await
         .unwrap();
     assert!(
-        !stats.importing,
-        "importing should be cleared after sync fails"
-    );
-    assert!(
-        stats.import_error.is_some(),
-        "import_error should be set after sync fails"
+        !importing,
+        "importing should be cleared after the synchronous sync returns"
     );
 }
 
@@ -882,33 +774,25 @@ async fn test_sync_repo_times_out_on_hanging_borg_and_clears_importing() {
     let resp = oneshot(&mut app, req).await;
     let elapsed = started.elapsed();
 
-    assert_eq!(
-        resp.status(),
-        StatusCode::ACCEPTED,
-        "sync should be accepted immediately, got {}",
+    // SAFETY: serialised by borg_binary_lock.
+    unsafe { std::env::remove_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS") };
+
+    assert!(
+        resp.status().is_server_error(),
+        "a hanging borg list should fail the sync, got {}",
         resp.status()
     );
     assert!(
-        elapsed < std::time::Duration::from_secs(5),
-        "sync should return quickly, took {elapsed:?}"
+        elapsed < std::time::Duration::from_secs(20),
+        "sync should time out quickly, took {elapsed:?}"
     );
 
-    wait_for_import_completion(&pool, repo_id).await;
-
-    // SAFETY: env var must remain set until the background task finishes.
-    unsafe { std::env::remove_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS") };
-
-    let stats = server::db::get_repo_with_stats(&pool, repo_id)
+    let importing: bool = sqlx::query_scalar("SELECT importing FROM repos WHERE id = $1")
+        .bind(repo_id)
+        .fetch_one(&pool)
         .await
         .unwrap();
-    assert!(
-        !stats.importing,
-        "importing must be cleared after a timeout"
-    );
-    assert!(
-        stats.import_error.is_some(),
-        "import_error should be set after a timeout"
-    );
+    assert!(!importing, "importing must be cleared after a timeout");
 }
 
 #[tokio::test]
@@ -932,10 +816,10 @@ async fn test_delete_archive_runs_in_background() {
   }
 }"#;
     let (_borg_dir, _borg_guard) =
-        install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
+        install_fake_borg(empty_list, empty_list, info_repo_json, "").await;
 
     let mut app = build_test_app(pool.clone()).await;
-    let agent_id: i64 = sqlx::query_scalar(
+    let client_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('del-host', 'hash') RETURNING id",
     )
     .fetch_one(&pool)
@@ -947,7 +831,7 @@ async fn test_delete_archive_runs_in_background() {
         "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched, \
          archive_name) VALUES ($1, $2, NOW(), NOW(), 'success', true, $3)",
     )
-    .bind(agent_id)
+    .bind(client_id)
     .bind(repo_id)
     .bind("delete-me")
     .execute(&pool)
@@ -1044,10 +928,10 @@ async fn test_delete_multiple_archives_queues_without_conflict() {
   }
 }"#;
     let (_borg_dir, _borg_guard) =
-        install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
+        install_fake_borg(empty_list, empty_list, info_repo_json, "").await;
 
     let mut app = build_test_app(pool.clone()).await;
-    let agent_id: i64 = sqlx::query_scalar(
+    let client_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('multi-del', 'hash') RETURNING id",
     )
     .fetch_one(&pool)
@@ -1061,7 +945,7 @@ async fn test_delete_multiple_archives_queues_without_conflict() {
             "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
              matched, archive_name) VALUES ($1, $2, NOW(), NOW(), 'success', true, $3)",
         )
-        .bind(agent_id)
+        .bind(client_id)
         .bind(repo_id)
         .bind(name)
         .execute(&pool)
@@ -1183,24 +1067,12 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
         r#"{"type":"f","path":"docs/manual.txt","size":12,"mtime":"2026-06-05T10:00:00Z","#,
         r#""mode":"-rw-r--r--"}"#,
     );
-    let repo_list_lines = concat!(
-        r#"{"name":"sync-archive-1","hostname":"web-server-01","#,
-        r#""start":"2026-06-05T10:00:00Z","end":"2026-06-05T10:05:00Z","#,
-        r#""duration":300.0,"stats":{"original_size":1000,"compressed_size":500,"#,
-        r#""deduplicated_size":250,"nfiles":2}}"#,
-    );
 
-    let (_borg_dir, _borg_guard) = install_fake_borg(
-        list_json,
-        info_all_json,
-        info_repo_json,
-        repo_list_lines,
-        json_lines,
-    )
-    .await;
+    let (_borg_dir, _borg_guard) =
+        install_fake_borg(list_json, info_all_json, info_repo_json, json_lines).await;
 
     let mut app = build_test_app(pool.clone()).await;
-    let agent_id: i64 = sqlx::query_scalar(
+    let client_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, display_name, agent_token_hash) VALUES ($1, $2, $3) \
          RETURNING id",
     )
@@ -1221,7 +1093,7 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
          archive_name, borg_command) VALUES ($1, $2, NULL, $3, $4, 'success', 10, 5, 5, 5, 1, \
          300, NULL, '{}'::text[], NULL, true, $5, NULL)",
     )
-    .bind(agent_id)
+    .bind(client_id)
     .bind(repo_id)
     .bind(stale_started_at)
     .bind(stale_finished_at)
@@ -1270,9 +1142,10 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
         None,
     );
     let resp = oneshot(&mut app, req).await;
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-
-    wait_for_import_completion(&pool, repo_id).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["imported"], 1);
+    assert_eq!(body["removed"], 1);
 
     let (status, file_count) = wait_for_archive_index(&pool, repo_id, "sync-archive-1").await;
     assert_eq!(status, "done");
@@ -1425,54 +1298,6 @@ async fn test_reset_import_clears_state() {
 
 #[tokio::test]
 #[ignore]
-async fn test_reset_import_cancels_active_sync() {
-    let _borg_lock = borg_binary_lock().await;
-    let pool = setup_pool().await;
-    clean_tables(&pool).await;
-    create_test_user_and_session(&pool).await;
-    let (_borg_dir, _borg_guard) = install_slow_borg_list(30).await;
-
-    let mut app = build_test_app(pool.clone()).await;
-    let repo_id = insert_test_repo(&pool, "cancel-active-import-repo").await;
-
-    let sync_req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
-    let sync_resp = oneshot(&mut app, sync_req).await;
-    assert_eq!(sync_resp.status(), StatusCode::ACCEPTED);
-
-    let mut saw_importing = false;
-    for _ in 0..20 {
-        let stats = server::db::get_repo_with_stats(&pool, repo_id)
-            .await
-            .unwrap();
-        if stats.importing {
-            saw_importing = true;
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-    assert!(saw_importing, "sync should mark repo as importing");
-
-    let reset_req = json_request("POST", &format!("/api/repos/{repo_id}/reset-import"), None);
-    let reset_resp = oneshot(&mut app, reset_req).await;
-    assert_eq!(reset_resp.status(), StatusCode::NO_CONTENT);
-
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-
-    let stats = server::db::get_repo_with_stats(&pool, repo_id)
-        .await
-        .unwrap();
-    assert!(
-        !stats.importing,
-        "reset-import should cancel the active sync and clear importing"
-    );
-    assert!(
-        stats.import_error.is_none(),
-        "reset-import should not leave an import error behind"
-    );
-}
-
-#[tokio::test]
-#[ignore]
 async fn test_auth_me_without_session() {
     let pool = setup_pool().await;
     let mut app = build_test_app(pool.clone()).await;
@@ -1489,7 +1314,7 @@ async fn test_auth_me_without_session() {
 // -- Excludes API tests --
 
 /// Helper: insert a schedule directly into the DB (bypasses SSH check in the API).
-async fn insert_test_schedule(pool: &sqlx::PgPool, agent_id: i64, repo_id: i64) -> i64 {
+async fn insert_test_schedule(pool: &sqlx::PgPool, client_id: i64, repo_id: i64) -> i64 {
     let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-integration").unwrap();
     let passphrase_encrypted = shared::crypto::encrypt_passphrase("pass", &encryption_key).unwrap();
     sqlx::query_scalar("UPDATE repos SET passphrase_encrypted = $2 WHERE id = $1 RETURNING id")
@@ -1516,7 +1341,7 @@ async fn insert_test_schedule(pool: &sqlx::PgPool, agent_id: i64, repo_id: i64) 
         "INSERT INTO schedule_targets (schedule_id, agent_id, execution_order) VALUES ($1, $2, 0)",
     )
     .bind(schedule_id)
-    .bind(agent_id)
+    .bind(client_id)
     .execute(pool)
     .await
     .unwrap();
@@ -1595,8 +1420,8 @@ async fn test_per_agent_excludes_roundtrip_preserves_raw_text(pool: sqlx::PgPool
     create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone()).await;
 
-    // Set up agent and repo directly
-    let agent_id: i64 = sqlx::query_scalar(
+    // Set up client and repo directly
+    let client_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('exc-host', 'hash-exc') \
          RETURNING id",
     )
@@ -1605,7 +1430,7 @@ async fn test_per_agent_excludes_roundtrip_preserves_raw_text(pool: sqlx::PgPool
     .unwrap();
 
     let repo_id = insert_test_repo(&pool, "exc-repo").await;
-    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+    let schedule_id = insert_test_schedule(&pool, client_id, repo_id).await;
 
     let raw = "# Cache dirs\n*.cache\npp:__pycache__\n\n# Runtime\n/proc\n/sys";
 
@@ -1613,7 +1438,7 @@ async fn test_per_agent_excludes_roundtrip_preserves_raw_text(pool: sqlx::PgPool
         "INSERT INTO per_agent_excludes (schedule_id, agent_id, raw_text) VALUES ($1, $2, $3)",
     )
     .bind(schedule_id)
-    .bind(agent_id)
+    .bind(client_id)
     .bind(raw)
     .execute(&pool)
     .await
@@ -1629,7 +1454,7 @@ async fn test_per_agent_excludes_roundtrip_preserves_raw_text(pool: sqlx::PgPool
 
     let per_agent = body["exclude_patterns_per_agent"].as_array().unwrap();
     assert_eq!(per_agent.len(), 1);
-    assert_eq!(per_agent[0]["agent_id"], agent_id);
+    assert_eq!(per_agent[0]["agent_id"], client_id);
     assert_eq!(per_agent[0]["raw_text"], raw);
 }
 
@@ -1708,8 +1533,6 @@ async fn test_import_config_creates_hosts(pool: sqlx::PgPool) {
                 "display_name": "New Host 1",
                 "default_backup_paths": ["/etc", "/home"],
                 "default_exclude_patterns": ["*.log"],
-                "default_pre_backup_commands": "[]",
-                "default_post_backup_commands": "[]",
                 "hostname_patterns": []
             }
         ],
@@ -1756,8 +1579,6 @@ async fn test_import_config_updates_existing_host(pool: sqlx::PgPool) {
                 "display_name": "Updated Name",
                 "default_backup_paths": ["/var"],
                 "default_exclude_patterns": [],
-                "default_pre_backup_commands": "[]",
-                "default_post_backup_commands": "[]",
                 "hostname_patterns": []
             }
         ],
@@ -1962,102 +1783,6 @@ async fn test_export_then_import_roundtrip(pool: sqlx::PgPool) {
     assert_eq!(paths, vec!["/etc"]);
 }
 
-// -- admin-only enforcement on agent-mutating endpoints --
-
-const NON_ADMIN_SESSION_ID: &str = "non-admin-session-id-000000000000000";
-
-async fn create_non_admin_user_and_session(pool: &PgPool) {
-    let user_id: i64 = sqlx::query_scalar(
-        "INSERT INTO users (username, password_hash, role) VALUES ('integration-viewer', \
-         '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'user') ON CONFLICT \
-         (username) DO UPDATE SET role = 'user' RETURNING id",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap();
-
-    let expires = chrono::Utc::now() + chrono::Duration::hours(24);
-    sqlx::query(
-        "INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3) ON CONFLICT (id) DO \
-         UPDATE SET expires_at = EXCLUDED.expires_at",
-    )
-    .bind(NON_ADMIN_SESSION_ID)
-    .bind(user_id)
-    .bind(expires)
-    .execute(pool)
-    .await
-    .unwrap();
-}
-
-fn non_admin_delete_request(uri: &str) -> Request<Body> {
-    Request::builder()
-        .uri(uri)
-        .method("DELETE")
-        .header("cookie", format!("session={NON_ADMIN_SESSION_ID}"))
-        .body(Body::empty())
-        .unwrap()
-}
-
-#[sqlx::test(migrations = "./migrations")]
-async fn delete_agent_forbidden_for_non_admin(pool: sqlx::PgPool) {
-    create_non_admin_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
-
-    sqlx::query("INSERT INTO agents (hostname, agent_token_hash) VALUES ('guarded-host', 'hash')")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let resp = oneshot(
-        &mut app,
-        non_admin_delete_request("/api/agents/guarded-host"),
-    )
-    .await;
-    assert_eq!(
-        resp.status(),
-        StatusCode::FORBIDDEN,
-        "a non-admin user must not be able to delete an agent"
-    );
-
-    let remaining: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM agents WHERE hostname = 'guarded-host'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(
-        remaining, 1,
-        "the agent must still exist after a rejected delete"
-    );
-}
-
-#[sqlx::test(migrations = "./migrations")]
-async fn delete_agent_allowed_for_admin(pool: sqlx::PgPool) {
-    create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
-
-    sqlx::query("INSERT INTO agents (hostname, agent_token_hash) VALUES ('admin-host', 'hash')")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let resp = oneshot(&mut app, delete_request("/api/agents/admin-host")).await;
-    assert_eq!(
-        resp.status(),
-        StatusCode::NO_CONTENT,
-        "an admin user must be able to delete an agent"
-    );
-
-    let remaining: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM agents WHERE hostname = 'admin-host'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(
-        remaining, 0,
-        "the agent should be removed by an admin delete"
-    );
-}
-
 // -- must_change_password enforcement --
 
 const MCP_SESSION_ID: &str = "must-change-password-session-0000000";
@@ -2135,14 +1860,14 @@ async fn test_list_schedules_for_repo() {
     let mut app = build_test_app(pool.clone()).await;
 
     let repo_id = insert_test_repo(&pool, "sched-repo-endpoint").await;
-    let agent_id: i64 = sqlx::query_scalar(
+    let client_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('sched-endpoint-host', 'hash2') \
          RETURNING id",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
-    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+    let schedule_id = insert_test_schedule(&pool, client_id, repo_id).await;
 
     // Returns schedules for the correct repo
     let req = get_request(&format!("/api/repos/{repo_id}/schedules"));
@@ -2168,332 +1893,4 @@ async fn test_list_schedules_for_repo() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
     assert_eq!(body.as_array().unwrap().len(), 0);
-}
-
-// -- archive resync reliability --
-
-/// Regression test for: repos with no backups getting stuck in "Listing archives..." forever.
-///
-/// `refresh_repo_info_stats` was called after an empty borg-list result without any
-/// timeout guard. If `borg info` hung (e.g. due to a stalled SSH connection), the
-/// importing flag was never cleared and the repo appeared stuck indefinitely.
-///
-/// This test installs a fake borg that returns an empty archive list immediately but
-/// hangs on `borg info`, sets the per-command timeout to 1 s, and verifies that the
-/// sync endpoint returns quickly and always clears the importing flag.
-#[tokio::test]
-#[ignore]
-async fn test_sync_empty_repo_does_not_hang_when_borg_info_hangs() {
-    let _borg_lock = borg_binary_lock().await;
-    // SAFETY: serialised by borg_binary_lock.
-    unsafe { std::env::set_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS", "1") };
-
-    let (_borg_dir, _borg_guard) = install_borg_empty_list_hanging_info().await;
-
-    let pool = setup_pool().await;
-    clean_tables(&pool).await;
-    create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
-    let repo_id = insert_test_repo(&pool, "empty-repo-hanging-info").await;
-
-    let started = std::time::Instant::now();
-    let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
-
-    // Without the fix the handler blocks on `borg info` until killed; the outer
-    // timeout catches that hang and fails the test.
-    let resp = tokio::time::timeout(std::time::Duration::from_secs(15), oneshot(&mut app, req))
-        .await
-        .expect("sync must complete within 15 s even when borg info hangs");
-
-    let elapsed = started.elapsed();
-    assert!(
-        elapsed < std::time::Duration::from_secs(5),
-        "sync should return quickly once borg info times out, took {elapsed:?}"
-    );
-    assert_eq!(
-        resp.status(),
-        StatusCode::ACCEPTED,
-        "sync should be accepted immediately, got {}",
-        resp.status()
-    );
-
-    wait_for_import_completion(&pool, repo_id).await;
-
-    // SAFETY: env var must remain set until the background task finishes.
-    unsafe { std::env::remove_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS") };
-
-    let importing: bool = sqlx::query_scalar("SELECT importing FROM repos WHERE id = $1")
-        .bind(repo_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert!(
-        !importing,
-        "importing must be cleared even when borg info hangs"
-    );
-}
-
-/// Regression test for: the scheduled-sync loop blocking on each repo sequentially.
-///
-/// `run_repo_sync` previously called `sync_existing_archives` inline in a `for`
-/// loop, so a slow repo held up every subsequent repo. With two repos that each
-/// take BORG_DELAY_SECS seconds, sequential processing would block for at least
-/// BORG_DELAY_SECS * 2; concurrent dispatching should return almost immediately
-/// and let both syncs run in parallel.
-#[tokio::test]
-#[ignore]
-async fn test_scheduler_dispatches_repo_syncs_concurrently() {
-    let _borg_lock = borg_binary_lock().await;
-
-    let pool = setup_pool().await;
-    clean_tables(&pool).await;
-    create_test_user_and_session(&pool).await;
-
-    // Each borg call sleeps for this long, simulating a slow network / large repo.
-    const BORG_DELAY_SECS: u64 = 2;
-    let (_borg_dir, _borg_guard) = install_slow_borg_list(BORG_DELAY_SECS).await;
-
-    let repo_a = insert_test_repo(&pool, "concurrent-sync-repo-a").await;
-    let repo_b = insert_test_repo(&pool, "concurrent-sync-repo-b").await;
-
-    // Both repos are enabled and have a sync schedule that is already due.
-    for repo_id in [repo_a, repo_b] {
-        sqlx::query(
-            "UPDATE repos SET enabled = true, sync_schedule = '* * * * *', last_synced_at = \
-             '1970-01-01T00:00:00Z' WHERE id = $1",
-        )
-        .bind(repo_id)
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
-
-    let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-integration").unwrap();
-    let ui_broadcast = server::ws::ui_broadcast::UiBroadcast::new();
-    let repo_op_tracker = server::repo_op_tracker::RepoOpTracker::default();
-
-    let repo_lock = server::RepoLock::default();
-    let started = std::time::Instant::now();
-    server::scheduler::run_repo_sync(
-        &pool,
-        &encryption_key,
-        &ui_broadcast,
-        &repo_op_tracker,
-        &repo_lock,
-    )
-    .await;
-    let dispatch_elapsed = started.elapsed();
-
-    // Sequential (buggy): run_repo_sync blocks for >= BORG_DELAY_SECS per repo.
-    // Concurrent (fixed): run_repo_sync dispatches tasks and returns immediately.
-    assert!(
-        dispatch_elapsed < std::time::Duration::from_secs(BORG_DELAY_SECS),
-        "run_repo_sync should dispatch all syncs without blocking on each one; took \
-         {dispatch_elapsed:?} (sequential would take >={}s)",
-        BORG_DELAY_SECS * 2,
-    );
-
-    // Wait for both background tasks to finish and verify the importing flag is cleared.
-    for repo_id in [repo_a, repo_b] {
-        tokio::time::timeout(std::time::Duration::from_secs(BORG_DELAY_SECS + 5), async {
-            loop {
-                let importing: bool =
-                    sqlx::query_scalar("SELECT importing FROM repos WHERE id = $1")
-                        .bind(repo_id)
-                        .fetch_one(&pool)
-                        .await
-                        .unwrap();
-                if !importing {
-                    return;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
-        })
-        .await
-        .unwrap_or_else(|_| panic!("repo {repo_id} sync did not complete within expected time"));
-    }
-}
-
-/// Regression test: full sync must keep the fast manifest-only `borg list`
-/// path, then fetch authoritative per-archive metadata only after discovery.
-#[tokio::test]
-#[ignore]
-async fn test_sync_fetches_missing_hostname_via_borg_info() {
-    let _borg_lock = borg_binary_lock().await;
-    let pool = setup_pool().await;
-    clean_tables(&pool).await;
-    create_test_user_and_session(&pool).await;
-
-    let list_json = r#"{
-  "archives": [
-    {
-      "name": "web-server-01-backup-2026-06-05T02:00:00",
-      "start": "2026-06-05T02:00:00Z",
-      "duration": 300.0
-    }
-  ]
-}"#;
-    let info_all_json = r#"{
-  "archives": [
-    {
-      "name": "web-server-01-backup-2026-06-05T02:00:00",
-      "hostname": "web-server-01",
-      "start": "2026-06-05T02:00:00Z",
-      "end": "2026-06-05T02:05:00Z",
-      "duration": 300.0
-    }
-  ]
-}"#;
-    let info_repo_json = r#"{
-  "cache": {
-    "stats": {
-      "total_size": 1000,
-      "total_csize": 600,
-      "unique_csize": 500,
-      "total_chunks": 10,
-      "unique_chunks": 8
-    }
-  }
-}"#;
-
-    let (_borg_dir, _borg_guard) =
-        install_fake_borg(list_json, info_all_json, info_repo_json, "", "").await;
-
-    let mut app = build_test_app(pool.clone()).await;
-    let repo_id = insert_test_repo(&pool, "hostname-format-repo").await;
-
-    let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
-    let resp = oneshot(&mut app, req).await;
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
-
-    wait_for_import_completion(&pool, repo_id).await;
-
-    let imported_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM backup_reports WHERE repo_id = $1 AND archive_name IS NOT NULL",
-    )
-    .bind(repo_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(imported_count, 1, "archive should have been imported");
-
-    let unknown_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM agents WHERE hostname = 'unknown'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(
-        unknown_count, 0,
-        "no placeholder agent should be created with hostname 'unknown'"
-    );
-
-    let correct_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM agents WHERE hostname = 'web-server-01'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(
-        correct_count, 1,
-        "placeholder agent should be created with hostname from borg list --format output"
-    );
-
-    let token_hash: String =
-        sqlx::query_scalar("SELECT agent_token_hash FROM agents WHERE hostname = 'web-server-01'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(
-        token_hash, "imported:no-auth",
-        "placeholder agent should carry the imported sentinel token"
-    );
-}
-
-/// Regression test: borg list exits 0 but outputs unparseable text.
-///
-/// Previously, a parse failure was silently treated as an empty archive list,
-/// which would prune all existing archive records. Now it must be a hard error
-/// so no records are touched.
-#[tokio::test]
-#[ignore]
-async fn test_sync_returns_error_on_malformed_borg_list_json() {
-    let _borg_lock = borg_binary_lock().await;
-    let pool = setup_pool().await;
-    clean_tables(&pool).await;
-    create_test_user_and_session(&pool).await;
-
-    let info_repo_json = r#"{"cache": {"stats": {"total_size": 0, "total_csize": 0}}}"#;
-
-    // borg list exits 0 but stdout is not valid JSON
-    let (_borg_dir, _borg_guard) =
-        install_fake_borg("this is not valid json", "{}", info_repo_json, "", "").await;
-
-    let mut app = build_test_app(pool.clone()).await;
-    let repo_id = insert_test_repo(&pool, "malformed-json-repo").await;
-
-    let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
-    let resp = oneshot(&mut app, req).await;
-    assert_eq!(
-        resp.status(),
-        StatusCode::ACCEPTED,
-        "sync should be accepted immediately, got {}",
-        resp.status()
-    );
-
-    wait_for_import_completion(&pool, repo_id).await;
-
-    let stats = server::db::get_repo_with_stats(&pool, repo_id)
-        .await
-        .unwrap();
-    assert!(
-        stats.import_error.is_some(),
-        "import_error should be set after malformed JSON sync fails"
-    );
-}
-
-/// Regression test: borg list exits 0 with valid JSON but no `archives` key.
-///
-/// The `archives` array is required; a missing key must be a hard error for the
-/// same reason as malformed JSON - silently treating it as empty would prune
-/// all existing archive records.
-#[tokio::test]
-#[ignore]
-async fn test_sync_returns_error_when_borg_list_json_has_no_archives_key() {
-    let _borg_lock = borg_binary_lock().await;
-    let pool = setup_pool().await;
-    clean_tables(&pool).await;
-    create_test_user_and_session(&pool).await;
-
-    let info_repo_json = r#"{"cache": {"stats": {"total_size": 0, "total_csize": 0}}}"#;
-
-    // borg list exits 0 with valid JSON but no `archives` field
-    let (_borg_dir, _borg_guard) = install_fake_borg(
-        r#"{"encryption": {"mode": "none"}}"#,
-        "{}",
-        info_repo_json,
-        "",
-        "",
-    )
-    .await;
-
-    let mut app = build_test_app(pool.clone()).await;
-    let repo_id = insert_test_repo(&pool, "missing-archives-key-repo").await;
-
-    let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
-    let resp = oneshot(&mut app, req).await;
-    assert_eq!(
-        resp.status(),
-        StatusCode::ACCEPTED,
-        "sync should be accepted immediately, got {}",
-        resp.status()
-    );
-
-    wait_for_import_completion(&pool, repo_id).await;
-
-    let stats = server::db::get_repo_with_stats(&pool, repo_id)
-        .await
-        .unwrap();
-    assert!(
-        stats.import_error.is_some(),
-        "import_error should be set after no-archives-key sync fails"
-    );
 }

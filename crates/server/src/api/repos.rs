@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::{collections::HashMap, fmt, sync::Arc, time::Duration};
+use std::{collections::HashMap, process::Output, time::Duration};
 
 use axum::{
     Json,
@@ -13,6 +13,7 @@ use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use shared::{
     crypto::encrypt_passphrase,
+    ssh::borg_rsh,
     types::{BorgEncryption, build_repo_url},
 };
 use sqlx::PgPool;
@@ -30,7 +31,6 @@ use crate::{
     config_assembler,
     db::{self, InsertRepoParams, RepoRow, RepoWithStatsRow, UpdateRepoParams},
     error::{ApiError, ApiJson},
-    ssh::shell_escape,
     ws::ui_broadcast::UiBroadcast,
 };
 
@@ -102,10 +102,10 @@ pub async fn list_repos(
     get,
     path = "/api/agents/{hostname}/repos",
     tag = "Repositories",
-    operation_id = "getAgentRepos",
+    operation_id = "getClientRepos",
     summary = "List repositories for a specific host",
     params(
-        ("hostname" = String, Path, description = "Agent hostname"),
+        ("hostname" = String, Path, description = "Client hostname"),
     ),
     responses(
         (status = 200, description = "List of repositories", body = Vec<RepoRow>),
@@ -224,104 +224,61 @@ pub async fn create_repo(
     let need_borg_info = info_result.is_none();
     let bg_repo_url = repo_url.clone();
     let bg_passphrase = req.passphrase.clone();
-    let task_state = state.clone();
 
     db::set_repo_importing(&state.pool, repo_id, true).await?;
     ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
-    let (task_id, cancel) = state.import_tasks.start(repo_id).await;
 
     tokio::spawn(async move {
-        set_server_sync_op(&task_state, repo_id).await;
-        tokio::select! {
-            () = cancel.cancelled() => {
-                info!(repo_id, "initial import cancelled");
-            }
-            () = async {
-                // Detect encryption before syncing rather than concurrently: both borg
-                // info and the sync's borg list contend for the same repository lock, so
-                // running them in parallel would force the list into the lock-retry path.
-                if need_borg_info {
-                    let timeout = get_borg_timeout(&pool).await;
-                    match run_borg_info_with_retry(&bg_repo_url, &bg_passphrase, timeout).await {
-                        Ok(info) => {
-                            if let Err(e) =
-                                db::update_repo_encryption(
-                                    &pool,
-                                    repo_id,
-                                    &info.encryption.to_string(),
-                                )
-                                .await
-                            {
-                                warn!(
-                                    repo_id,
-                                    error = %e,
-                                    "failed to update encryption after deferred borg info"
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            warn!(
-                                repo_id,
-                                error = %e,
-                                "deferred borg info failed, continuing to archive sync"
-                            );
-                        }
+        if need_borg_info {
+            match run_borg_info_with_retry(&bg_repo_url, &bg_passphrase).await {
+                Ok(info) => {
+                    if let Err(e) =
+                        db::update_repo_encryption(&pool, repo_id, &info.encryption.to_string())
+                            .await
+                    {
+                        warn!(
+                            repo_id,
+                            error = %e,
+                            "failed to update encryption after deferred borg info"
+                        );
                     }
                 }
-
-                let _import_lock = state_repo_lock.acquire(repo_id).await;
-                let sync_ok = match sync_existing_archives(
-                    &pool,
-                    &encryption_key,
-                    repo_id,
-                    &ui_broadcast,
-                )
-                .await {
-                    Ok(_) => {
-                        if let Err(e) = db::update_repo_last_synced(&pool, repo_id).await {
-                            warn!(
-                                repo_id,
-                                error = %e,
-                                "failed to set last_synced_at after initial import"
-                            );
-                        }
-                        true
-                    }
-                    Err(e) => {
-                        warn!(repo_id, error = %e, "failed to sync existing archives on import");
-                        if task_state.import_tasks.is_current(repo_id, task_id).await {
-                            let _ =
-                                db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}")))
-                                    .await;
-                        }
-                        false
-                    }
-                };
-
-                if sync_ok && task_state.import_tasks.is_current(repo_id, task_id).await {
-                    index_archives_with_progress(
-                        pool.clone(),
-                        encryption_key,
+                Err(e) => {
+                    warn!(
                         repo_id,
-                        ui_broadcast.clone(),
-                        state_repo_lock,
-                        false,
-                    )
-                    .await;
+                        error = %e,
+                        "deferred borg info failed, continuing to archive sync"
+                    );
                 }
-
-                if task_state.import_tasks.is_current(repo_id, task_id).await {
-                    if let Err(e) = db::set_repo_importing(&pool, repo_id, false).await {
-                        warn!(repo_id, error = %e, "failed to clear importing flag");
-                    }
-                    clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
-                    ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
-                }
-            } => {}
+            }
         }
 
-        task_state.import_tasks.finish(repo_id, task_id).await;
-        clear_server_sync_op(&task_state, repo_id).await;
+        let sync_ok =
+            match sync_existing_archives(&pool, &encryption_key, repo_id, &ui_broadcast).await {
+                Ok(_) => true,
+                Err(e) => {
+                    warn!(repo_id, error = %e, "failed to sync existing archives on import");
+                    let _ = db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await;
+                    false
+                }
+            };
+
+        if sync_ok {
+            index_archives_with_progress(
+                pool.clone(),
+                encryption_key,
+                repo_id,
+                ui_broadcast.clone(),
+                state_repo_lock,
+            )
+            .await;
+        }
+
+        if let Err(e) = db::set_repo_importing(&pool, repo_id, false).await {
+            warn!(repo_id, error = %e, "failed to clear importing flag");
+        }
+        clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
+        ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
     });
 
     Ok((StatusCode::CREATED, Json(repo)))
@@ -370,24 +327,26 @@ pub async fn update_repo(
     let name = req.name.unwrap_or(existing.name);
     let ssh_port = req.ssh_port.unwrap_or(22);
 
-    let update_params = UpdateRepoParams {
-        repo_id,
-        name: &name,
-        repo_path: &req.repo_path,
-        ssh_user: &req.ssh_user,
-        ssh_host: &req.ssh_host,
-        ssh_port,
-        compression: &compression,
-        encryption: &encryption,
-        enabled: req.enabled.unwrap_or(true),
-        sync_schedule: sync_schedule.as_deref(),
-    };
+    let repo = db::update_repo(
+        &state.pool,
+        &UpdateRepoParams {
+            repo_id,
+            name: &name,
+            repo_path: &req.repo_path,
+            ssh_user: &req.ssh_user,
+            ssh_host: &req.ssh_host,
+            ssh_port,
+            compression: &compression,
+            encryption: &encryption,
+            enabled: req.enabled.unwrap_or(true),
+            sync_schedule: sync_schedule.as_deref(),
+        },
+    )
+    .await?;
 
-    let repo = if location_changed {
-        db::update_repo_and_set_relocation_pending(&state.pool, &update_params).await?
-    } else {
-        db::update_repo(&state.pool, &update_params).await?
-    };
+    if location_changed {
+        db::set_relocation_pending(&state.pool, repo_id).await?;
+    }
 
     Ok(Json(repo))
 }
@@ -893,79 +852,9 @@ pub async fn break_lock(
     }))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BorgSubcommand {
-    Info,
-    List,
-    Check,
-    Compact,
-    Prune,
-    Delete,
-    Diff,
-    Rename,
-    Recreate,
-}
-
-impl BorgSubcommand {
-    const ALL: [BorgSubcommand; 9] = [
-        BorgSubcommand::Info,
-        BorgSubcommand::List,
-        BorgSubcommand::Check,
-        BorgSubcommand::Compact,
-        BorgSubcommand::Prune,
-        BorgSubcommand::Delete,
-        BorgSubcommand::Diff,
-        BorgSubcommand::Rename,
-        BorgSubcommand::Recreate,
-    ];
-
-    fn as_str(self) -> &'static str {
-        match self {
-            BorgSubcommand::Info => "info",
-            BorgSubcommand::List => "list",
-            BorgSubcommand::Check => "check",
-            BorgSubcommand::Compact => "compact",
-            BorgSubcommand::Prune => "prune",
-            BorgSubcommand::Delete => "delete",
-            BorgSubcommand::Diff => "diff",
-            BorgSubcommand::Rename => "rename",
-            BorgSubcommand::Recreate => "recreate",
-        }
-    }
-
-    fn permitted_list() -> String {
-        Self::ALL
-            .iter()
-            .map(|s| s.as_str())
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-}
-
-impl fmt::Display for BorgSubcommand {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl std::str::FromStr for BorgSubcommand {
-    type Err = ();
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "info" => Ok(BorgSubcommand::Info),
-            "list" => Ok(BorgSubcommand::List),
-            "check" => Ok(BorgSubcommand::Check),
-            "compact" => Ok(BorgSubcommand::Compact),
-            "prune" => Ok(BorgSubcommand::Prune),
-            "delete" => Ok(BorgSubcommand::Delete),
-            "diff" => Ok(BorgSubcommand::Diff),
-            "rename" => Ok(BorgSubcommand::Rename),
-            "recreate" => Ok(BorgSubcommand::Recreate),
-            _ => Err(()),
-        }
-    }
-}
+const ALLOWED_BORG_SUBCOMMANDS: &[&str] = &[
+    "info", "list", "check", "compact", "prune", "delete", "diff", "rename", "recreate",
+];
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ExecBorgRequest {
@@ -1003,17 +892,18 @@ pub async fn exec_borg(
     Path(repo_id): Path<i64>,
     ApiJson(req): ApiJson<ExecBorgRequest>,
 ) -> Result<Json<ExecBorgResponse>, ApiError> {
-    let raw_subcommand = req
+    let subcommand = req
         .args
         .first()
         .ok_or_else(|| ApiError::BadRequest("args must not be empty".to_owned()))?;
 
-    let subcommand = raw_subcommand.parse::<BorgSubcommand>().map_err(|()| {
-        ApiError::BadRequest(format!(
-            "subcommand '{raw_subcommand}' is not allowed; permitted: {}",
-            BorgSubcommand::permitted_list()
-        ))
-    })?;
+    if !ALLOWED_BORG_SUBCOMMANDS.contains(&subcommand.as_str()) {
+        return Err(ApiError::BadRequest(format!(
+            "subcommand '{}' is not allowed; permitted: {}",
+            subcommand,
+            ALLOWED_BORG_SUBCOMMANDS.join(", ")
+        )));
+    }
 
     if req.args.len() > 32 {
         return Err(ApiError::BadRequest("too many arguments".to_owned()));
@@ -1030,10 +920,16 @@ pub async fn exec_borg(
         &repo.repo_path,
     );
 
-    let mut env = helpers::borg_base_env(&passphrase);
-    env.insert("BORG_REPO".to_owned(), repo_url);
+    let mut env = HashMap::from([
+        ("BORG_PASSPHRASE".to_owned(), passphrase),
+        ("BORG_REPO".to_owned(), repo_url),
+        ("BORG_RSH".to_owned(), borg_rsh()),
+    ]);
+    if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
+        env.insert("SSH_AUTH_SOCK".to_owned(), sock);
+    }
 
-    info!(repo_id, name = %repo.name, subcommand = %subcommand, "admin executing borg command");
+    info!(repo_id, name = %repo.name, subcommand, "admin executing borg command");
 
     let output = Borg::new()
         .run(&req.args, &env)
@@ -1120,11 +1016,7 @@ pub async fn migrate_encryption(
         &repo.ssh_user,
         &repo.ssh_host,
         repo.ssh_port,
-        &format!(
-            "mv {} {}",
-            shell_escape(&repo.repo_path),
-            shell_escape(&migrated_path)
-        ),
+        &format!("mv {} {migrated_path}", repo.repo_path),
         repo.ssh_host_key.clone(),
     )
     .await;
@@ -1144,11 +1036,7 @@ pub async fn migrate_encryption(
             &repo.ssh_user,
             &repo.ssh_host,
             repo.ssh_port,
-            &format!(
-                "mv {} {}",
-                shell_escape(&migrated_path),
-                shell_escape(&repo.repo_path)
-            ),
+            &format!("mv {migrated_path} {}", repo.repo_path),
             repo.ssh_host_key.clone(),
         )
         .await;
@@ -1248,17 +1136,8 @@ const DEFAULT_BORG_QUERY_TIMEOUT_SECS: u64 = 300;
 /// only bounds lock contention; a hung SSH connection would otherwise keep the
 /// process (and the import) waiting forever, leaving the repo stuck at "Listing
 /// archives". On timeout the process is killed and the operation fails so the
-/// importing state is cleared.
-///
-/// Resolution order: DB setting `borg_query_timeout_secs`, then env var
-/// `ASSIMILATE_BORG_QUERY_TIMEOUT_SECS`, then 300 s default.
-async fn get_borg_timeout(pool: &PgPool) -> Duration {
-    if let Ok(Some(v)) = db::get_setting(pool, "borg_query_timeout_secs").await
-        && let Ok(secs) = v.parse::<u64>()
-        && secs > 0
-    {
-        return Duration::from_secs(secs);
-    }
+/// importing state is cleared. Tunable via `ASSIMILATE_BORG_QUERY_TIMEOUT_SECS`.
+fn borg_query_timeout() -> Duration {
     std::env::var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
@@ -1272,17 +1151,20 @@ async fn get_borg_timeout(pool: &PgPool) -> Duration {
 async fn run_borg_info_with_retry(
     repo_url: &str,
     passphrase: &str,
-    timeout: Duration,
 ) -> Result<BorgInfoResult, ApiError> {
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
-        let attempt_result =
-            match tokio::time::timeout(timeout, run_borg_info_once(repo_url, passphrase)).await {
-                Ok(result) => result,
-                Err(_) => Err(ApiError::Internal(format!(
-                    "borg info timed out after {}s; the repository may be unreachable",
-                    timeout.as_secs()
-                ))),
-            };
+        let attempt_result = match tokio::time::timeout(
+            borg_query_timeout(),
+            run_borg_info_once(repo_url, passphrase),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(ApiError::Internal(format!(
+                "borg info timed out after {}s; the repository may be unreachable",
+                borg_query_timeout().as_secs()
+            ))),
+        };
         match attempt_result {
             Ok(result) => return Ok(result),
             Err(e) => {
@@ -1300,13 +1182,17 @@ async fn run_borg_info_with_retry(
             }
         }
     }
-    Err(ApiError::Internal(
-        "borg info failed after maximum retries".to_owned(),
-    ))
+    unreachable!()
 }
 
 async fn run_borg_info_once(repo_url: &str, passphrase: &str) -> Result<BorgInfoResult, ApiError> {
-    let env = helpers::borg_base_env(passphrase);
+    let mut env = HashMap::from([
+        ("BORG_PASSPHRASE".to_owned(), passphrase.to_owned()),
+        ("BORG_RSH".to_owned(), borg_rsh()),
+    ]);
+    if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
+        env.insert("SSH_AUTH_SOCK".to_owned(), sock);
+    }
 
     let output = Borg::new()
         .run(&["info", "--json", repo_url], &env)
@@ -1360,7 +1246,13 @@ async fn run_borg_info_once(repo_url: &str, passphrase: &str) -> Result<BorgInfo
 }
 
 async fn run_borg_break_lock(repo_url: &str, passphrase: &str) -> Result<String, ApiError> {
-    let env = helpers::borg_base_env(passphrase);
+    let mut env = HashMap::from([
+        ("BORG_PASSPHRASE".to_owned(), passphrase.to_owned()),
+        ("BORG_RSH".to_owned(), borg_rsh()),
+    ]);
+    if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
+        env.insert("SSH_AUTH_SOCK".to_owned(), sock);
+    }
 
     let output = Borg::new()
         .run(
@@ -1396,7 +1288,13 @@ async fn run_borg_init(
     passphrase: &str,
     encryption: BorgEncryption,
 ) -> Result<String, ApiError> {
-    let env = helpers::borg_base_env(passphrase);
+    let mut env = HashMap::from([
+        ("BORG_PASSPHRASE".to_owned(), passphrase.to_owned()),
+        ("BORG_RSH".to_owned(), borg_rsh()),
+    ]);
+    if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
+        env.insert("SSH_AUTH_SOCK".to_owned(), sock);
+    }
 
     let output = Borg::new()
         .run(
@@ -1437,77 +1335,46 @@ async fn run_borg_init(
 async fn run_borg_list_with_retry(
     borg_repo: &str,
     env: &std::collections::HashMap<String, String>,
-    timeout: Duration,
-    pool: &PgPool,
-    ui_broadcast: &UiBroadcast,
-    repo_id: i64,
-) -> Result<Vec<serde_json::Value>, ApiError> {
+) -> Result<Output, ApiError> {
     let borg = Borg::new();
-    // Plain `borg list --json` reads the repository manifest and returns
-    // immediately; adding `--format` forces per-archive metadata loads and
-    // makes full resyncs crawl on large repositories.
-    let args = borg_list_args(borg_repo);
-
+    let args = [
+        "list",
+        "--json",
+        "--format",
+        "{hostname}{end}",
+        "--lock-wait",
+        LOCK_WAIT_SECS,
+        borg_repo,
+    ];
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
-        let output = match tokio::time::timeout(timeout, borg.run(&args, env)).await {
-            Ok(Ok(output)) => output,
-            Ok(Err(e)) => {
-                return Err(ApiError::Internal(format!(
-                    "failed to execute borg list: {e}"
-                )));
-            }
+        let output = match tokio::time::timeout(borg_query_timeout(), borg.run(&args, env)).await {
+            Ok(result) => result
+                .map_err(|e| ApiError::Internal(format!("failed to execute borg list: {e}")))?,
             Err(_) => {
                 return Err(ApiError::Internal(format!(
                     "borg list timed out after {}s; the repository may be unreachable",
-                    timeout.as_secs()
+                    borg_query_timeout().as_secs()
                 )));
             }
         };
 
         if output.status.success() {
-            // A successful exit with unparseable output is a hard error: silently
-            // treating it as empty would prune every existing archive record.
-            let json: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| {
-                ApiError::Internal(format!("borg list returned malformed JSON: {e}"))
-            })?;
-            let archives = json["archives"].as_array().cloned().ok_or_else(|| {
-                ApiError::Internal("borg list JSON missing 'archives' array".to_string())
-            })?;
-            return Ok(archives);
+            return Ok(output);
         }
 
-        let stderr_str = String::from_utf8_lossy(&output.stderr);
-        if !is_lock_error(&stderr_str) || attempt == LOCK_RETRY_MAX_ATTEMPTS {
-            return Err(ApiError::Internal(format!(
-                "borg list failed: {stderr_str}"
-            )));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !is_lock_error(&stderr) || attempt == LOCK_RETRY_MAX_ATTEMPTS {
+            return Err(ApiError::Internal(format!("borg list failed: {stderr}")));
         }
-
         warn!(
             attempt,
             max = LOCK_RETRY_MAX_ATTEMPTS,
             "borg list lock contention, retrying in {}s",
             LOCK_RETRY_INTERVAL.as_secs()
         );
-        publish_import_progress(
-            pool,
-            ui_broadcast,
-            repo_id,
-            0,
-            0,
-            Some("Waiting for lock\u{2026}"),
-        )
-        .await;
         tokio::time::sleep(LOCK_RETRY_INTERVAL).await;
     }
-
-    Err(ApiError::Internal(
-        "borg list failed after maximum retries".to_owned(),
-    ))
-}
-
-fn borg_list_args(borg_repo: &str) -> [&str; 5] {
-    ["list", "--json", "--lock-wait", LOCK_WAIT_SECS, borg_repo]
+    unreachable!()
 }
 
 /// Refreshes the authoritative repo statistics from `borg info --json`
@@ -1520,21 +1387,12 @@ async fn refresh_repo_info_stats(
     env: &std::collections::HashMap<String, String>,
     repo_id: i64,
     archive_count: i64,
-    timeout: Duration,
 ) {
     let args = ["info", "--json", "--lock-wait", LOCK_WAIT_SECS, borg_repo];
-    let output = match tokio::time::timeout(timeout, Borg::new().run(&args, env)).await {
-        Ok(Ok(output)) => output,
-        Ok(Err(e)) => {
+    let output = match Borg::new().run(&args, env).await {
+        Ok(output) => output,
+        Err(e) => {
             warn!(repo_id, error = %e, "failed to run borg info for repo stats");
-            return;
-        }
-        Err(_) => {
-            warn!(
-                repo_id,
-                timeout_secs = timeout.as_secs(),
-                "borg info timed out refreshing repo stats"
-            );
             return;
         }
     };
@@ -1583,187 +1441,6 @@ fn parse_borg_timestamp(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
         .ok()
 }
 
-fn archive_hostname(archive: &serde_json::Value) -> Option<&str> {
-    archive["hostname"]
-        .as_str()
-        .filter(|hostname| !hostname.is_empty())
-}
-
-fn archive_finish_time(
-    archive: &serde_json::Value,
-    started_at: chrono::DateTime<chrono::Utc>,
-) -> chrono::DateTime<chrono::Utc> {
-    parse_borg_timestamp(archive["end"].as_str().unwrap_or_default()).unwrap_or_else(|| {
-        archive["duration"]
-            .as_f64()
-            .and_then(|duration| std::time::Duration::try_from_secs_f64(duration).ok())
-            .and_then(|duration| chrono::Duration::from_std(duration).ok())
-            .map_or(started_at, |duration| started_at + duration)
-    })
-}
-
-fn archive_metadata_missing(archive: &serde_json::Value) -> bool {
-    archive_hostname(archive).is_none() || archive["end"].as_str().is_none_or(str::is_empty)
-}
-
-async fn fetch_archive_metadata_with_retry(
-    borg_repo: &str,
-    env: &HashMap<String, String>,
-    archive_name: &str,
-    timeout: Duration,
-) -> Result<serde_json::Value, ApiError> {
-    let repo_archive = format!("{borg_repo}::{archive_name}");
-    let args = [
-        "info",
-        "--json",
-        "--lock-wait",
-        LOCK_WAIT_SECS,
-        repo_archive.as_str(),
-    ];
-
-    for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
-        let output = match tokio::time::timeout(timeout, Borg::new().run(&args, env)).await {
-            Ok(Ok(output)) => output,
-            Ok(Err(e)) => {
-                return Err(ApiError::Internal(format!(
-                    "failed to execute borg info for archive '{archive_name}': {e}"
-                )));
-            }
-            Err(_) => {
-                return Err(ApiError::Internal(format!(
-                    "borg info timed out after {}s while reading archive '{archive_name}'",
-                    timeout.as_secs()
-                )));
-            }
-        };
-
-        if output.status.success() {
-            let json: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| {
-                ApiError::Internal(format!(
-                    "borg info returned malformed JSON for archive '{archive_name}': {e}"
-                ))
-            })?;
-            return json["archives"]
-                .as_array()
-                .and_then(|archives| archives.first())
-                .cloned()
-                .ok_or_else(|| {
-                    ApiError::Internal(format!(
-                        "borg info JSON missing archive entry for '{archive_name}'"
-                    ))
-                });
-        }
-
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if !is_lock_error(&stderr) || attempt == LOCK_RETRY_MAX_ATTEMPTS {
-            let summary = extract_borg_error(&stderr);
-            return Err(ApiError::Internal(format!(
-                "borg info failed for archive '{archive_name}': {summary}"
-            )));
-        }
-
-        warn!(
-            attempt,
-            max = LOCK_RETRY_MAX_ATTEMPTS,
-            archive = archive_name,
-            "borg info lock contention, retrying in {}s",
-            LOCK_RETRY_INTERVAL.as_secs()
-        );
-        tokio::time::sleep(LOCK_RETRY_INTERVAL).await;
-    }
-
-    Err(ApiError::Internal(format!(
-        "borg info failed after maximum retries for archive '{archive_name}'"
-    )))
-}
-
-async fn hydrate_archives_with_metadata(
-    pool: &PgPool,
-    ui_broadcast: &UiBroadcast,
-    repo_id: i64,
-    borg_repo: &str,
-    env: &HashMap<String, String>,
-    timeout: Duration,
-    archives: &[&serde_json::Value],
-) -> Result<Vec<serde_json::Value>, ApiError> {
-    let borg_repo = Arc::new(borg_repo.to_owned());
-    let env = Arc::new(env.clone());
-    let total = archives.len();
-    let total_i32 = i32::try_from(total).unwrap_or(i32::MAX);
-
-    let mut hydrated = Vec::with_capacity(total);
-    let mut completed = 0usize;
-    for archive in archives.iter().copied() {
-        let archive_name = archive["name"].as_str().unwrap_or_default();
-        let loading_msg = if archive_name.is_empty() {
-            format!("Loading archive metadata... ({}/{total})", completed + 1)
-        } else {
-            format!(
-                "Loading metadata for '{archive_name}' ({}/{total})",
-                completed + 1
-            )
-        };
-        publish_import_progress(
-            pool,
-            ui_broadcast,
-            repo_id,
-            i32::try_from(completed + 1).unwrap_or(i32::MAX),
-            total_i32,
-            Some(&loading_msg),
-        )
-        .await;
-
-        let archive = {
-            let borg_repo = Arc::clone(&borg_repo);
-            let env = Arc::clone(&env);
-            async move {
-                let archive = archive.clone();
-                if !archive_metadata_missing(&archive) {
-                    return Ok::<serde_json::Value, ApiError>(archive);
-                }
-
-                let archive_name = archive["name"].as_str().unwrap_or_default();
-                if archive_name.is_empty() {
-                    return Ok::<serde_json::Value, ApiError>(archive);
-                }
-
-                let metadata =
-                    fetch_archive_metadata_with_retry(&borg_repo, &env, archive_name, timeout)
-                        .await?;
-
-                let mut merged = archive;
-                for field in ["hostname", "end"] {
-                    if merged[field].is_null() || merged[field].as_str().is_some_and(str::is_empty)
-                    {
-                        merged[field] = metadata[field].clone();
-                    }
-                }
-                Ok::<serde_json::Value, ApiError>(merged)
-            }
-        }
-        .await?;
-
-        completed += 1;
-        let loaded_msg = if archive_name.is_empty() {
-            format!("Loading archive metadata... ({completed}/{total})")
-        } else {
-            format!("Loaded metadata for '{archive_name}' ({completed}/{total})")
-        };
-        publish_import_progress(
-            pool,
-            ui_broadcast,
-            repo_id,
-            i32::try_from(completed).unwrap_or(i32::MAX),
-            total_i32,
-            Some(&loaded_msg),
-        )
-        .await;
-        hydrated.push(archive);
-    }
-
-    Ok(hydrated)
-}
-
 async fn publish_import_progress(
     pool: &PgPool,
     ui_broadcast: &UiBroadcast,
@@ -1789,55 +1466,65 @@ pub async fn clear_import_progress_state(pool: &PgPool, ui_broadcast: &UiBroadca
     let _ = db::set_import_status_message(pool, repo_id, None).await;
 }
 
-pub async fn set_server_sync_op(state: &AppState, repo_id: i64) {
-    state
-        .repo_op_tracker
-        .set(
-            repo_id,
-            shared::protocol::RepoOpKind::ServerSync,
-            "server".to_owned(),
-        )
-        .await;
-    state
-        .ui_broadcast
-        .send(shared::protocol::ServerToUi::RepoOpChanged {
-            repo_id,
-            op: state.repo_op_tracker.get(repo_id).await,
-        });
-}
-
-pub async fn clear_server_sync_op(state: &AppState, repo_id: i64) {
-    state.repo_op_tracker.clear(repo_id).await;
-    state
-        .ui_broadcast
-        .send(shared::protocol::ServerToUi::RepoOpChanged { repo_id, op: None });
-}
-
-/// Builds backup-report rows for a set of borg archives, resolving each archive's
-/// owning agent by hostname (creating an imported placeholder when unmatched).
-///
-/// Shared by full and incremental sync so agent resolution lives in one place.
-/// Hostname and end time are expected to be present by the time this runs.
-/// Progress is published per archive against `total = archives.len()`.
-async fn build_import_reports(
+pub async fn sync_existing_archives(
     pool: &PgPool,
-    ui_broadcast: &UiBroadcast,
+    encryption_key: &[u8; 32],
     repo_id: i64,
-    archives: &[&serde_json::Value],
-) -> Result<Vec<db::InsertReportParams>, ApiError> {
+    ui_broadcast: &UiBroadcast,
+) -> Result<(u64, u64), ApiError> {
+    let (borg_repo, env) = super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
+
+    let listing_msg = "Listing archives\u{2026}".to_string();
+    publish_import_progress(pool, ui_broadcast, repo_id, 0, 0, Some(&listing_msg)).await;
+
+    let output = run_borg_list_with_retry(&borg_repo, &env).await?;
+
+    let json_output: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| ApiError::Internal(format!("failed to parse borg list output: {e}")))?;
+
+    let archives = json_output["archives"]
+        .as_array()
+        .map_or_else(Vec::new, Clone::clone);
+
+    let borg_names: std::collections::HashSet<String> = archives
+        .iter()
+        .filter_map(|a| a["name"].as_str())
+        .filter(|n| !n.is_empty())
+        .map(String::from)
+        .collect();
+
+    let known_names = db::list_archive_names_for_repo(pool, repo_id).await?;
+    let stale: Vec<String> = known_names.difference(&borg_names).cloned().collect();
+    let removed = db::delete_archive_records_by_names(pool, repo_id, &stale).await?;
+    if removed > 0 {
+        info!(repo_id, removed, "removed stale archives during full sync");
+    }
+
+    if archives.is_empty() {
+        refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, 0).await;
+        return Ok((0, removed));
+    }
+
     let total = archives.len();
+    let importing_msg = format!("Importing {total} archives\u{2026}");
+    publish_import_progress(
+        pool,
+        ui_broadcast,
+        repo_id,
+        0,
+        total as i32,
+        Some(&importing_msg),
+    )
+    .await;
 
     let mut hostname_cache: HashMap<String, (i64, bool)> = HashMap::new();
-    let mut report_params = Vec::with_capacity(total);
+    let mut report_params = Vec::with_capacity(archives.len());
     for (processed, archive) in archives.iter().enumerate() {
         let name = archive["name"].as_str().unwrap_or_default();
+        let hostname = archive["hostname"].as_str().unwrap_or("unknown");
         if name.is_empty() {
             continue;
         }
-        let Some(hostname) = archive_hostname(archive) else {
-            warn!(repo_id, archive = %name, "skipping archive with missing hostname metadata");
-            continue;
-        };
 
         let (agent_id, matched) = if let Some(&cached) = hostname_cache.get(hostname) {
             cached
@@ -1855,18 +1542,19 @@ async fn build_import_reports(
             entry
         };
 
-        let Some(started_at) = parse_borg_timestamp(archive["start"].as_str().unwrap_or_default())
-        else {
+        let start = parse_borg_timestamp(archive["start"].as_str().unwrap_or_default());
+        let end = parse_borg_timestamp(archive["end"].as_str().unwrap_or_default());
+        let duration_secs = end
+            .zip(start)
+            .map_or(0, |(e, s)| e.signed_duration_since(s).num_seconds().max(0));
+
+        let Some(started_at) = start else {
             warn!(repo_id, archive = %name, "skipping archive with unparseable start timestamp");
             continue;
         };
-        let finished_at = archive_finish_time(archive, started_at);
-        let duration_secs = finished_at
-            .signed_duration_since(started_at)
-            .num_seconds()
-            .max(0);
+        let finished_at = end.unwrap_or(started_at);
 
-        let processed_count = i32::try_from(processed + 1).unwrap_or(i32::MAX);
+        let processed_count = (processed + 1) as i32;
         info!(repo_id, archive = %name, processed = processed_count, total, "archive imported");
         let progress_msg = format!("Imported \u{2018}{name}\u{2019} ({processed_count}/{total})");
         publish_import_progress(
@@ -1874,7 +1562,7 @@ async fn build_import_reports(
             ui_broadcast,
             repo_id,
             processed_count,
-            i32::try_from(total).unwrap_or(i32::MAX),
+            total as i32,
             Some(&progress_msg),
         )
         .await;
@@ -1902,53 +1590,59 @@ async fn build_import_reports(
         });
     }
 
-    Ok(report_params)
-}
-
-#[derive(Clone, Copy)]
-enum SyncMode<'a> {
-    /// Full sync: import every archive and prune DB records for archives no
-    /// longer present in the repository.
-    Existing,
-    /// Incremental sync: import only archives not already known, and queue
-    /// content indexing for the newly imported archives.
-    New { repo_lock: &'a RepoLock },
-}
-
-/// Returns `true` when a borg archive JSON entry has a non-empty name that is
-/// not already recorded for the repository (i.e. it is new and should be
-/// imported during an incremental sync).
-fn is_unknown_archive(
-    archive: &serde_json::Value,
-    known_names: &std::collections::HashSet<String>,
-) -> bool {
-    archive["name"]
-        .as_str()
-        .is_some_and(|n| !n.is_empty() && !known_names.contains(n))
-}
-
-async fn sync_archives(
-    pool: &PgPool,
-    encryption_key: &[u8; 32],
-    repo_id: i64,
-    ui_broadcast: &UiBroadcast,
-    mode: SyncMode<'_>,
-) -> Result<(u64, u64), ApiError> {
-    let (borg_repo, env) = super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
-    let timeout = get_borg_timeout(pool).await;
-
+    let imported = report_params.len() as u64;
+    let total_i32 = i32::try_from(total).unwrap_or(i32::MAX);
+    let save_msg = format!("Saving {imported} backup reports\u{2026}");
     publish_import_progress(
         pool,
         ui_broadcast,
         repo_id,
-        0,
-        0,
-        Some("Listing archives\u{2026}"),
+        total_i32,
+        total_i32,
+        Some(&save_msg),
     )
     .await;
+    db::bulk_insert_backup_reports(pool, &report_params).await?;
+    enrich_archive_stats_background(pool.clone(), borg_repo.clone(), env.clone(), repo_id, {
+        report_params
+            .iter()
+            .filter_map(|params| params.archive_name.clone())
+            .collect()
+    });
+    publish_import_progress(
+        pool,
+        ui_broadcast,
+        repo_id,
+        total_i32,
+        total_i32,
+        Some("Refreshing repository statistics\u{2026}"),
+    )
+    .await;
+    refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, borg_names.len() as i64).await;
+    info!(repo_id, imported, total, "synced existing archives");
+    Ok((imported, removed))
+}
 
-    let archives =
-        run_borg_list_with_retry(&borg_repo, &env, timeout, pool, ui_broadcast, repo_id).await?;
+pub async fn sync_new_archives(
+    pool: &PgPool,
+    encryption_key: &[u8; 32],
+    repo_id: i64,
+    ui_broadcast: &UiBroadcast,
+    repo_lock: &RepoLock,
+) -> Result<(u64, u64), ApiError> {
+    let (borg_repo, env) = super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
+
+    let listing_msg = "Listing archives\u{2026}".to_string();
+    publish_import_progress(pool, ui_broadcast, repo_id, 0, 0, Some(&listing_msg)).await;
+
+    let output = run_borg_list_with_retry(&borg_repo, &env).await?;
+
+    let json_output: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| ApiError::Internal(format!("failed to parse borg list output: {e}")))?;
+
+    let archives = json_output["archives"]
+        .as_array()
+        .map_or_else(Vec::new, Clone::clone);
 
     let borg_names: std::collections::HashSet<String> = archives
         .iter()
@@ -1959,74 +1653,108 @@ async fn sync_archives(
 
     let known_names = db::list_archive_names_for_repo(pool, repo_id).await?;
 
-    let removed = match mode {
-        SyncMode::Existing => {
-            let stale: Vec<String> = known_names.difference(&borg_names).cloned().collect();
-            let removed = db::delete_archive_records_by_names(pool, repo_id, &stale).await?;
-            if removed > 0 {
-                info!(repo_id, removed, "removed stale archives during full sync");
-            }
-            removed
-        }
-        SyncMode::New { .. } => 0,
-    };
+    let new_archives: Vec<&serde_json::Value> = archives
+        .iter()
+        .filter(|a| {
+            a["name"]
+                .as_str()
+                .is_some_and(|n| !n.is_empty() && !known_names.contains(n))
+        })
+        .collect();
 
-    let to_import: Vec<&serde_json::Value> = match mode {
-        SyncMode::Existing => archives.iter().collect(),
-        SyncMode::New { .. } => archives
-            .iter()
-            .filter(|a| is_unknown_archive(a, &known_names))
-            .collect(),
-    };
-
-    let repo_archive_count = i64::try_from(borg_names.len()).unwrap_or(i64::MAX);
-
-    if to_import.is_empty() {
-        refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, repo_archive_count, timeout).await;
-        return Ok((0, removed));
+    if new_archives.is_empty() {
+        refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, borg_names.len() as i64).await;
+        return Ok((0, 0));
     }
 
-    let total = to_import.len();
-    let importing_msg = match mode {
-        SyncMode::Existing => format!("Importing {total} archives\u{2026}"),
-        SyncMode::New { .. } => format!("Importing {total} new archives\u{2026}"),
-    };
+    let total = new_archives.len();
+    let importing_msg = format!("Importing {total} new archives\u{2026}");
     publish_import_progress(
         pool,
         ui_broadcast,
         repo_id,
         0,
-        i32::try_from(total).unwrap_or(i32::MAX),
+        total as i32,
         Some(&importing_msg),
     )
     .await;
 
-    publish_import_progress(
-        pool,
-        ui_broadcast,
-        repo_id,
-        0,
-        i32::try_from(total).unwrap_or(i32::MAX),
-        Some("Loading archive metadata..."),
-    )
-    .await;
-    let hydrated_archives = hydrate_archives_with_metadata(
-        pool,
-        ui_broadcast,
-        repo_id,
-        &borg_repo,
-        &env,
-        timeout,
-        &to_import,
-    )
-    .await?;
-    let hydrated_refs: Vec<&serde_json::Value> = hydrated_archives.iter().collect();
+    let mut hostname_cache: HashMap<String, (i64, bool)> = HashMap::new();
+    let mut report_params = Vec::with_capacity(new_archives.len());
+    for (processed, archive) in new_archives.iter().enumerate() {
+        let name = archive["name"].as_str().unwrap_or_default();
+        let hostname = archive["hostname"].as_str().unwrap_or("unknown");
+        if name.is_empty() {
+            continue;
+        }
 
-    let report_params = build_import_reports(pool, ui_broadcast, repo_id, &hydrated_refs).await?;
+        let (agent_id, matched) = if let Some(&cached) = hostname_cache.get(hostname) {
+            cached
+        } else {
+            let (agent, matched) = match db::resolve_agent_for_hostname(pool, hostname).await? {
+                db::ResolveResult::ExactMatch(c) => (c, true),
+                db::ResolveResult::PatternMatch(c) => (c, true),
+                db::ResolveResult::Unmatched => {
+                    let c = db::get_or_create_agent_by_hostname(pool, hostname).await?;
+                    (c, false)
+                }
+            };
+            let entry = (agent.id, matched);
+            hostname_cache.insert(hostname.to_string(), entry);
+            entry
+        };
 
-    let processed = u64::try_from(report_params.len()).unwrap_or(u64::MAX);
+        let start = parse_borg_timestamp(archive["start"].as_str().unwrap_or_default());
+        let end = parse_borg_timestamp(archive["end"].as_str().unwrap_or_default());
+        let duration_secs = end
+            .zip(start)
+            .map_or(0, |(e, s)| e.signed_duration_since(s).num_seconds().max(0));
+
+        let Some(started_at) = start else {
+            warn!(repo_id, archive = %name, "skipping archive with unparseable start timestamp");
+            continue;
+        };
+        let finished_at = end.unwrap_or(started_at);
+
+        let processed_count = (processed + 1) as i32;
+        info!(repo_id, archive = %name, processed = processed_count, total, "archive imported");
+        let progress_msg = format!("Imported \u{2018}{name}\u{2019} ({processed_count}/{total})");
+        publish_import_progress(
+            pool,
+            ui_broadcast,
+            repo_id,
+            processed_count,
+            total as i32,
+            Some(&progress_msg),
+        )
+        .await;
+
+        report_params.push(db::InsertReportParams {
+            agent_id,
+            repo_id,
+            schedule_id: None,
+            started_at,
+            finished_at,
+            status: "success".to_string(),
+            original_size: 0,
+            compressed_size: 0,
+            deduplicated_size: 0,
+            repo_unique_csize: 0,
+            files_processed: 0,
+            duration_secs,
+            error_message: None,
+            warnings: vec![],
+            borg_version: None,
+            matched,
+            archive_name: Some(name.to_string()),
+            borg_command: None,
+            run_id: None,
+        });
+    }
+
+    let added = report_params.len() as u64;
     let total_i32 = i32::try_from(total).unwrap_or(i32::MAX);
-    let save_msg = format!("Saving {processed} backup reports\u{2026}");
+    let save_msg = format!("Saving {added} backup reports\u{2026}");
     publish_import_progress(
         pool,
         ui_broadcast,
@@ -2036,7 +1764,6 @@ async fn sync_archives(
         Some(&save_msg),
     )
     .await;
-
     let archive_names: Vec<String> = report_params
         .iter()
         .filter_map(|params| params.archive_name.clone())
@@ -2049,19 +1776,15 @@ async fn sync_archives(
         repo_id,
         archive_names.clone(),
     );
-
-    if let SyncMode::New { repo_lock } = mode {
-        queue_archive_indexing(
-            pool,
-            encryption_key,
-            repo_id,
-            &archive_names,
-            repo_lock,
-            "incremental sync",
-        )
-        .await;
-    }
-
+    queue_archive_indexing(
+        pool,
+        encryption_key,
+        repo_id,
+        &archive_names,
+        repo_lock,
+        "incremental sync",
+    )
+    .await;
     publish_import_progress(
         pool,
         ui_broadcast,
@@ -2071,60 +1794,9 @@ async fn sync_archives(
         Some("Refreshing repository statistics\u{2026}"),
     )
     .await;
-    refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, repo_archive_count, timeout).await;
-
-    match mode {
-        SyncMode::Existing => {
-            info!(
-                repo_id,
-                imported = processed,
-                total,
-                "synced existing archives"
-            );
-        }
-        SyncMode::New { .. } => {
-            info!(
-                repo_id,
-                added = processed,
-                total,
-                "incremental sync complete"
-            );
-        }
-    }
-    Ok((processed, removed))
-}
-
-pub async fn sync_existing_archives(
-    pool: &PgPool,
-    encryption_key: &[u8; 32],
-    repo_id: i64,
-    ui_broadcast: &UiBroadcast,
-) -> Result<(u64, u64), ApiError> {
-    sync_archives(
-        pool,
-        encryption_key,
-        repo_id,
-        ui_broadcast,
-        SyncMode::Existing,
-    )
-    .await
-}
-
-pub async fn sync_new_archives(
-    pool: &PgPool,
-    encryption_key: &[u8; 32],
-    repo_id: i64,
-    ui_broadcast: &UiBroadcast,
-    repo_lock: &RepoLock,
-) -> Result<(u64, u64), ApiError> {
-    sync_archives(
-        pool,
-        encryption_key,
-        repo_id,
-        ui_broadcast,
-        SyncMode::New { repo_lock },
-    )
-    .await
+    refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, borg_names.len() as i64).await;
+    info!(repo_id, added, total, "incremental sync complete");
+    Ok((added, 0))
 }
 
 fn enrich_archive_stats_background(
@@ -2140,7 +1812,7 @@ fn enrich_archive_stats_background(
         let needing = match db::list_archive_names_needing_stats(&pool, repo_id).await {
             Ok(names) => names,
             Err(e) => {
-                warn!(repo_id, error = %e, "stat enrichment: no archives needing stats");
+                warn!(repo_id, error = %e, "stat enrichment: failed to list archives needing stats");
                 return;
             }
         };
@@ -2230,9 +1902,6 @@ fn enrich_archive_stats_background(
                         deduplicated_size: raw_stats["deduplicated_size"].as_i64().unwrap_or(0),
                         files_processed: raw_stats["nfiles"].as_i64().unwrap_or(0),
                         duration_secs: info["duration"].as_f64().unwrap_or(0.0) as i64,
-                        repo_unique_csize: json["cache"]["stats"]["unique_csize"]
-                            .as_i64()
-                            .unwrap_or(0),
                     };
 
                     if let Err(e) = db::update_backup_report_stats(
@@ -2310,7 +1979,6 @@ async fn index_archives_with_progress(
     repo_id: i64,
     ui_broadcast: UiBroadcast,
     repo_lock: RepoLock,
-    repo_lock_held: bool,
 ) {
     let all = match db::list_archive_names_for_repo(&pool, repo_id).await {
         Ok(names) => names,
@@ -2358,7 +2026,7 @@ async fn index_archives_with_progress(
         .await;
 
         if let Err(e) = archive_index::ensure_index_job(&pool, repo_id, archive_name).await {
-            warn!(repo_id, archive = %archive_name, error = %e, "content index job failed");
+            warn!(repo_id, archive = %archive_name, error = %e, "content indexing: failed to create job");
             continue;
         }
 
@@ -2387,28 +2055,16 @@ async fn index_archives_with_progress(
             });
         };
 
-        let result = if repo_lock_held {
-            archive_index::run_indexing_with_lock_held(
-                &pool,
-                &encryption_key,
-                repo_id,
-                archive_name,
-                &mut on_progress,
-            )
-            .await
-        } else {
-            archive_index::run_indexing(
-                &pool,
-                &encryption_key,
-                repo_id,
-                archive_name,
-                &repo_lock,
-                &mut on_progress,
-            )
-            .await
-        };
-
-        if let Err(e) = result {
+        if let Err(e) = archive_index::run_indexing(
+            &pool,
+            &encryption_key,
+            repo_id,
+            archive_name,
+            &repo_lock,
+            &mut on_progress,
+        )
+        .await
+        {
             warn!(repo_id, archive = %archive_name, error = %e, "content indexing: archive failed");
         }
     }
@@ -2533,7 +2189,7 @@ const SYNC_WARN_DURATION: Duration = Duration::from_secs(300);
         ("build_index" = bool, Query, description = "Also build archive indexes while syncing"),
     ),
     responses(
-        (status = 202, description = "Sync accepted, progress via WebSocket", body = SyncResponse),
+        (status = 200, description = "Sync results", body = SyncResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
         (status = 409, description = "Sync already in progress"),
@@ -2544,137 +2200,113 @@ pub async fn sync_repo(
     _admin: RequireAdmin,
     Query(query): Query<SyncQuery>,
     Path(repo_id): Path<i64>,
-) -> Result<(StatusCode, Json<SyncResponse>), ApiError> {
+) -> Result<Json<SyncResponse>, ApiError> {
     let repo = db::get_repo_with_stats(&state.pool, repo_id).await?;
     if repo.importing {
         return Err(ApiError::Conflict("sync already in progress".to_string()));
     }
 
-    // Set importing immediately so the scheduler and other callers know.
     db::set_repo_importing(&state.pool, repo_id, true).await?;
-    state
-        .ui_broadcast
-        .send(shared::protocol::ServerToUi::DataChanged);
 
-    let pool = state.pool.clone();
-    let encryption_key = state.encryption_key;
-    let ui_broadcast = state.ui_broadcast.clone();
-    let repo_lock = state.repo_lock.clone();
-    let build_index = query.build_index;
-    let repo_name = repo.name.clone();
-    let task_state = state.clone();
-    let (task_id, cancel) = state.import_tasks.start(repo_id).await;
+    let start = std::time::Instant::now();
+    let result = sync_existing_archives(
+        &state.pool,
+        &state.encryption_key,
+        repo_id,
+        &state.ui_broadcast,
+    )
+    .await;
+    let elapsed = start.elapsed();
 
-    // Spawn the sync in a background task so client/proxy disconnects (e.g.
-    // nginx 504 after 60s) do not cancel the cleanup -- the task owns the full
-    // lifecycle and always clears importing + broadcasts DataChanged.
-    tokio::spawn(async move {
-        set_server_sync_op(&task_state, repo_id).await;
+    db::update_repo_last_synced(&state.pool, repo_id).await?;
 
-        tokio::select! {
-            () = cancel.cancelled() => {
-                info!(repo_id, "repo sync cancelled");
+    let (imported, removed) = match result {
+        Ok(counts) => counts,
+        Err(e) => {
+            db::set_repo_importing(&state.pool, repo_id, false).await?;
+            clear_import_progress_state(&state.pool, &state.ui_broadcast, repo_id).await;
+            let msg = format!(
+                "repo sync failed for '{}' after {:.1}s: {e}",
+                repo.name,
+                elapsed.as_secs_f64()
+            );
+            error!("{msg}");
+            if let Err(log_err) =
+                db::insert_system_event(&state.pool, "repo_sync_failed", None, &msg).await
+            {
+                error!(error = %log_err, "failed to log sync event");
             }
-            () = async {
-                let _sync_guard = repo_lock.acquire(repo_id).await;
-                let start = std::time::Instant::now();
-                let result = sync_existing_archives(
-                    &pool,
-                    &encryption_key,
-                    repo_id,
-                    &ui_broadcast,
-                )
-                .await;
-                let elapsed = start.elapsed();
-
-                let (imported, removed) = match result {
-                    Ok(counts) => {
-                        let _ = db::update_repo_last_synced(&pool, repo_id).await;
-                        counts
-                    }
-                    Err(e) => {
-                        let msg = format!(
-                            "repo sync failed for '{}' after {:.1}s: {e}",
-                            repo_name,
-                            elapsed.as_secs_f64()
-                        );
-                        error!("{msg}");
-                        let _ =
-                            db::insert_system_event(&pool, "repo_sync_failed", None, &msg).await;
-                        if task_state.import_tasks.is_current(repo_id, task_id).await {
-                            let _ =
-                                db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}")))
-                                    .await;
-                            let _ = db::set_repo_importing(&pool, repo_id, false).await;
-                            clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
-                            ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
-                        }
-                        return;
-                    }
-                };
-
-                let duration_secs = elapsed.as_secs();
-                let msg = format!(
-                    "repo sync completed for '{}': imported {}, removed {} archives in {}s",
-                    repo_name,
-                    imported,
-                    removed,
-                    duration_secs,
-                );
-
-                if elapsed > SYNC_WARN_DURATION {
-                    error!(
-                        repo_id,
-                        duration_secs,
-                        "repo sync exceeded {}s threshold",
-                        SYNC_WARN_DURATION.as_secs()
-                    );
-                    let warn_msg = format!(
-                        "repo sync for '{}' took {duration_secs}s (exceeds {}s threshold)",
-                        repo_name,
-                        SYNC_WARN_DURATION.as_secs()
-                    );
-                    let _ = db::insert_system_event(&pool, "repo_sync_slow", None, &warn_msg).await;
-                }
-
-                info!("{msg}");
-                let _ = db::insert_system_event(&pool, "repo_sync", None, &msg).await;
-
-                if !task_state.import_tasks.is_current(repo_id, task_id).await {
-                    return;
-                }
-
-                let _ = db::set_repo_import_error(&pool, repo_id, None).await;
-                if build_index {
-                    index_archives_with_progress(
-                        pool.clone(),
-                        encryption_key,
-                        repo_id,
-                        ui_broadcast.clone(),
-                        repo_lock,
-                        true,
-                    )
-                    .await;
-                }
-
-                let _ = db::set_repo_importing(&pool, repo_id, false).await;
-                clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
-                ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
-            } => {}
+            return Err(e);
         }
+    };
 
-        task_state.import_tasks.finish(repo_id, task_id).await;
-        clear_server_sync_op(&task_state, repo_id).await;
-    });
+    let duration_secs = elapsed.as_secs();
+    let msg = format!(
+        "repo sync completed for '{}': imported {imported}, removed {removed} archives in \
+         {duration_secs}s",
+        repo.name
+    );
 
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(SyncResponse {
-            imported: 0,
-            removed: 0,
-            duration_secs: 0,
-        }),
-    ))
+    if elapsed > SYNC_WARN_DURATION {
+        error!(
+            repo_id,
+            duration_secs,
+            "repo sync exceeded {}s threshold",
+            SYNC_WARN_DURATION.as_secs()
+        );
+        let warn_msg = format!(
+            "repo sync for '{}' took {duration_secs}s (exceeds {}s threshold)",
+            repo.name,
+            SYNC_WARN_DURATION.as_secs()
+        );
+        if let Err(log_err) =
+            db::insert_system_event(&state.pool, "repo_sync_slow", None, &warn_msg).await
+        {
+            error!(error = %log_err, "failed to log slow sync event");
+        }
+    }
+
+    info!("{msg}");
+    if let Err(log_err) = db::insert_system_event(&state.pool, "repo_sync", None, &msg).await {
+        error!(error = %log_err, "failed to log sync event");
+    }
+
+    if query.build_index {
+        // Index the archive contents in the background, keeping the repository
+        // flagged as importing so the UI shows live per-archive progress. The
+        // importing flag and progress state are cleared once indexing finishes.
+        let pool = state.pool.clone();
+        let key = state.encryption_key;
+        let ui_broadcast = state.ui_broadcast.clone();
+        let repo_lock = state.repo_lock.clone();
+        tokio::spawn(async move {
+            index_archives_with_progress(
+                pool.clone(),
+                key,
+                repo_id,
+                ui_broadcast.clone(),
+                repo_lock,
+            )
+            .await;
+            if let Err(e) = db::set_repo_importing(&pool, repo_id, false).await {
+                error!(repo_id, error = %e, "failed to clear importing flag after indexing");
+            }
+            clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
+            ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
+        });
+    } else {
+        db::set_repo_importing(&state.pool, repo_id, false).await?;
+        clear_import_progress_state(&state.pool, &state.ui_broadcast, repo_id).await;
+        state
+            .ui_broadcast
+            .send(shared::protocol::ServerToUi::DataChanged);
+    }
+
+    Ok(Json(SyncResponse {
+        imported,
+        removed,
+        duration_secs,
+    }))
 }
 
 #[utoipa::path(
@@ -2698,190 +2330,13 @@ pub async fn reset_import(
     Path(repo_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     db::get_repo_with_stats(&state.pool, repo_id).await?;
-    let cancelled = state.import_tasks.cancel(repo_id).await;
-    if cancelled {
-        info!(repo_id, "cancelled active import task");
-    }
     db::set_repo_importing(&state.pool, repo_id, false).await?;
     db::set_repo_import_error(&state.pool, repo_id, None).await?;
     clear_import_progress_state(&state.pool, &state.ui_broadcast, repo_id).await;
-    clear_server_sync_op(&state, repo_id).await;
     state
         .ui_broadcast
         .send(shared::protocol::ServerToUi::DataChanged);
     Ok(StatusCode::NO_CONTENT)
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/repos/{repo_id}/reset-and-sync",
-    tag = "Repositories",
-    operation_id = "resetAndSyncRepo",
-    summary = "Delete all archive metadata and re-import from borg (admin only)",
-    params(
-        ("repo_id" = i64, Path, description = "Repository ID"),
-        ("build_index" = bool, Query, description = "Also build archive indexes while syncing"),
-    ),
-    responses(
-        (status = 202, description = "Reset accepted, progress via WebSocket", body = SyncResponse),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Not found"),
-        (status = 409, description = "Sync already in progress"),
-    )
-)]
-pub async fn reset_and_sync_repo(
-    State(state): State<AppState>,
-    _admin: RequireAdmin,
-    Query(query): Query<SyncQuery>,
-    Path(repo_id): Path<i64>,
-) -> Result<(StatusCode, Json<SyncResponse>), ApiError> {
-    let repo = db::get_repo_with_stats(&state.pool, repo_id).await?;
-    if repo.importing {
-        return Err(ApiError::Conflict("sync already in progress".to_string()));
-    }
-
-    // Set importing immediately so the scheduler and other callers know.
-    db::set_repo_importing(&state.pool, repo_id, true).await?;
-    state
-        .ui_broadcast
-        .send(shared::protocol::ServerToUi::DataChanged);
-
-    let pool = state.pool.clone();
-    let encryption_key = state.encryption_key;
-    let ui_broadcast = state.ui_broadcast.clone();
-    let repo_lock = state.repo_lock.clone();
-    let build_index = query.build_index;
-    let repo_name = repo.name.clone();
-    let task_state = state.clone();
-    let (task_id, cancel) = state.import_tasks.start(repo_id).await;
-
-    // Spawn the reset + sync in a background task so client/proxy disconnects
-    // do not cancel the cleanup.
-    tokio::spawn(async move {
-        set_server_sync_op(&task_state, repo_id).await;
-
-        tokio::select! {
-            () = cancel.cancelled() => {
-                info!(repo_id, "reset-and-sync cancelled");
-            }
-            () = async {
-                let _reset_guard = repo_lock.acquire(repo_id).await;
-                let start = std::time::Instant::now();
-                // Delete all archive metadata for this repo.
-                if let Err(e) = db::delete_all_repo_archive_data(&pool, repo_id).await {
-                    error!(repo_id, error = %e, "failed to delete archive data for reset-and-sync");
-                    if task_state.import_tasks.is_current(repo_id, task_id).await {
-                        let _ = db::set_repo_importing(&pool, repo_id, false).await;
-                        let _ =
-                            db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await;
-                        clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
-                        ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
-                    }
-                    return;
-                }
-
-                // Clean up orphaned placeholder agents that may have been left behind.
-                if let Err(e) = db::delete_orphaned_placeholder_agents(&pool).await {
-                    warn!(repo_id, error = %e, "failed to clean up orphaned placeholder agents");
-                }
-
-                let result = sync_existing_archives(
-                    &pool,
-                    &encryption_key,
-                    repo_id,
-                    &ui_broadcast,
-                )
-                .await;
-                let elapsed = start.elapsed();
-
-                let (imported, removed) = match result {
-                    Ok(counts) => {
-                        let _ = db::update_repo_last_synced(&pool, repo_id).await;
-                        counts
-                    }
-                    Err(e) => {
-                        let msg = format!(
-                            "reset-and-sync failed for '{}' after {:.1}s: {e}",
-                            repo_name,
-                            elapsed.as_secs_f64()
-                        );
-                        error!("{msg}");
-                        let _ =
-                            db::insert_system_event(&pool, "repo_sync_failed", None, &msg).await;
-                        if task_state.import_tasks.is_current(repo_id, task_id).await {
-                            let _ =
-                                db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}")))
-                                    .await;
-                            let _ = db::set_repo_importing(&pool, repo_id, false).await;
-                            clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
-                            ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
-                        }
-                        return;
-                    }
-                };
-
-                let duration_secs = elapsed.as_secs();
-                let msg = format!(
-                    "reset-and-sync completed for '{}': imported {}, removed {} archives in {}s",
-                    repo_name,
-                    imported,
-                    removed,
-                    duration_secs,
-                );
-
-                if elapsed > SYNC_WARN_DURATION {
-                    error!(
-                        repo_id,
-                        duration_secs,
-                        "reset-and-sync exceeded {}s threshold",
-                        SYNC_WARN_DURATION.as_secs()
-                    );
-                    let warn_msg = format!(
-                        "reset-and-sync for '{}' took {duration_secs}s (exceeds {}s threshold)",
-                        repo_name,
-                        SYNC_WARN_DURATION.as_secs()
-                    );
-                    let _ = db::insert_system_event(&pool, "repo_sync_slow", None, &warn_msg).await;
-                }
-
-                info!("{msg}");
-                let _ = db::insert_system_event(&pool, "repo_sync", None, &msg).await;
-
-                if !task_state.import_tasks.is_current(repo_id, task_id).await {
-                    return;
-                }
-
-                let _ = db::set_repo_import_error(&pool, repo_id, None).await;
-                if build_index {
-                    index_archives_with_progress(
-                        pool.clone(),
-                        encryption_key,
-                        repo_id,
-                        ui_broadcast.clone(),
-                        repo_lock,
-                        true,
-                    )
-                    .await;
-                }
-
-                let _ = db::set_repo_importing(&pool, repo_id, false).await;
-                clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
-                ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
-            } => {}
-        }
-
-        task_state.import_tasks.finish(repo_id, task_id).await;
-        clear_server_sync_op(&task_state, repo_id).await;
-    });
-
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(SyncResponse {
-            imported: 0,
-            removed: 0,
-            duration_secs: 0,
-        }),
-    ))
 }
 
 #[cfg(test)]
@@ -2959,164 +2414,5 @@ mod tests {
     fn parse_borg_timestamp_invalid_returns_none() {
         assert!(parse_borg_timestamp("not-a-date").is_none());
         assert!(parse_borg_timestamp("2024-13-01T00:00:00").is_none());
-    }
-
-    #[test]
-    fn borg_list_args_do_not_request_archive_metadata_format() {
-        let args = borg_list_args("ssh://borg@example.test/repo");
-        assert_eq!(
-            args,
-            [
-                "list",
-                "--json",
-                "--lock-wait",
-                LOCK_WAIT_SECS,
-                "ssh://borg@example.test/repo"
-            ]
-        );
-    }
-
-    #[test]
-    fn extract_borg_error_returns_first_line_when_no_traceback() {
-        let stderr = "Repository does not exist.\nsome extra context\n";
-        assert_eq!(extract_borg_error(stderr), "Repository does not exist.");
-    }
-
-    #[test]
-    fn extract_borg_error_returns_whole_input_when_single_line() {
-        assert_eq!(extract_borg_error("boom"), "boom");
-    }
-
-    #[test]
-    fn extract_borg_error_picks_exception_line_from_traceback() {
-        let stderr = "Traceback (most recent call last):\n  File \"borg/archiver.py\", line 1, in \
-                      main\n    do_thing()\nValueError: invalid passphrase\nPlatform: Linux x86_64";
-        assert_eq!(extract_borg_error(stderr), "ValueError: invalid passphrase");
-    }
-
-    #[test]
-    fn extract_borg_error_stops_at_platform_marker() {
-        let stderr = "Traceback (most recent call last):\n  File \"x.py\", line 2\nRuntimeError: \
-                      lock timeout\nPlatform: Linux\nLater: noise";
-        assert_eq!(extract_borg_error(stderr), "RuntimeError: lock timeout");
-    }
-
-    #[test]
-    fn borg_subcommand_from_str_round_trips_all_variants() {
-        for sub in BorgSubcommand::ALL {
-            let parsed: BorgSubcommand = sub.as_str().parse().unwrap();
-            assert_eq!(parsed, sub);
-            assert_eq!(sub.to_string(), sub.as_str());
-        }
-    }
-
-    #[test]
-    fn borg_subcommand_from_str_rejects_unknown() {
-        assert!("rm".parse::<BorgSubcommand>().is_err());
-        assert!("".parse::<BorgSubcommand>().is_err());
-        assert!("INFO".parse::<BorgSubcommand>().is_err());
-    }
-
-    #[test]
-    fn borg_subcommand_permitted_list_contains_all() {
-        let list = BorgSubcommand::permitted_list();
-        for sub in BorgSubcommand::ALL {
-            assert!(
-                list.contains(sub.as_str()),
-                "missing {} in {list}",
-                sub.as_str()
-            );
-        }
-        assert_eq!(list.matches(',').count(), BorgSubcommand::ALL.len() - 1);
-    }
-
-    #[test]
-    fn is_unknown_archive_detects_new_and_known() {
-        use std::collections::HashSet;
-        let known: HashSet<String> = ["host-2024-01-01".to_string()].into_iter().collect();
-        assert!(is_unknown_archive(
-            &serde_json::json!({"name": "host-2024-02-02"}),
-            &known
-        ));
-        assert!(!is_unknown_archive(
-            &serde_json::json!({"name": "host-2024-01-01"}),
-            &known
-        ));
-    }
-
-    #[test]
-    fn is_unknown_archive_rejects_empty_or_missing_name() {
-        use std::collections::HashSet;
-        let known: HashSet<String> = HashSet::new();
-        assert!(!is_unknown_archive(
-            &serde_json::json!({"name": ""}),
-            &known
-        ));
-        assert!(!is_unknown_archive(&serde_json::json!({"size": 1}), &known));
-    }
-
-    #[test]
-    fn archive_hostname_returns_hostname_when_present() {
-        let archive = serde_json::json!({"hostname": "web-01.example.com"});
-        assert_eq!(archive_hostname(&archive), Some("web-01.example.com"));
-    }
-
-    #[test]
-    fn archive_hostname_returns_none_when_missing_or_empty() {
-        assert_eq!(archive_hostname(&serde_json::json!({})), None);
-        assert_eq!(archive_hostname(&serde_json::json!({"hostname": ""})), None);
-        assert_eq!(
-            archive_hostname(&serde_json::json!({"hostname": null})),
-            None
-        );
-    }
-
-    #[test]
-    fn archive_finish_time_uses_end_timestamp_when_present() {
-        let archive = serde_json::json!({"end": "2024-06-01T08:00:00+00:00"});
-        let started_at = chrono::DateTime::parse_from_rfc3339("2024-06-01T07:00:00+00:00")
-            .unwrap()
-            .to_utc();
-        let finished = archive_finish_time(&archive, started_at);
-        assert_eq!(finished, started_at + chrono::Duration::hours(1));
-    }
-
-    #[test]
-    fn archive_finish_time_falls_back_to_duration_when_end_missing() {
-        let archive = serde_json::json!({"duration": 3600.0});
-        let started_at = chrono::DateTime::parse_from_rfc3339("2024-06-01T07:00:00+00:00")
-            .unwrap()
-            .to_utc();
-        let finished = archive_finish_time(&archive, started_at);
-        assert_eq!(finished, started_at + chrono::Duration::hours(1));
-    }
-
-    #[test]
-    fn archive_finish_time_falls_back_to_started_at_when_no_end_or_duration() {
-        let archive = serde_json::json!({});
-        let started_at = chrono::DateTime::parse_from_rfc3339("2024-06-01T07:00:00+00:00")
-            .unwrap()
-            .to_utc();
-        let finished = archive_finish_time(&archive, started_at);
-        assert_eq!(finished, started_at);
-    }
-
-    #[test]
-    fn archive_metadata_missing_true_when_hostname_or_end_missing() {
-        assert!(archive_metadata_missing(&serde_json::json!({})));
-        assert!(archive_metadata_missing(
-            &serde_json::json!({"hostname": "h1"})
-        ));
-        assert!(archive_metadata_missing(
-            &serde_json::json!({"end": "2024-01-01T00:00:00Z"})
-        ));
-    }
-
-    #[test]
-    fn archive_metadata_missing_false_when_hostname_and_end_present() {
-        assert!(!archive_metadata_missing(&serde_json::json!({
-            "hostname": "h1",
-            "end": "2024-01-01T00:00:00Z"
-        })));
     }
 }

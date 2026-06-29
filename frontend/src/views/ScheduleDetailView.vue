@@ -16,9 +16,31 @@ import { parseLines } from '../utils/validation'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import CronBuilder from '../components/CronBuilder.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
-import type { AgentRow } from '../types/agent'
-import type { ReportRow } from '../types/report'
-import type { ScheduleRow, ScheduleType } from '../types/schedule'
+
+type ScheduleType = 'backup' | 'check' | 'verify'
+
+interface ScheduleRow {
+  id: number
+  repo_id: number | null
+  name: string
+  schedule_type: string
+  cron_expression: string
+  enabled: boolean
+  canary_enabled: boolean
+  last_run_at: string | null
+  next_run_at: string | null
+  exclude_patterns_raw: string
+  ignore_global_excludes: boolean
+  keep_hourly: number
+  keep_daily: number
+  keep_weekly: number
+  keep_monthly: number
+  keep_yearly: number
+  compact_enabled: boolean
+  pre_backup_commands: string
+  post_backup_commands: string
+  on_failure: string
+}
 
 interface ScheduleTarget {
   agent_id: number
@@ -35,23 +57,40 @@ interface PerHostExcludePatterns {
   raw_text: string
 }
 
-interface PerAgentCommands {
-  agent_id: number
-  pre_backup_commands: string
-  post_backup_commands: string
-}
-
 interface ScheduleBackupSourcesResponse {
   backup_sources: string[] | null
-  backup_sources_per_agent: PerHostBackupSources[] | null
-  exclude_patterns_per_agent: PerHostExcludePatterns[] | null
-  commands_per_agent: PerAgentCommands[] | null
+  backup_sources_per_host: PerHostBackupSources[] | null
+  exclude_patterns_per_host: PerHostExcludePatterns[] | null
+}
+
+interface AgentRow {
+  id: number
+  hostname: string
+  display_name: string | null
 }
 
 interface RepoRow {
   id: number
   name: string
   repo_path: string
+}
+
+interface ReportRow {
+  id: number
+  agent_id: number
+  repo_id: number
+  started_at: string
+  finished_at: string
+  status: string
+  original_size: number
+  compressed_size: number
+  deduplicated_size: number
+  files_processed: number
+  duration_secs: number
+  error_message: string | null
+  warnings: string[]
+  borg_version: string | null
+  archive_name: string | null
 }
 
 const props = defineProps<{ id: string }>()
@@ -61,7 +100,7 @@ const router = useRouter()
 const isCreate = computed(() => props.id === 'new')
 
 const schedule = ref<ScheduleRow | null>(null)
-const agents = ref<AgentRow[]>([])
+const clients = ref<AgentRow[]>([])
 const repos = ref<RepoRow[]>([])
 const repo = computed(() => repos.value.find((r) => r.id === selectedRepoId.value) ?? null)
 const scheduleTargets = ref<ScheduleTarget[]>([])
@@ -81,7 +120,8 @@ const reportsLoading = ref(false)
 const reportsError = ref<string | null>(null)
 const { success: toastSuccess, error: toastError } = useToast()
 const { onMessage } = useWebSocket()
-const selectedAgentIds = ref<number[]>([])
+
+const selectedClientIds = ref<number[]>([])
 const selectedRepoId = ref<number | null>(null)
 const selectedType = ref<ScheduleType>('backup')
 const onFailure = ref<'stop' | 'continue'>('stop')
@@ -89,40 +129,9 @@ const usePerHostPaths = ref(false)
 const perHostSources = ref<Record<number, string>>({})
 const usePerHostExcludes = ref(false)
 const perHostExcludes = ref<Record<number, string>>({})
-const usePerAgentCmds = ref(false)
-const perAgentPreCmds = ref<Record<number, string>>({})
-const perAgentPostCmds = ref<Record<number, string>>({})
 
-const showAgentDropdown = ref(false)
-const agentDropdownRef = ref<HTMLElement | null>(null)
-
-interface ArchiveProgressData {
-  hostname: string
-  nfiles: number
-  originalSize: number
-  currentPath: string
-}
-const archiveProgress = ref<ArchiveProgressData | null>(null)
-const backupHostname = ref<string | null>(null)
-const backupArchiveName = ref<string | null>(null)
-const backupStartedAt = ref<number | null>(null)
-const backupElapsedSecs = ref(0)
-const liveLogLines = ref<string[]>([])
-const MAX_LIVE_LOG_LINES = 200
-let elapsedTimer: ReturnType<typeof setInterval> | null = null
-
-const lastSuccessfulReport = computed<ReportRow | null>(
-  () => reports.value.find((r) => r.status === 'success' || r.status === 'warning') ?? null,
-)
-
-const estimatedRemainingSecs = computed<number | null>(() => {
-  const ref = lastSuccessfulReport.value
-  if (!ref || !archiveProgress.value || ref.original_size === 0) return null
-  const fraction = archiveProgress.value.originalSize / ref.original_size
-  if (fraction <= 0) return null
-  const estimatedTotal = backupElapsedSecs.value / fraction
-  return Math.max(0, Math.round(estimatedTotal - backupElapsedSecs.value))
-})
+const showClientDropdown = ref(false)
+const clientDropdownRef = ref<HTMLElement | null>(null)
 
 type TabId = 'settings' | 'advanced' | 'logs'
 const activeTab = computed<TabId>({
@@ -149,9 +158,9 @@ const scheduleType = computed(() =>
 )
 const isBackup = computed(() => scheduleType.value === 'backup')
 
-const agentMap = computed(() => {
+const clientMap = computed(() => {
   const m = new Map<number, AgentRow>()
-  agents.value.forEach((c) => m.set(c.id, c))
+  clients.value.forEach((c) => m.set(c.id, c))
   return m
 })
 
@@ -173,46 +182,46 @@ const form = ref({
   backup_sources: '',
 })
 
-function agentLabel(id: number): string {
-  const c = agents.value.find((x) => x.id === id)
+function clientLabel(id: number): string {
+  const c = clients.value.find((x) => x.id === id)
   return c ? (c.display_name ?? c.hostname) : `#${id}`
 }
 
 function multiSelectLabel(): string {
-  if (selectedAgentIds.value.length === 0) return 'Select agents...'
-  if (selectedAgentIds.value.length === 1) return agentLabel(selectedAgentIds.value[0])
-  return `${selectedAgentIds.value.length} agents selected`
+  if (selectedClientIds.value.length === 0) return 'Select hosts...'
+  if (selectedClientIds.value.length === 1) return clientLabel(selectedClientIds.value[0])
+  return `${selectedClientIds.value.length} hosts selected`
 }
 
-function toggleAgentSelection(id: number): void {
-  if (selectedAgentIds.value.includes(id)) {
-    selectedAgentIds.value = selectedAgentIds.value.filter((x) => x !== id)
+function toggleClientSelection(id: number): void {
+  if (selectedClientIds.value.includes(id)) {
+    selectedClientIds.value = selectedClientIds.value.filter((x) => x !== id)
   } else {
-    selectedAgentIds.value = [...selectedAgentIds.value, id]
+    selectedClientIds.value = [...selectedClientIds.value, id]
   }
 }
 
-function moveAgentUp(index: number): void {
+function moveClientUp(index: number): void {
   if (index === 0) return
-  const ids = [...selectedAgentIds.value]
+  const ids = [...selectedClientIds.value]
   ;[ids[index - 1], ids[index]] = [ids[index], ids[index - 1]]
-  selectedAgentIds.value = ids
+  selectedClientIds.value = ids
 }
 
-function moveAgentDown(index: number): void {
-  if (index >= selectedAgentIds.value.length - 1) return
-  const ids = [...selectedAgentIds.value]
+function moveClientDown(index: number): void {
+  if (index >= selectedClientIds.value.length - 1) return
+  const ids = [...selectedClientIds.value]
   ;[ids[index], ids[index + 1]] = [ids[index + 1], ids[index]]
-  selectedAgentIds.value = ids
+  selectedClientIds.value = ids
 }
 
 function handleClickOutside(event: MouseEvent): void {
   if (
-    showAgentDropdown.value &&
-    agentDropdownRef.value &&
-    !agentDropdownRef.value.contains(event.target as Node)
+    showClientDropdown.value &&
+    clientDropdownRef.value &&
+    !clientDropdownRef.value.contains(event.target as Node)
   ) {
-    showAgentDropdown.value = false
+    showClientDropdown.value = false
   }
 }
 
@@ -223,9 +232,6 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
-  if (elapsedTimer !== null) {
-    clearInterval(elapsedTimer)
-  }
 })
 
 function populateForm(s: ScheduleRow): void {
@@ -234,9 +240,9 @@ function populateForm(s: ScheduleRow): void {
     cron_expression: s.cron_expression,
     enabled: s.enabled,
     canary_enabled: s.canary_enabled,
-    exclude_patterns: s.exclude_patterns_raw ?? '',
+    exclude_patterns: s.exclude_patterns_raw,
     ignore_global_excludes: s.ignore_global_excludes,
-    keep_hourly: s.keep_hourly ?? 0,
+    keep_hourly: s.keep_hourly,
     keep_daily: s.keep_daily,
     keep_weekly: s.keep_weekly,
     keep_monthly: s.keep_monthly,
@@ -264,7 +270,7 @@ function scheduleTypeLabel(t: string): string {
 }
 
 function targetHostnames(): string {
-  return selectedAgentIds.value.map(agentLabel).join(', ')
+  return selectedClientIds.value.map(clientLabel).join(', ')
 }
 
 async function loadData(): Promise<void> {
@@ -272,56 +278,37 @@ async function loadData(): Promise<void> {
   error.value = null
   try {
     if (isCreate.value) {
-      const [agentsRes, reposRes] = await Promise.all([
+      const [clientsRes, reposRes] = await Promise.all([
         apiClient.get<AgentRow[]>('/agents'),
         apiClient.get<RepoRow[]>('/repos'),
       ])
-      agents.value = agentsRes.data
+      clients.value = clientsRes.data
       repos.value = reposRes.data
-      const queryAgentId = Number(route.query.agent_id)
-      if (queryAgentId && agents.value.some((c) => c.id === queryAgentId)) {
-        selectedAgentIds.value = [queryAgentId]
+      const queryClientId = Number(route.query.agent_id)
+      if (queryClientId && clients.value.some((c) => c.id === queryClientId)) {
+        selectedClientIds.value = [queryClientId]
       }
       selectedRepoId.value = repos.value.length > 0 ? repos.value[0].id : null
     } else {
-      const [schedRes, agentsRes, reposRes, targetsRes, sourcesRes, recentReportsRes] =
-        await Promise.all([
-          apiClient.get<ScheduleRow>(`/schedules/${props.id}`),
-          apiClient.get<AgentRow[]>('/agents'),
-          apiClient.get<RepoRow[]>('/repos'),
-          apiClient.get<ScheduleTarget[]>(`/schedules/${props.id}/targets`),
-          apiClient.get<ScheduleBackupSourcesResponse>(`/schedules/${props.id}/sources`),
-          apiClient.get<ReportRow[]>(`/schedules/${props.id}/reports`, { params: { limit: 20 } }),
-        ])
+      const [schedRes, clientsRes, reposRes, targetsRes, sourcesRes] = await Promise.all([
+        apiClient.get<ScheduleRow>(`/schedules/${props.id}`),
+        apiClient.get<AgentRow[]>('/agents'),
+        apiClient.get<RepoRow[]>('/repos'),
+        apiClient.get<ScheduleTarget[]>(`/schedules/${props.id}/targets`),
+        apiClient.get<ScheduleBackupSourcesResponse>(`/schedules/${props.id}/sources`),
+      ])
       schedule.value = schedRes.data
-      agents.value = agentsRes.data
+      clients.value = clientsRes.data
       repos.value = reposRes.data
       scheduleTargets.value = targetsRes.data
       selectedRepoId.value = schedRes.data.repo_id ?? null
-      reports.value = recentReportsRes.data
-      const runningReport = recentReportsRes.data.find(
-        (r) => r.status === 'pending' || r.status === 'started',
-      )
-      backupRunning.value = runningReport !== undefined
-      if (runningReport) {
-        const agent = agentMap.value.get(runningReport.agent_id ?? 0)
-        backupHostname.value = agent?.display_name ?? agent?.hostname ?? null
-        backupStartedAt.value = new Date(runningReport.started_at).getTime()
-        backupElapsedSecs.value = Math.floor((Date.now() - backupStartedAt.value) / 1000)
-        if (elapsedTimer !== null) clearInterval(elapsedTimer)
-        elapsedTimer = setInterval(() => {
-          if (backupStartedAt.value !== null) {
-            backupElapsedSecs.value = Math.floor((Date.now() - backupStartedAt.value) / 1000)
-          }
-        }, 1000)
-      }
       const sorted = [...targetsRes.data].sort((a, b) => a.execution_order - b.execution_order)
-      selectedAgentIds.value = sorted.map((t) => t.agent_id)
+      selectedClientIds.value = sorted.map((t) => t.agent_id)
       populateForm(schedRes.data)
 
       const sources = sourcesRes.data
       form.value.backup_sources = (sources.backup_sources ?? []).join('\n')
-      const perHost = sources.backup_sources_per_agent ?? []
+      const perHost = sources.backup_sources_per_host ?? []
       if (perHost.length > 0) {
         usePerHostPaths.value = true
         const map: Record<number, string> = {}
@@ -330,7 +317,7 @@ async function loadData(): Promise<void> {
         }
         perHostSources.value = map
       }
-      const perHostExcludeEntries = sources.exclude_patterns_per_agent ?? []
+      const perHostExcludeEntries = sources.exclude_patterns_per_host ?? []
       if (perHostExcludeEntries.length > 0) {
         usePerHostExcludes.value = true
         const map: Record<number, string> = {}
@@ -338,22 +325,6 @@ async function loadData(): Promise<void> {
           map[entry.agent_id] = entry.raw_text
         }
         perHostExcludes.value = map
-      }
-      const perAgentCmdEntries = sources.commands_per_agent ?? []
-      if (perAgentCmdEntries.length > 0) {
-        usePerAgentCmds.value = true
-        const preMap: Record<number, string> = {}
-        const postMap: Record<number, string> = {}
-        for (const entry of perAgentCmdEntries) {
-          preMap[entry.agent_id] = (JSON.parse(entry.pre_backup_commands || '[]') as string[]).join(
-            '\n',
-          )
-          postMap[entry.agent_id] = (
-            JSON.parse(entry.post_backup_commands || '[]') as string[]
-          ).join('\n')
-        }
-        perAgentPreCmds.value = preMap
-        perAgentPostCmds.value = postMap
       }
     }
   } catch (e: unknown) {
@@ -388,52 +359,34 @@ async function save(): Promise<void> {
 
     if (usePerHostPaths.value) {
       const perHost: { agent_id: number; paths: string[] }[] = []
-      for (const id of selectedAgentIds.value) {
+      for (const id of selectedClientIds.value) {
         const text = perHostSources.value[id] ?? ''
         const paths = parseLines(text)
         if (paths.length > 0) {
           perHost.push({ agent_id: id, paths })
         }
       }
-      payload.backup_sources_per_agent = perHost
+      payload.backup_sources_per_host = perHost
     }
 
     if (usePerHostExcludes.value) {
       payload.exclude_patterns_raw = ''
       const perHost: { agent_id: number; raw_text: string }[] = []
-      for (const id of selectedAgentIds.value) {
+      for (const id of selectedClientIds.value) {
         const raw_text = perHostExcludes.value[id] ?? ''
         perHost.push({ agent_id: id, raw_text })
       }
-      payload.exclude_patterns_per_agent = perHost
-    }
-
-    if (usePerAgentCmds.value) {
-      payload.pre_backup_commands = []
-      payload.post_backup_commands = []
-      const perAgent: {
-        agent_id: number
-        pre_backup_commands: string[]
-        post_backup_commands: string[]
-      }[] = []
-      for (const id of selectedAgentIds.value) {
-        perAgent.push({
-          agent_id: id,
-          pre_backup_commands: parseLines(perAgentPreCmds.value[id] ?? ''),
-          post_backup_commands: parseLines(perAgentPostCmds.value[id] ?? ''),
-        })
-      }
-      payload.commands_per_agent = perAgent
+      payload.exclude_patterns_per_host = perHost
     }
 
     if (isCreate.value) {
-      if (selectedAgentIds.value.length === 0 || !selectedRepoId.value) {
-        saveError.value = 'Please select at least one agent and a repository.'
+      if (selectedClientIds.value.length === 0 || !selectedRepoId.value) {
+        saveError.value = 'Please select at least one host and a repository.'
         return
       }
       const res = await apiClient.post<ScheduleRow>('/schedules', {
         ...payload,
-        agent_ids: selectedAgentIds.value,
+        client_ids: selectedClientIds.value,
         repo_id: selectedRepoId.value,
         schedule_type: selectedType.value,
         on_failure: onFailure.value,
@@ -442,7 +395,7 @@ async function save(): Promise<void> {
     } else {
       const res = await apiClient.put<ScheduleRow>(`/schedules/${schedule.value!.id}`, {
         ...payload,
-        agent_ids: selectedAgentIds.value,
+        client_ids: selectedClientIds.value,
         repo_id: selectedRepoId.value,
         on_failure: onFailure.value,
       })
@@ -493,7 +446,6 @@ async function loadReports(): Promise<void> {
       params: { limit: 100 },
     })
     reports.value = res.data
-    backupRunning.value = res.data.some((r) => r.status === 'pending' || r.status === 'started')
   } catch (e: unknown) {
     reportsError.value = extractError(e, 'Failed to load reports')
   } finally {
@@ -516,91 +468,22 @@ async function cancelBackup(): Promise<void> {
 interface BackupPayload {
   hostname: string
   target_name: string
-  archive_name?: string | null
-  schedule_id?: number | null
-}
-
-interface BackupLogPayload {
-  hostname: string
-  schedule_id: number | null
-  repo_id: number
-  line: string
-}
-
-interface BorgArchiveProgress {
-  type: 'archive_progress'
-  nfiles: number
-  original_size: number
-  path: string
-}
-
-function parseArchiveProgress(raw: string): BorgArchiveProgress | null {
-  try {
-    const obj = JSON.parse(raw) as Record<string, unknown>
-    if (obj['type'] === 'archive_progress') return obj as unknown as BorgArchiveProgress
-    return null
-  } catch {
-    return null
-  }
-}
-
-function isThisSchedule(payload: BackupPayload): boolean {
-  if (payload.schedule_id != null) return payload.schedule_id === Number(props.id)
-  return repo.value != null && payload.target_name === repo.value.name
 }
 
 onMessage<BackupPayload>('BackupStarted', (payload) => {
-  if (!isThisSchedule(payload)) return
-  backupRunning.value = true
-  backupHostname.value = payload.hostname
-  backupArchiveName.value = payload.archive_name ?? null
-  archiveProgress.value = null
-  liveLogLines.value = []
-  backupStartedAt.value = Date.now()
-  backupElapsedSecs.value = 0
-  if (elapsedTimer !== null) clearInterval(elapsedTimer)
-  elapsedTimer = setInterval(() => {
-    if (backupStartedAt.value !== null) {
-      backupElapsedSecs.value = Math.floor((Date.now() - backupStartedAt.value) / 1000)
-    }
-  }, 1000)
+  if (repo.value && payload.target_name === repo.value.name) {
+    backupRunning.value = true
+  }
 })
 
 onMessage<BackupPayload>('BackupCompleted', (payload) => {
-  if (!isThisSchedule(payload)) return
-  backupRunning.value = false
-  backupHostname.value = null
-  backupArchiveName.value = null
-  liveLogLines.value = []
-  if (elapsedTimer !== null) {
-    clearInterval(elapsedTimer)
-    elapsedTimer = null
-  }
-})
-
-onMessage<BackupLogPayload>('BackupLog', (payload) => {
-  // Prefer schedule_id matching so progress arrives even before loadData() resolves
-  // selectedRepoId; fall back to repo_id when schedule_id is absent.
-  if (payload.schedule_id != null) {
-    if (payload.schedule_id !== Number(props.id)) return
-  } else if (selectedRepoId.value == null || payload.repo_id !== selectedRepoId.value) {
-    return
-  }
-  const progress = parseArchiveProgress(payload.line)
-  if (progress !== null) {
-    archiveProgress.value = {
-      hostname: payload.hostname,
-      nfiles: progress.nfiles,
-      originalSize: progress.original_size,
-      currentPath: progress.path ?? '',
-    }
-  } else {
-    liveLogLines.value = [...liveLogLines.value.slice(-(MAX_LIVE_LOG_LINES - 1)), payload.line]
+  if (repo.value && payload.target_name === repo.value.name) {
+    backupRunning.value = false
   }
 })
 
 onMessage<{ repo_id: number }>('DataChanged', () => {
-  if (!isCreate.value) {
+  if (activeTab.value === 'logs' && !isCreate.value) {
     loadReports().catch(() => undefined)
   }
 })
@@ -662,9 +545,8 @@ watch(activeTab, (tab) => {
           {{ cancelLoading ? '...' : 'Cancel Backup' }}
         </button>
         <button
-          v-else
           class="btn btn-sm btn-primary"
-          :disabled="runNowLoading"
+          :disabled="runNowLoading || backupRunning"
           @click="runNow"
         >
           {{ runNowLoading ? '...' : 'Run Now' }}
@@ -677,76 +559,6 @@ watch(activeTab, (tab) => {
       class="error-banner"
     >
       {{ error }}
-    </div>
-
-    <div
-      v-if="!isCreate && backupRunning"
-      class="live-log-card"
-    >
-      <div class="live-log-header">
-        <span class="live-log-pulse" />
-        <span class="live-log-title">Backup in progress</span>
-        <span
-          v-if="backupHostname"
-          class="live-log-host-badge"
-          >{{ backupHostname }}</span
-        >
-      </div>
-      <div class="progress-body">
-        <div
-          v-if="!archiveProgress"
-          class="live-log-empty"
-        >
-          Waiting for progress&hellip;
-        </div>
-        <template v-else>
-          <div class="progress-row">
-            <span class="progress-label">Elapsed</span>
-            <span class="progress-value">{{ formatDuration(backupElapsedSecs) }}</span>
-          </div>
-          <div
-            v-if="estimatedRemainingSecs !== null"
-            class="progress-row"
-          >
-            <span class="progress-label">Est. remaining</span>
-            <span class="progress-value">{{ formatDuration(estimatedRemainingSecs) }}</span>
-          </div>
-          <div class="progress-row">
-            <span class="progress-label">Files</span>
-            <span class="progress-value">{{ archiveProgress.nfiles.toLocaleString() }}</span>
-          </div>
-          <div class="progress-row">
-            <span class="progress-label">Data</span>
-            <span class="progress-value">{{ formatBytes(archiveProgress.originalSize) }}</span>
-          </div>
-          <div
-            v-if="backupArchiveName"
-            class="progress-row"
-          >
-            <span class="progress-label">Archive</span>
-            <span class="progress-value progress-mono">{{ backupArchiveName }}</span>
-          </div>
-          <div
-            v-if="archiveProgress.currentPath"
-            class="progress-row progress-row-wrap"
-          >
-            <span class="progress-label">Current file</span>
-            <span class="progress-value progress-path">{{ archiveProgress.currentPath }}</span>
-          </div>
-        </template>
-      </div>
-      <div
-        v-if="liveLogLines.length > 0"
-        class="live-log-output"
-      >
-        <div
-          v-for="(line, i) in liveLogLines"
-          :key="i"
-          class="live-log-line"
-        >
-          {{ line }}
-        </div>
-      </div>
     </div>
 
     <BaseSpinner
@@ -812,37 +624,37 @@ watch(activeTab, (tab) => {
             <div class="form-group">
               <label class="form-label">Hosts <span class="required">*</span></label>
               <div
-                ref="agentDropdownRef"
+                ref="clientDropdownRef"
                 class="multi-select-wrapper"
               >
                 <button
                   type="button"
                   class="multi-select-trigger"
-                  :class="{ open: showAgentDropdown }"
-                  @click.stop="showAgentDropdown = !showAgentDropdown"
+                  :class="{ open: showClientDropdown }"
+                  @click.stop="showClientDropdown = !showClientDropdown"
                 >
                   <span class="multi-select-label">{{ multiSelectLabel() }}</span>
-                  <span class="multi-select-arrow">{{ showAgentDropdown ? '▲' : '▼' }}</span>
+                  <span class="multi-select-arrow">{{ showClientDropdown ? '▲' : '▼' }}</span>
                 </button>
                 <div
-                  v-if="showAgentDropdown"
+                  v-if="showClientDropdown"
                   class="multi-select-dropdown"
                 >
                   <label
-                    v-for="c in agents"
+                    v-for="c in clients"
                     :key="c.id"
                     class="multi-select-item"
                   >
                     <input
                       type="checkbox"
-                      :checked="selectedAgentIds.includes(c.id)"
-                      @change="toggleAgentSelection(c.id)"
+                      :checked="selectedClientIds.includes(c.id)"
+                      @change="toggleClientSelection(c.id)"
                     />
                     <span class="multi-select-name">{{ c.display_name ?? c.hostname }}</span>
                   </label>
                 </div>
               </div>
-              <span class="field-hint">The agents that will execute this schedule</span>
+              <span class="field-hint">The agent clients that will execute this schedule</span>
             </div>
 
             <!-- On Failure -->
@@ -856,40 +668,40 @@ watch(activeTab, (tab) => {
                 <option value="continue">Continue</option>
               </select>
               <span class="field-hint">
-                Whether to stop or continue to the next agent when one fails.
+                Whether to stop or continue to the next host when one fails.
               </span>
             </div>
 
             <!-- Ordering (2+ hosts) -->
             <div
-              v-if="selectedAgentIds.length > 1"
+              v-if="selectedClientIds.length > 1"
               class="form-group"
             >
               <label class="form-label">Execution Order</label>
               <div class="order-list">
                 <div
-                  v-for="(agentId, idx) in selectedAgentIds"
-                  :key="agentId"
+                  v-for="(clientId, idx) in selectedClientIds"
+                  :key="clientId"
                   class="order-item"
                 >
                   <span class="order-index">{{ idx + 1 }}</span>
-                  <span class="order-name">{{ agentLabel(agentId) }}</span>
+                  <span class="order-name">{{ clientLabel(clientId) }}</span>
                   <div class="order-actions">
                     <button
                       type="button"
                       class="order-btn"
                       :disabled="idx === 0"
                       title="Move up"
-                      @click="moveAgentUp(idx)"
+                      @click="moveClientUp(idx)"
                     >
                       ▲
                     </button>
                     <button
                       type="button"
                       class="order-btn"
-                      :disabled="idx === selectedAgentIds.length - 1"
+                      :disabled="idx === selectedClientIds.length - 1"
                       title="Move down"
-                      @click="moveAgentDown(idx)"
+                      @click="moveClientDown(idx)"
                     >
                       ▼
                     </button>
@@ -991,31 +803,31 @@ watch(activeTab, (tab) => {
             <div class="form-group">
               <label class="form-label">Hosts</label>
               <div
-                ref="agentDropdownRef"
+                ref="clientDropdownRef"
                 class="multi-select-wrapper"
               >
                 <button
                   type="button"
                   class="multi-select-trigger"
-                  :class="{ open: showAgentDropdown }"
-                  @click.stop="showAgentDropdown = !showAgentDropdown"
+                  :class="{ open: showClientDropdown }"
+                  @click.stop="showClientDropdown = !showClientDropdown"
                 >
                   <span class="multi-select-label">{{ multiSelectLabel() }}</span>
-                  <span class="multi-select-arrow">{{ showAgentDropdown ? '▲' : '▼' }}</span>
+                  <span class="multi-select-arrow">{{ showClientDropdown ? '▲' : '▼' }}</span>
                 </button>
                 <div
-                  v-if="showAgentDropdown"
+                  v-if="showClientDropdown"
                   class="multi-select-dropdown"
                 >
                   <label
-                    v-for="c in agents"
+                    v-for="c in clients"
                     :key="c.id"
                     class="multi-select-item"
                   >
                     <input
                       type="checkbox"
-                      :checked="selectedAgentIds.includes(c.id)"
-                      @change="toggleAgentSelection(c.id)"
+                      :checked="selectedClientIds.includes(c.id)"
+                      @change="toggleClientSelection(c.id)"
                     />
                     <span class="multi-select-name">{{ c.display_name ?? c.hostname }}</span>
                   </label>
@@ -1053,34 +865,34 @@ watch(activeTab, (tab) => {
 
             <!-- Ordering (2+ hosts) -->
             <div
-              v-if="selectedAgentIds.length > 1"
+              v-if="selectedClientIds.length > 1"
               class="form-group"
             >
               <label class="form-label">Execution Order</label>
               <div class="order-list">
                 <div
-                  v-for="(agentId, idx) in selectedAgentIds"
-                  :key="agentId"
+                  v-for="(clientId, idx) in selectedClientIds"
+                  :key="clientId"
                   class="order-item"
                 >
                   <span class="order-index">{{ idx + 1 }}</span>
-                  <span class="order-name">{{ agentLabel(agentId) }}</span>
+                  <span class="order-name">{{ clientLabel(clientId) }}</span>
                   <div class="order-actions">
                     <button
                       type="button"
                       class="order-btn"
                       :disabled="idx === 0"
                       title="Move up"
-                      @click="moveAgentUp(idx)"
+                      @click="moveClientUp(idx)"
                     >
                       ▲
                     </button>
                     <button
                       type="button"
                       class="order-btn"
-                      :disabled="idx === selectedAgentIds.length - 1"
+                      :disabled="idx === selectedClientIds.length - 1"
                       title="Move down"
-                      @click="moveAgentDown(idx)"
+                      @click="moveClientDown(idx)"
                     >
                       ▼
                     </button>
@@ -1106,10 +918,10 @@ watch(activeTab, (tab) => {
             <div class="form-card">
               <h3 class="info-title">Backup Paths</h3>
               <div
-                v-if="selectedAgentIds.length > 1"
+                v-if="selectedClientIds.length > 1"
                 class="form-group form-group-inline"
               >
-                <label class="form-label">Configure per agent</label>
+                <label class="form-label">Configure per host</label>
                 <ToggleSwitch v-model="usePerHostPaths" />
               </div>
 
@@ -1124,7 +936,7 @@ watch(activeTab, (tab) => {
                   spellcheck="false"
                 />
                 <span class="field-hint">
-                  Leave empty to use the default paths configured for this agent.
+                  Leave empty to use the default paths configured for this host.
                 </span>
               </div>
 
@@ -1133,24 +945,24 @@ watch(activeTab, (tab) => {
                 class="per-host-paths"
               >
                 <div
-                  v-for="agentId in selectedAgentIds"
-                  :key="agentId"
+                  v-for="clientId in selectedClientIds"
+                  :key="clientId"
                   class="per-host-entry"
                 >
-                  <label class="form-label">{{ agentLabel(agentId) }}</label>
+                  <label class="form-label">{{ clientLabel(clientId) }}</label>
                   <textarea
-                    :value="perHostSources[agentId] ?? ''"
+                    :value="perHostSources[clientId] ?? ''"
                     class="form-input area-input area-input-sm"
                     placeholder="Directories to back up, one per line"
                     spellcheck="false"
                     @input="
                       ($event) =>
-                        (perHostSources[agentId] = ($event.target as HTMLTextAreaElement).value)
+                        (perHostSources[clientId] = ($event.target as HTMLTextAreaElement).value)
                     "
                   />
                 </div>
                 <span class="field-hint">
-                  Leave an agent empty to use its default backup paths.
+                  Leave a host empty to use its default backup paths.
                 </span>
               </div>
             </div>
@@ -1234,10 +1046,10 @@ watch(activeTab, (tab) => {
           <div class="form-card">
             <h3 class="info-title">Exclude Patterns</h3>
             <div
-              v-if="selectedAgentIds.length > 1"
+              v-if="selectedClientIds.length > 1"
               class="form-group form-group-inline"
             >
-              <label class="form-label">Configure per agent</label>
+              <label class="form-label">Configure per host</label>
               <ToggleSwitch v-model="usePerHostExcludes" />
             </div>
             <div class="form-group">
@@ -1263,31 +1075,31 @@ watch(activeTab, (tab) => {
                 class="per-host-paths"
               >
                 <div
-                  v-for="agentId in selectedAgentIds"
-                  :key="agentId"
+                  v-for="clientId in selectedClientIds"
+                  :key="clientId"
                   class="per-host-entry"
                 >
-                  <label class="form-label">{{ agentLabel(agentId) }}</label>
+                  <label class="form-label">{{ clientLabel(clientId) }}</label>
                   <textarea
-                    :value="perHostExcludes[agentId] ?? ''"
+                    :value="perHostExcludes[clientId] ?? ''"
                     class="form-input area-input area-input-sm"
                     placeholder="Exclude patterns, one per line"
                     spellcheck="false"
                     @input="
                       ($event) =>
-                        (perHostExcludes[agentId] = ($event.target as HTMLTextAreaElement).value)
+                        (perHostExcludes[clientId] = ($event.target as HTMLTextAreaElement).value)
                     "
                   />
                 </div>
                 <span class="field-hint">
-                  Leave an agent empty to use only global and agent-level default excludes.
+                  Leave a host empty to use only global and host-level default excludes.
                 </span>
               </div>
               <span
                 v-if="!usePerHostExcludes"
                 class="field-hint"
               >
-                Leave empty to use only global and agent-level default excludes. Lines starting with
+                Leave empty to use only global and host-level default excludes. Lines starting with
                 <code>#</code> are treated as comments.
               </span>
               <div
@@ -1329,69 +1141,24 @@ watch(activeTab, (tab) => {
 
           <div class="form-card">
             <h3 class="info-title">Commands</h3>
-            <div
-              v-if="selectedAgentIds.length > 1"
-              class="form-group form-group-inline"
-            >
-              <label class="form-label">Configure per agent</label>
-              <ToggleSwitch v-model="usePerAgentCmds" />
+            <div class="form-group">
+              <label class="form-label">Pre-backup Commands</label>
+              <textarea
+                v-model="form.pre_backup_commands"
+                class="form-input cmd-area"
+                placeholder="One command per line, e.g.&#10;docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"
+                spellcheck="false"
+              />
             </div>
-            <template v-if="!usePerAgentCmds">
-              <div class="form-group">
-                <label class="form-label">Pre-backup Commands</label>
-                <textarea
-                  v-model="form.pre_backup_commands"
-                  class="form-input cmd-area"
-                  placeholder="One command per line, e.g.&#10;docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"
-                  spellcheck="false"
-                />
-              </div>
-              <div class="form-group">
-                <label class="form-label">Post-backup Commands</label>
-                <textarea
-                  v-model="form.post_backup_commands"
-                  class="form-input cmd-area"
-                  placeholder="One command per line (optional)"
-                  spellcheck="false"
-                />
-              </div>
-            </template>
-            <template v-else>
-              <div class="per-host-paths">
-                <div
-                  v-for="agentId in selectedAgentIds"
-                  :key="agentId"
-                  class="per-host-entry"
-                >
-                  <label class="form-label">{{ agentLabel(agentId) }}</label>
-                  <label class="form-sublabel">Pre-backup</label>
-                  <textarea
-                    :value="perAgentPreCmds[agentId] ?? ''"
-                    class="form-input cmd-area"
-                    placeholder="One command per line"
-                    spellcheck="false"
-                    @input="
-                      ($event) =>
-                        (perAgentPreCmds[agentId] = ($event.target as HTMLTextAreaElement).value)
-                    "
-                  />
-                  <label class="form-sublabel">Post-backup</label>
-                  <textarea
-                    :value="perAgentPostCmds[agentId] ?? ''"
-                    class="form-input cmd-area"
-                    placeholder="One command per line (optional)"
-                    spellcheck="false"
-                    @input="
-                      ($event) =>
-                        (perAgentPostCmds[agentId] = ($event.target as HTMLTextAreaElement).value)
-                    "
-                  />
-                </div>
-                <span class="field-hint"
-                  >Leave an agent empty to run no schedule-level commands.</span
-                >
-              </div>
-            </template>
+            <div class="form-group">
+              <label class="form-label">Post-backup Commands</label>
+              <textarea
+                v-model="form.post_backup_commands"
+                class="form-input cmd-area"
+                placeholder="One command per line (optional)"
+                spellcheck="false"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -1443,9 +1210,9 @@ watch(activeTab, (tab) => {
                 <td class="cell-ts">{{ formatDateShort(r.started_at) }}</td>
                 <td class="cell-host">
                   {{
-                    agentMap.get(r.agent_id ?? 0)?.display_name ??
-                    agentMap.get(r.agent_id ?? 0)?.hostname ??
-                    `#${r.agent_id ?? 0}`
+                    clientMap.get(r.agent_id)?.display_name ??
+                    clientMap.get(r.agent_id)?.hostname ??
+                    `#${r.agent_id}`
                   }}
                 </td>
                 <td>
@@ -1794,16 +1561,6 @@ watch(activeTab, (tab) => {
   font-family: var(--mono);
   font-size: 0.82rem;
   line-height: 1.5;
-}
-
-.form-sublabel {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-top: 0.5rem;
-  display: block;
 }
 
 .retention-grid {
@@ -2339,119 +2096,5 @@ watch(activeTab, (tab) => {
 
 .btn-danger:hover:not(:disabled) {
   background: var(--danger-hover, color-mix(in srgb, var(--danger) 85%, #000));
-}
-
-.live-log-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  margin-bottom: 1rem;
-  overflow: hidden;
-}
-
-.live-log-header {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.6rem 1rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-base);
-}
-
-.live-log-title {
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-}
-
-.live-log-host-badge {
-  margin-left: auto;
-  font-size: 0.72rem;
-  color: var(--accent);
-  font-family: var(--mono);
-}
-
-.live-log-pulse {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--success);
-  animation: pulse 1.5s ease-in-out infinite;
-  flex-shrink: 0;
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
-}
-
-.live-log-empty {
-  padding: 0.75rem 1rem;
-  color: var(--text-muted);
-  font-style: italic;
-}
-
-.progress-body {
-  padding: 0.5rem 0;
-}
-
-.progress-row {
-  display: flex;
-  gap: 1rem;
-  padding: 0.2rem 1rem;
-  font-size: 0.85rem;
-}
-
-.progress-label {
-  color: var(--text-muted);
-  min-width: 9rem;
-  flex-shrink: 0;
-}
-
-.progress-value {
-  color: var(--text-primary);
-}
-
-.progress-row-wrap {
-  align-items: flex-start;
-}
-
-.progress-path {
-  font-family: var(--mono);
-  font-size: 0.78rem;
-  word-break: break-all;
-  overflow-wrap: break-word;
-  white-space: pre-wrap;
-  min-width: 0;
-}
-
-.progress-mono {
-  font-family: var(--mono);
-  font-size: 0.78rem;
-}
-
-.live-log-output {
-  border-top: 1px solid var(--border);
-  background: var(--bg-base);
-  max-height: 200px;
-  overflow-y: auto;
-  padding: 0.5rem 1rem;
-  font-family: var(--mono);
-  font-size: 0.72rem;
-  color: var(--text-secondary);
-}
-
-.live-log-line {
-  white-space: pre-wrap;
-  word-break: break-all;
-  line-height: 1.5;
-  padding: 0.05rem 0;
 }
 </style>

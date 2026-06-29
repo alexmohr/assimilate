@@ -14,7 +14,7 @@ use std::{
 use chrono::Utc;
 use shared::{
     protocol::AgentToServer,
-    ssh::{borg_rsh, borg_rsh_with_known_hosts, known_hosts_host},
+    ssh::known_hosts_host,
     types::{AgentConfig, BorgEncryption, DryRunFile, RepoConfig, RepoId, build_repo_url},
 };
 use tokio::{
@@ -24,7 +24,10 @@ use tokio::{
 use tracing::{error, info, warn};
 
 use crate::{
-    backup::{BackupEngine, BackupError, BackupResult, BackupTarget, CanaryResult},
+    backup::{
+        BackupEngine, BackupError, BackupTarget, CanaryToken, borg_env, borg_rsh_for_target,
+        write_exclude_file,
+    },
     borg::Borg,
     ssh_forward::{SshForwardError, SshForwardSocket, run_ssh_forward},
 };
@@ -802,26 +805,12 @@ async fn run_init_repo_task(
     Ok(())
 }
 
-fn borg_rsh_for_target(target: &BackupTarget) -> String {
-    target.known_hosts_path.as_ref().map_or_else(
-        || {
-            if target.ssh_host_key.is_empty() {
-                borg_rsh()
-            } else {
-                "false".to_owned()
-            }
-        },
-        |path| borg_rsh_with_known_hosts(path),
-    )
-}
-
 fn make_failed_report(
     repo_id: RepoId,
     schedule_id: Option<i64>,
     started_at: chrono::DateTime<Utc>,
     error_message: String,
     run_id: Option<String>,
-    borg_command: Option<String>,
 ) -> shared::types::BackupReport {
     let finished_at = Utc::now();
     shared::types::BackupReport {
@@ -842,7 +831,7 @@ fn make_failed_report(
         warnings: Vec::new(),
         borg_version: None,
         archive_name: None,
-        borg_command,
+        borg_command: None,
         run_id,
     }
 }
@@ -852,27 +841,6 @@ struct BackupTaskContext {
     server_url: String,
     token: String,
     run_id: Option<String>,
-}
-
-fn spawn_log_forwarder(
-    repo_id: RepoId,
-    schedule_id: Option<i64>,
-    outbound_tx: mpsc::Sender<AgentToServer>,
-) -> mpsc::Sender<String> {
-    let (log_tx, mut log_rx) = mpsc::channel::<String>(256);
-    tokio::spawn(async move {
-        while let Some(line) = log_rx.recv().await {
-            let msg = AgentToServer::BackupLog {
-                repo_id,
-                schedule_id,
-                line,
-            };
-            if outbound_tx.send(msg).await.is_err() {
-                break;
-            }
-        }
-    });
-    log_tx
 }
 
 async fn run_backup_task(
@@ -895,7 +863,7 @@ async fn run_backup_task(
         repo_id,
         schedule_id,
         started_at,
-        borg_command: Some(borg_command.clone()),
+        borg_command: Some(borg_command),
         run_id: run_id.clone(),
     };
     if let Err(e) = outbound_tx.send(started_msg).await {
@@ -916,32 +884,41 @@ async fn run_backup_task(
         None
     };
 
-    let log_tx = spawn_log_forwarder(repo_id, schedule_id, outbound_tx.clone());
-    let (report, canary_result) = match engine
-        .run_backup(&target, canary.as_ref(), Some(log_tx))
-        .await
-    {
-        Ok(result) => build_backup_report(repo_id, schedule_id, started_at, run_id.clone(), result),
+    let (report, run_canary) = match engine.run_backup(&target).await {
+        Ok(result) => {
+            let finished_at = Utc::now();
+            let report = shared::types::BackupReport {
+                id: shared::types::ReportId(0),
+                agent_id: shared::types::AgentId(0),
+                repo_id,
+                schedule_id,
+                started_at,
+                finished_at,
+                status: result.status,
+                original_size: result.original_size,
+                compressed_size: result.compressed_size,
+                deduplicated_size: result.deduplicated_size,
+                repo_unique_csize: result.repo_unique_csize,
+                files_processed: result.files_processed,
+                duration_secs: result.duration_secs,
+                error_message: result.error_message,
+                warnings: result.warnings,
+                borg_version: None,
+                archive_name: result.archive_name,
+                borg_command: result.borg_command,
+                run_id: run_id.clone(),
+            };
+            (report, true)
+        }
         Err(BackupError::Skipped(reason)) => {
             error!(repo_id = ?repo_id, reason = %reason, "backup skipped, treating as failure");
             (
-                make_failed_report(
-                    repo_id,
-                    schedule_id,
-                    started_at,
-                    reason,
-                    run_id.clone(),
-                    Some(borg_command),
-                ),
-                None,
+                make_failed_report(repo_id, schedule_id, started_at, reason, run_id.clone()),
+                false,
             )
         }
         Err(e) => {
             error!(repo_id = ?repo_id, error = %e, "backup failed");
-            let failed_command = e
-                .borg_command()
-                .map(std::borrow::ToOwned::to_owned)
-                .or_else(|| Some(borg_command.clone()));
             (
                 make_failed_report(
                     repo_id,
@@ -949,9 +926,8 @@ async fn run_backup_task(
                     started_at,
                     e.to_string(),
                     run_id.clone(),
-                    failed_command,
                 ),
-                None,
+                false,
             )
         }
     };
@@ -962,60 +938,11 @@ async fn run_backup_task(
     }
 
     if let Some(canary) = &canary {
-        send_canary_result(repo_id, canary.nonce.clone(), canary_result, outbound_tx).await;
+        if run_canary {
+            run_canary_verification(repo_id, &target, engine, canary, outbound_tx).await;
+        }
         BackupEngine::cleanup_canary(canary);
     }
-}
-
-async fn send_canary_result(
-    repo_id: RepoId,
-    nonce: String,
-    result: Option<CanaryResult>,
-    outbound_tx: &mpsc::Sender<AgentToServer>,
-) {
-    let Some(result) = result else { return };
-    let msg = AgentToServer::CanaryVerified {
-        repo_id,
-        success: result.success,
-        nonce,
-        archive_name: result.archive_name,
-        error_message: result.error_message,
-    };
-    if let Err(e) = outbound_tx.send(msg).await {
-        tracing::debug!(error = %e, "outbound send failed");
-    }
-}
-
-fn build_backup_report(
-    repo_id: RepoId,
-    schedule_id: Option<i64>,
-    started_at: chrono::DateTime<Utc>,
-    run_id: Option<String>,
-    result: BackupResult,
-) -> (shared::types::BackupReport, Option<CanaryResult>) {
-    let finished_at = Utc::now();
-    let report = shared::types::BackupReport {
-        id: shared::types::ReportId(0),
-        agent_id: shared::types::AgentId(0),
-        repo_id,
-        schedule_id,
-        started_at,
-        finished_at,
-        status: result.status,
-        original_size: result.original_size,
-        compressed_size: result.compressed_size,
-        deduplicated_size: result.deduplicated_size,
-        repo_unique_csize: result.repo_unique_csize,
-        files_processed: result.files_processed,
-        duration_secs: result.duration_secs,
-        error_message: result.error_message,
-        warnings: result.warnings,
-        borg_version: None,
-        archive_name: result.archive_name,
-        borg_command: result.borg_command,
-        run_id,
-    };
-    (report, result.canary_result)
 }
 
 struct RepoTransport {
@@ -1083,6 +1010,33 @@ fn write_known_hosts(
     file.flush()?;
     target.known_hosts_path = Some(file.path().to_path_buf());
     Ok(Some(file))
+}
+
+async fn run_canary_verification(
+    repo_id: RepoId,
+    target: &BackupTarget,
+    engine: &BackupEngine,
+    canary: &CanaryToken,
+    outbound_tx: &mpsc::Sender<AgentToServer>,
+) {
+    let (success, archive_name, error_message) = match engine.verify_canary(target, canary).await {
+        Ok(archive) => (true, archive, None),
+        Err(e) => {
+            error!(repo_id = ?repo_id, error = %e, "canary verification failed");
+            (false, String::new(), Some(e.to_string()))
+        }
+    };
+
+    let msg = AgentToServer::CanaryVerified {
+        repo_id,
+        success,
+        nonce: canary.nonce.clone(),
+        archive_name,
+        error_message,
+    };
+    if let Err(e) = outbound_tx.send(msg).await {
+        tracing::debug!(error = %e, "outbound send failed");
+    }
 }
 
 pub fn backup_target_from_repo(
@@ -1211,7 +1165,7 @@ async fn run_dry_run_task(
 ) {
     let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
 
-    let exclude_file = match write_temp_excludes(&exclude_patterns) {
+    let exclude_file = match write_exclude_file(&exclude_patterns) {
         Ok(f) => f,
         Err(e) => {
             let msg = AgentToServer::OperationFailed {
@@ -1228,7 +1182,7 @@ async fn run_dry_run_task(
     let timestamp = Utc::now().timestamp();
     let archive_spec = format!("::{hostname}-dryrun-{timestamp}");
 
-    let env_vars = build_borg_env(&target);
+    let env_vars = borg_env(&target);
 
     let mut args = vec![
         "create".to_owned(),
@@ -1314,7 +1268,7 @@ async fn run_restore_task(
 ) {
     let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
 
-    let env_vars = build_borg_env(&target);
+    let env_vars = borg_env(&target);
 
     let args = restore_args(&archive_name, &paths);
     let target_path = std::path::PathBuf::from(target_path);
@@ -1420,7 +1374,7 @@ async fn run_delete_archives_task(
     let (hostname, server_url, token) = ssh_params;
     let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
 
-    let env_vars = build_borg_env(&target);
+    let env_vars = borg_env(&target);
     let mut deleted_count: u32 = 0;
 
     for archive_name in &archive_names {
@@ -1532,50 +1486,6 @@ fn parse_dry_run_output(stderr: &str) -> (Vec<DryRunFile>, i64) {
     }
 
     (files, total_size)
-}
-
-fn write_temp_excludes(patterns: &[String]) -> Result<tempfile::NamedTempFile, std::io::Error> {
-    use std::io::Write;
-    let mut file = tempfile::NamedTempFile::new()?;
-    for pattern in patterns {
-        writeln!(file, "{pattern}")?;
-    }
-    file.flush()?;
-    Ok(file)
-}
-
-fn build_borg_env(target: &BackupTarget) -> Vec<(String, String)> {
-    let repo_url = build_repo_url(
-        &target.ssh_user,
-        &target.ssh_host,
-        target.ssh_port,
-        &target.repo_path,
-    );
-
-    let mut env = vec![
-        ("BORG_REPO".to_owned(), repo_url),
-        ("BORG_PASSPHRASE".to_owned(), target.passphrase.clone()),
-        ("BORG_HOST_ID".to_owned(), target.hostname.clone()),
-        ("BORG_RSH".to_owned(), borg_rsh_for_target(target)),
-        ("LANG".to_owned(), "en_US.UTF-8".to_owned()),
-        ("LC_CTYPE".to_owned(), "en_US.UTF-8".to_owned()),
-    ];
-
-    if target.accept_relocation {
-        env.push((
-            "BORG_RELOCATED_REPO_ACCESS_IS_OK".to_owned(),
-            "yes".to_owned(),
-        ));
-    }
-
-    if let Some(sock) = &target.ssh_auth_sock {
-        env.push((
-            "SSH_AUTH_SOCK".to_owned(),
-            sock.to_string_lossy().into_owned(),
-        ));
-    }
-
-    env
 }
 
 #[cfg(test)]
@@ -1768,7 +1678,7 @@ mod tests {
             None,
         );
         let known_hosts = write_known_hosts(&mut target).unwrap().unwrap();
-        let env = build_borg_env(&target);
+        let env = borg_env(&target);
         let borg_rsh = env
             .iter()
             .find(|(key, _value)| key == "BORG_RSH")

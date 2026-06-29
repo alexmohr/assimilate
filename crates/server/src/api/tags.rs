@@ -184,7 +184,7 @@ pub async fn get_repo_tags(
     tag = "Tags",
     operation_id = "setHostTags",
     summary = "Set tags for a host",
-    params(("hostname" = String, Path, description = "Agent hostname")),
+    params(("hostname" = String, Path, description = "Client hostname")),
     request_body = SetTagsRequest,
     responses(
         (status = 204, description = "Tags set"),
@@ -209,7 +209,7 @@ pub async fn set_agent_tags(
     tag = "Tags",
     operation_id = "getHostTags",
     summary = "Get tags for a host",
-    params(("hostname" = String, Path, description = "Agent hostname")),
+    params(("hostname" = String, Path, description = "Client hostname")),
     responses(
         (status = 200, description = "List of tags", body = Vec<crate::db::TagRow>),
         (status = 401, description = "Unauthorized"),

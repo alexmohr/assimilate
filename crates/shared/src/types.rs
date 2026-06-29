@@ -81,16 +81,6 @@ impl FromStr for ScheduleType {
     }
 }
 
-impl fmt::Display for ScheduleType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ScheduleType::Backup => write!(f, "backup"),
-            ScheduleType::Check => write!(f, "check"),
-            ScheduleType::Verify => write!(f, "verify"),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value")]
 pub enum Compression {

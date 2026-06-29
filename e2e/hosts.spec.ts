@@ -5,7 +5,7 @@ import { expect, test, type Route } from '@playwright/test';
 
 test.describe('Hosts Management', () => {
   test('hosts list shows connected agent hosts', async ({ page }) => {
-    await page.goto('/agents');
+    await page.goto('/clients');
     await page.waitForLoadState('networkidle');
 
     await expect(page.getByText('web-server-01')).toBeVisible();
@@ -14,7 +14,7 @@ test.describe('Hosts Management', () => {
   });
 
   test('hosts list shows imported/unmatched hosts', async ({ page }) => {
-    await page.goto('/agents');
+    await page.goto('/clients');
     await page.waitForLoadState('networkidle');
 
     await expect(page.getByText('old-webserver')).toBeVisible();
@@ -22,7 +22,7 @@ test.describe('Hosts Management', () => {
   });
 
   test('hosts list shows online/offline status indicators', async ({ page }) => {
-    await page.goto('/agents');
+    await page.goto('/clients');
     await page.waitForLoadState('networkidle');
 
     const statusIndicators = page.locator('[class*="status"], [class*="online"], [class*="offline"], [data-status]');
@@ -30,17 +30,17 @@ test.describe('Hosts Management', () => {
   });
 
   test('clicking a host navigates to detail page', async ({ page }) => {
-    await page.goto('/agents');
+    await page.goto('/clients');
     await page.waitForLoadState('networkidle');
 
     await page.locator('.host-card').filter({ hasText: 'web-server-01' }).first().click();
     await page.waitForLoadState('networkidle');
 
-    await expect(page).toHaveURL(/\/agents\//);
+    await expect(page).toHaveURL(/\/clients\//);
   });
 
   test('host detail shows hostname and connection status', async ({ page }) => {
-    await page.goto('/agents');
+    await page.goto('/clients');
     await page.waitForLoadState('networkidle');
 
     await page.locator('.host-card').filter({ hasText: 'web-server-01' }).first().click();
@@ -55,7 +55,7 @@ test.describe('Hosts Management', () => {
   });
 
   test('host detail shows display name', async ({ page }) => {
-    await page.goto('/agents');
+    await page.goto('/clients');
     await page.waitForLoadState('networkidle');
 
     await page.locator('.host-card').filter({ hasText: 'web-server-01' }).first().click();
@@ -65,7 +65,7 @@ test.describe('Hosts Management', () => {
   });
 
   test('deploy dialog opens and shows Load from remote button', async ({ page }) => {
-    await page.goto('/agents');
+    await page.goto('/clients');
     await page.waitForLoadState('networkidle');
 
     // Demo agents have no agent_version so they show a Deploy button (not imported).
@@ -104,7 +104,7 @@ test.describe('Hosts Management', () => {
       });
     });
 
-    await page.goto('/agents');
+    await page.goto('/clients');
     await page.waitForLoadState('networkidle');
 
     const card = page.locator('.host-card').filter({ hasText: 'web-server-01' }).first();

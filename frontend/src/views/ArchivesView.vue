@@ -5,6 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { RouterLink } from 'vue-router'
 import { FilterMatchMode } from '@primevue/core/api'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
@@ -18,7 +19,6 @@ import BaseSpinner from '../components/BaseSpinner.vue'
 import RestoreWizard from '../components/RestoreWizard.vue'
 import ArchiveDiff from '../components/ArchiveDiff.vue'
 import FileSearch from '../components/FileSearch.vue'
-import BaseHostLink from '../components/BaseHostLink.vue'
 
 interface RepoOption {
   id: number
@@ -503,18 +503,22 @@ onMounted(loadRepos)
                 />
               </template>
               <template #body="{ data }">
-                <BaseHostLink
+                <RouterLink
                   v-if="data.matched === true && data.agent_hostname"
-                  :hostname="data.agent_hostname"
+                  :to="{ name: 'client-detail', params: { hostname: data.agent_hostname } }"
                   class="host-link"
                   @click.stop
-                />
-                <BaseHostLink
+                >
+                  {{ data.agent_hostname }}
+                </RouterLink>
+                <RouterLink
                   v-else-if="data.matched !== true"
-                  :hostname="data.hostname"
+                  :to="{ name: 'client-detail', params: { hostname: data.hostname } }"
                   class="unmatched-host-link"
                   @click.stop
-                />
+                >
+                  {{ data.hostname }}
+                </RouterLink>
                 <span
                   v-else
                   class="td-host"

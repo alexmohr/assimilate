@@ -1,21 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 Alexander Mohr
-ARG COVERAGE=false
-
-FROM rust:1.96 AS builder
+FROM rust:1-trixie AS builder
 
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 
 RUN cargo build --release -p server -p agent
-
-ARG COVERAGE
-RUN if [ "$COVERAGE" = "true" ]; then \
-      rustc --version && \
-      RUSTFLAGS="-C instrument-coverage" cargo build -p server && \
-      cp target/debug/server target/release/server; \
-    fi
 
 FROM node:24-slim AS frontend
 
@@ -55,10 +46,8 @@ COPY --from=frontend /app/dist /app/static
 COPY --from=docs /docs-build/docs_html /app/docs_html
 COPY .devcontainer/demo/start-demo.sh /app/start-demo.sh
 COPY .devcontainer/demo/seed-demo.sh /app/seed-demo.sh
-COPY .devcontainer/demo/start-agent.sh /app/start-agent.sh
-COPY .devcontainer/demo/start-placeholder.sh /app/start-placeholder.sh
 COPY .devcontainer/demo/test-archive-restore.sh /app/test-archive-restore.sh
-RUN chmod +x /app/start-demo.sh /app/seed-demo.sh /app/start-agent.sh /app/start-placeholder.sh /app/test-archive-restore.sh
+RUN chmod +x /app/start-demo.sh /app/seed-demo.sh /app/test-archive-restore.sh
 
 ENV ASSIMILATE_STATIC_DIR=/app/static
 ENV ASSIMILATE_DOCS_DIR=/app/docs_html

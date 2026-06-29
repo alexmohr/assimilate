@@ -25,8 +25,37 @@ import {
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import CardError from '../components/CardError.vue'
-import type { AgentRow } from '../types/agent'
-import type { ScheduleRow, ScheduleType } from '../types/schedule'
+
+type ScheduleType = 'backup' | 'check' | 'verify'
+
+interface ScheduleRow {
+  id: number
+  repo_id: number | null
+  name: string
+  schedule_type: ScheduleType
+  cron_expression: string
+  enabled: boolean
+  canary_enabled: boolean
+  last_run_at: string | null
+  next_run_at: string | null
+  exclude_patterns: string[]
+  ignore_global_excludes: boolean
+  keep_daily: number
+  keep_weekly: number
+  keep_monthly: number
+  keep_yearly: number
+  compact_enabled: boolean
+  pre_backup_commands: string
+  post_backup_commands: string
+  on_failure: string
+  target_hostnames: string[]
+}
+
+interface AgentRow {
+  id: number
+  hostname: string
+  display_name: string | null
+}
 
 interface RepoRow {
   id: number
@@ -54,13 +83,13 @@ const health = ref<HealthEntry[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
 const router = useRouter()
-type SortField = 'agent' | 'next_run' | 'last_run' | 'type'
+type SortField = 'client' | 'next_run' | 'last_run' | 'type'
 type SortDir = 'asc' | 'desc'
 type FilterStatus = 'all' | 'enabled' | 'disabled'
 type FilterType = 'all' | 'backup' | 'check' | 'verify'
-type FilterHealth = 'all' | 'overdue' | 'success' | 'warning' | 'failed'
+type FilterHealth = 'all' | 'overdue' | 'success' | 'failed'
 
-const sortField = ref<SortField>('agent')
+const sortField = ref<SortField>('client')
 const sortDir = ref<SortDir>('asc')
 const filterStatus = ref<FilterStatus>('all')
 const filterType = ref<FilterType>('all')
@@ -68,7 +97,7 @@ const filterText = ref('')
 const filterHealth = ref<FilterHealth>(
   (() => {
     const q = useRoute().query.filter as string | undefined
-    if (q === 'overdue' || q === 'success' || q === 'warning' || q === 'failed') return q
+    if (q === 'overdue' || q === 'success' || q === 'failed') return q
     return 'all'
   })(),
 )
@@ -77,7 +106,6 @@ const { isMobile } = useMobile()
 const showMobileFilters = ref(false)
 
 const runNowLoading = ref<number | null>(null)
-const cancelLoading = ref<number | null>(null)
 const { success: toastSuccess, error: toastError } = useToast()
 
 function scheduleTypeLabel(t: ScheduleType): string {
@@ -101,12 +129,9 @@ interface EnrichedSchedule extends ScheduleRow {
   hostLabels: string[]
   repo: RepoRow | null
   health: HealthEntry | null
-  isRunning: boolean
 }
 
-const RUNNING_STATUSES = new Set(['pending', 'started'])
-
-const agentMap = computed(() => {
+const clientMap = computed(() => {
   const map = new Map<string, AgentRow>()
   agents.value.forEach((agent) => map.set(agent.hostname, agent))
   return map
@@ -125,7 +150,7 @@ const healthBySchedule = computed(() => {
 const enrichedSchedules = computed<EnrichedSchedule[]>(() =>
   schedules.value.map((s) => {
     const hostLabels = s.target_hostnames.map((hostname) => {
-      const agent = agentMap.value.get(hostname)
+      const agent = clientMap.value.get(hostname)
       return agent?.display_name ? `${agent.display_name} (${hostname})` : hostname
     })
     const repo: RepoRow | null = s.repo_id != null ? (repoMap.value.get(s.repo_id) ?? null) : null
@@ -135,10 +160,7 @@ const enrichedSchedules = computed<EnrichedSchedule[]>(() =>
       entries.find((h) => h.last_status === 'failed') ??
       entries[0] ??
       null
-    const isRunning = entries.some(
-      (h) => h.last_status != null && RUNNING_STATUSES.has(h.last_status),
-    )
-    return { ...s, hostLabels, repo, health: healthEntry, isRunning }
+    return { ...s, hostLabels, repo, health: healthEntry }
   }),
 )
 
@@ -159,8 +181,6 @@ const filteredSchedules = computed(() => {
     list = list.filter((s) => s.health?.is_overdue)
   } else if (filterHealth.value === 'success') {
     list = list.filter((s) => s.health?.last_status === 'success')
-  } else if (filterHealth.value === 'warning') {
-    list = list.filter((s) => s.health?.last_status === 'warning')
   } else if (filterHealth.value === 'failed') {
     list = list.filter((s) => s.health?.last_status === 'failed')
   }
@@ -178,7 +198,7 @@ const filteredSchedules = computed(() => {
   list.sort((a, b) => {
     let cmp = 0
     switch (sortField.value) {
-      case 'agent':
+      case 'client':
         cmp = (a.hostLabels[0] ?? '').localeCompare(b.hostLabels[0] ?? '')
         break
       case 'next_run':
@@ -277,18 +297,6 @@ async function runNow(s: ScheduleRow): Promise<void> {
   }
 }
 
-async function cancelBackup(s: ScheduleRow): Promise<void> {
-  cancelLoading.value = s.id
-  try {
-    await apiClient.post(`/schedules/${s.id}/cancel`)
-    toastSuccess('Cancel request sent.')
-  } catch (e: unknown) {
-    toastError(extractError(e))
-  } finally {
-    cancelLoading.value = null
-  }
-}
-
 onMounted(fetchAll)
 
 const { onMessage } = useWebSocket()
@@ -321,7 +329,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
       <input
         v-model="filterText"
         class="input search-input"
-        placeholder="Filter by name, agent, or repo..."
+        placeholder="Filter by name, client, or repo..."
       />
       <button
         v-if="isMobile"
@@ -361,7 +369,6 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
         >
           <option value="all">All health</option>
           <option value="success">Passed only</option>
-          <option value="warning">Warned only</option>
           <option value="failed">Failed only</option>
           <option value="overdue">Overdue only</option>
         </select>
@@ -369,10 +376,10 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
           <span class="sort-label">Sort:</span>
           <button
             class="btn btn-sm btn-ghost"
-            :class="{ active: sortField === 'agent' }"
-            @click="toggleSort('agent')"
+            :class="{ active: sortField === 'client' }"
+            @click="toggleSort('client')"
           >
-            Agent {{ sortField === 'agent' ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '' }}
+            Client {{ sortField === 'client' ? (sortDir === 'asc' ? '\u2191' : '\u2193') : '' }}
           </button>
           <button
             class="btn btn-sm btn-ghost"
@@ -476,9 +483,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
         </div>
         <CardError
           v-if="s.health?.last_error_message"
-          :label="
-            s.health.last_status === 'warning' ? 'Last backup had a warning' : 'Last backup failed'
-          "
+          label="Last backup failed"
           :message="s.health.last_error_message"
         />
         <div class="card-stats">
@@ -502,16 +507,6 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
           @click.stop
         >
           <button
-            v-if="s.isRunning"
-            class="btn btn-sm btn-danger"
-            :disabled="cancelLoading === s.id"
-            title="Cancel the running backup"
-            @click="cancelBackup(s)"
-          >
-            {{ cancelLoading === s.id ? '...' : 'Cancel' }}
-          </button>
-          <button
-            v-else
             class="btn btn-sm btn-ghost"
             :disabled="runNowLoading === s.id"
             :title="`Run ${scheduleTypeLabel(s.schedule_type ?? 'backup').toLowerCase()} now`"

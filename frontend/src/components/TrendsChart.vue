@@ -100,44 +100,45 @@ watch([selectedRepoId, selectedDays], () => {
   fetchTrends().catch(logger.error)
 })
 
-const combinedSizeData = computed(() => ({
-  labels: trends.value.map((t) => t.date.slice(5)),
-  datasets: [
-    {
-      label: 'Original',
-      data: trends.value.map((t) => t.original_size),
-      borderColor: 'oklch(0.75 0.16 75)',
-      backgroundColor: 'oklch(0.75 0.16 75 / 0.0)',
-      fill: false,
-      tension: 0.3,
-    },
-    {
-      label: 'Compressed',
-      data: trends.value.map((t) => t.compressed_size),
-      borderColor: 'oklch(0.62 0.19 255)',
-      backgroundColor: 'oklch(0.62 0.19 255 / 0.0)',
-      fill: false,
-      tension: 0.3,
-    },
-  ],
-}))
+const chartData = computed(
+  (): {
+    labels: string[]
+    datasets: {
+      label: string
+      data: number[]
+      borderColor: string
+      backgroundColor: string
+      fill: boolean
+      tension: number
+    }[]
+  } => {
+    return {
+      labels: trends.value.map((t) => t.date.slice(5)),
+      datasets: [
+        {
+          label: 'Compressed',
+          data: trends.value.map((t) => t.compressed_size),
+          borderColor: 'oklch(0.62 0.19 255)',
+          backgroundColor: 'oklch(0.62 0.19 255 / 0.1)',
+          fill: true,
+          tension: 0.3,
+        },
+        {
+          label: 'Deduplicated',
+          data: trends.value.map((t) => t.deduplicated_size),
+          borderColor: 'oklch(0.72 0.17 162)',
+          backgroundColor: 'oklch(0.72 0.17 162 / 0.1)',
+          fill: true,
+          tension: 0.3,
+        },
+      ],
+    }
+  },
+)
 
-const deduplicatedData = computed(() => ({
-  labels: trends.value.map((t) => t.date.slice(5)),
-  datasets: [
-    {
-      label: 'Deduplicated',
-      data: trends.value.map((t) => t.deduplicated_size),
-      borderColor: 'oklch(0.72 0.17 162)',
-      backgroundColor: 'oklch(0.72 0.17 162 / 0.1)',
-      fill: true,
-      tension: 0.3,
-    },
-  ],
-}))
-
-const combinedOptions = computed(() => {
+const chartOptions = computed(() => {
   void themeGeneration.value
+  const textSecondary = cssVar('--text-secondary')
   const textMuted = cssVar('--text-muted')
   const border = cssVar('--border')
   return {
@@ -149,8 +150,12 @@ const combinedOptions = computed(() => {
     },
     plugins: {
       legend: {
-        display: true,
-        labels: { color: textMuted, boxWidth: 12, font: { size: 10 } },
+        position: 'bottom' as const,
+        labels: {
+          color: textSecondary,
+          usePointStyle: true,
+          pointStyle: 'circle' as const,
+        },
       },
       tooltip: {
         callbacks: {
@@ -166,46 +171,6 @@ const combinedOptions = computed(() => {
         ticks: { color: textMuted, font: { size: 10 } },
       },
       y: {
-        grace: '10%',
-        grid: { color: border },
-        ticks: {
-          color: textMuted,
-          font: { size: 10 },
-          callback: (value: string | number): string => formatBytes(Number(value)),
-        },
-      },
-    },
-  }
-})
-
-const chartOptions = computed(() => {
-  void themeGeneration.value
-  const textMuted = cssVar('--text-muted')
-  const border = cssVar('--border')
-  return {
-    responsive: true,
-    maintainAspectRatio: false,
-    interaction: {
-      intersect: false,
-      mode: 'index' as const,
-    },
-    plugins: {
-      legend: { display: false },
-      tooltip: {
-        callbacks: {
-          label: (context: TooltipItem<'line'>): string => {
-            return `${context.dataset.label ?? ''}: ${formatBytes(context.parsed.y ?? 0)}`
-          },
-        },
-      },
-    },
-    scales: {
-      x: {
-        grid: { display: false },
-        ticks: { color: textMuted, font: { size: 10 } },
-      },
-      y: {
-        grace: '10%',
         grid: { color: border },
         ticks: {
           color: textMuted,
@@ -277,7 +242,7 @@ const dedupOptions = computed(() => {
           callback: (value: string | number): string => `${Number(value).toFixed(0)}%`,
         },
         min: Math.max(0, Math.floor(dataMin - padding)),
-        max: Math.ceil(dataMax + padding),
+        max: Math.min(100, Math.ceil(dataMax + padding)),
       },
     },
   }
@@ -350,38 +315,24 @@ const dedupOptions = computed(() => {
     >
       No backup data available for the selected period.
     </div>
-    <div
-      v-else
-      class="charts-row"
-    >
-      <div class="chart-cell">
-        <span class="metric-label">Original &amp; Compressed</span>
-        <div class="chart-container">
-          <Line
-            :data="combinedSizeData"
-            :options="combinedOptions"
-          />
-        </div>
+    <template v-else>
+      <div class="chart-container">
+        <Line
+          :data="chartData"
+          :options="chartOptions"
+        />
       </div>
-      <div class="chart-cell">
-        <span class="metric-label">Deduplicated</span>
-        <div class="chart-container">
-          <Line
-            :data="deduplicatedData"
-            :options="chartOptions"
-          />
-        </div>
+      <div class="chart-container chart-container-sm">
+        <Line
+          :data="dedupRatioData"
+          :options="dedupOptions"
+        />
       </div>
-      <div class="chart-cell">
-        <span class="metric-label">Dedup Ratio</span>
-        <div class="chart-container">
-          <Line
-            :data="dedupRatioData"
-            :options="dedupOptions"
-          />
-        </div>
-      </div>
-    </div>
+      <span class="dedup-label"
+        >Dedup Ratio — deduplicated ÷ original size; lower means more data was already stored in the
+        repo</span
+      >
+    </template>
   </section>
 </template>
 
@@ -403,9 +354,11 @@ const dedupOptions = computed(() => {
 }
 
 .panel-title {
-  font-size: 0.875rem;
+  font-size: 0.75rem;
   font-weight: 600;
-  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
   margin: 0;
   white-space: nowrap;
 }
@@ -460,29 +413,22 @@ const dedupOptions = computed(() => {
   color: var(--text-on-accent, #fff);
 }
 
-.charts-row {
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-}
-
-.chart-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.metric-label {
-  font-size: 0.65rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-}
-
 .chart-container {
   height: 220px;
   position: relative;
+}
+
+.chart-container-sm {
+  height: 100px;
+  margin-top: 1rem;
+}
+
+.dedup-label {
+  display: block;
+  text-align: center;
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
 }
 
 .state-msg {

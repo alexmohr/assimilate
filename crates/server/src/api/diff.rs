@@ -142,7 +142,7 @@ pub async fn diff_archives(
 
     let repo_archive1 = format!("{borg_repo}::{}", query.archive1);
 
-    let mut child = Borg::new()
+    let child = Borg::new()
         .spawn(
             &[
                 "diff",

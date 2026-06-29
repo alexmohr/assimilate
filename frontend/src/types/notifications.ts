@@ -35,7 +35,7 @@ export type ChannelConfig = EmailConfig | WebhookConfig | WebPushConfig
 
 export interface ChannelScope {
   repo_ids?: number[]
-  agent_ids?: number[]
+  client_ids?: number[]
   schedule_ids?: number[]
 }
 

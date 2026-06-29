@@ -158,9 +158,6 @@ pub(crate) fn build_email_body(payload: &serde_json::Value) -> String {
         .get("repo_name")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("");
-    let schedule_name = payload
-        .get("schedule_name")
-        .and_then(serde_json::Value::as_str);
     let status = payload
         .get("status")
         .and_then(serde_json::Value::as_str)
@@ -192,9 +189,6 @@ pub(crate) fn build_email_body(payload: &serde_json::Value) -> String {
     }
     if !repo_name.is_empty() {
         parts.push(format!("Repository: {repo_name}"));
-    }
-    if let Some(name) = schedule_name.filter(|n| !n.is_empty()) {
-        parts.push(format!("Schedule:   {name}"));
     }
     if let Some(name) = archive_name {
         parts.push(format!("Archive:    {name}"));
@@ -348,7 +342,6 @@ mod tests {
             "event_type": "backup_failed",
             "hostname": "web-server-01",
             "repo_name": "server-daily",
-            "schedule_name": "Nightly Server Backup",
             "archive_name": "web-server-01-2026-06-09T10:00:00.000000",
             "status": "failed",
             "timestamp": "2026-06-09T10:00:00Z",
@@ -358,24 +351,10 @@ mod tests {
         assert!(body.contains("Event:      Backup failed"));
         assert!(body.contains("Host:       web-server-01"));
         assert!(body.contains("Repository: server-daily"));
-        assert!(body.contains("Schedule:   Nightly Server Backup"));
         assert!(body.contains("Archive:    web-server-01-2026-06-09T10:00:00.000000"));
         assert!(body.contains("Status:     failed"));
         assert!(body.contains("Error:\nrepository is locked"));
         assert!(!body.contains('{'));
-    }
-
-    #[test]
-    fn body_omits_schedule_when_absent() {
-        let p = serde_json::json!({
-            "event_type": "backup_failed",
-            "hostname": "web-server-01",
-            "repo_name": "server-daily",
-            "status": "failed",
-            "timestamp": "2026-06-09T10:00:00Z",
-        });
-        let body = build_email_body(&p);
-        assert!(!body.contains("Schedule:"));
     }
 
     #[test]

@@ -26,7 +26,7 @@ test.describe('Schedules Management', () => {
     await expect(page.getByText('media-weekly')).toBeVisible();
   });
 
-  test('schedules list shows associated agent hostnames', async ({ page }) => {
+  test('schedules list shows associated client hostnames', async ({ page }) => {
     await page.goto('/schedules');
     await page.waitForLoadState('networkidle');
 
@@ -72,7 +72,7 @@ test.describe('Schedules Management', () => {
     await page.goto('/schedules/1');
     await page.waitForLoadState('networkidle');
 
-    await expect(page.getByText('Targets', { exact: true })).toBeVisible();
+    await expect(page.getByText('Client', { exact: true })).toBeVisible();
     await expect(page.getByText('Repository', { exact: true })).toBeVisible();
     await expect(page.getByText('server-daily')).toBeVisible();
   });
@@ -125,39 +125,5 @@ test.describe('Schedules Management', () => {
 
     // Per-host backup sources section should be rendered.
     await expect(page.locator('.per-host-paths').or(page.locator('.per-host-entry')).first()).toBeVisible();
-  });
-
-  test('creating a new schedule succeeds (regression: agent_ids/_per_agent field naming)', async ({
-    page,
-  }) => {
-    await page.goto('/schedules/new');
-    await page.waitForLoadState('networkidle');
-
-    const targetCard = page.locator('.form-card', { hasText: 'Target' });
-
-    await targetCard.locator('.multi-select-trigger').click();
-    await targetCard.getByText('Production Web Server').click();
-
-    // Close the dropdown so it doesn't cover the repository select.
-    await page.getByPlaceholder('e.g. Daily web server backup').click();
-
-    await targetCard
-      .locator('.form-group', { hasText: 'Repository' })
-      .locator('select')
-      .selectOption({ label: 'server-daily' });
-
-    // Use Integrity Check so the test doesn't depend on backup source paths.
-    await targetCard
-      .locator('.form-group', { hasText: 'Schedule Type' })
-      .locator('select')
-      .selectOption({ label: 'Integrity Check' });
-
-    await page.getByRole('button', { name: 'Create Schedule' }).click();
-
-    // The create request used to fail with "missing field `agent_ids`" because the
-    // frontend sent client_ids/backup_sources_per_host instead of the names the
-    // backend expects. A successful save navigates to the new schedule's detail page.
-    await expect(page).toHaveURL(/\/schedules\/\d+$/);
-    await expect(page.locator('.error-inline')).not.toBeVisible();
   });
 });

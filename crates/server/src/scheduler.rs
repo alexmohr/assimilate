@@ -10,6 +10,7 @@ use shared::{
     types::{OnFailure, RepoId, ScheduleType},
 };
 use sqlx::PgPool;
+use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::{
@@ -19,10 +20,7 @@ use crate::{
     db::DueScheduleRow,
     repo_op_tracker::RepoOpTracker,
     tunnel::TunnelManager,
-    ws::{
-        completion_bus, completion_bus::CompletionBus, registry::AgentRegistry,
-        ui_broadcast::UiBroadcast,
-    },
+    ws::{completion_bus::CompletionBus, registry::AgentRegistry, ui_broadcast::UiBroadcast},
 };
 
 const TICK_INTERVAL: Duration = Duration::from_secs(30);
@@ -31,6 +29,7 @@ const SYNC_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 const SESSION_CLEANUP_INTERVAL: Duration = Duration::from_secs(3600);
 const SYNC_WARN_DURATION: Duration = Duration::from_secs(300);
 const DEFAULT_RETENTION_DAYS: i64 = 7;
+const SEQUENTIAL_TIMEOUT: Duration = Duration::from_secs(4 * 3600);
 
 pub async fn run(state: AppState) {
     let _receiver = state.completion_bus.subscribe();
@@ -43,16 +42,14 @@ pub async fn run(state: AppState) {
         let mut interval = tokio::time::interval(TICK_INTERVAL);
         loop {
             interval.tick().await;
-            if let Err(e) = tick(&TickDeps {
-                pool: &schedule_state.pool,
-                registry: &schedule_state.registry,
-                encryption_key: &schedule_state.encryption_key,
-                tunnel_manager: &schedule_state.tunnel_manager,
-                completion_bus: &schedule_state.completion_bus,
-                repo_lock: &schedule_state.repo_lock,
-                repo_op_tracker: &schedule_state.repo_op_tracker,
-                ui_broadcast: &schedule_state.ui_broadcast,
-            })
+            if let Err(e) = tick(
+                &schedule_state.pool,
+                &schedule_state.registry,
+                &schedule_state.encryption_key,
+                &schedule_state.tunnel_manager,
+                &schedule_state.completion_bus,
+                &schedule_state.repo_lock,
+            )
             .await
             {
                 tracing::error!(error = %e, "scheduler tick failed");
@@ -79,7 +76,6 @@ pub async fn run(state: AppState) {
                 &sync_state.encryption_key,
                 &sync_state.ui_broadcast,
                 &sync_state.repo_op_tracker,
-                &sync_state.repo_lock,
             )
             .await;
         }
@@ -109,12 +105,11 @@ pub async fn run(state: AppState) {
     );
 }
 
-pub async fn run_repo_sync(
+async fn run_repo_sync(
     pool: &PgPool,
     encryption_key: &[u8; 32],
     ui_broadcast: &UiBroadcast,
     repo_op_tracker: &RepoOpTracker,
-    repo_lock: &RepoLock,
 ) {
     let repos = match db::list_all_repos(pool).await {
         Ok(r) => r,
@@ -190,131 +185,103 @@ pub async fn run_repo_sync(
             op: repo_op_tracker.get(repo.id).await,
         });
 
-        let task_pool = pool.clone();
-        let task_key = *encryption_key;
-        let task_broadcast = ui_broadcast.clone();
-        let task_op_tracker = repo_op_tracker.clone();
-        let task_repo_lock = repo_lock.clone();
-        let repo_id = repo.id;
-        let repo_name = repo.name.clone();
-        tokio::spawn(async move {
-            let _repo_guard = task_repo_lock.acquire(repo_id).await;
-            let start = std::time::Instant::now();
-            let sync_result =
-                sync_existing_archives(&task_pool, &task_key, repo_id, &task_broadcast).await;
+        let start = std::time::Instant::now();
+        let sync_result = sync_existing_archives(pool, encryption_key, repo.id, ui_broadcast).await;
 
-            task_op_tracker.clear(repo_id).await;
-            task_broadcast.send(ServerToUi::RepoOpChanged { repo_id, op: None });
+        repo_op_tracker.clear(repo.id).await;
+        ui_broadcast.send(ServerToUi::RepoOpChanged {
+            repo_id: repo.id,
+            op: None,
+        });
 
-            match sync_result {
-                Ok((added, removed)) => {
-                    let elapsed = start.elapsed();
-                    let duration_secs = elapsed.as_secs();
+        match sync_result {
+            Ok((added, removed)) => {
+                let elapsed = start.elapsed();
+                let duration_secs = elapsed.as_secs();
 
-                    if let Err(e) = db::update_repo_last_synced(&task_pool, repo_id).await {
-                        tracing::error!(repo_id, error = %e, "failed to update last_synced_at");
-                    }
-                    if let Err(e) = db::update_repo_last_op(
-                        &task_pool,
-                        repo_id,
-                        "server_sync",
-                        Utc::now(),
-                        "server",
-                    )
-                    .await
-                    {
-                        tracing::error!(repo_id, error = %e, "failed to update last_op after sync");
-                    }
-
-                    if let Err(e) = db::set_repo_importing(&task_pool, repo_id, false).await {
-                        tracing::error!(repo_id, error = %e, "failed to clear importing flag after sync");
-                    }
-                    if let Err(e) = db::set_repo_import_error(&task_pool, repo_id, None).await {
-                        tracing::error!(repo_id, error = %e, "failed to clear import_error after sync");
-                    }
-                    crate::api::repos::clear_import_progress_state(
-                        &task_pool,
-                        &task_broadcast,
-                        repo_id,
-                    )
-                    .await;
-                    task_broadcast.send(ServerToUi::DataChanged);
-
-                    if added > 0 || removed > 0 {
-                        let msg = format!(
-                            "periodic sync for '{repo_name}': added {added}, removed {removed} \
-                             archives in {duration_secs}s",
-                        );
-                        tracing::info!("{msg}");
-                        if let Err(e) =
-                            db::insert_system_event(&task_pool, "repo_sync", None, &msg).await
-                        {
-                            tracing::error!(error = %e, "failed to log sync event");
-                        }
-                    }
-
-                    if elapsed > SYNC_WARN_DURATION {
-                        let msg = format!(
-                            "periodic sync for '{repo_name}' took {duration_secs}s (exceeds {}s \
-                             threshold)",
-                            SYNC_WARN_DURATION.as_secs()
-                        );
-                        tracing::error!("{msg}");
-                        if let Err(e) =
-                            db::insert_system_event(&task_pool, "repo_sync_slow", None, &msg).await
-                        {
-                            tracing::error!(error = %e, "failed to log slow sync event");
-                        }
-                    }
+                if let Err(e) = db::update_repo_last_synced(pool, repo.id).await {
+                    tracing::error!(repo_id = repo.id, error = %e, "failed to update last_synced_at");
                 }
-                Err(crate::error::ApiError::NotFound(ref reason)) => {
-                    tracing::warn!(
-                        repo_id,
-                        repo_name = %repo_name,
-                        reason = %reason,
-                        "skipping sync for repo that no longer exists"
-                    );
-                    if let Err(e) = db::set_repo_importing(&task_pool, repo_id, false).await {
-                        tracing::error!(repo_id, error = %e, "failed to clear importing flag after NotFound");
-                    }
-                    crate::api::repos::clear_import_progress_state(
-                        &task_pool,
-                        &task_broadcast,
-                        repo_id,
-                    )
-                    .await;
-                    task_broadcast.send(ServerToUi::DataChanged);
+                if let Err(e) =
+                    db::update_repo_last_op(pool, repo.id, "server_sync", Utc::now(), "server")
+                        .await
+                {
+                    tracing::error!(repo_id = repo.id, error = %e, "failed to update last_op after sync");
                 }
-                Err(e) => {
-                    let elapsed = start.elapsed();
+
+                if let Err(e) = db::set_repo_importing(pool, repo.id, false).await {
+                    tracing::error!(repo_id = repo.id, error = %e, "failed to clear importing flag after sync");
+                }
+                if let Err(e) = db::set_repo_import_error(pool, repo.id, None).await {
+                    tracing::error!(repo_id = repo.id, error = %e, "failed to clear import_error after sync");
+                }
+                crate::api::repos::clear_import_progress_state(pool, ui_broadcast, repo.id).await;
+                ui_broadcast.send(ServerToUi::DataChanged);
+
+                if added > 0 || removed > 0 {
                     let msg = format!(
-                        "periodic sync failed for '{repo_name}' after {:.1}s: {e}",
-                        elapsed.as_secs_f64()
+                        "periodic sync for '{}': added {added}, removed {removed} archives in \
+                         {duration_secs}s",
+                        repo.name
+                    );
+                    tracing::info!("{msg}");
+                    if let Err(e) = db::insert_system_event(pool, "repo_sync", None, &msg).await {
+                        tracing::error!(error = %e, "failed to log sync event");
+                    }
+                }
+
+                if elapsed > SYNC_WARN_DURATION {
+                    let msg = format!(
+                        "periodic sync for '{}' took {duration_secs}s (exceeds {}s threshold)",
+                        repo.name,
+                        SYNC_WARN_DURATION.as_secs()
                     );
                     tracing::error!("{msg}");
-                    if let Err(log_err) =
-                        db::insert_system_event(&task_pool, "repo_sync_failed", None, &msg).await
+                    if let Err(e) =
+                        db::insert_system_event(pool, "repo_sync_slow", None, &msg).await
                     {
-                        tracing::error!(error = %log_err, "failed to log sync event");
+                        tracing::error!(error = %e, "failed to log slow sync event");
                     }
-                    if let Err(e2) = db::set_repo_importing(&task_pool, repo_id, false).await {
-                        tracing::error!(repo_id, error = %e2, "failed to clear import flag");
-                    }
-                    if let Err(e2) =
-                        db::set_repo_import_error(&task_pool, repo_id, Some(&format!("{e}"))).await
-                    {
-                        tracing::error!(repo_id, error = %e2, "failed to set import_error");
-                    }
-                    crate::api::repos::clear_import_progress_state(
-                        &task_pool,
-                        &task_broadcast,
-                        repo_id,
-                    )
-                    .await;
-                    task_broadcast.send(ServerToUi::DataChanged);
                 }
             }
-        });
+            Err(crate::error::ApiError::NotFound(ref reason)) => {
+                tracing::warn!(
+                    repo_id = repo.id,
+                    repo_name = %repo.name,
+                    reason = %reason,
+                    "skipping sync for repo that no longer exists"
+                );
+                if let Err(e) = db::set_repo_importing(pool, repo.id, false).await {
+                    tracing::error!(repo_id = repo.id, error = %e, "failed to clear importing flag after NotFound");
+                }
+                crate::api::repos::clear_import_progress_state(pool, ui_broadcast, repo.id).await;
+                ui_broadcast.send(ServerToUi::DataChanged);
+            }
+            Err(e) => {
+                let elapsed = start.elapsed();
+                let msg = format!(
+                    "periodic sync failed for '{}' after {:.1}s: {e}",
+                    repo.name,
+                    elapsed.as_secs_f64()
+                );
+                tracing::error!("{msg}");
+                if let Err(log_err) =
+                    db::insert_system_event(pool, "repo_sync_failed", None, &msg).await
+                {
+                    tracing::error!(error = %log_err, "failed to log sync event");
+                }
+                if let Err(e2) = db::set_repo_importing(pool, repo.id, false).await {
+                    tracing::error!(repo_id = repo.id, error = %e2, "failed to clear import flag");
+                }
+                if let Err(e2) =
+                    db::set_repo_import_error(pool, repo.id, Some(&format!("{e}"))).await
+                {
+                    tracing::error!(repo_id = repo.id, error = %e2, "failed to set import_error");
+                }
+                crate::api::repos::clear_import_progress_state(pool, ui_broadcast, repo.id).await;
+                ui_broadcast.send(ServerToUi::DataChanged);
+            }
+        }
     }
 }
 
@@ -349,33 +316,14 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
     Ok(())
 }
 
-/// Dependencies needed to evaluate and trigger due schedules. Bundled into one
-/// struct (rather than passed as individual arguments) to keep `tick`'s
-/// signature manageable as the scheduler grows more cross-cutting concerns
-/// (op tracking, broadcasts) beyond the original trigger/wait logic.
-#[derive(Clone, Copy)]
-struct TickDeps<'a> {
-    pool: &'a PgPool,
-    registry: &'a AgentRegistry,
-    encryption_key: &'a [u8; 32],
-    tunnel_manager: &'a TunnelManager,
-    completion_bus: &'a CompletionBus,
-    repo_lock: &'a RepoLock,
-    repo_op_tracker: &'a RepoOpTracker,
-    ui_broadcast: &'a UiBroadcast,
-}
-
-async fn tick(deps: &TickDeps<'_>) -> Result<(), crate::error::ApiError> {
-    let TickDeps {
-        pool,
-        registry,
-        encryption_key,
-        tunnel_manager,
-        completion_bus,
-        repo_lock,
-        repo_op_tracker,
-        ui_broadcast,
-    } = *deps;
+async fn tick(
+    pool: &PgPool,
+    registry: &AgentRegistry,
+    encryption_key: &[u8; 32],
+    tunnel_manager: &TunnelManager,
+    completion_bus: &CompletionBus,
+    repo_lock: &RepoLock,
+) -> Result<(), crate::error::ApiError> {
     let now = Utc::now();
     let due = db::list_due_schedules(pool, now).await?;
 
@@ -440,8 +388,6 @@ async fn tick(deps: &TickDeps<'_>) -> Result<(), crate::error::ApiError> {
             tunnel_manager: tunnel_manager.clone(),
             completion_bus: completion_bus.clone(),
             repo_lock: repo_lock.clone(),
-            repo_op_tracker: repo_op_tracker.clone(),
-            ui_broadcast: ui_broadcast.clone(),
             schedule_id,
             cron,
             targets,
@@ -494,17 +440,6 @@ fn schedule_type_label(schedule_type: ScheduleType) -> &'static str {
     }
 }
 
-/// The op kind to record while a triggered schedule target is in flight, so the
-/// repo detail page can show that the repository is actually locked right now
-/// rather than only ever showing the last completed operation.
-pub(crate) fn repo_op_kind_for(schedule_type: ScheduleType) -> shared::protocol::RepoOpKind {
-    match schedule_type {
-        ScheduleType::Backup => shared::protocol::RepoOpKind::AgentBackup,
-        ScheduleType::Check => shared::protocol::RepoOpKind::AgentCheck,
-        ScheduleType::Verify => shared::protocol::RepoOpKind::AgentVerify,
-    }
-}
-
 struct SequentialExecution {
     pool: PgPool,
     registry: AgentRegistry,
@@ -512,8 +447,6 @@ struct SequentialExecution {
     tunnel_manager: TunnelManager,
     completion_bus: CompletionBus,
     repo_lock: RepoLock,
-    repo_op_tracker: RepoOpTracker,
-    ui_broadcast: UiBroadcast,
     schedule_id: i64,
     cron: String,
     targets: Vec<DueScheduleRow>,
@@ -534,8 +467,6 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         tunnel_manager,
         completion_bus,
         repo_lock,
-        repo_op_tracker,
-        ui_broadcast,
         schedule_id,
         cron,
         targets,
@@ -562,7 +493,7 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         };
 
         // Subscribe before sending so we don't miss the completion event.
-        let rx = completion_bus.subscribe();
+        let mut rx = completion_bus.subscribe();
 
         // Acquire the per-repo lock to prevent concurrent backups across schedules.
         let _repo_guard = repo_lock.acquire(target.repo_id).await;
@@ -626,21 +557,6 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
                 if let Some(tx) = triggered_tx.take() {
                     let _ = tx.send(());
                 }
-                // Mark the repo as actively in use for the lifetime of the lock guard
-                // (not just while the agent happens to be reporting progress), so the
-                // repo detail page can show that it's locked right now rather than
-                // only ever showing the last completed operation.
-                repo_op_tracker
-                    .set(
-                        target.repo_id,
-                        repo_op_kind_for(schedule_type),
-                        target.hostname.clone(),
-                    )
-                    .await;
-                ui_broadcast.send(ServerToUi::RepoOpChanged {
-                    repo_id: target.repo_id,
-                    op: repo_op_tracker.get(target.repo_id).await,
-                });
                 if !marked_triggered {
                     match calculate_next_run(&cron, now, tz) {
                         Ok(next) => {
@@ -690,24 +606,28 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         let hostname = target.hostname.clone();
         let repo_id_val = target.repo_id;
 
-        let outcome =
-            completion_bus::wait_for_completion(&registry, rx, &hostname, repo_id_val).await;
+        let result = tokio::time::timeout(SEQUENTIAL_TIMEOUT, async {
+            loop {
+                match rx.recv().await {
+                    Ok(o) if o.hostname == hostname && o.repo_id == repo_id_val => {
+                        break o.success;
+                    }
+                    Ok(_) => {}
+                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => break false,
+                }
+            }
+        })
+        .await;
 
-        repo_op_tracker.clear(repo_id_val).await;
-        ui_broadcast.send(ServerToUi::RepoOpChanged {
-            repo_id: repo_id_val,
-            op: None,
-        });
-
-        let success = match outcome {
-            completion_bus::CompletionOutcome::Success => true,
-            completion_bus::CompletionOutcome::Failed => false,
-            completion_bus::CompletionOutcome::AgentDisconnected => {
+        let success = match result {
+            Ok(s) => s,
+            Err(_) => {
                 tracing::error!(
                     schedule_id,
                     hostname = %target.hostname,
                     repo_id = target.repo_id,
-                    "sequential: agent disconnected before reporting completion"
+                    "sequential: timed out waiting for operation to complete"
                 );
                 false
             }
@@ -779,20 +699,16 @@ set -eu
 case "$1" in
   list)
     case " $* " in
-      *" --json "*) cat <<'EOF'
+      *" --json-lines "*) exit 1 ;;
+      *) cat <<'EOF'
 {list_json}
 EOF
         ;;
-      *) ;;
     esac
     ;;
   info)
     case " $* " in
       *" --glob-archives "*) cat <<'EOF'
-{info_all_json}
-EOF
-        ;;
-      *"::"*) cat <<'EOF'
 {info_all_json}
 EOF
         ;;
@@ -861,12 +777,23 @@ esac
     #[sqlx::test(migrations = "./migrations")]
     async fn run_repo_sync_full_reimports_and_prunes_stale_archives(pool: sqlx::PgPool) {
         let _borg_lock = borg_binary_lock().await;
-        let list_json: &str = concat!(
-            r#"{"archives":[{"name":"fresh-archive","hostname":"scheduler-test-host","#,
-            r#""start":"2026-06-05T10:00:00Z","end":"2026-06-05T10:05:00Z","#,
-            r#""duration":300.0,"stats":{"original_size":1000,"compressed_size":500,"#,
-            r#""deduplicated_size":250,"nfiles":2}}]}"#,
-        );
+        let list_json = r#"{
+  "archives": [
+    {
+      "name": "fresh-archive",
+      "hostname": "scheduler-test-host",
+      "start": "2026-06-05T10:00:00Z",
+      "end": "2026-06-05T10:05:00Z",
+      "duration": 300.0,
+      "stats": {
+        "original_size": 1000,
+        "compressed_size": 500,
+        "deduplicated_size": 250,
+        "nfiles": 2
+      }
+    }
+  ]
+}"#;
         let info_repo_json = r#"{
   "cache": {
     "stats": {
@@ -928,9 +855,13 @@ esac
         .await
         .unwrap();
 
-        sync_existing_archives(&pool, &encryption_key, repo.id, &UiBroadcast::new())
-            .await
-            .expect("sync_existing_archives failed");
+        run_repo_sync(
+            &pool,
+            &encryption_key,
+            &UiBroadcast::new(),
+            &RepoOpTracker::default(),
+        )
+        .await;
 
         let stale_count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",
@@ -1050,18 +981,9 @@ esac
         let tunnel = dummy_tunnel(pool.clone());
         let bus = CompletionBus::new();
 
-        tick(&TickDeps {
-            pool: &pool,
-            registry: &registry,
-            encryption_key: &key,
-            tunnel_manager: &tunnel,
-            completion_bus: &bus,
-            repo_lock: &RepoLock::default(),
-            repo_op_tracker: &RepoOpTracker::default(),
-            ui_broadcast: &UiBroadcast::new(),
-        })
-        .await
-        .unwrap();
+        tick(&pool, &registry, &key, &tunnel, &bus, &RepoLock::default())
+            .await
+            .unwrap();
 
         let first = rx
             .try_recv()
@@ -1098,18 +1020,9 @@ esac
         let tunnel = dummy_tunnel(pool.clone());
         let bus = CompletionBus::new();
 
-        tick(&TickDeps {
-            pool: &pool,
-            registry: &registry,
-            encryption_key: &key,
-            tunnel_manager: &tunnel,
-            completion_bus: &bus,
-            repo_lock: &RepoLock::default(),
-            repo_op_tracker: &RepoOpTracker::default(),
-            ui_broadcast: &UiBroadcast::new(),
-        })
-        .await
-        .unwrap();
+        tick(&pool, &registry, &key, &tunnel, &bus, &RepoLock::default())
+            .await
+            .unwrap();
 
         let msg = rx.try_recv().expect("expected ConfigUpdate");
         match msg {
@@ -1145,18 +1058,9 @@ esac
         let tunnel = dummy_tunnel(pool.clone());
         let bus = CompletionBus::new();
 
-        tick(&TickDeps {
-            pool: &pool,
-            registry: &registry,
-            encryption_key: &key,
-            tunnel_manager: &tunnel,
-            completion_bus: &bus,
-            repo_lock: &RepoLock::default(),
-            repo_op_tracker: &RepoOpTracker::default(),
-            ui_broadcast: &UiBroadcast::new(),
-        })
-        .await
-        .unwrap();
+        tick(&pool, &registry, &key, &tunnel, &bus, &RepoLock::default())
+            .await
+            .unwrap();
 
         let due = db::list_due_schedules(&pool, Utc::now()).await.unwrap();
         assert!(

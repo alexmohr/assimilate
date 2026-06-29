@@ -20,7 +20,7 @@ use super::{
 };
 use crate::{
     AppState, config_assembler,
-    db::{self, AgentRow, IMPORTED_TOKEN_HASH, patterns::HostnamePatternRow},
+    db::{self, AgentRow, patterns::HostnamePatternRow},
     error::{ApiError, ApiJson},
 };
 
@@ -38,10 +38,6 @@ pub struct UpdateAgentRequest {
     pub default_backup_paths: Vec<String>,
     #[serde(default)]
     pub default_exclude_patterns: Vec<String>,
-    #[serde(default)]
-    pub default_pre_backup_commands: Vec<String>,
-    #[serde(default)]
-    pub default_post_backup_commands: Vec<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -52,21 +48,6 @@ pub struct AgentResponse {
     pub is_imported: bool,
     pub supports_restart: bool,
     pub restart_unavailable_reason: Option<String>,
-}
-
-/// Builds an [`AgentResponse`] for `agent`, resolving live connection and
-/// restart capability from the registry by the agent's own hostname.
-async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentResponse {
-    let is_connected = state.registry.is_connected(&agent.hostname).await;
-    let (supports_restart, restart_unavailable_reason) =
-        state.registry.restart_capability(&agent.hostname).await;
-    AgentResponse {
-        is_imported: agent.agent_token_hash == IMPORTED_TOKEN_HASH,
-        agent,
-        is_connected,
-        supports_restart,
-        restart_unavailable_reason,
-    }
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -155,7 +136,16 @@ pub async fn list_agents(
         {
             continue;
         }
-        responses.push(build_agent_response(&state, a).await);
+        let is_connected = state.registry.is_connected(&a.hostname).await;
+        let (supports_restart, restart_unavailable_reason) =
+            state.registry.restart_capability(&a.hostname).await;
+        responses.push(AgentResponse {
+            is_imported: a.agent_token_hash == "imported:no-auth",
+            agent: a,
+            is_connected,
+            supports_restart,
+            restart_unavailable_reason,
+        });
     }
     Ok(Json(responses))
 }
@@ -181,7 +171,16 @@ pub async fn get_agent(
     Path(hostname): Path<String>,
 ) -> Result<Json<AgentResponse>, ApiError> {
     let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
-    Ok(Json(build_agent_response(&state, agent).await))
+    let is_connected = state.registry.is_connected(&hostname).await;
+    let (supports_restart, restart_unavailable_reason) =
+        state.registry.restart_capability(&hostname).await;
+    Ok(Json(AgentResponse {
+        is_imported: agent.agent_token_hash == "imported:no-auth",
+        agent,
+        is_connected,
+        supports_restart,
+        restart_unavailable_reason,
+    }))
 }
 
 #[utoipa::path(
@@ -202,26 +201,18 @@ pub async fn get_agent(
 )]
 pub async fn update_agent(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    _auth: AuthUser,
     Path(hostname): Path<String>,
     ApiJson(req): ApiJson<UpdateAgentRequest>,
 ) -> Result<Json<AgentResponse>, ApiError> {
     let new_hostname = req.hostname.as_deref().unwrap_or(&hostname);
-    let pre_cmds = serde_json::to_string(&req.default_pre_backup_commands)
-        .unwrap_or_else(|_| "[]".to_string());
-    let post_cmds = serde_json::to_string(&req.default_post_backup_commands)
-        .unwrap_or_else(|_| "[]".to_string());
     let agent = db::update_agent(
         &state.pool,
         &hostname,
         new_hostname,
-        db::AgentDefaults {
-            display_name: req.display_name.as_deref(),
-            default_backup_paths: &req.default_backup_paths,
-            default_exclude_patterns: &req.default_exclude_patterns,
-            default_pre_backup_commands: &pre_cmds,
-            default_post_backup_commands: &post_cmds,
-        },
+        req.display_name.as_deref(),
+        &req.default_backup_paths,
+        &req.default_exclude_patterns,
     )
     .await?;
     config_assembler::push_config_to_agent(&state, new_hostname).await;
@@ -229,7 +220,7 @@ pub async fn update_agent(
     let (supports_restart, restart_unavailable_reason) =
         state.registry.restart_capability(&hostname).await;
     Ok(Json(AgentResponse {
-        is_imported: agent.agent_token_hash == IMPORTED_TOKEN_HASH,
+        is_imported: agent.agent_token_hash == "imported:no-auth",
         agent,
         is_connected,
         supports_restart,
@@ -254,7 +245,7 @@ pub async fn update_agent(
 )]
 pub async fn delete_agent(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    _auth: AuthUser,
     Path(hostname): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
@@ -284,11 +275,11 @@ pub async fn delete_agent(
 )]
 pub async fn regenerate_token(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    _auth: AuthUser,
     Path(hostname): Path<String>,
 ) -> Result<Json<CreateAgentResponse>, ApiError> {
     let existing = db::get_agent_by_hostname(&state.pool, &hostname).await?;
-    let was_imported = existing.agent_token_hash == IMPORTED_TOKEN_HASH;
+    let was_imported = existing.agent_token_hash == "imported:no-auth";
 
     let token_hex = helpers::generate_random_hex(32);
 
@@ -324,7 +315,7 @@ pub async fn regenerate_token(
 )]
 pub async fn restart_agent(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    _auth: AuthUser,
     Path(hostname): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let (supports_restart, reason) = state.registry.restart_capability(&hostname).await;
@@ -393,7 +384,7 @@ pub struct AddPatternRequest {
 )]
 pub async fn add_hostname_pattern(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    _auth: AuthUser,
     Path(hostname): Path<String>,
     ApiJson(req): ApiJson<AddPatternRequest>,
 ) -> Result<(StatusCode, Json<HostnamePatternRow>), ApiError> {
@@ -421,7 +412,7 @@ pub async fn add_hostname_pattern(
 )]
 pub async fn delete_hostname_pattern(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    _auth: AuthUser,
     Path((hostname, pattern_id)): Path<(String, i64)>,
 ) -> Result<StatusCode, ApiError> {
     db::get_agent_by_hostname(&state.pool, &hostname).await?;
@@ -459,7 +450,7 @@ pub struct MergeAgentResponse {
 )]
 pub async fn merge_agent(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    _auth: AuthUser,
     Path((hostname, source_id)): Path<(String, i64)>,
     ApiJson(req): ApiJson<MergeAgentRequest>,
 ) -> Result<Json<MergeAgentResponse>, ApiError> {
@@ -492,11 +483,20 @@ pub async fn merge_agent(
 )]
 pub async fn hide_agent(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    _auth: AuthUser,
     Path(hostname): Path<String>,
 ) -> Result<Json<AgentResponse>, ApiError> {
     let a = db::set_agent_hidden(&state.pool, &hostname, true).await?;
-    Ok(Json(build_agent_response(&state, a).await))
+    let is_connected = state.registry.is_connected(&a.hostname).await;
+    let (supports_restart, restart_unavailable_reason) =
+        state.registry.restart_capability(&a.hostname).await;
+    Ok(Json(AgentResponse {
+        is_imported: a.agent_token_hash == "imported:no-auth",
+        agent: a,
+        is_connected,
+        supports_restart,
+        restart_unavailable_reason,
+    }))
 }
 
 #[utoipa::path(
@@ -516,11 +516,20 @@ pub async fn hide_agent(
 )]
 pub async fn unhide_agent(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    _auth: AuthUser,
     Path(hostname): Path<String>,
 ) -> Result<Json<AgentResponse>, ApiError> {
     let a = db::set_agent_hidden(&state.pool, &hostname, false).await?;
-    Ok(Json(build_agent_response(&state, a).await))
+    let is_connected = state.registry.is_connected(&a.hostname).await;
+    let (supports_restart, restart_unavailable_reason) =
+        state.registry.restart_capability(&a.hostname).await;
+    Ok(Json(AgentResponse {
+        is_imported: a.agent_token_hash == "imported:no-auth",
+        agent: a,
+        is_connected,
+        supports_restart,
+        restart_unavailable_reason,
+    }))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -548,7 +557,7 @@ pub struct DeleteArchivesResponse {
 )]
 pub async fn delete_agent_archives(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    _auth: AuthUser,
     Path(hostname): Path<String>,
 ) -> Result<Json<DeleteArchivesResponse>, ApiError> {
     let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;

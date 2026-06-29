@@ -11,14 +11,14 @@ interface LoginResponse {
   };
 }
 
-interface AgentRow {
+interface ClientRow {
   id: number;
   hostname: string;
   display_name: string | null;
 }
 
-interface CreateAgentResponse {
-  agent: AgentRow;
+interface CreateClientResponse {
+  client: ClientRow;
   token: string;
 }
 
@@ -29,6 +29,7 @@ interface RepoRow {
 
 interface ScheduleRow {
   id: number;
+  client_id: number;
   repo_id: number;
 }
 
@@ -91,19 +92,19 @@ async function login(): Promise<string> {
   return `session=${match[1]}`;
 }
 
-async function seedHosts(cookie: string): Promise<AgentRow[]> {
+async function seedHosts(cookie: string): Promise<ClientRow[]> {
   const hostnames = ['web-01', 'db-01', 'mail-01'];
-  const agents: AgentRow[] = [];
+  const clients: ClientRow[] = [];
   for (const hostname of hostnames) {
-    const resp = await apiPost<CreateAgentResponse>(
-      '/api/agents',
+    const resp = await apiPost<CreateClientResponse>(
+      '/api/clients',
       { hostname, display_name: hostname },
       cookie,
     );
-    agents.push(resp.agent);
-    process.stdout.write(`Created host: ${hostname} (id=${resp.agent.id})\n`);
+    clients.push(resp.client);
+    process.stdout.write(`Created host: ${hostname} (id=${resp.client.id})\n`);
   }
-  return agents;
+  return clients;
 }
 
 async function seedRepos(cookie: string): Promise<RepoRow[]> {
@@ -136,18 +137,18 @@ async function seedRepos(cookie: string): Promise<RepoRow[]> {
 
 async function seedSchedules(
   cookie: string,
-  agents: AgentRow[],
+  clients: ClientRow[],
   repos: RepoRow[],
 ): Promise<ScheduleRow[]> {
   const scheduleSpecs = [
     {
-      agent_ids: [agents[0].id],
+      client_id: clients[0].id,
       repo_id: repos[0].id,
       cron_expression: '0 2 * * *',
       enabled: true,
     },
     {
-      agent_ids: [agents[1].id],
+      client_id: clients[1].id,
       repo_id: repos[1].id,
       cron_expression: '0 3 * * *',
       enabled: true,
@@ -158,7 +159,7 @@ async function seedSchedules(
     const schedule = await apiPost<ScheduleRow>('/api/schedules', spec, cookie);
     schedules.push(schedule);
     process.stdout.write(
-      `Created schedule for agent=${spec.agent_ids[0]} repo=${spec.repo_id}\n`,
+      `Created schedule for client=${spec.client_id} repo=${spec.repo_id}\n`,
     );
   }
   return schedules;
@@ -204,9 +205,9 @@ async function main(): Promise<void> {
   const cookie = await login();
   process.stdout.write('Logged in as admin\n');
 
-  const agents = await seedHosts(cookie);
+  const clients = await seedHosts(cookie);
   const repos = await seedRepos(cookie);
-  await seedSchedules(cookie, agents, repos);
+  await seedSchedules(cookie, clients, repos);
   await seedUser(cookie);
   await seedToken(cookie);
   await seedExcludes(cookie);

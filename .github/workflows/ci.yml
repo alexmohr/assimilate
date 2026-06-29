@@ -264,29 +264,30 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Build demo image (GitHub Actions build cache)
-        env:
-          # The docker-container buildx driver checks filesystem entitlements
-          # when the bake context resolves outside CWD (compose uses ../..),
-          # which requires an explicit --allow flag or disabling the check.
-          BUILDX_BAKE_ENTITLEMENTS_FS: "0"
         run: |
-          # Build via buildx bake so the cargo-chef dependency layers are
-          # restored from / persisted to the GitHub Actions cache (type=gha),
-          # turning a ~10 min from-scratch compile into an incremental build.
-          # cache-to is restricted to the demo target (the coverage build is a
-          # superset whose layers cover the agent image too) to avoid racing
-          # writes to the same cache scope. Only two targets are built: demo
-          # (assimilate-demo:coverage) and one representative agent
-          # (assimilate-demo:local); the other agent/placeholder services share
-          # the :local tag, so they need no separate build. --load places both
-          # images into the local store so the subsequent `docker compose up`
-          # reuses them without rebuilding.
-          docker buildx bake $COMPOSE_FILES \
-            --pull \
-            --set "*.cache-from=type=gha,scope=demo-e2e" \
-            --set "demo.cache-to=type=gha,mode=max,scope=demo-e2e" \
+          # Build the coverage-instrumented server image (assimilate-demo:coverage)
+          # used by the demo service, then the non-instrumented image
+          # (assimilate-demo:local) used by all agent/placeholder services.
+          # Using direct `docker buildx build` avoids the path-resolution
+          # ambiguity that `docker buildx bake` has with compose files that use
+          # relative context paths (context: ../.. from the compose file dir).
+          # The cargo-chef dependency layer is keyed on recipe.json and shared
+          # between both builds; cache-to persists it on the first run so
+          # subsequent runs restore it instead of recompiling all dependencies.
+          docker buildx build \
+            --file .devcontainer/demo/Dockerfile.demo \
+            --build-arg COVERAGE=true \
+            --cache-from type=gha,scope=demo-e2e \
+            --cache-to type=gha,mode=max,scope=demo-e2e \
             --load \
-            demo web-server-01
+            --tag assimilate-demo:coverage \
+            .
+          docker buildx build \
+            --file .devcontainer/demo/Dockerfile.demo \
+            --cache-from type=gha,scope=demo-e2e \
+            --load \
+            --tag assimilate-demo:local \
+            .
       - name: Start demo environment (with instrumented frontend)
         run: |
           docker compose $COMPOSE_FILES up -d

@@ -219,9 +219,9 @@ onMessage<{ hostname: string; repo_id: number; schedule_id: number | null; line:
   },
 )
 
-const activeLiveSessions = computed<LiveBackupSession[]>(() =>
-  [...liveBackupSessions.value.values()],
-)
+const activeLiveSessions = computed<LiveBackupSession[]>(() => [
+  ...liveBackupSessions.value.values(),
+])
 
 watch(activeCategory, (cat) => {
   router.replace({ query: { ...route.query, category: cat } }).catch(() => {})

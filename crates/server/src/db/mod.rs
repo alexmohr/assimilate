@@ -2442,12 +2442,12 @@ pub async fn cancel_backup_report(
     agent_id: i64,
     repo_id: i64,
 ) -> Result<(), ApiError> {
-    sqlx::query!(
-        "UPDATE backup_reports SET status = 'cancelled', finished_at = NOW(), \
-         cancellation_acknowledged = false WHERE agent_id = $1 AND repo_id = $2 AND status IN \
-         ('pending', 'started')",
-        agent_id,
-        repo_id,
+    sqlx::query(
+        "UPDATE backup_reports SET status = 'cancelled', finished_at = NOW() WHERE agent_id = $1 \
+         AND repo_id = $2 AND status IN ('pending', 'started')",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
     )
     .execute(pool)
     .await
@@ -2456,9 +2456,9 @@ pub async fn cancel_backup_report(
 }
 
 pub async fn cancel_all_active_backups(pool: &PgPool) -> Result<u64, ApiError> {
-    let result = sqlx::query!(
-        "UPDATE backup_reports SET status = 'cancelled', finished_at = NOW(), \
-         cancellation_acknowledged = false WHERE status IN ('pending', 'started')",
+    let result = sqlx::query(
+        "UPDATE backup_reports SET status = 'cancelled', finished_at = NOW() WHERE status IN \
+         ('pending', 'started')",
     )
     .execute(pool)
     .await
@@ -2466,44 +2466,6 @@ pub async fn cancel_all_active_backups(pool: &PgPool) -> Result<u64, ApiError> {
     Ok(result.rows_affected())
 }
 
-pub async fn acknowledge_cancellation(
-    pool: &PgPool,
-    agent_id: i64,
-    repo_id: i64,
-) -> Result<(), ApiError> {
-    sqlx::query!(
-        "UPDATE backup_reports SET cancellation_acknowledged = true WHERE agent_id = $1 AND \
-         repo_id = $2 AND status = 'cancelled'",
-        agent_id,
-        repo_id,
-    )
-    .execute(pool)
-    .await
-    .map_err(ApiError::Database)?;
-    Ok(())
-}
-
-pub async fn fail_other_started_backups(
-    pool: &PgPool,
-    agent_id: i64,
-    repo_id: i64,
-    current_run_id: Option<&str>,
-    hostname: &str,
-) -> Result<u64, ApiError> {
-    let result = sqlx::query!(
-        "UPDATE backup_reports SET status = 'failed', finished_at = NOW(), error_message = $1 \
-         WHERE agent_id = $2 AND repo_id = $3 AND status IN ('pending', 'started') AND ($4::text \
-         IS NULL OR run_id IS DISTINCT FROM $4)",
-        format!("Agent '{hostname}' restarted; backup abandoned"),
-        agent_id,
-        repo_id,
-        current_run_id,
-    )
-    .execute(pool)
-    .await
-    .map_err(ApiError::Database)?;
-    Ok(result.rows_affected())
-}
 
 pub async fn insert_backup_report(
     pool: &PgPool,

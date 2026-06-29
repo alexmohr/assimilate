@@ -12,21 +12,26 @@ jobs:
   no-ai-banners:
     name: No AI Banners
     runs-on: ubuntu-latest
+    env:
+      AI_TOOLS: 'claude|copilot|chatgpt|openai|anthropic|gemini|cursor|codeium|tabnine|amazon.?q|codewhisperer|devin|aider|cody|continue\.dev'
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Check commits for AI banners
+      - name: Resolve commit range
+        id: range
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             git fetch origin "${{ github.base_ref }}" --depth=1
-            COMMITS=$(git log "origin/${{ github.base_ref }}..HEAD" --format=%B)
+            echo "range=origin/${{ github.base_ref }}..HEAD" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
-            COMMITS=$(git log -1 --format=%B)
+            echo "range=-1" >> "$GITHUB_OUTPUT"
           else
-            COMMITS=$(git log "${{ github.event.before }}..${{ github.sha }}" --format=%B)
+            echo "range=${{ github.event.before }}..${{ github.sha }}" >> "$GITHUB_OUTPUT"
           fi
-          AI_TOOLS='claude|copilot|chatgpt|openai|anthropic|gemini|cursor|codeium|tabnine|amazon.?q|codewhisperer|devin|aider|cody|continue\.dev'
+      - name: Check commits for AI banners
+        run: |
+          COMMITS=$(git log "${{ steps.range.outputs.range }}" --format=%B)
           AI_PATTERN="co-authored-by:.*($AI_TOOLS)|generated (with|by).*($AI_TOOLS)|claude-session:|claude\.ai/code|github\.com/features/copilot|aider\.chat"
           if echo "$COMMITS" | grep -iEq "$AI_PATTERN"; then
             echo "AI banner found in commit messages:"
@@ -36,14 +41,8 @@ jobs:
           echo "No AI banners found in commits."
       - name: Check commit authors for AI tools
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            AUTHOR_INFO=$(git log "origin/${{ github.base_ref }}..HEAD" --format='%an|%ae')
-          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
-            AUTHOR_INFO=$(git log -1 --format='%an|%ae')
-          else
-            AUTHOR_INFO=$(git log "${{ github.event.before }}..${{ github.sha }}" --format='%an|%ae')
-          fi
-          AI_AUTHOR_PATTERN='claude|copilot|chatgpt|openai|anthropic|gemini|cursor|codeium|tabnine|amazon.?q|codewhisperer|devin|aider|cody|\[bot\]|noreply@anthropic\.com|github-copilot'
+          AUTHOR_INFO=$(git log "${{ steps.range.outputs.range }}" --format='%an|%ae')
+          AI_AUTHOR_PATTERN="$AI_TOOLS|\[bot\]|noreply@anthropic\.com|github-copilot"
           if echo "$AUTHOR_INFO" | grep -iEq "$AI_AUTHOR_PATTERN"; then
             echo "AI tool detected as commit author:"
             echo "$AUTHOR_INFO" | grep -iE "$AI_AUTHOR_PATTERN"
@@ -59,20 +58,19 @@ jobs:
           COMMIT_LOGINS=$(gh api \
             "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits?per_page=100" \
             --paginate \
-            --jq '.[].author.login // "null"')
-          MISMATCHED=$(echo "$COMMIT_LOGINS" | grep -vE "^${PR_AUTHOR}$" || true)
+            --jq '.[].author.login // empty')
+          MISMATCHED=$(echo "$COMMIT_LOGINS" | grep -vE "^${PR_AUTHOR}$" | grep -v "^$" || true)
           if [ -n "$MISMATCHED" ]; then
-            echo "Commits not authored by PR opener '$PR_AUTHOR':"
+            echo "Commits authored by a different GitHub account than PR opener '$PR_AUTHOR':"
             echo "$MISMATCHED"
             exit 1
           fi
-          echo "All commits authored by PR opener '$PR_AUTHOR'."
+          echo "All linked commits authored by PR opener '$PR_AUTHOR'."
       - name: Check PR description for AI banners
         if: github.event_name == 'pull_request'
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          AI_TOOLS='claude|copilot|chatgpt|openai|anthropic|gemini|cursor|codeium|tabnine|amazon.?q|codewhisperer|devin|aider|cody|continue\.dev'
           AI_PATTERN="co-authored-by:.*($AI_TOOLS)|generated (with|by).*($AI_TOOLS)|claude-session:|claude\.ai/code|github\.com/features/copilot|aider\.chat"
           if echo "$PR_BODY" | grep -iEq "$AI_PATTERN"; then
             echo "AI banner found in PR description:"

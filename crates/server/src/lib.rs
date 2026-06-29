@@ -146,4 +146,5 @@ pub struct AppState {
     pub pending_restores: PendingRestores,
     pub pending_migrations: PendingMigrations,
     pub pending_deletes: PendingDeletes,
+    pub shutdown_token: CancellationToken,
 }

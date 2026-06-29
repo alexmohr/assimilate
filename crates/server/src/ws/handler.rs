@@ -1084,6 +1084,7 @@ mod tests {
             pending_deletes: std::sync::Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),
+            shutdown_token: tokio_util::sync::CancellationToken::new(),
         }
     }
 

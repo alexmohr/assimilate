@@ -155,6 +155,12 @@ onMounted(async () => {
     filterRunId.value = runIdParam
     activeCategory.value = 'backup'
   }
+  // Trigger a WebSocket reconnect so the server replays BackupStarted for any
+  // currently-running backups. The replay only fires on new connections; without
+  // this the activity page misses sessions that started before it loaded.
+  if (status.value === 'connected') {
+    forceReconnect()
+  }
   await Promise.all([fetchMachines(), fetchSchedules(), fetchData(true)])
 })
 
@@ -171,7 +177,7 @@ function liveSessionKey(hostname: string, target: string): string {
   return `${hostname}::${target}`
 }
 
-const { onMessage } = useWebSocket()
+const { onMessage, forceReconnect, status } = useWebSocket()
 onMessage('DataChanged', () => fetchData(true).catch(logger.error))
 onMessage('AgentConnected', () => fetchData(true).catch(logger.error))
 onMessage('AgentDisconnected', () => fetchData(true).catch(logger.error))
@@ -213,9 +219,9 @@ onMessage<{ hostname: string; repo_id: number; schedule_id: number | null; line:
   },
 )
 
-const activeLiveSessions = computed<LiveBackupSession[]>(() =>
-  [...liveBackupSessions.value.values()].filter((s) => s.lines.length > 0),
-)
+const activeLiveSessions = computed<LiveBackupSession[]>(() => [
+  ...liveBackupSessions.value.values(),
+])
 
 watch(activeCategory, (cat) => {
   router.replace({ query: { ...route.query, category: cat } }).catch(() => {})

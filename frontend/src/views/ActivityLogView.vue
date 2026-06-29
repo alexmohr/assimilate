@@ -220,7 +220,7 @@ onMessage<{ hostname: string; repo_id: number; schedule_id: number | null; line:
 )
 
 const activeLiveSessions = computed<LiveBackupSession[]>(() =>
-  [...liveBackupSessions.value.values()].filter((s) => s.lines.length > 0),
+  [...liveBackupSessions.value.values()],
 )
 
 watch(activeCategory, (cat) => {

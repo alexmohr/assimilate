@@ -165,7 +165,10 @@ test.describe('run now flow', () => {
     await page.locator('.tab-bar').waitFor({ timeout: 10_000 })
 
     const runNowBtn = page.getByRole('button', { name: 'Run Now' })
-    await expect(runNowBtn).toBeVisible({ timeout: 10_000 })
+    // Use a long timeout here: a cancelled backup from the previous describe block
+    // may leave a stale "started" report in the DB that keeps backupRunning=true
+    // until the next REST poll resolves it (up to ~120 s).
+    await expect(runNowBtn).toBeVisible({ timeout: 120_000 })
     await runNowBtn.click()
 
     // Either the cancel button appears (backup in progress) or Run Now reappears

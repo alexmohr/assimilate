@@ -1,12 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 Alexander Mohr
-FROM rust:1-trixie AS builder
+ARG COVERAGE=false
+
+FROM rust:1.96 AS builder
 
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 
 RUN cargo build --release -p server -p agent
+
+ARG COVERAGE
+RUN if [ "$COVERAGE" = "true" ]; then \
+      rustc --version && \
+      RUSTFLAGS="-C instrument-coverage" cargo build -p server && \
+      cp target/debug/server target/release/server; \
+    fi
 
 FROM node:24-slim AS frontend
 

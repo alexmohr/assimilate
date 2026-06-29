@@ -39,6 +39,7 @@ web-push = "0.11"
 p256 = { version = "0.13", features = ["ecdsa"] }
 base64 = "0.22"
 glob-match = "0.2"
+ts-rs = { version = "12", default-features = false, features = ["chrono-impl", "format"] }
 which = "7"
 ssh-key = { version = "0.6", features = ["ed25519", "std", "rand_core"] }
 lz4_flex = "0.11"

@@ -3,12 +3,14 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::types::{
     AgentConfig, AgentStatus, BackupReport, BorgEncryption, DryRunFile, RepoId, SearchEntry,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema, TS)]
+#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum RepoOpKind {
     AgentBackup,
@@ -19,7 +21,8 @@ pub enum RepoOpKind {
     DeleteArchive,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema, TS)]
+#[ts(export)]
 pub struct ActiveRepoOp {
     pub kind: RepoOpKind,
     pub actor: String,
@@ -29,8 +32,10 @@ pub struct ActiveRepoOp {
     pub queued: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 #[serde(tag = "type", content = "payload")]
+#[ts(tag = "type", content = "payload")]
 pub enum ServerToAgent {
     ConfigUpdate(AgentConfig),
     RunBackupNow {
@@ -115,8 +120,10 @@ pub enum ServerToAgent {
     ShuttingDown,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 #[serde(tag = "type", content = "payload")]
+#[ts(tag = "type", content = "payload")]
 pub enum AgentToServer {
     Hello {
         hostname: String,
@@ -251,7 +258,8 @@ pub enum AgentToServer {
     Pong,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export)]
 #[serde(rename_all = "lowercase")]
 pub enum TunnelStatus {
     Connected,
@@ -260,8 +268,10 @@ pub enum TunnelStatus {
     Error { message: String },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 #[serde(tag = "type", content = "payload")]
+#[ts(tag = "type", content = "payload")]
 pub enum ServerToUi {
     AgentConnected {
         hostname: String,

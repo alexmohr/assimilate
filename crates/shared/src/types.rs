@@ -5,6 +5,7 @@ use std::{fmt, str::FromStr};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 fn default_keep_hourly() -> u32 {
     24
@@ -17,16 +18,20 @@ pub fn build_repo_url(ssh_user: &str, ssh_host: &str, ssh_port: u16, repo_path: 
     )
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct AgentId(pub i64);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct RepoId(pub i64);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct ReportId(pub i64);
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct OperationId(pub String);
 
 impl From<String> for OperationId {
@@ -35,7 +40,8 @@ impl From<String> for OperationId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct SearchEntry {
     pub path: String,
     pub size: i64,
@@ -44,7 +50,8 @@ pub struct SearchEntry {
     pub archive_name: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct DryRunFile {
     pub path: String,
     pub size: i64,
@@ -91,8 +98,10 @@ impl fmt::Display for ScheduleType {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
 #[serde(tag = "type", content = "value")]
+#[ts(tag = "type", content = "value")]
 pub enum Compression {
     None,
     #[default]
@@ -142,7 +151,8 @@ impl FromStr for Compression {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub enum BorgEncryption {
     #[serde(rename = "repokey")]
     Repokey,
@@ -198,7 +208,8 @@ impl FromStr for BorgEncryption {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS)]
+#[ts(export)]
 #[serde(rename_all = "lowercase")]
 pub enum ScheduleType {
     #[default]
@@ -207,7 +218,8 @@ pub enum ScheduleType {
     Verify,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS)]
+#[ts(export)]
 #[serde(rename_all = "lowercase")]
 pub enum ExecutionMode {
     #[default]
@@ -233,7 +245,8 @@ impl FromStr for ExecutionMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS)]
+#[ts(export)]
 #[serde(rename_all = "lowercase")]
 pub enum OnFailure {
     #[default]
@@ -262,20 +275,23 @@ impl FromStr for OnFailure {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub enum BackupStatus {
     Success,
     Warning,
     Failed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub enum AgentStatus {
     Online,
     Offline,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct Agent {
     pub id: AgentId,
     pub hostname: String,
@@ -285,7 +301,8 @@ pub struct Agent {
     pub last_seen_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct Repo {
     pub id: RepoId,
     pub name: String,
@@ -298,13 +315,15 @@ pub struct Repo {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct BackupSource {
     pub repo_id: RepoId,
     pub path: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct Schedule {
     pub repo_id: RepoId,
     pub schedule_type: ScheduleType,
@@ -315,7 +334,8 @@ pub struct Schedule {
     pub keep_yearly: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct BackupReport {
     pub id: ReportId,
     pub agent_id: AgentId,
@@ -346,7 +366,8 @@ pub struct BackupReport {
     pub run_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct AgentConfig {
     pub agent_hostname: String,
     #[serde(default)]
@@ -354,7 +375,8 @@ pub struct AgentConfig {
     pub repos: Vec<RepoConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct RepoConfig {
     pub repo_id: RepoId,
     pub name: String,
@@ -372,7 +394,8 @@ pub struct RepoConfig {
     pub schedules: Vec<ScheduleConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct ScheduleConfig {
     #[serde(default)]
     pub id: i64,

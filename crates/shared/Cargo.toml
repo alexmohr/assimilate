@@ -25,3 +25,4 @@ chrono-tz = { workspace = true }
 iana-time-zone = "0.1"
 croner = { workspace = true }
 tokio-tungstenite = { workspace = true }
+ts-rs = { workspace = true }

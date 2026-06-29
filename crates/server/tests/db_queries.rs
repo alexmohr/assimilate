@@ -310,9 +310,17 @@ async fn repo_with_passphrase(pool: PgPool) {
 async fn test_quota_upsert_and_get(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
 
-    let quota = db::quota::upsert_quota(&pool, repo.id, Some(100), Some(200), true)
-        .await
-        .unwrap();
+    let quota = db::quota::upsert_quota(
+        &pool,
+        repo.id,
+        Some(100),
+        Some(200),
+        db::quota::QuotaAction::NotifyOnly,
+        db::quota::QuotaAction::NotifyOnly,
+        true,
+    )
+    .await
+    .unwrap();
     assert_eq!(quota.repo_id, repo.id);
     assert_eq!(quota.warn_bytes, Some(100));
     assert_eq!(quota.critical_bytes, Some(200));
@@ -329,9 +337,17 @@ async fn test_quota_upsert_and_get(pool: PgPool) {
 async fn test_quota_disabled(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
 
-    let quota = db::quota::upsert_quota(&pool, repo.id, Some(100), Some(200), false)
-        .await
-        .unwrap();
+    let quota = db::quota::upsert_quota(
+        &pool,
+        repo.id,
+        Some(100),
+        Some(200),
+        db::quota::QuotaAction::NotifyOnly,
+        db::quota::QuotaAction::NotifyOnly,
+        false,
+    )
+    .await
+    .unwrap();
 
     assert!(!quota.enabled);
     assert_eq!(
@@ -1705,9 +1721,17 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
 async fn dashboard_repository_capacity_uses_repo_stats_and_quota(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
     set_test_repo_info_stats(&pool, repo.id, 1).await;
-    db::quota::upsert_quota(&pool, repo.id, Some(200_000), Some(300_000), true)
-        .await
-        .unwrap();
+    db::quota::upsert_quota(
+        &pool,
+        repo.id,
+        Some(200_000),
+        Some(300_000),
+        db::quota::QuotaAction::NotifyOnly,
+        db::quota::QuotaAction::NotifyOnly,
+        true,
+    )
+    .await
+    .unwrap();
 
     let repositories = db::dashboard::repositories(&pool).await.unwrap();
     assert_eq!(repositories.len(), 1);
@@ -2101,14 +2125,13 @@ async fn session_crud(pool: PgPool) {
         .unwrap();
 
     let expires = Utc::now() + Duration::hours(24);
-    db::insert_session(&pool, "sess_abc123", user.id, expires, false)
+    db::insert_session(&pool, "sess_abc123", user.id, expires)
         .await
         .unwrap();
 
     let session = db::get_session(&pool, "sess_abc123").await.unwrap();
     assert_eq!(session.user_id, user.id);
     assert_eq!(session.id, "sess_abc123");
-    assert!(!session.remember_me);
 
     db::delete_session(&pool, "sess_abc123").await.unwrap();
 
@@ -2123,7 +2146,7 @@ async fn session_expired(pool: PgPool) {
         .unwrap();
 
     let expired = Utc::now() - Duration::hours(1);
-    db::insert_session(&pool, "sess_expired", user.id, expired, false)
+    db::insert_session(&pool, "sess_expired", user.id, expired)
         .await
         .unwrap();
 
@@ -2138,49 +2161,12 @@ async fn session_delete_expired(pool: PgPool) {
         .unwrap();
 
     let expired = Utc::now() - Duration::hours(1);
-    db::insert_session(&pool, "sess_old", user.id, expired, false)
+    db::insert_session(&pool, "sess_old", user.id, expired)
         .await
         .unwrap();
 
     let deleted = db::delete_expired_sessions(&pool).await.unwrap();
     assert_eq!(deleted, 1);
-}
-
-#[sqlx::test(migrations = "./migrations")]
-async fn session_remember_me(pool: PgPool) {
-    let user = db::insert_user(&pool, "rememberuser", "hash", "user")
-        .await
-        .unwrap();
-
-    let expires = Utc::now() + Duration::days(7);
-    db::insert_session(&pool, "sess_remember", user.id, expires, true)
-        .await
-        .unwrap();
-
-    let session = db::get_session(&pool, "sess_remember").await.unwrap();
-    assert_eq!(session.user_id, user.id);
-    assert!(session.remember_me);
-}
-
-#[sqlx::test(migrations = "./migrations")]
-async fn session_extend(pool: PgPool) {
-    let user = db::insert_user(&pool, "extenduser", "hash", "user")
-        .await
-        .unwrap();
-
-    let original_expires = Utc::now() + Duration::hours(1);
-    db::insert_session(&pool, "sess_extend", user.id, original_expires, true)
-        .await
-        .unwrap();
-
-    let new_expires = Utc::now() + Duration::days(7);
-    db::extend_session(&pool, "sess_extend", new_expires)
-        .await
-        .unwrap();
-
-    let session = db::get_session(&pool, "sess_extend").await.unwrap();
-    assert!(session.expires_at > original_expires);
-    assert!(session.remember_me);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2804,9 +2790,17 @@ async fn ssh_tunnel_crud(pool: PgPool) {
 async fn test_quota_evaluate_warning(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
 
-    let quota = db::quota::upsert_quota(&pool, repo.id, Some(100), Some(500), true)
-        .await
-        .unwrap();
+    let quota = db::quota::upsert_quota(
+        &pool,
+        repo.id,
+        Some(100),
+        Some(500),
+        db::quota::QuotaAction::NotifyOnly,
+        db::quota::QuotaAction::NotifyOnly,
+        true,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         db::quota::evaluate_quota(&quota, 50),
@@ -2834,13 +2828,29 @@ async fn test_quota_evaluate_warning(pool: PgPool) {
 async fn test_quota_upsert_overwrites(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
 
-    db::quota::upsert_quota(&pool, repo.id, Some(100), Some(200), true)
-        .await
-        .unwrap();
+    db::quota::upsert_quota(
+        &pool,
+        repo.id,
+        Some(100),
+        Some(200),
+        db::quota::QuotaAction::NotifyOnly,
+        db::quota::QuotaAction::NotifyOnly,
+        true,
+    )
+    .await
+    .unwrap();
 
-    let updated = db::quota::upsert_quota(&pool, repo.id, Some(500), Some(1000), false)
-        .await
-        .unwrap();
+    let updated = db::quota::upsert_quota(
+        &pool,
+        repo.id,
+        Some(500),
+        Some(1000),
+        db::quota::QuotaAction::BlockBackups,
+        db::quota::QuotaAction::DisableSchedule,
+        false,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(updated.warn_bytes, Some(500));
     assert_eq!(updated.critical_bytes, Some(1000));
@@ -4705,7 +4715,7 @@ fn compression_round_trip() {
 #[sqlx::test(migrations = "./migrations")]
 async fn storage_trends_test(pool: PgPool) {
     let empty_trends = db::get_storage_trends(&pool, None, 7).await.unwrap();
-    assert!(empty_trends.iter().all(|t| t.deduplicated_size.is_none()));
+    assert!(empty_trends.iter().all(|t| t.deduplicated_size == 0));
 
     let agent = db::insert_agent(&pool, "strend-host", None, "hash", None)
         .await
@@ -4715,25 +4725,17 @@ async fn storage_trends_test(pool: PgPool) {
     insert_test_report(&pool, agent.id, repo.id).await;
 
     let trends = db::get_storage_trends(&pool, None, 7).await.unwrap();
-    assert!(
-        trends
-            .iter()
-            .any(|t| t.deduplicated_size.is_some_and(|v| v > 0))
-    );
+    assert!(trends.iter().any(|t| t.deduplicated_size > 0));
 
     let trends_repo = db::get_storage_trends(&pool, Some(repo.id), 7)
         .await
         .unwrap();
-    assert!(
-        trends_repo
-            .iter()
-            .any(|t| t.deduplicated_size.is_some_and(|v| v > 0))
-    );
+    assert!(trends_repo.iter().any(|t| t.deduplicated_size > 0));
 
     let trends_other = db::get_storage_trends(&pool, Some(repo.id + 999), 7)
         .await
         .unwrap();
-    assert!(trends_other.iter().all(|t| t.deduplicated_size.is_none()));
+    assert!(trends_other.iter().all(|t| t.deduplicated_size == 0));
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -4753,7 +4755,7 @@ async fn storage_trends_by_repo_test(pool: PgPool) {
     assert!(
         trends
             .iter()
-            .any(|t| t.repo_name == "test-repo" && t.deduplicated_size.is_some_and(|v| v > 0))
+            .any(|t| t.repo_name == "test-repo" && t.deduplicated_size > 0)
     );
 }
 
@@ -4974,22 +4976,7 @@ async fn list_archive_names_needing_stats_filters_enriched(pool: PgPool) {
             original_size: 1_000,
             compressed_size: 500,
             deduplicated_size: 250,
-            repo_unique_csize: 0,
-            archive_name: Some("missing-repo-csize".to_string()),
-            ..base.clone()
-        },
-    )
-    .await
-    .unwrap();
-    db::insert_backup_report(
-        &pool,
-        &InsertReportParams {
-            started_at: now - Duration::minutes(30),
-            original_size: 1_000,
-            compressed_size: 500,
-            deduplicated_size: 250,
-            repo_unique_csize: 800,
-            archive_name: Some("fully-enriched".to_string()),
+            archive_name: Some("already-enriched".to_string()),
             ..base.clone()
         },
     )
@@ -4999,9 +4986,8 @@ async fn list_archive_names_needing_stats_filters_enriched(pool: PgPool) {
     let needing = db::list_archive_names_needing_stats(&pool, repo.id)
         .await
         .unwrap();
-    assert_eq!(needing.len(), 2);
+    assert_eq!(needing.len(), 1);
     assert!(needing.contains("needs-stats"));
-    assert!(needing.contains("missing-repo-csize"));
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -5700,4 +5686,338 @@ async fn check_repo_permission_view_all_is_view_only(pool: PgPool) {
 
     let denied = check_repo_permission(&pool, &auth, repo.id, |p| p.can_delete).await;
     assert!(matches!(denied, Err(ApiError::Forbidden(_))));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_quota_action_display_and_parse(pool: PgPool) {
+    let _ = pool;
+    let pairs = [
+        (db::quota::QuotaAction::NotifyOnly, "notify_only"),
+        (db::quota::QuotaAction::BlockBackups, "block_backups"),
+        (db::quota::QuotaAction::DisableSchedule, "disable_schedule"),
+    ];
+    for (action, s) in pairs {
+        assert_eq!(action.to_string(), s);
+        let parsed: db::quota::QuotaAction = s.parse().unwrap();
+        assert_eq!(parsed, action);
+    }
+    let err = "unknown".parse::<db::quota::QuotaAction>();
+    assert!(err.is_err());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_quota_with_non_default_actions(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    let quota = db::quota::upsert_quota(
+        &pool,
+        repo.id,
+        Some(1_000),
+        Some(2_000),
+        db::quota::QuotaAction::BlockBackups,
+        db::quota::QuotaAction::DisableSchedule,
+        true,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        quota.warn_action_parsed(),
+        db::quota::QuotaAction::BlockBackups
+    );
+    assert_eq!(
+        quota.critical_action_parsed(),
+        db::quota::QuotaAction::DisableSchedule
+    );
+
+    let fetched = db::quota::get_quota(&pool, repo.id).await.unwrap().unwrap();
+    assert_eq!(
+        fetched.warn_action_parsed(),
+        db::quota::QuotaAction::BlockBackups
+    );
+    assert_eq!(
+        fetched.critical_action_parsed(),
+        db::quota::QuotaAction::DisableSchedule
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_server_quota_upsert_and_get(pool: PgPool) {
+    let quota = db::quota::upsert_server_quota(
+        &pool,
+        "backup.example.com",
+        Some(10_737_418_240),
+        Some(21_474_836_480),
+        db::quota::QuotaAction::NotifyOnly,
+        db::quota::QuotaAction::BlockBackups,
+        true,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(quota.ssh_host, "backup.example.com");
+    assert_eq!(quota.warn_bytes, Some(10_737_418_240));
+    assert_eq!(quota.critical_bytes, Some(21_474_836_480));
+    assert_eq!(
+        quota.warn_action_parsed(),
+        db::quota::QuotaAction::NotifyOnly
+    );
+    assert_eq!(
+        quota.critical_action_parsed(),
+        db::quota::QuotaAction::BlockBackups
+    );
+    assert!(quota.enabled);
+
+    let fetched = db::quota::get_server_quota(&pool, "backup.example.com")
+        .await
+        .unwrap()
+        .expect("quota should exist");
+    assert_eq!(fetched.ssh_host, "backup.example.com");
+    assert_eq!(fetched.warn_bytes, Some(10_737_418_240));
+    assert_eq!(
+        fetched.warn_action_parsed(),
+        db::quota::QuotaAction::NotifyOnly
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_server_quota_upsert_overwrites(pool: PgPool) {
+    db::quota::upsert_server_quota(
+        &pool,
+        "srv.local",
+        Some(100),
+        Some(200),
+        db::quota::QuotaAction::NotifyOnly,
+        db::quota::QuotaAction::NotifyOnly,
+        true,
+    )
+    .await
+    .unwrap();
+
+    let updated = db::quota::upsert_server_quota(
+        &pool,
+        "srv.local",
+        Some(500),
+        Some(1_000),
+        db::quota::QuotaAction::BlockBackups,
+        db::quota::QuotaAction::DisableSchedule,
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(updated.warn_bytes, Some(500));
+    assert_eq!(updated.critical_bytes, Some(1_000));
+    assert_eq!(
+        updated.warn_action_parsed(),
+        db::quota::QuotaAction::BlockBackups
+    );
+    assert!(!updated.enabled);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_server_quota_list(pool: PgPool) {
+    for host in ["alpha.local", "beta.local", "gamma.local"] {
+        db::quota::upsert_server_quota(
+            &pool,
+            host,
+            None,
+            None,
+            db::quota::QuotaAction::NotifyOnly,
+            db::quota::QuotaAction::NotifyOnly,
+            true,
+        )
+        .await
+        .unwrap();
+    }
+
+    let list = db::quota::list_server_quotas(&pool).await.unwrap();
+    assert_eq!(list.len(), 3);
+    assert_eq!(list[0].ssh_host, "alpha.local");
+    assert_eq!(list[1].ssh_host, "beta.local");
+    assert_eq!(list[2].ssh_host, "gamma.local");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_server_quota_delete(pool: PgPool) {
+    db::quota::upsert_server_quota(
+        &pool,
+        "del.local",
+        None,
+        None,
+        db::quota::QuotaAction::NotifyOnly,
+        db::quota::QuotaAction::NotifyOnly,
+        true,
+    )
+    .await
+    .unwrap();
+
+    let deleted = db::quota::delete_server_quota(&pool, "del.local")
+        .await
+        .unwrap();
+    assert!(deleted);
+
+    let result = db::quota::get_server_quota(&pool, "del.local")
+        .await
+        .unwrap();
+    assert!(result.is_none());
+
+    let not_found = db::quota::delete_server_quota(&pool, "del.local")
+        .await
+        .unwrap();
+    assert!(!not_found);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_server_quota_total_size(pool: PgPool) {
+    let repo_a = db::insert_repo(
+        &pool,
+        &InsertRepoParams {
+            name: "sz-repo-a",
+            repo_path: "/backups/a",
+            ssh_user: "u",
+            ssh_host: "sz.local",
+            ssh_port: 22,
+            passphrase_encrypted: b"enc",
+            compression: "none",
+            encryption: "none",
+            owner_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    let repo_b = db::insert_repo(
+        &pool,
+        &InsertRepoParams {
+            name: "sz-repo-b",
+            repo_path: "/backups/b",
+            ssh_user: "u",
+            ssh_host: "sz.local",
+            ssh_port: 22,
+            passphrase_encrypted: b"enc",
+            compression: "none",
+            encryption: "none",
+            owner_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    let _repo_other = db::insert_repo(
+        &pool,
+        &InsertRepoParams {
+            name: "sz-repo-other",
+            repo_path: "/backups/other",
+            ssh_user: "u",
+            ssh_host: "other.local",
+            ssh_port: 22,
+            passphrase_encrypted: b"enc",
+            compression: "none",
+            encryption: "none",
+            owner_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    db::update_repo_info_stats(
+        &pool,
+        repo_a.id,
+        &db::RepoInfoStats {
+            deduplicated_size: 300_000,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    db::update_repo_info_stats(
+        &pool,
+        repo_b.id,
+        &db::RepoInfoStats {
+            deduplicated_size: 700_000,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let total = db::quota::get_server_total_size(&pool, "sz.local")
+        .await
+        .unwrap();
+    assert_eq!(total, 1_000_000);
+
+    let other_total = db::quota::get_server_total_size(&pool, "other.local")
+        .await
+        .unwrap();
+    assert_eq!(other_total, 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_evaluate_server_quota(pool: PgPool) {
+    let _ = pool;
+    use chrono::Utc;
+    let make_quota =
+        |warn: Option<i64>, critical: Option<i64>, enabled: bool| db::quota::ServerQuota {
+            ssh_host: "test.local".to_string(),
+            warn_bytes: warn,
+            critical_bytes: critical,
+            warn_action: "notify_only".to_string(),
+            critical_action: "notify_only".to_string(),
+            enabled,
+            updated_at: Utc::now(),
+        };
+
+    let quota = make_quota(Some(100), Some(500), true);
+    assert_eq!(
+        db::quota::evaluate_server_quota(&quota, 50),
+        db::quota::QuotaStatus::Ok
+    );
+    assert_eq!(
+        db::quota::evaluate_server_quota(&quota, 100),
+        db::quota::QuotaStatus::Warning
+    );
+    assert_eq!(
+        db::quota::evaluate_server_quota(&quota, 500),
+        db::quota::QuotaStatus::Critical
+    );
+
+    let disabled = make_quota(Some(1), Some(2), false);
+    assert_eq!(
+        db::quota::evaluate_server_quota(&disabled, 999),
+        db::quota::QuotaStatus::Ok
+    );
+
+    let no_limits = make_quota(None, None, true);
+    assert_eq!(
+        db::quota::evaluate_server_quota(&no_limits, 999_999),
+        db::quota::QuotaStatus::Ok
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_list_ssh_hosts(pool: PgPool) {
+    for (name, host) in [
+        ("hosts-repo-a", "host-b.local"),
+        ("hosts-repo-b", "host-a.local"),
+        ("hosts-repo-c", "host-b.local"),
+    ] {
+        db::insert_repo(
+            &pool,
+            &InsertRepoParams {
+                name,
+                repo_path: "/backups",
+                ssh_user: "u",
+                ssh_host: host,
+                ssh_port: 22,
+                passphrase_encrypted: b"enc",
+                compression: "none",
+                encryption: "none",
+                owner_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    let hosts = db::quota::list_ssh_hosts(&pool).await.unwrap();
+    assert_eq!(hosts, vec!["host-a.local", "host-b.local"]);
 }

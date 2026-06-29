@@ -34,15 +34,10 @@ fn resolve_git_commit_count() -> Option<u32> {
 }
 
 fn main() {
-    let app_version = std::env::var("APP_VERSION_OVERRIDE").unwrap_or_else(|_| {
-        std::env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION must be set")
-    });
-
     let sha = resolve_git_sha().unwrap_or_default();
     let commit_count = resolve_git_commit_count().unwrap_or(0);
     let build_timestamp = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
-    println!("cargo::rustc-env=APP_VERSION={app_version}");
     println!("cargo::rustc-env=GIT_SHA={sha}");
     println!("cargo::rustc-env=GIT_COMMIT_COUNT={commit_count}");
     println!("cargo::rustc-env=BUILD_TIMESTAMP={build_timestamp}");

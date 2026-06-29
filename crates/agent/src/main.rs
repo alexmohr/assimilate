@@ -46,11 +46,7 @@ async fn shutdown_signal() {
 
 #[must_use]
 pub fn agent_version_string() -> &'static str {
-    if env!("GIT_SHA").is_empty() {
-        env!("APP_VERSION")
-    } else {
-        concat!(env!("APP_VERSION"), "+", env!("GIT_SHA"))
-    }
+    concat!(env!("CARGO_PKG_VERSION"), "+", env!("GIT_SHA"))
 }
 
 #[derive(Parser)]

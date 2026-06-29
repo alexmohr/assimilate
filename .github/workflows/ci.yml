@@ -206,10 +206,11 @@ jobs:
           --health-cmd "pg_isready -U borg -d borg" --health-interval 5s --health-timeout 3s --health-retries 10
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust stable
+      - name: Install Rust nightly
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: 1.96
+          toolchain: nightly
+          components: llvm-tools-preview
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
       - name: Install sqlx-cli
@@ -230,7 +231,7 @@ jobs:
       - name: Generate Rust coverage
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.info -- --include-ignored --test-threads=1
+        run: cargo +nightly llvm-cov --workspace --lcov --output-path lcov.info -- --include-ignored --test-threads=1
       - name: Generate frontend coverage
         working-directory: frontend
         run: npm run test:coverage
@@ -238,44 +239,27 @@ jobs:
         run: |
           sed 's|^SF:|SF:frontend/|' frontend/coverage/lcov.info > frontend-lcov-fixed.info
           cat lcov.info frontend-lcov-fixed.info > merged.info
-      - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload coverage to Coveralls
+        uses: coverallsapp/github-action@v2
         with:
-          name: unit-coverage
-          path: merged.info
-          retention-days: 1
+          file: merged.info
+          format: lcov
+          flag-name: unit
+          parallel: true
 
   coveralls-finish:
     name: Coveralls Finish
     runs-on: ubuntu-latest
     needs: [coverage, e2e]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: unit-coverage
-      - uses: actions/download-artifact@v4
-        with:
-          name: e2e-coverage
-          path: e2e
-      - name: Merge and upload coverage
-        run: |
-          sudo apt-get update && sudo apt-get install -y lcov
-          lcov --add-tracefile merged.info \
-            --add-tracefile e2e/merged-e2e.info \
-            --output-file final.info \
-            --ignore-errors inconsistent
       - uses: coverallsapp/github-action@v2
         with:
-          file: final.info
-          format: lcov
+          parallel-finished: true
 
   e2e:
     name: Playwright E2E
     runs-on: ubuntu-latest
     needs: [frontend]
-    env:
-      COMPOSE_FILES: -f .devcontainer/demo/docker-compose.demo.yml -f .devcontainer/demo/docker-compose.coverage-override.yml
     steps:
       - uses: actions/checkout@v4
       - name: Setup Node.js
@@ -284,11 +268,6 @@ jobs:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
-      - name: Install Rust stable (for backend coverage processing)
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: 1.96
-          components: llvm-tools-preview
       - name: Install dependencies
         run: npm ci
         working-directory: frontend
@@ -306,14 +285,6 @@ jobs:
         uses: docker/setup-buildx-action@v3
       - name: Build demo image (GitHub Actions build cache)
         run: |
-          # Build a single image tagged as both :coverage and :local.
-          # The coverage-override.yml points the demo service at :coverage
-          # (instrumented server binary); all agent/placeholder services use
-          # :local but only execute /app/agent, so they are unaffected by
-          # whether the server binary is instrumented.
-          # A second COVERAGE=false build would break the Docker layer-cache
-          # chain at the ARG COVERAGE declaration, forcing cargo build --release
-          # to run twice for no gain.
           docker buildx build \
             --file .devcontainer/demo/Dockerfile.demo \
             --build-arg COVERAGE=true \
@@ -328,6 +299,7 @@ jobs:
           docker compose $COMPOSE_FILES up -d
           echo "Waiting for demo seed to complete (up to 40 min)..."
           DEMO_READY=false
+          COMPOSE_FILES="-f .devcontainer/demo/docker-compose.demo.yml -f .devcontainer/demo/docker-compose.coverage-override.yml"
           for i in $(seq 1 480); do
             if docker compose $COMPOSE_FILES logs demo 2>&1 | grep -q "Demo ready:"; then
               echo "Demo is seeded and ready"
@@ -352,63 +324,29 @@ jobs:
             exit 1
           fi
       - name: Run Playwright tests
-        run: |
-          set +e
-          npm run e2e
-          PW_EXIT=$?
-          node -e "
-            const fs = require('fs');
-            const path = 'test-results.json';
-            if (!fs.existsSync(path)) {
-              console.error('ERROR: No test results found - Playwright likely crashed');
-              process.exit(1);
-            }
-            const r = JSON.parse(fs.readFileSync(path, 'utf8'));
-            if (r.stats.flaky > 0) {
-              console.error('ERROR: ' + r.stats.flaky + ' flaky test(s) - treated as failure');
-              process.exit(1);
-            }
-            if (r.stats.unexpected > 0) {
-              console.error('ERROR: ' + r.stats.unexpected + ' test(s) failed');
-              process.exit(1);
-            }
-            console.log('All ' + r.stats.expected + ' tests passed.');
-          "
-          CHECK_EXIT=$?
-          exit $(( PW_EXIT > CHECK_EXIT ? PW_EXIT : CHECK_EXIT ))
+        run: npm run e2e
         working-directory: frontend
         env:
           E2E_BASE_URL: http://localhost:8080
           VITE_COVERAGE: "true"
-      - name: Generate frontend e2e coverage report
+      - name: Generate e2e coverage report
+        if: always()
         run: npx nyc report --reporter=lcov --report-dir=coverage-e2e --temp-dir=.nyc_output
         working-directory: frontend
       - name: Collect backend coverage from Docker
         run: |
-          # Stop agents with --timeout 30 so LLVM atexit handlers can flush profraw files
-          # before docker sends SIGKILL. Also drops WebSocket connections so the server
-          # shuts down cleanly without waiting for open connections.
           docker compose $COMPOSE_FILES stop --timeout 30 \
             web-server-01 db-server-01 media-store-01 \
             old-webserver legacy-db-prod \
             2>/dev/null || true
           sleep 2
-          # Stop the demo container with SIGTERM and up to 30s for graceful shutdown.
-          # This sends SIGTERM to start-demo.sh (PID 1), whose trap forwards it to the
-          # server subprocess. The server's shutdown_signal() catches it via tokio,
-          # drains connections, calls tunnel_manager.shutdown(), and exits main() cleanly.
-          # LLVM's atexit handlers then flush coverage data to the bind-mounted .coverage/
-          # before the process exits. docker compose stop waits for the container to fully
-          # stop (or times out after 30s and sends SIGKILL).
           docker compose $COMPOSE_FILES stop demo --timeout 30 2>/dev/null || true
-          # Copy server binary from the stopped demo container for llvm-cov.
           DEMO_CONTAINER=$(docker compose $COMPOSE_FILES ps -qa demo 2>/dev/null | head -1)
           if [ -n "$DEMO_CONTAINER" ]; then
             docker cp "$DEMO_CONTAINER":/app/server .coverage/server 2>/dev/null || true
           else
             echo "Demo container not found, skipping server binary copy"
           fi
-          # Copy agent binary from one of the stopped agent containers for llvm-cov.
           AGENT_CONTAINER=$(docker compose $COMPOSE_FILES ps -qa web-server-01 2>/dev/null | head -1)
           if [ -n "$AGENT_CONTAINER" ]; then
             docker cp "$AGENT_CONTAINER":/app/agent .coverage/agent 2>/dev/null || true
@@ -427,9 +365,6 @@ jobs:
             exit 1
           fi
 
-          # Use the same Rust image that built the coverage-instrumented binary.
-          # NOTE: sh -c script is SINGLE-QUOTED so $() and $VAR are evaluated
-          # inside the container, not on the CI runner.
           docker run --rm \
             -v "$(pwd)/.coverage:/coverage" \
             rust:1.96 \
@@ -470,9 +405,10 @@ jobs:
       - name: Upload e2e coverage artifact
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-coverage
-          path: merged-e2e.info
-          retention-days: 1
+          file: frontend/coverage-e2e/lcov.info
+          format: lcov
+          flag-name: e2e
+          parallel: true
       - name: Upload Playwright report
         uses: actions/upload-artifact@v4
         if: always()
@@ -482,7 +418,11 @@ jobs:
           retention-days: 7
       - name: Stop services
         if: always()
-        run: docker compose $COMPOSE_FILES down -v
+        run: |
+          docker compose \
+            -f .devcontainer/demo/docker-compose.demo.yml \
+            -f .devcontainer/demo/docker-compose.coverage-override.yml \
+            down -v
   build-agent:
     name: Build Agent (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
@@ -495,30 +435,11 @@ jobs:
             runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Compute agent version
-        id: version
-        run: |
-          FULL_VERSION=$(grep '^version = ' crates/agent/Cargo.toml | sed 's/.*"\(.*\)"/\1/')
-          MAJOR=$(printf '%s' "$FULL_VERSION" | cut -d. -f1)
-          MINOR=$(printf '%s' "$FULL_VERSION" | cut -d. -f2)
-          VERSION_COMMIT=$(git log -1 --pretty=format:"%H" -S "version = \"${FULL_VERSION}\"" -- crates/agent/Cargo.toml HEAD)
-
-          if [ -n "$VERSION_COMMIT" ]; then
-            PATCH=$(git rev-list --count "${VERSION_COMMIT}..HEAD" -- crates/agent/ crates/shared/ crates/agent/Cargo.toml)
-          else
-            PATCH=$(git rev-list --count HEAD -- crates/agent/ crates/shared/ crates/agent/Cargo.toml)
-          fi
-
-          echo "version=${MAJOR}.${MINOR}.${PATCH}" >> "$GITHUB_OUTPUT"
       - name: Install Rust nightly
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: nightly
       - name: Build agent
-        env:
-          APP_VERSION_OVERRIDE: ${{ steps.version.outputs.version }}
         run: cargo +nightly build --release -p agent
       - name: Upload agent binary
         uses: actions/upload-artifact@v4
@@ -534,8 +455,6 @@ jobs:
       ASSIMILATE_SECRET_KEY: ci_test_key_not_real
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - name: Download agent-x86_64
         uses: actions/download-artifact@v4
         with:
@@ -605,8 +524,6 @@ jobs:
             platform: linux/arm64
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - name: Download agent-x86_64
         if: matrix.dockerfile == 'Dockerfile.server'
         uses: actions/download-artifact@v4
@@ -642,30 +559,6 @@ jobs:
           tags: |
             type=raw,value=nightly,suffix=-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
             type=sha,suffix=-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
-      - name: Compute nightly version
-        id: version
-        run: |
-          if [ "${{ matrix.dockerfile }}" = "Dockerfile.server" ]; then
-            CRATE="server"
-          else
-            CRATE="agent"
-          fi
-
-          MAJOR=$(grep '^version = ' "crates/${CRATE}/Cargo.toml" | sed 's/.*"\([0-9]*\)\.\([0-9]*\)\.[0-9]*".*/\1/')
-          MINOR=$(grep '^version = ' "crates/${CRATE}/Cargo.toml" | sed 's/.*"\([0-9]*\)\.\([0-9]*\)\.[0-9]*".*/\2/')
-          FULL_VERSION=$(grep '^version = ' "crates/${CRATE}/Cargo.toml" | sed 's/.*"\(.*\)"/\1/')
-
-          # Find commit where this exact version string was introduced in Cargo.toml
-          VC=$(git log -1 --pretty=format:"%H" -S "version = \"${FULL_VERSION}\"" -- "crates/${CRATE}/Cargo.toml" HEAD)
-
-          if [ -n "$VC" ]; then
-            PATCH=$(git rev-list --count "${VC}..HEAD" -- "crates/${CRATE}/" "crates/shared/" "crates/${CRATE}/Cargo.toml")
-          else
-            # Fallback: count all commits touching this crate
-            PATCH=$(git rev-list --count HEAD -- "crates/${CRATE}/" "crates/shared/")
-          fi
-
-          echo "version=${MAJOR}.${MINOR}.${PATCH}" >> "$GITHUB_OUTPUT"
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -673,12 +566,7 @@ jobs:
           file: ${{ matrix.dockerfile }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          labels: |
-            ${{ steps.meta.outputs.labels }}
-            org.opencontainers.image.version=${{ steps.version.outputs.version }}
-          build-args: |
-            SERVER_VERSION=${{ steps.version.outputs.version }}
-            AGENT_VERSION=${{ steps.version.outputs.version }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.platform }}
           platforms: ${{ matrix.platform }}

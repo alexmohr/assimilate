@@ -43,9 +43,7 @@ function setupSuccessMocks(): void {
       return Promise.resolve({ data: { public_key: SSH_KEY } })
     }
     if (url === '/system/settings') {
-      return Promise.resolve({
-        data: { timezone: 'Europe/Berlin', retention_days: 30, borg_query_timeout_secs: 600 },
-      })
+      return Promise.resolve({ data: { timezone: 'Europe/Berlin', retention_days: 30 } })
     }
     if (url === '/system/version') {
       return Promise.resolve({
@@ -147,21 +145,6 @@ describe('SystemView', () => {
     expect(input.element.value).toBe('30')
   })
 
-  it('renders Borg Timeout input', async () => {
-    setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
-    expect(wrapper.find('#settings-borg-timeout').exists()).toBe(true)
-  })
-
-  it('populates borg timeout from API response', async () => {
-    setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
-    const input = wrapper.find<HTMLInputElement>('#settings-borg-timeout')
-    expect(input.element.value).toBe('600')
-  })
-
   it('renders Save button for settings', async () => {
     setupSuccessMocks()
     const wrapper = renderWithPlugins(SystemView)
@@ -189,9 +172,7 @@ describe('SystemView', () => {
         return Promise.reject(new Error('Network error'))
       }
       if (url === '/system/settings') {
-        return Promise.resolve({
-          data: { timezone: 'UTC', retention_days: 7, borg_query_timeout_secs: 300 },
-        })
+        return Promise.resolve({ data: { timezone: 'UTC', retention_days: 7 } })
       }
       if (url === '/system/version') {
         return Promise.resolve({

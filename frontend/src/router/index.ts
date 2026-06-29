@@ -78,6 +78,12 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAdmin: true },
   },
   {
+    path: '/server-quotas',
+    name: 'server-quotas',
+    component: () => import('../views/ServerQuotasView.vue'),
+    meta: { requiresAdmin: true },
+  },
+  {
     path: '/notifications',
     name: 'notifications',
     component: () => import('../views/NotificationsView.vue'),

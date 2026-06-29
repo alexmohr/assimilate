@@ -97,12 +97,20 @@ async fn handle_ui_socket(socket: WebSocket, state: AppState) {
     };
 
     let send_task = async {
-        while let Ok(event) = rx.recv().await {
-            let Ok(json) = serde_json::to_string(&event) else {
-                continue;
-            };
-            if sink.send(Message::Text(json.into())).await.is_err() {
-                return;
+        loop {
+            tokio::select! {
+                event = rx.recv() => {
+                    let Ok(event) = event else { return };
+                    let Ok(json) = serde_json::to_string(&event) else {
+                        continue;
+                    };
+                    if sink.send(Message::Text(json.into())).await.is_err() {
+                        return;
+                    }
+                }
+                _ = state.shutdown_token.cancelled() => {
+                    return;
+                }
             }
         }
     };
@@ -110,5 +118,38 @@ async fn handle_ui_socket(socket: WebSocket, state: AppState) {
     tokio::select! {
         () = send_task => {}
         () = recv_task => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio_util::sync::CancellationToken;
+
+    #[tokio::test]
+    async fn send_task_exits_when_shutdown_token_cancelled() {
+        let token = CancellationToken::new();
+        let (tx, _rx) = tokio::sync::broadcast::channel::<&str>(2);
+
+        let mut rx = tx.subscribe();
+
+        let token_clone = token.clone();
+        let task = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = rx.recv() => {}
+                    _ = token_clone.cancelled() => {
+                        return;
+                    }
+                }
+            }
+        });
+
+        token.cancel();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), task).await;
+
+        assert!(
+            result.is_ok(),
+            "send_task did not exit within 5s after token cancellation"
+        );
     }
 }

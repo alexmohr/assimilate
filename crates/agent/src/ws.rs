@@ -33,6 +33,12 @@ pub async fn run_ws_client(
                 error!("Authentication rejected by server: {reason}");
                 return Err(WsError::AuthRejected(reason));
             }
+            Err(WsError::ServerShutdown) => {
+                info!("Server shutting down, reconnecting in 60s");
+                tokio::time::sleep(Duration::from_mins(1)).await;
+                backoff = BACKOFF_BASE;
+                continue;
+            }
             Err(e) => {
                 error!("WebSocket connection error: {e}");
             }
@@ -244,6 +250,10 @@ async fn handle_text_message(
                 .await
                 .map_err(|e| WsError::Send(Box::new(e)))?;
         }
+        ServerToAgent::ShuttingDown => {
+            info!("Server shutting down, disconnecting");
+            return Err(WsError::ServerShutdown);
+        }
         ServerToAgent::RestartAgent => {
             info!("Received RestartAgent command, exiting for systemd restart");
             process::exit(0);
@@ -349,6 +359,8 @@ pub enum WsError {
     Deserialize(serde_json::Error),
     #[error("authentication rejected: {0}")]
     AuthRejected(String),
+    #[error("server is shutting down")]
+    ServerShutdown,
 }
 
 /// Returns `true` for errors that should terminate the agent process rather
@@ -389,5 +401,16 @@ mod tests {
     fn auth_rejected_debug_includes_variant() {
         let err = WsError::AuthRejected("nope".into());
         assert!(format!("{err:?}").contains("AuthRejected"));
+    }
+
+    #[test]
+    fn server_shutdown_is_not_fatal() {
+        assert!(!is_fatal(&WsError::ServerShutdown));
+    }
+
+    #[test]
+    fn server_shutdown_display() {
+        let err = WsError::ServerShutdown;
+        assert_eq!(err.to_string(), "server is shutting down");
     }
 }

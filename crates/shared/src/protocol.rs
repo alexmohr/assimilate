@@ -112,6 +112,7 @@ pub enum ServerToAgent {
         repo_id: RepoId,
     },
     Ping,
+    ShuttingDown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

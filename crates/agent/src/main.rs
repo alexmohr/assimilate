@@ -16,6 +16,34 @@ use shared::protocol::AgentToServer;
 use tokio::sync::mpsc;
 use tracing_subscriber::EnvFilter;
 
+// Resolves when SIGINT or SIGTERM is received.
+// SIGTERM is critical for coverage builds: docker compose stop sends SIGTERM,
+// and LLVM's atexit handler only runs when the process exits via exit(), not
+// when terminated by an unhandled signal.
+#[cfg(unix)]
+async fn shutdown_signal() {
+    use tokio::signal::unix::{SignalKind, signal as unix_signal};
+    let mut sigterm =
+        unix_signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+    tokio::select! {
+        _ = sigterm.recv() => tracing::info!("Received SIGTERM, shutting down"),
+        res = tokio::signal::ctrl_c() => {
+            if let Err(e) = res {
+                tracing::error!("Failed to listen for Ctrl+C: {e}");
+            }
+            tracing::info!("Received Ctrl+C, shutting down");
+        }
+    }
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() {
+    if let Err(e) = tokio::signal::ctrl_c().await {
+        tracing::error!("Failed to listen for Ctrl+C: {e}");
+    }
+    tracing::info!("Received Ctrl+C, shutting down");
+}
+
 #[must_use]
 pub fn agent_version_string() -> &'static str {
     if env!("GIT_SHA").is_empty() {
@@ -67,12 +95,7 @@ async fn main() {
                 process::exit(1);
             }
         }
-        res = tokio::signal::ctrl_c() => {
-            if let Err(e) = res {
-                tracing::error!("Failed to listen for Ctrl+C: {e}");
-            }
-            tracing::info!("Received Ctrl+C, shutting down");
-        }
+        () = shutdown_signal() => {}
     }
 }
 

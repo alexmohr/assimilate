@@ -31,8 +31,9 @@ RUN cargo build --release -p server -p agent
 
 RUN if [ "$COVERAGE" = "true" ]; then \
       rustc --version && \
-      RUSTFLAGS="-C instrument-coverage" cargo build -p server && \
-      cp target/debug/server target/release/server; \
+      RUSTFLAGS="-C instrument-coverage" cargo build -p server -p agent && \
+      cp target/debug/server target/release/server && \
+      cp target/debug/agent target/release/agent; \
     fi
 
 FROM node:24-slim AS frontend

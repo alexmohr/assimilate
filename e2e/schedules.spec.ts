@@ -116,7 +116,7 @@ test.describe('Schedules Management', () => {
     );
     expect(multiHost).toBeDefined();
 
-    // Navigate to the detail page — this used to crash before the null-safety fix.
+    // Navigate to the detail page - this used to crash before the null-safety fix.
     await page.goto(`/schedules/${multiHost!.id}`);
     await page.waitForLoadState('networkidle');
 

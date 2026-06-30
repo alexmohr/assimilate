@@ -197,7 +197,7 @@ onMessage<{ hostname: string; repo_id: number; schedule_id: number | null; line:
       const obj = JSON.parse(payload.line) as Record<string, unknown>
       if (obj['type'] === 'archive_progress') return
     } catch {
-      // non-JSON line — show it
+      // non-JSON line - show it
     }
     const sessions = new Map(liveBackupSessions.value)
     for (const [key, session] of sessions) {

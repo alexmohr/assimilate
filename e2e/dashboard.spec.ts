@@ -37,7 +37,7 @@ test.describe('Dashboard', () => {
     expect(resp.ok()).toBe(true);
     const body = (await resp.json()) as Record<string, unknown>;
 
-    // These fields drove the 0/0 display bug — verify the API uses the correct names.
+    // These fields drove the 0/0 display bug - verify the API uses the correct names.
     expect(typeof body['online_agents']).toBe('number');
     expect(typeof body['total_agents']).toBe('number');
     expect(body['total_agents']).toBeGreaterThan(0);

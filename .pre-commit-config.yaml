@@ -77,6 +77,11 @@ repos:
 
   - repo: local
     hooks:
+      - id: no-typography-in-comments
+        name: no typography in comments
+        entry: python3 scripts/no-typography-in-comments.py
+        language: system
+        files: '\.(rs|py|toml|yml|yaml|c|h|kt|kts|sh|proto|fbs|puml|json|xml|ts|tsx|vue|js|mjs|cjs)$|^Dockerfile$'
       - id: fmt-nightly
         name: cargo fmt (nightly)
         entry: cargo +nightly fmt -- --config error_on_unformatted=true,error_on_line_overflow=true,format_strings=true,group_imports=StdExternalCrate,imports_granularity=Crate

@@ -7,6 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref, computed, onMounted } from 'vue'
 import { apiClient } from '../api/client'
 import { extractError } from '../utils/error'
+import { useAsyncAction } from '../composables/useAsyncAction'
 import { Plus, Trash2 } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 
@@ -60,8 +61,8 @@ const PERMISSION_LABELS: { key: PermissionKey; label: string }[] = [
 const SEEDED_ROLES = new Set(['admin', 'operator', 'viewer'])
 
 const roles = ref<Role[]>([])
-const loading = ref(true)
-const error = ref<string | null>(null)
+const { loading, error, run } = useAsyncAction('Failed to load roles')
+loading.value = true
 
 const showCreateModal = ref(false)
 const createForm = ref<{ name: string } & Record<PermissionKey, boolean>>({
@@ -123,16 +124,10 @@ function permissionCount(role: Role): number {
 }
 
 async function fetchRoles(): Promise<void> {
-  loading.value = true
-  error.value = null
-  try {
+  await run(async () => {
     const res = await apiClient.get<Role[]>('/roles')
     roles.value = res.data
-  } catch (e: unknown) {
-    error.value = extractError(e, 'Failed to load roles')
-  } finally {
-    loading.value = false
-  }
+  })
 }
 
 function openCreate(): void {

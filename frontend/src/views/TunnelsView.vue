@@ -8,6 +8,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { extractError } from '../utils/error'
+import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
 import {
   listTunnels,
@@ -33,8 +34,7 @@ interface AgentOption {
 }
 
 const tunnels = ref<TunnelWithStatus[]>([])
-const loading = ref(false)
-const error = ref('')
+const { loading, error, run } = useAsyncAction()
 
 const agents = ref<AgentOption[]>([])
 
@@ -86,15 +86,9 @@ function closeErrorDetail(): void {
 }
 
 async function loadTunnels(): Promise<void> {
-  loading.value = true
-  error.value = ''
-  try {
+  await run(async () => {
     tunnels.value = await listTunnels()
-  } catch (e: unknown) {
-    error.value = extractError(e)
-  } finally {
-    loading.value = false
-  }
+  })
 }
 
 async function loadAgents(): Promise<void> {

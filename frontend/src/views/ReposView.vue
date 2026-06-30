@@ -14,6 +14,7 @@ import { useWebSocket } from '../composables/useWebSocket'
 import { logger } from '../utils/logger'
 import { formatBytes, relativeTime } from '../utils/format'
 import { extractError } from '../utils/error'
+import { useAsyncAction } from '../composables/useAsyncAction'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import { Plus, Download, SlidersHorizontal, Database, Folder, FolderPlus } from '@lucide/vue'
 import BaseModal from '../components/BaseModal.vue'
@@ -88,8 +89,7 @@ interface BrowserState {
 const router = useRouter()
 const authStore = useAuthStore()
 const repos = ref<RepoWithStats[]>([])
-const loading = ref(false)
-const error = ref<string | null>(null)
+const { loading, error, run } = useAsyncAction()
 
 const sortField = ref<SortField>('name')
 const sortDir = ref<SortDir>('asc')
@@ -385,9 +385,7 @@ async function confirmCreateFolder(): Promise<void> {
 }
 
 async function loadRepos(): Promise<void> {
-  loading.value = true
-  error.value = null
-  try {
+  await run(async () => {
     const [reposRes, repoTagAssocRes, repoTagsRes] = await Promise.all([
       apiClient.get<RepoWithStats[]>('/repos/stats'),
       apiClient.get<RepoTagRow[]>('/repo-tags').catch(() => ({ data: [] as RepoTagRow[] })),
@@ -404,11 +402,7 @@ async function loadRepos(): Promise<void> {
       tagMap[rt.repo_id].push({ name: rt.tag_name, color: rt.tag_color })
     })
     repoTagsMap.value = tagMap
-  } catch (e: unknown) {
-    error.value = extractError(e)
-  } finally {
-    loading.value = false
-  }
+  })
 }
 
 function navigateToRepo(repo: RepoWithStats): void {

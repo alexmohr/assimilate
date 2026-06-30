@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
-import { extractError } from '../utils/error'
+import { useAsyncAction } from '../composables/useAsyncAction'
 const authStore = useAuthStore()
 const route = useRoute()
 const router = useRouter()
@@ -15,13 +15,10 @@ const router = useRouter()
 const username = ref('')
 const password = ref('')
 const rememberMe = ref(false)
-const error = ref('')
-const submitting = ref(false)
+const { loading: submitting, error, run } = useAsyncAction('Login failed')
 
 async function handleSubmit(): Promise<void> {
-  error.value = ''
-  submitting.value = true
-  try {
+  await run(async () => {
     await authStore.login(username.value, password.value, rememberMe.value)
     const next =
       typeof route.query.next === 'string' && route.query.next.startsWith('/')
@@ -32,11 +29,7 @@ async function handleSubmit(): Promise<void> {
     } else {
       router.push(next)
     }
-  } catch (e: unknown) {
-    error.value = extractError(e, 'Login failed')
-  } finally {
-    submitting.value = false
-  }
+  })
 }
 </script>
 

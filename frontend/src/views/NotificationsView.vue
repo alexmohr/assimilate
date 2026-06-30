@@ -8,6 +8,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { extractError } from '../utils/error'
+import { useAsyncAction } from '../composables/useAsyncAction'
 import { formatDate } from '../utils/format'
 import { logger } from '../utils/logger'
 import {
@@ -53,8 +54,7 @@ const activeTab = ref<TabId>('channels')
 const channels = ref<NotificationChannel[]>([])
 const rules = ref<NotificationRule[]>([])
 const deliveries = ref<NotificationDelivery[]>([])
-const loading = ref(false)
-const error = ref('')
+const { loading, error, run } = useAsyncAction()
 const scopeRepos = ref<ScopeOption[]>([])
 const scopeAgents = ref<ScopeOption[]>([])
 const scopeSchedules = ref<ScopeOption[]>([])
@@ -232,16 +232,10 @@ const isPushSupported = computed((): boolean => {
 })
 
 async function loadChannels(): Promise<void> {
-  loading.value = true
-  error.value = ''
-  try {
+  await run(async () => {
     channels.value = await listChannels()
     rules.value = await listRules()
-  } catch (e: unknown) {
-    error.value = extractError(e)
-  } finally {
-    loading.value = false
-  }
+  })
 }
 
 async function loadDeliveries(): Promise<void> {

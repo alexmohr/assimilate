@@ -8,38 +8,30 @@ import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { validatePassword } from '../utils/validation'
-import { extractError } from '../utils/error'
+import { useAsyncAction } from '../composables/useAsyncAction'
 const authStore = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 
 const newPassword = ref('')
 const confirmPassword = ref('')
-const error = ref('')
-const submitting = ref(false)
+const { loading: submitting, error, run } = useAsyncAction('Failed to change password')
 
 async function handleSubmit(): Promise<void> {
-  error.value = ''
-
   const validationError = validatePassword(newPassword.value, confirmPassword.value)
   if (validationError) {
     error.value = validationError
     return
   }
 
-  submitting.value = true
-  try {
+  await run(async () => {
     await authStore.changePassword(newPassword.value)
     const next =
       typeof route.query.next === 'string' && route.query.next.startsWith('/')
         ? route.query.next
         : '/'
     router.push(next)
-  } catch (e: unknown) {
-    error.value = extractError(e, 'Failed to change password')
-  } finally {
-    submitting.value = false
-  }
+  })
 }
 </script>
 

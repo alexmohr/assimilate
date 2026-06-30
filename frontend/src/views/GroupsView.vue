@@ -8,6 +8,7 @@ import { ref, computed, onMounted } from 'vue'
 import { apiClient } from '../api/client'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
+import { useAsyncAction } from '../composables/useAsyncAction'
 import { Plus, Trash2 } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 
@@ -30,8 +31,8 @@ interface GroupMember {
 
 const groups = ref<Group[]>([])
 const allUsers = ref<UserRow[]>([])
-const loading = ref(true)
-const error = ref<string | null>(null)
+const { loading, error, run } = useAsyncAction('Failed to load groups')
+loading.value = true
 
 const showCreateModal = ref(false)
 const createForm = ref({ name: '', description: '' })
@@ -69,9 +70,7 @@ const filteredGroups = computed((): Group[] => {
 })
 
 async function fetchGroups(): Promise<void> {
-  loading.value = true
-  error.value = null
-  try {
+  await run(async () => {
     const res = await apiClient.get<Group[]>('/groups')
     groups.value = res.data
     const counts: Record<number, number> = {}
@@ -87,11 +86,7 @@ async function fetchGroups(): Promise<void> {
       }),
     )
     memberCounts.value = counts
-  } catch (e: unknown) {
-    error.value = extractError(e, 'Failed to load groups')
-  } finally {
-    loading.value = false
-  }
+  })
 }
 
 async function fetchUsers(): Promise<void> {

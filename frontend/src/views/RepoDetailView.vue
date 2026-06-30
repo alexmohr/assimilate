@@ -20,6 +20,7 @@ import { useToast } from '../composables/useToast'
 import { formatBytes, formatDate, relativeTime } from '../utils/format'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
+import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
 import {
   Folder,
@@ -111,8 +112,7 @@ const tabs: { id: TabId; label: string }[] = [
 ]
 
 const repo = ref<RepoWithStats | null>(null)
-const loading = ref(false)
-const error = ref<string | null>(null)
+const { loading, error, run } = useAsyncAction()
 
 // Edit
 const isEditing = ref(false)
@@ -650,17 +650,11 @@ function lastOpLabel(kind: string | null): string {
 }
 
 async function loadRepo(): Promise<void> {
-  loading.value = true
-  error.value = null
-  try {
+  await run(async () => {
     const res = await apiClient.get<RepoWithStats>(`/repos/${repoId.value}`)
     repo.value = res.data
     currentOp.value = res.data.current_op ?? null
-  } catch (e: unknown) {
-    error.value = extractError(e)
-  } finally {
-    loading.value = false
-  }
+  })
 }
 
 async function refreshRepo(): Promise<void> {

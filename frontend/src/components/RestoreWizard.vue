@@ -6,7 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { apiClient } from '../api/client'
-import { extractError } from '../utils/error'
+import { useAsyncAction } from '../composables/useAsyncAction'
 import BaseModal from './BaseModal.vue'
 
 interface ArchiveEntry {
@@ -36,8 +36,7 @@ const pathsInput = ref('')
 const restoreMethod = ref<RestoreMethod>('download')
 const targetPath = ref('')
 const hostname = ref('')
-const executing = ref(false)
-const error = ref<string | null>(null)
+const { loading: executing, error, run } = useAsyncAction()
 const success = ref(false)
 
 const totalSteps = 4
@@ -98,12 +97,10 @@ function back(): void {
 
 async function execute(): Promise<void> {
   if (props.repoId === null || selectedArchiveName.value === null) return
-  executing.value = true
-  error.value = null
 
   const archiveEncoded = encodeURIComponent(selectedArchiveName.value)
 
-  try {
+  await run(async () => {
     if (restoreMethod.value === 'download') {
       const response = await apiClient.post(
         `/repos/${props.repoId}/archives/${archiveEncoded}/download`,
@@ -127,11 +124,7 @@ async function execute(): Promise<void> {
       })
     }
     success.value = true
-  } catch (e: unknown) {
-    error.value = extractError(e)
-  } finally {
-    executing.value = false
-  }
+  })
 }
 </script>
 

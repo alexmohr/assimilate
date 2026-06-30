@@ -13,6 +13,7 @@ import { useWebSocket } from '../composables/useWebSocket'
 import { useClipboard } from '../composables/useClipboard'
 import { formatDate, formatDateShort, formatBytes, relativeTime } from '../utils/format'
 import { extractError } from '../utils/error'
+import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
 import { cronToHuman } from '../utils/cron'
 import { parseLines } from '../utils/validation'
@@ -58,8 +59,7 @@ const agent = ref<AgentRow | null>(null)
 const repos = ref<RepoRow[]>([])
 const schedules = ref<ScheduleRow[]>([])
 const reports = ref<ReportRow[]>([])
-const loading = ref(false)
-const error = ref<string | null>(null)
+const { loading, error, run } = useAsyncAction()
 const expandedReportId = ref<number | null>(null)
 
 // Backup filter / sort
@@ -496,22 +496,15 @@ function handleResultClick(r: ReportRow): void {
 }
 
 async function loadAgent(): Promise<void> {
-  loading.value = true
-  error.value = null
-  try {
+  await run(async () => {
     const res = await apiClient.get<AgentRow[]>('/agents')
     allAgents.value = res.data
     agent.value = res.data.find((m) => m.hostname === props.hostname) ?? null
     if (!agent.value) {
-      error.value = `Agent "${props.hostname}" not found`
-      return
+      throw new Error(`Agent "${props.hostname}" not found`)
     }
     await Promise.all([loadTabData(), loadTags(), loadHostnamePatterns()])
-  } catch (e: unknown) {
-    error.value = extractError(e)
-  } finally {
-    loading.value = false
-  }
+  })
 }
 
 async function loadTabData(): Promise<void> {

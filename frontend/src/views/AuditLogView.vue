@@ -12,8 +12,8 @@ import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import { apiClient } from '../api/client'
 import { formatDateShort } from '../utils/format'
-import { extractError } from '../utils/error'
 import { useAuthStore } from '../stores/auth'
+import { useAsyncAction } from '../composables/useAsyncAction'
 
 interface AuditEntry {
   id: number
@@ -39,8 +39,7 @@ const isAdmin = computed(() => authStore.user?.role === 'admin')
 
 const entries = ref<AuditEntry[]>([])
 const total = ref(0)
-const loading = ref(false)
-const error = ref<string | null>(null)
+const { loading, error, run } = useAsyncAction()
 const expandedRows = ref<AuditEntry[]>([])
 
 const filters = reactive({
@@ -56,9 +55,7 @@ const perPage = ref(25)
 const perPageOptions = [10, 25, 50]
 
 async function fetchAuditLog(): Promise<void> {
-  loading.value = true
-  error.value = null
-  try {
+  await run(async () => {
     const params: Record<string, string | number> = {
       page: page.value,
       per_page: perPage.value,
@@ -71,13 +68,7 @@ async function fetchAuditLog(): Promise<void> {
     const res = await apiClient.get<AuditResponse>('/audit-log', { params })
     entries.value = res.data.items
     total.value = res.data.total
-  } catch (e: unknown) {
-    error.value = extractError(e)
-    entries.value = []
-    total.value = 0
-  } finally {
-    loading.value = false
-  }
+  })
 }
 
 function onPageChange(event: { page: number; rows: number }): void {

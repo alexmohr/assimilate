@@ -10,7 +10,7 @@ import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import { apiClient } from '../api/client'
 import { formatBytes, formatDate } from '../utils/format'
-import { extractError } from '../utils/error'
+import { useAsyncAction } from '../composables/useAsyncAction'
 import BaseSpinner from './BaseSpinner.vue'
 import EmptyState from './EmptyState.vue'
 
@@ -44,8 +44,7 @@ const searchMode = ref<'single' | 'cross'>('cross')
 const selectedArchiveName = ref<string | null>(null)
 const pattern = ref('')
 const maxArchives = ref(20)
-const loading = ref(false)
-const error = ref<string | null>(null)
+const { loading, error, run } = useAsyncAction()
 const results = ref<SearchResultItem[]>([])
 const totalResults = ref(0)
 const hasSearched = ref(false)
@@ -58,13 +57,11 @@ const canSearch = computed<boolean>(() => {
 
 async function doSearch(): Promise<void> {
   if (!canSearch.value || props.repoId === null) return
-  loading.value = true
-  error.value = null
   results.value = []
   totalResults.value = 0
   hasSearched.value = true
 
-  try {
+  await run(async () => {
     if (searchMode.value === 'single' && selectedArchiveName.value) {
       const res = await apiClient.get<SingleArchiveResponse>(
         `/repos/${props.repoId}/archives/${encodeURIComponent(selectedArchiveName.value)}/search`,
@@ -79,11 +76,7 @@ async function doSearch(): Promise<void> {
       results.value = res.data
       totalResults.value = res.data.length
     }
-  } catch (e: unknown) {
-    error.value = extractError(e)
-  } finally {
-    loading.value = false
-  }
+  })
 }
 
 function handleKeydown(event: KeyboardEvent): void {

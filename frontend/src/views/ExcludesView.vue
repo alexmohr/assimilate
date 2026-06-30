@@ -6,53 +6,31 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { apiClient } from '../api/client'
+import { useAsyncAction } from '../composables/useAsyncAction'
 import BaseSpinner from '../components/BaseSpinner.vue'
 
-const loading = ref(false)
-const error = ref<string | null>(null)
+const { loading, error, run } = useAsyncAction()
 const text = ref('')
-const saving = ref(false)
-const saveError = ref<string | null>(null)
+const { loading: saving, error: saveError, run: runSave } = useAsyncAction()
 const saveOk = ref(false)
 const refOpen = ref(false)
 
-function extractError(e: unknown): string {
-  if (e && typeof e === 'object' && 'response' in e) {
-    const resp = (e as { response?: { data?: { error?: string; message?: string } } }).response
-    return resp?.data?.error ?? resp?.data?.message ?? 'Unknown error'
-  }
-  if (e instanceof Error) return e.message
-  return 'Unknown error'
-}
-
 async function loadData(): Promise<void> {
-  loading.value = true
-  error.value = null
-  try {
+  await run(async () => {
     const res = await apiClient.get<{ raw_text: string }>('/excludes')
     text.value = res.data.raw_text
-  } catch (e: unknown) {
-    error.value = extractError(e)
-  } finally {
-    loading.value = false
-  }
+  })
 }
 
 async function save(): Promise<void> {
-  saving.value = true
-  saveError.value = null
   saveOk.value = false
-  try {
+  await runSave(async () => {
     await apiClient.put('/excludes', { raw_text: text.value })
     saveOk.value = true
     setTimeout(() => {
       saveOk.value = false
     }, 2500)
-  } catch (e: unknown) {
-    saveError.value = extractError(e)
-  } finally {
-    saving.value = false
-  }
+  })
 }
 
 onMounted(loadData)

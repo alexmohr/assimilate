@@ -10,6 +10,7 @@ import { apiClient } from '../api/client'
 import { formatDateShort, formatDuration, formatBytes } from '../utils/format'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
+import { useAsyncAction } from '../composables/useAsyncAction'
 import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
 import { parseLines } from '../utils/validation'
@@ -65,8 +66,7 @@ const agents = ref<AgentRow[]>([])
 const repos = ref<RepoRow[]>([])
 const repo = computed(() => repos.value.find((r) => r.id === selectedRepoId.value) ?? null)
 const scheduleTargets = ref<ScheduleTarget[]>([])
-const loading = ref(false)
-const error = ref<string | null>(null)
+const { loading, error, run } = useAsyncAction('Failed to load schedule')
 const saving = ref(false)
 const saveError = ref<string | null>(null)
 const saveSuccess = ref(false)
@@ -268,9 +268,7 @@ function targetHostnames(): string {
 }
 
 async function loadData(): Promise<void> {
-  loading.value = true
-  error.value = null
-  try {
+  await run(async () => {
     if (isCreate.value) {
       const [agentsRes, reposRes] = await Promise.all([
         apiClient.get<AgentRow[]>('/agents'),
@@ -356,11 +354,7 @@ async function loadData(): Promise<void> {
         perAgentPostCmds.value = postMap
       }
     }
-  } catch (e: unknown) {
-    error.value = extractError(e, 'Failed to load schedule')
-  } finally {
-    loading.value = false
-  }
+  })
 }
 
 async function save(): Promise<void> {

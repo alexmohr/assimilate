@@ -6,7 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref } from 'vue'
 import { apiClient } from '../api/client'
-import { extractError } from '../utils/error'
+import { useAsyncAction } from '../composables/useAsyncAction'
 import BaseModal from './BaseModal.vue'
 
 interface ArchiveEntry {
@@ -36,8 +36,7 @@ const emit = defineEmits<{
 
 const archive1 = ref<string | null>(null)
 const archive2 = ref<string | null>(null)
-const loading = ref(false)
-const error = ref<string | null>(null)
+const { loading, error, run } = useAsyncAction()
 const result = ref<DiffResult | null>(null)
 
 function reset(): void {
@@ -55,11 +54,9 @@ function close(): void {
 
 async function compare(): Promise<void> {
   if (props.repoId === null || archive1.value === null || archive2.value === null) return
-  loading.value = true
-  error.value = null
   result.value = null
 
-  try {
+  await run(async () => {
     const res = await apiClient.get<DiffResult>(`/repos/${props.repoId}/archives/diff`, {
       params: {
         archive1: archive1.value,
@@ -67,11 +64,7 @@ async function compare(): Promise<void> {
       },
     })
     result.value = res.data
-  } catch (e: unknown) {
-    error.value = extractError(e)
-  } finally {
-    loading.value = false
-  }
+  })
 }
 </script>
 

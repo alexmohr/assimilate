@@ -61,6 +61,12 @@ repos:
           - --allowed-chars=µ,§
       - id: no-banner-comment-check
         files: '\.(rs|py|toml|yml|yaml|c|h|kt|kts|sh|proto|fbs|puml|json|xml|ts|tsx|vue|js|mjs|cjs)$|^Dockerfile$'
+        args:
+          # Add em-dash (U+2014), en-dash (U+2013) and horizontal bar (U+2015)
+          # to the default fill set so Unicode-dash banners are caught too.
+          # Written as \u escapes to keep this file ASCII for no-unicode-check.
+          - "--banner-chars==-#*/~_+\u2014\u2013\u2015"
+          - --min-length=5
       - id: validate-cargo-lints
       - id: cargo-fmt
       - id: clippy

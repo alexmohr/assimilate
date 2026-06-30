@@ -7,12 +7,26 @@ use axum::{
     http::StatusCode,
 };
 use serde::Deserialize;
+use shared::responses::UserResponse;
 
 use super::{auth::RequireAdmin, helpers};
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
 };
+
+impl From<db::UserRow> for UserResponse {
+    fn from(row: db::UserRow) -> Self {
+        Self {
+            id: row.id,
+            username: row.username,
+            role: row.role,
+            created_at: row.created_at,
+            last_login_at: row.last_login_at,
+            must_change_password: row.must_change_password,
+        }
+    }
+}
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateUserRequest {
@@ -38,7 +52,7 @@ pub struct UpdatePasswordRequest {
     operation_id = "list_users",
     summary = "List all users (admin only)",
     responses(
-        (status = 200, description = "List of users", body = Vec<db::UserRow>),
+        (status = 200, description = "List of users", body = Vec<UserResponse>),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin access required"),
         (status = 500, description = "Internal server error"),
@@ -47,8 +61,12 @@ pub struct UpdatePasswordRequest {
 pub async fn list_users(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
-) -> Result<Json<Vec<db::UserRow>>, ApiError> {
-    let users = db::list_users(&state.pool).await?;
+) -> Result<Json<Vec<UserResponse>>, ApiError> {
+    let users: Vec<UserResponse> = db::list_users(&state.pool)
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect();
     Ok(Json(users))
 }
 
@@ -60,7 +78,7 @@ pub async fn list_users(
     summary = "Create a new user (admin only)",
     request_body = CreateUserRequest,
     responses(
-        (status = 201, description = "User created", body = db::UserRow),
+        (status = 201, description = "User created", body = UserResponse),
         (status = 400, description = "Invalid input"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin access required"),
@@ -71,7 +89,7 @@ pub async fn create_user(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     ApiJson(req): ApiJson<CreateUserRequest>,
-) -> Result<(StatusCode, Json<db::UserRow>), ApiError> {
+) -> Result<(StatusCode, Json<UserResponse>), ApiError> {
     helpers::validate_non_empty(&req.username, "username")?;
 
     if req.password.len() < 8 {
@@ -84,7 +102,9 @@ pub async fn create_user(
 
     let hash = helpers::hash_password(req.password.clone()).await?;
 
-    let user = db::insert_user(&state.pool, &req.username, &hash, &req.role).await?;
+    let user: UserResponse = db::insert_user(&state.pool, &req.username, &hash, &req.role)
+        .await?
+        .into();
     Ok((StatusCode::CREATED, Json(user)))
 }
 
@@ -99,7 +119,7 @@ pub async fn create_user(
     ),
     request_body = UpdateRoleRequest,
     responses(
-        (status = 200, description = "Updated user", body = db::UserRow),
+        (status = 200, description = "Updated user", body = UserResponse),
         (status = 400, description = "Invalid input"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin access required"),
@@ -112,14 +132,16 @@ pub async fn update_role(
     RequireAdmin(admin): RequireAdmin,
     Path(user_id): Path<i64>,
     ApiJson(req): ApiJson<UpdateRoleRequest>,
-) -> Result<Json<db::UserRow>, ApiError> {
+) -> Result<Json<UserResponse>, ApiError> {
     if admin.user_id == user_id {
         return Err(ApiError::BadRequest("cannot change own role".to_string()));
     }
 
     validate_role(&req.role)?;
 
-    let user = db::update_user_role(&state.pool, user_id, &req.role).await?;
+    let user: UserResponse = db::update_user_role(&state.pool, user_id, &req.role)
+        .await?
+        .into();
     Ok(Json(user))
 }
 

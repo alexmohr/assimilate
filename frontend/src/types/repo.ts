@@ -1,43 +1,35 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-export type RepoOpKind = 'agent_backup' | 'server_sync' | 'break_lock' | 'delete_archive'
+import type {
+  RepoOpKind,
+  ActiveRepoOp as GeneratedActiveRepoOp,
+  RepoWithStatsResponse,
+} from './generated'
 
-export interface ActiveRepoOp {
-  kind: RepoOpKind
-  actor: string
-  started_at: string
-  queued?: number
-}
-
-export interface RepoWithStats {
+export type { RepoOpKind }
+export type ActiveRepoOp = GeneratedActiveRepoOp
+export type RepoWithStats = Omit<
+  RepoWithStatsResponse,
+  | 'id'
+  | 'archive_count'
+  | 'agent_count'
+  | 'unmatched_count'
+  | 'total_original_size'
+  | 'total_compressed_size'
+  | 'total_deduplicated_size'
+  | 'import_progress'
+  | 'import_total'
+  | 'ssh_port'
+> & {
   id: number
-  name: string
-  repo_path: string
-  ssh_user: string
-  ssh_host: string
-  ssh_port: number
-  ssh_host_key: string | null
-  compression: string
-  encryption: string
-  enabled: boolean
-  importing: boolean
-  import_error: string | null
-  import_progress: number
-  import_total: number
-  import_status_message: string | null
-  sync_schedule?: string | null
-  last_synced_at?: string | null
   archive_count: number
-  last_backup_at: string | null
+  agent_count: number
+  unmatched_count: number
   total_original_size: number
   total_compressed_size: number
   total_deduplicated_size: number
-  agent_count: number
-  unmatched_count: number
-  relocation_pending?: boolean
-  last_op_kind?: string | null
-  last_op_at?: string | null
-  last_op_by?: string | null
-  current_op?: ActiveRepoOp | null
+  import_progress: number
+  import_total: number
+  ssh_port: number
 }

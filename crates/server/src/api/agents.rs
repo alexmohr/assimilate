@@ -8,8 +8,13 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
 };
-use serde::{Deserialize, Serialize};
-use shared::protocol::ServerToAgent;
+use serde::Deserialize;
+use shared::{
+    protocol::ServerToAgent,
+    responses::{
+        AgentResponse, CreateAgentResponse, DeleteAgentArchivesResponse, MergeAgentResponse,
+    },
+};
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
@@ -44,16 +49,6 @@ pub struct UpdateAgentRequest {
     pub default_post_backup_commands: Vec<String>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct AgentResponse {
-    #[serde(flatten)]
-    pub agent: AgentRow,
-    pub is_connected: bool,
-    pub is_imported: bool,
-    pub supports_restart: bool,
-    pub restart_unavailable_reason: Option<String>,
-}
-
 /// Builds an [`AgentResponse`] for `agent`, resolving live connection and
 /// restart capability from the registry by the agent's own hostname.
 async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentResponse {
@@ -61,18 +56,27 @@ async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentRespons
     let (supports_restart, restart_unavailable_reason) =
         state.registry.restart_capability(&agent.hostname).await;
     AgentResponse {
-        is_imported: agent.agent_token_hash == IMPORTED_TOKEN_HASH,
-        agent,
+        id: agent.id,
+        hostname: agent.hostname,
+        display_name: agent.display_name,
+        agent_version: agent.agent_version,
+        agent_git_sha: agent.agent_git_sha,
+        agent_build_time: agent.agent_build_time,
+        agent_commit_count: agent.agent_commit_count,
+        created_at: agent.created_at,
+        last_seen_at: agent.last_seen_at,
+        default_backup_paths: agent.default_backup_paths,
+        default_exclude_patterns: agent.default_exclude_patterns,
+        default_pre_backup_commands: agent.default_pre_backup_commands,
+        default_post_backup_commands: agent.default_post_backup_commands,
         is_connected,
+        is_imported: agent.agent_token_hash == IMPORTED_TOKEN_HASH,
+        is_hidden: agent.is_hidden,
         supports_restart,
+        owner_id: agent.owner_id,
+        visibility: agent.visibility,
         restart_unavailable_reason,
     }
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct CreateAgentResponse {
-    pub agent: AgentRow,
-    pub token: String,
 }
 
 #[utoipa::path(
@@ -111,7 +115,7 @@ pub async fn create_agent(
     Ok((
         StatusCode::CREATED,
         Json(CreateAgentResponse {
-            agent,
+            agent: build_agent_response(&state, agent).await,
             token: token_hex,
         }),
     ))
@@ -225,16 +229,7 @@ pub async fn update_agent(
     )
     .await?;
     config_assembler::push_config_to_agent(&state, new_hostname).await;
-    let is_connected = state.registry.is_connected(&hostname).await;
-    let (supports_restart, restart_unavailable_reason) =
-        state.registry.restart_capability(&hostname).await;
-    Ok(Json(AgentResponse {
-        is_imported: agent.agent_token_hash == IMPORTED_TOKEN_HASH,
-        agent,
-        is_connected,
-        supports_restart,
-        restart_unavailable_reason,
-    }))
+    Ok(Json(build_agent_response(&state, agent).await))
 }
 
 #[utoipa::path(
@@ -301,7 +296,28 @@ pub async fn regenerate_token(
     }
 
     Ok(Json(CreateAgentResponse {
-        agent,
+        agent: shared::responses::AgentResponse {
+            id: agent.id,
+            hostname: agent.hostname,
+            display_name: agent.display_name,
+            agent_version: agent.agent_version,
+            agent_git_sha: agent.agent_git_sha,
+            agent_build_time: agent.agent_build_time,
+            agent_commit_count: agent.agent_commit_count,
+            created_at: agent.created_at,
+            last_seen_at: agent.last_seen_at,
+            default_backup_paths: agent.default_backup_paths,
+            default_exclude_patterns: agent.default_exclude_patterns,
+            default_pre_backup_commands: agent.default_pre_backup_commands,
+            default_post_backup_commands: agent.default_post_backup_commands,
+            is_connected: false,
+            is_imported: false,
+            is_hidden: agent.is_hidden,
+            supports_restart: false,
+            owner_id: agent.owner_id,
+            visibility: agent.visibility,
+            restart_unavailable_reason: None,
+        },
         token: token_hex,
     }))
 }
@@ -434,11 +450,6 @@ pub struct MergeAgentRequest {
     pub create_pattern: Option<String>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct MergeAgentResponse {
-    pub merged: bool,
-}
-
 #[utoipa::path(
     post,
     path = "/api/agents/{hostname}/merge-from/{source_id}",
@@ -523,13 +534,6 @@ pub async fn unhide_agent(
     Ok(Json(build_agent_response(&state, a).await))
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct DeleteArchivesResponse {
-    pub success: bool,
-    pub total_deleted: u32,
-    pub errors: Vec<String>,
-}
-
 #[utoipa::path(
     post,
     path = "/api/agents/{hostname}/delete-archives",
@@ -540,7 +544,7 @@ pub struct DeleteArchivesResponse {
         ("hostname" = String, Path, description = "Agent hostname"),
     ),
     responses(
-        (status = 200, description = "Archives deleted", body = DeleteArchivesResponse),
+        (status = 200, description = "Archives deleted", body = DeleteAgentArchivesResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
         (status = 503, description = "Agent offline"),
@@ -550,7 +554,7 @@ pub async fn delete_agent_archives(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
-) -> Result<Json<DeleteArchivesResponse>, ApiError> {
+) -> Result<Json<DeleteAgentArchivesResponse>, ApiError> {
     let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
 
     let archives_by_repo = db::get_archives_for_agent_with_patterns(&state.pool, agent.id).await?;
@@ -625,7 +629,7 @@ pub async fn delete_agent_archives(
         db::delete_agent(&state.pool, &hostname).await?;
     }
 
-    Ok(Json(DeleteArchivesResponse {
+    Ok(Json(DeleteAgentArchivesResponse {
         success: errors.is_empty(),
         total_deleted,
         errors,

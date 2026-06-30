@@ -25,6 +25,7 @@ import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow } from '../types/schedule'
 import type { TagRow } from '../types/tag'
+import type { CreateAgentResponse } from '../types/generated'
 
 type TabId = 'overview' | 'schedules' | 'backups'
 
@@ -327,11 +328,6 @@ async function confirmDeleteArchives(): Promise<void> {
   }
 }
 
-interface CreateAgentResponse {
-  agent: AgentRow
-  token: string
-}
-
 async function adoptHost(): Promise<void> {
   if (!agent.value) return
   try {
@@ -346,6 +342,7 @@ async function adoptHost(): Promise<void> {
     agent.value = {
       ...agent.value,
       ...res.data.agent,
+      id: Number(res.data.agent.id),
       is_imported: false,
       display_name: cleanDisplayName,
     }

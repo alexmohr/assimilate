@@ -9,10 +9,51 @@ use axum::{
 use serde::Deserialize;
 use shared::{
     protocol::{ServerToAgent, ServerToUi},
+    responses::{
+        PerAgentBackupSourcesResponse, PerAgentCommandsResponse, PerAgentExcludePatternsResponse,
+        ScheduleBackupSourcesResponse, ScheduleTargetResponse,
+    },
     schedule::{calculate_next_run, validate_cron},
     types::{OnFailure, RepoId, ScheduleType},
 };
 use sqlx::PgPool;
+
+impl From<db::ScheduleTargetRow> for ScheduleTargetResponse {
+    fn from(t: db::ScheduleTargetRow) -> Self {
+        Self {
+            agent_id: t.agent_id,
+            execution_order: t.execution_order,
+        }
+    }
+}
+
+impl From<db::PerAgentBackupSources> for PerAgentBackupSourcesResponse {
+    fn from(s: db::PerAgentBackupSources) -> Self {
+        Self {
+            agent_id: s.agent_id,
+            paths: s.paths,
+        }
+    }
+}
+
+impl From<db::PerAgentExcludePatterns> for PerAgentExcludePatternsResponse {
+    fn from(e: db::PerAgentExcludePatterns) -> Self {
+        Self {
+            agent_id: e.agent_id,
+            raw_text: e.raw_text,
+        }
+    }
+}
+
+impl From<db::PerAgentCommands> for PerAgentCommandsResponse {
+    fn from(c: db::PerAgentCommands) -> Self {
+        Self {
+            agent_id: c.agent_id,
+            pre_backup_commands: c.pre_backup_commands,
+            post_backup_commands: c.post_backup_commands,
+        }
+    }
+}
 use uuid::Uuid;
 
 use super::{
@@ -763,7 +804,7 @@ pub async fn list_schedule_reports(
     summary = "List target hosts for a schedule",
     params(("id" = i64, Path, description = "Schedule ID")),
     responses(
-        (status = 200, description = "List of targets", body = Vec<crate::db::ScheduleTargetRow>),
+        (status = 200, description = "List of targets", body = Vec<ScheduleTargetResponse>),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
     )
@@ -772,18 +813,14 @@ pub async fn list_schedule_targets(
     State(state): State<AppState>,
     _auth: AuthUser,
     Path(id): Path<i64>,
-) -> Result<Json<Vec<db::ScheduleTargetRow>>, ApiError> {
+) -> Result<Json<Vec<ScheduleTargetResponse>>, ApiError> {
     let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
-    let targets = db::list_schedule_targets(&state.pool, id).await?;
+    let targets: Vec<ScheduleTargetResponse> = db::list_schedule_targets(&state.pool, id)
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect();
     Ok(Json(targets))
-}
-
-#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
-pub struct ScheduleBackupSourcesResponse {
-    pub backup_sources: Vec<String>,
-    pub backup_sources_per_agent: Vec<db::PerAgentBackupSources>,
-    pub exclude_patterns_per_agent: Vec<db::PerAgentExcludePatterns>,
-    pub commands_per_agent: Vec<db::PerAgentCommands>,
 }
 
 #[utoipa::path(
@@ -806,11 +843,24 @@ pub async fn list_schedule_backup_sources(
 ) -> Result<Json<ScheduleBackupSourcesResponse>, ApiError> {
     let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
     let backup_sources = db::list_backup_sources_for_schedule(&state.pool, id).await?;
-    let backup_sources_per_agent =
-        db::list_all_per_agent_backup_sources_for_schedule(&state.pool, id).await?;
-    let exclude_patterns_per_agent =
-        db::list_all_per_agent_excludes_for_schedule(&state.pool, id).await?;
-    let commands_per_agent = db::list_all_per_agent_commands_for_schedule(&state.pool, id).await?;
+    let backup_sources_per_agent: Vec<PerAgentBackupSourcesResponse> =
+        db::list_all_per_agent_backup_sources_for_schedule(&state.pool, id)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect();
+    let exclude_patterns_per_agent: Vec<PerAgentExcludePatternsResponse> =
+        db::list_all_per_agent_excludes_for_schedule(&state.pool, id)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect();
+    let commands_per_agent: Vec<PerAgentCommandsResponse> =
+        db::list_all_per_agent_commands_for_schedule(&state.pool, id)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect();
     Ok(Json(ScheduleBackupSourcesResponse {
         backup_sources,
         backup_sources_per_agent,

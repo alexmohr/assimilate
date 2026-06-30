@@ -7,12 +7,59 @@ use axum::{
     http::StatusCode,
 };
 use serde::Deserialize;
+use shared::responses::{
+    AgentTagEntryResponse, ArchiveTagResponse, RepoTagEntryResponse, TagResponse,
+};
 
 use super::auth::{AuthUser, RequireAdmin, Role};
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
 };
+
+impl From<db::TagRow> for TagResponse {
+    fn from(t: db::TagRow) -> Self {
+        Self {
+            id: t.id,
+            name: t.name,
+            color: t.color,
+            scope: t.scope,
+        }
+    }
+}
+
+impl From<db::tags::ArchiveTag> for ArchiveTagResponse {
+    fn from(a: db::tags::ArchiveTag) -> Self {
+        Self {
+            id: a.id,
+            repo_id: a.repo_id,
+            archive_name: a.archive_name,
+            tag: a.tag,
+            created_by: a.created_by,
+            created_at: a.created_at,
+        }
+    }
+}
+
+impl From<db::AgentTagRow> for AgentTagEntryResponse {
+    fn from(a: db::AgentTagRow) -> Self {
+        Self {
+            agent_id: a.agent_id,
+            tag_name: a.tag_name,
+            tag_color: a.tag_color,
+        }
+    }
+}
+
+impl From<db::RepoTagRow> for RepoTagEntryResponse {
+    fn from(r: db::RepoTagRow) -> Self {
+        Self {
+            repo_id: r.repo_id,
+            tag_name: r.tag_name,
+            tag_color: r.tag_color,
+        }
+    }
+}
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct TagScopeQuery {
@@ -72,7 +119,7 @@ async fn ensure_manage_tags(state: &AppState, auth: &AuthUser) -> Result<(), Api
     summary = "List tags by scope",
     params(("scope" = String, Query, description = "Tag scope (e.g. 'repo' or 'agent')")),
     responses(
-        (status = 200, description = "List of tags", body = Vec<crate::db::TagRow>),
+        (status = 200, description = "List of tags", body = Vec<TagResponse>),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden -- admin only"),
     )
@@ -81,8 +128,12 @@ pub async fn list_tags(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Query(query): Query<TagScopeQuery>,
-) -> Result<Json<Vec<db::TagRow>>, ApiError> {
-    let tags = db::list_tags(&state.pool, &query.scope).await?;
+) -> Result<Json<Vec<TagResponse>>, ApiError> {
+    let tags: Vec<TagResponse> = db::list_tags(&state.pool, &query.scope)
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect();
     Ok(Json(tags))
 }
 
@@ -94,7 +145,7 @@ pub async fn list_tags(
     summary = "Create a new tag",
     request_body = CreateTagRequest,
     responses(
-        (status = 201, description = "Created", body = crate::db::TagRow),
+        (status = 201, description = "Created", body = TagResponse),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden -- admin only"),
     )
@@ -103,9 +154,11 @@ pub async fn create_tag(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     ApiJson(req): ApiJson<CreateTagRequest>,
-) -> Result<(StatusCode, Json<db::TagRow>), ApiError> {
+) -> Result<(StatusCode, Json<TagResponse>), ApiError> {
     let color = req.color.as_deref().unwrap_or("#6b7280");
-    let tag = db::insert_tag(&state.pool, &req.name, color, &req.scope).await?;
+    let tag: TagResponse = db::insert_tag(&state.pool, &req.name, color, &req.scope)
+        .await?
+        .into();
     Ok((StatusCode::CREATED, Json(tag)))
 }
 
@@ -164,7 +217,7 @@ pub async fn set_repo_tags(
     summary = "Get tags for a repository",
     params(("repo_id" = i64, Path, description = "Repository ID")),
     responses(
-        (status = 200, description = "List of tags", body = Vec<crate::db::TagRow>),
+        (status = 200, description = "List of tags", body = Vec<TagResponse>),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden -- admin only"),
     )
@@ -173,8 +226,12 @@ pub async fn get_repo_tags(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(repo_id): Path<i64>,
-) -> Result<Json<Vec<db::TagRow>>, ApiError> {
-    let tags = db::list_tags_for_repo(&state.pool, repo_id).await?;
+) -> Result<Json<Vec<TagResponse>>, ApiError> {
+    let tags: Vec<TagResponse> = db::list_tags_for_repo(&state.pool, repo_id)
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect();
     Ok(Json(tags))
 }
 
@@ -211,7 +268,7 @@ pub async fn set_agent_tags(
     summary = "Get tags for a host",
     params(("hostname" = String, Path, description = "Agent hostname")),
     responses(
-        (status = 200, description = "List of tags", body = Vec<crate::db::TagRow>),
+        (status = 200, description = "List of tags", body = Vec<TagResponse>),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden -- admin only"),
     )
@@ -220,9 +277,13 @@ pub async fn get_agent_tags(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
-) -> Result<Json<Vec<db::TagRow>>, ApiError> {
+) -> Result<Json<Vec<TagResponse>>, ApiError> {
     let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
-    let tags = db::list_tags_for_agent(&state.pool, agent.id).await?;
+    let tags: Vec<TagResponse> = db::list_tags_for_agent(&state.pool, agent.id)
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect();
     Ok(Json(tags))
 }
 
@@ -234,7 +295,7 @@ pub async fn get_agent_tags(
     summary = "List all host-tag associations",
     responses(
         (status = 200, description = "Host-tag associations",
-            body = Vec<crate::db::AgentTagRow>),
+            body = Vec<AgentTagEntryResponse>),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden -- admin only"),
     )
@@ -242,8 +303,12 @@ pub async fn get_agent_tags(
 pub async fn list_agent_tag_associations(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
-) -> Result<Json<Vec<db::AgentTagRow>>, ApiError> {
-    let tags = db::list_all_agent_tags(&state.pool).await?;
+) -> Result<Json<Vec<AgentTagEntryResponse>>, ApiError> {
+    let tags: Vec<AgentTagEntryResponse> = db::list_all_agent_tags(&state.pool)
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect();
     Ok(Json(tags))
 }
 
@@ -255,7 +320,7 @@ pub async fn list_agent_tag_associations(
     summary = "List all repo-tag associations",
     responses(
         (status = 200, description = "Repo-tag associations",
-            body = Vec<crate::db::RepoTagRow>),
+            body = Vec<RepoTagEntryResponse>),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden -- admin only"),
     )
@@ -263,8 +328,12 @@ pub async fn list_agent_tag_associations(
 pub async fn list_repo_tag_associations(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
-) -> Result<Json<Vec<db::RepoTagRow>>, ApiError> {
-    let tags = db::list_all_repo_tags(&state.pool).await?;
+) -> Result<Json<Vec<RepoTagEntryResponse>>, ApiError> {
+    let tags: Vec<RepoTagEntryResponse> = db::list_all_repo_tags(&state.pool)
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect();
     Ok(Json(tags))
 }
 
@@ -279,7 +348,7 @@ pub async fn list_repo_tag_associations(
         ("archive_name" = String, Path, description = "Archive name"),
     ),
     responses(
-        (status = 200, description = "List of archive tags", body = Vec<db::tags::ArchiveTag>),
+        (status = 200, description = "List of archive tags", body = Vec<ArchiveTagResponse>),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden"),
     )
@@ -288,9 +357,14 @@ pub async fn list_archive_tags(
     State(state): State<AppState>,
     auth: AuthUser,
     Path((repo_id, archive_name)): Path<(i64, String)>,
-) -> Result<Json<Vec<db::tags::ArchiveTag>>, ApiError> {
+) -> Result<Json<Vec<ArchiveTagResponse>>, ApiError> {
     ensure_manage_tags(&state, &auth).await?;
-    let tags = db::tags::list_tags_for_archive(&state.pool, repo_id, &archive_name).await?;
+    let tags: Vec<ArchiveTagResponse> =
+        db::tags::list_tags_for_archive(&state.pool, repo_id, &archive_name)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect();
     Ok(Json(tags))
 }
 
@@ -306,7 +380,7 @@ pub async fn list_archive_tags(
     ),
     request_body = ArchiveTagRequest,
     responses(
-        (status = 201, description = "Created", body = db::tags::ArchiveTag),
+        (status = 201, description = "Created", body = ArchiveTagResponse),
         (status = 400, description = "Invalid tag"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden"),
@@ -318,11 +392,11 @@ pub async fn add_archive_tag(
     auth: AuthUser,
     Path((repo_id, archive_name)): Path<(i64, String)>,
     ApiJson(req): ApiJson<ArchiveTagRequest>,
-) -> Result<(StatusCode, Json<db::tags::ArchiveTag>), ApiError> {
+) -> Result<(StatusCode, Json<ArchiveTagResponse>), ApiError> {
     ensure_manage_tags(&state, &auth).await?;
     let tag = normalize_tag(req.tag)?;
 
-    let created = db::tags::add_tag(
+    let created: ArchiveTagResponse = db::tags::add_tag(
         &state.pool,
         repo_id,
         &archive_name,
@@ -335,7 +409,8 @@ pub async fn add_archive_tag(
             ApiError::Conflict("tag already exists for archive".to_string())
         }
         other => ApiError::Database(other),
-    })?;
+    })?
+    .into();
 
     Ok((StatusCode::CREATED, Json(created)))
 }

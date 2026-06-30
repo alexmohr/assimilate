@@ -45,8 +45,7 @@ function connect(): void {
     let parsed: WsMessage
     try {
       parsed = JSON.parse(event.data) as WsMessage
-    } catch (e: unknown) {
-      logger.debug('ws: failed to parse message', e)
+    } catch {
       return
     }
 

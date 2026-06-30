@@ -12,18 +12,13 @@ import { extractError } from '../utils/error'
 import { formatBytes } from '../utils/format'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import TimezoneSelect from '../components/TimezoneSelect.vue'
+import type { SettingsResponse, SystemResetResponse } from '../types/generated'
 
 interface ImportResult {
   hosts_created: number
   hosts_updated: number
   schedules_created: number
   warnings: string[]
-}
-
-interface SettingsResponse {
-  retention_days: number
-  timezone: string
-  borg_query_timeout_secs: number
 }
 
 interface VersionInfo {
@@ -83,8 +78,8 @@ onMounted(async () => {
   try {
     const res = await apiClient.get<SettingsResponse>('/system/settings')
     settingsForm.timezone = res.data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone
-    settingsForm.retention_days = res.data.retention_days
-    settingsForm.borg_query_timeout_secs = res.data.borg_query_timeout_secs
+    settingsForm.retention_days = Number(res.data.retention_days)
+    settingsForm.borg_query_timeout_secs = Number(res.data.borg_query_timeout_secs)
   } catch (e: unknown) {
     settingsError.value = extractError(e, 'Failed to load settings')
   } finally {
@@ -207,8 +202,8 @@ async function saveSettings(): Promise<void> {
       borg_query_timeout_secs: settingsForm.borg_query_timeout_secs,
     })
     settingsForm.timezone = res.data.timezone
-    settingsForm.retention_days = res.data.retention_days
-    settingsForm.borg_query_timeout_secs = res.data.borg_query_timeout_secs
+    settingsForm.retention_days = Number(res.data.retention_days)
+    settingsForm.borg_query_timeout_secs = Number(res.data.borg_query_timeout_secs)
     setTimezone(res.data.timezone || undefined)
     settingsSaved.value = true
     setTimeout(() => {
@@ -219,11 +214,6 @@ async function saveSettings(): Promise<void> {
   } finally {
     settingsSaving.value = false
   }
-}
-
-interface SystemResetResponse {
-  cancelled_backups: number
-  notified_agents: number
 }
 
 const showResetConfirm = ref(false)

@@ -6,9 +6,21 @@ use axum::{
     extract::{Query, State},
 };
 use serde::Deserialize;
+use shared::responses::LogEntryResponse;
 
 use super::auth::RequireAdmin;
 use crate::{AppState, error::ApiError, log_buffer::LogEntry};
+
+impl From<LogEntry> for LogEntryResponse {
+    fn from(e: LogEntry) -> Self {
+        Self {
+            timestamp: e.timestamp,
+            level: e.level,
+            target: e.target,
+            message: e.message,
+        }
+    }
+}
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct LogQuery {
@@ -32,7 +44,7 @@ pub struct LogQuery {
             description = "Case-insensitive search in message/target"),
     ),
     responses(
-        (status = 200, description = "Log entries (newest first)", body = Vec<LogEntry>),
+        (status = 200, description = "Log entries (newest first)", body = Vec<LogEntryResponse>),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden -- admin only"),
     )
@@ -41,10 +53,13 @@ pub async fn get_logs(
     State(state): State<AppState>,
     _admin: RequireAdmin,
     Query(query): Query<LogQuery>,
-) -> Result<Json<Vec<LogEntry>>, ApiError> {
+) -> Result<Json<Vec<LogEntryResponse>>, ApiError> {
     let limit = query.limit.unwrap_or(200);
-    let entries = state
+    let entries: Vec<LogEntryResponse> = state
         .log_buffer
-        .entries(limit, query.level.as_deref(), query.search.as_deref());
+        .entries(limit, query.level.as_deref(), query.search.as_deref())
+        .into_iter()
+        .map(Into::into)
+        .collect();
     Ok(Json(entries))
 }

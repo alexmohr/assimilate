@@ -6,12 +6,27 @@ use axum::{
     extract::{Path, State},
 };
 use serde::Deserialize;
+use shared::responses::RepoPermissionResponse;
 
 use super::auth::{AuthUser, RequireAdmin, Role};
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
 };
+
+impl From<db::RepoPermissionRow> for RepoPermissionResponse {
+    fn from(row: db::RepoPermissionRow) -> Self {
+        Self {
+            user_id: row.user_id,
+            repo_id: row.repo_id,
+            can_view: row.can_view,
+            can_backup: row.can_backup,
+            can_modify_schedules: row.can_modify_schedules,
+            can_extract: row.can_extract,
+            can_delete: row.can_delete,
+        }
+    }
+}
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpsertPermissionRequest {
@@ -31,7 +46,7 @@ pub struct UpsertPermissionRequest {
     params(("repo_id" = i64, Path, description = "Repository ID")),
     responses(
         (status = 200, description = "List of permissions",
-            body = Vec<crate::db::RepoPermissionRow>),
+            body = Vec<RepoPermissionResponse>),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden -- admin only"),
     )
@@ -40,8 +55,13 @@ pub async fn list_for_repo(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(repo_id): Path<i64>,
-) -> Result<Json<Vec<db::RepoPermissionRow>>, ApiError> {
-    let perms = db::list_repo_permissions_for_repo(&state.pool, repo_id).await?;
+) -> Result<Json<Vec<RepoPermissionResponse>>, ApiError> {
+    let perms: Vec<RepoPermissionResponse> =
+        db::list_repo_permissions_for_repo(&state.pool, repo_id)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect();
     Ok(Json(perms))
 }
 
@@ -57,7 +77,7 @@ pub async fn list_for_repo(
     ),
     request_body = UpsertPermissionRequest,
     responses(
-        (status = 200, description = "Updated permission", body = crate::db::RepoPermissionRow),
+        (status = 200, description = "Updated permission", body = RepoPermissionResponse),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden -- admin only"),
     )
@@ -67,8 +87,8 @@ pub async fn upsert(
     RequireAdmin(_admin): RequireAdmin,
     Path((repo_id, user_id)): Path<(i64, i64)>,
     ApiJson(req): ApiJson<UpsertPermissionRequest>,
-) -> Result<Json<db::RepoPermissionRow>, ApiError> {
-    let perm = db::upsert_repo_permission(
+) -> Result<Json<RepoPermissionResponse>, ApiError> {
+    let perm: RepoPermissionResponse = db::upsert_repo_permission(
         &state.pool,
         &db::UpsertRepoPermissionParams {
             user_id,
@@ -80,7 +100,8 @@ pub async fn upsert(
             can_delete: req.can_delete,
         },
     )
-    .await?;
+    .await?
+    .into();
     Ok(Json(perm))
 }
 
@@ -93,7 +114,7 @@ pub async fn upsert(
     params(("id" = i64, Path, description = "User ID")),
     responses(
         (status = 200, description = "List of permissions",
-            body = Vec<crate::db::RepoPermissionRow>),
+            body = Vec<RepoPermissionResponse>),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden -- admin only"),
     )
@@ -102,8 +123,13 @@ pub async fn list_for_user(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(user_id): Path<i64>,
-) -> Result<Json<Vec<db::RepoPermissionRow>>, ApiError> {
-    let perms = db::list_repo_permissions_for_user(&state.pool, user_id).await?;
+) -> Result<Json<Vec<RepoPermissionResponse>>, ApiError> {
+    let perms: Vec<RepoPermissionResponse> =
+        db::list_repo_permissions_for_user(&state.pool, user_id)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect();
     Ok(Json(perms))
 }
 

@@ -419,7 +419,7 @@ function openEditChannel(channel: NotificationChannel): void {
 
 function editChannelType(): ChannelType {
   const ch = channels.value.find((c) => c.id === editChannelId.value)
-  return ch?.channel_type ?? 'email'
+  return (ch?.channel_type ?? 'email') as ChannelType
 }
 
 async function submitEditChannel(): Promise<void> {
@@ -728,12 +728,14 @@ onMounted(() => {
           <div class="channel-header">
             <div class="channel-info">
               <component
-                :is="channelTypeIcon(channel.channel_type)"
+                :is="channelTypeIcon(channel.channel_type as ChannelType)"
                 :size="16"
                 class="channel-icon"
               />
               <span class="channel-name">{{ channel.name }}</span>
-              <span class="channel-type-badge">{{ channelTypeLabel(channel.channel_type) }}</span>
+              <span class="channel-type-badge">{{
+                channelTypeLabel(channel.channel_type as ChannelType)
+              }}</span>
             </div>
             <div class="channel-actions">
               <button

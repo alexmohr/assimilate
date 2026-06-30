@@ -5,6 +5,7 @@ use std::{fmt, str::FromStr};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 fn default_keep_hourly() -> u32 {
     24
@@ -35,7 +36,8 @@ impl From<String> for OperationId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[ts(export)]
 pub struct SearchEntry {
     pub path: String,
     pub size: i64,

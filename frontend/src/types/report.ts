@@ -1,25 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-export interface ReportRow {
+import type { ReportResponse } from './generated'
+
+export type ReportRow = Omit<
+  ReportResponse,
+  | 'id'
+  | 'agent_id'
+  | 'repo_id'
+  | 'schedule_id'
+  | 'original_size'
+  | 'compressed_size'
+  | 'deduplicated_size'
+  | 'files_processed'
+  | 'duration_secs'
+> & {
   id: number
-  agent_id?: number
-  machine_id?: number
+  agent_id: number
   repo_id: number
-  repo_name?: string
-  schedule_id?: number | null
-  schedule_name?: string | null
-  started_at: string
-  finished_at: string
-  status: string
+  schedule_id: number | null
   original_size: number
   compressed_size: number
   deduplicated_size: number
   files_processed: number
   duration_secs: number
-  error_message: string | null
-  warnings?: string[]
-  borg_version: string | null
-  archive_name?: string | null
-  borg_command?: string | null
 }

@@ -547,6 +547,15 @@ async function submitRepo(): Promise<void> {
             total_deduplicated_size: 0,
             agent_count: 0,
             unmatched_count: 0,
+            visibility: 'private',
+            owner_id: null,
+            sync_schedule: null,
+            last_synced_at: null,
+            relocation_pending: false,
+            last_op_kind: null,
+            last_op_at: null,
+            last_op_by: null,
+            current_op: null,
           },
         ]
         return

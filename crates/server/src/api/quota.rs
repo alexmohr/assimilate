@@ -6,12 +6,25 @@ use axum::{
     extract::{Path, State},
 };
 use serde::Deserialize;
+use shared::responses::RepoQuotaResponse;
 
 use super::auth::{AuthUser, Role};
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
 };
+
+impl From<db::quota::RepoQuota> for RepoQuotaResponse {
+    fn from(q: db::quota::RepoQuota) -> Self {
+        Self {
+            repo_id: q.repo_id,
+            warn_bytes: q.warn_bytes,
+            critical_bytes: q.critical_bytes,
+            enabled: q.enabled,
+            updated_at: q.updated_at,
+        }
+    }
+}
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpsertQuotaRequest {
@@ -41,7 +54,7 @@ async fn require_operator_or_admin(state: &AppState, auth: &AuthUser) -> Result<
     summary = "Get a repository quota configuration",
     params(("id" = i64, Path, description = "Repository ID")),
     responses(
-        (status = 200, description = "Quota configuration", body = crate::db::quota::RepoQuota),
+        (status = 200, description = "Quota configuration", body = RepoQuotaResponse),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden"),
         (status = 404, description = "Quota not configured"),
@@ -51,12 +64,13 @@ pub async fn get_quota(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(repo_id): Path<i64>,
-) -> Result<Json<crate::db::quota::RepoQuota>, ApiError> {
+) -> Result<Json<RepoQuotaResponse>, ApiError> {
     require_operator_or_admin(&state, &auth).await?;
 
-    let quota = db::quota::get_quota(&state.pool, repo_id)
+    let quota: RepoQuotaResponse = db::quota::get_quota(&state.pool, repo_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("quota for repo {repo_id} not found")))?;
+        .ok_or_else(|| ApiError::NotFound(format!("quota for repo {repo_id} not found")))?
+        .into();
 
     Ok(Json(quota))
 }
@@ -70,7 +84,7 @@ pub async fn get_quota(
     params(("id" = i64, Path, description = "Repository ID")),
     request_body = UpsertQuotaRequest,
     responses(
-        (status = 200, description = "Quota configuration", body = crate::db::quota::RepoQuota),
+        (status = 200, description = "Quota configuration", body = RepoQuotaResponse),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden"),
     )
@@ -80,17 +94,18 @@ pub async fn upsert_quota(
     auth: AuthUser,
     Path(repo_id): Path<i64>,
     ApiJson(req): ApiJson<UpsertQuotaRequest>,
-) -> Result<Json<crate::db::quota::RepoQuota>, ApiError> {
+) -> Result<Json<RepoQuotaResponse>, ApiError> {
     require_operator_or_admin(&state, &auth).await?;
 
-    let quota = db::quota::upsert_quota(
+    let quota: RepoQuotaResponse = db::quota::upsert_quota(
         &state.pool,
         repo_id,
         req.warn_bytes,
         req.critical_bytes,
         req.enabled,
     )
-    .await?;
+    .await?
+    .into();
 
     Ok(Json(quota))
 }

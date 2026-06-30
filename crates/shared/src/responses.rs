@@ -1384,3 +1384,40 @@ pub struct SyncResponse {
     #[ts(type = "number")]
     pub duration_secs: u64,
 }
+
+/// REUSE-compliant header to prepend to every generated `.ts` file
+/// so pre-commit and CI lint pass without extra annotations.
+#[cfg(test)]
+fn add_reuse_header(path: &std::path::Path) {
+    let content = std::fs::read_to_string(path).expect("read generated file");
+    if content.contains("SPDX-License-Identifier") {
+        return;
+    }
+    let header = "\
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+";
+    let new = format!("{header}{content}");
+    std::fs::write(path, new).expect("write REUSE header");
+}
+
+#[cfg(test)]
+#[test]
+fn add_reuse_headers_to_generated_ts_files() {
+    use std::io::Read;
+    let Ok(out_dir) = std::env::var("TS_RS_EXPORT_DIR") else {
+        return;
+    };
+    let dir = std::path::Path::new(&out_dir);
+    if !dir.exists() {
+        return;
+    }
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.extension().is_some_and(|e| e == "ts") {
+            add_reuse_header(&path);
+        }
+    }
+}

@@ -10,7 +10,7 @@
 
 Flags em dashes, en dashes, ellipsis characters, and curly quotes when they
 appear in comment lines.  String literals and template text are intentionally
-not checked — only stripped comment content is tested.
+not checked - only stripped comment content is tested.
 """
 
 import argparse
@@ -19,15 +19,17 @@ import sys
 
 COMMENT_PREFIXES = ("///", "//!", "//", "/*", "*/", "#!", "#", "*")
 
-TYPOGRAPHY = {
-    "—": "em dash (—) — use -",
-    "–": "en dash (–) — use -",
-    "―": "horizontal bar (―) — use -",
-    "…": "ellipsis (…) — use ...",
-    "“": "left double quote (“) — use \"",
-    "”": "right double quote (”) — use \"",
-    "‘": "left single quote (‘) — use '",
-    "’": "right single quote (’) — use '",
+# chr() calls are used so that no literal typographic characters appear in
+# this source file, avoiding ruff RUF001 false positives on the script itself.
+TYPOGRAPHY: dict[str, str] = {
+    chr(0x2014): "em dash: use -",
+    chr(0x2013): "en dash: use -",
+    chr(0x2015): "horizontal bar: use -",
+    chr(0x2026): "ellipsis: use ...",
+    chr(0x201C): 'left double quote: use "',
+    chr(0x201D): 'right double quote: use "',
+    chr(0x2018): "left single quote: use '",
+    chr(0x2019): "right single quote: use '",
 }
 
 PATTERN = re.compile("[" + "".join(re.escape(c) for c in TYPOGRAPHY) + "]")

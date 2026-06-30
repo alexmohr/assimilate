@@ -59,7 +59,6 @@ repos:
       - id: reuse-annotate
         args: ['--ignore-paths', 'tests/mock-borg/borg,excludes.common,excludes.local.example']
       - id: no-unicode-check
-        files: '\.(rs|py|toml|yml|yaml|rst|c|h|kt|kts|sh|proto|fbs|puml|json|xml|ts|tsx|vue|js|mjs|cjs)$|^Dockerfile$'
         # Excluded because it contains literal Unicode banner-fill characters in
         # the no-banner-comment-check args below.
         exclude: ^\.pre-commit-config\.yaml$

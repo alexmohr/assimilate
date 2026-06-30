@@ -56,6 +56,7 @@ repos:
       - id: reuse-annotate
         args: ['--ignore-paths', 'tests/mock-borg/borg,excludes.common,excludes.local.example']
       - id: no-unicode-check
+        files: '\.(rs|py|toml|yml|yaml|rst|c|h|kt|kts|sh|proto|fbs|puml|json|xml|ts|tsx|vue|js|mjs|cjs)$|^Dockerfile$'
         args:
           - --allowed-chars=µ,§
       - id: no-banner-comment-check

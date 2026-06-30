@@ -20,6 +20,11 @@ repos:
     rev: v0.21.0
     hooks:
       - id: yamlfmt
+        # This file declares Unicode banner-fill chars as \u escapes (see the
+        # no-banner-comment-check args). yamlfmt would rewrite those escapes
+        # into literal characters, which no-unicode-check then rejects, so it
+        # is excluded here to keep the escapes intact.
+        exclude: ^\.pre-commit-config\.yaml$
 
   - repo: https://github.com/igorshubovych/markdownlint-cli
     rev: v0.48.0
@@ -62,10 +67,11 @@ repos:
       - id: no-banner-comment-check
         files: '\.(rs|py|toml|yml|yaml|c|h|kt|kts|sh|proto|fbs|puml|json|xml|ts|tsx|vue|js|mjs|cjs)$|^Dockerfile$'
         args:
-          # Add em-dash (U+2014), en-dash (U+2013) and horizontal bar (U+2015)
-          # to the default fill set so Unicode-dash banners are caught too.
-          # Written as \u escapes to keep this file ASCII for no-unicode-check.
-          - "--banner-chars==-#*/~_+\u2014\u2013\u2015"
+          # Add Unicode dash and box-drawing characters to the default fill
+          # set so banners drawn with em/en dashes, horizontal bars or box
+          # lines/corners are caught. Written as \u escapes to keep this file
+          # ASCII for no-unicode-check (which is why yamlfmt skips it above).
+          - "--banner-chars==-#*/~_+\u2014\u2013\u2015\u2500\u2501\u2550\u2502\u2503\u2551\u250c\u2510\u2514\u2518\u250f\u2513\u2517\u251b\u2554\u2557\u255a\u255d\u256d\u256e\u256f\u2570"
           - --min-length=5
       - id: validate-cargo-lints
       - id: cargo-fmt

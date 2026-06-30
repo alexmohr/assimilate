@@ -75,7 +75,7 @@ run_dev() {
 }
 
 if [ -f "/.dockerenv" ] || [ -f "/run/.containerenv" ]; then
-    # ---- Inside a container ----
+    # Inside a container.
     # Demo container: repos are mounted locally.
     # Dev container: repos are behind the borg-repo sidecar.
     if [ -d "$REPO_BASE/$REPO_NAME" ]; then
@@ -84,7 +84,7 @@ if [ -f "/.dockerenv" ] || [ -f "/run/.containerenv" ]; then
         run_dev "$@"
     fi
 else
-    # ---- On the host ----
+    # On the host.
     # Detect which environment is running and exec into the right service.
     demo_running=false
     dev_running=false

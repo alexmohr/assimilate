@@ -80,7 +80,7 @@ test.describe('Hosts Management', () => {
     // Dialog should open.
     await expect(page.getByRole('heading', { name: /Deploy|Upgrade/ }).first()).toBeVisible();
 
-    // The "Load from remote" button must be present — this was added in issue #124.
+    // The "Load from remote" button must be present - this was added in issue #124.
     const loadBtn = page.getByRole('button', { name: 'Load from remote' });
     await expect(loadBtn).toBeVisible();
     await expect(loadBtn).not.toBeDisabled();
@@ -117,7 +117,7 @@ test.describe('Hosts Management', () => {
     const errorPre = card.locator('.error-pre');
     await expect(errorPre).not.toBeVisible();
 
-    // Click to expand — the error detail becomes visible.
+    // Click to expand - the error detail becomes visible.
     await errorToggle.click();
     await expect(errorPre).toBeVisible();
     await expect(errorPre).toContainText('Repository lock could not be acquired');

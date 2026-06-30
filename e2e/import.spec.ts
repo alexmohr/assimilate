@@ -96,7 +96,7 @@ test.describe('Import / Sync lifecycle', () => {
     const body = (await syncResp.json()) as SyncResponse;
 
     // The sync response must include these fields (they correspond to the granular
-    // "Saving N backup reports…" substep messages added in issue #124).
+    // "Saving N backup reports..." substep messages added in issue #124).
     expect(typeof body.imported).toBe('number');
     expect(typeof body.removed).toBe('number');
     expect(typeof body.duration_secs).toBe('number');

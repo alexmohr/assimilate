@@ -43,7 +43,7 @@ vi.mock('../composables/useTimezone', () => ({
   getConfiguredTimezone: (): string | undefined => undefined,
 }))
 
-// Captured WebSocket message handlers — populated during component setup().
+// Captured WebSocket message handlers - populated during component setup().
 // Accessing wsHandlers here is safe because onMessage is only CALLED during
 // component setup(), which happens inside test functions after module evaluation.
 const wsHandlers: Record<string, (payload: unknown) => void> = {}

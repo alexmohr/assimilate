@@ -13,7 +13,6 @@ pub struct HealthCheckResponse {
     pub status: String,
 }
 
-
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct LoginResponse {
@@ -57,7 +56,6 @@ pub struct UserResponse {
 pub struct UserListResponse {
     pub users: Vec<UserResponse>,
 }
-
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
@@ -123,7 +121,6 @@ pub struct HostnamePatternResponse {
     pub pattern: String,
     pub created_at: DateTime<Utc>,
 }
-
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
@@ -249,7 +246,6 @@ pub struct MigrateEncryptionResponse {
     pub migrated_path: Option<String>,
 }
 
-
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct ScheduleResponse {
@@ -331,7 +327,6 @@ pub struct PerAgentCommandsResponse {
     pub post_backup_commands: String,
 }
 
-
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct ReportResponse {
@@ -371,7 +366,6 @@ pub struct ReportResponse {
 pub struct ReportListResponse {
     pub reports: Vec<ReportResponse>,
 }
-
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
@@ -454,7 +448,6 @@ pub struct DiffResponse {
     pub offset: usize,
 }
 
-
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct TagResponse {
@@ -484,7 +477,6 @@ pub struct ArchiveTagResponse {
     pub created_by: Option<i64>,
     pub created_at: DateTime<Utc>,
 }
-
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
@@ -517,7 +509,6 @@ pub struct DeleteApiTokenResponse {
     pub deleted: bool,
 }
 
-
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct TunnelResponse {
@@ -533,7 +524,6 @@ pub struct TunnelResponse {
     pub created_at: DateTime<Utc>,
     pub status: String,
 }
-
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
@@ -599,7 +589,6 @@ pub struct RepoPermissionResponse {
     pub can_delete: bool,
 }
 
-
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct SshPublicKeyResponse {
@@ -653,7 +642,6 @@ pub struct SystemResetResponse {
     pub notified_agents: usize,
 }
 
-
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct AuditEntryResponse {
@@ -683,7 +671,6 @@ pub struct AuditLogResponse {
     #[ts(type = "number")]
     pub per_page: i64,
 }
-
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
@@ -750,7 +737,6 @@ pub struct PushSubscriptionResponse {
     pub created_at: DateTime<Utc>,
 }
 
-
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct RepoQuotaResponse {
@@ -764,13 +750,11 @@ pub struct RepoQuotaResponse {
     pub updated_at: DateTime<Utc>,
 }
 
-
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct GlobalExcludesResponse {
     pub raw_text: String,
 }
-
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
@@ -982,7 +966,6 @@ pub struct ScheduleCountByAgentResponse {
     pub count: i64,
 }
 
-
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct DashboardOverviewResponse {
@@ -1036,11 +1019,20 @@ pub enum DashboardDestinationResponse {
     #[serde(rename = "host")]
     Host { hostname: String },
     #[serde(rename = "schedule")]
-    Schedule { #[ts(type = "number")] schedule_id: i64 },
+    Schedule {
+        #[ts(type = "number")]
+        schedule_id: i64,
+    },
     #[serde(rename = "repository")]
-    Repository { #[ts(type = "number")] repo_id: i64 },
+    Repository {
+        #[ts(type = "number")]
+        repo_id: i64,
+    },
     #[serde(rename = "activity")]
-    Activity { #[ts(type = "number")] report_id: i64 },
+    Activity {
+        #[ts(type = "number")]
+        report_id: i64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -1116,7 +1108,6 @@ pub struct DashboardRepositoryCapacityResponse {
     pub threshold_estimate: Option<DateTime<Utc>>,
 }
 
-
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct LogEntryResponse {
@@ -1125,7 +1116,6 @@ pub struct LogEntryResponse {
     pub target: String,
     pub message: String,
 }
-
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
@@ -1184,7 +1174,6 @@ pub struct ImportResultResponse {
     pub warnings: Vec<String>,
 }
 
-
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct DeployAgentResponse {
@@ -1201,7 +1190,6 @@ pub struct FetchServiceUnitResponse {
     pub content: Option<String>,
 }
 
-
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct RestoreFilesResponse {
@@ -1211,7 +1199,6 @@ pub struct RestoreFilesResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
 }
-
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
@@ -1228,7 +1215,6 @@ pub struct DryRunFileEntryResponse {
     #[ts(type = "number")]
     pub size: i64,
 }
-
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
@@ -1267,7 +1253,6 @@ pub struct CrossSearchEntryResponse {
     pub archive_name: String,
 }
 
-
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 #[serde(transparent)]
@@ -1276,13 +1261,11 @@ pub struct PreferencesResponse {
     pub inner: serde_json::Value,
 }
 
-
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct RefreshResponse {
     pub session_expires_at: DateTime<Utc>,
 }
-
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]

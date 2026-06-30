@@ -43,8 +43,6 @@ async function navigateToRepo(page: Page, repoName: string, tab?: string): Promi
   }
 }
 
-// ── Repository list ──────────────────────────────────────────────────────────
-
 test('repos page shows all seeded repositories', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/repos')
@@ -52,8 +50,6 @@ test('repos page shows all seeded repositories', async ({ page }) => {
   await expect(page.getByText('database-hourly')).toBeVisible()
   await expect(page.getByText('media-weekly')).toBeVisible()
 })
-
-// ── Repository detail — basic structure ─────────────────────────────────────
 
 test('repo detail page loads without error', async ({ page }) => {
   await loginAsAdmin(page)
@@ -77,8 +73,6 @@ test('repo detail shows archive list with entries', async ({ page }) => {
   })
 })
 
-// ── Unmatched archives ───────────────────────────────────────────────────────
-
 test('server-daily shows unmatched-banner for old-webserver archives', async ({ page }) => {
   await loginAsAdmin(page)
   await navigateToRepo(page, 'server-daily', 'Archives')
@@ -98,8 +92,6 @@ test('database-hourly shows unmatched-banner for legacy-db-prod archives', async
   await navigateToRepo(page, 'database-hourly', 'Archives')
   await expect(page.locator('.unmatched-banner')).toBeVisible({ timeout: 15_000 })
 })
-
-// ── Imported agents ──────────────────────────────────────────────────────────
 
 test('agents page shows imported placeholder agents', async ({ page }) => {
   await loginAsAdmin(page)
@@ -129,8 +121,6 @@ test('imported agents show Merge into... and Adopt action buttons', async ({ pag
   await expect(page.getByRole('button', { name: /merge into/i }).first()).toBeVisible()
   await expect(page.getByRole('button', { name: /adopt/i }).first()).toBeVisible()
 })
-
-// ── Import-state resilience: reset stuck import ──────────────────────────────
 
 test('Cancel Import button appears when repo is in importing state', async ({ page }) => {
   await loginAsAdmin(page)
@@ -199,8 +189,6 @@ test('Cancel Import cancels a live resync under borg lock contention', async ({ 
   }
 })
 
-// ── Full resync ──────────────────────────────────────────────────────────────
-
 test('full resync completes and preserves archives', async ({ page }) => {
   await loginAsAdmin(page)
   await navigateToRepo(page, 'server-daily')
@@ -267,8 +255,6 @@ test('broken repo resync does not navigate to /error page', async ({ page }) => 
     data: { repo_path: '/backup/repos/server-daily' },
   })
 })
-
-// ── Status badge live updates during resync ──────────────────────────────────
 
 test('status badge transitions to importing class when resync starts', async ({ page }) => {
   await loginAsAdmin(page)
@@ -383,8 +369,6 @@ test('status badge shows Enabled and no importing elements after resync complete
   await expect(statusBadge).toHaveText(/enabled/i)
 })
 
-// ── Stale archive pruning ────────────────────────────────────────────────────
-
 test('full resync removes archive deleted from borg', async ({ page }) => {
   await loginAsAdmin(page)
 
@@ -420,8 +404,6 @@ test('full resync removes archive deleted from borg', async ({ page }) => {
   await expect(page.locator('.archive-name', { hasText: toDelete })).not.toBeVisible()
 })
 
-// ── Lock contention ──────────────────────────────────────────────────────────
-
 test('import-status-msg shows waiting-for-lock during borg lock contention', async ({ page }) => {
   // This test blocks borg for LOCK_WAIT_SECS (60 s) then waits for the retry
   // sleep ticker (~5 s into the 30 s wait) — budget at least 2 minutes.
@@ -453,8 +435,6 @@ test('import-status-msg shows waiting-for-lock during borg lock contention', asy
   // After lock release the next retry should complete the resync.
   await expect(resyncBtn).toBeVisible({ timeout: 120_000 })
 })
-
-// ── Archive browsing ─────────────────────────────────────────────────────────
 
 test('clicking an archive opens the file browser', async ({ page }) => {
   await loginAsAdmin(page)

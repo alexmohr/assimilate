@@ -34,8 +34,6 @@ function makeReport(status: 'started' | 'pending' | 'success' | 'cancelled'): ob
   }
 }
 
-// ── Cancel flow ──────────────────────────────────────────────────────────────
-
 test('cancel button is shown when a backup is in progress', async ({ page }) => {
   await loginAsAdmin(page)
   const id = await openFirstSchedule(page)
@@ -103,8 +101,6 @@ test('after cancel the Run Now button is restored on next report poll', async ({
   await expect(page.getByRole('button', { name: 'Run Now' })).toBeVisible({ timeout: 10_000 })
   await expect(page.getByRole('button', { name: 'Cancel Backup' })).not.toBeVisible()
 })
-
-// ── Completion flow ──────────────────────────────────────────────────────────
 
 test('Run Now shows a success toast when the API accepts the request', async ({ page }) => {
   await loginAsAdmin(page)

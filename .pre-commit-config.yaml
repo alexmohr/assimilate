@@ -57,7 +57,7 @@ repos:
     rev: f43fba4e91b39a92b0948633fbbdc080ef4bb3d3
     hooks:
       - id: reuse-annotate
-        args: ['--ignore-paths', 'tests/mock-borg/borg,excludes.common,excludes.local.example']
+        args: ['--ignore-paths', 'tests/mock-borg/borg,excludes.common,excludes.local.example,frontend/src/types/generated']
       - id: no-unicode-check
         # Excluded because it contains literal Unicode banner-fill characters in
         # the no-banner-comment-check args below.

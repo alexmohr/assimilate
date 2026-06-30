@@ -2,6 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+# /// script
+# dependencies = []
+# ///
+
 """Reject typographic / Unicode punctuation inside source-code comments.
 
 Flags em dashes, en dashes, ellipsis characters, and curly quotes when they

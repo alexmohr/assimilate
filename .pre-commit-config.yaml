@@ -68,7 +68,7 @@ repos:
         files: '\.(rs|py|toml|yml|yaml|c|h|kt|kts|sh|proto|fbs|puml|json|xml|ts|tsx|vue|js|mjs|cjs)$|^Dockerfile$'
         args:
           - "--banner-chars==-#*/~_+—–―─━═│┃║┌┐└┘┏┓┗┛╔╗╚╝╭╮╯╰"
-          - --min-length=3
+          - --min-length=4
       - id: validate-cargo-lints
       - id: cargo-fmt
       - id: clippy

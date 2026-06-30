@@ -1,8 +1,0 @@
-Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: Assimilate
-Upstream-Contact: Alexander Mohr <git@mohr.io>
-Source: https://github.com/alexmohr/assimilate
-
-Files: frontend/src/types/generated/*
-Copyright: 2026 Alexander Mohr
-License: Apache-2.0

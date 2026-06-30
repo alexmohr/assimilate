@@ -12,3 +12,8 @@ SPDX-License-Identifier = "Apache-2.0"
 path = [".gitignore", ".dockerignore", ".env.example"]
 SPDX-FileCopyrightText = "2026 Alexander Mohr"
 SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["frontend/src/types/generated/*"]
+SPDX-FileCopyrightText = "2026 Alexander Mohr"
+SPDX-License-Identifier = "Apache-2.0"

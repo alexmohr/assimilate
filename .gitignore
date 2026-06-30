@@ -33,5 +33,9 @@ docs_html/
 
 .opencode
 
+# Python
+__pycache__/
+*.pyc
+
 # Claude Code
 .claude/

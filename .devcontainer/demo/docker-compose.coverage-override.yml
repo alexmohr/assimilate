@@ -4,10 +4,10 @@
 # Overlay for coverage-instrumented e2e runs.
 # 1. Mounts a locally-built (Istanbul-instrumented) frontend dist directory over
 #    the image's /app/static so Playwright tests hit instrumented code.
-# 2. Rebuilds the demo service with a coverage-instrumented server binary
+# 2. Rebuilds the demo service with coverage-instrumented server and agent binaries
 #    (COVERAGE=true build arg to Dockerfile.demo).
 # 3. Mounts a .coverage directory to capture LLVM profraw files from the server
-#    process for backend code coverage.
+#    and agent processes for backend code coverage.
 #
 # Usage (from repo root):
 #   VITE_COVERAGE=true npm --prefix frontend run build
@@ -31,3 +31,24 @@ services:
       - ../../.coverage:/tmp/coverage
     environment:
       LLVM_PROFILE_FILE: /tmp/coverage/server.profraw
+
+  web-server-01:
+    image: assimilate-demo:coverage
+    volumes:
+      - ../../.coverage:/tmp/coverage
+    environment:
+      LLVM_PROFILE_FILE: /tmp/coverage/agent-web-server-01.profraw
+
+  db-server-01:
+    image: assimilate-demo:coverage
+    volumes:
+      - ../../.coverage:/tmp/coverage
+    environment:
+      LLVM_PROFILE_FILE: /tmp/coverage/agent-db-server-01.profraw
+
+  media-store-01:
+    image: assimilate-demo:coverage
+    volumes:
+      - ../../.coverage:/tmp/coverage
+    environment:
+      LLVM_PROFILE_FILE: /tmp/coverage/agent-media-store-01.profraw

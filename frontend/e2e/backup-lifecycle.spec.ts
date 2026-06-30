@@ -163,8 +163,14 @@ test('Run Now triggers a backup that eventually completes', async ({ page }) => 
   await expect(cancelOrRun).toBeVisible({ timeout: 15_000 })
 
   // Wait until the backup is no longer in progress (BackupCompleted resets the button).
-  await expect(page.getByRole('button', { name: 'Run Now' })).toBeVisible({ timeout: 120_000 })
-  await expect(page.getByRole('button', { name: 'Cancel Backup' })).not.toBeVisible()
+  // Check both conditions in the same poll to avoid a race where "Run Now" briefly appears
+  // while "Cancel Backup" is still in the DOM, or a new backup starts immediately after.
+  await expect(async () => {
+    await expect(page.getByRole('button', { name: 'Run Now' })).toBeVisible({ timeout: 500 })
+    await expect(page.getByRole('button', { name: 'Cancel Backup' })).not.toBeVisible({
+      timeout: 500,
+    })
+  }).toPass({ timeout: 120_000 })
 })
 
 test('cancel running backup and verify it is marked cancelled', async ({ page }) => {

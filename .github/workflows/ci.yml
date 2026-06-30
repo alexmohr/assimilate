@@ -265,15 +265,14 @@ jobs:
         uses: docker/setup-buildx-action@v3
       - name: Build demo image (GitHub Actions build cache)
         run: |
-          # Build the coverage-instrumented server image (assimilate-demo:coverage)
-          # used by the demo service, then the non-instrumented image
-          # (assimilate-demo:local) used by all agent/placeholder services.
-          # Using direct `docker buildx build` avoids the path-resolution
-          # ambiguity that `docker buildx bake` has with compose files that use
-          # relative context paths (context: ../.. from the compose file dir).
-          # The cargo-chef dependency layer is keyed on recipe.json and shared
-          # between both builds; cache-to persists it on the first run so
-          # subsequent runs restore it instead of recompiling all dependencies.
+          # Build a single image tagged as both :coverage and :local.
+          # The coverage-override.yml points the demo service at :coverage
+          # (instrumented server binary); all agent/placeholder services use
+          # :local but only execute /app/agent, so they are unaffected by
+          # whether the server binary is instrumented.
+          # A second COVERAGE=false build would break the Docker layer-cache
+          # chain at the ARG COVERAGE declaration, forcing cargo build --release
+          # to run twice for no gain.
           docker buildx build \
             --file .devcontainer/demo/Dockerfile.demo \
             --build-arg COVERAGE=true \
@@ -281,11 +280,6 @@ jobs:
             --cache-to type=gha,mode=max,scope=demo-e2e \
             --load \
             --tag assimilate-demo:coverage \
-            .
-          docker buildx build \
-            --file .devcontainer/demo/Dockerfile.demo \
-            --cache-from type=gha,scope=demo-e2e \
-            --load \
             --tag assimilate-demo:local \
             .
       - name: Start demo environment (with instrumented frontend)
@@ -350,9 +344,10 @@ jobs:
         working-directory: frontend
       - name: Collect backend coverage from Docker
         run: |
-          # Stop agents first so they drop WebSocket connections to the server.
-          # Otherwise the server's graceful shutdown hangs waiting for open WS connections.
-          docker compose $COMPOSE_FILES stop \
+          # Stop agents with --timeout 30 so LLVM atexit handlers can flush profraw files
+          # before docker sends SIGKILL. Also drops WebSocket connections so the server
+          # shuts down cleanly without waiting for open connections.
+          docker compose $COMPOSE_FILES stop --timeout 30 \
             web-server-01 db-server-01 media-store-01 \
             old-webserver legacy-db-prod \
             2>/dev/null || true
@@ -365,19 +360,26 @@ jobs:
           # before the process exits. docker compose stop waits for the container to fully
           # stop (or times out after 30s and sends SIGKILL).
           docker compose $COMPOSE_FILES stop demo --timeout 30 2>/dev/null || true
-          # Copy server binary from the stopped container for llvm-cov.
+          # Copy server binary from the stopped demo container for llvm-cov.
           DEMO_CONTAINER=$(docker compose $COMPOSE_FILES ps -qa demo 2>/dev/null | head -1)
           if [ -n "$DEMO_CONTAINER" ]; then
             docker cp "$DEMO_CONTAINER":/app/server .coverage/server 2>/dev/null || true
-            echo "=== Debug: Coverage directory contents ==="
-            ls -la .coverage/ || echo "coverage directory empty"
           else
-            echo "Demo container not found, skipping backend coverage collection"
+            echo "Demo container not found, skipping server binary copy"
           fi
+          # Copy agent binary from one of the stopped agent containers for llvm-cov.
+          AGENT_CONTAINER=$(docker compose $COMPOSE_FILES ps -qa web-server-01 2>/dev/null | head -1)
+          if [ -n "$AGENT_CONTAINER" ]; then
+            docker cp "$AGENT_CONTAINER":/app/agent .coverage/agent 2>/dev/null || true
+          else
+            echo "Agent container not found, skipping agent binary copy"
+          fi
+          echo "=== Debug: Coverage directory contents ==="
+          ls -la .coverage/ || echo "coverage directory empty"
       - name: Process backend coverage
         run: |
           set -x
-          if [ ! -f .coverage/server.profraw ] || [ ! -f .coverage/server ]; then
+          if [ ! -f .coverage/server.profraw ] || [ ! -f .coverage/server ] || [ ! -f .coverage/agent ]; then
             echo "ERROR: No backend coverage data found"
             echo "=== Debug: Coverage directory ==="
             ls -la .coverage/ 2>/dev/null || echo "no coverage directory"
@@ -396,12 +398,14 @@ jobs:
               SYSROOT=$(rustc --print sysroot)
               LLVM_PROFDATA=$SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-profdata
               LLVM_COV=$SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-cov
-              ls -la /coverage/server.profraw
+              echo "=== Profraw files found ==="
+              find /coverage -name "*.profraw" | xargs ls -la
               echo "=== Running llvm-profdata merge ==="
-              $LLVM_PROFDATA merge -sparse /coverage/server.profraw -o /coverage/docker.profdata 2>&1
+              find /coverage -name "*.profraw" | xargs $LLVM_PROFDATA merge -sparse -o /coverage/docker.profdata 2>&1
               echo "=== Running llvm-cov export ==="
               $LLVM_COV export -format=lcov \
                 /coverage/server \
+                --object /coverage/agent \
                 -instr-profile=/coverage/docker.profdata \
                 --ignore-filename-regex="/usr/local/cargo|/usr/local/rustup" \
                 > /coverage/backend-e2e-raw.info

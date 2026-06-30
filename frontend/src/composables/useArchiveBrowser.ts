@@ -212,7 +212,7 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
         indexing.value = false
         contents.value = entries.filter((e) => e.path !== '.' && e.path !== '..')
       } else {
-        // pending or indexing — show spinner and poll
+        // pending or indexing - show spinner and poll
         indexing.value = true
         contents.value = []
         startPolling(selectedArchive.value.name, path)

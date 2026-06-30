@@ -459,7 +459,7 @@ onMounted(fetchUsers)
       >
         <div class="modal modal-wide">
           <div class="modal-header">
-            <h2>Edit User — {{ editUser?.username }}</h2>
+            <h2>Edit User &#x2014; {{ editUser?.username }}</h2>
             <button
               class="close-btn"
               @click="showEditModal = false"

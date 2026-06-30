@@ -342,7 +342,7 @@ const dedupOptions = computed(() => {
       v-if="loading"
       class="state-msg"
     >
-      Loading trends…
+      Loading trends&#x2026;
     </div>
     <div
       v-else-if="trends.length === 0"

@@ -197,7 +197,7 @@ onMessage<{ hostname: string; repo_id: number; schedule_id: number | null; line:
       const obj = JSON.parse(payload.line) as Record<string, unknown>
       if (obj['type'] === 'archive_progress') return
     } catch {
-      // non-JSON line — show it
+      // non-JSON line - show it
     }
     const sessions = new Map(liveBackupSessions.value)
     for (const [key, session] of sessions) {
@@ -509,7 +509,9 @@ function filterByRun(runId: string): void {
         <div class="live-session-header">
           <span class="live-session-pulse" />
           <span class="live-session-title">Live backup output</span>
-          <span class="live-session-meta">{{ session.hostname }} → {{ session.target_name }}</span>
+          <span class="live-session-meta"
+            >{{ session.hostname }} &#x2192; {{ session.target_name }}</span
+          >
         </div>
         <div class="live-session-output">
           <div
@@ -621,7 +623,7 @@ function filterByRun(runId: string): void {
                   title="Clear run filter"
                   @click="filterRunId = null"
                 >
-                  ✕
+                  &#x2715;
                 </button>
               </div>
             </div>
@@ -891,7 +893,7 @@ function filterByRun(runId: string): void {
                           <dt>Files processed</dt>
                           <dd>{{ expandedDetail.files_processed.toLocaleString() }}</dd>
                           <dt>Borg version</dt>
-                          <dd>{{ expandedDetail.borg_version ?? '—' }}</dd>
+                          <dd>{{ expandedDetail.borg_version ?? '\u2014' }}</dd>
                         </dl>
                       </div>
                       <div
@@ -929,7 +931,7 @@ function filterByRun(runId: string): void {
                   {{ formatDateShort(row.event.created_at) }}
                 </td>
                 <td class="cell-host">
-                  {{ row.event.hostname ?? '—' }}
+                  {{ row.event.hostname ?? '\u2014' }}
                 </td>
                 <td class="cell-target cell-message">
                   {{ row.event.message }}
@@ -941,7 +943,7 @@ function filterByRun(runId: string): void {
                     >{{ row.event.event_type }}</span
                   >
                 </td>
-                <td class="cell-dur">—</td>
+                <td class="cell-dur">&#x2014;</td>
               </tr>
               <tr
                 v-if="row.kind === 'system' && row.event && expandedSystemId === row.event.id"

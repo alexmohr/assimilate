@@ -135,7 +135,7 @@ function navigateToActivity(status?: string): void {
       v-if="loading"
       class="state-msg"
     >
-      Loading…
+      Loading&#x2026;
     </div>
     <div
       v-else

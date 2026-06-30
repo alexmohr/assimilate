@@ -130,7 +130,7 @@ function handleKeydown(event: KeyboardEvent): void {
             :value="null"
             disabled
           >
-            — select archive —
+            &#x2014; select archive &#x2014;
           </option>
           <option
             v-for="archive in archives"

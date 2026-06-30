@@ -773,7 +773,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
               {{ agent.hostname }}
             </dd>
             <dt>Display Name</dt>
-            <dd>{{ agent.display_name ?? '—' }}</dd>
+            <dd>{{ agent.display_name ?? '\u2014' }}</dd>
             <dt>Status</dt>
             <dd>
               <span
@@ -785,15 +785,15 @@ watch(wsStatus, (newStatus, oldStatus) => {
             </dd>
             <dt>Agent Version</dt>
             <dd class="mono">
-              {{ agent.agent_version ?? '—' }}
+              {{ agent.agent_version ?? '\u2014' }}
             </dd>
             <dt>Revision</dt>
             <dd class="mono">
-              {{ agent.agent_git_sha ?? '—' }}
+              {{ agent.agent_git_sha ?? '\u2014' }}
             </dd>
             <dt>Built</dt>
             <dd class="mono">
-              {{ agent.agent_build_time ?? '—' }}
+              {{ agent.agent_build_time ?? '\u2014' }}
             </dd>
             <dt>Created</dt>
             <dd>{{ formatDate(agent.created_at ?? null, 'Never') }}</dd>
@@ -1272,8 +1272,8 @@ watch(wsStatus, (newStatus, oldStatus) => {
           <h3 class="info-title">Hostname Aliases</h3>
           <p class="field-hint">
             Glob patterns that match archive hostnames to this agent during repository import. Only
-            affects future discoveries — existing imported agents are not retroactively reassigned.
-            Use "Merge into" on an imported agent to move its historical archives.
+            affects future discoveries &#x2014; existing imported agents are not retroactively
+            reassigned. Use "Merge into" on an imported agent to move its historical archives.
           </p>
           <div
             v-if="hostnamePatterns.length > 0"
@@ -1483,7 +1483,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
               class="btn btn-sm btn-ghost"
               @click="sortAscending = !sortAscending"
             >
-              {{ sortAscending ? '↑ Oldest' : '↓ Newest' }}
+              {{ sortAscending ? '\u2191 Oldest' : '\u2193 Newest' }}
             </button>
           </div>
         </div>
@@ -1555,7 +1555,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
             <span
               v-if="r.status === 'success'"
               class="result-link-hint"
-              >View archives →</span
+              >View archives &#x2192;</span
             >
             <span
               v-else-if="r.error_message || (r.warnings ?? []).length > 0"

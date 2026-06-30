@@ -264,7 +264,7 @@ describe('ReposView', () => {
     expect(wrapper.text()).toContain('Never')
   })
 
-  it('shows "Importing…" badge when repo is importing without progress', async () => {
+  it('shows "Importing\u2026" badge when repo is importing without progress', async () => {
     const importingRepo: RepoWithStats = {
       ...baseRepo,
       id: 4,
@@ -284,7 +284,7 @@ describe('ReposView', () => {
     })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Importing…')
+    expect(wrapper.text()).toContain('Importing\u2026')
   })
 
   it('shows "Importing N/M" badge when repo is importing with progress', async () => {
@@ -311,7 +311,7 @@ describe('ReposView', () => {
     expect(wrapper.text()).toContain('Importing 42/100')
   })
 
-  it('shows "Indexing…" badge when repo is in the indexing phase without progress', async () => {
+  it('shows "Indexing\u2026" badge when repo is in the indexing phase without progress', async () => {
     const indexingRepo: RepoWithStats = {
       ...baseRepo,
       id: 4,
@@ -320,7 +320,7 @@ describe('ReposView', () => {
       archive_count: 0,
       importing: true,
       import_total: 0,
-      import_status_message: 'Indexing archive contents…',
+      import_status_message: 'Indexing archive contents\u2026',
     }
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
       if (url === '/repos/stats') return Promise.resolve({ data: [indexingRepo] })
@@ -332,7 +332,7 @@ describe('ReposView', () => {
     })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Indexing…')
+    expect(wrapper.text()).toContain('Indexing\u2026')
     expect(wrapper.text()).not.toContain('Importing')
   })
 
@@ -346,7 +346,7 @@ describe('ReposView', () => {
       importing: true,
       import_progress: 10,
       import_total: 50,
-      import_status_message: 'Indexing archive contents…',
+      import_status_message: 'Indexing archive contents\u2026',
     }
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
       if (url === '/repos/stats') return Promise.resolve({ data: [indexingRepo] })

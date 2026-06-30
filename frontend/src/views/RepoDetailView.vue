@@ -733,7 +733,8 @@ async function saveEdit(): Promise<void> {
       ssh_port: editForm.ssh_port,
     })
     if (!connRes.data.ssh_ok) {
-      editError.value = connRes.data.error ?? 'Cannot reach repository host — changes not saved'
+      editError.value =
+        connRes.data.error ?? 'Cannot reach repository host \u2014 changes not saved'
       return
     }
     await apiClient.put(`/repos/${repoId.value}`, {
@@ -1166,7 +1167,7 @@ async function resetImport(): Promise<void> {
                     by {{ repo.last_op_by }}
                   </template>
                   <template v-if="repo.last_op_at">
-                    — {{ relativeTime(repo.last_op_at ?? '') }}
+                    &#x2014; {{ relativeTime(repo.last_op_at ?? '') }}
                   </template>
                 </template>
                 <template v-else>Never</template>
@@ -1410,7 +1411,7 @@ async function resetImport(): Promise<void> {
               :disabled="borgConsoleLoading || !borgConsoleCommand.trim()"
               @click="runBorgCommand"
             >
-              {{ borgConsoleLoading ? 'Running…' : 'Run' }}
+              {{ borgConsoleLoading ? 'Running\u2026' : 'Run' }}
             </button>
           </div>
           <div class="console-hints">
@@ -1499,7 +1500,7 @@ async function resetImport(): Promise<void> {
                 v-if="repo?.relocation_pending"
                 class="danger-hint"
               >
-                Relocation already pending — will apply on the next backup run.
+                Relocation already pending &#x2014; will apply on the next backup run.
               </span>
             </div>
           </div>
@@ -1533,8 +1534,9 @@ async function resetImport(): Promise<void> {
               <span class="danger-heading">Remove Repository</span>
               <span class="danger-desc"
                 >Remove this repository from the UI and database. All associated schedules will be
-                <strong>disabled</strong> and their repository link removed — they must be fixed
-                manually. Reports will be deleted. The repository data on disk is NOT touched.</span
+                <strong>disabled</strong> and their repository link removed &#x2014; they must be
+                fixed manually. Reports will be deleted. The repository data on disk is NOT
+                touched.</span
               >
             </div>
             <button
@@ -1812,7 +1814,7 @@ async function resetImport(): Promise<void> {
               class="state-msg state-msg-sm"
             >
               <BaseSpinner size="sm" />
-              Indexing archive contents — this only happens once…
+              Indexing archive contents &#x2014; this only happens once&#x2026;
             </div>
             <div
               v-else-if="contentsError"
@@ -2020,7 +2022,9 @@ async function resetImport(): Promise<void> {
                     ? 'Last backup had a warning'
                     : 'Last backup failed'
                 }}
-                <span class="toggle-arrow">{{ scheduleExpandedError === s.id ? '▴' : '▾' }}</span>
+                <span class="toggle-arrow">{{
+                  scheduleExpandedError === s.id ? '\u25B4' : '\u25BE'
+                }}</span>
               </button>
               <pre
                 v-if="scheduleExpandedError === s.id"
@@ -2159,7 +2163,7 @@ async function resetImport(): Promise<void> {
       >
         <div class="dialog">
           <div class="dialog-header">
-            <h2 class="dialog-title">⚠️ DESTROY Repository From Disk</h2>
+            <h2 class="dialog-title">&#x26A0;&#xFE0F; DESTROY Repository From Disk</h2>
             <button
               class="close-btn"
               @click="showDeleteDialog = false"

@@ -16,7 +16,7 @@ test('storage trend widget shows deduplicated chart section', async ({ page }) =
   await page.goto('/')
   const trendPanel = page.locator('.panel').filter({ hasText: 'Storage Trend' })
   await expect(trendPanel).toBeVisible({ timeout: 10_000 })
-  // The deduplicated metric label is only rendered when hasData (≥2 trend entries)
+  // The deduplicated metric label is only rendered when hasData (>=2 trend entries)
   await expect(trendPanel.locator('.metric-label', { hasText: 'Deduplicated' })).toBeVisible({
     timeout: 10_000,
   })

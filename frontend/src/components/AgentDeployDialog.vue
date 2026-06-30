@@ -215,7 +215,7 @@ async function submitDeploy(): Promise<void> {
                 placeholder="Leave empty to use SSH key"
               />
               <span class="field-hint"
-                >Optional — authenticate with password instead of the server's SSH key</span
+                >Optional &#x2014; authenticate with password instead of the server's SSH key</span
               >
             </div>
             <div class="field">
@@ -268,7 +268,7 @@ async function submitDeploy(): Promise<void> {
                   :disabled="fetchServiceLoading || !deployForm.ssh_host"
                   @click="loadExistingServiceUnit"
                 >
-                  {{ fetchServiceLoading ? 'Loading…' : 'Load from remote' }}
+                  {{ fetchServiceLoading ? 'Loading\u2026' : 'Load from remote' }}
                 </button>
               </div>
               <textarea

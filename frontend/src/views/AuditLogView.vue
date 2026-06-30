@@ -259,7 +259,7 @@ onMounted(fetchAuditLog)
           field="ip_address"
         >
           <template #body="{ data }">
-            <span class="cell-ip mono">{{ data.ip_address ?? '—' }}</span>
+            <span class="cell-ip mono">{{ data.ip_address ?? '\u2014' }}</span>
           </template>
         </Column>
         <Column

@@ -88,7 +88,7 @@ async function agentCard(page: Page): ReturnType<Page['locator']> {
   return card
 }
 
-// ── No binary available (the regression case) ────────────────────────────────
+// No binary available (the regression case)
 
 test('no upgrade button when no agent binary is available on server', async ({ page }) => {
   await loginAsAdmin(page)
@@ -98,7 +98,7 @@ test('no upgrade button when no agent binary is available on server', async ({ p
   await expect(page.getByRole('button', { name: 'Upgrade' })).not.toBeVisible()
 })
 
-// ── Version-string comparison ─────────────────────────────────────────────────
+// Version-string comparison
 
 test('no upgrade button when agent version matches available binary', async ({ page }) => {
   await loginAsAdmin(page)
@@ -124,7 +124,7 @@ test('upgrade button shown when a newer binary is available', async ({ page }) =
   await expect(page.getByRole('button', { name: 'Upgrade' })).toBeVisible({ timeout: 5_000 })
 })
 
-// ── Commit-count comparison ───────────────────────────────────────────────────
+// Commit-count comparison
 
 test('no upgrade button when agent commit count matches server', async ({ page }) => {
   await loginAsAdmin(page)
@@ -150,7 +150,7 @@ test('upgrade button shown when agent commit count is behind server', async ({ p
   await expect(page.getByRole('button', { name: 'Upgrade' })).toBeVisible({ timeout: 5_000 })
 })
 
-// ── Undeployed agent ──────────────────────────────────────────────────────────
+// Undeployed agent
 
 test('deploy button shown for agent with no version', async ({ page }) => {
   await loginAsAdmin(page)

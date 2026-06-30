@@ -259,7 +259,7 @@ const hasData = computed((): boolean => entries.value.length >= 2)
       v-if="loading"
       class="state-msg"
     >
-      Loading…
+      Loading&#x2026;
     </div>
     <div
       v-else-if="!hasData"

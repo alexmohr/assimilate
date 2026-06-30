@@ -237,7 +237,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
       v-if="loading"
       class="state-msg"
     >
-      Loading…
+      Loading&#x2026;
     </div>
     <template v-else>
       <div class="cal-grid">

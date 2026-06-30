@@ -26,7 +26,7 @@ const expanded = ref(false)
     >
       <AlertCircle :size="12" />
       {{ label }}
-      <span class="toggle-arrow">{{ expanded ? '▴' : '▾' }}</span>
+      <span class="toggle-arrow">{{ expanded ? '\u25B4' : '\u25BE' }}</span>
     </button>
     <pre
       v-if="expanded"

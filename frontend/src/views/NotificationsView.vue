@@ -785,7 +785,7 @@ onMounted(() => {
                 title="Edit events"
                 @click="openEventsModal(channel.id)"
               >
-                ✎
+                &#x270E;
               </button>
             </div>
             <div class="meta-row">
@@ -796,7 +796,7 @@ onMounted(() => {
                 title="Edit scope"
                 @click="openScopeModal(channel.id)"
               >
-                ✎
+                &#x270E;
               </button>
             </div>
           </div>
@@ -841,7 +841,7 @@ onMounted(() => {
                   {{ d.status }}
                 </span>
               </td>
-              <td class="mono">{{ d.error_message ?? '—' }}</td>
+              <td class="mono">{{ d.error_message ?? '\u2014' }}</td>
               <td>{{ formatDate(d.attempted_at) }}</td>
             </tr>
           </tbody>
@@ -1343,7 +1343,7 @@ onMounted(() => {
       >
         <div class="dialog">
           <div class="dialog-header">
-            <h2 class="dialog-title">Events — {{ eventsModalChannel()!.name }}</h2>
+            <h2 class="dialog-title">Events &#x2014; {{ eventsModalChannel()!.name }}</h2>
             <button
               class="close-btn"
               @click="showEventsModal = false"
@@ -1391,7 +1391,7 @@ onMounted(() => {
       >
         <div class="dialog">
           <div class="dialog-header">
-            <h2 class="dialog-title">Scope — {{ scopeModalChannel()!.name }}</h2>
+            <h2 class="dialog-title">Scope &#x2014; {{ scopeModalChannel()!.name }}</h2>
             <button
               class="close-btn"
               @click="showScopeModal = false"

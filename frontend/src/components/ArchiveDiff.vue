@@ -93,7 +93,7 @@ async function compare(): Promise<void> {
             :value="null"
             disabled
           >
-            — select —
+            &#x2014; select &#x2014;
           </option>
           <option
             v-for="archive in archives"
@@ -114,7 +114,7 @@ async function compare(): Promise<void> {
             :value="null"
             disabled
           >
-            — select —
+            &#x2014; select &#x2014;
           </option>
           <option
             v-for="archive in archives"

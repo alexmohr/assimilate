@@ -3,7 +3,7 @@
 
 import { expect, loginAsAdmin, test } from './fixtures'
 
-// ── Unauthenticated ──────────────────────────────────────────────────────────
+// Unauthenticated
 
 test('login page loads', async ({ page }) => {
   await page.goto('/login')
@@ -15,7 +15,7 @@ test('unauthenticated users are redirected to login', async ({ page }) => {
   await expect(page).toHaveURL(/\/login/)
 })
 
-// ── Authentication ───────────────────────────────────────────────────────────
+// Authentication
 
 test('admin can log in and reach the dashboard', async ({ page }) => {
   await loginAsAdmin(page)
@@ -34,7 +34,7 @@ test('logout redirects to login', async ({ page }) => {
   await expect(page).toHaveURL(/\/login/, { timeout: 10_000 })
 })
 
-// ── Dashboard renders without errors ────────────────────────────────────────
+// Dashboard renders without errors
 
 test('dashboard does not redirect to /error', async ({ page }) => {
   await loginAsAdmin(page)
@@ -51,7 +51,7 @@ test('dashboard renders content panels', async ({ page }) => {
   await expect(page.locator('h2').first()).toBeVisible({ timeout: 10_000 })
 })
 
-// ── Navigation: every main route loads without throwing ─────────────────────
+// Navigation: every main route loads without throwing
 
 const routes = [
   { path: '/agents', label: 'agents list' },
@@ -72,7 +72,7 @@ for (const { path, label } of routes) {
   })
 }
 
-// ── Admin-only routes ────────────────────────────────────────────────────────
+// Admin-only routes
 
 const adminRoutes = [
   { path: '/system', label: 'system settings' },
@@ -92,7 +92,7 @@ for (const { path, label } of adminRoutes) {
   })
 }
 
-// ── Demo data is visible ─────────────────────────────────────────────────────
+// Demo data is visible
 
 test('agents page lists seeded agents', async ({ page }) => {
   await loginAsAdmin(page)

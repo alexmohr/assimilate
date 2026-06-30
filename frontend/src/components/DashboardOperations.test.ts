@@ -171,7 +171,7 @@ describe('dashboard operational components', () => {
     })
 
     expect(wrapper.text()).toContain('Running relative:2026-06-01T00:00:00Z')
-    expect(wrapper.text()).toMatch(/8 targets\s+· 2 offline/)
+    expect(wrapper.text()).toMatch(/8 targets\s+\u00B7 2 offline/)
     expect(wrapper.findAll('.work-row')).toHaveLength(2)
   })
 

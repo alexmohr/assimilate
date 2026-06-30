@@ -35,7 +35,7 @@ defineProps<{
       >
         <span class="running-dot" />
         <strong>{{ operation.schedule_name }}</strong>
-        <span>{{ operation.hostname }} · {{ operation.repo_name }}</span>
+        <span>{{ operation.hostname }} &#x00B7; {{ operation.repo_name }}</span>
         <time>Running {{ relativeTime(operation.started_at) }}</time>
       </RouterLink>
       <RouterLink
@@ -49,7 +49,7 @@ defineProps<{
         <span>
           {{ schedule.target_count }} targets
           <template v-if="schedule.offline_target_count > 0">
-            · {{ schedule.offline_target_count }} offline
+            &#x00B7; {{ schedule.offline_target_count }} offline
           </template>
         </span>
         <time>{{ relativeTime(schedule.next_run_at) }}</time>

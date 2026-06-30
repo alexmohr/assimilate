@@ -360,7 +360,7 @@ onMounted(loadRepos)
             :value="null"
             disabled
           >
-            — select a repository —
+            &#x2014; select a repository &#x2014;
           </option>
           <option
             v-for="repo in repos"
@@ -570,7 +570,7 @@ onMounted(loadRepos)
           class="panel browser-panel"
         >
           <div class="panel-header">
-            <span class="panel-title">Files — {{ selectedArchive.name }}</span>
+            <span class="panel-title">Files &#x2014; {{ selectedArchive.name }}</span>
           </div>
 
           <div class="breadcrumb">
@@ -594,7 +594,7 @@ onMounted(loadRepos)
             class="state-msg"
           >
             <BaseSpinner size="sm" />
-            Indexing archive contents — this only happens once…
+            Indexing archive contents &#x2014; this only happens once&#x2026;
           </div>
           <div
             v-else-if="contentsError"
@@ -667,7 +667,7 @@ onMounted(loadRepos)
                 />
               </template>
               <template #body="{ data }">
-                <span class="td-size">{{ data.isDir ? '—' : formatBytes(data.size) }}</span>
+                <span class="td-size">{{ data.isDir ? '\u2014' : formatBytes(data.size) }}</span>
               </template>
             </Column>
             <Column

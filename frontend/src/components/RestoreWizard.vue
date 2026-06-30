@@ -182,7 +182,7 @@ async function execute(): Promise<void> {
           :value="null"
           disabled
         >
-          — choose archive —
+          &#x2014; choose archive &#x2014;
         </option>
         <option
           v-for="archive in archives"
@@ -275,7 +275,7 @@ async function execute(): Promise<void> {
           {{
             restoreMethod === 'download'
               ? 'Download to browser'
-              : `Agent restore → ${hostname}:${targetPath}`
+              : `Agent restore \u2192 ${hostname}:${targetPath}`
           }}
         </dd>
       </dl>

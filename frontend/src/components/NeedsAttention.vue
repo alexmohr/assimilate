@@ -82,7 +82,7 @@ async function dismiss(finding: DashboardFinding): Promise<void> {
           <strong>{{ findingLabel(finding) }}</strong>
           <span class="finding-context">
             <template v-if="finding.schedule_name">{{ finding.schedule_name }}</template>
-            <template v-if="finding.schedule_name && finding.repo_name"> · </template>
+            <template v-if="finding.schedule_name && finding.repo_name"> &#x00B7; </template>
             <template v-if="finding.repo_name">{{ finding.repo_name }}</template>
           </span>
           <span class="finding-reason">{{ finding.reason }}</span>
@@ -105,7 +105,7 @@ async function dismiss(finding: DashboardFinding): Promise<void> {
             title="Dismiss"
             @click="dismiss(finding)"
           >
-            ✕
+            &#x2715;
           </button>
         </div>
       </div>

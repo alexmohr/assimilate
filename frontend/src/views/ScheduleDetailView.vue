@@ -776,7 +776,7 @@ watch(activeTab, (tab) => {
           class="tab-btn tab-btn-link"
           @click="goToLogs"
         >
-          Logs ↗
+          Logs &#x2197;
         </button>
       </div>
 
@@ -822,7 +822,9 @@ watch(activeTab, (tab) => {
                   @click.stop="showAgentDropdown = !showAgentDropdown"
                 >
                   <span class="multi-select-label">{{ multiSelectLabel() }}</span>
-                  <span class="multi-select-arrow">{{ showAgentDropdown ? '▲' : '▼' }}</span>
+                  <span class="multi-select-arrow">{{
+                    showAgentDropdown ? '\u25B2' : '\u25BC'
+                  }}</span>
                 </button>
                 <div
                   v-if="showAgentDropdown"
@@ -882,7 +884,7 @@ watch(activeTab, (tab) => {
                       title="Move up"
                       @click="moveAgentUp(idx)"
                     >
-                      ▲
+                      &#x25B2;
                     </button>
                     <button
                       type="button"
@@ -891,7 +893,7 @@ watch(activeTab, (tab) => {
                       title="Move down"
                       @click="moveAgentDown(idx)"
                     >
-                      ▼
+                      &#x25BC;
                     </button>
                   </div>
                 </div>
@@ -945,7 +947,7 @@ watch(activeTab, (tab) => {
             <h3 class="info-title">Schedule Info</h3>
             <div class="info-row">
               <span class="info-label">Targets</span>
-              <span class="info-value">{{ targetHostnames() || '—' }}</span>
+              <span class="info-value">{{ targetHostnames() || '\u2014' }}</span>
             </div>
             <div class="info-row">
               <span class="info-label">On Failure</span>
@@ -1001,7 +1003,9 @@ watch(activeTab, (tab) => {
                   @click.stop="showAgentDropdown = !showAgentDropdown"
                 >
                   <span class="multi-select-label">{{ multiSelectLabel() }}</span>
-                  <span class="multi-select-arrow">{{ showAgentDropdown ? '▲' : '▼' }}</span>
+                  <span class="multi-select-arrow">{{
+                    showAgentDropdown ? '\u25B2' : '\u25BC'
+                  }}</span>
                 </button>
                 <div
                   v-if="showAgentDropdown"
@@ -1073,7 +1077,7 @@ watch(activeTab, (tab) => {
                       title="Move up"
                       @click="moveAgentUp(idx)"
                     >
-                      ▲
+                      &#x25B2;
                     </button>
                     <button
                       type="button"
@@ -1082,7 +1086,7 @@ watch(activeTab, (tab) => {
                       title="Move down"
                       @click="moveAgentDown(idx)"
                     >
-                      ▼
+                      &#x25BC;
                     </button>
                   </div>
                 </div>
@@ -1468,7 +1472,7 @@ watch(activeTab, (tab) => {
                   <span
                     v-else
                     class="no-error"
-                    >—</span
+                    >&#x2014;</span
                   >
                 </td>
               </tr>

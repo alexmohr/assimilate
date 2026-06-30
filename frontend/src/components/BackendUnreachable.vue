@@ -31,7 +31,7 @@ const { backendUnreachable, retryCountdown, checking, retryNow } = useBackendSta
           :disabled="checking"
           @click="retryNow()"
         >
-          {{ checking ? 'Checking…' : 'Retry now' }}
+          {{ checking ? 'Checking\u2026' : 'Retry now' }}
         </button>
       </div>
     </div>

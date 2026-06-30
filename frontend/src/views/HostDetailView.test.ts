@@ -159,7 +159,7 @@ async function openSchedulesTab(wrapper: VueWrapper<ComponentPublicInstance>): P
   await flushPromises()
 }
 
-describe('HostDetailView — backups tab', () => {
+describe('HostDetailView \u2014 backups tab', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
@@ -354,7 +354,7 @@ describe('HostDetailView — backups tab', () => {
   })
 })
 
-describe('HostDetailView — schedules tab', () => {
+describe('HostDetailView \u2014 schedules tab', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })

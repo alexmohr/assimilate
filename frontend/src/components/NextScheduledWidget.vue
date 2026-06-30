@@ -107,7 +107,7 @@ onUnmounted(() => {
       v-if="loading"
       class="state-msg"
     >
-      Loading…
+      Loading&#x2026;
     </div>
     <div
       v-else-if="items.length === 0"
@@ -125,7 +125,7 @@ onUnmounted(() => {
         class="scheduled-item"
         @click="navigateToSchedule(item)"
       >
-        <span class="scheduled-icon">⏱</span>
+        <span class="scheduled-icon">&#x23F1;</span>
         <div class="scheduled-info">
           <span class="scheduled-repo">{{ item.repo_name }}</span>
           <span class="scheduled-time">{{ item.datetime }}</span>

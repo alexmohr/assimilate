@@ -434,7 +434,7 @@ async function fetchOverview(): Promise<void> {
           <span class="stat-value stat-value-sm">
             <template v-if="activeBackups.length > 0">Active</template>
             <template v-else>
-              {{ summary?.next_backup_at ? relativeTime(summary.next_backup_at) : '—' }}
+              {{ summary?.next_backup_at ? relativeTime(summary.next_backup_at) : '\u2014' }}
             </template>
           </span>
         </div>
@@ -647,7 +647,7 @@ async function fetchOverview(): Promise<void> {
               <h2 class="panel-title">Storage Breakdown</h2>
             </div>
             <p class="chart-desc">
-              Current on-disk usage per repository — deduplicated (unique chunks across all
+              Current on-disk usage per repository &#x2014; deduplicated (unique chunks across all
               archives).
             </p>
             <div class="ring-container">

@@ -91,7 +91,7 @@ async function confirmMerge(): Promise<void> {
               :key="c.id"
               :value="c.hostname"
             >
-              {{ c.hostname }}{{ c.display_name ? ` — ${c.display_name}` : '' }}
+              {{ c.hostname }}{{ c.display_name ? ` \u2014 ${c.display_name}` : '' }}
             </option>
           </select>
         </div>

@@ -167,17 +167,17 @@ const darkPairs: ColorPair[] = [
 
 const knownViolations: ColorPair[] = [
   {
-    name: 'VIOLATION light: success (#16a34a) on base (#ffffff) — ~3.3:1, fix: darken --success to #15803d',
+    name: 'VIOLATION light: success (#16a34a) on base (#ffffff) \u2014 ~3.3:1, fix: darken --success to #15803d',
     foreground: light.success,
     background: light.bgBase,
   },
   {
-    name: 'VIOLATION dark: white text on accent (#3b82f6) — ~3.7:1, fix: darken --accent or use dark text',
+    name: 'VIOLATION dark: white text on accent (#3b82f6) \u2014 ~3.7:1, fix: darken --accent or use dark text',
     foreground: dark.textOnAccent,
     background: dark.accent,
   },
   {
-    name: 'VIOLATION dark: white text on danger (#f87171) — ~2.8:1, fix: darken --danger or use dark text',
+    name: 'VIOLATION dark: white text on danger (#f87171) \u2014 ~2.8:1, fix: darken --danger or use dark text',
     foreground: dark.textOnAccent,
     background: dark.danger,
   },
@@ -201,7 +201,7 @@ describe('contrastRatio utility', () => {
   })
 })
 
-describe('WCAG AA contrast >= 4.5:1 — light theme', () => {
+describe('WCAG AA contrast >= 4.5:1 \u2014 light theme', () => {
   for (const pair of lightPairs) {
     it(pair.name, () => {
       const ratio = contrastRatio(pair.foreground, pair.background)
@@ -213,7 +213,7 @@ describe('WCAG AA contrast >= 4.5:1 — light theme', () => {
   }
 })
 
-describe('WCAG AA contrast >= 4.5:1 — dark theme', () => {
+describe('WCAG AA contrast >= 4.5:1 \u2014 dark theme', () => {
   for (const pair of darkPairs) {
     it(pair.name, () => {
       const ratio = contrastRatio(pair.foreground, pair.background)
@@ -225,7 +225,7 @@ describe('WCAG AA contrast >= 4.5:1 — dark theme', () => {
   }
 })
 
-describe('known WCAG AA violations — tracked bugs, fix --success and dark --accent/--danger', () => {
+describe('known WCAG AA violations \u2014 tracked bugs, fix --success and dark --accent/--danger', () => {
   for (const pair of knownViolations) {
     it.fails(pair.name, () => {
       const ratio = contrastRatio(pair.foreground, pair.background)

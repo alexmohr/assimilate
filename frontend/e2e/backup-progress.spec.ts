@@ -164,7 +164,7 @@ test.describe('backup progress card', () => {
     // Let the elapsed timer fire at least once (1 s) before sending progress data.
     await page.waitForTimeout(1_100)
 
-    // 2 GB of 4 GB ≈ 50% done → estimated remaining ≈ elapsed (non-zero).
+    // 2 GB of 4 GB ~ 50% done -> estimated remaining ~ elapsed (non-zero).
     sendWsMsg(ws!, 'BackupLog', {
       hostname: 'web-server-01',
       schedule_id: SCHEDULE_ID,
@@ -197,7 +197,7 @@ test.describe('backup progress card', () => {
       line: makeArchiveProgressLine(99, 1_000, '/other/file'),
     })
 
-    // Progress placeholder should still be visible — message was for a different schedule.
+    // Progress placeholder should still be visible - message was for a different schedule.
     await page.waitForTimeout(300)
     await expect(page.locator('.live-log-empty')).toBeVisible()
   })
@@ -214,7 +214,7 @@ test.describe('backup progress card', () => {
       line: makeArchiveProgressLine(99, 1_000, '/other/file'),
     })
 
-    // Progress placeholder should still be visible — null schedule_id falls back to repo_id filter.
+    // Progress placeholder should still be visible - null schedule_id falls back to repo_id filter.
     await page.waitForTimeout(300)
     await expect(page.locator('.live-log-empty')).toBeVisible()
   })
@@ -243,7 +243,7 @@ test.describe('backup progress card', () => {
 // Both scenarios are exercised by loading the page while a backup is already running
 // (the UI sets backupRunning via the reports API) and then verifying that the subsequent
 // BackupStarted WS message and a BackupLog archive_progress line produce the correct UI.
-test.describe('backup progress card — mid-backup page load', () => {
+test.describe('backup progress card \u2014 mid-backup page load', () => {
   let ws: WebSocketRoute | null = null
   const STARTED_AT = new Date(Date.now() - 30_000).toISOString()
 
@@ -322,7 +322,7 @@ test.describe('backup progress card — mid-backup page load', () => {
       line: makeArchiveProgressLine(100, 1_000_000, '/home/user/file.txt'),
     })
 
-    // The started_at was 30 s ago, so elapsed should be ≥ 25 s.
+    // The started_at was 30 s ago, so elapsed should be >= 25 s.
     await expect(page.locator('.progress-body')).toContainText('Elapsed', { timeout: 3_000 })
     const elapsedText = await page.locator('.progress-row').first().textContent()
     const match = /(\d+)s/.exec(elapsedText ?? '')
@@ -470,7 +470,7 @@ async function mockActivityLogApis(page: Page): Promise<void> {
   )
 }
 
-test.describe('activity log — live backup log', () => {
+test.describe('activity log \u2014 live backup log', () => {
   let ws: WebSocketRoute | null = null
 
   test.beforeEach(async ({ page }) => {
@@ -495,7 +495,7 @@ test.describe('activity log — live backup log', () => {
 
     sendWsMsg(ws!, 'BackupStarted', { hostname: 'web-server-01', target_name: REPO_NAME })
 
-    // Card not visible yet — needs at least one non-progress log line.
+    // Card not visible yet - needs at least one non-progress log line.
     await page.waitForTimeout(300)
     await expect(page.locator('.live-session-card')).not.toBeVisible()
 
@@ -528,7 +528,7 @@ test.describe('activity log — live backup log', () => {
     })
 
     await page.waitForTimeout(400)
-    // archive_progress lines are filtered out — no card should appear.
+    // archive_progress lines are filtered out - no card should appear.
     await expect(page.locator('.live-session-card')).not.toBeVisible()
   })
 

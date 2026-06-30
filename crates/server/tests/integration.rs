@@ -168,6 +168,7 @@ async fn build_test_app(pool: PgPool) -> Router {
             get(server::api::stats::storage_breakdown),
         )
         .route("/api/audit-log", get(server::api::audit::list_audit_log))
+        .route("/api/logs", get(server::api::logs::get_logs))
         .route(
             "/api/notifications/channels",
             get(server::api::notifications::list_channels)
@@ -1998,6 +1999,15 @@ fn non_admin_delete_request(uri: &str) -> Request<Body> {
         .unwrap()
 }
 
+fn non_admin_get_request(uri: &str) -> Request<Body> {
+    Request::builder()
+        .uri(uri)
+        .method("GET")
+        .header("cookie", format!("session={NON_ADMIN_SESSION_ID}"))
+        .body(Body::empty())
+        .unwrap()
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn delete_agent_forbidden_for_non_admin(pool: sqlx::PgPool) {
     create_non_admin_user_and_session(&pool).await;
@@ -2055,6 +2065,32 @@ async fn delete_agent_allowed_for_admin(pool: sqlx::PgPool) {
     assert_eq!(
         remaining, 0,
         "the agent should be removed by an admin delete"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn get_logs_forbidden_for_non_admin(pool: sqlx::PgPool) {
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool).await;
+
+    let resp = oneshot(&mut app, non_admin_get_request("/api/logs")).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "a non-admin user must not be able to read logs"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn get_logs_allowed_for_admin(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool).await;
+
+    let resp = oneshot(&mut app, get_request("/api/logs")).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "an admin user must be able to read logs"
     );
 }
 

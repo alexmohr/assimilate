@@ -7,7 +7,7 @@ use axum::{
 };
 use serde::Deserialize;
 
-use super::auth::AuthUser;
+use super::auth::RequireAdmin;
 use crate::{AppState, error::ApiError, log_buffer::LogEntry};
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -34,11 +34,12 @@ pub struct LogQuery {
     responses(
         (status = 200, description = "Log entries (newest first)", body = Vec<LogEntry>),
         (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden -- admin only"),
     )
 )]
 pub async fn get_logs(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    _admin: RequireAdmin,
     Query(query): Query<LogQuery>,
 ) -> Result<Json<Vec<LogEntry>>, ApiError> {
     let limit = query.limit.unwrap_or(200);

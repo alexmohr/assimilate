@@ -26,6 +26,7 @@ pub struct LoginResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct MeResponse {
+    #[ts(type = "number")]
     pub id: i64,
     pub username: String,
     pub role: String,
@@ -43,6 +44,7 @@ pub struct RefreshSessionResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct UserResponse {
+    #[ts(type = "number")]
     pub id: i64,
     pub username: String,
     pub role: String,
@@ -62,6 +64,7 @@ pub struct UserListResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct AgentResponse {
+    #[ts(type = "number")]
     pub id: i64,
     pub hostname: String,
     pub display_name: Option<String>,
@@ -79,6 +82,7 @@ pub struct AgentResponse {
     pub is_imported: bool,
     pub is_hidden: bool,
     pub supports_restart: bool,
+    #[ts(type = "number | null")]
     pub owner_id: Option<i64>,
     pub visibility: String,
     pub restart_unavailable_reason: Option<String>,
@@ -114,7 +118,9 @@ pub struct DeleteAgentArchivesResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct HostnamePatternResponse {
+    #[ts(type = "number")]
     pub id: i64,
+    #[ts(type = "number")]
     pub agent_id: i64,
     pub pattern: String,
     pub created_at: DateTime<Utc>,
@@ -125,6 +131,7 @@ pub struct HostnamePatternResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct RepoResponse {
+    #[ts(type = "number")]
     pub id: i64,
     pub name: String,
     pub repo_path: String,
@@ -134,6 +141,7 @@ pub struct RepoResponse {
     pub compression: String,
     pub encryption: String,
     pub enabled: bool,
+    #[ts(type = "number | null")]
     pub owner_id: Option<i64>,
     pub visibility: String,
     pub sync_schedule: Option<String>,
@@ -149,6 +157,7 @@ pub struct RepoListResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct RepoWithStatsResponse {
+    #[ts(type = "number")]
     pub id: i64,
     pub name: String,
     pub repo_path: String,
@@ -164,16 +173,23 @@ pub struct RepoWithStatsResponse {
     pub import_progress: i32,
     pub import_total: i32,
     pub import_status_message: Option<String>,
+    #[ts(type = "number | null")]
     pub owner_id: Option<i64>,
     pub visibility: String,
     pub sync_schedule: Option<String>,
     pub last_synced_at: Option<DateTime<Utc>>,
+    #[ts(type = "number")]
     pub archive_count: i64,
     pub last_backup_at: Option<DateTime<Utc>>,
+    #[ts(type = "number")]
     pub total_original_size: i64,
+    #[ts(type = "number")]
     pub total_compressed_size: i64,
+    #[ts(type = "number")]
     pub total_deduplicated_size: i64,
+    #[ts(type = "number")]
     pub agent_count: i64,
+    #[ts(type = "number")]
     pub unmatched_count: i64,
     pub relocation_pending: bool,
     pub last_op_kind: Option<String>,
@@ -241,7 +257,9 @@ pub struct MigrateEncryptionResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct ScheduleResponse {
+    #[ts(type = "number")]
     pub id: i64,
+    #[ts(type = "number | null")]
     pub repo_id: Option<i64>,
     pub name: String,
     pub schedule_type: String,
@@ -263,6 +281,7 @@ pub struct ScheduleResponse {
     pub post_backup_commands: String,
     pub execution_mode: String,
     pub on_failure: String,
+    #[ts(type = "number | null")]
     pub owner_id: Option<i64>,
     pub visibility: String,
     pub target_hostnames: Vec<String>,
@@ -277,6 +296,7 @@ pub struct ScheduleListResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct ScheduleTargetResponse {
+    #[ts(type = "number")]
     pub agent_id: i64,
     pub execution_order: i32,
 }
@@ -293,6 +313,7 @@ pub struct ScheduleBackupSourcesResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct PerAgentBackupSourcesResponse {
+    #[ts(type = "number")]
     pub agent_id: i64,
     pub paths: Vec<String>,
 }
@@ -300,6 +321,7 @@ pub struct PerAgentBackupSourcesResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct PerAgentExcludePatternsResponse {
+    #[ts(type = "number")]
     pub agent_id: i64,
     pub raw_text: String,
 }
@@ -307,6 +329,7 @@ pub struct PerAgentExcludePatternsResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct PerAgentCommandsResponse {
+    #[ts(type = "number")]
     pub agent_id: i64,
     pub pre_backup_commands: String,
     pub post_backup_commands: String,
@@ -317,17 +340,26 @@ pub struct PerAgentCommandsResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct ReportResponse {
+    #[ts(type = "number")]
     pub id: i64,
+    #[ts(type = "number")]
     pub agent_id: i64,
+    #[ts(type = "number")]
     pub repo_id: i64,
+    #[ts(type = "number | null")]
     pub schedule_id: Option<i64>,
     pub started_at: DateTime<Utc>,
     pub finished_at: DateTime<Utc>,
     pub status: String,
+    #[ts(type = "number")]
     pub original_size: i64,
+    #[ts(type = "number")]
     pub compressed_size: i64,
+    #[ts(type = "number")]
     pub deduplicated_size: i64,
+    #[ts(type = "number")]
     pub files_processed: i64,
+    #[ts(type = "number")]
     pub duration_secs: i64,
     pub error_message: Option<String>,
     pub warnings: Vec<String>,
@@ -354,7 +386,9 @@ pub struct ArchiveEntryResponse {
     pub start: String,
     pub hostname: String,
     pub comment: String,
+    #[ts(type = "number")]
     pub original_size: i64,
+    #[ts(type = "number")]
     pub deduplicated_size: i64,
     pub matched: Option<bool>,
     pub agent_hostname: Option<String>,
@@ -363,9 +397,13 @@ pub struct ArchiveEntryResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct ArchiveInfoResponse {
+    #[ts(type = "number")]
     pub original_size: i64,
+    #[ts(type = "number")]
     pub compressed_size: i64,
+    #[ts(type = "number")]
     pub deduplicated_size: i64,
+    #[ts(type = "number")]
     pub nfiles: i64,
     pub duration: f64,
     pub start: String,
@@ -376,8 +414,10 @@ pub struct ArchiveInfoResponse {
 #[ts(export)]
 pub struct ContentEntryResponse {
     #[serde(rename = "type")]
+    #[ts(rename = "type")]
     pub entry_type: String,
     pub path: String,
+    #[ts(type = "number")]
     pub size: i64,
     pub mtime: String,
     pub mode: String,
@@ -394,6 +434,7 @@ pub struct ContentsResponse {
 #[ts(export)]
 pub struct ArchiveIndexStatusResponse {
     pub status: String,
+    #[ts(type = "number | null")]
     pub file_count: Option<i64>,
     pub error: Option<String>,
 }
@@ -411,8 +452,11 @@ pub struct DiffResponse {
     pub added: Vec<String>,
     pub removed: Vec<String>,
     pub modified: Vec<String>,
+    #[ts(type = "number")]
     pub total_changes: usize,
+    #[ts(type = "number")]
     pub limit: usize,
+    #[ts(type = "number")]
     pub offset: usize,
 }
 
@@ -421,6 +465,7 @@ pub struct DiffResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct TagResponse {
+    #[ts(type = "number")]
     pub id: i64,
     pub name: String,
     pub color: String,
@@ -436,10 +481,13 @@ pub struct TagListResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct ArchiveTagResponse {
+    #[ts(type = "number")]
     pub id: i64,
+    #[ts(type = "number")]
     pub repo_id: i64,
     pub archive_name: String,
     pub tag: String,
+    #[ts(type = "number | null")]
     pub created_by: Option<i64>,
     pub created_at: DateTime<Utc>,
 }
@@ -449,7 +497,9 @@ pub struct ArchiveTagResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct ApiTokenResponse {
+    #[ts(type = "number")]
     pub id: i64,
+    #[ts(type = "number")]
     pub user_id: i64,
     pub name: String,
     pub last_used_at: Option<DateTime<Utc>>,
@@ -480,7 +530,9 @@ pub struct DeleteApiTokenResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct TunnelResponse {
+    #[ts(type = "number")]
     pub id: i64,
+    #[ts(type = "number")]
     pub agent_id: i64,
     pub ssh_host: String,
     pub ssh_user: String,
@@ -496,6 +548,7 @@ pub struct TunnelResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct GroupResponse {
+    #[ts(type = "number")]
     pub id: i64,
     pub name: String,
     pub description: Option<String>,
@@ -517,6 +570,7 @@ pub struct GroupMembersResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct RoleResponse {
+    #[ts(type = "number")]
     pub id: i64,
     pub name: String,
     pub created_at: DateTime<Utc>,
@@ -543,7 +597,9 @@ pub struct RoleListResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct RepoPermissionResponse {
+    #[ts(type = "number")]
     pub user_id: i64,
+    #[ts(type = "number")]
     pub repo_id: i64,
     pub can_view: bool,
     pub can_backup: bool,
@@ -563,15 +619,19 @@ pub struct SshPublicKeyResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct SettingsResponse {
+    #[ts(type = "number")]
     pub retention_days: i64,
     pub timezone: String,
+    #[ts(type = "number")]
     pub borg_query_timeout_secs: u64,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct DatabaseStorageResponse {
+    #[ts(type = "number")]
     pub database_bytes: i64,
+    #[ts(type = "number")]
     pub other_bytes: i64,
     pub relations: Vec<DatabaseRelationSizeResponse>,
 }
@@ -580,6 +640,7 @@ pub struct DatabaseStorageResponse {
 #[ts(export)]
 pub struct DatabaseRelationSizeResponse {
     pub relation_name: String,
+    #[ts(type = "number")]
     pub total_bytes: i64,
 }
 
@@ -596,7 +657,9 @@ pub struct VersionResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct SystemResetResponse {
+    #[ts(type = "number")]
     pub cancelled_backups: u64,
+    #[ts(type = "number")]
     pub notified_agents: usize,
 }
 
@@ -605,11 +668,14 @@ pub struct SystemResetResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct AuditEntryResponse {
+    #[ts(type = "number")]
     pub id: i64,
+    #[ts(type = "number | null")]
     pub user_id: Option<i64>,
     pub username: String,
     pub action: String,
     pub target_type: Option<String>,
+    #[ts(type = "number | null")]
     pub target_id: Option<i64>,
     #[ts(type = "any")]
     pub details: Option<serde_json::Value>,
@@ -621,8 +687,11 @@ pub struct AuditEntryResponse {
 #[ts(export)]
 pub struct AuditLogResponse {
     pub items: Vec<AuditEntryResponse>,
+    #[ts(type = "number")]
     pub total: i64,
+    #[ts(type = "number")]
     pub page: i64,
+    #[ts(type = "number")]
     pub per_page: i64,
 }
 
@@ -631,6 +700,7 @@ pub struct AuditLogResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct NotificationChannelResponse {
+    #[ts(type = "number")]
     pub id: i64,
     pub name: String,
     pub channel_type: String,
@@ -646,10 +716,14 @@ pub struct NotificationChannelResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct NotificationRuleResponse {
+    #[ts(type = "number")]
     pub id: i64,
+    #[ts(type = "number")]
     pub channel_id: i64,
     pub event_type: String,
+    #[ts(type = "number | null")]
     pub repo_id: Option<i64>,
+    #[ts(type = "number | null")]
     pub agent_id: Option<i64>,
     pub enabled: bool,
 }
@@ -657,7 +731,9 @@ pub struct NotificationRuleResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct NotificationDeliveryResponse {
+    #[ts(type = "number")]
     pub id: i64,
+    #[ts(type = "number")]
     pub channel_id: i64,
     pub event_type: String,
     #[ts(type = "any")]
@@ -677,7 +753,9 @@ pub struct VapidKeyResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct PushSubscriptionResponse {
+    #[ts(type = "number")]
     pub id: i64,
+    #[ts(type = "number")]
     pub user_id: i64,
     pub endpoint: String,
     pub user_agent: Option<String>,
@@ -689,8 +767,11 @@ pub struct PushSubscriptionResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct RepoQuotaResponse {
+    #[ts(type = "number")]
     pub repo_id: i64,
+    #[ts(type = "number | null")]
     pub warn_bytes: Option<i64>,
+    #[ts(type = "number | null")]
     pub critical_bytes: Option<i64>,
     pub enabled: bool,
     pub updated_at: DateTime<Utc>,
@@ -709,29 +790,45 @@ pub struct GlobalExcludesResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct DashboardSummaryResponse {
+    #[ts(type = "number")]
     pub online_agents: usize,
+    #[ts(type = "number")]
     pub total_agents: i64,
+    #[ts(type = "number")]
     pub total_repos: i64,
     pub last_backup_at: Option<DateTime<Utc>>,
     pub next_backup_at: Option<DateTime<Utc>>,
+    #[ts(type = "number | null")]
     pub last_backup_schedule_id: Option<i64>,
+    #[ts(type = "number | null")]
     pub last_backup_repo_id: Option<i64>,
     pub last_backup_archive_name: Option<String>,
+    #[ts(type = "number | null")]
     pub next_backup_schedule_id: Option<i64>,
+    #[ts(type = "number")]
     pub active_schedules: i64,
+    #[ts(type = "number")]
     pub total_schedules: i64,
+    #[ts(type = "number")]
     pub total_storage_bytes: i64,
+    #[ts(type = "number")]
     pub success_30d: i64,
+    #[ts(type = "number")]
     pub failed_30d: i64,
+    #[ts(type = "number")]
     pub total_30d: i64,
     pub storage_by_repo: Vec<StorageRepoEntryResponse>,
     pub last_failure_at: Option<DateTime<Utc>>,
     pub last_warning_at: Option<DateTime<Utc>>,
+    #[ts(type = "number | null")]
     pub last_failure_schedule_id: Option<i64>,
+    #[ts(type = "number | null")]
     pub last_warning_schedule_id: Option<i64>,
     pub last_failure_message: Option<String>,
     pub last_warning_message: Option<String>,
+    #[ts(type = "number | null")]
     pub last_failure_repo_id: Option<i64>,
+    #[ts(type = "number | null")]
     pub last_warning_repo_id: Option<i64>,
     pub last_failure_repo_name: Option<String>,
     pub last_warning_repo_name: Option<String>,
@@ -743,7 +840,9 @@ pub struct DashboardSummaryResponse {
 #[ts(export)]
 pub struct StorageRepoEntryResponse {
     pub name: String,
+    #[ts(type = "number")]
     pub compressed_size: i64,
+    #[ts(type = "number")]
     pub deduplicated_size: i64,
     pub percentage: f64,
 }
@@ -751,7 +850,9 @@ pub struct StorageRepoEntryResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct HealthSummaryResponse {
+    #[ts(type = "number")]
     pub repo_id: i64,
+    #[ts(type = "number")]
     pub schedule_id: i64,
     pub hostname: String,
     pub target_name: String,
@@ -770,16 +871,24 @@ pub type HealthResponse = HealthSummaryResponse;
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct ActivityEntryResponse {
+    #[ts(type = "number")]
     pub id: i64,
+    #[ts(type = "number")]
     pub repo_id: i64,
+    #[ts(type = "number | null")]
     pub schedule_id: Option<i64>,
     pub hostname: String,
     pub status: String,
     pub archive_name: Option<String>,
+    #[ts(type = "number")]
     pub original_size: i64,
+    #[ts(type = "number")]
     pub compressed_size: i64,
+    #[ts(type = "number")]
     pub deduplicated_size: i64,
+    #[ts(type = "number")]
     pub files_processed: i64,
+    #[ts(type = "number")]
     pub duration_secs: i64,
     pub error_message: Option<String>,
     pub started_at: DateTime<Utc>,
@@ -789,8 +898,10 @@ pub struct ActivityEntryResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct SystemEventResponse {
+    #[ts(type = "number")]
     pub id: i64,
     pub event_type: String,
+    #[ts(type = "number | null")]
     pub agent_id: Option<i64>,
     pub message: String,
     pub created_at: DateTime<Utc>,
@@ -807,13 +918,17 @@ pub struct CalendarDayResponse {
 #[ts(export)]
 pub struct CalendarEventResponse {
     #[serde(rename = "type")]
+    #[ts(rename = "type")]
     pub event_type: String,
     pub status: String,
     pub repo_name: String,
     pub hostname: String,
     pub time: String,
+    #[ts(type = "number | null")]
     pub report_id: Option<i64>,
+    #[ts(type = "number | null")]
     pub repo_id: Option<i64>,
+    #[ts(type = "number | null")]
     pub schedule_id: Option<i64>,
     pub archive_name: Option<String>,
     pub error_message: Option<String>,
@@ -823,11 +938,16 @@ pub struct CalendarEventResponse {
 #[ts(export)]
 pub struct TrendEntryResponse {
     pub date: String,
+    #[ts(type = "number")]
     pub original_size: i64,
+    #[ts(type = "number")]
     pub compressed_size: i64,
+    #[ts(type = "number")]
     pub deduplicated_size: i64,
     pub dedup_ratio: f64,
+    #[ts(type = "number")]
     pub file_count: i64,
+    #[ts(type = "number")]
     pub duration_seconds: i64,
 }
 
@@ -835,8 +955,11 @@ pub struct TrendEntryResponse {
 #[ts(export)]
 pub struct StorageTrendEntryResponse {
     pub date: String,
+    #[ts(type = "number")]
     pub original_size: i64,
+    #[ts(type = "number")]
     pub compressed_size: i64,
+    #[ts(type = "number | null")]
     pub deduplicated_size: Option<i64>,
 }
 
@@ -844,10 +967,14 @@ pub struct StorageTrendEntryResponse {
 #[ts(export)]
 pub struct StorageTrendByRepoEntryResponse {
     pub date: String,
+    #[ts(type = "number")]
     pub repo_id: i64,
     pub repo_name: String,
+    #[ts(type = "number")]
     pub original_size: i64,
+    #[ts(type = "number")]
     pub compressed_size: i64,
+    #[ts(type = "number | null")]
     pub deduplicated_size: Option<i64>,
 }
 
@@ -855,14 +982,18 @@ pub struct StorageTrendByRepoEntryResponse {
 #[ts(export)]
 pub struct StorageStatResponse {
     pub name: String,
+    #[ts(type = "number")]
     pub compressed_size: i64,
+    #[ts(type = "number")]
     pub deduplicated_size: i64,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct ScheduleCountByAgentResponse {
+    #[ts(type = "number")]
     pub agent_id: i64,
+    #[ts(type = "number")]
     pub count: i64,
 }
 
@@ -882,10 +1013,15 @@ pub struct DashboardOverviewResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct DashboardSummaryCountersResponse {
+    #[ts(type = "number")]
     pub protected_hosts: i64,
+    #[ts(type = "number")]
     pub eligible_hosts: i64,
+    #[ts(type = "number")]
     pub needs_attention: usize,
+    #[ts(type = "number")]
     pub running_operations: usize,
+    #[ts(type = "number")]
     pub total_storage_bytes: i64,
 }
 
@@ -897,8 +1033,10 @@ pub struct DashboardFindingResponse {
     pub severity: String,
     pub status: String,
     pub hostname: Option<String>,
+    #[ts(type = "number | null")]
     pub schedule_id: Option<i64>,
     pub schedule_name: Option<String>,
+    #[ts(type = "number | null")]
     pub repo_id: Option<i64>,
     pub repo_name: Option<String>,
     pub reason: String,
@@ -924,10 +1062,13 @@ pub enum DashboardDestinationResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct DashboardProtectionCoverageResponse {
+    #[ts(type = "number")]
     pub protected_hosts: i64,
+    #[ts(type = "number")]
     pub eligible_hosts: i64,
     pub protected_agent_links: Vec<DashboardAgentLinkResponse>,
     pub unassigned_agents: Vec<DashboardAgentLinkResponse>,
+    #[ts(type = "number")]
     pub never_succeeded_targets: i64,
     pub never_succeeded_agents: Vec<DashboardAgentLinkResponse>,
     pub disabled_only_agents: Vec<DashboardAgentLinkResponse>,
@@ -936,6 +1077,7 @@ pub struct DashboardProtectionCoverageResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct DashboardAgentLinkResponse {
+    #[ts(type = "number")]
     pub agent_id: i64,
     pub hostname: String,
 }
@@ -943,11 +1085,14 @@ pub struct DashboardAgentLinkResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct DashboardOperationResponse {
+    #[ts(type = "number")]
     pub report_id: i64,
     pub status: String,
     pub hostname: String,
+    #[ts(type = "number")]
     pub schedule_id: i64,
     pub schedule_name: String,
+    #[ts(type = "number")]
     pub repo_id: i64,
     pub repo_name: String,
     pub started_at: DateTime<Utc>,
@@ -957,24 +1102,32 @@ pub struct DashboardOperationResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct DashboardUpcomingScheduleResponse {
+    #[ts(type = "number")]
     pub schedule_id: i64,
     pub schedule_name: String,
+    #[ts(type = "number")]
     pub repo_id: i64,
     pub repo_name: String,
     pub next_run_at: DateTime<Utc>,
+    #[ts(type = "number")]
     pub target_count: i64,
+    #[ts(type = "number")]
     pub offline_target_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct DashboardRepositoryCapacityResponse {
+    #[ts(type = "number")]
     pub repo_id: i64,
     pub repo_name: String,
+    #[ts(type = "number")]
     pub deduplicated_size: i64,
+    #[ts(type = "number | null")]
     pub quota_bytes: Option<i64>,
     pub quota_utilization_percent: Option<f64>,
     pub quota_status: String,
+    #[ts(type = "number | null")]
     pub storage_change_bytes: Option<i64>,
     pub threshold_estimate: Option<DateTime<Utc>>,
 }
@@ -1073,6 +1226,7 @@ pub struct FetchServiceUnitResponse {
 #[ts(export)]
 pub struct RestoreFilesResponse {
     pub success: bool,
+    #[ts(type = "number")]
     pub files_restored: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
@@ -1084,6 +1238,7 @@ pub struct RestoreFilesResponse {
 #[ts(export)]
 pub struct DryRunResponse {
     pub files: Vec<DryRunFileEntryResponse>,
+    #[ts(type = "number")]
     pub total_size: i64,
 }
 
@@ -1091,6 +1246,7 @@ pub struct DryRunResponse {
 #[ts(export)]
 pub struct DryRunFileEntryResponse {
     pub path: String,
+    #[ts(type = "number")]
     pub size: i64,
 }
 
@@ -1100,8 +1256,11 @@ pub struct DryRunFileEntryResponse {
 #[ts(export)]
 pub struct SearchResponse {
     pub items: Vec<SearchEntry>,
+    #[ts(type = "number")]
     pub total_matched: usize,
+    #[ts(type = "number")]
     pub limit: usize,
+    #[ts(type = "number")]
     pub offset: usize,
 }
 
@@ -1109,8 +1268,11 @@ pub struct SearchResponse {
 #[ts(export)]
 pub struct CrossSearchResponse {
     pub items: Vec<CrossSearchEntryResponse>,
+    #[ts(type = "number")]
     pub total_archives_searched: usize,
+    #[ts(type = "number")]
     pub limit: usize,
+    #[ts(type = "number")]
     pub offset: usize,
 }
 
@@ -1118,9 +1280,11 @@ pub struct CrossSearchResponse {
 #[ts(export)]
 pub struct CrossSearchEntryResponse {
     pub path: String,
+    #[ts(type = "number")]
     pub size: i64,
     pub mtime: DateTime<Utc>,
     #[serde(rename = "type")]
+    #[ts(rename = "type")]
     pub entry_type: String,
     pub archive_name: String,
 }
@@ -1196,7 +1360,9 @@ pub struct ArchiveTagListResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct AgentTagAssociationResponse {
+    #[ts(type = "number")]
     pub tag_id: i64,
+    #[ts(type = "number")]
     pub agent_id: i64,
     pub created_at: DateTime<Utc>,
 }
@@ -1204,7 +1370,9 @@ pub struct AgentTagAssociationResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct RepoTagAssociationResponse {
+    #[ts(type = "number")]
     pub tag_id: i64,
+    #[ts(type = "number")]
     pub repo_id: i64,
     pub created_at: DateTime<Utc>,
 }
@@ -1224,6 +1392,7 @@ pub struct RepoTagAssociationListResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct AgentTagEntryResponse {
+    #[ts(type = "number")]
     pub agent_id: i64,
     pub tag_name: String,
     pub tag_color: String,
@@ -1232,6 +1401,7 @@ pub struct AgentTagEntryResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct RepoTagEntryResponse {
+    #[ts(type = "number")]
     pub repo_id: i64,
     pub tag_name: String,
     pub tag_color: String,
@@ -1240,14 +1410,19 @@ pub struct RepoTagEntryResponse {
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct RescanResponse {
+    #[ts(type = "number")]
     pub matched: u64,
+    #[ts(type = "number")]
     pub remaining_unmatched: u64,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct SyncResponse {
+    #[ts(type = "number")]
     pub imported: u64,
+    #[ts(type = "number")]
     pub removed: u64,
+    #[ts(type = "number")]
     pub duration_secs: u64,
 }

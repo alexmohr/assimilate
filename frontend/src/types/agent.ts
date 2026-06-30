@@ -3,4 +3,4 @@
 
 import type { AgentResponse } from './generated'
 
-export type AgentRow = Omit<AgentResponse, 'id'> & { id: number }
+export type AgentRow = AgentResponse

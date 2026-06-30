@@ -3,10 +3,7 @@
 
 import type { TunnelResponse } from './generated'
 
-export type SshTunnel = Omit<TunnelResponse, 'id' | 'agent_id' | 'status'> & {
-  id: number
-  agent_id: number
-}
+export type SshTunnel = Omit<TunnelResponse, 'status'>
 export type TunnelStatus =
   | 'connected'
   | 'disconnected'

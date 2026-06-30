@@ -56,67 +56,28 @@ export type DashboardFinding = {
   destination: DashboardDestination
 }
 
-export type DashboardHostLink = Omit<DashboardAgentLinkResponse, 'agent_id'> & { agent_id: number }
+export type DashboardHostLink = DashboardAgentLinkResponse
 
-export type DashboardOperation = Omit<
-  DashboardOperationResponse,
-  'report_id' | 'schedule_id' | 'repo_id'
-> & {
-  report_id: number
-  schedule_id: number
-  repo_id: number
+export type DashboardOperation = Omit<DashboardOperationResponse, 'destination'> & {
   destination: DashboardDestination
 }
 
-export type DashboardUpcomingSchedule = Omit<
-  DashboardUpcomingScheduleResponse,
-  'schedule_id' | 'repo_id' | 'target_count'
-> & {
-  schedule_id: number
-  repo_id: number
-  target_count: number
-}
+export type DashboardUpcomingSchedule = DashboardUpcomingScheduleResponse
 
 export type DashboardQuotaStatus = 'unconfigured' | 'healthy' | 'warning' | 'critical'
 
 export type DashboardRepositoryCapacity = Omit<
   DashboardRepositoryCapacityResponse,
-  'repo_id' | 'deduplicated_size' | 'quota_bytes' | 'storage_change_bytes'
+  'quota_bytes' | 'storage_change_bytes' | 'quota_status'
 > & {
-  repo_id: number
-  deduplicated_size: number
   quota_bytes: number | null
   storage_change_bytes: number | null
   quota_status: DashboardQuotaStatus
 }
 
-export type DashboardSummaryCounters = Omit<
-  DashboardSummaryCountersResponse,
-  'protected_hosts' | 'eligible_hosts' | 'total_storage_bytes'
-> & {
-  protected_hosts: number
-  eligible_hosts: number
-  total_storage_bytes: number
-}
+export type DashboardSummaryCounters = DashboardSummaryCountersResponse
 
-export type DashboardProtectionCoverage = Omit<
-  DashboardProtectionCoverageResponse,
-  | 'protected_hosts'
-  | 'eligible_hosts'
-  | 'never_succeeded_targets'
-  | 'protected_agent_links'
-  | 'unassigned_agents'
-  | 'never_succeeded_agents'
-  | 'disabled_only_agents'
-> & {
-  protected_hosts: number
-  eligible_hosts: number
-  never_succeeded_targets: number
-  protected_agent_links: DashboardHostLink[]
-  unassigned_agents: DashboardHostLink[]
-  never_succeeded_agents: DashboardHostLink[]
-  disabled_only_agents: DashboardHostLink[]
-}
+export type DashboardProtectionCoverage = DashboardProtectionCoverageResponse
 
 export type DashboardOverview = {
   summary: DashboardSummaryCounters

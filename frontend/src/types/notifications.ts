@@ -8,29 +8,22 @@ import type {
   PushSubscriptionResponse,
 } from './generated'
 
-export type NotificationChannel = Omit<NotificationChannelResponse, 'id' | 'scope' | 'config'> & {
-  id: number
+export type NotificationChannel = Omit<NotificationChannelResponse, 'scope' | 'config'> & {
   scope: ChannelScope
   config: ChannelConfig
 }
 export type NotificationRule = Omit<
   NotificationRuleResponse,
-  'id' | 'channel_id' | 'repo_id' | 'agent_id' | 'event_type'
+  'repo_id' | 'agent_id' | 'event_type'
 > & {
-  id: number
-  channel_id: number
   repo_id: number | null
   agent_id: number | null
   event_type: NotificationEventType
 }
-export type NotificationDelivery = Omit<
-  NotificationDeliveryResponse,
-  'id' | 'channel_id' | 'status'
-> & { id: number; channel_id: number; status: 'pending' | 'sent' | 'failed' }
-export type PushSubscriptionInfo = Omit<PushSubscriptionResponse, 'id' | 'user_id'> & {
-  id: number
-  user_id: number
+export type NotificationDelivery = Omit<NotificationDeliveryResponse, 'status'> & {
+  status: 'pending' | 'sent' | 'failed'
 }
+export type PushSubscriptionInfo = PushSubscriptionResponse
 
 export type ChannelType = 'email' | 'webhook' | 'web_push'
 

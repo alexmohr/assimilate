@@ -120,7 +120,7 @@ const breadcrumbs = computed<BreadcrumbSegment[]>(() => {
 })
 
 interface DisplayEntry {
-  entry_type: string
+  type: string
   path: string
   size: number
   mtime: string
@@ -132,18 +132,18 @@ interface DisplayEntry {
 const browserEntries = computed<DisplayEntry[]>(() => {
   const currentDir = currentPath.value.replace(/^\//, '')
   const dirList = contents.value
-    .filter((e) => e.entry_type === 'd' && e.path !== currentDir)
+    .filter((e) => e.type === 'd' && e.path !== currentDir)
     .sort((a, b) => a.path.localeCompare(b.path))
   const fileList = contents.value
-    .filter((e) => e.entry_type !== 'd')
+    .filter((e) => e.type !== 'd')
     .sort((a, b) => a.path.localeCompare(b.path))
 
   const entries: DisplayEntry[] = []
 
-  const currentEntry = contents.value.find((e) => e.entry_type === 'd' && e.path === currentDir)
+  const currentEntry = contents.value.find((e) => e.type === 'd' && e.path === currentDir)
   if (currentEntry) {
     entries.push({
-      entry_type: currentEntry.entry_type,
+      type: currentEntry.type,
       path: currentEntry.path,
       size: Number(currentEntry.size),
       mtime: currentEntry.mtime,
@@ -153,7 +153,7 @@ const browserEntries = computed<DisplayEntry[]>(() => {
     })
   } else if (currentPath.value === '/') {
     entries.push({
-      entry_type: 'd',
+      type: 'd',
       path: '',
       size: 0,
       mtime: '',
@@ -166,7 +166,7 @@ const browserEntries = computed<DisplayEntry[]>(() => {
   if (currentPath.value !== '/') {
     const parentPath = currentPath.value.replace(/\/[^/]+$/, '') || '/'
     entries.push({
-      entry_type: 'd',
+      type: 'd',
       path: parentPath,
       size: 0,
       mtime: '',
@@ -179,13 +179,13 @@ const browserEntries = computed<DisplayEntry[]>(() => {
   return [
     ...entries,
     ...[...dirList, ...fileList].map((e) => ({
-      entry_type: e.entry_type,
+      type: e.type,
       path: e.path,
       size: Number(e.size),
       mtime: e.mtime,
       mode: e.mode,
       displayName: e.path.split('/').pop() ?? e.path,
-      isDir: e.entry_type === 'd',
+      isDir: e.type === 'd',
     })),
   ]
 })
@@ -284,7 +284,7 @@ function downloadEntry(entry: ContentEntryResponse): void {
   if (selectedRepoId.value === null || !selectedArchive.value) return
   const archiveName = encodeURIComponent(selectedArchive.value.name)
   const encodedPath = encodeURIComponent(entry.path)
-  const isDir = entry.entry_type === 'd'
+  const isDir = entry.type === 'd'
   const url = isDir
     ? `/api/repos/${selectedRepoId.value}/archives/${archiveName}/export?path=${encodedPath}`
     : `/api/repos/${selectedRepoId.value}/archives/${archiveName}/extract?path=${encodedPath}`

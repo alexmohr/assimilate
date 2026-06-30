@@ -40,6 +40,7 @@ impl From<String> for OperationId {
 #[ts(export)]
 pub struct SearchEntry {
     pub path: String,
+    #[ts(type = "number")]
     pub size: i64,
     pub mtime: DateTime<Utc>,
     pub entry_type: String,

@@ -3,4 +3,4 @@
 
 import type { TagResponse } from './generated'
 
-export type TagRow = Omit<TagResponse, 'id'> & { id: number }
+export type TagRow = TagResponse

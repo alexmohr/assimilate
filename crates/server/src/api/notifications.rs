@@ -164,7 +164,8 @@ pub async fn list_channels(
     State(state): State<AppState>,
     _admin: RequireAdmin,
 ) -> Result<Json<Vec<NotificationChannel>>, ApiError> {
-    let channels: Vec<NotificationChannel> = sqlx::query_as(
+    let channels: Vec<NotificationChannel> = sqlx::query_as!(
+        NotificationChannel,
         "SELECT id, name, channel_type, config, enabled, scope, created_at, updated_at FROM \
          notification_channels ORDER BY id",
     )
@@ -194,7 +195,8 @@ pub async fn create_channel(
 
     let enabled = req.enabled.unwrap_or(true);
     let scope = req.scope.unwrap_or(serde_json::json!({}));
-    let channel: NotificationChannel = sqlx::query_as(
+    let channel: NotificationChannel = sqlx::query_as!(
+        NotificationChannel,
         r#"
         INSERT INTO notification_channels
             (name, channel_type, config, enabled, scope, created_at, updated_at)
@@ -202,12 +204,12 @@ pub async fn create_channel(
         RETURNING id, name, channel_type, config, enabled, scope,
             created_at, updated_at
         "#,
+        &req.name,
+        &req.channel_type.to_string(),
+        &config,
+        enabled,
+        &scope,
     )
-    .bind(&req.name)
-    .bind(req.channel_type)
-    .bind(&config)
-    .bind(enabled)
-    .bind(&scope)
     .fetch_one(&state.pool)
     .await?;
 
@@ -230,11 +232,12 @@ pub async fn update_channel(
         let (effective_type, effective_config) = match (&req.channel_type, &req.config) {
             (Some(ct), Some(cfg)) => (*ct, cfg.clone()),
             _ => {
-                let existing: NotificationChannel = sqlx::query_as(
+                let existing: NotificationChannel = sqlx::query_as!(
+                    NotificationChannel,
                     "SELECT id, name, channel_type, config, enabled, scope, created_at, \
                      updated_at FROM notification_channels WHERE id = $1",
+                    id,
                 )
-                .bind(id)
                 .fetch_optional(&state.pool)
                 .await?
                 .ok_or_else(|| ApiError::NotFound(format!("channel {id} not found")))?;
@@ -247,25 +250,26 @@ pub async fn update_channel(
         validate_channel_config(effective_type, &effective_config)?;
     }
 
-    let channel: NotificationChannel = sqlx::query_as(
+    let channel: NotificationChannel = sqlx::query_as!(
+        NotificationChannel,
         r#"
         UPDATE notification_channels
-        SET name = COALESCE($1, name),
-            channel_type = COALESCE($2, channel_type),
-            config = COALESCE($3, config),
-            enabled = COALESCE($4, enabled),
-            scope = COALESCE($5, scope),
+        SET name = COALESCE($1::text, name),
+            channel_type = COALESCE($2::text, channel_type),
+            config = COALESCE($3::jsonb, config),
+            enabled = COALESCE($4::bool, enabled),
+            scope = COALESCE($5::jsonb, scope),
             updated_at = NOW()
         WHERE id = $6
         RETURNING id, name, channel_type, config, enabled, scope, created_at, updated_at
         "#,
+        req.name.as_deref(),
+        req.channel_type.map(|c| c.to_string()),
+        req.config.as_ref(),
+        req.enabled,
+        req.scope.as_ref(),
+        id,
     )
-    .bind(&req.name)
-    .bind(req.channel_type)
-    .bind(&req.config)
-    .bind(req.enabled)
-    .bind(&req.scope)
-    .bind(id)
     .fetch_optional(&state.pool)
     .await?
     .ok_or_else(|| ApiError::NotFound(format!("channel {id} not found")))?;
@@ -278,8 +282,7 @@ pub async fn delete_channel(
     _admin: RequireAdmin,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let result = sqlx::query("DELETE FROM notification_channels WHERE id = $1")
-        .bind(id)
+    let result = sqlx::query!("DELETE FROM notification_channels WHERE id = $1", id)
         .execute(&state.pool)
         .await?;
 
@@ -294,11 +297,12 @@ pub async fn test_channel(
     _admin: RequireAdmin,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let channel: NotificationChannel = sqlx::query_as(
+    let channel: NotificationChannel = sqlx::query_as!(
+        NotificationChannel,
         "SELECT id, name, channel_type, config, enabled, scope, created_at, updated_at FROM \
          notification_channels WHERE id = $1",
+        id,
     )
-    .bind(id)
     .fetch_optional(&state.pool)
     .await?
     .ok_or_else(|| ApiError::NotFound(format!("channel {id} not found")))?;
@@ -328,7 +332,8 @@ pub async fn list_rules(
     State(state): State<AppState>,
     _admin: RequireAdmin,
 ) -> Result<Json<Vec<NotificationRule>>, ApiError> {
-    let rules: Vec<NotificationRule> = sqlx::query_as(
+    let rules: Vec<NotificationRule> = sqlx::query_as!(
+        NotificationRule,
         "SELECT id, channel_id, event_type, repo_id, agent_id, enabled FROM notification_rules \
          ORDER BY id",
     )
@@ -345,18 +350,19 @@ pub async fn create_rule(
     validate_event_type(&req.event_type)?;
 
     let enabled = req.enabled.unwrap_or(true);
-    let rule: NotificationRule = sqlx::query_as(
+    let rule: NotificationRule = sqlx::query_as!(
+        NotificationRule,
         r#"
         INSERT INTO notification_rules (channel_id, event_type, repo_id, agent_id, enabled)
         VALUES ($1, $2, $3, $4, $5)
         RETURNING id, channel_id, event_type, repo_id, agent_id, enabled
         "#,
+        req.channel_id,
+        &req.event_type,
+        req.repo_id,
+        req.agent_id,
+        enabled,
     )
-    .bind(req.channel_id)
-    .bind(&req.event_type)
-    .bind(req.repo_id)
-    .bind(req.agent_id)
-    .bind(enabled)
     .fetch_one(&state.pool)
     .await?;
 
@@ -368,8 +374,7 @@ pub async fn delete_rule(
     _admin: RequireAdmin,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let result = sqlx::query("DELETE FROM notification_rules WHERE id = $1")
-        .bind(id)
+    let result = sqlx::query!("DELETE FROM notification_rules WHERE id = $1", id)
         .execute(&state.pool)
         .await?;
 
@@ -424,18 +429,19 @@ pub async fn subscribe_push(
         ));
     }
 
-    let sub: PushSubscription = sqlx::query_as(
+    let sub: PushSubscription = sqlx::query_as!(
+        PushSubscription,
         r#"
         INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, created_at)
         VALUES ($1, $2, $3, $4, NOW())
         ON CONFLICT (endpoint) DO UPDATE SET p256dh = $3, auth = $4
         RETURNING id, user_id, endpoint, p256dh, auth, user_agent, created_at
         "#,
+        user.user_id,
+        &req.endpoint,
+        &req.keys.p256dh,
+        &req.keys.auth,
     )
-    .bind(user.user_id)
-    .bind(&req.endpoint)
-    .bind(&req.keys.p256dh)
-    .bind(&req.keys.auth)
     .fetch_one(&state.pool)
     .await?;
 
@@ -447,11 +453,13 @@ pub async fn unsubscribe_push(
     user: AuthUser,
     ApiJson(req): ApiJson<UnsubscribePushRequest>,
 ) -> Result<StatusCode, ApiError> {
-    sqlx::query("DELETE FROM push_subscriptions WHERE user_id = $1 AND endpoint = $2")
-        .bind(user.user_id)
-        .bind(&req.endpoint)
-        .execute(&state.pool)
-        .await?;
+    sqlx::query!(
+        "DELETE FROM push_subscriptions WHERE user_id = $1 AND endpoint = $2",
+        user.user_id,
+        &req.endpoint,
+    )
+    .execute(&state.pool)
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -459,11 +467,12 @@ pub async fn list_push_subscriptions(
     State(state): State<AppState>,
     user: AuthUser,
 ) -> Result<Json<Vec<PushSubscription>>, ApiError> {
-    let subs: Vec<PushSubscription> = sqlx::query_as(
+    let subs: Vec<PushSubscription> = sqlx::query_as!(
+        PushSubscription,
         "SELECT id, user_id, endpoint, p256dh, auth, user_agent, created_at FROM \
          push_subscriptions WHERE user_id = $1 ORDER BY id",
+        user.user_id,
     )
-    .bind(user.user_id)
     .fetch_all(&state.pool)
     .await?;
     Ok(Json(subs))
@@ -475,11 +484,12 @@ pub async fn list_deliveries(
     Query(query): Query<DeliveryQuery>,
 ) -> Result<Json<Vec<NotificationDelivery>>, ApiError> {
     let limit = query.limit.unwrap_or(50);
-    let deliveries: Vec<NotificationDelivery> = sqlx::query_as(
+    let deliveries: Vec<NotificationDelivery> = sqlx::query_as!(
+        NotificationDelivery,
         "SELECT id, channel_id, event_type, payload, status, error_message, attempted_at FROM \
          notification_deliveries ORDER BY attempted_at DESC LIMIT $1",
+        limit,
     )
-    .bind(limit)
     .fetch_all(&state.pool)
     .await?;
     Ok(Json(deliveries))

@@ -166,8 +166,12 @@ pub async fn list_channels(
 ) -> Result<Json<Vec<NotificationChannel>>, ApiError> {
     let channels: Vec<NotificationChannel> = sqlx::query_as!(
         NotificationChannel,
-        "SELECT id, name, channel_type, config, enabled, scope, created_at, updated_at FROM \
-         notification_channels ORDER BY id",
+        r#"
+        SELECT id, name, channel_type as "channel_type: ChannelType", config, enabled, scope,
+               created_at, updated_at
+        FROM notification_channels
+        ORDER BY id
+        "#,
     )
     .fetch_all(&state.pool)
     .await?;
@@ -201,7 +205,7 @@ pub async fn create_channel(
         INSERT INTO notification_channels
             (name, channel_type, config, enabled, scope, created_at, updated_at)
         VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-        RETURNING id, name, channel_type, config, enabled, scope,
+        RETURNING id, name, channel_type as "channel_type: ChannelType", config, enabled, scope,
             created_at, updated_at
         "#,
         &req.name,
@@ -234,8 +238,12 @@ pub async fn update_channel(
             _ => {
                 let existing: NotificationChannel = sqlx::query_as!(
                     NotificationChannel,
-                    "SELECT id, name, channel_type, config, enabled, scope, created_at, \
-                     updated_at FROM notification_channels WHERE id = $1",
+                    r#"
+                    SELECT id, name, channel_type as "channel_type: ChannelType", config, enabled,
+                           scope, created_at, updated_at
+                    FROM notification_channels
+                    WHERE id = $1
+                    "#,
                     id,
                 )
                 .fetch_optional(&state.pool)
@@ -261,7 +269,8 @@ pub async fn update_channel(
             scope = COALESCE($5::jsonb, scope),
             updated_at = NOW()
         WHERE id = $6
-        RETURNING id, name, channel_type, config, enabled, scope, created_at, updated_at
+        RETURNING id, name, channel_type as "channel_type: ChannelType", config, enabled, scope,
+                 created_at, updated_at
         "#,
         req.name.as_deref(),
         req.channel_type.map(|c| c.to_string()),
@@ -299,8 +308,12 @@ pub async fn test_channel(
 ) -> Result<StatusCode, ApiError> {
     let channel: NotificationChannel = sqlx::query_as!(
         NotificationChannel,
-        "SELECT id, name, channel_type, config, enabled, scope, created_at, updated_at FROM \
-         notification_channels WHERE id = $1",
+        r#"
+        SELECT id, name, channel_type as "channel_type: ChannelType", config, enabled, scope,
+               created_at, updated_at
+        FROM notification_channels
+        WHERE id = $1
+        "#,
         id,
     )
     .fetch_optional(&state.pool)

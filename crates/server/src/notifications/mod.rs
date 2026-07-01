@@ -30,15 +30,6 @@ impl fmt::Display for ChannelType {
     }
 }
 
-impl From<String> for ChannelType {
-    fn from(s: String) -> Self {
-        s.parse().unwrap_or_else(|e| {
-            tracing::warn!(raw = %s, error = %e, "invalid ChannelType, defaulting to Email");
-            Default::default()
-        })
-    }
-}
-
 impl std::str::FromStr for ChannelType {
     type Err = UnknownChannelType;
 
@@ -252,7 +243,7 @@ pub async fn dispatch(
     let channels: Vec<MatchedChannel> = sqlx::query_as!(
         MatchedChannel,
         r#"
-        SELECT DISTINCT nc.id, nc.channel_type, nc.config
+        SELECT DISTINCT nc.id, nc.channel_type as "channel_type: ChannelType", nc.config
         FROM notification_channels nc
         INNER JOIN notification_rules nr ON nr.channel_id = nc.id
         WHERE nr.event_type = $1
@@ -515,25 +506,6 @@ mod tests {
         assert_eq!(ChannelType::Email.to_string(), "email");
         assert_eq!(ChannelType::Webhook.to_string(), "webhook");
         assert_eq!(ChannelType::WebPush.to_string(), "web_push");
-    }
-
-    #[test]
-    fn channel_type_from_string_fallback_on_invalid_value() {
-        let ct = ChannelType::from("bogus".to_string());
-        assert_eq!(ct, ChannelType::Email);
-    }
-
-    #[test]
-    fn channel_type_from_string_valid_values() {
-        assert_eq!(ChannelType::from("email".to_string()), ChannelType::Email);
-        assert_eq!(
-            ChannelType::from("webhook".to_string()),
-            ChannelType::Webhook
-        );
-        assert_eq!(
-            ChannelType::from("web_push".to_string()),
-            ChannelType::WebPush
-        );
     }
 
     #[test]

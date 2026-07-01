@@ -1,0 +1,69 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE ssh_tunnels SET ssh_host = COALESCE($2, ssh_host), ssh_user = COALESCE($3, ssh_user), ssh_port = COALESCE($4, ssh_port), tunnel_port = COALESCE($5, tunnel_port), enabled = COALESCE($6, enabled) WHERE id = $1 RETURNING id, agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, enabled, created_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "ssh_host",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "ssh_user",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "ssh_port",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "tunnel_port",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Int4",
+        "Int4",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "f257ece4e2f1dc64fdb01ed2d23db1244eb50158a3bb1fcb1c80a9872f20efba"
+}

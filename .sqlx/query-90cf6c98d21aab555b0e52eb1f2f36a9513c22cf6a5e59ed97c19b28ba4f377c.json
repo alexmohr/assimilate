@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT archive_name FROM backup_reports WHERE repo_id = $1 AND archive_name IS NOT NULL AND ((original_size = 0 AND compressed_size = 0 AND deduplicated_size = 0) OR repo_unique_csize = 0)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "archive_name",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "90cf6c98d21aab555b0e52eb1f2f36a9513c22cf6a5e59ed97c19b28ba4f377c"
+}

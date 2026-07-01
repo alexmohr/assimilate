@@ -1,0 +1,59 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT user_id, repo_id, can_view, can_backup, can_modify_schedules, can_extract, can_delete FROM repo_permissions WHERE user_id = $1 AND repo_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "can_view",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 3,
+        "name": "can_backup",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "can_modify_schedules",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "can_extract",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "can_delete",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "1245a05d28889648d0e3114b110f054277487e8aa03e1db8b4b512d37a4de4c0"
+}

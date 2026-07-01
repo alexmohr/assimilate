@@ -1,0 +1,92 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, enabled, owner_id, visibility, sync_schedule, last_synced_at FROM repos ORDER BY name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "repo_path",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "ssh_user",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "ssh_host",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "ssh_port",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "compression",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "encryption",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "owner_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
+        "name": "visibility",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "sync_schedule",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "last_synced_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "8c8a14afd6f5753863074da6fcac321bbb7b96171b8f26deead150a52732f894"
+}

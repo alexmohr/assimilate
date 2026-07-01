@@ -1,0 +1,106 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.id, r.name, r.can_create_agent, r.can_delete_agent, r.can_delete_own_agent, r.can_create_repo, r.can_delete_repo, r.can_delete_own_repo, r.can_create_schedule, r.can_delete_schedule, r.can_delete_own_schedule, r.can_manage_tags, r.can_view_all_repos, r.can_manage_tunnels, r.created_at FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = $1 ORDER BY r.name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "can_create_agent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 3,
+        "name": "can_delete_agent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "can_delete_own_agent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "can_create_repo",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "can_delete_repo",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "can_delete_own_repo",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "can_create_schedule",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "can_delete_schedule",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 10,
+        "name": "can_delete_own_schedule",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 11,
+        "name": "can_manage_tags",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 12,
+        "name": "can_view_all_repos",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 13,
+        "name": "can_manage_tunnels",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 14,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "b2a89d718c5e2c3cf3ef5e710e5752b4e3067c80189dbba60e367c2b4f17a25a"
+}

@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE backup_reports SET started_at = $1, status = 'started', borg_command = $2 WHERE run_id = $3 AND agent_id = $4 AND status = 'pending'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Text",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5deb4b548163a987ac1f9a20b4f64901cd523c11f3de689413426d7f6c461fc1"
+}

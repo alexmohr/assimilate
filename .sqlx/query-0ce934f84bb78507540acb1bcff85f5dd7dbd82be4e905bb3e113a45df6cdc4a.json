@@ -1,0 +1,121 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, $3, $4) RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, agent_token_hash, is_hidden",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "display_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "agent_version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "agent_git_sha",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "agent_build_time",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "agent_commit_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "last_seen_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "owner_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
+        "name": "visibility",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "default_backup_paths",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 12,
+        "name": "default_exclude_patterns",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 13,
+        "name": "default_pre_backup_commands",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 14,
+        "name": "default_post_backup_commands",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "agent_token_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 16,
+        "name": "is_hidden",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "0ce934f84bb78507540acb1bcff85f5dd7dbd82be4e905bb3e113a45df6cdc4a"
+}

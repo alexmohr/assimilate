@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(SELECT 1 FROM user_groups a JOIN user_groups b ON a.group_id = b.group_id WHERE a.user_id = $1 AND b.user_id = $2) AS shared",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "shared",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "b6d505d58b4008834026126518ab282c6d9122b40d584f4a81f7fb88fb3734de"
+}

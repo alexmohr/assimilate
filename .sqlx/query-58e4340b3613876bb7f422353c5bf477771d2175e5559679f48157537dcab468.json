@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT pg_database_size(current_database())::BIGINT",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "pg_database_size",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "58e4340b3613876bb7f422353c5bf477771d2175e5559679f48157537dcab468"
+}

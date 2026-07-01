@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE backup_reports SET cancellation_acknowledged = true WHERE agent_id = $1 AND repo_id = $2 AND status = 'cancelled'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a74624041440b9fd5be515f2bcc4f9ed562cb8aff91b78bea3ebe5479dced8b7"
+}

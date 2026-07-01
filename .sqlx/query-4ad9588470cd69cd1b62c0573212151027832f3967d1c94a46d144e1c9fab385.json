@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) as count FROM login_attempts WHERE username = $1 AND ip = $2 AND success = false AND attempted_at > NOW() - ($3 || ' minutes')::INTERVAL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "4ad9588470cd69cd1b62c0573212151027832f3967d1c94a46d144e1c9fab385"
+}

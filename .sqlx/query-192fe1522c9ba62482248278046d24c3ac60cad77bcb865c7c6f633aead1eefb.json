@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT ssh_user, ssh_host, ssh_port FROM repos WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ssh_user",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "ssh_host",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "ssh_port",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "192fe1522c9ba62482248278046d24c3ac60cad77bcb865c7c6f633aead1eefb"
+}

@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE backup_reports SET status = 'failed', finished_at = NOW(), error_message = $1 WHERE agent_id = $2 AND repo_id = $3 AND status IN ('pending', 'started') AND ($4::text IS NULL OR run_id IS DISTINCT FROM $4)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "202748679af3fd67672b1c39b39fb1366a3fd013d97f22bee8aa07577c8066a4"
+}

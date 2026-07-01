@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM agent_tags WHERE agent_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "794caa94bd1ae1e3ace3d0f5d44f54ffe8ad2c7ce51ac2aff720bed972ad977b"
+}

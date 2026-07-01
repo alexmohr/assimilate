@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT agent_id AS \"agent_id!\", path FROM backup_sources WHERE schedule_id = $1 AND agent_id IS NOT NULL ORDER BY agent_id, sort_order, id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "agent_id!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "path",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "4a311c6504d9d809c3b758851d4c04653f8ed81c528846def731d2101eed341c"
+}

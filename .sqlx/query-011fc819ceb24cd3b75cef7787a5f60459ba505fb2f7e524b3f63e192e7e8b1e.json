@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM repo_relocation_pending_hosts WHERE repo_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "011fc819ceb24cd3b75cef7787a5f60459ba505fb2f7e524b3f63e192e7e8b1e"
+}

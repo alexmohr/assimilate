@@ -1,0 +1,118 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO roles (name, can_create_agent, can_delete_agent, can_delete_own_agent, can_create_repo, can_delete_repo, can_delete_own_repo, can_create_schedule, can_delete_schedule, can_delete_own_schedule, can_manage_tags, can_view_all_repos, can_manage_tunnels) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id, name, can_create_agent, can_delete_agent, can_delete_own_agent, can_create_repo, can_delete_repo, can_delete_own_repo, can_create_schedule, can_delete_schedule, can_delete_own_schedule, can_manage_tags, can_view_all_repos, can_manage_tunnels, created_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "can_create_agent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 3,
+        "name": "can_delete_agent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "can_delete_own_agent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "can_create_repo",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "can_delete_repo",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "can_delete_own_repo",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "can_create_schedule",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "can_delete_schedule",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 10,
+        "name": "can_delete_own_schedule",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 11,
+        "name": "can_manage_tags",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 12,
+        "name": "can_view_all_repos",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 13,
+        "name": "can_manage_tunnels",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 14,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "eb1506b1a38d5073943314ca775902d0f3c03833bbc5c844a264a93ca5b9345b"
+}

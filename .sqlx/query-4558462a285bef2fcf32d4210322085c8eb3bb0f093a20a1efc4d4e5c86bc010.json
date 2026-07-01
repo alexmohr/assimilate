@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT repo_id, archive_name FROM backup_reports WHERE agent_id = $1 AND archive_name IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "archive_name",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "4558462a285bef2fcf32d4210322085c8eb3bb0f093a20a1efc4d4e5c86bc010"
+}

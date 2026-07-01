@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.name, r.info_compressed_size AS compressed_size, r.info_deduplicated_size AS deduplicated_size FROM repos r ORDER BY r.info_deduplicated_size DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "compressed_size",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "deduplicated_size",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "dbbee109fac994095526ee86f49e4c7866a6ce11b2a1d403e2c7d1320d267e6c"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM backup_reports WHERE repo_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "eaa8d0f646d34d3323e3e60910e2bf4b9003011ef5a8ba12af12724aaf03bebc"
+}

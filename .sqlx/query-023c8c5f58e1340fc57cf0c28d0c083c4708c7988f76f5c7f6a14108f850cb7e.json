@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT a.id AS agent_id, a.hostname FROM agents a JOIN schedule_targets st ON st.agent_id = a.id WHERE st.schedule_id = $1 AND a.is_hidden = false ORDER BY st.execution_order",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "hostname",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "023c8c5f58e1340fc57cf0c28d0c083c4708c7988f76f5c7f6a14108f850cb7e"
+}

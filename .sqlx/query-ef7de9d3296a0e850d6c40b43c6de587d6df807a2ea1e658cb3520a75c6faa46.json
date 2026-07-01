@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO per_agent_commands (schedule_id, agent_id, pre_backup_commands, post_backup_commands) VALUES ($1, $2, $3, $4) ON CONFLICT (schedule_id, agent_id) DO UPDATE SET pre_backup_commands = EXCLUDED.pre_backup_commands, post_backup_commands = EXCLUDED.post_backup_commands",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ef7de9d3296a0e850d6c40b43c6de587d6df807a2ea1e658cb3520a75c6faa46"
+}

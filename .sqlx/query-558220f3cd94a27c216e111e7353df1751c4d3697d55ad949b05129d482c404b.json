@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT agent_id, execution_order FROM schedule_targets WHERE schedule_id = $1 ORDER BY execution_order",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "execution_order",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "558220f3cd94a27c216e111e7353df1751c4d3697d55ad949b05129d482c404b"
+}

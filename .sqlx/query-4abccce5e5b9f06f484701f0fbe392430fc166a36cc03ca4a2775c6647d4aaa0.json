@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO repo_permissions (user_id, repo_id, can_view, can_backup, can_modify_schedules, can_extract, can_delete) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (user_id, repo_id) DO UPDATE SET can_view = $3, can_backup = $4, can_modify_schedules = $5, can_extract = $6, can_delete = $7 RETURNING user_id, repo_id, can_view, can_backup, can_modify_schedules, can_extract, can_delete",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "can_view",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 3,
+        "name": "can_backup",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "can_modify_schedules",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "can_extract",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "can_delete",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "4abccce5e5b9f06f484701f0fbe392430fc166a36cc03ca4a2775c6647d4aaa0"
+}

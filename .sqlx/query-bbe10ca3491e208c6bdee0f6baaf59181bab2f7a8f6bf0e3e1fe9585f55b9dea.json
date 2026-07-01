@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE backup_reports SET matched = true WHERE agent_id = $1 AND matched = false",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bbe10ca3491e208c6bdee0f6baaf59181bab2f7a8f6bf0e3e1fe9585f55b9dea"
+}

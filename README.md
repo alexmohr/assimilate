@@ -10,7 +10,7 @@
 
 A self-hosted BorgBackup management server — web UI, multi-host agent orchestration, and scheduled backups with a REST API.
 
-> **Alpha Software** — This project is under heavy development and not yet recommended for production backups. Expect breaking changes, incomplete features, and data-format migrations between releases. It is entirely AI coded and the development os mostly automated at this point
+> **Alpha Software** — This project is under heavy development and not yet recommended for production backups. Expect breaking changes, incomplete features, and data-format migrations between releases. It is entirely AI coded and the development is mostly automated at this point
 
 ## Key Features
 

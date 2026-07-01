@@ -62,11 +62,11 @@ sequenceDiagram
     participant Agent
     participant Borg
 
-    User->>Server: POST /api/archives/{id}/restore
-    Server->>Agent: RestoreArchive (WebSocket)
+    User->>Server: POST /api/repos/{repo_id}/archives/{archive_name}/restore
+    Server->>Agent: RestoreFiles (WebSocket)
     Agent->>Borg: borg extract <archive> <path>
     Borg-->>Agent: exit code + stats
-    Agent->>Server: RestoreResult (WebSocket)
+    Agent->>Server: RestoreCompleted (WebSocket)
     Server->>User: restore complete notification
 ```
 

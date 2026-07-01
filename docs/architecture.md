@@ -61,7 +61,7 @@ Three distinct communication channels are used:
 | REST API (`/api/…`) | Browser ↔ Server | CRUD operations, stats, auth |
 | Agent WebSocket (`/ws/agent`) | Agent ↔ Server | Command dispatch and result reporting |
 | UI WebSocket (`/ws/ui`) | Browser ↔ Server | Real-time push events (backup started/completed, agent connected/disconnected) |
-| SSH relay WebSocket (`/ws/ssh-agent/:hostname/:token`) | Agent ↔ Server | SSH agent protocol forwarding |
+| SSH relay WebSocket (`/ws/ssh-agent/{hostname}`) | Agent ↔ Server | SSH agent protocol forwarding (token sent as the first message) |
 
 ### Agent handshake and backup sequence
 

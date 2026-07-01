@@ -26,7 +26,8 @@ sequenceDiagram
     Agent->>Borg: Spawn borg with SSH_AUTH_SOCK injected
 
     Borg->>UDS: Connect (SSH agent protocol)
-    Agent->>Server: Open WebSocket /ws/ssh-agent/{hostname}/{token}
+    Agent->>Server: Open WebSocket /ws/ssh-agent/{hostname}
+    Agent->>Server: Send token as first WebSocket message
     Server->>Server: Verify token via bcrypt hash lookup
     Server->>LocalAgent: Connect to server's SSH_AUTH_SOCK
 
@@ -45,7 +46,7 @@ sequenceDiagram
     Repo->>Borg: Authorised — backup proceeds
 ```
 
-Before each backup the agent creates a temporary Unix domain socket in a private directory under `$TMPDIR`. For every connection borg makes to that socket the agent opens a new WebSocket to the server's relay endpoint at `/ws/ssh-agent/{hostname}/{token}`. The server authenticates the request by verifying the token against the bcrypt hash stored in the database, then connects to its own `SSH_AUTH_SOCK` and relays bytes bidirectionally between the WebSocket and the local agent socket. When the backup finishes the temporary socket directory is removed automatically.
+Before each backup the agent creates a temporary Unix domain socket in a private directory under `$TMPDIR`. For every connection borg makes to that socket the agent opens a new WebSocket to the server's relay endpoint at `/ws/ssh-agent/{hostname}` and sends its token as the first message. The server authenticates the request by verifying the token against the bcrypt hash stored in the database, then connects to its own `SSH_AUTH_SOCK` and relays bytes bidirectionally between the WebSocket and the local agent socket. When the backup finishes the temporary socket directory is removed automatically.
 
 ## Server Setup
 

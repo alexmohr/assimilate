@@ -91,12 +91,12 @@ Adjust based on the workloads running on your backup machines. Avoid overly broa
 
 ## API Endpoints
 
+Global excludes are stored as a single newline-separated block of patterns and edited as a whole, not as individually addressable records.
+
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/excludes` | List all global exclude patterns |
-| `POST` | `/api/excludes` | Create a new exclude pattern |
-| `PUT` | `/api/excludes/:id` | Update an exclude pattern |
-| `DELETE` | `/api/excludes/:id` | Delete an exclude pattern |
+| `GET` | `/api/excludes` | Get the global exclude patterns as raw text |
+| `PUT` | `/api/excludes` | Replace the global exclude patterns from raw text |
 
 See the full [API Reference](api-reference.md) for request/response schemas.
 

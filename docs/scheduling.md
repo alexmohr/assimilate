@@ -141,9 +141,9 @@ Pruning only removes archives whose names match the prefix used by this schedule
 
 ## Timezone Handling
 
-All cron expressions are evaluated in the **server's local timezone**. There is no per-schedule timezone setting. If your server runs in UTC (recommended), `0 2 * * *` fires at 02:00 UTC every day.
+All cron expressions are evaluated in the **timezone configured in system settings** (default `UTC`). This is a single server-wide value; there is no per-schedule timezone setting. With the default UTC, `0 2 * * *` fires at 02:00 UTC every day.
 
-To verify the server's timezone, check the system clock or the `TZ` environment variable on the server host.
+Change the timezone under **System → Settings** (the `timezone` setting, e.g. `Europe/Berlin`); see [Configuration](configuration.md#system-settings). The setting is independent of the server host's OS timezone or `TZ` variable.
 
 ## Rate Limiting
 

@@ -4491,6 +4491,12 @@ pub struct StorageTrendByRepoRow {
     pub deduplicated_size: Option<i64>,
 }
 
+/// `original_size`/`compressed_size` are the cumulative sum, across every archive taken up to
+/// that date, of that archive's (pre-deduplication) size; this mirrors how borg itself defines
+/// a repository's total (non-deduplicated) size. `deduplicated_size` is the repository's actual
+/// unique compressed size (`repo_unique_csize`) as of the most recent archive on or before that
+/// date. Mixing a single archive's per-archive size with the repo-wide deduplicated size would
+/// make the deduplicated line exceed the original/compressed lines, which is impossible.
 pub async fn get_storage_trends(
     pool: &PgPool,
     repo_id: Option<i64>,
@@ -4502,13 +4508,15 @@ pub async fn get_storage_trends(
             StorageTrendRow,
             "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => \
              $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ) SELECT d.date AS \
-             \"date!\", COALESCE(latest.original_size, 0)::INT8 AS \"original_size!\", \
-             COALESCE(latest.compressed_size, 0)::INT8 AS \"compressed_size!\", \
+             \"date!\", COALESCE(totals.original_size, 0)::INT8 AS \"original_size!\", \
+             COALESCE(totals.compressed_size, 0)::INT8 AS \"compressed_size!\", \
              NULLIF(COALESCE(latest.repo_unique_csize, 0), 0)::INT8 AS \"deduplicated_size?\" \
-             FROM days d LEFT JOIN LATERAL ( SELECT br.original_size, br.compressed_size, \
-             br.repo_unique_csize FROM backup_reports br WHERE br.repo_id = $2 AND \
-             br.started_at::date <= d.date AND br.status = 'success' ORDER BY br.started_at DESC \
-             LIMIT 1 ) latest ON true ORDER BY d.date",
+             FROM days d LEFT JOIN LATERAL ( SELECT SUM(br.original_size) AS original_size, \
+             SUM(br.compressed_size) AS compressed_size FROM backup_reports br WHERE br.repo_id = \
+             $2 AND br.started_at::date <= d.date AND br.status = 'success' ) totals ON true LEFT \
+             JOIN LATERAL ( SELECT br.repo_unique_csize FROM backup_reports br WHERE br.repo_id = \
+             $2 AND br.started_at::date <= d.date AND br.status = 'success' ORDER BY \
+             br.started_at DESC LIMIT 1 ) latest ON true ORDER BY d.date",
             days,
             rid,
         )
@@ -4520,14 +4528,16 @@ pub async fn get_storage_trends(
             StorageTrendRow,
             "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => \
              $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ) SELECT d.date AS \
-             \"date!\", COALESCE(SUM(latest.original_size), 0)::INT8 AS \"original_size!\", \
-             COALESCE(SUM(latest.compressed_size), 0)::INT8 AS \"compressed_size!\", \
-             NULLIF(COALESCE(SUM(latest.repo_unique_csize), 0), 0)::INT8 AS \
-             \"deduplicated_size?\" FROM days d LEFT JOIN LATERAL ( SELECT DISTINCT ON \
-             (br.repo_id) br.original_size, br.compressed_size, br.repo_unique_csize FROM \
-             backup_reports br WHERE br.started_at::date <= d.date AND br.status = 'success' \
-             ORDER BY br.repo_id, br.started_at DESC ) latest ON true GROUP BY d.date ORDER BY \
-             d.date",
+             \"date!\", COALESCE(totals.original_size, 0)::INT8 AS \"original_size!\", \
+             COALESCE(totals.compressed_size, 0)::INT8 AS \"compressed_size!\", \
+             NULLIF(COALESCE(dedup.repo_unique_csize, 0), 0)::INT8 AS \"deduplicated_size?\" FROM \
+             days d LEFT JOIN LATERAL ( SELECT SUM(br.original_size) AS original_size, \
+             SUM(br.compressed_size) AS compressed_size FROM backup_reports br WHERE \
+             br.started_at::date <= d.date AND br.status = 'success' ) totals ON true LEFT JOIN \
+             LATERAL ( SELECT SUM(latest.repo_unique_csize) AS repo_unique_csize FROM ( SELECT \
+             DISTINCT ON (br.repo_id) br.repo_unique_csize FROM backup_reports br WHERE \
+             br.started_at::date <= d.date AND br.status = 'success' ORDER BY br.repo_id, \
+             br.started_at DESC ) latest ) dedup ON true ORDER BY d.date",
             days,
         )
         .fetch_all(pool)
@@ -4713,6 +4723,9 @@ pub async fn delete_orphaned_placeholder_agents(pool: &PgPool) -> Result<u64, Ap
     Ok(result.rows_affected())
 }
 
+/// See [`get_storage_trends`] for why `original_size`/`compressed_size` are a cumulative sum
+/// over all archives up to that date while `deduplicated_size` is the latest repo-wide
+/// `repo_unique_csize` snapshot.
 pub async fn get_storage_trends_by_repo(
     pool: &PgPool,
     days: i64,
@@ -4722,13 +4735,16 @@ pub async fn get_storage_trends_by_repo(
         "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => $1))::date, \
          CURRENT_DATE, '1 day'::interval )::date AS date ), repos_list AS ( SELECT DISTINCT r.id \
          AS repo_id, r.name AS repo_name FROM repos r JOIN backup_reports br ON br.repo_id = r.id \
-         ) SELECT d.date, rl.repo_id, rl.repo_name, COALESCE(latest.original_size, 0)::INT8 AS \
-         original_size, COALESCE(latest.compressed_size, 0)::INT8 AS compressed_size, \
+         ) SELECT d.date, rl.repo_id, rl.repo_name, COALESCE(totals.original_size, 0)::INT8 AS \
+         original_size, COALESCE(totals.compressed_size, 0)::INT8 AS compressed_size, \
          NULLIF(COALESCE(latest.repo_unique_csize, 0), 0)::INT8 AS deduplicated_size FROM days d \
-         CROSS JOIN repos_list rl LEFT JOIN LATERAL ( SELECT br.original_size, \
-         br.compressed_size, br.repo_unique_csize FROM backup_reports br WHERE br.repo_id = \
-         rl.repo_id AND br.started_at::date <= d.date AND br.status = 'success' ORDER BY \
-         br.started_at DESC LIMIT 1 ) latest ON true ORDER BY d.date, rl.repo_name",
+         CROSS JOIN repos_list rl LEFT JOIN LATERAL ( SELECT SUM(br.original_size) AS \
+         original_size, SUM(br.compressed_size) AS compressed_size FROM backup_reports br WHERE \
+         br.repo_id = rl.repo_id AND br.started_at::date <= d.date AND br.status = 'success' ) \
+         totals ON true LEFT JOIN LATERAL ( SELECT br.repo_unique_csize FROM backup_reports br \
+         WHERE br.repo_id = rl.repo_id AND br.started_at::date <= d.date AND br.status = \
+         'success' ORDER BY br.started_at DESC LIMIT 1 ) latest ON true ORDER BY d.date, \
+         rl.repo_name",
     )
     .bind(days_i32)
     .fetch_all(pool)

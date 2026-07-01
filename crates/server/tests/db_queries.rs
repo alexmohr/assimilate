@@ -4757,6 +4757,99 @@ async fn storage_trends_by_repo_test(pool: PgPool) {
     );
 }
 
+/// Regression test for https://github.com/alexmohr/assimilate/issues/195: the deduplicated
+/// size in the storage trend must never exceed the original/compressed size. Each individual
+/// archive is small, but `repo_unique_csize` (the repo-wide on-disk footprint) grows across
+/// archives, which used to be compared against a single archive's per-archive original size.
+#[sqlx::test(migrations = "./migrations")]
+async fn storage_trends_dedup_never_exceeds_original(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "strend-invariant-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+
+    for day in 0..5i64 {
+        db::insert_backup_report(
+            &pool,
+            &InsertReportParams {
+                agent_id: agent.id,
+                repo_id: repo.id,
+                schedule_id: None,
+                started_at: now - Duration::days(6 - day) - Duration::minutes(5),
+                finished_at: now - Duration::days(6 - day),
+                status: "success".to_string(),
+                original_size: 1_000,
+                compressed_size: 800,
+                deduplicated_size: 100,
+                repo_unique_csize: (day + 1) * 750,
+                files_processed: 10,
+                duration_secs: 60,
+                error_message: None,
+                warnings: vec![],
+                borg_version: Some("1.4.0".to_string()),
+                matched: true,
+                archive_name: Some(format!("invariant-archive-{day}")),
+                borg_command: None,
+                run_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    for trend in db::get_storage_trends(&pool, None, 7).await.unwrap() {
+        let dedup = trend.deduplicated_size.unwrap_or(0);
+        assert!(
+            dedup <= trend.compressed_size && trend.compressed_size <= trend.original_size,
+            "invariant violated on {}: original={} compressed={} dedup={}",
+            trend.date,
+            trend.original_size,
+            trend.compressed_size,
+            dedup
+        );
+    }
+
+    for trend in db::get_storage_trends(&pool, Some(repo.id), 7)
+        .await
+        .unwrap()
+    {
+        let dedup = trend.deduplicated_size.unwrap_or(0);
+        assert!(
+            dedup <= trend.compressed_size && trend.compressed_size <= trend.original_size,
+            "invariant violated on {}: original={} compressed={} dedup={}",
+            trend.date,
+            trend.original_size,
+            trend.compressed_size,
+            dedup
+        );
+    }
+
+    for trend in db::get_storage_trends_by_repo(&pool, 7).await.unwrap() {
+        let dedup = trend.deduplicated_size.unwrap_or(0);
+        assert!(
+            dedup <= trend.compressed_size && trend.compressed_size <= trend.original_size,
+            "invariant violated on {} for {}: original={} compressed={} dedup={}",
+            trend.date,
+            trend.repo_name,
+            trend.original_size,
+            trend.compressed_size,
+            dedup
+        );
+    }
+
+    // The last day's dedup size (3_750) exceeds a single archive's original_size (1_000),
+    // which is exactly the scenario that used to violate the invariant.
+    let last_dedup = db::get_storage_trends(&pool, Some(repo.id), 7)
+        .await
+        .unwrap()
+        .into_iter()
+        .next_back()
+        .and_then(|t| t.deduplicated_size)
+        .unwrap_or(0);
+    assert!(last_dedup > 1_000);
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn archive_names_and_delete_test(pool: PgPool) {
     let agent = db::insert_agent(&pool, "archive-del-host", None, "hash", None)

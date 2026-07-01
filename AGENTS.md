@@ -558,7 +558,7 @@ Agents can tunnel the server's SSH agent socket to `borg` for passwordless repos
 
 ### How it works
 
-1. The server exposes a WebSocket endpoint at `/ws/ssh-agent/:hostname/:token`.
+1. The server exposes a WebSocket endpoint at `/ws/ssh-agent/:hostname`; the agent sends its token as the first WebSocket message.
 2. On each backup, the agent creates a temporary Unix domain socket (`$TMPDIR/assimilate-XXXX/agent.sock`).
 3. For each connection from borg/ssh to that socket, the agent opens a new WebSocket to the server relay endpoint and pipes bytes bidirectionally.
 4. The server connects to its own `SSH_AUTH_SOCK` and relays SSH agent protocol between the WebSocket and the local agent socket.

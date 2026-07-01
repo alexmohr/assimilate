@@ -1,0 +1,79 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT (br.started_at AT TIME ZONE $4)::date AS \"date!\", 'backup' AS \"event_type!\", CASE WHEN br.status = 'success' THEN 'success' ELSE 'failed' END AS \"status!\", r.name AS \"repo_name!\", a.hostname AS \"hostname!\", to_char(br.started_at AT TIME ZONE $4, 'HH24:MI') AS \"time!\", br.id AS \"report_id?\", br.repo_id AS \"repo_id?\", br.error_message, br.archive_name FROM backup_reports br JOIN repos r ON r.id = br.repo_id JOIN agents a ON a.id = br.agent_id WHERE a.is_hidden = false AND (br.started_at AT TIME ZONE $4)::date >= $1 AND (br.started_at AT TIME ZONE $4)::date < $2 AND br.repo_id = $3 ORDER BY br.started_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "date!",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 1,
+        "name": "event_type!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "status!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "repo_name!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "hostname!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "time!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "report_id?",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "repo_id?",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "error_message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "archive_name",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Date",
+        "Date",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      false,
+      false,
+      null,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "894b273144d54f317d01c3b84702e5e24bbfa353817742546eaff425403cc7a4"
+}

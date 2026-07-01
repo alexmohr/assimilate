@@ -4365,32 +4365,35 @@ pub async fn get_backup_trends(
     repo_id: Option<i64>,
     days: i64,
 ) -> Result<Vec<TrendRow>, ApiError> {
+    let days = i32::try_from(days).unwrap_or(30);
     if let Some(rid) = repo_id {
-        sqlx::query_as::<_, TrendRow>(
-            "SELECT started_at::date AS date, COALESCE(AVG(original_size), 0)::INT8 AS \
-             original_size, COALESCE(AVG(compressed_size), 0)::INT8 AS compressed_size, \
-             COALESCE(AVG(deduplicated_size), 0)::INT8 AS deduplicated_size, \
-             COALESCE(AVG(files_processed), 0)::INT8 AS file_count, COALESCE(AVG(duration_secs), \
-             0)::INT8 AS duration_seconds, COUNT(*)::INT8 AS backup_count FROM backup_reports \
-             WHERE repo_id = $1 AND started_at > NOW() - make_interval(days => $2) GROUP BY \
-             started_at::date ORDER BY date",
+        sqlx::query_as!(
+            TrendRow,
+            "SELECT started_at::date AS \"date!\", COALESCE(AVG(original_size), 0)::INT8 AS \
+             \"original_size!\", COALESCE(AVG(compressed_size), 0)::INT8 AS \"compressed_size!\", \
+             COALESCE(AVG(deduplicated_size), 0)::INT8 AS \"deduplicated_size!\", \
+             COALESCE(AVG(files_processed), 0)::INT8 AS \"file_count!\", \
+             COALESCE(AVG(duration_secs), 0)::INT8 AS \"duration_seconds!\", COUNT(*)::INT8 AS \
+             \"backup_count!\" FROM backup_reports WHERE repo_id = $1 AND started_at > NOW() - \
+             make_interval(days => $2) GROUP BY started_at::date ORDER BY 1",
+            rid,
+            days,
         )
-        .bind(rid)
-        .bind(i32::try_from(days).unwrap_or(30))
         .fetch_all(pool)
         .await
         .map_err(ApiError::Database)
     } else {
-        sqlx::query_as::<_, TrendRow>(
-            "SELECT started_at::date AS date, COALESCE(AVG(original_size), 0)::INT8 AS \
-             original_size, COALESCE(AVG(compressed_size), 0)::INT8 AS compressed_size, \
-             COALESCE(AVG(deduplicated_size), 0)::INT8 AS deduplicated_size, \
-             COALESCE(AVG(files_processed), 0)::INT8 AS file_count, COALESCE(AVG(duration_secs), \
-             0)::INT8 AS duration_seconds, COUNT(*)::INT8 AS backup_count FROM backup_reports \
-             WHERE started_at > NOW() - make_interval(days => $1) GROUP BY started_at::date ORDER \
-             BY date",
+        sqlx::query_as!(
+            TrendRow,
+            "SELECT started_at::date AS \"date!\", COALESCE(AVG(original_size), 0)::INT8 AS \
+             \"original_size!\", COALESCE(AVG(compressed_size), 0)::INT8 AS \"compressed_size!\", \
+             COALESCE(AVG(deduplicated_size), 0)::INT8 AS \"deduplicated_size!\", \
+             COALESCE(AVG(files_processed), 0)::INT8 AS \"file_count!\", \
+             COALESCE(AVG(duration_secs), 0)::INT8 AS \"duration_seconds!\", COUNT(*)::INT8 AS \
+             \"backup_count!\" FROM backup_reports WHERE started_at > NOW() - make_interval(days \
+             => $1) GROUP BY started_at::date ORDER BY 1",
+            days,
         )
-        .bind(i32::try_from(days).unwrap_or(30))
         .fetch_all(pool)
         .await
         .map_err(ApiError::Database)
@@ -4430,36 +4433,40 @@ pub async fn get_calendar_events(
     let tz_name = tz.name();
 
     if let Some(rid) = repo_id {
-        sqlx::query_as::<_, CalendarEventRow>(
-            "SELECT (br.started_at AT TIME ZONE $4)::date AS date, 'backup' AS event_type, CASE \
-             WHEN br.status = 'success' THEN 'success' ELSE 'failed' END AS status, r.name AS \
-             repo_name, a.hostname, to_char(br.started_at AT TIME ZONE $4, 'HH24:MI') AS time, \
-             br.id AS report_id, br.repo_id, br.error_message, br.archive_name FROM \
+        sqlx::query_as!(
+            CalendarEventRow,
+            "SELECT (br.started_at AT TIME ZONE $4)::date AS \"date!\", 'backup' AS \
+             \"event_type!\", CASE WHEN br.status = 'success' THEN 'success' ELSE 'failed' END AS \
+             \"status!\", r.name AS \"repo_name!\", a.hostname AS \"hostname!\", \
+             to_char(br.started_at AT TIME ZONE $4, 'HH24:MI') AS \"time!\", br.id AS \
+             \"report_id?\", br.repo_id AS \"repo_id?\", br.error_message, br.archive_name FROM \
              backup_reports br JOIN repos r ON r.id = br.repo_id JOIN agents a ON a.id = \
              br.agent_id WHERE a.is_hidden = false AND (br.started_at AT TIME ZONE $4)::date >= \
              $1 AND (br.started_at AT TIME ZONE $4)::date < $2 AND br.repo_id = $3 ORDER BY \
              br.started_at",
+            start,
+            end,
+            rid,
+            tz_name,
         )
-        .bind(start)
-        .bind(end)
-        .bind(rid)
-        .bind(tz_name)
         .fetch_all(pool)
         .await
         .map_err(ApiError::Database)
     } else {
-        sqlx::query_as::<_, CalendarEventRow>(
-            "SELECT (br.started_at AT TIME ZONE $3)::date AS date, 'backup' AS event_type, CASE \
-             WHEN br.status = 'success' THEN 'success' ELSE 'failed' END AS status, r.name AS \
-             repo_name, a.hostname, to_char(br.started_at AT TIME ZONE $3, 'HH24:MI') AS time, \
-             br.id AS report_id, br.repo_id, br.error_message, br.archive_name FROM \
+        sqlx::query_as!(
+            CalendarEventRow,
+            "SELECT (br.started_at AT TIME ZONE $3)::date AS \"date!\", 'backup' AS \
+             \"event_type!\", CASE WHEN br.status = 'success' THEN 'success' ELSE 'failed' END AS \
+             \"status!\", r.name AS \"repo_name!\", a.hostname AS \"hostname!\", \
+             to_char(br.started_at AT TIME ZONE $3, 'HH24:MI') AS \"time!\", br.id AS \
+             \"report_id?\", br.repo_id AS \"repo_id?\", br.error_message, br.archive_name FROM \
              backup_reports br JOIN repos r ON r.id = br.repo_id JOIN agents a ON a.id = \
              br.agent_id WHERE a.is_hidden = false AND (br.started_at AT TIME ZONE $3)::date >= \
              $1 AND (br.started_at AT TIME ZONE $3)::date < $2 ORDER BY br.started_at",
+            start,
+            end,
+            tz_name,
         )
-        .bind(start)
-        .bind(end)
-        .bind(tz_name)
         .fetch_all(pool)
         .await
         .map_err(ApiError::Database)
@@ -4489,39 +4496,40 @@ pub async fn get_storage_trends(
     repo_id: Option<i64>,
     days: i64,
 ) -> Result<Vec<StorageTrendRow>, ApiError> {
-    // For each day in the range, take the last backup report per repo up to that day
-    // and sum their sizes. This gives the total repo footprint per day.
-    let days_i32 = i32::try_from(days).unwrap_or(30);
+    let days = i32::try_from(days).unwrap_or(30);
     if let Some(rid) = repo_id {
-        sqlx::query_as::<_, StorageTrendRow>(
+        sqlx::query_as!(
+            StorageTrendRow,
             "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => \
-             $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ) SELECT d.date, \
-             COALESCE(latest.original_size, 0)::INT8 AS original_size, \
-             COALESCE(latest.compressed_size, 0)::INT8 AS compressed_size, \
-             NULLIF(COALESCE(latest.repo_unique_csize, 0), 0)::INT8 AS deduplicated_size FROM \
-             days d LEFT JOIN LATERAL ( SELECT br.original_size, br.compressed_size, \
+             $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ) SELECT d.date AS \
+             \"date!\", COALESCE(latest.original_size, 0)::INT8 AS \"original_size!\", \
+             COALESCE(latest.compressed_size, 0)::INT8 AS \"compressed_size!\", \
+             NULLIF(COALESCE(latest.repo_unique_csize, 0), 0)::INT8 AS \"deduplicated_size?\" \
+             FROM days d LEFT JOIN LATERAL ( SELECT br.original_size, br.compressed_size, \
              br.repo_unique_csize FROM backup_reports br WHERE br.repo_id = $2 AND \
              br.started_at::date <= d.date AND br.status = 'success' ORDER BY br.started_at DESC \
              LIMIT 1 ) latest ON true ORDER BY d.date",
+            days,
+            rid,
         )
-        .bind(days_i32)
-        .bind(rid)
         .fetch_all(pool)
         .await
         .map_err(ApiError::Database)
     } else {
-        sqlx::query_as::<_, StorageTrendRow>(
+        sqlx::query_as!(
+            StorageTrendRow,
             "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => \
-             $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ) SELECT d.date, \
-             COALESCE(SUM(latest.original_size), 0)::INT8 AS original_size, \
-             COALESCE(SUM(latest.compressed_size), 0)::INT8 AS compressed_size, \
-             NULLIF(COALESCE(SUM(latest.repo_unique_csize), 0), 0)::INT8 AS deduplicated_size \
-             FROM days d LEFT JOIN LATERAL ( SELECT DISTINCT ON (br.repo_id) br.original_size, \
-             br.compressed_size, br.repo_unique_csize FROM backup_reports br WHERE \
-             br.started_at::date <= d.date AND br.status = 'success' ORDER BY br.repo_id, \
-             br.started_at DESC ) latest ON true GROUP BY d.date ORDER BY d.date",
+             $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ) SELECT d.date AS \
+             \"date!\", COALESCE(SUM(latest.original_size), 0)::INT8 AS \"original_size!\", \
+             COALESCE(SUM(latest.compressed_size), 0)::INT8 AS \"compressed_size!\", \
+             NULLIF(COALESCE(SUM(latest.repo_unique_csize), 0), 0)::INT8 AS \
+             \"deduplicated_size?\" FROM days d LEFT JOIN LATERAL ( SELECT DISTINCT ON \
+             (br.repo_id) br.original_size, br.compressed_size, br.repo_unique_csize FROM \
+             backup_reports br WHERE br.started_at::date <= d.date AND br.status = 'success' \
+             ORDER BY br.repo_id, br.started_at DESC ) latest ON true GROUP BY d.date ORDER BY \
+             d.date",
+            days,
         )
-        .bind(days_i32)
         .fetch_all(pool)
         .await
         .map_err(ApiError::Database)

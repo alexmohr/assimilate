@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM archive_tags t USING archives a WHERE a.id = t.archive_id AND a.repo_id = $1 AND a.name = $2 AND t.tag = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4f78f8e8db84f8a9750b2cf896995fa51c2d58a017f2cc4f5ccb0184b2a69a29"
+}

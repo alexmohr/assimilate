@@ -1,0 +1,50 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT s.id AS schedule_id,\n               COALESCE(NULLIF(s.name, ''), r.name) AS schedule_name,\n               r.id AS repo_id,\n               r.name AS repo_name,\n               s.next_run_at,\n               COUNT(DISTINCT c.id) AS target_count\n         FROM schedules s\n         JOIN repos r ON r.id = s.repo_id\n         JOIN schedule_targets st ON st.schedule_id = s.id\n         JOIN agents c ON c.id = st.agent_id\n         WHERE s.enabled = true\n           AND r.enabled = true\n           AND s.next_run_at IS NOT NULL\n           AND c.is_hidden = false\n           AND c.agent_token_hash <> 'imported:no-auth'\n         GROUP BY s.id, s.name, r.id, r.name, s.next_run_at\n         ORDER BY s.next_run_at, s.id\n         LIMIT 8\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "schedule_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "schedule_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "repo_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "next_run_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "target_count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      null,
+      false,
+      false,
+      true,
+      null
+    ]
+  },
+  "hash": "728ee12bb0471b273a0df5dd9ccdcc0ab0ef8989feedfcce55e330502d39e7b7"
+}

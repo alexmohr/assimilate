@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, agent_id, pattern, created_at FROM agent_hostname_patterns WHERE agent_id = $1 ORDER BY pattern",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "pattern",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "6c0131ae2d33f6602d637be769877ff5a8601e3f9f42e9cf2cc1084177b28997"
+}

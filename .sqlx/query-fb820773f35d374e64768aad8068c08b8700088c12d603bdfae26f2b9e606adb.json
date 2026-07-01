@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT j.status, j.file_count, j.error_message FROM archive_index_jobs j JOIN archives a ON a.id = j.archive_id WHERE a.repo_id = $1 AND a.name = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "file_count",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "error_message",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "fb820773f35d374e64768aad8068c08b8700088c12d603bdfae26f2b9e606adb"
+}

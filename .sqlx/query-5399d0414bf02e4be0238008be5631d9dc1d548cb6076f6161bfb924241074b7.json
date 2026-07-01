@@ -1,0 +1,58 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, user_id, endpoint, p256dh, auth, user_agent, created_at FROM push_subscriptions WHERE user_id = $1 ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "endpoint",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "p256dh",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "auth",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "user_agent",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "5399d0414bf02e4be0238008be5631d9dc1d548cb6076f6161bfb924241074b7"
+}

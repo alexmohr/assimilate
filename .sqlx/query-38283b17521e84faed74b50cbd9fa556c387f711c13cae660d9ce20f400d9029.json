@@ -1,0 +1,48 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.path, f.entry_type, f.size, f.mtime, f.mode FROM archive_files f JOIN archive_paths p ON p.id = f.path_id WHERE f.archive_id = $1 AND f.parent_path_id = $2 ORDER BY f.entry_type DESC, p.path ASC LIMIT $3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "path",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "entry_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "size",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "mtime",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "mode",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "38283b17521e84faed74b50cbd9fa556c387f711c13cae660d9ce20f400d9029"
+}

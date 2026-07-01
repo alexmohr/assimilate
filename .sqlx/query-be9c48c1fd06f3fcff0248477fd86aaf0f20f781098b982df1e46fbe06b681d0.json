@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT c.id AS agent_id,\n               c.hostname,\n               COUNT(DISTINCT st.schedule_id) FILTER (\n                   WHERE s.enabled = true AND r.enabled = true\n               ) AS enabled_assignment_count,\n               COUNT(DISTINCT st.schedule_id) FILTER (\n                   WHERE s.enabled = false OR r.enabled = false\n               ) AS disabled_assignment_count,\n               COUNT(DISTINCT st.schedule_id) FILTER (\n                   WHERE s.enabled = true AND r.enabled = true AND EXISTS (\n                       SELECT 1 FROM backup_reports br\n                       WHERE br.schedule_id = s.id AND br.agent_id = c.id\n                         AND br.status = 'success'\n                   )\n               ) AS successful_enabled_assignment_count\n         FROM agents c\n         LEFT JOIN schedule_targets st ON st.agent_id = c.id\n         LEFT JOIN schedules s ON s.id = st.schedule_id\n         LEFT JOIN repos r ON r.id = s.repo_id\n         WHERE c.is_hidden = false\n           AND c.agent_token_hash <> 'imported:no-auth'\n         GROUP BY c.id, c.hostname\n         ORDER BY c.hostname\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "enabled_assignment_count",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "disabled_assignment_count",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "successful_enabled_assignment_count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "be9c48c1fd06f3fcff0248477fd86aaf0f20f781098b982df1e46fbe06b681d0"
+}

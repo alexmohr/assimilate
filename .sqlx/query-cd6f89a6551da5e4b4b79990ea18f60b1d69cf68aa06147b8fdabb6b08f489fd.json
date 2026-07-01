@@ -1,0 +1,56 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO notification_rules (channel_id, event_type, repo_id, agent_id, enabled)\n        VALUES ($1, $2, $3, $4, $5)\n        RETURNING id, channel_id, event_type, repo_id, agent_id, enabled\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "channel_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "event_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "enabled",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int8",
+        "Int8",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "cd6f89a6551da5e4b4b79990ea18f60b1d69cf68aa06147b8fdabb6b08f489fd"
+}

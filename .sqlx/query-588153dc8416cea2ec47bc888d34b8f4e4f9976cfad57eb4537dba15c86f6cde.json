@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT a.name FROM archive_tags t JOIN archives a ON a.id = t.archive_id WHERE a.repo_id = $1 AND t.tag = $2 ORDER BY a.name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "588153dc8416cea2ec47bc888d34b8f4e4f9976cfad57eb4537dba15c86f6cde"
+}

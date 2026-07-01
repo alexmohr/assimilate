@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO agent_hostname_patterns (agent_id, pattern) VALUES ($1, $2) RETURNING id, agent_id, pattern, created_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "pattern",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "80b8dc63f0ab63010e97a00032ed026b3ad8a5558449693f73099539cbf77a72"
+}

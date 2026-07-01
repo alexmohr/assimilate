@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM agents WHERE agent_token_hash = 'imported:no-auth' AND NOT EXISTS (SELECT 1 FROM backup_reports WHERE agent_id = agents.id)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "30b171783de86ccd5f39cf4e7cac77870a0d6dc69f5c7144c9b6d6b16f846f9b"
+}

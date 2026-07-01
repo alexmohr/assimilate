@@ -101,7 +101,7 @@ pub async fn dashboard_overview(
     findings.extend(
         hosts
             .iter()
-            .filter(|host| host.enabled_assignment_count == 0)
+            .filter(|host| host.enabled_assignment_count.unwrap_or(0) == 0)
             .map(|host| DashboardFindingResponse {
                 id: format!("agent:{}:unassigned", host.agent_id),
                 kind: "host_unassigned".to_owned(),
@@ -122,7 +122,7 @@ pub async fn dashboard_overview(
     );
 
     repositories.iter().for_each(|repo| {
-        if repo.enabled_schedule_count == 0 {
+        if repo.enabled_schedule_count.unwrap_or(0) == 0 {
             findings.push(repository_finding(
                 repo,
                 "repository_unscheduled",
@@ -178,7 +178,7 @@ pub async fn dashboard_overview(
                 status: "running".to_owned(),
                 hostname: target.hostname.clone(),
                 schedule_id: target.schedule_id,
-                schedule_name: target.schedule_name.clone(),
+                schedule_name: target.schedule_name.clone().unwrap_or_default(),
                 repo_id: target.repo_id,
                 repo_name: target.repo_name.clone(),
                 started_at,
@@ -189,23 +189,26 @@ pub async fn dashboard_overview(
 
     let protected_hosts = hosts
         .iter()
-        .filter(|host| host.successful_enabled_assignment_count > 0)
+        .filter(|host| host.successful_enabled_assignment_count.unwrap_or(0) > 0)
         .count();
     let protected_hosts = i64::try_from(protected_hosts).unwrap_or(i64::MAX);
     let eligible_hosts = i64::try_from(hosts.len()).unwrap_or(i64::MAX);
     let protected_agent_links = hosts
         .iter()
-        .filter(|host| host.successful_enabled_assignment_count > 0)
+        .filter(|host| host.successful_enabled_assignment_count.unwrap_or(0) > 0)
         .map(agent_link)
         .collect();
     let unassigned_agents = hosts
         .iter()
-        .filter(|host| host.enabled_assignment_count == 0)
+        .filter(|host| host.enabled_assignment_count.unwrap_or(0) == 0)
         .map(agent_link)
         .collect();
     let disabled_only_agents = hosts
         .iter()
-        .filter(|host| host.enabled_assignment_count == 0 && host.disabled_assignment_count > 0)
+        .filter(|host| {
+            host.enabled_assignment_count.unwrap_or(0) == 0
+                && host.disabled_assignment_count.unwrap_or(0) > 0
+        })
         .map(agent_link)
         .collect();
     let never_succeeded_targets = targets
@@ -234,11 +237,11 @@ pub async fn dashboard_overview(
                 .count();
             DashboardUpcomingScheduleResponse {
                 schedule_id: schedule.schedule_id,
-                schedule_name: schedule.schedule_name,
+                schedule_name: schedule.schedule_name.unwrap_or_default(),
                 repo_id: schedule.repo_id,
                 repo_name: schedule.repo_name,
-                next_run_at: schedule.next_run_at,
-                target_count: schedule.target_count,
+                next_run_at: schedule.next_run_at.unwrap_or_default(),
+                target_count: schedule.target_count.unwrap_or(0),
                 offline_target_count,
             }
         })
@@ -370,7 +373,7 @@ fn target_finding(
         status,
         hostname: Some(target.hostname.clone()),
         schedule_id: Some(target.schedule_id),
-        schedule_name: Some(target.schedule_name.clone()),
+        schedule_name: target.schedule_name.clone(),
         repo_id: Some(target.repo_id),
         repo_name: Some(target.repo_name.clone()),
         reason,

@@ -218,11 +218,11 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     // If the user cancelled a backup while this agent was offline, notify the
     // agent now so it can kill the corresponding borg process.
-    if let Ok(rows) = sqlx::query_scalar::<_, i64>(
+    if let Ok(rows) = sqlx::query_scalar!(
         "SELECT DISTINCT repo_id FROM backup_reports WHERE agent_id = $1 AND status = 'cancelled' \
          AND NOT cancellation_acknowledged",
+        agent_id,
     )
-    .bind(agent_id)
     .fetch_all(&state.pool)
     .await
     {
@@ -246,15 +246,27 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     // Execute any pending backup runs that were triggered (e.g. "Run Now") while
     // this agent was offline. The backup_report is already in the DB as 'pending'
     // and will be updated to 'started' when the agent reports BackupStarted.
-    if let Ok(rows) = sqlx::query_as::<_, (i64, Option<i64>, Option<String>)>(
+    #[derive(sqlx::FromRow)]
+    struct PendingBackupRow {
+        repo_id: i64,
+        schedule_id: Option<i64>,
+        run_id: Option<String>,
+    }
+    if let Ok(rows) = sqlx::query_as!(
+        PendingBackupRow,
         "SELECT repo_id, schedule_id, run_id FROM backup_reports WHERE agent_id = $1 AND status = \
          'pending' ORDER BY started_at ASC",
+        agent_id,
     )
-    .bind(agent_id)
     .fetch_all(&state.pool)
     .await
     {
-        for (repo_id, schedule_id, run_id) in rows {
+        for row in rows {
+            let PendingBackupRow {
+                repo_id,
+                schedule_id,
+                run_id,
+            } = row;
             let msg = ServerToAgent::RunBackupNow {
                 repo_id: shared::types::RepoId(repo_id),
                 schedule_id,

@@ -2839,23 +2839,23 @@ pub async fn get_activity_feed(
     schedule_id: Option<i64>,
     run_id: Option<&str>,
 ) -> Result<Vec<ActivityRow>, ApiError> {
-    #[allow(trivial_casts)]
-    sqlx::query_as::<_, ActivityRow>(
+    sqlx::query_as!(
+        ActivityRow,
         "SELECT br.id, a.hostname, r.name AS target_name, br.started_at, br.finished_at, \
          br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message, \
-         br.schedule_id, s.name AS schedule_name, br.run_id FROM backup_reports br JOIN agents a \
-         ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = \
-         br.schedule_id WHERE a.is_hidden = false AND a.visibility <> 'hidden' AND \
+         br.schedule_id, s.name AS \"schedule_name?\", br.run_id FROM backup_reports br JOIN \
+         agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s \
+         ON s.id = br.schedule_id WHERE a.is_hidden = false AND a.visibility <> 'hidden' AND \
          COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND ($1::bigint IS NULL OR \
          br.repo_id = $1) AND ($2::text IS NULL OR a.hostname = $2) AND ($3::bigint IS NULL OR \
          br.schedule_id = $3) AND ($4::text IS NULL OR br.run_id = $4) ORDER BY br.started_at \
          DESC LIMIT $5",
+        repo_id,
+        hostname,
+        schedule_id,
+        run_id,
+        limit,
     )
-    .bind(repo_id)
-    .bind(hostname)
-    .bind(schedule_id)
-    .bind(run_id)
-    .bind(limit)
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)
@@ -3926,23 +3926,23 @@ pub async fn get_activity_feed_days(
     schedule_id: Option<i64>,
     run_id: Option<&str>,
 ) -> Result<Vec<ActivityRow>, ApiError> {
-    #[allow(trivial_casts)]
-    sqlx::query_as::<_, ActivityRow>(
+    sqlx::query_as!(
+        ActivityRow,
         "SELECT br.id, a.hostname, r.name AS target_name, br.started_at, br.finished_at, \
          br.status, br.duration_secs, br.repo_id, br.archive_name, br.error_message, \
-         br.schedule_id, s.name AS schedule_name, br.run_id FROM backup_reports br JOIN agents a \
-         ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = \
-         br.schedule_id WHERE a.is_hidden = false AND a.visibility <> 'hidden' AND \
+         br.schedule_id, s.name AS \"schedule_name?\", br.run_id FROM backup_reports br JOIN \
+         agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s \
+         ON s.id = br.schedule_id WHERE a.is_hidden = false AND a.visibility <> 'hidden' AND \
          COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND br.started_at > NOW() - \
          make_interval(days => $1::int) AND ($2::bigint IS NULL OR br.repo_id = $2) AND ($3::text \
          IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR br.schedule_id = $4) AND \
          ($5::text IS NULL OR br.run_id = $5) ORDER BY br.started_at DESC",
+        i32::try_from(days).unwrap_or(14),
+        repo_id,
+        hostname,
+        schedule_id,
+        run_id,
     )
-    .bind(i32::try_from(days).unwrap_or(14))
-    .bind(repo_id)
-    .bind(hostname)
-    .bind(schedule_id)
-    .bind(run_id)
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)

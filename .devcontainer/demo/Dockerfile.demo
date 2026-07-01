@@ -27,6 +27,8 @@ RUN if [ "$COVERAGE" = "true" ]; then \
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
+COPY .sqlx/ ./.sqlx/
+ENV SQLX_OFFLINE=true
 RUN cargo build --release -p server -p agent
 
 RUN if [ "$COVERAGE" = "true" ]; then \

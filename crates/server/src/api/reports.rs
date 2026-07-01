@@ -7,6 +7,7 @@ use axum::{
 };
 use serde::Deserialize;
 use shared::responses::ReportResponse;
+use tracing::warn;
 
 use super::auth::AuthUser;
 use crate::{AppState, db, error::ApiError};
@@ -19,7 +20,14 @@ fn row_to_report_response(row: db::ReportRow, hostname: String) -> ReportRespons
         schedule_id: row.schedule_id,
         started_at: row.started_at,
         finished_at: row.finished_at,
-        status: row.status,
+        status: row.status.parse().unwrap_or_else(|e| {
+            warn!(
+                error = %e,
+                raw_status = %row.status,
+                "failed to parse backup status, defaulting to Success"
+            );
+            Default::default()
+        }),
         original_size: row.original_size,
         compressed_size: row.compressed_size,
         deduplicated_size: row.deduplicated_size,

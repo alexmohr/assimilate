@@ -5,7 +5,13 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use ts_rs::TS;
 
-use crate::types::SearchEntry;
+use crate::{
+    protocol::{RepoOpKind, TunnelStatus},
+    types::{
+        BackupStatus, BorgEncryption, Compression, ExecutionMode, OnFailure, ScheduleType,
+        SearchEntry,
+    },
+};
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
@@ -132,8 +138,10 @@ pub struct RepoResponse {
     pub ssh_user: String,
     pub ssh_host: String,
     pub ssh_port: i32,
-    pub compression: String,
-    pub encryption: String,
+    #[ts(type = "string")]
+    pub compression: Compression,
+    #[ts(type = "string")]
+    pub encryption: BorgEncryption,
     pub enabled: bool,
     #[ts(type = "number | null")]
     pub owner_id: Option<i64>,
@@ -159,8 +167,10 @@ pub struct RepoWithStatsResponse {
     pub ssh_host: String,
     pub ssh_port: i32,
     pub ssh_host_key: Option<String>,
-    pub compression: String,
-    pub encryption: String,
+    #[ts(type = "string")]
+    pub compression: Compression,
+    #[ts(type = "string")]
+    pub encryption: BorgEncryption,
     pub enabled: bool,
     pub importing: bool,
     pub import_error: Option<String>,
@@ -186,7 +196,8 @@ pub struct RepoWithStatsResponse {
     #[ts(type = "number")]
     pub unmatched_count: i64,
     pub relocation_pending: bool,
-    pub last_op_kind: Option<String>,
+    #[ts(type = "string | null")]
+    pub last_op_kind: Option<RepoOpKind>,
     pub last_op_at: Option<DateTime<Utc>>,
     pub last_op_by: Option<String>,
     pub current_op: Option<crate::protocol::ActiveRepoOp>,
@@ -254,7 +265,8 @@ pub struct ScheduleResponse {
     #[ts(type = "number | null")]
     pub repo_id: Option<i64>,
     pub name: String,
-    pub schedule_type: String,
+    #[ts(type = "string")]
+    pub schedule_type: ScheduleType,
     pub cron_expression: String,
     pub enabled: bool,
     pub canary_enabled: bool,
@@ -271,8 +283,10 @@ pub struct ScheduleResponse {
     pub rate_limit_kbps: Option<i32>,
     pub pre_backup_commands: String,
     pub post_backup_commands: String,
-    pub execution_mode: String,
-    pub on_failure: String,
+    #[ts(type = "string")]
+    pub execution_mode: ExecutionMode,
+    #[ts(type = "string")]
+    pub on_failure: OnFailure,
     #[ts(type = "number | null")]
     pub owner_id: Option<i64>,
     pub visibility: String,
@@ -340,7 +354,8 @@ pub struct ReportResponse {
     pub schedule_id: Option<i64>,
     pub started_at: DateTime<Utc>,
     pub finished_at: DateTime<Utc>,
-    pub status: String,
+    #[ts(type = "string")]
+    pub status: BackupStatus,
     #[ts(type = "number")]
     pub original_size: i64,
     #[ts(type = "number")]
@@ -522,7 +537,8 @@ pub struct TunnelResponse {
     pub tunnel_port: i32,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
-    pub status: String,
+    #[ts(type = "string")]
+    pub status: TunnelStatus,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -825,7 +841,8 @@ pub struct HealthSummaryResponse {
     pub schedule_id: i64,
     pub hostname: String,
     pub target_name: String,
-    pub last_status: Option<String>,
+    #[ts(type = "string | null")]
+    pub last_status: Option<BackupStatus>,
     pub last_backup_at: Option<DateTime<Utc>>,
     pub is_overdue: bool,
     pub last_error_message: Option<String>,
@@ -847,7 +864,8 @@ pub struct ActivityEntryResponse {
     #[ts(type = "number | null")]
     pub schedule_id: Option<i64>,
     pub hostname: String,
-    pub status: String,
+    #[ts(type = "string")]
+    pub status: BackupStatus,
     pub archive_name: Option<String>,
     #[ts(type = "number")]
     pub original_size: i64,
@@ -1142,12 +1160,15 @@ pub struct HostExportResponse {
 #[ts(export)]
 pub struct ScheduleExportResponse {
     pub name: String,
-    pub schedule_type: String,
+    #[ts(type = "string")]
+    pub schedule_type: ScheduleType,
     pub cron_expression: String,
     pub enabled: bool,
     pub canary_enabled: bool,
-    pub execution_mode: String,
-    pub on_failure: String,
+    #[ts(type = "string")]
+    pub execution_mode: ExecutionMode,
+    #[ts(type = "string")]
+    pub on_failure: OnFailure,
     pub exclude_patterns_raw: String,
     pub ignore_global_excludes: bool,
     pub keep_hourly: i32,

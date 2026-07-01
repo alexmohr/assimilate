@@ -5,7 +5,9 @@ use std::{fmt, str::FromStr};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use ts_rs::TS;
+use utoipa::ToSchema;
 
 fn default_keep_hourly() -> u32 {
     24
@@ -94,8 +96,7 @@ impl fmt::Display for ScheduleType {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", content = "value")]
+#[derive(Debug, Clone, Default, PartialEq, Eq, TS, ToSchema)]
 pub enum Compression {
     None,
     #[default]
@@ -106,6 +107,48 @@ pub enum Compression {
     Zlib {
         level: i32,
     },
+}
+
+impl Serialize for Compression {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for Compression {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Accept both the new flat-string format ("zstd,3") and the old
+        // tagged-object format ({"type":"Zstd","value":{"level":3}}) for
+        // backward compatibility during mixed-version server/agent upgrades.
+        match Value::deserialize(deserializer)? {
+            Value::String(s) => s.parse().map_err(serde::de::Error::custom),
+            Value::Object(ref map) => {
+                let type_ = map
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| serde::de::Error::custom("missing 'type' in compression"))?;
+                let level = map
+                    .get("value")
+                    .and_then(|v| v.get("level"))
+                    .and_then(|v| v.as_i64())
+                    .and_then(|v| i32::try_from(v).ok());
+                match type_ {
+                    "None" => Ok(Compression::None),
+                    "Lz4" => Ok(Compression::Lz4),
+                    "Zstd" => Ok(Compression::Zstd {
+                        level: level.unwrap_or(3),
+                    }),
+                    "Zlib" => Ok(Compression::Zlib {
+                        level: level.unwrap_or(6),
+                    }),
+                    other => Err(serde::de::Error::custom(format!(
+                        "unknown compression type: {other}"
+                    ))),
+                }
+            }
+            _ => Err(serde::de::Error::custom("invalid compression format")),
+        }
+    }
 }
 
 impl fmt::Display for Compression {
@@ -145,8 +188,9 @@ impl FromStr for Compression {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
 pub enum BorgEncryption {
+    #[default]
     #[serde(rename = "repokey")]
     Repokey,
     #[serde(rename = "repokey-blake2")]
@@ -201,7 +245,7 @@ impl FromStr for BorgEncryption {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ScheduleType {
     #[default]
@@ -210,7 +254,7 @@ pub enum ScheduleType {
     Verify,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ExecutionMode {
     #[default]
@@ -236,7 +280,7 @@ impl FromStr for ExecutionMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum OnFailure {
     #[default]
@@ -265,14 +309,43 @@ impl FromStr for OnFailure {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema)]
+#[serde(rename_all = "lowercase")]
 pub enum BackupStatus {
+    #[default]
+    #[serde(alias = "Success")]
     Success,
+    #[serde(alias = "Warning")]
     Warning,
+    #[serde(alias = "Failed")]
     Failed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+impl fmt::Display for BackupStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Success => write!(f, "success"),
+            Self::Warning => write!(f, "warning"),
+            Self::Failed => write!(f, "failed"),
+        }
+    }
+}
+
+impl FromStr for BackupStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "success" | "Success" => Ok(Self::Success),
+            "warning" | "Warning" => Ok(Self::Warning),
+            "failed" | "Failed" => Ok(Self::Failed),
+            other => Err(format!("unknown backup status: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[serde(rename_all = "lowercase")]
 pub enum AgentStatus {
     Online,
     Offline,

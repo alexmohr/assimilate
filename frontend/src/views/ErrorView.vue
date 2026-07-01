@@ -4,13 +4,40 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import CardError from '../components/CardError.vue'
+import { consumeErrorDetails } from '../utils/errorDetails'
 
 const route = useRoute()
 const router = useRouter()
 
 const statusCode = route.query.code ?? '500'
 const message = route.query.message ?? 'Something went wrong. Please try again later.'
+
+const errorDetails = consumeErrorDetails()
+
+const sourceLabel = computed(() => {
+  if (errorDetails?.source === 'frontend') {
+    return 'Frontend error'
+  }
+  if (errorDetails?.source === 'backend') {
+    return 'Backend error'
+  }
+  return undefined
+})
+
+const detailsMessage = computed(() => {
+  if (!errorDetails) {
+    return undefined
+  }
+  const lines = [
+    errorDetails.name ? `Type: ${errorDetails.name}` : undefined,
+    `Message: ${errorDetails.message}`,
+    errorDetails.stack ? `\nStack trace:\n${errorDetails.stack}` : undefined,
+  ].filter((line): line is string => line !== undefined)
+  return lines.join('\n')
+})
 
 function goHome(): void {
   router.push('/')
@@ -24,9 +51,21 @@ function goHome(): void {
         {{ statusCode }}
       </div>
       <h1 class="error-title">Error</h1>
+      <p
+        v-if="sourceLabel"
+        class="error-source"
+      >
+        {{ sourceLabel }}
+      </p>
       <p class="error-message">
         {{ message }}
       </p>
+      <CardError
+        v-if="detailsMessage"
+        class="error-details"
+        label="Show error details"
+        :message="detailsMessage"
+      />
       <button
         class="error-btn"
         @click="goHome"
@@ -72,11 +111,25 @@ function goHome(): void {
   margin: 0 0 0.5rem;
 }
 
+.error-source {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  margin: 0 0 0.5rem;
+}
+
 .error-message {
   font-size: 0.875rem;
   color: var(--text-secondary);
   margin: 0 0 1.5rem;
   line-height: 1.5;
+}
+
+.error-details {
+  text-align: left;
+  margin: 0 0 1.5rem;
 }
 
 .error-btn {

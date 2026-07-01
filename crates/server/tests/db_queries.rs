@@ -1660,18 +1660,18 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
         .iter()
         .find(|host| host.agent_id == disabled_agent.id)
         .unwrap();
-    assert_eq!(disabled.enabled_assignment_count, 0);
-    assert_eq!(disabled.disabled_assignment_count, 1);
+    assert_eq!(disabled.enabled_assignment_count, Some(0));
+    assert_eq!(disabled.disabled_assignment_count, Some(1));
     let unassigned = hosts
         .iter()
         .find(|host| host.agent_id == unassigned.id)
         .unwrap();
-    assert_eq!(unassigned.enabled_assignment_count, 0);
+    assert_eq!(unassigned.enabled_assignment_count, Some(0));
 
     let upcoming = db::dashboard::upcoming_schedules(&pool).await.unwrap();
     assert_eq!(upcoming.len(), 1);
     assert_eq!(upcoming[0].schedule_id, schedule_a.id);
-    assert_eq!(upcoming[0].target_count, 1);
+    assert_eq!(upcoming[0].target_count, Some(1));
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1687,7 +1687,7 @@ async fn dashboard_repository_capacity_uses_repo_stats_and_quota(pool: PgPool) {
     assert_eq!(repositories[0].deduplicated_size, 250_000);
     assert_eq!(repositories[0].warn_bytes, Some(200_000));
     assert_eq!(repositories[0].critical_bytes, Some(300_000));
-    assert_eq!(repositories[0].enabled_schedule_count, 0);
+    assert_eq!(repositories[0].enabled_schedule_count, Some(0));
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2342,8 +2342,8 @@ async fn test_tag_add_and_list(pool: PgPool) {
         .await
         .unwrap();
 
-    assert_eq!(created.repo_id, repo.id);
-    assert_eq!(created.archive_name, "archive-1");
+    assert_eq!(created.repo_id, Some(repo.id));
+    assert_eq!(created.archive_name, Some("archive-1".to_string()));
     assert_eq!(created.tag, "nightly");
     assert!(created.created_by.is_none());
 

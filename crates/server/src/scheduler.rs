@@ -932,24 +932,26 @@ esac
             .await
             .expect("sync_existing_archives failed");
 
-        let stale_count: i64 = sqlx::query_scalar!(
-            "SELECT COUNT(*) FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",
+        let stale_count = sqlx::query_scalar!(
+            "SELECT COUNT(*)::BIGINT FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",
             repo.id,
             "stale-archive",
         )
         .fetch_one(&pool)
         .await
-        .unwrap();
+        .unwrap()
+        .unwrap_or(0);
         assert_eq!(stale_count, 0);
 
-        let fresh_count: i64 = sqlx::query_scalar!(
-            "SELECT COUNT(*) FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",
+        let fresh_count = sqlx::query_scalar!(
+            "SELECT COUNT(*)::BIGINT FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",
             repo.id,
             "fresh-archive",
         )
         .fetch_one(&pool)
         .await
-        .unwrap();
+        .unwrap()
+        .unwrap_or(0);
         assert_eq!(fresh_count, 1);
     }
 

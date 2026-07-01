@@ -127,6 +127,10 @@ jobs:
           toolchain: nightly
       - name: Install sqlx-cli
         run: cargo install sqlx-cli --locked --no-default-features --features postgres
+      - name: Apply database migrations
+        run: cargo sqlx migrate run --source crates/server/migrations
+        env:
+          DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
       - name: Run database integration tests
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
@@ -161,6 +165,10 @@ jobs:
           toolchain: nightly
       - name: Install sqlx-cli
         run: cargo install sqlx-cli --locked --no-default-features --features postgres
+      - name: Apply database migrations
+        run: cargo sqlx migrate run --source crates/server/migrations
+        env:
+          DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
       - name: Run tests (unit + integration) on nightly
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
@@ -211,6 +219,10 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
+      - name: Apply database migrations
+        run: cargo sqlx migrate run --source crates/server/migrations
+        env:
+          DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
       - name: Generate Rust coverage
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg

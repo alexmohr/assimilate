@@ -39,6 +39,10 @@ jobs:
         run: cargo +nightly clippy --workspace -- -D warnings
       - name: Tests
         run: cargo test --workspace --lib --bins
+      - name: Apply database migrations
+        run: cargo sqlx migrate run --source crates/server/migrations
+        env:
+          DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
       - name: Check sqlx offline cache is fresh
         run: cargo sqlx prepare --check --workspace
         env:

@@ -11,9 +11,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelType {
+    #[default]
     Email,
     Webhook,
     WebPush,
@@ -31,7 +32,10 @@ impl fmt::Display for ChannelType {
 
 impl From<String> for ChannelType {
     fn from(s: String) -> Self {
-        s.parse().expect("invalid ChannelType")
+        s.parse().unwrap_or_else(|e| {
+            tracing::warn!(raw = %s, error = %e, "invalid ChannelType, defaulting to Email");
+            Default::default()
+        })
     }
 }
 
@@ -48,7 +52,7 @@ impl std::str::FromStr for ChannelType {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, PartialEq, thiserror::Error)]
 #[error("unknown channel type: {0}")]
 pub struct UnknownChannelType(pub String);
 
@@ -490,10 +494,51 @@ pub(crate) fn build_push_url(payload: &serde_json::Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
 
     fn payload(json: serde_json::Value) -> serde_json::Value {
         json
+    }
+
+    #[test]
+    fn channel_type_from_str() {
+        assert_eq!(ChannelType::from_str("email"), Ok(ChannelType::Email));
+        assert_eq!(ChannelType::from_str("webhook"), Ok(ChannelType::Webhook));
+        assert_eq!(ChannelType::from_str("web_push"), Ok(ChannelType::WebPush));
+        assert!(ChannelType::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn channel_type_display() {
+        assert_eq!(ChannelType::Email.to_string(), "email");
+        assert_eq!(ChannelType::Webhook.to_string(), "webhook");
+        assert_eq!(ChannelType::WebPush.to_string(), "web_push");
+    }
+
+    #[test]
+    fn channel_type_from_string_fallback_on_invalid_value() {
+        let ct = ChannelType::from("bogus".to_string());
+        assert_eq!(ct, ChannelType::Email);
+    }
+
+    #[test]
+    fn channel_type_from_string_valid_values() {
+        assert_eq!(ChannelType::from("email".to_string()), ChannelType::Email);
+        assert_eq!(
+            ChannelType::from("webhook".to_string()),
+            ChannelType::Webhook
+        );
+        assert_eq!(
+            ChannelType::from("web_push".to_string()),
+            ChannelType::WebPush
+        );
+    }
+
+    #[test]
+    fn channel_type_default_is_email() {
+        assert_eq!(ChannelType::default(), ChannelType::Email);
     }
 
     #[test]

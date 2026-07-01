@@ -2472,11 +2472,12 @@ pub async fn rescan_repo(
         hostname: String,
     }
 
-    let unmatched_rows = sqlx::query_as::<_, UnmatchedRow>(
+    let unmatched_rows = sqlx::query_as!(
+        UnmatchedRow,
         "SELECT br.id AS report_id, c.hostname FROM backup_reports br JOIN agents c ON c.id = \
          br.agent_id WHERE br.repo_id = $1 AND br.matched = false",
+        repo_id,
     )
-    .bind(repo_id)
     .fetch_all(&state.pool)
     .await
     .map_err(ApiError::Database)?;
@@ -2492,17 +2493,19 @@ pub async fn rescan_repo(
         };
 
         if let Some(agent_id) = new_agent_id {
-            sqlx::query("UPDATE backup_reports SET agent_id = $1, matched = true WHERE id = $2")
-                .bind(agent_id)
-                .bind(row.report_id)
-                .execute(&state.pool)
-                .await
-                .map_err(ApiError::Database)?;
+            sqlx::query!(
+                "UPDATE backup_reports SET agent_id = $1, matched = true WHERE id = $2",
+                agent_id,
+                row.report_id,
+            )
+            .execute(&state.pool)
+            .await
+            .map_err(ApiError::Database)?;
             matched_count += 1;
         }
     }
 
-    sqlx::query(
+    sqlx::query!(
         "DELETE FROM agents WHERE agent_token_hash = 'imported:no-auth' AND NOT EXISTS (SELECT 1 \
          FROM backup_reports WHERE agent_id = agents.id)",
     )

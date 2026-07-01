@@ -233,7 +233,8 @@ pub async fn list_archives(
         agent_hostname: String,
     }
 
-    let rows = sqlx::query_as::<_, Row>(
+    let rows = sqlx::query_as!(
+        Row,
         "WITH latest_archives AS (SELECT DISTINCT ON (br.archive_name) br.archive_name, \
          br.started_at, br.original_size, br.deduplicated_size, br.matched, c.hostname AS \
          agent_hostname FROM backup_reports br JOIN agents c ON c.id = br.agent_id WHERE \
@@ -241,8 +242,8 @@ pub async fn list_archives(
          ORDER BY br.archive_name, br.started_at DESC, br.id DESC) SELECT archive_name, \
          started_at, original_size, deduplicated_size, matched, agent_hostname FROM \
          latest_archives ORDER BY started_at DESC",
+        repo_id,
     )
-    .bind(repo_id)
     .fetch_all(&state.pool)
     .await
     .map_err(ApiError::Database)?;
@@ -824,12 +825,13 @@ pub async fn get_archive_index_status(
         error_message: Option<String>,
     }
 
-    let row = sqlx::query_as::<_, Row>(
+    let row = sqlx::query_as!(
+        Row,
         "SELECT j.status, j.file_count, j.error_message FROM archive_index_jobs j JOIN archives a \
          ON a.id = j.archive_id WHERE a.repo_id = $1 AND a.name = $2",
+        repo_id,
+        archive_name,
     )
-    .bind(repo_id)
-    .bind(&archive_name)
     .fetch_optional(&state.pool)
     .await
     .map_err(ApiError::Database)?;

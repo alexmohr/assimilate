@@ -11,7 +11,7 @@ use crate::error::ApiError;
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TargetRow {
     pub schedule_id: i64,
-    pub schedule_name: String,
+    pub schedule_name: Option<String>,
     pub cron_expression: String,
     pub schedule_enabled: bool,
     pub schedule_last_run_at: Option<DateTime<Utc>>,
@@ -34,19 +34,19 @@ pub struct TargetRow {
 pub struct EligibleAgentRow {
     pub agent_id: i64,
     pub hostname: String,
-    pub enabled_assignment_count: i64,
-    pub disabled_assignment_count: i64,
-    pub successful_enabled_assignment_count: i64,
+    pub enabled_assignment_count: Option<i64>,
+    pub disabled_assignment_count: Option<i64>,
+    pub successful_enabled_assignment_count: Option<i64>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct UpcomingScheduleRow {
     pub schedule_id: i64,
-    pub schedule_name: String,
+    pub schedule_name: Option<String>,
     pub repo_id: i64,
     pub repo_name: String,
-    pub next_run_at: DateTime<Utc>,
-    pub target_count: i64,
+    pub next_run_at: Option<DateTime<Utc>>,
+    pub target_count: Option<i64>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -57,14 +57,15 @@ pub struct RepositoryRow {
     pub warn_bytes: Option<i64>,
     pub critical_bytes: Option<i64>,
     pub quota_enabled: Option<bool>,
-    pub enabled_schedule_count: i64,
+    pub enabled_schedule_count: Option<i64>,
     pub importing: bool,
     pub import_error: Option<String>,
     pub last_synced_at: Option<DateTime<Utc>>,
 }
 
 pub async fn targets(pool: &PgPool) -> Result<Vec<TargetRow>, ApiError> {
-    sqlx::query_as::<_, TargetRow>(
+    sqlx::query_as!(
+        TargetRow,
         r#"
         SELECT s.id AS schedule_id,
                COALESCE(NULLIF(s.name, ''), r.name) AS schedule_name,
@@ -87,30 +88,30 @@ pub async fn targets(pool: &PgPool) -> Result<Vec<TargetRow>, ApiError> {
                    ELSE latest.error_message
                END AS latest_message,
                success.finished_at AS last_success_at
-        FROM schedules s
-        JOIN schedule_targets st ON st.schedule_id = s.id
-        JOIN agents c ON c.id = st.agent_id
-        JOIN repos r ON r.id = s.repo_id
-        LEFT JOIN LATERAL (
-            SELECT br.id, br.started_at, br.finished_at, br.status,
-                   br.error_message, br.warnings
-            FROM backup_reports br
-            WHERE br.schedule_id = s.id AND br.agent_id = c.id
-            ORDER BY br.started_at DESC
-            LIMIT 1
-        ) latest ON true
-        LEFT JOIN LATERAL (
-            SELECT br.finished_at
-            FROM backup_reports br
-            WHERE br.schedule_id = s.id AND br.agent_id = c.id
-              AND br.status = 'success'
-            ORDER BY br.finished_at DESC
-            LIMIT 1
-        ) success ON true
-        WHERE c.is_hidden = false
-          AND c.agent_token_hash <> 'imported:no-auth'
-          AND r.enabled = true
-        ORDER BY s.id, c.id
+         FROM schedules s
+         JOIN schedule_targets st ON st.schedule_id = s.id
+         JOIN agents c ON c.id = st.agent_id
+         JOIN repos r ON r.id = s.repo_id
+         LEFT JOIN LATERAL (
+             SELECT br.id, br.started_at, br.finished_at, br.status,
+                    br.error_message, br.warnings
+             FROM backup_reports br
+             WHERE br.schedule_id = s.id AND br.agent_id = c.id
+             ORDER BY br.started_at DESC
+             LIMIT 1
+         ) latest ON true
+         LEFT JOIN LATERAL (
+             SELECT br.finished_at
+             FROM backup_reports br
+             WHERE br.schedule_id = s.id AND br.agent_id = c.id
+               AND br.status = 'success'
+             ORDER BY br.finished_at DESC
+             LIMIT 1
+         ) success ON true
+         WHERE c.is_hidden = false
+           AND c.agent_token_hash <> 'imported:no-auth'
+           AND r.enabled = true
+         ORDER BY s.id, c.id
         "#,
     )
     .fetch_all(pool)
@@ -119,7 +120,8 @@ pub async fn targets(pool: &PgPool) -> Result<Vec<TargetRow>, ApiError> {
 }
 
 pub async fn eligible_hosts(pool: &PgPool) -> Result<Vec<EligibleAgentRow>, ApiError> {
-    sqlx::query_as::<_, EligibleAgentRow>(
+    sqlx::query_as!(
+        EligibleAgentRow,
         r#"
         SELECT c.id AS agent_id,
                c.hostname,
@@ -136,14 +138,14 @@ pub async fn eligible_hosts(pool: &PgPool) -> Result<Vec<EligibleAgentRow>, ApiE
                          AND br.status = 'success'
                    )
                ) AS successful_enabled_assignment_count
-        FROM agents c
-        LEFT JOIN schedule_targets st ON st.agent_id = c.id
-        LEFT JOIN schedules s ON s.id = st.schedule_id
-        LEFT JOIN repos r ON r.id = s.repo_id
-        WHERE c.is_hidden = false
-          AND c.agent_token_hash <> 'imported:no-auth'
-        GROUP BY c.id, c.hostname
-        ORDER BY c.hostname
+         FROM agents c
+         LEFT JOIN schedule_targets st ON st.agent_id = c.id
+         LEFT JOIN schedules s ON s.id = st.schedule_id
+         LEFT JOIN repos r ON r.id = s.repo_id
+         WHERE c.is_hidden = false
+           AND c.agent_token_hash <> 'imported:no-auth'
+         GROUP BY c.id, c.hostname
+         ORDER BY c.hostname
         "#,
     )
     .fetch_all(pool)
@@ -152,7 +154,8 @@ pub async fn eligible_hosts(pool: &PgPool) -> Result<Vec<EligibleAgentRow>, ApiE
 }
 
 pub async fn upcoming_schedules(pool: &PgPool) -> Result<Vec<UpcomingScheduleRow>, ApiError> {
-    sqlx::query_as::<_, UpcomingScheduleRow>(
+    sqlx::query_as!(
+        UpcomingScheduleRow,
         r#"
         SELECT s.id AS schedule_id,
                COALESCE(NULLIF(s.name, ''), r.name) AS schedule_name,
@@ -160,18 +163,18 @@ pub async fn upcoming_schedules(pool: &PgPool) -> Result<Vec<UpcomingScheduleRow
                r.name AS repo_name,
                s.next_run_at,
                COUNT(DISTINCT c.id) AS target_count
-        FROM schedules s
-        JOIN repos r ON r.id = s.repo_id
-        JOIN schedule_targets st ON st.schedule_id = s.id
-        JOIN agents c ON c.id = st.agent_id
-        WHERE s.enabled = true
-          AND r.enabled = true
-          AND s.next_run_at IS NOT NULL
-          AND c.is_hidden = false
-          AND c.agent_token_hash <> 'imported:no-auth'
-        GROUP BY s.id, s.name, r.id, r.name, s.next_run_at
-        ORDER BY s.next_run_at, s.id
-        LIMIT 8
+         FROM schedules s
+         JOIN repos r ON r.id = s.repo_id
+         JOIN schedule_targets st ON st.schedule_id = s.id
+         JOIN agents c ON c.id = st.agent_id
+         WHERE s.enabled = true
+           AND r.enabled = true
+           AND s.next_run_at IS NOT NULL
+           AND c.is_hidden = false
+           AND c.agent_token_hash <> 'imported:no-auth'
+         GROUP BY s.id, s.name, r.id, r.name, s.next_run_at
+         ORDER BY s.next_run_at, s.id
+         LIMIT 8
         "#,
     )
     .fetch_all(pool)
@@ -180,7 +183,8 @@ pub async fn upcoming_schedules(pool: &PgPool) -> Result<Vec<UpcomingScheduleRow
 }
 
 pub async fn repositories(pool: &PgPool) -> Result<Vec<RepositoryRow>, ApiError> {
-    sqlx::query_as::<_, RepositoryRow>(
+    sqlx::query_as!(
+        RepositoryRow,
         r#"
         SELECT r.id AS repo_id,
                r.name AS repo_name,
@@ -192,13 +196,13 @@ pub async fn repositories(pool: &PgPool) -> Result<Vec<RepositoryRow>, ApiError>
                r.importing,
                r.import_error,
                r.last_synced_at
-        FROM repos r
-        LEFT JOIN repo_quotas q ON q.repo_id = r.id
-        LEFT JOIN schedules s ON s.repo_id = r.id
-        WHERE r.enabled = true
-        GROUP BY r.id, r.name, r.info_deduplicated_size, q.warn_bytes,
-                 q.critical_bytes, q.enabled, r.importing, r.import_error, r.last_synced_at
-        ORDER BY r.info_deduplicated_size DESC, r.name
+         FROM repos r
+         LEFT JOIN repo_quotas q ON q.repo_id = r.id
+         LEFT JOIN schedules s ON s.repo_id = r.id
+         WHERE r.enabled = true
+         GROUP BY r.id, r.name, r.info_deduplicated_size, q.warn_bytes,
+                  q.critical_bytes, q.enabled, r.importing, r.import_error, r.last_synced_at
+         ORDER BY r.info_deduplicated_size DESC, r.name
         "#,
     )
     .fetch_all(pool)
@@ -210,10 +214,12 @@ pub async fn dismissed_finding_ids(
     pool: &PgPool,
     user_id: i64,
 ) -> Result<HashSet<String>, ApiError> {
-    sqlx::query_scalar::<_, String>(
+    let uid =
+        i32::try_from(user_id).map_err(|_| ApiError::BadRequest("user_id out of range".into()))?;
+    sqlx::query_scalar!(
         "SELECT finding_id FROM dismissed_dashboard_findings WHERE user_id = $1",
+        uid,
     )
-    .bind(user_id)
     .fetch_all(pool)
     .await
     .map(HashSet::from_iter)
@@ -225,13 +231,15 @@ pub async fn dismiss_finding(
     user_id: i64,
     finding_id: &str,
 ) -> Result<(), ApiError> {
-    sqlx::query(
+    let uid =
+        i32::try_from(user_id).map_err(|_| ApiError::BadRequest("user_id out of range".into()))?;
+    sqlx::query!(
         "INSERT INTO dismissed_dashboard_findings (user_id, finding_id)
          VALUES ($1, $2)
          ON CONFLICT DO NOTHING",
+        uid,
+        finding_id,
     )
-    .bind(user_id)
-    .bind(finding_id)
     .execute(pool)
     .await
     .map(|_| ())
@@ -243,11 +251,15 @@ pub async fn undismiss_finding(
     user_id: i64,
     finding_id: &str,
 ) -> Result<(), ApiError> {
-    sqlx::query("DELETE FROM dismissed_dashboard_findings WHERE user_id = $1 AND finding_id = $2")
-        .bind(user_id)
-        .bind(finding_id)
-        .execute(pool)
-        .await
-        .map(|_| ())
-        .map_err(ApiError::Database)
+    let uid =
+        i32::try_from(user_id).map_err(|_| ApiError::BadRequest("user_id out of range".into()))?;
+    sqlx::query!(
+        "DELETE FROM dismissed_dashboard_findings WHERE user_id = $1 AND finding_id = $2",
+        uid,
+        finding_id,
+    )
+    .execute(pool)
+    .await
+    .map(|_| ())
+    .map_err(ApiError::Database)
 }

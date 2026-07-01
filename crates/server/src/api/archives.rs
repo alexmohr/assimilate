@@ -13,7 +13,13 @@ use axum::{
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt as _;
 use serde::{Deserialize, Serialize};
-use shared::types::build_repo_url;
+use shared::{
+    responses::{
+        ArchiveEntryResponse, ArchiveIndexStatusResponse, ArchiveInfoResponse,
+        DeleteArchiveResponse as SharedDeleteArchiveResponse,
+    },
+    types::build_repo_url,
+};
 use sqlx::PgPool;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, BufReader},
@@ -23,6 +29,16 @@ use tokio_util::io::ReaderStream;
 
 use super::{auth::AuthUser, permissions::check_repo_permission};
 use crate::{AppState, borg::Borg, db, error::ApiError};
+
+fn index_status_to_string(s: &crate::archive_index::IndexStatus) -> String {
+    match s {
+        crate::archive_index::IndexStatus::Pending => "pending",
+        crate::archive_index::IndexStatus::Indexing => "indexing",
+        crate::archive_index::IndexStatus::Done => "done",
+        crate::archive_index::IndexStatus::Failed => "failed",
+    }
+    .to_string()
+}
 
 const EXTRACT_TIMEOUT: Duration = Duration::from_secs(300);
 pub const LOCK_WAIT_SECS: &str = "60";
@@ -151,42 +167,11 @@ fn ensure_utc_suffix(ts: &str) -> String {
     }
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct ArchiveEntry {
-    pub name: String,
-    pub start: String,
-    pub hostname: String,
-    pub comment: String,
-    pub original_size: i64,
-    pub deduplicated_size: i64,
-    pub matched: Option<bool>,
-    pub agent_hostname: Option<String>,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct ArchiveInfo {
-    pub original_size: i64,
-    pub compressed_size: i64,
-    pub deduplicated_size: i64,
-    pub nfiles: i64,
-    pub duration: f64,
-    pub start: String,
-    pub end: String,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct ContentEntry {
-    #[serde(rename = "type")]
-    pub entry_type: String,
-    pub path: String,
-    pub size: i64,
-    pub mtime: String,
-    pub mode: String,
-}
+pub use shared::responses::ContentEntryResponse as ContentEntry;
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContentsResponse {
-    pub index_status: crate::archive_index::IndexStatus,
+    pub index_status: String,
     pub entries: Vec<ContentEntry>,
 }
 
@@ -224,7 +209,7 @@ pub struct DeleteArchiveResponse {
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),
     responses(
-        (status = 200, description = "List of archives", body = Vec<ArchiveEntry>),
+        (status = 200, description = "List of archives", body = Vec<ArchiveEntryResponse>),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden"),
         (status = 404, description = "Not found"),
@@ -235,7 +220,7 @@ pub async fn list_archives(
     State(state): State<AppState>,
     auth: AuthUser,
     AxumPath(repo_id): AxumPath<i64>,
-) -> Result<Json<Vec<ArchiveEntry>>, ApiError> {
+) -> Result<Json<Vec<ArchiveEntryResponse>>, ApiError> {
     check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_view).await?;
 
     #[derive(sqlx::FromRow)]
@@ -267,7 +252,7 @@ pub async fn list_archives(
         .map(|row| {
             let name = row.archive_name.unwrap_or_default();
             let start = row.started_at.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string();
-            ArchiveEntry {
+            ArchiveEntryResponse {
                 name,
                 start,
                 hostname: row.agent_hostname.clone(),
@@ -294,7 +279,7 @@ pub async fn list_archives(
         ("archive_name" = String, Path, description = "Archive name"),
     ),
     responses(
-        (status = 200, description = "Archive info", body = ArchiveInfo),
+        (status = 200, description = "Archive info", body = ArchiveInfoResponse),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden"),
         (status = 404, description = "Not found"),
@@ -305,7 +290,7 @@ pub async fn archive_info(
     State(state): State<AppState>,
     auth: AuthUser,
     AxumPath((repo_id, archive_name)): AxumPath<(i64, String)>,
-) -> Result<Json<ArchiveInfo>, ApiError> {
+) -> Result<Json<ArchiveInfoResponse>, ApiError> {
     check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_view).await?;
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
 
@@ -342,7 +327,7 @@ pub async fn archive_info(
 
     let stats = &archive["stats"];
 
-    let info = ArchiveInfo {
+    let info = ArchiveInfoResponse {
         original_size: stats["original_size"].as_i64().unwrap_or(0),
         compressed_size: stats["compressed_size"].as_i64().unwrap_or(0),
         deduplicated_size: stats["deduplicated_size"].as_i64().unwrap_or(0),
@@ -366,7 +351,8 @@ pub async fn archive_info(
         ("archive_name" = String, Path, description = "Archive name"),
     ),
     responses(
-        (status = 202, description = "Archive deletion started", body = DeleteArchiveResponse),
+        (status = 202, description = "Archive deletion started",
+            body = SharedDeleteArchiveResponse),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden"),
         (status = 404, description = "Archive not found"),
@@ -377,7 +363,7 @@ pub async fn delete_archive(
     State(state): State<AppState>,
     auth: AuthUser,
     AxumPath((repo_id, archive_name)): AxumPath<(i64, String)>,
-) -> Result<(StatusCode, Json<DeleteArchiveResponse>), ApiError> {
+) -> Result<(StatusCode, Json<SharedDeleteArchiveResponse>), ApiError> {
     check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_delete).await?;
     // Resolve credentials up front so authorisation/borg-config errors surface
     // synchronously; the slow `borg delete` itself runs in the background so the
@@ -407,7 +393,7 @@ pub async fn delete_archive(
 
     Ok((
         StatusCode::ACCEPTED,
-        Json(DeleteArchiveResponse {
+        Json(SharedDeleteArchiveResponse {
             success: true,
             archive_name,
         }),
@@ -705,7 +691,7 @@ pub async fn list_contents(
             )
             .await?;
             return Ok(Json(ContentsResponse {
-                index_status: IndexStatus::Done,
+                index_status: index_status_to_string(&IndexStatus::Done),
                 entries,
             }));
         }
@@ -714,7 +700,7 @@ pub async fn list_contents(
         }
         Some(IndexStatus::Pending | IndexStatus::Indexing) => {
             return Ok(Json(ContentsResponse {
-                index_status: status.unwrap(),
+                index_status: index_status_to_string(status.as_ref().unwrap()),
                 entries: vec![],
             }));
         }
@@ -729,7 +715,7 @@ pub async fn list_contents(
             )
             .await?;
             return Ok(Json(ContentsResponse {
-                index_status: triggered,
+                index_status: index_status_to_string(&triggered),
                 entries: vec![],
             }));
         }
@@ -803,7 +789,7 @@ pub async fn list_contents(
     let limited: Vec<ContentEntry> = children.into_iter().take(limit).collect();
 
     Ok(Json(ContentsResponse {
-        index_status: IndexStatus::Failed,
+        index_status: index_status_to_string(&IndexStatus::Failed),
         entries: limited,
     }))
 }
@@ -819,7 +805,7 @@ pub async fn list_contents(
         ("archive_name" = String, Path, description = "Archive name"),
     ),
     responses(
-        (status = 200, description = "Index status", body = ArchiveIndexStatus),
+        (status = 200, description = "Index status", body = ArchiveIndexStatusResponse),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden"),
     )
@@ -828,9 +814,7 @@ pub async fn get_archive_index_status(
     State(state): State<AppState>,
     auth: AuthUser,
     AxumPath((repo_id, archive_name)): AxumPath<(i64, String)>,
-) -> Result<Json<ArchiveIndexStatus>, ApiError> {
-    use crate::archive_index::{self, IndexStatus};
-
+) -> Result<Json<ArchiveIndexStatusResponse>, ApiError> {
     check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_view).await?;
 
     #[derive(sqlx::FromRow)]
@@ -851,18 +835,15 @@ pub async fn get_archive_index_status(
     .map_err(ApiError::Database)?;
 
     let response = row.map_or(
-        ArchiveIndexStatus {
-            status: IndexStatus::Pending,
+        ArchiveIndexStatusResponse {
+            status: "pending".to_string(),
             file_count: None,
             error: None,
         },
-        |r| {
-            let status = archive_index::get_index_status_from_str(&r.status);
-            ArchiveIndexStatus {
-                status,
-                file_count: r.file_count,
-                error: r.error_message,
-            }
+        |r| ArchiveIndexStatusResponse {
+            status: r.status,
+            file_count: r.file_count,
+            error: r.error_message,
         },
     );
 

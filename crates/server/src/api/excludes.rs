@@ -3,11 +3,11 @@
 
 use axum::{Json, extract::State};
 use serde::Deserialize;
+use shared::responses::GlobalExcludesResponse;
 
 use super::auth::AuthUser;
 use crate::{
-    AppState,
-    db::{self, GlobalExcludesConfig},
+    AppState, db,
     error::{ApiError, ApiJson},
 };
 
@@ -23,16 +23,16 @@ pub struct SetGlobalExcludesRequest {
     operation_id = "getExcludes",
     summary = "Get global exclude patterns as raw text",
     responses(
-        (status = 200, description = "Global excludes raw text", body = GlobalExcludesConfig),
+        (status = 200, description = "Global excludes raw text", body = GlobalExcludesResponse),
         (status = 401, description = "Unauthorized"),
     )
 )]
 pub async fn get_excludes(
     State(state): State<AppState>,
     _auth: AuthUser,
-) -> Result<Json<GlobalExcludesConfig>, ApiError> {
+) -> Result<Json<GlobalExcludesResponse>, ApiError> {
     let raw_text = db::get_global_excludes_raw(&state.pool).await?;
-    Ok(Json(GlobalExcludesConfig { raw_text }))
+    Ok(Json(GlobalExcludesResponse { raw_text }))
 }
 
 #[utoipa::path(
@@ -43,7 +43,7 @@ pub async fn get_excludes(
     summary = "Set global exclude patterns from raw text",
     request_body = SetGlobalExcludesRequest,
     responses(
-        (status = 200, description = "Updated", body = GlobalExcludesConfig),
+        (status = 200, description = "Updated", body = GlobalExcludesResponse),
         (status = 401, description = "Unauthorized"),
     )
 )]
@@ -51,12 +51,12 @@ pub async fn set_excludes(
     State(state): State<AppState>,
     _auth: AuthUser,
     ApiJson(req): ApiJson<SetGlobalExcludesRequest>,
-) -> Result<Json<GlobalExcludesConfig>, ApiError> {
+) -> Result<Json<GlobalExcludesResponse>, ApiError> {
     db::set_global_excludes_raw(&state.pool, &req.raw_text).await?;
 
     super::helpers::push_config_to_all_agents(&state).await;
 
-    Ok(Json(GlobalExcludesConfig {
+    Ok(Json(GlobalExcludesResponse {
         raw_text: req.raw_text,
     }))
 }

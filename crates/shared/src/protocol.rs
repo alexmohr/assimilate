@@ -3,13 +3,15 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::types::{
     AgentConfig, AgentStatus, BackupReport, BorgEncryption, DryRunFile, RepoId, SearchEntry,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export)]
 pub enum RepoOpKind {
     AgentBackup,
     AgentCheck,
@@ -19,7 +21,8 @@ pub enum RepoOpKind {
     DeleteArchive,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema, TS)]
+#[ts(export)]
 pub struct ActiveRepoOp {
     pub kind: RepoOpKind,
     pub actor: String,

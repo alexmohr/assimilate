@@ -20,33 +20,11 @@ import BaseSpinner from '../components/BaseSpinner.vue'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
+import type { ScheduleBackupSourcesResponse } from '../types/generated'
 
 interface ScheduleTarget {
   agent_id: number
   execution_order: number
-}
-
-interface PerHostBackupSources {
-  agent_id: number
-  paths: string[]
-}
-
-interface PerHostExcludePatterns {
-  agent_id: number
-  raw_text: string
-}
-
-interface PerAgentCommands {
-  agent_id: number
-  pre_backup_commands: string
-  post_backup_commands: string
-}
-
-interface ScheduleBackupSourcesResponse {
-  backup_sources: string[] | null
-  backup_sources_per_agent: PerHostBackupSources[] | null
-  exclude_patterns_per_agent: PerHostExcludePatterns[] | null
-  commands_per_agent: PerAgentCommands[] | null
 }
 
 interface RepoRow {
@@ -324,7 +302,7 @@ async function loadData(): Promise<void> {
         usePerHostPaths.value = true
         const map: Record<number, string> = {}
         for (const entry of perHost) {
-          map[entry.agent_id] = entry.paths.join('\n')
+          map[Number(entry.agent_id)] = entry.paths.join('\n')
         }
         perHostSources.value = map
       }
@@ -333,7 +311,7 @@ async function loadData(): Promise<void> {
         usePerHostExcludes.value = true
         const map: Record<number, string> = {}
         for (const entry of perHostExcludeEntries) {
-          map[entry.agent_id] = entry.raw_text
+          map[Number(entry.agent_id)] = entry.raw_text
         }
         perHostExcludes.value = map
       }
@@ -343,10 +321,10 @@ async function loadData(): Promise<void> {
         const preMap: Record<number, string> = {}
         const postMap: Record<number, string> = {}
         for (const entry of perAgentCmdEntries) {
-          preMap[entry.agent_id] = (JSON.parse(entry.pre_backup_commands || '[]') as string[]).join(
-            '\n',
-          )
-          postMap[entry.agent_id] = (
+          preMap[Number(entry.agent_id)] = (
+            JSON.parse(entry.pre_backup_commands || '[]') as string[]
+          ).join('\n')
+          postMap[Number(entry.agent_id)] = (
             JSON.parse(entry.post_backup_commands || '[]') as string[]
           ).join('\n')
         }

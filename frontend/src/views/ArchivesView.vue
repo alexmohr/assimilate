@@ -19,6 +19,7 @@ import RestoreWizard from '../components/RestoreWizard.vue'
 import ArchiveDiff from '../components/ArchiveDiff.vue'
 import FileSearch from '../components/FileSearch.vue'
 import BaseHostLink from '../components/BaseHostLink.vue'
+import type { ContentsResponse, ContentEntryResponse } from '../types/generated'
 
 interface RepoOption {
   id: number
@@ -38,14 +39,6 @@ interface ArchiveEntry {
   agent_hostname: string | null
 }
 
-interface ContentEntry {
-  type: string
-  path: string
-  size: number
-  mtime: string
-  mode: string
-}
-
 interface BreadcrumbSegment {
   label: string
   path: string
@@ -62,7 +55,7 @@ const archivesError = ref<string | null>(null)
 const selectedArchive = ref<ArchiveEntry | null>(null)
 
 const currentPath = ref('/')
-const contents = ref<ContentEntry[]>([])
+const contents = ref<ContentEntryResponse[]>([])
 const contentsLoading = ref(false)
 const contentsError = ref<string | null>(null)
 const indexing = ref(false)
@@ -126,7 +119,12 @@ const breadcrumbs = computed<BreadcrumbSegment[]>(() => {
   return segments
 })
 
-interface DisplayEntry extends ContentEntry {
+interface DisplayEntry {
+  type: string
+  path: string
+  size: number
+  mtime: string
+  mode: string
   displayName: string
   isDir: boolean
 }
@@ -145,7 +143,11 @@ const browserEntries = computed<DisplayEntry[]>(() => {
   const currentEntry = contents.value.find((e) => e.type === 'd' && e.path === currentDir)
   if (currentEntry) {
     entries.push({
-      ...currentEntry,
+      type: currentEntry.type,
+      path: currentEntry.path,
+      size: Number(currentEntry.size),
+      mtime: currentEntry.mtime,
+      mode: currentEntry.mode,
       displayName: '.',
       isDir: true,
     })
@@ -177,7 +179,11 @@ const browserEntries = computed<DisplayEntry[]>(() => {
   return [
     ...entries,
     ...[...dirList, ...fileList].map((e) => ({
-      ...e,
+      type: e.type,
+      path: e.path,
+      size: Number(e.size),
+      mtime: e.mtime,
+      mode: e.mode,
       displayName: e.path.split('/').pop() ?? e.path,
       isDir: e.type === 'd',
     })),
@@ -238,11 +244,6 @@ async function selectArchive(archive: ArchiveEntry): Promise<void> {
   await loadContents('/')
 }
 
-interface ContentsResponse {
-  index_status: 'pending' | 'indexing' | 'done' | 'failed'
-  entries: ContentEntry[]
-}
-
 async function loadContents(path: string): Promise<void> {
   if (selectedRepoId.value === null || !selectedArchive.value) return
   contentsLoading.value = true
@@ -275,11 +276,11 @@ function navigateTo(path: string): void {
   loadContents(path)
 }
 
-function entryName(entry: ContentEntry): string {
+function entryName(entry: ContentEntryResponse): string {
   return entry.path.split('/').pop() ?? entry.path
 }
 
-function downloadEntry(entry: ContentEntry): void {
+function downloadEntry(entry: ContentEntryResponse): void {
   if (selectedRepoId.value === null || !selectedArchive.value) return
   const archiveName = encodeURIComponent(selectedArchive.value.name)
   const encodedPath = encodeURIComponent(entry.path)

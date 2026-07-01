@@ -24,11 +24,7 @@ import CardError from '../components/CardError.vue'
 import type { DashboardOverview } from '../types/dashboard'
 import type { AgentRow } from '../types/agent'
 import type { TagRow } from '../types/tag'
-
-interface CreateAgentResponse {
-  agent: AgentRow
-  token: string
-}
+import type { CreateAgentResponse } from '../types/generated'
 
 interface AgentTagRow {
   agent_id: number
@@ -387,7 +383,7 @@ async function submitAdd(): Promise<void> {
       hostname,
       display_name: addForm.display_name.trim() || null,
     })
-    agents.value.push(res.data.agent)
+    agents.value.push({ ...res.data.agent, id: Number(res.data.agent.id) })
     newToken.value = res.data.token
   } catch (e: unknown) {
     addError.value = extractError(e)
@@ -419,6 +415,7 @@ async function adoptAgent(agent: AgentRow): Promise<void> {
       agents.value[idx] = {
         ...agents.value[idx],
         ...res.data.agent,
+        id: Number(res.data.agent.id),
         is_imported: false,
         display_name: cleanDisplayName,
       }

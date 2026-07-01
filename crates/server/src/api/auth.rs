@@ -9,6 +9,7 @@ use axum::{
 };
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
+use shared::responses::{MeResponse, PreferencesResponse, RefreshSessionResponse};
 use uuid::Uuid;
 
 use super::helpers;
@@ -358,16 +359,6 @@ pub async fn me(
     }))
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct MeResponse {
-    pub id: i64,
-    pub username: String,
-    pub role: String,
-    pub must_change_password: bool,
-    pub session_expires_at: Option<DateTime<Utc>>,
-    pub remember_me: bool,
-}
-
 #[utoipa::path(
     post,
     path = "/api/auth/refresh",
@@ -375,7 +366,7 @@ pub struct MeResponse {
     operation_id = "refresh_session",
     summary = "Extend a remember-me session before it expires",
     responses(
-        (status = 200, description = "Session extended", body = RefreshResponse),
+        (status = 200, description = "Session extended", body = RefreshSessionResponse),
         (status = 400, description = "Not a remember-me session or token auth"),
         (status = 401, description = "Not authenticated"),
         (status = 500, description = "Internal server error"),
@@ -411,7 +402,7 @@ pub async fn refresh_session(
         "session={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age_secs}{secure_flag}"
     );
 
-    let mut response = Json(RefreshResponse {
+    let mut response = Json(RefreshSessionResponse {
         session_expires_at: new_expires_at,
     })
     .into_response();
@@ -476,9 +467,9 @@ pub async fn change_password(
 pub async fn get_preferences(
     auth: AuthUser,
     State(state): State<AppState>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<PreferencesResponse>, ApiError> {
     let prefs = db::get_user_preferences(&state.pool, auth.user_id).await?;
-    Ok(Json(prefs))
+    Ok(Json(PreferencesResponse { inner: prefs }))
 }
 
 #[utoipa::path(
@@ -499,12 +490,12 @@ pub async fn update_preferences(
     auth: AuthUser,
     State(state): State<AppState>,
     ApiJson(body): ApiJson<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<PreferencesResponse>, ApiError> {
     if !body.is_object() {
         return Err(ApiError::BadRequest(
             "preferences must be a JSON object".to_string(),
         ));
     }
     db::set_user_preferences(&state.pool, auth.user_id, &body).await?;
-    Ok(Json(body))
+    Ok(Json(PreferencesResponse { inner: body }))
 }

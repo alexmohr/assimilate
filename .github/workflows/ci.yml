@@ -26,6 +26,8 @@ jobs:
         run: cargo +nightly clippy --workspace -- -D warnings
       - name: Tests
         run: cargo test --workspace --lib --bins
+      - name: Check generated TypeScript files are in sync
+        run: git diff --exit-code frontend/src/types/generated/
   frontend:
     name: Frontend (fmt + lint + test + build)
     runs-on: ubuntu-latest

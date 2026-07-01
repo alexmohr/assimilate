@@ -623,14 +623,18 @@ const availableTags = computed<TagRow[]>(() =>
 function repoOpLabel(op: ActiveRepoOp): string {
   const queued = op.queued && op.queued > 0 ? ` (+${op.queued} queued)` : ''
   switch (op.kind) {
-    case 'agent_backup':
+    case 'AgentBackup':
       return `Agent backup in progress by ${op.actor}${queued}`
-    case 'server_sync':
+    case 'ServerSync':
       return `Server sync in progress${queued}`
-    case 'break_lock':
+    case 'BreakLock':
       return `Break-lock in progress${queued}`
-    case 'delete_archive':
+    case 'DeleteArchive':
       return `Deleting archive (started by ${op.actor})${queued}`
+    case 'AgentCheck':
+      return `Integrity check in progress by ${op.actor}${queued}`
+    case 'AgentVerify':
+      return `Verify in progress by ${op.actor}${queued}`
   }
 }
 

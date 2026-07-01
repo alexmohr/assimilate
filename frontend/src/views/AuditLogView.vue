@@ -14,25 +14,10 @@ import { apiClient } from '../api/client'
 import { formatDateShort } from '../utils/format'
 import { useAuthStore } from '../stores/auth'
 import { useAsyncAction } from '../composables/useAsyncAction'
+import type { AuditEntryResponse, AuditLogResponse } from '../types/generated'
 
-interface AuditEntry {
-  id: number
-  user_id: number | null
-  username: string
-  action: string
-  target_type: string | null
-  target_id: number | null
-  details: Record<string, unknown> | null
-  ip_address: string | null
-  created_at: string
-}
-
-interface AuditResponse {
-  items: AuditEntry[]
-  total: number
-  page: number
-  per_page: number
-}
+type AuditEntry = AuditEntryResponse
+type AuditResponse = AuditLogResponse
 
 const authStore = useAuthStore()
 const isAdmin = computed(() => authStore.user?.role === 'admin')
@@ -67,7 +52,7 @@ async function fetchAuditLog(): Promise<void> {
 
     const res = await apiClient.get<AuditResponse>('/audit-log', { params })
     entries.value = res.data.items
-    total.value = res.data.total
+    total.value = Number(res.data.total)
   })
 }
 

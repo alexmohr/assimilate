@@ -3442,6 +3442,7 @@ pub struct RepoWithStatsRow {
     pub agent_count: i64,
     pub unmatched_count: i64,
     pub last_op_kind: Option<String>,
+    pub relocation_pending: bool,
     pub last_op_at: Option<DateTime<Utc>>,
     pub last_op_by: Option<String>,
 }
@@ -3455,9 +3456,9 @@ pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow
          r.info_original_size AS total_original_size, r.info_compressed_size AS \
          total_compressed_size, r.info_deduplicated_size AS total_deduplicated_size, \
          COALESCE(agg.agent_count, 0) AS agent_count, COALESCE(agg.unmatched_count, 0) AS \
-         unmatched_count, r.last_op_kind, r.last_op_at, r.last_op_by FROM repos r LEFT JOIN \
-         LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' THEN \
-         br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, \
+         unmatched_count, r.relocation_pending, r.last_op_kind, r.last_op_at, r.last_op_by FROM \
+         repos r LEFT JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' \
+         THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, \
          COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM \
          backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true ORDER \
          BY r.name",
@@ -3479,9 +3480,9 @@ pub async fn get_repo_with_stats(
          r.info_original_size AS total_original_size, r.info_compressed_size AS \
          total_compressed_size, r.info_deduplicated_size AS total_deduplicated_size, \
          COALESCE(agg.agent_count, 0) AS agent_count, COALESCE(agg.unmatched_count, 0) AS \
-         unmatched_count, r.last_op_kind, r.last_op_at, r.last_op_by FROM repos r LEFT JOIN \
-         LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' THEN \
-         br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, \
+         unmatched_count, r.relocation_pending, r.last_op_kind, r.last_op_at, r.last_op_by FROM \
+         repos r LEFT JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' \
+         THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, \
          COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM \
          backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true WHERE \
          r.id = $1",

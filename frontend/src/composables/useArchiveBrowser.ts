@@ -4,30 +4,14 @@
 import { ref, computed, type Ref, type ComputedRef } from 'vue'
 import { apiClient } from '../api/client'
 import { extractError } from '../utils/error'
+import type {
+  ArchiveEntryResponse as ArchiveEntry,
+  ContentEntryResponse as ContentEntry,
+  ContentsResponse,
+} from '../types/generated'
 
-export interface ArchiveEntry {
-  name: string
-  start: string
-  hostname: string
-  comment: string
-  original_size: number
-  deduplicated_size: number
-  matched: boolean | null
-  agent_hostname: string | null
-}
-
-export interface ContentEntry {
-  type: string
-  path: string
-  size: number
-  mtime: string
-  mode: string
-}
-
-interface ContentsResponse {
-  index_status: 'pending' | 'indexing' | 'done' | 'failed'
-  entries: ContentEntry[]
-}
+export type { ContentEntry }
+export type { ArchiveEntry }
 
 export interface BreadcrumbSegment {
   label: string

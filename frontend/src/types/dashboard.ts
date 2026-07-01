@@ -1,6 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+import type {
+  DashboardAgentLinkResponse,
+  DashboardOperationResponse,
+  DashboardUpcomingScheduleResponse,
+  DashboardRepositoryCapacityResponse,
+  DashboardSummaryCountersResponse,
+  DashboardProtectionCoverageResponse,
+} from './generated'
+
 export type DashboardStatus =
   | 'healthy'
   | 'warning'
@@ -31,7 +40,7 @@ export type DashboardDestination =
   | { kind: 'repository'; repo_id: number }
   | { kind: 'activity'; report_id: number }
 
-export interface DashboardFinding {
+export type DashboardFinding = {
   id: string
   kind: DashboardFindingKind
   severity: DashboardSeverity
@@ -47,64 +56,33 @@ export interface DashboardFinding {
   destination: DashboardDestination
 }
 
-export interface DashboardHostLink {
-  agent_id: number
-  hostname: string
-}
+export type DashboardHostLink = DashboardAgentLinkResponse
 
-export interface DashboardOperation {
-  report_id: number
-  status: 'running'
-  hostname: string
-  schedule_id: number
-  schedule_name: string
-  repo_id: number
-  repo_name: string
-  started_at: string
+export type DashboardOperation = Omit<DashboardOperationResponse, 'destination'> & {
   destination: DashboardDestination
 }
 
-export interface DashboardUpcomingSchedule {
-  schedule_id: number
-  schedule_name: string
-  repo_id: number
-  repo_name: string
-  next_run_at: string
-  target_count: number
-  offline_target_count: number
-}
+export type DashboardUpcomingSchedule = DashboardUpcomingScheduleResponse
 
 export type DashboardQuotaStatus = 'unconfigured' | 'healthy' | 'warning' | 'critical'
 
-export interface DashboardRepositoryCapacity {
-  repo_id: number
-  repo_name: string
-  deduplicated_size: number
+export type DashboardRepositoryCapacity = Omit<
+  DashboardRepositoryCapacityResponse,
+  'quota_bytes' | 'storage_change_bytes' | 'quota_status'
+> & {
   quota_bytes: number | null
-  quota_utilization_percent: number | null
-  quota_status: DashboardQuotaStatus
   storage_change_bytes: number | null
-  threshold_estimate: string | null
+  quota_status: DashboardQuotaStatus
 }
 
-export interface DashboardOverview {
-  summary: {
-    protected_hosts: number
-    eligible_hosts: number
-    needs_attention: number
-    running_operations: number
-    total_storage_bytes: number
-  }
+export type DashboardSummaryCounters = DashboardSummaryCountersResponse
+
+export type DashboardProtectionCoverage = DashboardProtectionCoverageResponse
+
+export type DashboardOverview = {
+  summary: DashboardSummaryCounters
   findings: DashboardFinding[]
-  protection: {
-    protected_hosts: number
-    eligible_hosts: number
-    protected_agent_links: DashboardHostLink[]
-    unassigned_agents: DashboardHostLink[]
-    never_succeeded_targets: number
-    never_succeeded_agents: DashboardHostLink[]
-    disabled_only_agents: DashboardHostLink[]
-  }
+  protection: DashboardProtectionCoverage
   running_operations: DashboardOperation[]
   upcoming_schedules: DashboardUpcomingSchedule[]
   repository_capacity: DashboardRepositoryCapacity[]

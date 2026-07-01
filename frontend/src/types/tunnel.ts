@@ -1,17 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-export interface SshTunnel {
-  id: number
-  agent_id: number
-  ssh_host: string
-  ssh_user: string
-  ssh_port: number
-  tunnel_port: number
-  enabled: boolean
-  created_at: string
-}
+import type { TunnelResponse } from './generated'
 
+export type SshTunnel = Omit<TunnelResponse, 'status'>
 export type TunnelStatus =
   | 'connected'
   | 'disconnected'
@@ -31,7 +23,6 @@ export interface CreateTunnelRequest {
   tunnel_port: number
   enabled: boolean
 }
-
 export interface UpdateTunnelRequest {
   ssh_host?: string
   ssh_user?: string

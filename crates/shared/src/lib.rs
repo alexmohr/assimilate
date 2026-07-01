@@ -3,6 +3,7 @@
 
 pub mod crypto;
 pub mod protocol;
+pub mod responses;
 pub mod schedule;
 pub mod ssh;
 pub mod types;

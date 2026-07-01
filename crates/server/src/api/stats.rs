@@ -9,7 +9,16 @@ use axum::{
     http::StatusCode,
 };
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use shared::responses::{
+    CalendarDayResponse, CalendarEventResponse, DashboardAgentLinkResponse,
+    DashboardDestinationResponse, DashboardFindingResponse, DashboardOperationResponse,
+    DashboardOverviewResponse, DashboardProtectionCoverageResponse,
+    DashboardRepositoryCapacityResponse, DashboardSummaryCountersResponse,
+    DashboardSummaryResponse, DashboardUpcomingScheduleResponse, HealthResponse,
+    StorageRepoEntryResponse, StorageTrendByRepoEntryResponse, StorageTrendEntryResponse,
+    TrendEntryResponse,
+};
 
 use super::auth::AuthUser;
 use crate::{AppState, db, error::ApiError};
@@ -32,174 +41,7 @@ pub struct ActivityQuery {
     pub run_id: Option<String>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct HealthResponse {
-    pub repo_id: i64,
-    pub schedule_id: i64,
-    pub hostname: String,
-    pub target_name: String,
-    pub last_status: Option<String>,
-    pub last_backup_at: Option<chrono::DateTime<Utc>>,
-    pub is_overdue: bool,
-    pub last_error_message: Option<String>,
-    pub cron_expression: Option<String>,
-    pub schedule_enabled: Option<bool>,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct DashboardSummaryResponse {
-    pub online_agents: usize,
-    pub total_agents: i64,
-    pub total_repos: i64,
-    pub last_backup_at: Option<chrono::DateTime<Utc>>,
-    pub next_backup_at: Option<chrono::DateTime<Utc>>,
-    pub last_backup_schedule_id: Option<i64>,
-    pub last_backup_repo_id: Option<i64>,
-    pub last_backup_archive_name: Option<String>,
-    pub next_backup_schedule_id: Option<i64>,
-    pub active_schedules: i64,
-    pub total_schedules: i64,
-    pub total_storage_bytes: i64,
-    pub success_30d: i64,
-    pub failed_30d: i64,
-    pub total_30d: i64,
-    pub storage_by_repo: Vec<StorageRepoEntry>,
-    pub last_failure_at: Option<chrono::DateTime<Utc>>,
-    pub last_warning_at: Option<chrono::DateTime<Utc>>,
-    pub last_failure_schedule_id: Option<i64>,
-    pub last_warning_schedule_id: Option<i64>,
-    pub last_failure_message: Option<String>,
-    pub last_warning_message: Option<String>,
-    pub last_failure_repo_id: Option<i64>,
-    pub last_warning_repo_id: Option<i64>,
-    pub last_failure_repo_name: Option<String>,
-    pub last_warning_repo_name: Option<String>,
-    pub last_failure_schedule_name: Option<String>,
-    pub last_warning_schedule_name: Option<String>,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct StorageRepoEntry {
-    pub name: String,
-    pub compressed_size: i64,
-    pub deduplicated_size: i64,
-    pub percentage: f64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DashboardSeverity {
-    Critical,
-    Warning,
-    Info,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DashboardStatus {
-    Healthy,
-    Warning,
-    Failed,
-    Overdue,
-    NeverSucceeded,
-    Running,
-    Disabled,
-    OfflineDueSoon,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DashboardFindingKind {
-    BackupFailed,
-    BackupWarning,
-    ScheduleTargetOverdue,
-    ScheduleTargetNeverSucceeded,
-    HostOfflineDueSoon,
-    HostUnassigned,
-    RepositoryUnscheduled,
-    RepositoryQuotaWarning,
-    RepositoryQuotaCritical,
-    RepositoryImportFailed,
-}
-
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum DashboardDestination {
-    Host { hostname: String },
-    Schedule { schedule_id: i64 },
-    Repository { repo_id: i64 },
-    Activity { report_id: i64 },
-}
-
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
-pub struct DashboardFinding {
-    pub id: String,
-    pub kind: DashboardFindingKind,
-    pub severity: DashboardSeverity,
-    pub status: DashboardStatus,
-    pub hostname: Option<String>,
-    pub schedule_id: Option<i64>,
-    pub schedule_name: Option<String>,
-    pub repo_id: Option<i64>,
-    pub repo_name: Option<String>,
-    pub reason: String,
-    pub occurred_at: Option<chrono::DateTime<Utc>>,
-    pub deadline: Option<chrono::DateTime<Utc>>,
-    pub destination: DashboardDestination,
-}
-
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
-pub struct DashboardSummaryCounters {
-    pub protected_hosts: i64,
-    pub eligible_hosts: i64,
-    pub needs_attention: usize,
-    pub running_operations: usize,
-    pub total_storage_bytes: i64,
-}
-
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
-pub struct DashboardAgentLink {
-    pub agent_id: i64,
-    pub hostname: String,
-}
-
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
-pub struct DashboardProtectionCoverage {
-    pub protected_hosts: i64,
-    pub eligible_hosts: i64,
-    pub protected_agent_links: Vec<DashboardAgentLink>,
-    pub unassigned_agents: Vec<DashboardAgentLink>,
-    pub never_succeeded_targets: i64,
-    pub never_succeeded_agents: Vec<DashboardAgentLink>,
-    pub disabled_only_agents: Vec<DashboardAgentLink>,
-}
-
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
-pub struct DashboardOperation {
-    pub report_id: i64,
-    pub status: DashboardStatus,
-    pub hostname: String,
-    pub schedule_id: i64,
-    pub schedule_name: String,
-    pub repo_id: i64,
-    pub repo_name: String,
-    pub started_at: chrono::DateTime<Utc>,
-    pub destination: DashboardDestination,
-}
-
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
-pub struct DashboardUpcomingSchedule {
-    pub schedule_id: i64,
-    pub schedule_name: String,
-    pub repo_id: i64,
-    pub repo_name: String,
-    pub next_run_at: chrono::DateTime<Utc>,
-    pub target_count: i64,
-    pub offline_target_count: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DashboardQuotaStatus {
     Unconfigured,
     Healthy,
@@ -207,26 +49,15 @@ pub enum DashboardQuotaStatus {
     Critical,
 }
 
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
-pub struct DashboardRepositoryCapacity {
-    pub repo_id: i64,
-    pub repo_name: String,
-    pub deduplicated_size: i64,
-    pub quota_bytes: Option<i64>,
-    pub quota_utilization_percent: Option<f64>,
-    pub quota_status: DashboardQuotaStatus,
-    pub storage_change_bytes: Option<i64>,
-    pub threshold_estimate: Option<chrono::DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
-pub struct DashboardOverviewResponse {
-    pub summary: DashboardSummaryCounters,
-    pub findings: Vec<DashboardFinding>,
-    pub protection: DashboardProtectionCoverage,
-    pub running_operations: Vec<DashboardOperation>,
-    pub upcoming_schedules: Vec<DashboardUpcomingSchedule>,
-    pub repository_capacity: Vec<DashboardRepositoryCapacity>,
+impl DashboardQuotaStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Unconfigured => "unconfigured",
+            Self::Healthy => "healthy",
+            Self::Warning => "warning",
+            Self::Critical => "critical",
+        }
+    }
 }
 
 #[utoipa::path(
@@ -271,11 +102,11 @@ pub async fn dashboard_overview(
         hosts
             .iter()
             .filter(|host| host.enabled_assignment_count == 0)
-            .map(|host| DashboardFinding {
+            .map(|host| DashboardFindingResponse {
                 id: format!("agent:{}:unassigned", host.agent_id),
-                kind: DashboardFindingKind::HostUnassigned,
-                severity: DashboardSeverity::Warning,
-                status: DashboardStatus::Warning,
+                kind: "host_unassigned".to_owned(),
+                severity: "warning".to_owned(),
+                status: "warning".to_owned(),
                 hostname: Some(host.hostname.clone()),
                 schedule_id: None,
                 schedule_name: None,
@@ -284,7 +115,7 @@ pub async fn dashboard_overview(
                 reason: "No enabled backup schedule is assigned".to_owned(),
                 occurred_at: None,
                 deadline: None,
-                destination: DashboardDestination::Host {
+                destination: DashboardDestinationResponse::Host {
                     hostname: host.hostname.clone(),
                 },
             }),
@@ -294,25 +125,25 @@ pub async fn dashboard_overview(
         if repo.enabled_schedule_count == 0 {
             findings.push(repository_finding(
                 repo,
-                DashboardFindingKind::RepositoryUnscheduled,
-                DashboardSeverity::Warning,
-                DashboardStatus::Warning,
+                "repository_unscheduled",
+                "warning",
+                "warning",
                 "No enabled backup schedule uses this repository",
             ));
         }
         match repository_quota_status(repo) {
             DashboardQuotaStatus::Critical => findings.push(repository_finding(
                 repo,
-                DashboardFindingKind::RepositoryQuotaCritical,
-                DashboardSeverity::Critical,
-                DashboardStatus::Failed,
+                "repository_quota_critical",
+                "critical",
+                "failed",
                 "Repository storage is at or above its critical quota",
             )),
             DashboardQuotaStatus::Warning => findings.push(repository_finding(
                 repo,
-                DashboardFindingKind::RepositoryQuotaWarning,
-                DashboardSeverity::Warning,
-                DashboardStatus::Warning,
+                "repository_quota_warning",
+                "warning",
+                "warning",
                 "Repository storage is at or above its warning quota",
             )),
             DashboardQuotaStatus::Unconfigured | DashboardQuotaStatus::Healthy => {}
@@ -320,16 +151,16 @@ pub async fn dashboard_overview(
         if repo.import_error.is_some() {
             findings.push(repository_finding(
                 repo,
-                DashboardFindingKind::RepositoryImportFailed,
-                DashboardSeverity::Critical,
-                DashboardStatus::Failed,
+                "repository_import_failed",
+                "critical",
+                "failed",
                 repo.import_error
                     .as_deref()
                     .unwrap_or("Repository import failed"),
             ));
         }
     });
-    findings.sort_by_key(|finding| severity_rank(finding.severity));
+    findings.sort_by_key(|finding| severity_rank(&finding.severity));
     findings.retain(|finding| !dismissed.contains(&finding.id));
 
     let running_operations = targets
@@ -342,16 +173,16 @@ pub async fn dashboard_overview(
             ) else {
                 return None;
             };
-            Some(DashboardOperation {
+            Some(DashboardOperationResponse {
                 report_id,
-                status: DashboardStatus::Running,
+                status: "running".to_owned(),
                 hostname: target.hostname.clone(),
                 schedule_id: target.schedule_id,
                 schedule_name: target.schedule_name.clone(),
                 repo_id: target.repo_id,
                 repo_name: target.repo_name.clone(),
                 started_at,
-                destination: DashboardDestination::Activity { report_id },
+                destination: DashboardDestinationResponse::Activity { report_id },
             })
         })
         .collect::<Vec<_>>();
@@ -401,7 +232,7 @@ pub async fn dashboard_overview(
                 .filter(|target| target.schedule_id == schedule.schedule_id)
                 .filter(|target| !connected.contains(&target.hostname))
                 .count();
-            DashboardUpcomingSchedule {
+            DashboardUpcomingScheduleResponse {
                 schedule_id: schedule.schedule_id,
                 schedule_name: schedule.schedule_name,
                 repo_id: schedule.repo_id,
@@ -417,7 +248,7 @@ pub async fn dashboard_overview(
     let repository_capacity = repositories.iter().map(repository_capacity).collect();
 
     Ok(Json(DashboardOverviewResponse {
-        summary: DashboardSummaryCounters {
+        summary: DashboardSummaryCountersResponse {
             protected_hosts,
             eligible_hosts,
             needs_attention: findings.len(),
@@ -425,7 +256,7 @@ pub async fn dashboard_overview(
             total_storage_bytes,
         },
         findings,
-        protection: DashboardProtectionCoverage {
+        protection: DashboardProtectionCoverageResponse {
             protected_hosts,
             eligible_hosts,
             protected_agent_links,
@@ -446,7 +277,7 @@ fn target_finding(
     now: chrono::DateTime<Utc>,
     due_soon: chrono::DateTime<Utc>,
     timezone: chrono_tz::Tz,
-) -> Option<DashboardFinding> {
+) -> Option<DashboardFindingResponse> {
     if target.latest_started == Some(true) {
         return None;
     }
@@ -460,55 +291,55 @@ fn target_finding(
     let (kind, severity, status, reason, occurred_at, deadline, destination) =
         if target.latest_failed == Some(true) {
             (
-                DashboardFindingKind::BackupFailed,
-                DashboardSeverity::Critical,
-                DashboardStatus::Failed,
+                "backup_failed".to_owned(),
+                "critical".to_owned(),
+                "failed".to_owned(),
                 target
                     .latest_message
                     .clone()
                     .unwrap_or_else(|| "Latest backup failed".to_owned()),
                 target.latest_finished_at,
                 None,
-                DashboardDestination::Activity {
+                DashboardDestinationResponse::Activity {
                     report_id: target.latest_report_id?,
                 },
             )
         } else if overdue_at.is_some_and(|deadline| now > deadline) {
             (
-                DashboardFindingKind::ScheduleTargetOverdue,
-                DashboardSeverity::Critical,
-                DashboardStatus::Overdue,
+                "schedule_target_overdue".to_owned(),
+                "critical".to_owned(),
+                "overdue".to_owned(),
                 "No successful backup completed in the expected cron window".to_owned(),
                 target.last_success_at,
                 overdue_at,
-                DashboardDestination::Schedule {
+                DashboardDestinationResponse::Schedule {
                     schedule_id: target.schedule_id,
                 },
             )
         } else if target.latest_warning == Some(true) {
             (
-                DashboardFindingKind::BackupWarning,
-                DashboardSeverity::Warning,
-                DashboardStatus::Warning,
+                "backup_warning".to_owned(),
+                "warning".to_owned(),
+                "warning".to_owned(),
                 target
                     .latest_message
                     .clone()
                     .unwrap_or_else(|| "Latest backup completed with warnings".to_owned()),
                 target.latest_finished_at,
                 None,
-                DashboardDestination::Activity {
+                DashboardDestinationResponse::Activity {
                     report_id: target.latest_report_id?,
                 },
             )
         } else if target.last_success_at.is_none() && target.schedule_last_run_at.is_some() {
             (
-                DashboardFindingKind::ScheduleTargetNeverSucceeded,
-                DashboardSeverity::Critical,
-                DashboardStatus::NeverSucceeded,
+                "schedule_target_never_succeeded".to_owned(),
+                "critical".to_owned(),
+                "never_succeeded".to_owned(),
                 "This enabled schedule target has run but never succeeded".to_owned(),
                 target.latest_finished_at,
                 target.next_run_at,
-                DashboardDestination::Schedule {
+                DashboardDestinationResponse::Schedule {
                     schedule_id: target.schedule_id,
                 },
             )
@@ -518,13 +349,13 @@ fn target_finding(
             && !connected.contains(&target.hostname)
         {
             (
-                DashboardFindingKind::HostOfflineDueSoon,
-                DashboardSeverity::Warning,
-                DashboardStatus::OfflineDueSoon,
+                "host_offline_due_soon".to_owned(),
+                "warning".to_owned(),
+                "offline_due_soon".to_owned(),
                 "Agent is offline and this schedule is due within two hours".to_owned(),
                 None,
                 target.next_run_at,
-                DashboardDestination::Host {
+                DashboardDestinationResponse::Host {
                     hostname: target.hostname.clone(),
                 },
             )
@@ -532,8 +363,8 @@ fn target_finding(
             return None;
         };
 
-    Some(DashboardFinding {
-        id: format!("target:{}:{}:{kind:?}", target.schedule_id, target.agent_id),
+    Some(DashboardFindingResponse {
+        id: format!("target:{}:{}:{kind}", target.schedule_id, target.agent_id),
         kind,
         severity,
         status,
@@ -549,8 +380,8 @@ fn target_finding(
     })
 }
 
-fn agent_link(host: &db::dashboard::EligibleAgentRow) -> DashboardAgentLink {
-    DashboardAgentLink {
+fn agent_link(host: &db::dashboard::EligibleAgentRow) -> DashboardAgentLinkResponse {
+    DashboardAgentLinkResponse {
         agent_id: host.agent_id,
         hostname: host.hostname.clone(),
     }
@@ -558,16 +389,16 @@ fn agent_link(host: &db::dashboard::EligibleAgentRow) -> DashboardAgentLink {
 
 fn repository_finding(
     repo: &db::dashboard::RepositoryRow,
-    kind: DashboardFindingKind,
-    severity: DashboardSeverity,
-    status: DashboardStatus,
+    kind: &str,
+    severity: &str,
+    status: &str,
     reason: &str,
-) -> DashboardFinding {
-    DashboardFinding {
-        id: format!("repository:{}:{kind:?}", repo.repo_id),
-        kind,
-        severity,
-        status,
+) -> DashboardFindingResponse {
+    DashboardFindingResponse {
+        id: format!("repository:{}:{kind}", repo.repo_id),
+        kind: kind.to_owned(),
+        severity: severity.to_owned(),
+        status: status.to_owned(),
         hostname: None,
         schedule_id: None,
         schedule_name: None,
@@ -576,17 +407,18 @@ fn repository_finding(
         reason: reason.to_owned(),
         occurred_at: repo.last_synced_at,
         deadline: None,
-        destination: DashboardDestination::Repository {
+        destination: DashboardDestinationResponse::Repository {
             repo_id: repo.repo_id,
         },
     }
 }
 
-const fn severity_rank(severity: DashboardSeverity) -> u8 {
+fn severity_rank(severity: &str) -> u8 {
     match severity {
-        DashboardSeverity::Critical => 0,
-        DashboardSeverity::Warning => 1,
-        DashboardSeverity::Info => 2,
+        "critical" => 0,
+        "warning" => 1,
+        "info" => 2,
+        _ => 3,
     }
 }
 
@@ -609,18 +441,18 @@ fn repository_quota_status(repo: &db::dashboard::RepositoryRow) -> DashboardQuot
     DashboardQuotaStatus::Healthy
 }
 
-fn repository_capacity(repo: &db::dashboard::RepositoryRow) -> DashboardRepositoryCapacity {
+fn repository_capacity(repo: &db::dashboard::RepositoryRow) -> DashboardRepositoryCapacityResponse {
     let quota_bytes = repo.critical_bytes.or(repo.warn_bytes);
     let quota_utilization_percent = quota_bytes
         .filter(|limit| *limit > 0)
         .map(|limit| percentage_of(repo.deduplicated_size, limit));
-    DashboardRepositoryCapacity {
+    DashboardRepositoryCapacityResponse {
         repo_id: repo.repo_id,
         repo_name: repo.repo_name.clone(),
         deduplicated_size: repo.deduplicated_size,
         quota_bytes,
         quota_utilization_percent,
-        quota_status: repository_quota_status(repo),
+        quota_status: repository_quota_status(repo).as_str().to_owned(),
         storage_change_bytes: None,
         threshold_estimate: None,
     }
@@ -654,7 +486,7 @@ pub async fn summary(
             } else {
                 0.0
             };
-            StorageRepoEntry {
+            StorageRepoEntryResponse {
                 name: b.name,
                 compressed_size: b.compressed_size,
                 deduplicated_size: b.deduplicated_size,
@@ -744,14 +576,14 @@ pub async fn schedule_counts(
     operation_id = "getStorageBreakdown",
     summary = "Get per-repo storage breakdown (sourced from borg info)",
     responses(
-        (status = 200, description = "Storage breakdown", body = Vec<StorageRepoEntry>),
+        (status = 200, description = "Storage breakdown", body = Vec<StorageRepoEntryResponse>),
         (status = 401, description = "Unauthorized"),
     )
 )]
 pub async fn storage_breakdown(
     State(state): State<AppState>,
     _auth: AuthUser,
-) -> Result<Json<Vec<StorageRepoEntry>>, ApiError> {
+) -> Result<Json<Vec<StorageRepoEntryResponse>>, ApiError> {
     let breakdown = db::get_storage_breakdown(&state.pool).await?;
 
     let total: i64 = breakdown.iter().map(|b| b.deduplicated_size).sum();
@@ -763,7 +595,7 @@ pub async fn storage_breakdown(
             } else {
                 0.0
             };
-            StorageRepoEntry {
+            StorageRepoEntryResponse {
                 name: b.name,
                 compressed_size: b.compressed_size,
                 deduplicated_size: b.deduplicated_size,
@@ -853,7 +685,8 @@ pub async fn system_events(
     operation_id = "getHealthSummary",
     summary = "Get backup health summary for all schedules",
     responses(
-        (status = 200, description = "Health summary", body = Vec<HealthResponse>),
+        (status = 200, description = "Health summary",
+            body = Vec<shared::responses::HealthSummaryResponse>),
         (status = 401, description = "Unauthorized"),
     )
 )]
@@ -908,17 +741,6 @@ pub struct TrendsQuery {
     pub days: Option<i64>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct TrendEntry {
-    pub date: String,
-    pub original_size: i64,
-    pub compressed_size: i64,
-    pub deduplicated_size: i64,
-    pub dedup_ratio: f64,
-    pub file_count: i64,
-    pub duration_seconds: i64,
-}
-
 #[utoipa::path(
     get,
     path = "/api/stats/trends",
@@ -930,7 +752,7 @@ pub struct TrendEntry {
         ("days" = Option<i64>, Query, description = "Number of days (30, 90, 365)"),
     ),
     responses(
-        (status = 200, description = "Backup trends", body = Vec<TrendEntry>),
+        (status = 200, description = "Backup trends", body = Vec<TrendEntryResponse>),
         (status = 401, description = "Unauthorized"),
     )
 )]
@@ -938,7 +760,7 @@ pub async fn trends(
     State(state): State<AppState>,
     _auth: AuthUser,
     Query(query): Query<TrendsQuery>,
-) -> Result<Json<Vec<TrendEntry>>, ApiError> {
+) -> Result<Json<Vec<TrendEntryResponse>>, ApiError> {
     let days = query.days.unwrap_or(30);
     let rows = db::get_backup_trends(&state.pool, query.repo_id, days).await?;
     let entries = rows
@@ -950,7 +772,7 @@ pub async fn trends(
             } else {
                 0.0
             };
-            TrendEntry {
+            TrendEntryResponse {
                 date: row.date.to_string(),
                 original_size: row.original_size,
                 compressed_size: row.compressed_size,
@@ -964,24 +786,6 @@ pub async fn trends(
     Ok(Json(entries))
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct StorageTrendEntry {
-    pub date: String,
-    pub original_size: i64,
-    pub compressed_size: i64,
-    pub deduplicated_size: Option<i64>,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct StorageTrendByRepoEntry {
-    pub date: String,
-    pub repo_id: i64,
-    pub repo_name: String,
-    pub original_size: i64,
-    pub compressed_size: i64,
-    pub deduplicated_size: Option<i64>,
-}
-
 #[utoipa::path(
     get,
     path = "/api/stats/storage-trends",
@@ -993,7 +797,7 @@ pub struct StorageTrendByRepoEntry {
         ("days" = Option<i64>, Query, description = "Number of days (14, 30, 90, 365)"),
     ),
     responses(
-        (status = 200, description = "Storage trends", body = Vec<StorageTrendEntry>),
+        (status = 200, description = "Storage trends", body = Vec<StorageTrendEntryResponse>),
         (status = 401, description = "Unauthorized"),
     )
 )]
@@ -1001,12 +805,12 @@ pub async fn storage_trends(
     State(state): State<AppState>,
     _auth: AuthUser,
     Query(query): Query<TrendsQuery>,
-) -> Result<Json<Vec<StorageTrendEntry>>, ApiError> {
+) -> Result<Json<Vec<StorageTrendEntryResponse>>, ApiError> {
     let days = query.days.unwrap_or(30);
     let rows = db::get_storage_trends(&state.pool, query.repo_id, days).await?;
     let entries = rows
         .into_iter()
-        .map(|row| StorageTrendEntry {
+        .map(|row| StorageTrendEntryResponse {
             date: row.date.to_string(),
             original_size: row.original_size,
             compressed_size: row.compressed_size,
@@ -1027,7 +831,7 @@ pub async fn storage_trends(
     ),
     responses(
         (status = 200, description = "Per-repo storage trends",
-            body = Vec<StorageTrendByRepoEntry>),
+            body = Vec<StorageTrendByRepoEntryResponse>),
         (status = 401, description = "Unauthorized"),
     )
 )]
@@ -1035,12 +839,12 @@ pub async fn storage_trends_by_repo(
     State(state): State<AppState>,
     _auth: AuthUser,
     Query(query): Query<TrendsQuery>,
-) -> Result<Json<Vec<StorageTrendByRepoEntry>>, ApiError> {
+) -> Result<Json<Vec<StorageTrendByRepoEntryResponse>>, ApiError> {
     let days = query.days.unwrap_or(30);
     let rows = db::get_storage_trends_by_repo(&state.pool, days).await?;
     let entries = rows
         .into_iter()
-        .map(|row| StorageTrendByRepoEntry {
+        .map(|row| StorageTrendByRepoEntryResponse {
             date: row.date.to_string(),
             repo_id: row.repo_id,
             repo_name: row.repo_name,
@@ -1058,12 +862,21 @@ pub struct CalendarQuery {
     pub repo_id: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CalendarEventType {
     Backup,
     Check,
     Verify,
+}
+
+impl CalendarEventType {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Backup => "backup",
+            Self::Check => "check",
+            Self::Verify => "verify",
+        }
+    }
 }
 
 impl TryFrom<&str> for CalendarEventType {
@@ -1079,12 +892,21 @@ impl TryFrom<&str> for CalendarEventType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CalendarEventStatus {
     Success,
     Failed,
     Scheduled,
+}
+
+impl CalendarEventStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failed => "failed",
+            Self::Scheduled => "scheduled",
+        }
+    }
 }
 
 impl TryFrom<&str> for CalendarEventStatus {
@@ -1100,27 +922,6 @@ impl TryFrom<&str> for CalendarEventStatus {
     }
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct CalendarEvent {
-    #[serde(rename = "type")]
-    pub event_type: CalendarEventType,
-    pub status: CalendarEventStatus,
-    pub repo_name: String,
-    pub hostname: String,
-    pub time: String,
-    pub report_id: Option<i64>,
-    pub repo_id: Option<i64>,
-    pub schedule_id: Option<i64>,
-    pub archive_name: Option<String>,
-    pub error_message: Option<String>,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct CalendarDay {
-    pub date: String,
-    pub events: Vec<CalendarEvent>,
-}
-
 #[utoipa::path(
     get,
     path = "/api/stats/calendar",
@@ -1132,7 +933,7 @@ pub struct CalendarDay {
         ("repo_id" = Option<i64>, Query, description = "Filter by repository ID"),
     ),
     responses(
-        (status = 200, description = "Calendar events", body = Vec<CalendarDay>),
+        (status = 200, description = "Calendar events", body = Vec<CalendarDayResponse>),
         (status = 401, description = "Unauthorized"),
     )
 )]
@@ -1140,7 +941,7 @@ pub async fn calendar(
     State(state): State<AppState>,
     _auth: AuthUser,
     Query(query): Query<CalendarQuery>,
-) -> Result<Json<Vec<CalendarDay>>, ApiError> {
+) -> Result<Json<Vec<CalendarDayResponse>>, ApiError> {
     let parts: Vec<&str> = query.month.split('-').collect();
     if parts.len() != 2 {
         return Err(ApiError::BadRequest(
@@ -1169,7 +970,7 @@ pub async fn calendar(
     }
     .ok_or_else(|| ApiError::BadRequest("invalid month".to_string()))?;
 
-    let mut day_map: std::collections::BTreeMap<String, Vec<CalendarEvent>> =
+    let mut day_map: std::collections::BTreeMap<String, Vec<CalendarEventResponse>> =
         std::collections::BTreeMap::new();
 
     for row in rows {
@@ -1182,9 +983,9 @@ pub async fn calendar(
         day_map
             .entry(row.date.to_string())
             .or_default()
-            .push(CalendarEvent {
-                event_type,
-                status,
+            .push(CalendarEventResponse {
+                event_type: event_type.as_str().to_owned(),
+                status: status.as_str().to_owned(),
                 repo_name: row.repo_name,
                 hostname: row.hostname,
                 time: row.time,
@@ -1232,9 +1033,9 @@ pub async fn calendar(
                 day_map
                     .entry(next_date.to_string())
                     .or_default()
-                    .push(CalendarEvent {
-                        event_type: CalendarEventType::Backup,
-                        status: CalendarEventStatus::Scheduled,
+                    .push(CalendarEventResponse {
+                        event_type: CalendarEventType::Backup.as_str().to_owned(),
+                        status: CalendarEventStatus::Scheduled.as_str().to_owned(),
                         repo_name: repo_name.clone(),
                         hostname: hostname.clone(),
                         time: time_str,
@@ -1251,7 +1052,7 @@ pub async fn calendar(
 
     let result = day_map
         .into_iter()
-        .map(|(date, events)| CalendarDay { date, events })
+        .map(|(date, events)| CalendarDayResponse { date, events })
         .collect();
 
     Ok(Json(result))

@@ -1,6 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+import type {
+  NotificationChannelResponse,
+  NotificationRuleResponse,
+  NotificationDeliveryResponse,
+  PushSubscriptionResponse,
+} from './generated'
+
+export type NotificationChannel = Omit<NotificationChannelResponse, 'scope' | 'config'> & {
+  scope: ChannelScope
+  config: ChannelConfig
+}
+export type NotificationRule = Omit<
+  NotificationRuleResponse,
+  'repo_id' | 'agent_id' | 'event_type'
+> & {
+  repo_id: number | null
+  agent_id: number | null
+  event_type: NotificationEventType
+}
+export type NotificationDelivery = Omit<NotificationDeliveryResponse, 'status'> & {
+  status: 'pending' | 'sent' | 'failed'
+}
+export type PushSubscriptionInfo = PushSubscriptionResponse
+
 export type ChannelType = 'email' | 'webhook' | 'web_push'
 
 export type NotificationEventType =
@@ -39,17 +63,6 @@ export interface ChannelScope {
   schedule_ids?: number[]
 }
 
-export interface NotificationChannel {
-  id: number
-  name: string
-  channel_type: ChannelType
-  config: ChannelConfig
-  enabled: boolean
-  scope: ChannelScope
-  created_at: string
-  updated_at: string
-}
-
 export interface CreateChannelRequest {
   name: string
   channel_type: ChannelType
@@ -65,36 +78,10 @@ export interface UpdateChannelRequest {
   scope?: ChannelScope
 }
 
-export interface NotificationRule {
-  id: number
-  channel_id: number
-  event_type: NotificationEventType
-  repo_id: number | null
-  agent_id: number | null
-  enabled: boolean
-}
-
 export interface CreateRuleRequest {
   channel_id: number
   event_type: NotificationEventType
   repo_id?: number | null
   agent_id?: number | null
   enabled: boolean
-}
-
-export interface PushSubscriptionInfo {
-  id: number
-  user_id: number
-  endpoint: string
-  user_agent: string | null
-  created_at: string
-}
-
-export interface NotificationDelivery {
-  id: number
-  channel_id: number
-  event_type: string
-  status: 'pending' | 'sent' | 'failed'
-  error_message: string | null
-  attempted_at: string
 }

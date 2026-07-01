@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 use axum::{Json, http::StatusCode};
-use serde_json::{Value, json};
+use shared::responses::HealthCheckResponse;
 
 #[utoipa::path(
     get,
@@ -11,9 +11,14 @@ use serde_json::{Value, json};
     operation_id = "healthCheck",
     summary = "Server health check",
     responses(
-        (status = 200, description = "Server is healthy", body = serde_json::Value),
+        (status = 200, description = "Server is healthy", body = HealthCheckResponse),
     )
 )]
-pub async fn health() -> (StatusCode, Json<Value>) {
-    (StatusCode::OK, Json(json!({ "status": "ok" })))
+pub async fn health() -> (StatusCode, Json<HealthCheckResponse>) {
+    (
+        StatusCode::OK,
+        Json(HealthCheckResponse {
+            status: "ok".to_string(),
+        }),
+    )
 }

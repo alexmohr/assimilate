@@ -5,8 +5,11 @@ use axum::{
     Json,
     extract::{Path, State},
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use shared::responses::{
+    ApiTokenResponse, CreateApiTokenResponse, DeleteApiTokenResponse, ListApiTokensResponse,
+};
 
 use super::helpers;
 use crate::{
@@ -21,15 +24,16 @@ pub struct CreateTokenRequest {
     pub name: String,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct CreateTokenResponse {
-    pub token: db::ApiTokenRow,
-    pub plaintext: String,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct ListTokensResponse {
-    pub tokens: Vec<db::ApiTokenRow>,
+impl From<db::ApiTokenRow> for ApiTokenResponse {
+    fn from(row: db::ApiTokenRow) -> Self {
+        Self {
+            id: row.id,
+            user_id: row.user_id,
+            name: row.name,
+            last_used_at: row.last_used_at,
+            created_at: row.created_at,
+        }
+    }
 }
 
 fn generate_token() -> String {
@@ -51,7 +55,7 @@ pub fn hash_token(plaintext: &str) -> String {
     summary = "Create a new API token for the current user",
     request_body = CreateTokenRequest,
     responses(
-        (status = 200, description = "Token created", body = CreateTokenResponse),
+        (status = 200, description = "Token created", body = CreateApiTokenResponse),
         (status = 400, description = "Invalid token name"),
         (status = 401, description = "Not authenticated"),
         (status = 500, description = "Internal server error"),
@@ -61,16 +65,18 @@ pub async fn create_token(
     State(state): State<AppState>,
     auth: AuthUser,
     ApiJson(req): ApiJson<CreateTokenRequest>,
-) -> Result<Json<CreateTokenResponse>, ApiError> {
+) -> Result<Json<CreateApiTokenResponse>, ApiError> {
     helpers::validate_non_empty(req.name.trim(), "token name")?;
 
     let plaintext = generate_token();
     let token_hash = hash_token(&plaintext);
 
-    let token =
-        db::insert_api_token(&state.pool, auth.user_id, req.name.trim(), &token_hash).await?;
+    let token: ApiTokenResponse =
+        db::insert_api_token(&state.pool, auth.user_id, req.name.trim(), &token_hash)
+            .await?
+            .into();
 
-    Ok(Json(CreateTokenResponse { token, plaintext }))
+    Ok(Json(CreateApiTokenResponse { token, plaintext }))
 }
 
 #[utoipa::path(
@@ -80,7 +86,7 @@ pub async fn create_token(
     operation_id = "list_tokens",
     summary = "List API tokens (all tokens for admin, own tokens for regular users)",
     responses(
-        (status = 200, description = "List of tokens", body = ListTokensResponse),
+        (status = 200, description = "List of tokens", body = ListApiTokensResponse),
         (status = 401, description = "Not authenticated"),
         (status = 500, description = "Internal server error"),
     )
@@ -88,14 +94,15 @@ pub async fn create_token(
 pub async fn list_tokens(
     State(state): State<AppState>,
     auth: AuthUser,
-) -> Result<Json<ListTokensResponse>, ApiError> {
-    let tokens = if auth.role == Role::Admin {
+) -> Result<Json<ListApiTokensResponse>, ApiError> {
+    let token_rows = if auth.role == Role::Admin {
         db::list_all_api_tokens(&state.pool).await?
     } else {
         db::list_api_tokens_for_user(&state.pool, auth.user_id).await?
     };
 
-    Ok(Json(ListTokensResponse { tokens }))
+    let tokens: Vec<ApiTokenResponse> = token_rows.into_iter().map(Into::into).collect();
+    Ok(Json(ListApiTokensResponse { tokens }))
 }
 
 #[utoipa::path(
@@ -119,7 +126,7 @@ pub async fn delete_token(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(id): Path<i64>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeleteApiTokenResponse>, ApiError> {
     if auth.role != Role::Admin {
         let owner_id = db::get_api_token_owner(&state.pool, id).await?;
         if owner_id != auth.user_id {
@@ -130,5 +137,5 @@ pub async fn delete_token(
     }
 
     db::delete_api_token(&state.pool, id).await?;
-    Ok(Json(serde_json::json!({ "deleted": true })))
+    Ok(Json(DeleteApiTokenResponse { deleted: true }))
 }

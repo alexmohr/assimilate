@@ -10,9 +10,14 @@ use axum::{
 };
 use chrono::DateTime;
 use futures_util::future::join_all;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use shared::{
     crypto::encrypt_passphrase,
+    responses::{
+        BreakLockResponse, ConfirmRelocationResponse, ExecBorgResponse, InitRepoResponse,
+        MigrateEncryptionResponse, PassphraseResponse, RepoHostKeyResponse, RepoResponse,
+        RepoWithStatsResponse, RescanResponse, SyncResponse,
+    },
     types::{BorgEncryption, build_repo_url},
 };
 use sqlx::PgPool;
@@ -34,11 +39,62 @@ use crate::{
     ws::ui_broadcast::UiBroadcast,
 };
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct RepoDetailResponse {
-    #[serde(flatten)]
-    pub stats: RepoWithStatsRow,
-    pub current_op: Option<shared::protocol::ActiveRepoOp>,
+impl From<RepoRow> for RepoResponse {
+    fn from(row: RepoRow) -> Self {
+        Self {
+            id: row.id,
+            name: row.name,
+            repo_path: row.repo_path,
+            ssh_user: row.ssh_user,
+            ssh_host: row.ssh_host,
+            ssh_port: row.ssh_port,
+            compression: row.compression,
+            encryption: row.encryption,
+            enabled: row.enabled,
+            owner_id: row.owner_id,
+            visibility: row.visibility,
+            sync_schedule: row.sync_schedule,
+            last_synced_at: row.last_synced_at,
+        }
+    }
+}
+
+impl From<RepoWithStatsRow> for RepoWithStatsResponse {
+    fn from(row: RepoWithStatsRow) -> Self {
+        Self {
+            id: row.id,
+            name: row.name,
+            repo_path: row.repo_path,
+            ssh_user: row.ssh_user,
+            ssh_host: row.ssh_host,
+            ssh_port: row.ssh_port,
+            ssh_host_key: row.ssh_host_key,
+            compression: row.compression,
+            encryption: row.encryption,
+            enabled: row.enabled,
+            importing: row.importing,
+            import_error: row.import_error,
+            import_progress: row.import_progress,
+            import_total: row.import_total,
+            import_status_message: row.import_status_message,
+            owner_id: row.owner_id,
+            visibility: row.visibility,
+            sync_schedule: row.sync_schedule,
+            last_synced_at: row.last_synced_at,
+            archive_count: row.archive_count,
+            last_backup_at: row.last_backup_at,
+            total_original_size: row.total_original_size,
+            total_compressed_size: row.total_compressed_size,
+            total_deduplicated_size: row.total_deduplicated_size,
+            agent_count: row.agent_count,
+            unmatched_count: row.unmatched_count,
+            relocation_pending: row.relocation_pending,
+            last_op_kind: row.last_op_kind,
+            last_op_at: row.last_op_at,
+            last_op_by: row.last_op_by,
+            current_op: None,
+        }
+    }
 }
 
 /// Extracts a concise, user-facing error message from borg stderr.
@@ -475,11 +531,6 @@ pub async fn destroy_repo(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[derive(Serialize, utoipa::ToSchema)]
-pub struct PassphraseResponse {
-    pub passphrase: String,
-}
-
 #[utoipa::path(
     get,
     path = "/api/repos/{repo_id}/passphrase",
@@ -504,11 +555,6 @@ pub async fn get_passphrase(
     let encrypted = db::get_repo_passphrase(&state.pool, repo_id).await?;
     let passphrase = shared::crypto::decrypt_passphrase(&encrypted, &state.encryption_key)?;
     Ok(Json(PassphraseResponse { passphrase }))
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct RepoHostKeyResponse {
-    pub ssh_host_key: String,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -634,7 +680,7 @@ pub async fn list_repos_with_stats(
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),
     responses(
-        (status = 200, description = "Repository with stats", body = RepoDetailResponse),
+        (status = 200, description = "Repository with stats", body = RepoWithStatsResponse),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
     )
@@ -643,10 +689,11 @@ pub async fn get_repo(
     State(state): State<AppState>,
     _auth: AuthUser,
     Path(repo_id): Path<i64>,
-) -> Result<Json<RepoDetailResponse>, ApiError> {
-    let stats = db::get_repo_with_stats(&state.pool, repo_id).await?;
-    let current_op = state.repo_op_tracker.get(repo_id).await;
-    Ok(Json(RepoDetailResponse { stats, current_op }))
+) -> Result<Json<RepoWithStatsResponse>, ApiError> {
+    let mut res: RepoWithStatsResponse =
+        db::get_repo_with_stats(&state.pool, repo_id).await?.into();
+    res.current_op = state.repo_op_tracker.get(repo_id).await;
+    Ok(Json(res))
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -661,12 +708,6 @@ pub struct InitRepoRequest {
     #[schema(value_type = String)]
     pub encryption: BorgEncryption,
     pub compression: Option<String>,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct InitRepoResponse {
-    pub repo: RepoRow,
-    pub borg_output: String,
 }
 
 #[utoipa::path(
@@ -729,13 +770,11 @@ pub async fn init_repo(
 
     Ok((
         StatusCode::CREATED,
-        Json(InitRepoResponse { repo, borg_output }),
+        Json(InitRepoResponse {
+            repo: repo.into(),
+            borg_output,
+        }),
     ))
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct ConfirmRelocationResponse {
-    pub message: String,
 }
 
 #[utoipa::path(
@@ -814,12 +853,6 @@ pub async fn list_schedules_for_repo(
         }
     }
     Ok(Json(visible))
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct BreakLockResponse {
-    pub message: String,
-    pub borg_output: String,
 }
 
 #[utoipa::path(
@@ -972,13 +1005,6 @@ pub struct ExecBorgRequest {
     pub args: Vec<String>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct ExecBorgResponse {
-    pub stdout: String,
-    pub stderr: String,
-    pub exit_code: i32,
-}
-
 #[utoipa::path(
     post,
     path = "/api/repos/{repo_id}/exec",
@@ -1055,13 +1081,6 @@ pub async fn exec_borg(
 pub struct MigrateEncryptionRequest {
     #[schema(value_type = String)]
     pub target_encryption: BorgEncryption,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct MigrateEncryptionResponse {
-    pub success: bool,
-    pub message: String,
-    pub migrated_path: Option<String>,
 }
 
 #[utoipa::path(
@@ -2425,12 +2444,6 @@ async fn index_archives_with_progress(
     info!(repo_id, total, "content indexing: completed");
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct RescanResponse {
-    pub matched: u64,
-    pub remaining_unmatched: u64,
-}
-
 #[utoipa::path(
     post,
     path = "/api/repos/{repo_id}/rescan",
@@ -2505,13 +2518,6 @@ pub async fn rescan_repo(
         matched: matched_count,
         remaining_unmatched,
     }))
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct SyncResponse {
-    pub imported: u64,
-    pub removed: u64,
-    pub duration_secs: u64,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -2679,7 +2685,7 @@ pub async fn sync_repo(
 
 #[utoipa::path(
     post,
-    path = "/api/repos/{repo_id}/reset-import",
+    path = "/api/repos/{repo_id}/reset-and-sync",
     tag = "Repositories",
     operation_id = "resetImport",
     summary = "Reset a stuck importing state (admin only)",

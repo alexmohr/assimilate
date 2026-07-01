@@ -1543,6 +1543,33 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn health_summary_with_invalid_status_silently_returns_none(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+
+    sqlx::query!(
+        r#"INSERT INTO backup_reports
+           (agent_id, repo_id, schedule_id, started_at, finished_at, status, matched)
+           VALUES ($1, $2, $3, NOW() - INTERVAL '5 minutes', NOW(), $4, true)"#,
+        agent.id,
+        repo.id,
+        schedule.id,
+        "completely_invalid_status_value",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let health = db::get_health_summary(&pool).await.unwrap();
+    assert_eq!(health.len(), 1);
+    assert_eq!(
+        health[0].last_status.as_deref(),
+        Some("completely_invalid_status_value"),
+        "raw invalid status is returned as-is from the db layer"
+    );
+    assert_eq!(health[0].schedule_id, schedule.id);
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholders(pool: PgPool) {
     let (agent, repo, schedule_a) = create_test_schedule(&pool).await;
     let schedule_b = db::insert_schedule(

@@ -12,6 +12,65 @@ use tracing::warn;
 use super::auth::AuthUser;
 use crate::{AppState, db, error::ApiError};
 
+#[cfg(test)]
+mod tests {
+    use shared::types::BackupStatus;
+
+    use super::*;
+
+    fn make_row(status: &str) -> db::ReportRow {
+        db::ReportRow {
+            id: 1,
+            agent_id: 1,
+            repo_id: 1,
+            repo_name: "test-repo".to_owned(),
+            schedule_id: Some(1),
+            schedule_name: None,
+            started_at: chrono::Utc::now(),
+            finished_at: chrono::Utc::now(),
+            status: status.to_owned(),
+            original_size: 0,
+            compressed_size: 0,
+            deduplicated_size: 0,
+            files_processed: 0,
+            duration_secs: 0,
+            error_message: None,
+            warnings: vec![],
+            borg_version: None,
+            archive_name: None,
+            borg_command: None,
+        }
+    }
+
+    #[test]
+    fn row_to_report_response_parses_valid_status() {
+        let row = make_row("success");
+        let resp = row_to_report_response(row, "myhost".to_owned());
+        assert_eq!(resp.status, BackupStatus::Success);
+    }
+
+    #[test]
+    fn row_to_report_response_parses_failed_status() {
+        let row = make_row("failed");
+        let resp = row_to_report_response(row, "myhost".to_owned());
+        assert_eq!(resp.status, BackupStatus::Failed);
+    }
+
+    #[test]
+    fn row_to_report_response_falls_back_to_success_on_invalid_status() {
+        let row = make_row("corrupted_status_value");
+        let resp = row_to_report_response(row, "myhost".to_owned());
+        assert_eq!(resp.status, BackupStatus::Success);
+    }
+
+    #[test]
+    fn row_to_report_response_hostname_is_set() {
+        let row = make_row("success");
+        let resp = row_to_report_response(row, "webserver-01".to_owned());
+        assert_eq!(resp.hostname, Some("webserver-01".to_owned()));
+    }
+}
+
 fn row_to_report_response(row: db::ReportRow, hostname: String) -> ReportResponse {
     ReportResponse {
         id: row.id,

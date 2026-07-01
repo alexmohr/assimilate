@@ -1078,3 +1078,141 @@ pub async fn undismiss_finding(
     db::dashboard::undismiss_finding(&state.pool, auth.user_id, &finding_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
+
+#[cfg(test)]
+mod tests {
+    use shared::{responses::HealthResponse, types::BackupStatus};
+
+    #[test]
+    fn health_response_parses_valid_status() {
+        let row = crate::db::HealthRow {
+            repo_id: 1,
+            schedule_id: 1,
+            hostname: "host".into(),
+            target_name: "target".into(),
+            last_status: Some("success".into()),
+            last_backup_at: Some(chrono::Utc::now()),
+            last_error_message: None,
+            cron_expression: Some("0 * * * *".into()),
+            schedule_enabled: Some(true),
+        };
+        let response = HealthResponse {
+            repo_id: row.repo_id,
+            schedule_id: row.schedule_id,
+            hostname: row.hostname.clone(),
+            target_name: row.target_name.clone(),
+            last_status: row.last_status.and_then(|s| s.parse().ok()),
+            last_backup_at: row.last_backup_at,
+            is_overdue: super::is_overdue(
+                row.last_backup_at,
+                row.cron_expression.as_deref(),
+                chrono_tz::UTC,
+            ),
+            last_error_message: row.last_error_message,
+            cron_expression: row.cron_expression,
+            schedule_enabled: row.schedule_enabled,
+        };
+        assert_eq!(response.last_status, Some(BackupStatus::Success));
+    }
+
+    #[test]
+    fn health_response_drops_invalid_status_silently() {
+        let row = crate::db::HealthRow {
+            repo_id: 1,
+            schedule_id: 1,
+            hostname: "host".into(),
+            target_name: "target".into(),
+            last_status: Some("bogus_status".into()),
+            last_backup_at: Some(chrono::Utc::now()),
+            last_error_message: None,
+            cron_expression: Some("0 * * * *".into()),
+            schedule_enabled: Some(true),
+        };
+        let response = HealthResponse {
+            repo_id: row.repo_id,
+            schedule_id: row.schedule_id,
+            hostname: row.hostname.clone(),
+            target_name: row.target_name.clone(),
+            last_status: row.last_status.and_then(|s| s.parse().ok()),
+            last_backup_at: row.last_backup_at,
+            is_overdue: super::is_overdue(
+                row.last_backup_at,
+                row.cron_expression.as_deref(),
+                chrono_tz::UTC,
+            ),
+            last_error_message: row.last_error_message,
+            cron_expression: row.cron_expression,
+            schedule_enabled: row.schedule_enabled,
+        };
+        assert_eq!(response.last_status, None);
+    }
+
+    #[test]
+    fn health_response_none_status_when_no_last_backup() {
+        let row = crate::db::HealthRow {
+            repo_id: 1,
+            schedule_id: 1,
+            hostname: "host".into(),
+            target_name: "target".into(),
+            last_status: None,
+            last_backup_at: None,
+            last_error_message: None,
+            cron_expression: Some("0 * * * *".into()),
+            schedule_enabled: Some(true),
+        };
+        let response = HealthResponse {
+            repo_id: row.repo_id,
+            schedule_id: row.schedule_id,
+            hostname: row.hostname.clone(),
+            target_name: row.target_name.clone(),
+            last_status: row.last_status.and_then(|s| s.parse().ok()),
+            last_backup_at: row.last_backup_at,
+            is_overdue: super::is_overdue(
+                row.last_backup_at,
+                row.cron_expression.as_deref(),
+                chrono_tz::UTC,
+            ),
+            last_error_message: row.last_error_message,
+            cron_expression: row.cron_expression,
+            schedule_enabled: row.schedule_enabled,
+        };
+        assert_eq!(response.last_status, None);
+        assert!(!response.is_overdue);
+    }
+
+    #[test]
+    fn is_overdue_with_no_last_backup_returns_false() {
+        assert!(!super::is_overdue(None, Some("0 * * * *"), chrono_tz::UTC));
+    }
+
+    #[test]
+    fn is_overdue_with_no_cron_returns_false() {
+        let now = chrono::Utc::now();
+        assert!(!super::is_overdue(Some(now), None, chrono_tz::UTC));
+    }
+
+    #[test]
+    fn is_overdue_with_invalid_cron_returns_false() {
+        let now = chrono::Utc::now();
+        assert!(!super::is_overdue(
+            Some(now),
+            Some("invalid cron"),
+            chrono_tz::UTC
+        ));
+    }
+
+    #[test]
+    fn percentage_of_zero_part_yields_zero() {
+        assert_eq!(super::percentage_of(0, 100), 0.0);
+    }
+
+    #[test]
+    fn percentage_of_equal_values_yields_100() {
+        assert_eq!(super::percentage_of(100, 100), 100.0);
+    }
+
+    #[test]
+    fn percentage_of_half_yields_50() {
+        assert_eq!(super::percentage_of(50, 100), 50.0);
+    }
+}

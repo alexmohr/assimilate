@@ -3128,4 +3128,147 @@ mod tests {
             "end": "2024-01-01T00:00:00Z"
         })));
     }
+
+    #[test]
+    fn repo_row_from_valid_compression_lz4() {
+        let row = db::RepoRow {
+            id: 1,
+            name: "test".into(),
+            repo_path: "/repo".into(),
+            ssh_user: "borg".into(),
+            ssh_host: "host".into(),
+            ssh_port: 22,
+            compression: "lz4".into(),
+            encryption: "repokey".into(),
+            enabled: true,
+            owner_id: None,
+            visibility: "private".into(),
+            sync_schedule: None,
+            last_synced_at: None,
+        };
+        let resp = RepoResponse::from(row);
+        assert_eq!(resp.compression, shared::types::Compression::Lz4);
+        assert_eq!(resp.encryption, shared::types::BorgEncryption::Repokey);
+    }
+
+    #[test]
+    fn repo_row_from_invalid_compression_falls_back_to_default() {
+        let row = db::RepoRow {
+            id: 1,
+            name: "test".into(),
+            repo_path: "/repo".into(),
+            ssh_user: "borg".into(),
+            ssh_host: "host".into(),
+            ssh_port: 22,
+            compression: "garbage_algorithm".into(),
+            encryption: "repokey_blake2".into(),
+            enabled: true,
+            owner_id: None,
+            visibility: "private".into(),
+            sync_schedule: None,
+            last_synced_at: None,
+        };
+        let resp = RepoResponse::from(row);
+        assert_eq!(resp.compression, shared::types::Compression::Lz4);
+    }
+
+    #[test]
+    fn repo_row_from_invalid_encryption_falls_back_to_default() {
+        let row = db::RepoRow {
+            id: 1,
+            name: "test".into(),
+            repo_path: "/repo".into(),
+            ssh_user: "borg".into(),
+            ssh_host: "host".into(),
+            ssh_port: 22,
+            compression: "lz4".into(),
+            encryption: "bogus_encryption".into(),
+            enabled: true,
+            owner_id: None,
+            visibility: "private".into(),
+            sync_schedule: None,
+            last_synced_at: None,
+        };
+        let resp = RepoResponse::from(row);
+        assert_eq!(resp.encryption, shared::types::BorgEncryption::Repokey);
+    }
+
+    #[test]
+    fn repo_with_stats_row_from_invalid_last_op_kind_silently_drops() {
+        let row = db::RepoWithStatsRow {
+            id: 1,
+            name: "test".into(),
+            repo_path: "/repo".into(),
+            ssh_user: "borg".into(),
+            ssh_host: "host".into(),
+            ssh_port: 22,
+            ssh_host_key: None,
+            compression: "lz4".into(),
+            encryption: "repokey".into(),
+            enabled: true,
+            importing: false,
+            import_error: None,
+            import_progress: 0,
+            import_total: 0,
+            import_status_message: None,
+            owner_id: None,
+            visibility: "private".into(),
+            sync_schedule: None,
+            last_synced_at: None,
+            archive_count: 0,
+            last_backup_at: None,
+            total_original_size: 0,
+            total_compressed_size: 0,
+            total_deduplicated_size: 0,
+            agent_count: 0,
+            unmatched_count: 0,
+            last_op_kind: Some("bogus_op".into()),
+            relocation_pending: false,
+            last_op_at: None,
+            last_op_by: None,
+        };
+        let resp = RepoWithStatsResponse::from(row);
+        assert_eq!(resp.last_op_kind, None);
+    }
+
+    #[test]
+    fn repo_with_stats_row_from_valid_last_op_kind() {
+        let row = db::RepoWithStatsRow {
+            id: 1,
+            name: "test".into(),
+            repo_path: "/repo".into(),
+            ssh_user: "borg".into(),
+            ssh_host: "host".into(),
+            ssh_port: 22,
+            ssh_host_key: None,
+            compression: "lz4".into(),
+            encryption: "repokey".into(),
+            enabled: true,
+            importing: false,
+            import_error: None,
+            import_progress: 0,
+            import_total: 0,
+            import_status_message: None,
+            owner_id: None,
+            visibility: "private".into(),
+            sync_schedule: None,
+            last_synced_at: None,
+            archive_count: 0,
+            last_backup_at: None,
+            total_original_size: 0,
+            total_compressed_size: 0,
+            total_deduplicated_size: 0,
+            agent_count: 0,
+            unmatched_count: 0,
+            last_op_kind: Some("agent_backup".into()),
+            relocation_pending: false,
+            last_op_at: None,
+            last_op_by: None,
+        };
+        let resp = RepoWithStatsResponse::from(row);
+        assert_eq!(
+            resp.last_op_kind,
+            Some(shared::protocol::RepoOpKind::AgentBackup)
+        );
+    }
 }

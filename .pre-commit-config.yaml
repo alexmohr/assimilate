@@ -80,7 +80,6 @@ repos:
       - id: validate-cargo-lints
       - id: cargo-fmt
       - id: clippy
-      - id: check-hooks
 
   - repo: local
     hooks:

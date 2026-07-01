@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        UPDATE notification_channels\n        SET name = COALESCE($1::text, name),\n            channel_type = COALESCE($2::text, channel_type),\n            config = COALESCE($3::jsonb, config),\n            enabled = COALESCE($4::bool, enabled),\n            scope = COALESCE($5::jsonb, scope),\n            updated_at = NOW()\n        WHERE id = $6\n        RETURNING id, name, channel_type, config, enabled, scope, created_at, updated_at\n        ",
+  "query": "\n        UPDATE notification_channels\n        SET name = COALESCE($1::text, name),\n            channel_type = COALESCE($2::text, channel_type),\n            config = COALESCE($3::jsonb, config),\n            enabled = COALESCE($4::bool, enabled),\n            scope = COALESCE($5::jsonb, scope),\n            updated_at = NOW()\n        WHERE id = $6\n        RETURNING id, name, channel_type as \"channel_type: ChannelType\", config, enabled, scope,\n                 created_at, updated_at\n        ",
   "describe": {
     "columns": [
       {
@@ -15,7 +15,7 @@
       },
       {
         "ordinal": 2,
-        "name": "channel_type",
+        "name": "channel_type: ChannelType",
         "type_info": "Text"
       },
       {
@@ -65,5 +65,5 @@
       false
     ]
   },
-  "hash": "7661292797f16fdb18a9afa3246b0c98ea1857a23fd1fa86cce0fadaa4d73934"
+  "hash": "933676d8cf80c2e80fa4e3bb3c50c2a309374ad22f47e812e95ec76d1fd45836"
 }

@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT BOOL_OR(r.can_create_agent) AS can_create_agent, BOOL_OR(r.can_delete_agent) AS can_delete_agent, BOOL_OR(r.can_delete_own_agent) AS can_delete_own_agent, BOOL_OR(r.can_create_repo) AS can_create_repo, BOOL_OR(r.can_delete_repo) AS can_delete_repo, BOOL_OR(r.can_delete_own_repo) AS can_delete_own_repo, BOOL_OR(r.can_create_schedule) AS can_create_schedule, BOOL_OR(r.can_delete_schedule) AS can_delete_schedule, BOOL_OR(r.can_delete_own_schedule) AS can_delete_own_schedule, BOOL_OR(r.can_manage_tags) AS can_manage_tags, BOOL_OR(r.can_view_all_repos) AS can_view_all_repos, BOOL_OR(r.can_manage_tunnels) AS can_manage_tunnels FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "can_create_agent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 1,
+        "name": "can_delete_agent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 2,
+        "name": "can_delete_own_agent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 3,
+        "name": "can_create_repo",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "can_delete_repo",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "can_delete_own_repo",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "can_create_schedule",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "can_delete_schedule",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "can_delete_own_schedule",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "can_manage_tags",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 10,
+        "name": "can_view_all_repos",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 11,
+        "name": "can_manage_tunnels",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "1eb9ae17f9b9e075589c9062282bb70f78610c8bd950774d604f0020b9ab03b7"
+}

@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT pre_backup_commands, post_backup_commands FROM per_agent_commands WHERE schedule_id = $1 AND agent_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "pre_backup_commands",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "post_backup_commands",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "7b7e21f68e60d348c22addc6cae3f97f64bfa793d60e6b2484324db5485f80d4"
+}

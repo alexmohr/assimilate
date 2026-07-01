@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE repos SET relocation_pending = true WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8a14b47c005b2b924d1ebbfb4913dbf4b71f9b0a6d872df3eb91e1d98f3cbb6f"
+}

@@ -1,0 +1,122 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT s.id AS schedule_id,\n               COALESCE(NULLIF(s.name, ''), r.name) AS schedule_name,\n               s.cron_expression,\n               s.enabled AS schedule_enabled,\n               s.last_run_at AS schedule_last_run_at,\n               s.next_run_at,\n               c.id AS agent_id,\n               c.hostname,\n               r.id AS repo_id,\n               r.name AS repo_name,\n               COALESCE(latest.id, NULL) AS latest_report_id,\n               COALESCE(latest.started_at, NULL) AS latest_started_at,\n               COALESCE(latest.finished_at, NULL) AS latest_finished_at,\n               COALESCE(latest.status = 'failed', NULL) AS latest_failed,\n               COALESCE(latest.status = 'warning', NULL) AS latest_warning,\n               COALESCE(latest.status = 'started', NULL) AS latest_started,\n               CASE WHEN latest.status = 'warning' THEN latest.warnings[1]\n                    ELSE latest.error_message END AS latest_message,\n               COALESCE(success.finished_at, NULL) AS last_success_at\n        FROM schedules s\n        JOIN schedule_targets st ON st.schedule_id = s.id\n        JOIN agents c ON c.id = st.agent_id\n        JOIN repos r ON r.id = s.repo_id\n        LEFT JOIN LATERAL (\n            SELECT br.id, br.started_at, br.finished_at, br.status, br.error_message, br.warnings\n            FROM backup_reports br\n            WHERE br.schedule_id = s.id AND br.agent_id = c.id\n            ORDER BY br.started_at DESC\n            LIMIT 1\n        ) latest ON true\n        LEFT JOIN LATERAL (\n            SELECT br.finished_at\n            FROM backup_reports br\n            WHERE br.schedule_id = s.id AND br.agent_id = c.id AND br.status = 'success'\n            ORDER BY br.finished_at DESC\n            LIMIT 1\n        ) success ON true\n        WHERE c.is_hidden = false\n          AND c.agent_token_hash <> 'imported:no-auth'\n          AND r.enabled = true\n        ORDER BY s.id, c.id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "schedule_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "schedule_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "cron_expression",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "schedule_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "schedule_last_run_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "next_run_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 9,
+        "name": "repo_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "latest_report_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 11,
+        "name": "latest_started_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 12,
+        "name": "latest_finished_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "latest_failed",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 14,
+        "name": "latest_warning",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 15,
+        "name": "latest_started",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 16,
+        "name": "latest_message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 17,
+        "name": "last_success_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      null,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "8ba495c90d8161656cbe1c086f226525827a8df7b0f3f051ef134b25c752e64c"
+}

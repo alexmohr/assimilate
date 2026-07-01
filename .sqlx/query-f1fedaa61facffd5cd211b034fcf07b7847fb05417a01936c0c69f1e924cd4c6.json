@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE archive_index_jobs SET status = 'indexing', started_at = NOW() WHERE archive_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f1fedaa61facffd5cd211b034fcf07b7847fb05417a01936c0c69f1e924cd4c6"
+}

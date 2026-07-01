@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT br.id AS report_id, c.hostname FROM backup_reports br JOIN agents c ON c.id = br.agent_id WHERE br.repo_id = $1 AND br.matched = false",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "report_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "hostname",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "7b30387f45f157d1b60f433baf184e3be25d700fb1ecae3ccb934eeda1ae8234"
+}

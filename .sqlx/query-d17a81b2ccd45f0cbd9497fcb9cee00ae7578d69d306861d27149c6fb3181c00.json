@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE backup_reports SET status = 'cancelled', finished_at = NOW(), cancellation_acknowledged = false WHERE status IN ('pending', 'started')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "d17a81b2ccd45f0cbd9497fcb9cee00ae7578d69d306861d27149c6fb3181c00"
+}

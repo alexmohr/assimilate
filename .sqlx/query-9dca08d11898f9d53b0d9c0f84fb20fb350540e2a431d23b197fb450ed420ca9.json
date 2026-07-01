@@ -1,0 +1,131 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT br.id, br.agent_id, br.repo_id, r.name AS repo_name, br.schedule_id, CASE WHEN s.id IS NOT NULL THEN COALESCE(NULLIF(s.name, ''), r.name) END AS schedule_name, br.started_at, br.finished_at, br.status, br.original_size, br.compressed_size, br.deduplicated_size, br.files_processed, br.duration_secs, br.error_message, br.warnings, br.borg_version, br.archive_name, br.borg_command FROM backup_reports br JOIN repos r ON r.id = br.repo_id LEFT JOIN schedules s ON s.id = br.schedule_id WHERE br.agent_id = $1 ORDER BY br.started_at DESC LIMIT $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "repo_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "schedule_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "schedule_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "started_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "finished_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "original_size",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
+        "name": "compressed_size",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 11,
+        "name": "deduplicated_size",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 12,
+        "name": "files_processed",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 13,
+        "name": "duration_secs",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 14,
+        "name": "error_message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "warnings",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 16,
+        "name": "borg_version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 17,
+        "name": "archive_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 18,
+        "name": "borg_command",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      null,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "9dca08d11898f9d53b0d9c0f84fb20fb350540e2a431d23b197fb450ed420ca9"
+}

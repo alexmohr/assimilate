@@ -11,9 +11,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelType {
+    #[default]
     Email,
     Webhook,
     WebPush,
@@ -42,7 +43,7 @@ impl std::str::FromStr for ChannelType {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, PartialEq, thiserror::Error)]
 #[error("unknown channel type: {0}")]
 pub struct UnknownChannelType(pub String);
 
@@ -239,33 +240,34 @@ pub async fn dispatch(
     service: &NotificationService,
     event: NotificationEvent,
 ) -> Result<(), NotificationError> {
-    let channels: Vec<MatchedChannel> = sqlx::query_as(
+    let channels: Vec<MatchedChannel> = sqlx::query_as!(
+        MatchedChannel,
         r#"
-        SELECT DISTINCT nc.id, nc.channel_type, nc.config
+        SELECT DISTINCT nc.id, nc.channel_type as "channel_type: ChannelType", nc.config
         FROM notification_channels nc
         INNER JOIN notification_rules nr ON nr.channel_id = nc.id
         WHERE nr.event_type = $1
           AND nr.enabled = true
           AND nc.enabled = true
            AND (nc.scope = '{}' OR nc.scope IS NULL
-               OR (($2::bigint IS NULL
-                    OR NOT nc.scope ? 'repo_ids'
-                    OR nc.scope->'repo_ids' = '[]'::jsonb
-                    OR nc.scope->'repo_ids' @> to_jsonb($2::bigint))
-               AND ($3::bigint IS NULL
-                    OR NOT nc.scope ? 'agent_ids'
-                    OR nc.scope->'agent_ids' = '[]'::jsonb
-                    OR nc.scope->'agent_ids' @> to_jsonb($3::bigint))
-               AND ($4::bigint IS NULL
-                    OR NOT nc.scope ? 'schedule_ids'
-                    OR nc.scope->'schedule_ids' = '[]'::jsonb
-                    OR nc.scope->'schedule_ids' @> to_jsonb($4::bigint))))
+                OR (($2::bigint IS NULL
+                     OR NOT nc.scope ? 'repo_ids'
+                     OR nc.scope->'repo_ids' = '[]'::jsonb
+                     OR nc.scope->'repo_ids' @> to_jsonb($2::bigint))
+                AND ($3::bigint IS NULL
+                     OR NOT nc.scope ? 'agent_ids'
+                     OR nc.scope->'agent_ids' = '[]'::jsonb
+                     OR nc.scope->'agent_ids' @> to_jsonb($3::bigint))
+                AND ($4::bigint IS NULL
+                     OR NOT nc.scope ? 'schedule_ids'
+                     OR nc.scope->'schedule_ids' = '[]'::jsonb
+                     OR nc.scope->'schedule_ids' @> to_jsonb($4::bigint))))
         "#,
+        event.event_type.to_string(),
+        event.repo_id,
+        event.agent_id,
+        event.schedule_id,
     )
-    .bind(event.event_type.to_string())
-    .bind(event.repo_id)
-    .bind(event.agent_id)
-    .bind(event.schedule_id)
     .fetch_all(&service.pool)
     .await?;
 
@@ -297,19 +299,19 @@ pub async fn dispatch(
                 }
             };
 
-            if let Err(e) = sqlx::query(
+            if let Err(e) = sqlx::query!(
                 r#"
                 INSERT INTO notification_deliveries
                     (channel_id, event_type, payload, status,
                      error_message, attempted_at)
                 VALUES ($1, $2, $3, $4, $5, NOW())
                 "#,
+                channel_id,
+                &event_type_str,
+                &payload,
+                &status,
+                error_message,
             )
-            .bind(channel_id)
-            .bind(&event_type_str)
-            .bind(&payload)
-            .bind(&status)
-            .bind(&error_message)
             .execute(&pool)
             .await
             {
@@ -351,10 +353,11 @@ pub async fn deliver_to_channel(
                     NotificationError::Config("VAPID private key not configured".to_owned())
                 })?;
 
-            let subscriptions: Vec<PushSubscriptionRow> = sqlx::query_as(
+            let subscriptions: Vec<PushSubscriptionRow> = sqlx::query_as!(
+                PushSubscriptionRow,
                 "SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1",
+                cfg.user_id,
             )
-            .bind(cfg.user_id)
             .fetch_all(pool)
             .await?;
 
@@ -394,10 +397,12 @@ pub async fn deliver_to_channel(
                         ::web_push::WebPushError::EndpointNotValid(_),
                     )) => {
                         tracing::warn!(endpoint = %sub.endpoint, "removing stale push subscription (410 Gone)");
-                        let _ = sqlx::query("DELETE FROM push_subscriptions WHERE endpoint = $1")
-                            .bind(&sub.endpoint)
-                            .execute(pool)
-                            .await;
+                        let _ = sqlx::query!(
+                            "DELETE FROM push_subscriptions WHERE endpoint = $1",
+                            &sub.endpoint,
+                        )
+                        .execute(pool)
+                        .await;
                     }
                     Err(e) => {
                         tracing::error!(endpoint = %sub.endpoint, error = %e, "web push delivery failed");
@@ -480,10 +485,32 @@ pub(crate) fn build_push_url(payload: &serde_json::Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
 
     fn payload(json: serde_json::Value) -> serde_json::Value {
         json
+    }
+
+    #[test]
+    fn channel_type_from_str() {
+        assert_eq!(ChannelType::from_str("email"), Ok(ChannelType::Email));
+        assert_eq!(ChannelType::from_str("webhook"), Ok(ChannelType::Webhook));
+        assert_eq!(ChannelType::from_str("web_push"), Ok(ChannelType::WebPush));
+        assert!(ChannelType::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn channel_type_display() {
+        assert_eq!(ChannelType::Email.to_string(), "email");
+        assert_eq!(ChannelType::Webhook.to_string(), "webhook");
+        assert_eq!(ChannelType::WebPush.to_string(), "web_push");
+    }
+
+    #[test]
+    fn channel_type_default_is_email() {
+        assert_eq!(ChannelType::default(), ChannelType::Email);
     }
 
     #[test]

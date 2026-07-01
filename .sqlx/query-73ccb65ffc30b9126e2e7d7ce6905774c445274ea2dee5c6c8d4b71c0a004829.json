@@ -1,0 +1,59 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT started_at::date AS \"date!\", COALESCE(AVG(original_size), 0)::INT8 AS \"original_size!\", COALESCE(AVG(compressed_size), 0)::INT8 AS \"compressed_size!\", COALESCE(AVG(deduplicated_size), 0)::INT8 AS \"deduplicated_size!\", COALESCE(AVG(files_processed), 0)::INT8 AS \"file_count!\", COALESCE(AVG(duration_secs), 0)::INT8 AS \"duration_seconds!\", COUNT(*)::INT8 AS \"backup_count!\" FROM backup_reports WHERE repo_id = $1 AND started_at > NOW() - make_interval(days => $2) GROUP BY started_at::date ORDER BY 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "date!",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 1,
+        "name": "original_size!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "compressed_size!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "deduplicated_size!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "file_count!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "duration_seconds!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "backup_count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "73ccb65ffc30b9126e2e7d7ce6905774c445274ea2dee5c6c8d4b71c0a004829"
+}

@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, user_id, username, action, target_type, target_id, details, ip_address, created_at\n         FROM audit_log\n         WHERE ($1::BIGINT IS NULL OR user_id = $1)\n           AND ($2::TEXT IS NULL OR action = $2)\n           AND ($3::TEXT IS NULL OR target_type = $3)\n           AND ($4::TIMESTAMPTZ IS NULL OR created_at >= $4)\n           AND ($5::TIMESTAMPTZ IS NULL OR created_at <= $5)\n         ORDER BY created_at DESC, id DESC\n         LIMIT $6 OFFSET $7",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "username",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "action",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "target_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "target_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "details",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 7,
+        "name": "ip_address",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Timestamptz",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "c50786d650d06d48e639429824eb8ce4ea312457eac61380b1909d16c40c6be2"
+}

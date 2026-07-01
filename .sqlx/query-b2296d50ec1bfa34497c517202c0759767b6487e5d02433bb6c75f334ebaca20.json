@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE repos SET last_op_kind = $1, last_op_at = $2, last_op_by = $3 WHERE id = $4",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b2296d50ec1bfa34497c517202c0759767b6487e5d02433bb6c75f334ebaca20"
+}

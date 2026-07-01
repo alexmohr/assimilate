@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE backup_reports SET repo_unique_csize = $3 WHERE repo_id = $1 AND archive_name = $2 AND repo_unique_csize = 0",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5b6cd4097b992cdd9df2295b89bae22d13058f681cfa64b59bd66fd89ca42e94"
+}

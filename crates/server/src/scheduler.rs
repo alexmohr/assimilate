@@ -912,18 +912,18 @@ esac
 
         let stale_started_at = Utc::now() - chrono::Duration::days(1);
         let stale_finished_at = stale_started_at + chrono::Duration::minutes(5);
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
              status, original_size, compressed_size, deduplicated_size, repo_unique_csize, \
              files_processed, duration_secs, error_message, warnings, borg_version, matched, \
              archive_name, borg_command) VALUES ($1, $2, NULL, $3, $4, 'success', 10, 5, 5, 5, 1, \
              300, NULL, '{}'::text[], NULL, true, $5, NULL)",
+            agent.id,
+            repo.id,
+            stale_started_at,
+            stale_finished_at,
+            "stale-archive",
         )
-        .bind(agent.id)
-        .bind(repo.id)
-        .bind(stale_started_at)
-        .bind(stale_finished_at)
-        .bind("stale-archive")
         .execute(&pool)
         .await
         .unwrap();
@@ -932,24 +932,26 @@ esac
             .await
             .expect("sync_existing_archives failed");
 
-        let stale_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",
+        let stale_count = sqlx::query_scalar!(
+            "SELECT COUNT(*)::BIGINT FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",
+            repo.id,
+            "stale-archive",
         )
-        .bind(repo.id)
-        .bind("stale-archive")
         .fetch_one(&pool)
         .await
-        .unwrap();
+        .unwrap()
+        .unwrap_or(0);
         assert_eq!(stale_count, 0);
 
-        let fresh_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",
+        let fresh_count = sqlx::query_scalar!(
+            "SELECT COUNT(*)::BIGINT FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",
+            repo.id,
+            "fresh-archive",
         )
-        .bind(repo.id)
-        .bind("fresh-archive")
         .fetch_one(&pool)
         .await
-        .unwrap();
+        .unwrap()
+        .unwrap_or(0);
         assert_eq!(fresh_count, 1);
     }
 

@@ -32,8 +32,8 @@ impl From<db::tags::ArchiveTag> for ArchiveTagResponse {
     fn from(a: db::tags::ArchiveTag) -> Self {
         Self {
             id: a.id,
-            repo_id: a.repo_id,
-            archive_name: a.archive_name,
+            repo_id: a.repo_id.unwrap_or_default(),
+            archive_name: a.archive_name.unwrap_or_default(),
             tag: a.tag,
             created_by: a.created_by,
             created_at: a.created_at,

@@ -1,0 +1,55 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO archive_tags (archive_id, tag, created_by)\n         SELECT a.id, $3, $4 FROM archives a WHERE a.repo_id = $1 AND a.name = $2\n         RETURNING id,\n                   (SELECT repo_id FROM archives WHERE id = archive_tags.archive_id) AS repo_id,\n                   (SELECT name   FROM archives WHERE id = archive_tags.archive_id) AS archive_name,\n                   tag, created_by, created_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "archive_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "tag",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "created_by",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      null,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "3c384a5779c60b2fc4a2b0428dc6e3a781cd3ac7bd885d8210eca91039d02c94"
+}

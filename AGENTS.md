@@ -55,6 +55,33 @@ DATABASE_URL=postgres://borg:borg_dev@localhost:5432/borg cargo +nightly test -p
 
 The GitHub Actions workflow (`.github/workflows/ci.yml`) has a `db-integration` job that spins up a PostgreSQL service container and runs both `db_queries` and the ignored `integration` tests automatically.
 
+## sqlx Offline Cache
+
+The project uses `sqlx` compile-time query macros (`query!`, `query_as!`, `query_scalar!`). These require an offline cache (`.sqlx/` directory) for builds without a live PostgreSQL connection.
+
+### Regenerating the offline cache
+
+After changing any SQL query or running new migrations:
+
+```bash
+# Ensure PostgreSQL is running and migrations are applied
+DATABASE_URL=postgres://borg:borg_dev@localhost:5432/borg cargo sqlx prepare --workspace
+```
+
+This regenerates the `.sqlx/` JSON cache files. Commit the updated `.sqlx/` directory alongside SQL changes.
+
+### CI check
+
+CI runs `cargo sqlx prepare --check --workspace` to verify the cache is up to date with the current queries.
+
+### Verifying cache freshness locally
+
+```bash
+DATABASE_URL=postgres://borg:borg_dev@localhost:5432/borg cargo sqlx prepare --check --workspace
+```
+
+Exits with non-zero status if the cache is stale.
+
 ### Writing new DB tests
 
 * Add tests to `crates/server/tests/db_queries.rs`.

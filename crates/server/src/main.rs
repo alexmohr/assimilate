@@ -768,21 +768,22 @@ async fn shutdown_signal(
 }
 
 async fn bootstrap_admin(pool: &PgPool) -> Result<(), StartupError> {
-    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+    let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM users")
         .fetch_one(pool)
-        .await?;
+        .await?
+        .unwrap_or(0);
 
-    if count.0 > 0 {
+    if count > 0 {
         return Ok(());
     }
 
     let hash = bcrypt::hash("admin", 10)?;
 
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO users (username, password_hash, role, must_change_password) VALUES ('admin', \
          $1, 'admin', true)",
+        &hash,
     )
-    .bind(&hash)
     .execute(pool)
     .await?;
 

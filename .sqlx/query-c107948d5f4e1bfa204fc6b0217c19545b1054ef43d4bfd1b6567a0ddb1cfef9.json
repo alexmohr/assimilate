@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT j.status FROM archive_index_jobs j JOIN archives a ON a.id = j.archive_id WHERE a.repo_id = $1 AND a.name = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "status",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c107948d5f4e1bfa204fc6b0217c19545b1054ef43d4bfd1b6567a0ddb1cfef9"
+}

@@ -1,0 +1,122 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.pattern, a.id, a.hostname, a.display_name, a.agent_version, a.agent_git_sha, a.agent_build_time, a.agent_commit_count, a.created_at, a.last_seen_at, a.owner_id, a.visibility, a.default_backup_paths, a.default_exclude_patterns, a.default_pre_backup_commands, a.default_post_backup_commands, a.agent_token_hash, a.is_hidden FROM agent_hostname_patterns p JOIN agents a ON a.id = p.agent_id ORDER BY p.pattern",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "pattern",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "display_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "agent_version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "agent_git_sha",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "agent_build_time",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "agent_commit_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "last_seen_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "owner_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 11,
+        "name": "visibility",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "default_backup_paths",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 13,
+        "name": "default_exclude_patterns",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 14,
+        "name": "default_pre_backup_commands",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "default_post_backup_commands",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 16,
+        "name": "agent_token_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 17,
+        "name": "is_hidden",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "d20c7b1fccea6458ae484a3790e5c06f01e8d55e4f84ce8735a3b93bfe072f63"
+}

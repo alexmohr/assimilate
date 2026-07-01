@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, status, borg_command) VALUES ($1, $2, $3, $4, $4, 'started', $5) ON CONFLICT (repo_id, agent_id, started_at) WHERE archive_name IS NULL DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d08d57c287af9c7af7649714c59b3c7020e79aa415a225fa54a5f12b80e36a53"
+}

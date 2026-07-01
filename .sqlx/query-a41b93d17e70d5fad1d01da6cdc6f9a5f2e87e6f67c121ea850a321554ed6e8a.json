@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                INSERT INTO notification_deliveries\n                    (channel_id, event_type, payload, status,\n                     error_message, attempted_at)\n                VALUES ($1, $2, $3, $4, $5, NOW())\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Jsonb",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a41b93d17e70d5fad1d01da6cdc6f9a5f2e87e6f67c121ea850a321554ed6e8a"
+}

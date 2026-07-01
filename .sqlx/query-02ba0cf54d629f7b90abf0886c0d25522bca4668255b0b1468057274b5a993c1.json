@@ -1,0 +1,104 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, name, can_create_agent, can_delete_agent, can_delete_own_agent, can_create_repo, can_delete_repo, can_delete_own_repo, can_create_schedule, can_delete_schedule, can_delete_own_schedule, can_manage_tags, can_view_all_repos, can_manage_tunnels, created_at FROM roles ORDER BY name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "can_create_agent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 3,
+        "name": "can_delete_agent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "can_delete_own_agent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "can_create_repo",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "can_delete_repo",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "can_delete_own_repo",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "can_create_schedule",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "can_delete_schedule",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 10,
+        "name": "can_delete_own_schedule",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 11,
+        "name": "can_manage_tags",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 12,
+        "name": "can_view_all_repos",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 13,
+        "name": "can_manage_tunnels",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 14,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "02ba0cf54d629f7b90abf0886c0d25522bca4668255b0b1468057274b5a993c1"
+}

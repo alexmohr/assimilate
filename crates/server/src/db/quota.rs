@@ -29,7 +29,8 @@ pub async fn upsert_quota(
     critical_bytes: Option<i64>,
     enabled: bool,
 ) -> Result<RepoQuota, sqlx::Error> {
-    sqlx::query_as::<_, RepoQuota>(
+    sqlx::query_as!(
+        RepoQuota,
         r#"
         INSERT INTO repo_quotas (repo_id, warn_bytes, critical_bytes, enabled, updated_at)
         VALUES ($1, $2, $3, $4, NOW())
@@ -40,11 +41,11 @@ pub async fn upsert_quota(
             updated_at = NOW()
         RETURNING repo_id, warn_bytes, critical_bytes, enabled, updated_at
         "#,
+        repo_id,
+        warn_bytes,
+        critical_bytes,
+        enabled,
     )
-    .bind(repo_id)
-    .bind(warn_bytes)
-    .bind(critical_bytes)
-    .bind(enabled)
     .fetch_one(pool)
     .await
 }
@@ -57,11 +58,12 @@ impl RepoQuota {
 }
 
 pub async fn get_quota(pool: &PgPool, repo_id: i64) -> Result<Option<RepoQuota>, sqlx::Error> {
-    let quota = sqlx::query_as::<_, RepoQuota>(
+    let quota = sqlx::query_as!(
+        RepoQuota,
         "SELECT repo_id, warn_bytes, critical_bytes, enabled, updated_at FROM repo_quotas WHERE \
          repo_id = $1",
+        repo_id,
     )
-    .bind(repo_id)
     .fetch_optional(pool)
     .await?;
 

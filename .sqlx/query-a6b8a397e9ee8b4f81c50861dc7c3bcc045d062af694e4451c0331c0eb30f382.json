@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO archive_paths (repo_id, path) SELECT $1, unnest($2::text[]) ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a6b8a397e9ee8b4f81c50861dc7c3bcc045d062af694e4451c0331c0eb30f382"
+}

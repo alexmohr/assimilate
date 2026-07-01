@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE backup_reports SET schedule_id = COALESCE($1, schedule_id), finished_at = $2, status = $3, original_size = $4, compressed_size = $5, deduplicated_size = $6, repo_unique_csize = $7, files_processed = $8, duration_secs = $9, error_message = $10, warnings = $11, borg_version = $12, matched = $13, archive_name = $14, borg_command = COALESCE($15, borg_command), started_at = $16 WHERE run_id = $17 AND agent_id = $18 AND status IN ('pending', 'started')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Timestamptz",
+        "Text",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Text",
+        "TextArray",
+        "Text",
+        "Bool",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ceec3bd270967cbec5e748021262d87329941b23ca3a46224a7955782906624b"
+}

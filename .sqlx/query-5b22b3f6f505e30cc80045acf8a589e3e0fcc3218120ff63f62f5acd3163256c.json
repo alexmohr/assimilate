@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM backup_sources WHERE schedule_id = $1 AND agent_id IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5b22b3f6f505e30cc80045acf8a589e3e0fcc3218120ff63f62f5acd3163256c"
+}

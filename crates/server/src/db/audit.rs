@@ -33,17 +33,17 @@ pub async fn insert_audit_entry(
     pool: &PgPool,
     entry: &NewAuditEntry<'_>,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO audit_log (user_id, username, action, target_type, target_id, details, \
          ip_address) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        entry.user_id,
+        entry.username,
+        entry.action,
+        entry.target_type,
+        entry.target_id,
+        entry.details,
+        entry.ip_address,
     )
-    .bind(entry.user_id)
-    .bind(entry.username)
-    .bind(entry.action)
-    .bind(entry.target_type)
-    .bind(entry.target_id)
-    .bind(entry.details.clone())
-    .bind(entry.ip_address)
     .execute(pool)
     .await?;
 
@@ -65,7 +65,8 @@ pub async fn list_audit_entries(
     filters: &AuditEntryFilters<'_>,
 ) -> Result<(Vec<AuditEntry>, i64), sqlx::Error> {
     let offset = (filters.page - 1) * filters.per_page;
-    let rows = sqlx::query_as::<_, AuditEntry>(
+    let rows = sqlx::query_as!(
+        AuditEntry,
         "SELECT id, user_id, username, action, target_type, target_id, details, ip_address, \
          created_at
          FROM audit_log
@@ -76,18 +77,18 @@ pub async fn list_audit_entries(
            AND ($5::TIMESTAMPTZ IS NULL OR created_at <= $5)
          ORDER BY created_at DESC, id DESC
          LIMIT $6 OFFSET $7",
+        filters.filter_user_id,
+        filters.filter_action,
+        filters.filter_target_type,
+        filters.filter_from,
+        filters.filter_to,
+        filters.per_page,
+        offset,
     )
-    .bind(filters.filter_user_id)
-    .bind(filters.filter_action)
-    .bind(filters.filter_target_type)
-    .bind(filters.filter_from)
-    .bind(filters.filter_to)
-    .bind(filters.per_page)
-    .bind(offset)
     .fetch_all(pool)
     .await?;
 
-    let total = sqlx::query_scalar::<_, i64>(
+    let total = sqlx::query_scalar!(
         "SELECT COUNT(*)
          FROM audit_log
          WHERE ($1::BIGINT IS NULL OR user_id = $1)
@@ -95,14 +96,14 @@ pub async fn list_audit_entries(
            AND ($3::TEXT IS NULL OR target_type = $3)
            AND ($4::TIMESTAMPTZ IS NULL OR created_at >= $4)
            AND ($5::TIMESTAMPTZ IS NULL OR created_at <= $5)",
+        filters.filter_user_id,
+        filters.filter_action,
+        filters.filter_target_type,
+        filters.filter_from,
+        filters.filter_to,
     )
-    .bind(filters.filter_user_id)
-    .bind(filters.filter_action)
-    .bind(filters.filter_target_type)
-    .bind(filters.filter_from)
-    .bind(filters.filter_to)
     .fetch_one(pool)
     .await?;
 
-    Ok((rows, total))
+    Ok((rows, total.unwrap_or(0)))
 }

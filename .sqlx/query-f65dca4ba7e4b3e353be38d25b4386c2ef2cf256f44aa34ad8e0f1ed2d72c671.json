@@ -1,0 +1,124 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE agents SET hostname = $2, display_name = $3, default_backup_paths = $4, default_exclude_patterns = $5, default_pre_backup_commands = $6, default_post_backup_commands = $7 WHERE hostname = $1 RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, agent_token_hash, is_hidden",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "display_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "agent_version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "agent_git_sha",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "agent_build_time",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "agent_commit_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "last_seen_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "owner_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
+        "name": "visibility",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "default_backup_paths",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 12,
+        "name": "default_exclude_patterns",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 13,
+        "name": "default_pre_backup_commands",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 14,
+        "name": "default_post_backup_commands",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "agent_token_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 16,
+        "name": "is_hidden",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "TextArray",
+        "TextArray",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "f65dca4ba7e4b3e353be38d25b4386c2ef2cf256f44aa34ad8e0f1ed2d72c671"
+}

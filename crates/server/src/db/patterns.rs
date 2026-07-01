@@ -19,11 +19,12 @@ pub async fn list_patterns_for_agent(
     pool: &PgPool,
     agent_id: i64,
 ) -> Result<Vec<HostnamePatternRow>, ApiError> {
-    sqlx::query_as::<_, HostnamePatternRow>(
+    sqlx::query_as!(
+        HostnamePatternRow,
         "SELECT id, agent_id, pattern, created_at FROM agent_hostname_patterns WHERE agent_id = \
          $1 ORDER BY pattern",
+        agent_id,
     )
-    .bind(agent_id)
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)
@@ -34,23 +35,26 @@ pub async fn add_hostname_pattern(
     agent_id: i64,
     pattern: &str,
 ) -> Result<HostnamePatternRow, ApiError> {
-    sqlx::query_as::<_, HostnamePatternRow>(
+    sqlx::query_as!(
+        HostnamePatternRow,
         "INSERT INTO agent_hostname_patterns (agent_id, pattern) VALUES ($1, $2) RETURNING id, \
          agent_id, pattern, created_at",
+        agent_id,
+        pattern,
     )
-    .bind(agent_id)
-    .bind(pattern)
     .fetch_one(pool)
     .await
     .map_err(ApiError::Database)
 }
 
 pub async fn delete_hostname_pattern(pool: &PgPool, pattern_id: i64) -> Result<(), ApiError> {
-    sqlx::query("DELETE FROM agent_hostname_patterns WHERE id = $1")
-        .bind(pattern_id)
-        .execute(pool)
-        .await
-        .map_err(ApiError::Database)?;
+    sqlx::query!(
+        "DELETE FROM agent_hostname_patterns WHERE id = $1",
+        pattern_id
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
     Ok(())
 }
 
@@ -80,7 +84,8 @@ pub async fn find_agent_by_pattern(
     pool: &PgPool,
     hostname: &str,
 ) -> Result<Option<super::AgentRow>, ApiError> {
-    let rows = sqlx::query_as::<_, PatternAgentJoinRow>(
+    let rows = sqlx::query_as!(
+        PatternAgentJoinRow,
         "SELECT p.pattern, a.id, a.hostname, a.display_name, a.agent_version, a.agent_git_sha, \
          a.agent_build_time, a.agent_commit_count, a.created_at, a.last_seen_at, a.owner_id, \
          a.visibility, a.default_backup_paths, a.default_exclude_patterns, \

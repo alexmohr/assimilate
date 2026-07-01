@@ -64,25 +64,51 @@ pub struct RepositoryRow {
 }
 
 pub async fn targets(pool: &PgPool) -> Result<Vec<TargetRow>, ApiError> {
-    #[allow(trivial_casts)]
-    sqlx::query_as::<_, TargetRow>(
-        "SELECT s.id AS schedule_id, COALESCE(NULLIF(s.name, ''), r.name) AS schedule_name, \
-         s.cron_expression, s.enabled AS schedule_enabled, s.last_run_at AS schedule_last_run_at, \
-         s.next_run_at, c.id AS agent_id, c.hostname, r.id AS repo_id, r.name AS repo_name, \
-         latest.id AS latest_report_id, latest.started_at AS latest_started_at, \
-         latest.finished_at AS latest_finished_at, latest.status = 'failed' AS latest_failed, \
-         latest.status = 'warning' AS latest_warning, latest.status = 'started' AS \
-         latest_started, CASE WHEN latest.status = 'warning' THEN latest.warnings[1] ELSE \
-         latest.error_message END AS latest_message, success.finished_at AS last_success_at FROM \
-         schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents c ON c.id = \
-         st.agent_id JOIN repos r ON r.id = s.repo_id LEFT JOIN LATERAL ( SELECT br.id, \
-         br.started_at, br.finished_at, br.status, br.error_message, br.warnings FROM \
-         backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = c.id ORDER BY \
-         br.started_at DESC LIMIT 1 ) latest ON true LEFT JOIN LATERAL ( SELECT br.finished_at \
-         FROM backup_reports br WHERE br.schedule_id = s.id AND br.agent_id = c.id AND br.status \
-         = 'success' ORDER BY br.finished_at DESC LIMIT 1 ) success ON true WHERE c.is_hidden = \
-         false AND c.agent_token_hash <> 'imported:no-auth' AND r.enabled = true ORDER BY s.id, \
-         c.id",
+    sqlx::query_as!(
+        TargetRow,
+        r#"
+        SELECT s.id AS schedule_id,
+               COALESCE(NULLIF(s.name, ''), r.name) AS schedule_name,
+               s.cron_expression,
+               s.enabled AS schedule_enabled,
+               s.last_run_at AS schedule_last_run_at,
+               s.next_run_at,
+               c.id AS agent_id,
+               c.hostname,
+               r.id AS repo_id,
+               r.name AS repo_name,
+               COALESCE(latest.id, NULL) AS latest_report_id,
+               COALESCE(latest.started_at, NULL) AS latest_started_at,
+               COALESCE(latest.finished_at, NULL) AS latest_finished_at,
+               COALESCE(latest.status = 'failed', NULL) AS latest_failed,
+               COALESCE(latest.status = 'warning', NULL) AS latest_warning,
+               COALESCE(latest.status = 'started', NULL) AS latest_started,
+               CASE WHEN latest.status = 'warning' THEN latest.warnings[1]
+                    ELSE latest.error_message END AS latest_message,
+               COALESCE(success.finished_at, NULL) AS last_success_at
+        FROM schedules s
+        JOIN schedule_targets st ON st.schedule_id = s.id
+        JOIN agents c ON c.id = st.agent_id
+        JOIN repos r ON r.id = s.repo_id
+        LEFT JOIN LATERAL (
+            SELECT br.id, br.started_at, br.finished_at, br.status, br.error_message, br.warnings
+            FROM backup_reports br
+            WHERE br.schedule_id = s.id AND br.agent_id = c.id
+            ORDER BY br.started_at DESC
+            LIMIT 1
+        ) latest ON true
+        LEFT JOIN LATERAL (
+            SELECT br.finished_at
+            FROM backup_reports br
+            WHERE br.schedule_id = s.id AND br.agent_id = c.id AND br.status = 'success'
+            ORDER BY br.finished_at DESC
+            LIMIT 1
+        ) success ON true
+        WHERE c.is_hidden = false
+          AND c.agent_token_hash <> 'imported:no-auth'
+          AND r.enabled = true
+        ORDER BY s.id, c.id
+        "#,
     )
     .fetch_all(pool)
     .await

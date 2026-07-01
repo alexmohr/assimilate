@@ -705,7 +705,7 @@ pub async fn health(
                 schedule_id: row.schedule_id,
                 hostname: row.hostname,
                 target_name: row.target_name,
-                last_status: row.last_status,
+                last_status: row.last_status.and_then(|s| s.parse().ok()),
                 last_backup_at: row.last_backup_at,
                 is_overdue: overdue,
                 last_error_message: row.last_error_message,

@@ -19,7 +19,7 @@ fn row_to_report_response(row: db::ReportRow, hostname: String) -> ReportRespons
         schedule_id: row.schedule_id,
         started_at: row.started_at,
         finished_at: row.finished_at,
-        status: row.status,
+        status: row.status.parse().unwrap_or_default(),
         original_size: row.original_size,
         compressed_size: row.compressed_size,
         deduplicated_size: row.deduplicated_size,

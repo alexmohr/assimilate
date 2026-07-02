@@ -374,7 +374,9 @@ pub async fn dashboard_overview(
         .collect();
     let disabled_only_agents = hosts
         .iter()
-        .filter(|host| host.enabled_assignment_count == Some(0) && host.disabled_assignment_count > Some(0))
+        .filter(|host| {
+            host.enabled_assignment_count == Some(0) && host.disabled_assignment_count > Some(0)
+        })
         .map(agent_link)
         .collect();
     let never_succeeded_targets = targets

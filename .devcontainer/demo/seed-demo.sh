@@ -72,7 +72,7 @@ export AGENT_TOKEN_2="$DB01_TOKEN"
 export AGENT_TOKEN_3="$MEDIA_TOKEN"
 
 echo "==> Registering repositories..."
-REPO_DAILY_ID=$(api POST "/api/repos" "{
+api POST "/api/repos" "{
     \"name\": \"server-daily\",
     \"repo_path\": \"/backup/repos/server-daily\",
     \"ssh_user\": \"borg\",
@@ -80,9 +80,9 @@ REPO_DAILY_ID=$(api POST "/api/repos" "{
     \"ssh_port\": 22,
     \"passphrase\": \"demo-passphrase-123\",
     \"compression\": \"lz4\"
-}" | jq -r '.id')
+}" > /dev/null
 
-REPO_HOURLY_ID=$(api POST "/api/repos" "{
+api POST "/api/repos" "{
     \"name\": \"database-hourly\",
     \"repo_path\": \"/backup/repos/database-hourly\",
     \"ssh_user\": \"borg\",
@@ -90,9 +90,9 @@ REPO_HOURLY_ID=$(api POST "/api/repos" "{
     \"ssh_port\": 22,
     \"passphrase\": \"demo-passphrase-123\",
     \"compression\": \"zstd,3\"
-}" | jq -r '.id')
+}" > /dev/null
 
-REPO_WEEKLY_ID=$(api POST "/api/repos" "{
+api POST "/api/repos" "{
     \"name\": \"media-weekly\",
     \"repo_path\": \"/backup/repos/media-weekly\",
     \"ssh_user\": \"borg\",
@@ -100,10 +100,10 @@ REPO_WEEKLY_ID=$(api POST "/api/repos" "{
     \"ssh_port\": 22,
     \"passphrase\": \"demo-passphrase-123\",
     \"compression\": \"lz4\"
-}" | jq -r '.id')
+}" > /dev/null
 
 echo "==> Configuring per-repo sync schedules..."
-api PUT "/api/repos/$REPO_HOURLY_ID" "{
+api PUT "/api/repos/2" "{
     \"repo_path\": \"/backup/repos/database-hourly\",
     \"ssh_user\": \"borg\",
     \"ssh_host\": \"localhost\",
@@ -112,7 +112,7 @@ api PUT "/api/repos/$REPO_HOURLY_ID" "{
     \"sync_schedule\": \"0 */4 * * *\"
 }" > /dev/null
 
-api PUT "/api/repos/$REPO_WEEKLY_ID" "{
+api PUT "/api/repos/3" "{
     \"repo_path\": \"/backup/repos/media-weekly\",
     \"ssh_user\": \"borg\",
     \"ssh_host\": \"localhost\",
@@ -135,22 +135,90 @@ END
 $$;
 SQL
 
-echo "==> Writing agent tokens for agent containers..."
-mkdir -p /seeds
-echo "AGENT_TOKEN_1='$WEB01_TOKEN'" > /seeds/tokens.env
-echo "AGENT_TOKEN_2='$DB01_TOKEN'" >> /seeds/tokens.env
-echo "AGENT_TOKEN_3='$MEDIA_TOKEN'" >> /seeds/tokens.env
+echo "==> Creating sample borg archives for browsing/diff..."
 
-echo "==> Signaling agent containers to start creating archives..."
-touch /seeds/repos-ready
+# Helper: create borg archive with spoofed hostname metadata and a back-dated
+# archive timestamp.
+# Borg 1.x stores socket.gethostname() in archive metadata with no env override,
+# so we monkey-patch it via Python before invoking borg's main(). We also pass
+# `--timestamp` so the archive's recorded start/end matches the historical date
+# encoded in its name -- otherwise every archive would record "now", and all the
+# imported history (trends, calendar, activity) would collapse onto today.
+#
+# This is deliberate: the demo seeds NO backup_reports manually. Every archive,
+# size, count, and date the UI shows is derived from real borg state via repo
+# import/sync -- borg info/list are the single source of truth.
+#
+# Usage: borg_create_as <hostname> <repo::archive> <source_path> <timestamp>
+borg_create_as() {
+    local fake_host="$1" repo_archive="$2" source_path="$3" timestamp="$4"
+    su -c "cd $source_path && BORG_PASSPHRASE=demo-passphrase-123 python3 -c \"
+import socket, platform, sys
+socket.gethostname = lambda: '$fake_host'
+platform.node = lambda: '$fake_host'
+from borg.archiver import main
+sys.argv = ['borg', 'create', '--timestamp', '$timestamp', '$repo_archive', '.']
+sys.exit(main())
+\"" borg
+}
 
-echo "==> Waiting for all agent/placeholder containers to finish creating archives..."
-for HOST in web-server-01 db-server-01 media-store-01 old-webserver legacy-db-prod; do
-    while [ ! -f "/seeds/done-$HOST" ]; do
-        sleep 2
-    done
-    echo "  [$HOST] done."
+# server-daily: 30 days of daily web-server-01 backups.
+# Archive contents intentionally vary in both timestamp and payload size so the
+# archive browser's date/size sort modes have meaningful demo data.
+for i in $(seq 1 30); do
+    ARCHIVE_DATE=$(date -u -d "$i days ago" +%Y-%m-%dT02:00:00 2>/dev/null || date -u -v-"${i}"d +%Y-%m-%dT02:00:00)
+    ARCHIVE_DIR=$(mktemp -d)
+    chmod 755 "$ARCHIVE_DIR"
+    mkdir -p "$ARCHIVE_DIR/var/www/html" "$ARCHIVE_DIR/etc/nginx/conf.d"
+    echo "<html><body>Version $i</body></html>" > "$ARCHIVE_DIR/var/www/html/index.html"
+    echo "server { listen 80; }" > "$ARCHIVE_DIR/etc/nginx/conf.d/default.conf"
+    echo "Restore this file from the archive browser." > "$ARCHIVE_DIR/restore-example.txt"
+    dd if=/dev/urandom of="$ARCHIVE_DIR/var/www/html/app.js" bs=1024 count=$((50 + i * 10)) 2>/dev/null
+    borg_create_as "web-server-01" "/backup/repos/server-daily::web-server-01-backup-$ARCHIVE_DATE" "$ARCHIVE_DIR" "$ARCHIVE_DATE"
+    rm -rf "$ARCHIVE_DIR"
 done
+
+# database-hourly: 48 hours of hourly db-server-01 backups.
+for i in $(seq 1 48); do
+    ARCHIVE_DATE=$(date -u -d "$i hours ago" +%Y-%m-%dT%H:00:00 2>/dev/null || date -u -v-"${i}"H +%Y-%m-%dT%H:00:00)
+    ARCHIVE_DIR=$(mktemp -d)
+    chmod 755 "$ARCHIVE_DIR"
+    mkdir -p "$ARCHIVE_DIR/tmp" "$ARCHIVE_DIR/var/lib/postgresql"
+    echo "-- pg_dump output v$i" > "$ARCHIVE_DIR/tmp/mydb.sql"
+    dd if=/dev/urandom of="$ARCHIVE_DIR/var/lib/postgresql/data.bin" bs=1024 count=$((100 + i * 20)) 2>/dev/null
+    borg_create_as "db-server-01" "/backup/repos/database-hourly::db-server-01-backup-$ARCHIVE_DATE" "$ARCHIVE_DIR" "$ARCHIVE_DATE"
+    rm -rf "$ARCHIVE_DIR"
+done
+
+# media-weekly: 12 weeks of weekly media-store-01 backups.
+for i in $(seq 1 12); do
+    ARCHIVE_DATE=$(date -u -d "$((i * 7)) days ago" +%Y-%m-%dT03:00:00 2>/dev/null || date -u -v-"$((i * 7))"d +%Y-%m-%dT03:00:00)
+    ARCHIVE_DIR=$(mktemp -d)
+    chmod 755 "$ARCHIVE_DIR"
+    mkdir -p "$ARCHIVE_DIR/mnt/media/photos" "$ARCHIVE_DIR/mnt/media/videos"
+    dd if=/dev/urandom of="$ARCHIVE_DIR/mnt/media/photos/img_$i.jpg" bs=1024 count=$((200 + i * 50)) 2>/dev/null
+    dd if=/dev/urandom of="$ARCHIVE_DIR/mnt/media/videos/clip_$i.mp4" bs=1024 count=$((500 + i * 100)) 2>/dev/null
+    borg_create_as "media-store-01" "/backup/repos/media-weekly::media-store-01-backup-$ARCHIVE_DATE" "$ARCHIVE_DIR" "$ARCHIVE_DATE"
+    rm -rf "$ARCHIVE_DIR"
+done
+
+echo "==> Creating unmatched archives (unknown hostnames)..."
+# Hostnames that don't match any registered agent or pattern. On import these
+# resolve to auto-created, unmatched ("imported") agents -- demonstrating the
+# unmatched-archive scenario entirely from real borg data.
+UNMATCHED_DATE=$(date -u -d "5 days ago" +%Y-%m-%dT04:00:00 2>/dev/null || date -u -v-5d +%Y-%m-%dT04:00:00)
+create_unmatched_archive() {
+    local repo="$1" fake_host="$2"
+    local dir
+    dir=$(mktemp -d)
+    chmod 755 "$dir"
+    mkdir -p "$dir/tmp"
+    echo "old backup data" > "$dir/tmp/data.txt"
+    borg_create_as "$fake_host" "/backup/repos/$repo::${fake_host}-backup-$UNMATCHED_DATE" "$dir" "$UNMATCHED_DATE"
+    rm -rf "$dir"
+}
+create_unmatched_archive server-daily old-webserver
+create_unmatched_archive database-hourly legacy-db-prod
 
 # Blocks until no repo reports importing == true (sync runs in the background).
 wait_for_imports() {
@@ -162,36 +230,26 @@ wait_for_imports() {
     done
 }
 
-# Blocks until background borg-info enrichment has populated sizes for all
-# imported archives. Enrichment runs fire-and-forget after sync_existing_archives
-# returns, so the importing flag clears before it completes. E2E tests must not
-# start while borg info processes are still running and loading the server.
-wait_for_enrichment() {
-    for _attempt in $(seq 1 120); do
-        pending=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
-            "SELECT COUNT(*) FROM backup_reports WHERE original_size = 0 AND compressed_size = 0 AND deduplicated_size = 0 AND repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly'))" 2>/dev/null || echo 1)
-        [ "$pending" = "0" ] && break
-        sleep 2
-    done
-}
+echo "==> Waiting for registration-time import to settle..."
+wait_for_imports
 
 echo "==> Syncing repos to import borg archives..."
-api POST "/api/repos/$REPO_DAILY_ID/sync" > /dev/null
-api POST "/api/repos/$REPO_HOURLY_ID/sync" > /dev/null
-api POST "/api/repos/$REPO_WEEKLY_ID/sync" > /dev/null
+api POST /api/repos/1/sync > /dev/null
+api POST /api/repos/2/sync > /dev/null
+api POST /api/repos/3/sync > /dev/null
 
 echo "==> Waiting for archive import to complete..."
 wait_for_imports
 
-echo "==> Waiting for background stat enrichment to complete..."
-wait_for_enrichment
-
-echo "==> Fetching agent IDs..."
+echo "==> Fetching IDs..."
 WEB01_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='web-server-01'")
 DB01_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='db-server-01'")
 MEDIA_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='media-store-01'")
 OFFLINE_DUE_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='offline-due-01'")
 DISABLED_ONLY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='disabled-only-01'")
+REPO_DAILY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM repos WHERE name='server-daily'")
+REPO_HOURLY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM repos WHERE name='database-hourly'")
+REPO_WEEKLY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM repos WHERE name='media-weekly'")
 
 echo "==> Creating schedules..."
 api POST "/api/schedules" "{
@@ -407,6 +465,11 @@ WHERE repo_id = $REPO_DAILY_ID AND archive_name LIKE 'web-server-01-backup-%'
 ORDER BY started_at DESC OFFSET 2 LIMIT 1
 ON CONFLICT DO NOTHING;
 SQL
+
+echo "==> Writing agent tokens for start-demo.sh..."
+echo "export AGENT_TOKEN_1='$WEB01_TOKEN'" > /tmp/agent-tokens.env
+echo "export AGENT_TOKEN_2='$DB01_TOKEN'" >> /tmp/agent-tokens.env
+echo "export AGENT_TOKEN_3='$MEDIA_TOKEN'" >> /tmp/agent-tokens.env
 
 echo "==> Updating database storage statistics..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -c 'ANALYZE;' > /dev/null

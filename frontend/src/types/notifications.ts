@@ -8,9 +8,13 @@ import type {
   PushSubscriptionResponse,
 } from './generated'
 
-export type NotificationChannel = Omit<NotificationChannelResponse, 'scope' | 'config'> & {
+export type NotificationChannel = Omit<
+  NotificationChannelResponse,
+  'scope' | 'config' | 'channel_type'
+> & {
   scope: ChannelScope
   config: ChannelConfig
+  channel_type: ChannelType
 }
 export type NotificationRule = Omit<
   NotificationRuleResponse,
@@ -59,7 +63,7 @@ export type ChannelConfig = EmailConfig | WebhookConfig | WebPushConfig
 
 export interface ChannelScope {
   repo_ids?: number[]
-  agent_ids?: number[]
+  client_ids?: number[]
   schedule_ids?: number[]
 }
 

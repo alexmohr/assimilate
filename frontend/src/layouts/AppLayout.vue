@@ -55,8 +55,6 @@ const uiStore = useUiStore()
 const route = useRoute()
 
 const isAdmin = computed(() => authStore.user?.role === 'admin')
-const isFullWidth = computed(() => route.path.startsWith('/activity'))
-const isDashboard = computed(() => route.path === '/')
 const settingsOpen = ref(false)
 
 const mainNav = [
@@ -306,13 +304,7 @@ onMounted(() => {
     </aside>
 
     <main class="content">
-      <div
-        class="page-wrapper"
-        :class="{
-          'page-wrapper--dashboard': !isFullWidth && isDashboard,
-          'page-wrapper--constrained': !isFullWidth && !isDashboard,
-        }"
-      >
+      <div class="page-wrapper">
         <RouterView v-slot="{ Component: RouteComponent }">
           <Transition name="page">
             <component
@@ -814,16 +806,6 @@ onMounted(() => {
 
 .page-wrapper {
   position: relative;
-}
-
-.page-wrapper--dashboard {
-  max-width: 1600px;
-  margin: 0 auto;
-}
-
-.page-wrapper--constrained {
-  max-width: 1100px;
-  margin: 0 auto;
 }
 
 .page-enter-active,

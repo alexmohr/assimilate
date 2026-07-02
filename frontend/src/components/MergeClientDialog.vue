@@ -7,7 +7,13 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref, computed } from 'vue'
 import { apiClient } from '../api/client'
 import { extractError } from '../utils/error'
-import type { AgentRow } from '../types/agent'
+
+interface AgentRow {
+  id: number
+  hostname: string
+  display_name: string | null
+  is_imported: boolean
+}
 
 interface MergeResult {
   merged: boolean
@@ -114,7 +120,7 @@ async function confirmMerge(): Promise<void> {
             placeholder="e.g. myhost*"
           />
           <span class="field-hint">
-            This pattern will be added to the target agent's hostname aliases.
+            This pattern will be added to the target client's hostname aliases.
           </span>
         </div>
         <div

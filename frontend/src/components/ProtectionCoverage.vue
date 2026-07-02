@@ -65,13 +65,6 @@ defineProps<{ protection: DashboardOverview['protection'] }>()
 </template>
 
 <style scoped>
-.panel-title {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 0.75rem;
-}
-
 .coverage-score {
   display: flex;
   align-items: baseline;

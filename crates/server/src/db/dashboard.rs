@@ -197,7 +197,8 @@ pub async fn repositories(pool: &PgPool) -> Result<Vec<RepositoryRow>, ApiError>
          LEFT JOIN schedules s ON s.repo_id = r.id
          WHERE r.enabled = true
          GROUP BY r.id, r.name, r.info_deduplicated_size, q.warn_bytes,
-                  q.critical_bytes, COALESCE(q.enabled, false), r.importing, r.import_error, r.last_synced_at
+                  q.critical_bytes, COALESCE(q.enabled, false),
+                  r.importing, r.import_error, r.last_synced_at
          ORDER BY r.info_deduplicated_size DESC, r.name
         "#,
     )

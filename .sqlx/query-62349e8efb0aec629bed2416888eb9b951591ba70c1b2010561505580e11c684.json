@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT r.id AS repo_id,\n               r.name AS repo_name,\n               r.info_deduplicated_size AS deduplicated_size,\n               q.warn_bytes,\n               q.critical_bytes,\n               COALESCE(q.enabled, false) AS quota_enabled,\n               COUNT(DISTINCT s.id) FILTER (WHERE s.enabled = true) AS enabled_schedule_count,\n               r.importing,\n               r.import_error,\n               r.last_synced_at\n         FROM repos r\n         LEFT JOIN repo_quotas q ON q.repo_id = r.id\n         LEFT JOIN schedules s ON s.repo_id = r.id\n         WHERE r.enabled = true\n         GROUP BY r.id, r.name, r.info_deduplicated_size, q.warn_bytes,\n                  q.critical_bytes, COALESCE(q.enabled, false), r.importing, r.import_error, r.last_synced_at\n         ORDER BY r.info_deduplicated_size DESC, r.name\n        ",
+  "query": "\n        SELECT r.id AS repo_id,\n               r.name AS repo_name,\n               r.info_deduplicated_size AS deduplicated_size,\n               q.warn_bytes,\n               q.critical_bytes,\n               COALESCE(q.enabled, false) AS quota_enabled,\n               COUNT(DISTINCT s.id) FILTER (WHERE s.enabled = true) AS enabled_schedule_count,\n               r.importing,\n               r.import_error,\n               r.last_synced_at\n         FROM repos r\n         LEFT JOIN repo_quotas q ON q.repo_id = r.id\n         LEFT JOIN schedules s ON s.repo_id = r.id\n         WHERE r.enabled = true\n         GROUP BY r.id, r.name, r.info_deduplicated_size, q.warn_bytes,\n                  q.critical_bytes, COALESCE(q.enabled, false),\n                  r.importing, r.import_error, r.last_synced_at\n         ORDER BY r.info_deduplicated_size DESC, r.name\n        ",
   "describe": {
     "columns": [
       {
@@ -70,5 +70,5 @@
       true
     ]
   },
-  "hash": "f7d3ebfc0f884d28a8bcfa59bc3d209417a308d6b321be25212db852f677a4c7"
+  "hash": "62349e8efb0aec629bed2416888eb9b951591ba70c1b2010561505580e11c684"
 }

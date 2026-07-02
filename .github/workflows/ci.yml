@@ -260,6 +260,8 @@ jobs:
     name: Playwright E2E
     runs-on: ubuntu-latest
     needs: [frontend]
+    env:
+      COMPOSE_FILES: -f .devcontainer/demo/docker-compose.demo.yml -f .devcontainer/demo/docker-compose.coverage-override.yml
     steps:
       - uses: actions/checkout@v4
       - name: Setup Node.js
@@ -299,7 +301,6 @@ jobs:
           docker compose $COMPOSE_FILES up -d
           echo "Waiting for demo seed to complete (up to 40 min)..."
           DEMO_READY=false
-          COMPOSE_FILES="-f .devcontainer/demo/docker-compose.demo.yml -f .devcontainer/demo/docker-compose.coverage-override.yml"
           for i in $(seq 1 480); do
             if docker compose $COMPOSE_FILES logs demo 2>&1 | grep -q "Demo ready:"; then
               echo "Demo is seeded and ready"

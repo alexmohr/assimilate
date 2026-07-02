@@ -276,14 +276,6 @@ jobs:
         uses: docker/setup-buildx-action@v3
       - name: Build demo image (GitHub Actions build cache)
         run: |
-          # Build a single image tagged as both :coverage and :local.
-          # The coverage-override.yml points the demo service at :coverage
-          # (instrumented server binary); all agent/placeholder services use
-          # :local but only execute /app/agent, so they are unaffected by
-          # whether the server binary is instrumented.
-          # A second COVERAGE=false build would break the Docker layer-cache
-          # chain at the ARG COVERAGE declaration, forcing cargo build --release
-          # to run twice for no gain.
           docker buildx build \
             --file .devcontainer/demo/Dockerfile.demo \
             --build-arg COVERAGE=true \
@@ -293,6 +285,22 @@ jobs:
             --tag assimilate-demo:coverage \
             --tag assimilate-demo:local \
             .
+      - name: Download agent-x86_64
+        uses: actions/download-artifact@v4
+        with:
+          name: agent-x86_64
+          path: agents/x86_64/
+      - name: Download agent-aarch64
+        uses: actions/download-artifact@v4
+        with:
+          name: agent-aarch64
+          path: agents/aarch64/
+      - name: Prepare agent binaries
+        run: |
+          mv agents/x86_64/agent agents/agent-x86_64
+          mv agents/aarch64/agent agents/agent-aarch64
+          rm -rf agents/x86_64 agents/aarch64
+          chmod +x agents/agent-*
       - name: Start demo environment (with instrumented frontend)
         run: |
           docker compose $COMPOSE_FILES up -d

@@ -112,6 +112,7 @@ function liveRelativeTime(iso: string): string {
           <pre
             v-if="expandedId === item.id && item.error_message"
             class="activity-error"
+            :style="{ color: statusColor(item.status) }"
             >{{ item.error_message }}</pre
           >
         </div>
@@ -228,7 +229,6 @@ function liveRelativeTime(iso: string): string {
 
 .activity-error {
   font-size: 0.65rem;
-  color: var(--danger);
   background: var(--bg-code, var(--bg-hover));
   border-radius: var(--radius-sm);
   padding: 0.4rem;

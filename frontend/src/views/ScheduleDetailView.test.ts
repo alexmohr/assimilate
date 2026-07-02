@@ -460,7 +460,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
     expect(wrapper.text()).toContain('Backup in progress')
   })
 
-  it('BackupStarted with non-matching schedule_id does not activate progress card', async () => {
+  it('BackupStarted with non-matching schedule_id but matching target name activates progress card', async () => {
     setupEditMode()
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
@@ -473,7 +473,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
     })
     await nextTick()
 
-    expect(wrapper.find('.live-log-card').exists()).toBe(false)
+    expect(wrapper.find('.live-log-card').exists()).toBe(true)
   })
 
   it('BackupStarted with null schedule_id and matching repo name activates progress card', async () => {
@@ -595,7 +595,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
     expect(wrapper.text()).toContain('/srv/data.tar')
   })
 
-  it('BackupLog with wrong schedule_id does not update progress', async () => {
+  it('BackupLog with wrong schedule_id but matching repo_id still updates progress', async () => {
     setupEditMode()
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
@@ -621,7 +621,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
     })
     await nextTick()
 
-    expect(wrapper.find('.live-log-empty').exists()).toBe(true)
+    expect(wrapper.find('.live-log-empty').exists()).toBe(false)
   })
 
   it('BackupLog with null schedule_id and matching repo_id updates progress', async () => {

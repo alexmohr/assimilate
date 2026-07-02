@@ -2988,10 +2988,12 @@ mod tests {
         archive: &serde_json::Value,
         started_at: chrono::DateTime<chrono::Utc>,
     ) -> chrono::DateTime<chrono::Utc> {
-        if let Some(end_str) = archive.get("end").and_then(|v| v.as_str()) {
-            if let Ok(end) = chrono::DateTime::parse_from_rfc3339(end_str) {
-                return end.to_utc();
-            }
+        if let Ok(end) = archive
+            .get("end")
+            .and_then(|v| v.as_str())
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        {
+            return end.to_utc();
         }
         if let Some(duration) = archive.get("duration").and_then(|v| v.as_f64()) {
             let secs = duration as i64;

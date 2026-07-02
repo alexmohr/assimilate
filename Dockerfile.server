@@ -23,6 +23,8 @@ RUN rustup default nightly
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
+COPY .sqlx/ ./.sqlx/
+ENV SQLX_OFFLINE=true
 RUN cargo build --release -p server
 
 # Stage 4: Runtime

@@ -42,10 +42,10 @@ describe('apiClient response interceptor', () => {
 
   it('redirects 401 responses to login', async () => {
     await expect(
-      errorHandler({ response: { status: 401 }, config: { url: '/agents' } }),
+      errorHandler({ response: { status: 401 }, config: { url: '/clients' } }),
     ).rejects.toEqual({
       response: { status: 401 },
-      config: { url: '/agents' },
+      config: { url: '/clients' },
     })
 
     expect(locationAssign).toHaveBeenCalledWith('/login')
@@ -53,10 +53,10 @@ describe('apiClient response interceptor', () => {
 
   it('does not redirect non-401 responses', async () => {
     await expect(
-      errorHandler({ response: { status: 500 }, config: { url: '/agents' } }),
+      errorHandler({ response: { status: 500 }, config: { url: '/clients' } }),
     ).rejects.toEqual({
       response: { status: 500 },
-      config: { url: '/agents' },
+      config: { url: '/clients' },
     })
 
     expect(locationAssign).not.toHaveBeenCalled()

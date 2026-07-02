@@ -17,46 +17,17 @@ import {
 } from '../composables/useArchiveBrowser'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useToast } from '../composables/useToast'
-import { formatBytes, formatDate, relativeTime } from '../utils/format'
+import { formatBytes, formatDate } from '../utils/format'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
-import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
-import {
-  Folder,
-  File,
-  Download,
-  RotateCcw,
-  Trash2,
-  CheckCircle,
-  AlertTriangle,
-  AlertCircle,
-} from '@lucide/vue'
+import { Folder, File, Download, RotateCcw, Trash2 } from '@lucide/vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import QuotaPanel from '../components/QuotaPanel.vue'
 import BaseModal from '../components/BaseModal.vue'
-import BaseHostLink from '../components/BaseHostLink.vue'
-import type { ScheduleRow, ScheduleType } from '../types/schedule'
-import type { ActiveRepoOp, RepoWithStats } from '../types/repo'
-import type { TagRow } from '../types/tag'
 
-type TabId = 'overview' | 'archives' | 'schedules'
-
-interface AgentRow {
-  id: number
-  hostname: string
-  display_name: string | null
-}
-
-interface HealthEntry {
-  schedule_id: number
-  hostname: string
-  last_status: string | null
-  last_backup_at: string | null
-  is_overdue: boolean
-  last_error_message: string | null
-}
+type TabId = 'overview' | 'archives'
 type ArchiveSortMode =
   | 'date-desc'
   | 'date-asc'
@@ -73,6 +44,53 @@ type EncryptionType =
   | 'authenticated'
   | 'authenticated-blake2'
   | 'none'
+
+type RepoOpKind = 'agent_backup' | 'server_sync' | 'break_lock' | 'delete_archive'
+
+interface ActiveRepoOp {
+  kind: RepoOpKind
+  actor: string
+  started_at: string
+  queued?: number
+}
+
+interface RepoWithStats {
+  id: number
+  name: string
+  repo_path: string
+  ssh_user: string
+  ssh_host: string
+  ssh_port: number
+  ssh_host_key: string | null
+  compression: string
+  encryption: string
+  enabled: boolean
+  importing: boolean
+  import_error: string | null
+  import_progress: number
+  import_total: number
+  import_status_message: string | null
+  sync_schedule: string | null
+  last_synced_at: string | null
+  archive_count: number
+  last_backup_at: string | null
+  total_original_size: number
+  total_compressed_size: number
+  total_deduplicated_size: number
+  client_count: number
+  relocation_pending: boolean
+  last_op_kind: string | null
+  last_op_at: string | null
+  last_op_by: string | null
+  current_op: ActiveRepoOp | null
+}
+
+interface TagRow {
+  id: number
+  name: string
+  color: string
+  scope: string
+}
 
 interface EditForm {
   name: string
@@ -97,7 +115,7 @@ const repoIdRef = computed(() => repoId.value)
 const activeTab = computed<TabId>({
   get() {
     const t = route.query.tab as string | undefined
-    if (t === 'archives' || t === 'schedules') return t
+    if (t === 'archives') return t
     return 'overview'
   },
   set(val: TabId) {
@@ -108,11 +126,11 @@ const activeTab = computed<TabId>({
 const tabs: { id: TabId; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'archives', label: 'Archives' },
-  { id: 'schedules', label: 'Schedules' },
 ]
 
 const repo = ref<RepoWithStats | null>(null)
-const { loading, error, run } = useAsyncAction()
+const loading = ref(false)
+const error = ref<string | null>(null)
 
 // Edit
 const isEditing = ref(false)
@@ -187,8 +205,6 @@ const borgConsoleResult = ref<BorgExecResult | null>(null)
 const rescanLoading = ref(false)
 const syncLoading = ref(false)
 const resetImportLoading = ref(false)
-const resetAndSyncLoading = ref(false)
-const showResetAndSyncDialog = ref(false)
 const { success: toastSuccess, error: toastError } = useToast()
 
 interface RescanResult {
@@ -199,137 +215,6 @@ interface RescanResult {
 useEscapeKey(showBreakLockDialog, () => {
   showBreakLockDialog.value = false
 })
-
-useEscapeKey(showResetAndSyncDialog, () => {
-  showResetAndSyncDialog.value = false
-})
-
-// Schedules tab
-const repoSchedules = ref<ScheduleRow[]>([])
-const repoSchedulesLoading = ref(false)
-const repoSchedulesError = ref<string | null>(null)
-const scheduleAgents = ref<AgentRow[]>([])
-const scheduleHealth = ref<HealthEntry[]>([])
-const scheduleExpandedError = ref<number | null>(null)
-const scheduleRunNowLoading = ref<number | null>(null)
-const { success: scheduleToastSuccess, error: scheduleToastError } = useToast()
-
-const scheduleAgentMap = computed(() => {
-  const m = new Map<string, AgentRow>()
-  scheduleAgents.value.forEach((a) => m.set(a.hostname, a))
-  return m
-})
-
-const scheduleHealthBySchedule = computed(() => {
-  const m = new Map<number, HealthEntry[]>()
-  scheduleHealth.value.forEach((h) => {
-    const entries = m.get(h.schedule_id) ?? []
-    entries.push(h)
-    m.set(h.schedule_id, entries)
-  })
-  return m
-})
-
-interface EnrichedSchedule extends ScheduleRow {
-  hostLabels: string[]
-  health: HealthEntry | null
-}
-
-const enrichedRepoSchedules = computed<EnrichedSchedule[]>(() =>
-  repoSchedules.value.map((s) => {
-    const hostLabels = s.target_hostnames.map((hostname) => {
-      const agent = scheduleAgentMap.value.get(hostname)
-      return agent?.display_name ? `${agent.display_name} (${hostname})` : hostname
-    })
-    const entries = scheduleHealthBySchedule.value.get(s.id) ?? []
-    const health: HealthEntry | null =
-      entries.find((h) => h.is_overdue) ??
-      entries.find((h) => h.last_status === 'failed') ??
-      entries[0] ??
-      null
-    return { ...s, hostLabels, health }
-  }),
-)
-
-function scheduleTypeLabel(t: ScheduleType): string {
-  switch (t) {
-    case 'backup':
-      return 'Backup'
-    case 'check':
-      return 'Integrity Check'
-    case 'verify':
-      return 'Verify (extract dry-run)'
-  }
-}
-
-function scheduleStatusClass(entry: HealthEntry | null): string {
-  if (!entry) return ''
-  if (entry.is_overdue) return 'status-overdue'
-  switch (entry.last_status) {
-    case 'success':
-      return 'status-success'
-    case 'warning':
-      return 'status-warning'
-    case 'failed':
-      return 'status-failed'
-    case 'started':
-      return 'status-started'
-    default:
-      return ''
-  }
-}
-
-function scheduleStatusLabel(entry: HealthEntry | null): string {
-  if (!entry) return ''
-  if (entry.is_overdue) return 'Overdue'
-  switch (entry.last_status) {
-    case 'success':
-      return 'Success'
-    case 'warning':
-      return 'Warning'
-    case 'failed':
-      return 'Failed'
-    case 'started':
-      return 'Running'
-    default:
-      return 'No data'
-  }
-}
-
-function toggleScheduleError(id: number): void {
-  scheduleExpandedError.value = scheduleExpandedError.value === id ? null : id
-}
-
-async function loadRepoSchedules(): Promise<void> {
-  repoSchedulesLoading.value = true
-  repoSchedulesError.value = null
-  try {
-    const [schRes, agentRes, healthRes] = await Promise.all([
-      apiClient.get<ScheduleRow[]>(`/repos/${repoId.value}/schedules`),
-      apiClient.get<AgentRow[]>('/agents'),
-      apiClient.get<HealthEntry[]>('/stats/health'),
-    ])
-    repoSchedules.value = schRes.data
-    scheduleAgents.value = agentRes.data
-    scheduleHealth.value = healthRes.data
-  } catch {
-    repoSchedulesError.value = 'Failed to load schedules.'
-  } finally {
-    repoSchedulesLoading.value = false
-  }
-}
-
-async function runScheduleNow(s: ScheduleRow): Promise<void> {
-  scheduleRunNowLoading.value = s.id
-  try {
-    await apiClient.post(`/schedules/${s.id}/run`)
-    scheduleToastSuccess(`${scheduleTypeLabel(s.schedule_type)} started.`)
-  } catch (e: unknown) {
-    scheduleToastError(extractError(e))
-  } finally {
-    scheduleRunNowLoading.value = null
-  }
-}
 
 // Confirm Relocation
 const showConfirmRelocationDialog = ref(false)
@@ -437,11 +322,6 @@ onMessage<ImportProgressPayload>('ImportProgress', (payload) => {
       repo.value.import_total = payload.total
     }
     repo.value.import_status_message = payload.message
-    if (payload.message !== null) {
-      repo.value.importing = true
-    } else {
-      repo.value.importing = false
-    }
   }
 })
 
@@ -541,7 +421,7 @@ const archiveSortModeOptions: { value: ArchiveSortMode; label: string }[] = [
 interface ArchiveGroup {
   hostname: string
   matched: boolean
-  agentHostname: string | null
+  clientHostname: string | null
   archives: ArchiveEntry[]
 }
 
@@ -589,7 +469,7 @@ const groupedArchives = computed<ArchiveGroup[]>(() => {
       groups.set(key, {
         hostname: key,
         matched: isMatched,
-        agentHostname: isMatched ? archive.agent_hostname : null,
+        clientHostname: isMatched ? archive.agent_hostname : null,
         archives: [],
       })
     }
@@ -620,6 +500,20 @@ const availableTags = computed<TagRow[]>(() =>
   allTags.value.filter((t) => !repoTagIds.value.includes(t.id)),
 )
 
+function formatLastBackup(iso: string | null): string {
+  if (!iso) return 'Never'
+  const ts = new Date(iso).getTime()
+  if (isNaN(ts) || ts === 0) return 'Never'
+  const diff = Date.now() - ts
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'Just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  const days = Math.floor(hrs / 24)
+  return `${days}d ago`
+}
+
 function repoOpLabel(op: ActiveRepoOp): string {
   const queued = op.queued && op.queued > 0 ? ` (+${op.queued} queued)` : ''
   switch (op.kind) {
@@ -631,10 +525,6 @@ function repoOpLabel(op: ActiveRepoOp): string {
       return `Break-lock in progress${queued}`
     case 'delete_archive':
       return `Deleting archive (started by ${op.actor})${queued}`
-    case 'agent_check':
-      return `Integrity check in progress by ${op.actor}${queued}`
-    case 'agent_verify':
-      return `Verify in progress by ${op.actor}${queued}`
   }
 }
 
@@ -654,11 +544,17 @@ function lastOpLabel(kind: string | null): string {
 }
 
 async function loadRepo(): Promise<void> {
-  await run(async () => {
+  loading.value = true
+  error.value = null
+  try {
     const res = await apiClient.get<RepoWithStats>(`/repos/${repoId.value}`)
     repo.value = res.data
     currentOp.value = res.data.current_op ?? null
-  })
+  } catch (e: unknown) {
+    error.value = extractError(e)
+  } finally {
+    loading.value = false
+  }
 }
 
 async function refreshRepo(): Promise<void> {
@@ -707,7 +603,7 @@ function startEdit(): void {
   editForm.compression = normalizeCompression(repo.value.compression)
   editForm.encryption = repo.value.encryption as EncryptionType
   editForm.enabled = repo.value.enabled
-  editForm.sync_schedule = repo.value.sync_schedule ?? null
+  editForm.sync_schedule = repo.value.sync_schedule
   editError.value = null
   isEditing.value = true
 }
@@ -880,32 +776,19 @@ watch(
     archiveFilter.value = ''
     collapsedGroups.value = new Set()
     selectedArchive.value = null
-    repoSchedules.value = []
     await loadRepo()
     if (repo.value) {
       await Promise.all([loadTags(), loadArchives(), checkHostKeyMismatch()])
       await selectArchiveFromQuery()
-      if (activeTab.value === 'schedules') {
-        await loadRepoSchedules()
-      }
     }
   },
 )
-
-watch(activeTab, async (tab) => {
-  if (tab === 'schedules' && repoSchedules.value.length === 0 && !repoSchedulesLoading.value) {
-    await loadRepoSchedules()
-  }
-})
 
 onMounted(async () => {
   await loadRepo()
   if (repo.value) {
     await Promise.all([loadTags(), loadArchives(), checkHostKeyMismatch()])
     await selectArchiveFromQuery()
-    if (activeTab.value === 'schedules') {
-      await loadRepoSchedules()
-    }
   }
 })
 
@@ -952,19 +835,6 @@ async function syncRepo(): Promise<void> {
     toastError(extractError(e))
   } finally {
     syncLoading.value = false
-  }
-}
-
-async function resetAndSync(): Promise<void> {
-  showResetAndSyncDialog.value = false
-  resetAndSyncLoading.value = true
-  try {
-    await apiClient.post(`/repos/${repoId.value}/reset-and-sync?build_index=true`)
-    toastSuccess('Archive metadata reset and re-import started. Progress is shown via WebSocket.')
-  } catch (e: unknown) {
-    toastError(extractError(e))
-  } finally {
-    resetAndSyncLoading.value = false
   }
 }
 
@@ -1090,7 +960,7 @@ async function resetImport(): Promise<void> {
               <dt>Status</dt>
               <dd>
                 <span
-                  class="status-badge repo-status-badge"
+                  class="status-badge"
                   :class="
                     repo.import_error
                       ? 'status-error'
@@ -1146,7 +1016,7 @@ async function resetImport(): Promise<void> {
               <dt>Deduplicated</dt>
               <dd>{{ formatBytes(repo.total_deduplicated_size) }}</dd>
               <dt>Last Backup</dt>
-              <dd>{{ relativeTime(repo.last_backup_at ?? '') }}</dd>
+              <dd>{{ formatLastBackup(repo.last_backup_at) }}</dd>
               <dt>Disk Sync</dt>
               <dd>
                 <template v-if="repo.sync_schedule">
@@ -1164,7 +1034,7 @@ async function resetImport(): Promise<void> {
                     by {{ repo.last_op_by }}
                   </template>
                   <template v-if="repo.last_op_at">
-                    — {{ relativeTime(repo.last_op_at ?? '') }}
+                    — {{ formatLastBackup(repo.last_op_at) }}
                   </template>
                 </template>
                 <template v-else>Never</template>
@@ -1173,8 +1043,8 @@ async function resetImport(): Promise<void> {
                 <dt>Current Operation</dt>
                 <dd class="current-op-running">{{ repoOpLabel(currentOp) }}</dd>
               </template>
-              <dt>Agents</dt>
-              <dd>{{ repo.agent_count }}</dd>
+              <dt>Clients</dt>
+              <dd>{{ repo.client_count }}</dd>
             </dl>
           </template>
 
@@ -1557,23 +1427,6 @@ async function resetImport(): Promise<void> {
               Delete Repository
             </button>
           </div>
-          <div class="danger-body">
-            <div class="danger-info">
-              <span class="danger-heading">Reset &amp; Re-import</span>
-              <span class="danger-desc">
-                Delete ALL archive metadata (backup reports, file indexes, tags) and re-import from
-                the borg repository on disk. Use this when archives show as unmatched despite
-                matching hostnames. The repository data on disk is NOT touched.
-              </span>
-            </div>
-            <button
-              class="btn btn-sm btn-danger"
-              :disabled="resetAndSyncLoading"
-              @click="showResetAndSyncDialog = true"
-            >
-              {{ resetAndSyncLoading ? 'Resetting...' : 'Reset &amp; Re-import' }}
-            </button>
-          </div>
         </div>
       </div>
 
@@ -1689,14 +1542,22 @@ async function resetImport(): Promise<void> {
                     @click="toggleGroup(group.hostname)"
                   >
                     <span class="group-chevron">&#9656;</span>
-                    <BaseHostLink
-                      :hostname="
-                        group.agentHostname && group.matched ? group.agentHostname : group.hostname
-                      "
+                    <RouterLink
+                      v-if="group.matched && group.clientHostname"
+                      :to="{ name: 'client-detail', params: { hostname: group.clientHostname } }"
                       class="host-link group-hostname"
-                      :class="{ 'group-unmatched': !group.matched }"
                       @click.stop
-                    />
+                    >
+                      {{ group.hostname }}
+                    </RouterLink>
+                    <RouterLink
+                      v-else
+                      :to="{ name: 'client-detail', params: { hostname: group.hostname } }"
+                      class="host-link group-hostname group-unmatched"
+                      @click.stop
+                    >
+                      {{ group.hostname }}
+                    </RouterLink>
                     <span
                       v-if="!group.matched"
                       class="match-icon match-warn"
@@ -1922,139 +1783,6 @@ async function resetImport(): Promise<void> {
             class="panel browser-panel empty-browser"
           >
             <span class="muted">Select an archive to browse its contents.</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Schedules Tab -->
-      <div
-        v-if="activeTab === 'schedules'"
-        class="tab-content"
-      >
-        <BaseSpinner
-          v-if="repoSchedulesLoading"
-          size="lg"
-        />
-        <div
-          v-else-if="repoSchedulesError"
-          class="state-msg state-error"
-        >
-          {{ repoSchedulesError }}
-        </div>
-        <div
-          v-else-if="enrichedRepoSchedules.length === 0"
-          class="state-msg"
-        >
-          No schedules configured for this repository.
-        </div>
-        <div
-          v-else
-          class="repo-schedule-grid"
-        >
-          <div
-            v-for="s in enrichedRepoSchedules"
-            :key="s.id"
-            class="schedule-card"
-            :class="{ disabled: !s.enabled }"
-            @click="router.push(`/schedules/${s.id}`)"
-          >
-            <div class="card-top">
-              <div class="card-info">
-                <span class="card-hostname">{{ s.name || `Schedule #${s.id}` }}</span>
-                <span class="card-repo">{{ s.hostLabels.join(', ') || 'No hosts assigned' }}</span>
-              </div>
-              <div class="card-badges">
-                <span
-                  v-if="s.health && (s.health.last_status || s.health.is_overdue)"
-                  class="health-badge"
-                  :class="scheduleStatusClass(s.health)"
-                >
-                  <CheckCircle
-                    v-if="s.health.last_status === 'success' && !s.health.is_overdue"
-                    :size="12"
-                  />
-                  <AlertTriangle
-                    v-else-if="s.health.last_status === 'warning' || s.health.is_overdue"
-                    :size="12"
-                  />
-                  <AlertCircle
-                    v-else-if="s.health.last_status === 'failed'"
-                    :size="12"
-                  />
-                  {{ scheduleStatusLabel(s.health) }}
-                </span>
-                <span
-                  class="status-badge"
-                  :class="s.enabled ? 'status-online' : 'status-offline'"
-                >
-                  {{ s.enabled ? 'Enabled' : 'Disabled' }}
-                </span>
-              </div>
-            </div>
-            <div class="card-meta">
-              <span class="host-count">
-                {{ s.target_hostnames.length }}
-                host{{ s.target_hostnames.length === 1 ? '' : 's' }}
-              </span>
-              <span
-                class="type-badge"
-                :class="`type-${s.schedule_type ?? 'backup'}`"
-              >
-                {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
-              </span>
-            </div>
-            <div
-              v-if="s.health?.last_error_message"
-              class="card-error"
-              @click.stop
-            >
-              <button
-                class="error-toggle"
-                @click="toggleScheduleError(s.id)"
-              >
-                <AlertCircle :size="12" />
-                {{
-                  s.health?.last_status === 'warning'
-                    ? 'Last backup had a warning'
-                    : 'Last backup failed'
-                }}
-                <span class="toggle-arrow">{{ scheduleExpandedError === s.id ? '▴' : '▾' }}</span>
-              </button>
-              <pre
-                v-if="scheduleExpandedError === s.id"
-                class="error-pre"
-                >{{ s.health.last_error_message }}</pre
-              >
-            </div>
-            <div class="card-stats">
-              <div class="stat">
-                <span class="stat-value">{{
-                  cronToHuman(s.cron_expression) ?? s.cron_expression
-                }}</span>
-                <span class="stat-label">Schedule</span>
-              </div>
-              <div class="stat">
-                <span class="stat-value">{{ formatDate(s.next_run_at) }}</span>
-                <span class="stat-label">Next run</span>
-              </div>
-              <div class="stat">
-                <span class="stat-value">{{ formatDate(s.last_run_at) }}</span>
-                <span class="stat-label">Last run</span>
-              </div>
-            </div>
-            <div
-              class="card-actions"
-              @click.stop
-            >
-              <button
-                class="btn btn-sm btn-ghost"
-                :disabled="scheduleRunNowLoading === s.id"
-                :title="`Run ${scheduleTypeLabel(s.schedule_type ?? 'backup').toLowerCase()} now`"
-                @click="runScheduleNow(s)"
-              >
-                {{ scheduleRunNowLoading === s.id ? '...' : 'Run' }}
-              </button>
-            </div>
           </div>
         </div>
       </div>
@@ -2295,53 +2023,6 @@ async function resetImport(): Promise<void> {
               @click="doConfirmRelocation"
             >
               {{ confirmRelocationLoading ? 'Confirming...' : 'Yes, Confirm Relocation' }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
-    <!-- Reset & Re-import Confirmation Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showResetAndSyncDialog"
-        class="overlay"
-        @click.self="showResetAndSyncDialog = false"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Reset &amp; Re-import?</h2>
-            <button
-              class="close-btn"
-              @click="showResetAndSyncDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p style="color: var(--danger); font-weight: 600">
-              This will permanently delete ALL archive metadata for
-              <strong>{{ repo?.name }}</strong> and re-import from borg. This operation cannot be
-              undone.
-            </p>
-            <p>
-              Backup reports, file indexes, tags, and archive paths will be deleted. The repository
-              data on disk (borg archives themselves) is NOT touched.
-            </p>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showResetAndSyncDialog = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="resetAndSyncLoading"
-              @click="resetAndSync"
-            >
-              {{ resetAndSyncLoading ? 'Resetting...' : 'Confirm Reset' }}
             </button>
           </div>
         </div>
@@ -3539,227 +3220,5 @@ async function resetImport(): Promise<void> {
   border-radius: 50%;
   color: var(--danger);
   background: var(--danger-subtle);
-}
-
-.repo-schedule-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
-  gap: 1rem;
-}
-
-.schedule-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-  cursor: pointer;
-  transition:
-    box-shadow 0.15s,
-    border-color 0.15s;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.schedule-card:hover {
-  border-color: var(--accent);
-  box-shadow: var(--shadow);
-}
-
-.schedule-card.disabled {
-  opacity: 0.5;
-}
-
-.card-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.card-badges {
-  display: flex;
-  gap: 0.4rem;
-  align-items: center;
-  flex-shrink: 0;
-}
-
-.health-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.health-badge.status-success {
-  background: var(--success-subtle);
-  color: var(--success);
-}
-
-.health-badge.status-warning {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.health-badge.status-failed {
-  background: var(--danger-subtle);
-  color: var(--danger);
-}
-
-.health-badge.status-overdue {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.health-badge.status-started {
-  background: var(--info-subtle);
-  color: var(--info);
-}
-
-.card-error {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.error-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  background: none;
-  border: none;
-  color: var(--danger);
-  font-size: 0.75rem;
-  font-weight: 500;
-  cursor: pointer;
-  padding: 0.2rem 0;
-}
-
-.error-toggle:hover {
-  text-decoration: underline;
-}
-
-.toggle-arrow {
-  font-size: 0.6rem;
-  margin-left: 0.1rem;
-}
-
-.error-pre {
-  background: var(--bg-input);
-  border: 1px solid var(--danger-subtle);
-  border-radius: var(--radius-sm);
-  padding: 0.6rem 0.75rem;
-  font-size: 0.72rem;
-  font-family: var(--mono);
-  color: var(--danger);
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 150px;
-  overflow-y: auto;
-  margin: 0;
-}
-
-.card-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  min-width: 0;
-}
-
-.card-hostname {
-  font-weight: 600;
-  font-family: var(--mono);
-  font-size: 0.9rem;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.card-repo {
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  font-family: var(--mono);
-  line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.card-meta {
-  display: flex;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-}
-
-.host-count {
-  display: inline-block;
-  padding: 0.1rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-}
-
-.type-badge {
-  display: inline-block;
-  padding: 0.1rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.type-backup {
-  background: var(--success-subtle);
-  color: var(--success);
-}
-
-.type-check {
-  background: var(--accent-subtle);
-  color: var(--accent);
-}
-
-.type-verify {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.card-stats {
-  display: flex;
-  gap: 1.25rem;
-}
-
-.stat {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-}
-
-.stat-value {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.stat-label {
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.card-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.25rem;
-  margin-top: auto;
 }
 </style>

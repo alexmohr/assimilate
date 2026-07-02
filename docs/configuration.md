@@ -13,11 +13,8 @@
 | `SSH_KEY_DIR` | `/app/ssh` | No | Directory where the server stores its managed Ed25519 key pair (`id_ed25519` / `id_ed25519.pub`). |
 | `BORG_BINARY` | `borg` | No | Path to the `borg` executable used by the server for repository operations (init, archive listing, extraction). |
 | `ASSIMILATE_DB_MAX_CONN` | `10` | No | Maximum number of connections in the PostgreSQL connection pool. |
-| `ASSIMILATE_BORG_QUERY_TIMEOUT_SECS` | `300` | No | Maximum time a single `borg list`/`borg info` query may run before it is killed and the operation fails. Bounds hangs (e.g. an unreachable repository) so an import never gets stuck at "Listing archives". Increase for very large repositories over slow links. |
 | `ASSIMILATE_SECURE_COOKIES` | `false` | No | When `true`, session cookies are set with the `Secure` flag (requires HTTPS). Enable this in production behind TLS. |
 | `AGENT_BINARY_DIR` | — | No | Directory containing arch-specific agent binaries (`agent-x86_64`, `agent-aarch64`, etc.) used by the SSH deploy feature. If unset, the server looks in `/app/` (Docker) or alongside its own executable. |
-| `VAPID_PUBLIC_KEY` | — | No | Web Push VAPID public key. Used as a fallback for browser push notifications when no key is stored in system settings. See [Notifications](notifications.md). |
-| `VAPID_PRIVATE_KEY` | — | No | Web Push VAPID private key. Fallback companion to `VAPID_PUBLIC_KEY`; keys stored via the API take precedence. |
 
 !!! warning "Security"
     `ASSIMILATE_SECRET_KEY` is used to derive the encryption key that protects all repository passphrases stored in the database. If you lose or rotate this value, every encrypted passphrase becomes **permanently unrecoverable**. Store it in a secrets manager and never change it after initial setup.
@@ -35,18 +32,11 @@
 System settings are stored in the database and managed through the UI or the `/api/system/settings` endpoint.
 
 ![System Settings](assets/screenshots/system.png)
-![System Settings (Database storage)](assets/screenshots/system-db.png)
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `retention_days` | `7` | Number of days to retain backup-run *history* (failed/cancelled runs without an archive) and system event log entries. Reports that represent an actual archive are never pruned by age — their lifecycle follows borg and repository sync — so imported archives with old timestamps are not affected. Set to `0` to disable automatic cleanup. |
+| `retention_days` | `7` | Number of days to retain backup reports and system event log entries. Set to `0` to disable automatic cleanup. |
 | `timezone` | `UTC` | Timezone used for displaying timestamps in the UI and for scheduling cron-based backups (e.g., `Europe/Berlin`, `America/New_York`). |
-
-## Database Storage
-
-Open **System → Database Storage** to inspect PostgreSQL disk allocation. The table lists every application table in descending size order and separates table data, indexes, and TOAST data. Use this view to identify growth in archive indexes, backup reports, audit records, and other persisted data.
-
-The total includes PostgreSQL system catalogs and database overhead. The **Other PostgreSQL storage** row accounts for allocation not owned by an application table. Deleted rows remain reusable inside PostgreSQL and do not necessarily reduce the database files on disk.
 
 ## Schedule Configuration
 

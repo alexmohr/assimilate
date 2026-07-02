@@ -35,14 +35,9 @@ const routerLinkStub = defineComponent({
     },
   },
   setup(props, { slots }) {
-    function resolveHref(): string {
-      if (typeof props.to === 'string') return props.to
-      const dest = props.to as { path?: string; query?: Record<string, string> }
-      const path = dest.path ?? ''
-      if (!dest.query || Object.keys(dest.query).length === 0) return path
-      return `${path}?${new URLSearchParams(dest.query).toString()}`
-    }
-    return (): ReturnType<typeof h> => h('a', { href: resolveHref() }, slots.default?.())
+    const href =
+      typeof props.to === 'string' ? props.to : ((props.to as { path?: string })?.path ?? '')
+    return (): ReturnType<typeof h> => h('a', { href }, slots.default?.())
   },
 })
 

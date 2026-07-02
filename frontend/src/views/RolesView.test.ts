@@ -21,9 +21,9 @@ interface Role {
   id: number
   name: string
   is_seeded: boolean
-  can_create_agent: boolean
-  can_delete_agent: boolean
-  can_delete_own_agent: boolean
+  can_create_client: boolean
+  can_delete_client: boolean
+  can_delete_own_client: boolean
   can_create_repo: boolean
   can_delete_repo: boolean
   can_delete_own_repo: boolean
@@ -40,9 +40,9 @@ function makeRole(id: number, name: string, isSeeded: boolean, allPerms: boolean
     id,
     name,
     is_seeded: isSeeded,
-    can_create_agent: allPerms,
-    can_delete_agent: allPerms,
-    can_delete_own_agent: allPerms,
+    can_create_client: allPerms,
+    can_delete_client: allPerms,
+    can_delete_own_client: allPerms,
     can_create_repo: allPerms,
     can_delete_repo: allPerms,
     can_delete_own_repo: allPerms,
@@ -94,7 +94,7 @@ describe('RolesView', () => {
 
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Create Agent')
+    expect(wrapper.text()).toContain('Create Client')
     expect(wrapper.text()).toContain('View All Repos')
     expect(wrapper.text()).toContain('Manage Tags')
   })

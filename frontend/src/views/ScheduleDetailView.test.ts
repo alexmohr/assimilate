@@ -3,7 +3,6 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { nextTick } from 'vue'
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -41,19 +40,6 @@ vi.mock('../utils/cron', () => ({
 
 vi.mock('../composables/useTimezone', () => ({
   getConfiguredTimezone: (): string | undefined => undefined,
-}))
-
-// Captured WebSocket message handlers - populated during component setup().
-// Accessing wsHandlers here is safe because onMessage is only CALLED during
-// component setup(), which happens inside test functions after module evaluation.
-const wsHandlers: Record<string, (payload: unknown) => void> = {}
-
-vi.mock('../composables/useWebSocket', () => ({
-  useWebSocket: () => ({
-    onMessage: (type: string, cb: (p: unknown) => void) => {
-      wsHandlers[type] = cb
-    },
-  }),
 }))
 
 import { apiClient } from '../api/client'
@@ -101,7 +87,7 @@ const mockCheckSchedule = {
   post_backup_commands: '[]',
 }
 
-const mockAgents = [
+const mockClients = [
   { id: 10, hostname: 'web-server-01', display_name: 'Web Server' },
   { id: 11, hostname: 'db-server-01', display_name: null },
 ]
@@ -117,8 +103,8 @@ function setupEditMode(schedule = mockSchedule): void {
     if (url === `/schedules/${schedule.id}/targets`)
       return Promise.resolve({ data: [{ agent_id: schedule.agent_id, execution_order: 0 }] })
     if (url === `/schedules/${schedule.id}/sources`)
-      return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_agent: [] } })
-    if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_host: [] } })
+    if (url === '/agents') return Promise.resolve({ data: mockClients })
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
     return Promise.resolve({ data: [] })
   })
@@ -126,7 +112,7 @@ function setupEditMode(schedule = mockSchedule): void {
 
 function setupCreateMode(): void {
   mockApiClient.get.mockImplementation((url: string) => {
-    if (url === '/agents') return Promise.resolve({ data: mockAgents })
+    if (url === '/agents') return Promise.resolve({ data: mockClients })
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
     return Promise.resolve({ data: [] })
   })
@@ -158,7 +144,7 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(wrapper.find('h1').text()).toContain('Backup Schedule')
   })
 
-  it('shows agent and repo in info card', async () => {
+  it('shows client and repo in info card', async () => {
     setupEditMode()
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
@@ -312,61 +298,6 @@ describe('ScheduleDetailView - edit mode', () => {
     const weeklyInput = inputs[2]
     expect(weeklyInput.element.value).toBe('52')
   })
-
-  it('shows Run Now and no Cancel Backup button when nothing is running', async () => {
-    setupEditMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-
-    const buttons = wrapper.findAll('button').map((b) => b.text())
-    expect(buttons).toContain('Run Now')
-    expect(buttons).not.toContain('Cancel Backup')
-  })
-
-  it('seeds running state from recent reports and shows Cancel Backup instead of Run Now', async () => {
-    mockApiClient.get.mockImplementation((url: string) => {
-      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
-      if (url === '/schedules/1/targets')
-        return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
-      if (url === '/schedules/1/sources')
-        return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_host: [] } })
-      if (url === '/schedules/1/reports')
-        return Promise.resolve({ data: [{ id: 1, status: 'started' }] })
-      if (url === '/agents') return Promise.resolve({ data: mockAgents })
-      if (url === '/repos') return Promise.resolve({ data: mockRepos })
-      return Promise.resolve({ data: [] })
-    })
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-
-    const buttons = wrapper.findAll('button').map((b) => b.text())
-    expect(buttons).toContain('Cancel Backup')
-    expect(buttons).not.toContain('Run Now')
-  })
-
-  it('calls cancel API when Cancel Backup is clicked', async () => {
-    mockApiClient.get.mockImplementation((url: string) => {
-      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
-      if (url === '/schedules/1/targets')
-        return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
-      if (url === '/schedules/1/sources')
-        return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_host: [] } })
-      if (url === '/schedules/1/reports')
-        return Promise.resolve({ data: [{ id: 1, status: 'pending' }] })
-      if (url === '/agents') return Promise.resolve({ data: mockAgents })
-      if (url === '/repos') return Promise.resolve({ data: mockRepos })
-      return Promise.resolve({ data: [] })
-    })
-    mockApiClient.post.mockResolvedValue({ data: {} })
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-
-    const cancelBtn = wrapper.findAll('button').find((b) => b.text() === 'Cancel Backup')
-    await cancelBtn!.trigger('click')
-    await flushPromises()
-
-    expect(mockApiClient.post).toHaveBeenCalledWith('/schedules/1/cancel')
-  })
 })
 
 describe('ScheduleDetailView - create mode', () => {
@@ -394,12 +325,12 @@ describe('ScheduleDetailView - create mode', () => {
     expect(wrapper.text()).toContain('New')
   })
 
-  it('shows agent and repo dropdowns', async () => {
+  it('shows client and repo dropdowns', async () => {
     setupCreateMode()
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Select agents...')
+    expect(wrapper.text()).toContain('Select hosts...')
     expect(wrapper.text()).toContain('server-daily')
   })
 
@@ -428,283 +359,5 @@ describe('ScheduleDetailView - create mode', () => {
     await flushPromises()
 
     expect(wrapper.find('.info-card').exists()).toBe(false)
-  })
-})
-
-describe('ScheduleDetailView - WebSocket handlers', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    for (const key of Object.keys(wsHandlers)) {
-      delete wsHandlers[key]
-    }
-  })
-
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
-  it('BackupStarted with matching schedule_id shows BACKUP IN PROGRESS card', async () => {
-    setupEditMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-
-    wsHandlers['BackupStarted']?.({
-      hostname: 'web-server-01',
-      target_name: 'server-daily',
-      archive_name: 'server-daily-2026-06-26',
-      schedule_id: 1,
-    })
-    await nextTick()
-
-    expect(wrapper.find('.live-log-card').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Backup in progress')
-  })
-
-  it('BackupStarted with non-matching schedule_id does not activate progress card', async () => {
-    setupEditMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-
-    wsHandlers['BackupStarted']?.({
-      hostname: 'web-server-01',
-      target_name: 'server-daily',
-      archive_name: null,
-      schedule_id: 999,
-    })
-    await nextTick()
-
-    expect(wrapper.find('.live-log-card').exists()).toBe(false)
-  })
-
-  it('BackupStarted with null schedule_id and matching repo name activates progress card', async () => {
-    setupEditMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-
-    wsHandlers['BackupStarted']?.({
-      hostname: 'web-server-01',
-      target_name: 'server-daily',
-      archive_name: null,
-      schedule_id: null,
-    })
-    await nextTick()
-
-    expect(wrapper.find('.live-log-card').exists()).toBe(true)
-  })
-
-  it('BackupCompleted with matching schedule_id hides BACKUP IN PROGRESS card', async () => {
-    setupEditMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-
-    wsHandlers['BackupStarted']?.({
-      hostname: 'web-server-01',
-      target_name: 'server-daily',
-      archive_name: null,
-      schedule_id: 1,
-    })
-    await nextTick()
-    expect(wrapper.find('.live-log-card').exists()).toBe(true)
-
-    wsHandlers['BackupCompleted']?.({
-      hostname: 'web-server-01',
-      target_name: 'server-daily',
-      archive_name: null,
-      schedule_id: 1,
-    })
-    await nextTick()
-
-    expect(wrapper.find('.live-log-card').exists()).toBe(false)
-  })
-
-  it('BackupLog with matching schedule_id and archive_progress JSON updates progress data', async () => {
-    setupEditMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-
-    wsHandlers['BackupStarted']?.({
-      hostname: 'web-server-01',
-      target_name: 'server-daily',
-      archive_name: null,
-      schedule_id: 1,
-    })
-    await nextTick()
-
-    wsHandlers['BackupLog']?.({
-      hostname: 'web-server-01',
-      schedule_id: 1,
-      repo_id: 20,
-      line: JSON.stringify({
-        type: 'archive_progress',
-        nfiles: 1234,
-        original_size: 5368709120,
-        path: '/home/user/important.txt',
-      }),
-    })
-    await nextTick()
-
-    expect(wrapper.find('.live-log-empty').exists()).toBe(false)
-    expect(wrapper.text()).toContain('1,234')
-    expect(wrapper.text()).toContain('/home/user/important.txt')
-  })
-
-  it('replayed BackupLog updates a running backup after reload', async () => {
-    mockApiClient.get.mockImplementation((url: string) => {
-      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
-      if (url === '/schedules/1/targets')
-        return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
-      if (url === '/schedules/1/sources')
-        return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_host: [] } })
-      if (url === '/schedules/1/reports')
-        return Promise.resolve({
-          data: [
-            {
-              id: 1,
-              status: 'started',
-              started_at: '2026-06-27T10:00:00Z',
-              agent_id: 10,
-              original_size: 0,
-            },
-          ],
-        })
-      if (url === '/agents') return Promise.resolve({ data: mockAgents })
-      if (url === '/repos') return Promise.resolve({ data: mockRepos })
-      return Promise.resolve({ data: [] })
-    })
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-
-    expect(wrapper.find('.live-log-card').exists()).toBe(true)
-    expect(wrapper.find('.live-log-empty').exists()).toBe(true)
-
-    wsHandlers['BackupLog']?.({
-      hostname: 'web-server-01',
-      schedule_id: 1,
-      repo_id: 20,
-      line: JSON.stringify({
-        type: 'archive_progress',
-        nfiles: 321,
-        original_size: 4096,
-        path: '/srv/data.tar',
-      }),
-    })
-    await nextTick()
-
-    expect(wrapper.find('.live-log-empty').exists()).toBe(false)
-    expect(wrapper.text()).toContain('321')
-    expect(wrapper.text()).toContain('/srv/data.tar')
-  })
-
-  it('BackupLog with wrong schedule_id does not update progress', async () => {
-    setupEditMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-
-    wsHandlers['BackupStarted']?.({
-      hostname: 'web-server-01',
-      target_name: 'server-daily',
-      archive_name: null,
-      schedule_id: 1,
-    })
-    await nextTick()
-
-    wsHandlers['BackupLog']?.({
-      hostname: 'web-server-01',
-      schedule_id: 999,
-      repo_id: 20,
-      line: JSON.stringify({
-        type: 'archive_progress',
-        nfiles: 1,
-        original_size: 100,
-        path: '/tmp/file',
-      }),
-    })
-    await nextTick()
-
-    expect(wrapper.find('.live-log-empty').exists()).toBe(true)
-  })
-
-  it('BackupLog with null schedule_id and matching repo_id updates progress', async () => {
-    setupEditMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-
-    wsHandlers['BackupStarted']?.({
-      hostname: 'web-server-01',
-      target_name: 'server-daily',
-      archive_name: null,
-      schedule_id: 1,
-    })
-    await nextTick()
-
-    wsHandlers['BackupLog']?.({
-      hostname: 'web-server-01',
-      schedule_id: null,
-      repo_id: 20,
-      line: JSON.stringify({
-        type: 'archive_progress',
-        nfiles: 500,
-        original_size: 1073741824,
-        path: '',
-      }),
-    })
-    await nextTick()
-
-    expect(wrapper.find('.live-log-empty').exists()).toBe(false)
-    expect(wrapper.text()).toContain('500')
-  })
-
-  it('BackupLog with null schedule_id and wrong repo_id does not update progress', async () => {
-    setupEditMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-
-    wsHandlers['BackupStarted']?.({
-      hostname: 'web-server-01',
-      target_name: 'server-daily',
-      archive_name: null,
-      schedule_id: 1,
-    })
-    await nextTick()
-
-    wsHandlers['BackupLog']?.({
-      hostname: 'web-server-01',
-      schedule_id: null,
-      repo_id: 999,
-      line: JSON.stringify({
-        type: 'archive_progress',
-        nfiles: 100,
-        original_size: 100,
-        path: '/tmp/file',
-      }),
-    })
-    await nextTick()
-
-    expect(wrapper.find('.live-log-empty').exists()).toBe(true)
-  })
-
-  it('BackupLog with non-JSON line adds text to live log output', async () => {
-    setupEditMode()
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-
-    wsHandlers['BackupStarted']?.({
-      hostname: 'web-server-01',
-      target_name: 'server-daily',
-      archive_name: null,
-      schedule_id: 1,
-    })
-    await nextTick()
-
-    wsHandlers['BackupLog']?.({
-      hostname: 'web-server-01',
-      schedule_id: 1,
-      repo_id: 20,
-      line: 'Creating archive server-daily-2026-06-26...',
-    })
-    await nextTick()
-
-    expect(wrapper.find('.live-log-output').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Creating archive server-daily-2026-06-26...')
   })
 })

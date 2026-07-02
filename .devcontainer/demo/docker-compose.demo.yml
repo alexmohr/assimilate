@@ -2,9 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Alexander Mohr
 #
 # Demo environment for documentation screenshots.
-# The server container runs the server, postgres, sshd, and seeds data.
-# Each agent/placeholder container sets its own hostname so borg naturally
-# records the correct archive hostname - no kernel capabilities required.
+# Starts server + postgres + borg-repo, spawns 3 agents inside the dev container,
+# and seeds realistic demo data.
 #
 # Usage:
 #   docker compose -f .devcontainer/demo/docker-compose.demo.yml up --build
@@ -19,7 +18,6 @@ services:
     volumes:
       - demo-ssh-keys:/ssh-keys
       - demo-borg-repos:/backup/repos
-      - demo-seeds:/seeds
     environment:
       DATABASE_URL: postgres://borg:borg_demo@postgres:5432/borg
       ASSIMILATE_SECRET_KEY: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
@@ -122,4 +120,3 @@ volumes:
   demo-pgdata:
   demo-ssh-keys:
   demo-borg-repos:
-  demo-seeds:

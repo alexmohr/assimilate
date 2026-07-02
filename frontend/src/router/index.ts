@@ -25,6 +25,11 @@ const routes: RouteRecordRaw[] = [
     name: 'agent-detail',
     props: true,
   },
+  { path: '/clients', redirect: '/agents' },
+  {
+    path: '/clients/:hostname',
+    redirect: (to) => `/agents/${to.params.hostname}`,
+  },
   { path: '/repos', component: () => import('../views/ReposView.vue'), name: 'repos' },
   {
     path: '/repos/:id',
@@ -32,7 +37,9 @@ const routes: RouteRecordRaw[] = [
     name: 'repo-detail',
     props: true,
   },
+  { path: '/machines', redirect: '/agents' },
   { path: '/excludes', component: () => import('../views/ExcludesView.vue'), name: 'excludes' },
+  { path: '/archives', redirect: '/repos' },
   { path: '/schedules', component: () => import('../views/SchedulesView.vue'), name: 'schedules' },
   {
     path: '/schedules/new',
@@ -91,6 +98,7 @@ const routes: RouteRecordRaw[] = [
   },
   { path: '/tokens', component: () => import('../views/TokensView.vue'), name: 'tokens' },
   { path: '/profile', component: () => import('../views/ProfileView.vue'), name: 'profile' },
+  { path: '/appearance', redirect: '/profile' },
   {
     path: '/error',
     component: () => import('../views/ErrorView.vue'),

@@ -12,17 +12,14 @@ import { useEscapeKey } from '../composables/useEscapeKey'
 import { useMobile } from '../composables/useMobile'
 import { useWebSocket } from '../composables/useWebSocket'
 import { logger } from '../utils/logger'
-import { formatBytes, relativeTime } from '../utils/format'
+import { formatBytes } from '../utils/format'
 import { extractError } from '../utils/error'
-import { useAsyncAction } from '../composables/useAsyncAction'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import { Plus, Download, SlidersHorizontal, Database, Folder, FolderPlus } from '@lucide/vue'
 import BaseModal from '../components/BaseModal.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import SshKeyDeployPanel from '../components/SshKeyDeployPanel.vue'
-import type { RepoWithStats } from '../types/repo'
-import type { TagRow } from '../types/tag'
 
 type CompressionType = 'lz4' | 'zstd' | 'none'
 type EncryptionType =
@@ -37,6 +34,13 @@ type AddTab = 'import' | 'create'
 type SortField = 'name' | 'size' | 'last_backup'
 type SortDir = 'asc' | 'desc'
 
+interface TagRow {
+  id: number
+  name: string
+  color: string
+  scope: string
+}
+
 interface RepoTagRow {
   repo_id: number
   tag_name: string
@@ -47,6 +51,31 @@ interface TagGroup {
   label: string
   color: string | null
   repos: RepoWithStats[]
+}
+
+interface RepoWithStats {
+  id: number
+  name: string
+  repo_path: string
+  ssh_user: string
+  ssh_host: string
+  ssh_port: number
+  ssh_host_key: string | null
+  compression: string
+  encryption: string
+  enabled: boolean
+  importing: boolean
+  import_error: string | null
+  import_progress: number
+  import_total: number
+  import_status_message: string | null
+  archive_count: number
+  last_backup_at: string | null
+  total_original_size: number
+  total_compressed_size: number
+  total_deduplicated_size: number
+  client_count: number
+  unmatched_count: number
 }
 
 interface RepoForm {
@@ -89,7 +118,8 @@ interface BrowserState {
 const router = useRouter()
 const authStore = useAuthStore()
 const repos = ref<RepoWithStats[]>([])
-const { loading, error, run } = useAsyncAction()
+const loading = ref(false)
+const error = ref<string | null>(null)
 
 const sortField = ref<SortField>('name')
 const sortDir = ref<SortDir>('asc')
@@ -228,6 +258,20 @@ function repoTags(repo: RepoWithStats): { name: string; color: string }[] {
 
 function repoImportPhaseVerb(repo: RepoWithStats): string {
   return (repo.import_status_message ?? '').startsWith('Indexing') ? 'Indexing' : 'Importing'
+}
+
+function formatLastBackup(iso: string | null): string {
+  if (!iso) return 'Never'
+  const ts = new Date(iso).getTime()
+  if (Number.isNaN(ts) || ts === 0) return 'Never'
+  const diff = Date.now() - ts
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'Just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  const days = Math.floor(hrs / 24)
+  return `${days}d ago`
 }
 
 const defaultRepoForm = (): RepoForm => ({
@@ -385,7 +429,9 @@ async function confirmCreateFolder(): Promise<void> {
 }
 
 async function loadRepos(): Promise<void> {
-  await run(async () => {
+  loading.value = true
+  error.value = null
+  try {
     const [reposRes, repoTagAssocRes, repoTagsRes] = await Promise.all([
       apiClient.get<RepoWithStats[]>('/repos/stats'),
       apiClient.get<RepoTagRow[]>('/repo-tags').catch(() => ({ data: [] as RepoTagRow[] })),
@@ -402,7 +448,11 @@ async function loadRepos(): Promise<void> {
       tagMap[rt.repo_id].push({ name: rt.tag_name, color: rt.tag_color })
     })
     repoTagsMap.value = tagMap
-  })
+  } catch (e: unknown) {
+    error.value = extractError(e)
+  } finally {
+    loading.value = false
+  }
 }
 
 function navigateToRepo(repo: RepoWithStats): void {
@@ -545,17 +595,8 @@ async function submitRepo(): Promise<void> {
             total_original_size: 0,
             total_compressed_size: 0,
             total_deduplicated_size: 0,
-            agent_count: 0,
+            client_count: 0,
             unmatched_count: 0,
-            visibility: 'private',
-            owner_id: null,
-            sync_schedule: null,
-            last_synced_at: null,
-            relocation_pending: false,
-            last_op_kind: null,
-            last_op_at: null,
-            last_op_by: null,
-            current_op: null,
           },
         ]
         return
@@ -876,7 +917,7 @@ onMounted(loadRepos)
             <span class="stat-label">Deduplicated</span>
           </div>
           <div class="stat">
-            <span class="stat-value">{{ relativeTime(repo.last_backup_at ?? '') }}</span>
+            <span class="stat-value">{{ formatLastBackup(repo.last_backup_at) }}</span>
             <span class="stat-label">Last backup</span>
           </div>
         </div>
@@ -999,7 +1040,7 @@ onMounted(loadRepos)
                 <span class="stat-label">Deduplicated</span>
               </div>
               <div class="stat">
-                <span class="stat-value">{{ relativeTime(repo.last_backup_at ?? '') }}</span>
+                <span class="stat-value">{{ formatLastBackup(repo.last_backup_at) }}</span>
                 <span class="stat-label">Last backup</span>
               </div>
             </div>

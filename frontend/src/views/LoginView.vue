@@ -82,7 +82,7 @@ async function handleSubmit(): Promise<void> {
             type="checkbox"
             :disabled="submitting"
           />
-          <label for="remember-me">Remember me</label>
+          <label for="remember-me">Remember me for 30 days</label>
         </div>
 
         <div

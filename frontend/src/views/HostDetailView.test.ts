@@ -36,11 +36,11 @@ vi.mock('../utils/error', () => ({
   extractError: (_e: unknown, fallback?: string) => fallback ?? 'Unknown error',
 }))
 
-vi.mock('../components/MergeAgentDialog.vue', () => ({
+vi.mock('../components/MergeClientDialog.vue', () => ({
   default: {
-    name: 'MergeAgentDialog',
+    name: 'MergeClientDialog',
     template: '<div />',
-    props: ['source', 'allAgents'],
+    props: ['clients', 'current'],
   },
 }))
 
@@ -54,7 +54,7 @@ vi.mock('../components/AgentDeployDialog.vue', () => ({
 
 import { apiClient } from '../api/client'
 
-const mockAgent = {
+const mockClient = {
   id: 1,
   hostname: 'test-host',
   display_name: 'Test Host',
@@ -77,9 +77,6 @@ const mockReports = [
     id: 1,
     machine_id: 1,
     repo_id: 10,
-    repo_name: 'server-daily',
-    schedule_id: 100,
-    schedule_name: 'Nightly Server Backup',
     started_at: '2026-06-01T09:55:00Z',
     finished_at: '2026-06-01T10:00:00Z',
     status: 'success',
@@ -97,9 +94,6 @@ const mockReports = [
     id: 2,
     machine_id: 1,
     repo_id: 10,
-    repo_name: 'server-daily',
-    schedule_id: 100,
-    schedule_name: 'Nightly Server Backup',
     started_at: '2026-06-02T09:55:00Z',
     finished_at: '2026-06-02T10:00:00Z',
     status: 'warning',
@@ -117,9 +111,6 @@ const mockReports = [
     id: 3,
     machine_id: 1,
     repo_id: 10,
-    repo_name: 'server-daily',
-    schedule_id: 100,
-    schedule_name: 'Nightly Server Backup',
     started_at: '2026-06-03T09:55:00Z',
     finished_at: '2026-06-03T10:00:00Z',
     status: 'failed',
@@ -137,7 +128,7 @@ const mockReports = [
 
 function setupApi(reports = mockReports, repos: unknown[] = [], schedules: unknown[] = []): void {
   vi.mocked(apiClient.get).mockImplementation((url: string) => {
-    if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
+    if (url === '/agents') return Promise.resolve({ data: [mockClient] })
     if (url === '/agents/test-host/repos') return Promise.resolve({ data: repos })
     if (url === '/schedules') return Promise.resolve({ data: schedules })
     if (url === '/agents/test-host/reports') return Promise.resolve({ data: reports })
@@ -150,12 +141,6 @@ function setupApi(reports = mockReports, repos: unknown[] = [], schedules: unkno
 async function openBackupsTab(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
   const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
   await router.push({ query: { tab: 'backups' } })
-  await flushPromises()
-}
-
-async function openSchedulesTab(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
-  const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
-  await router.push({ query: { tab: 'schedules' } })
   await flushPromises()
 }
 
@@ -202,37 +187,6 @@ describe('HostDetailView — backups tab', () => {
     await openBackupsTab(wrapper)
 
     expect(wrapper.findAll('.result-card')).toHaveLength(3)
-  })
-
-  it('shows the repo and schedule name on each report so a failure can be traced', async () => {
-    setupApi()
-    const wrapper = renderWithPlugins(HostDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-    await openBackupsTab(wrapper)
-
-    const card = wrapper.findAll('.result-card')[0]
-    expect(card.text()).toContain('server-daily')
-    expect(card.text()).toContain('Nightly Server Backup')
-    const scheduleLink = card.find('a.result-schedule-link')
-    expect(scheduleLink.exists()).toBe(true)
-    expect(scheduleLink.attributes('href')).toBe('/schedules/100')
-  })
-
-  it('omits the schedule link when a report has no schedule_id', async () => {
-    setupApi([{ ...mockReports[0], schedule_id: null, schedule_name: null }])
-    const wrapper = renderWithPlugins(HostDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-    await openBackupsTab(wrapper)
-
-    const card = wrapper.findAll('.result-card')[0]
-    expect(card.find('a.result-schedule-link').exists()).toBe(false)
-    expect(card.text()).toContain('server-daily')
   })
 
   it('filters to only warning reports when Warning is clicked', async () => {
@@ -359,7 +313,7 @@ describe('HostDetailView — schedules tab', () => {
     vi.clearAllMocks()
   })
 
-  it('shows only schedules that explicitly target the agent', async () => {
+  it('shows only schedules that explicitly target the client', async () => {
     const schedules = [
       {
         id: 1,
@@ -369,6 +323,7 @@ describe('HostDetailView — schedules tab', () => {
         schedule_type: 'backup',
         cron_expression: '0 2 * * *',
         enabled: true,
+        execution_mode: 'parallel',
       },
       {
         id: 2,
@@ -378,6 +333,7 @@ describe('HostDetailView — schedules tab', () => {
         schedule_type: 'backup',
         cron_expression: '0 3 * * *',
         enabled: true,
+        execution_mode: 'parallel',
       },
     ]
     setupApi(mockReports, [{ id: 10, target_name: 'shared-repo' }], schedules)
@@ -387,47 +343,9 @@ describe('HostDetailView — schedules tab', () => {
     })
     await flushPromises()
 
-    const agentSchedules = (
-      wrapper.vm as unknown as { agentSchedules: Array<{ id: number; name: string }> }
-    ).agentSchedules
-    expect(agentSchedules).toEqual([{ ...schedules[0] }])
-  })
-
-  it('renders schedule cards on the schedules tab', async () => {
-    const schedules = [
-      {
-        id: 1,
-        repo_id: 10,
-        name: 'Nightly Backup',
-        target_hostnames: ['test-host'],
-        schedule_type: 'backup',
-        cron_expression: '0 2 * * *',
-        enabled: true,
-        next_run_at: null,
-      },
-    ]
-    setupApi(mockReports, [{ id: 10, target_name: 'shared-repo' }], schedules)
-    const wrapper = renderWithPlugins(HostDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-    await openSchedulesTab(wrapper)
-
-    expect(wrapper.text()).toContain('Nightly Backup')
-    expect(wrapper.text()).toContain('Enabled')
-    expect(wrapper.text()).not.toContain('Sequential')
-  })
-
-  it('shows empty state when no schedules target the agent', async () => {
-    setupApi(mockReports, [{ id: 10, target_name: 'shared-repo' }], [])
-    const wrapper = renderWithPlugins(HostDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-    await openSchedulesTab(wrapper)
-
-    expect(wrapper.text()).toContain('No schedules for this agent.')
+    const clientSchedules = (
+      wrapper.vm as unknown as { clientSchedules: Array<{ id: number; name: string }> }
+    ).clientSchedules
+    expect(clientSchedules).toEqual([{ ...schedules[0] }])
   })
 })

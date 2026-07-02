@@ -26,7 +26,7 @@ test.describe('Dashboard', () => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
 
-    await expect(page.getByText('Online Agents').or(page.getByText('ONLINE AGENTS')).first()).toBeVisible();
+    await expect(page.getByText('Online Clients').or(page.getByText('ONLINE CLIENTS')).first()).toBeVisible();
     await expect(page.getByText('Overdue').or(page.getByText('OVERDUE')).first()).toBeVisible();
     await expect(page.getByText('Last Backup').or(page.getByText('LAST BACKUP')).first()).toBeVisible();
     await expect(page.getByText('Total Storage').or(page.getByText('TOTAL STORAGE')).first()).toBeVisible();
@@ -77,10 +77,10 @@ test.describe('Dashboard', () => {
 });
 
 test.describe('Navigation sidebar', () => {
-  test('Agents link navigates to /agents', async ({ page }) => {
+  test('Clients link navigates to /clients', async ({ page }) => {
     await page.goto('/');
-    await page.getByRole('link', { name: 'Agents' }).click();
-    await expect(page).toHaveURL(/\/agents/);
+    await page.getByRole('link', { name: 'Clients' }).click();
+    await expect(page).toHaveURL(/\/clients/);
   });
 
   test('Repos link navigates to /repos', async ({ page }) => {
@@ -102,7 +102,7 @@ test.describe('Navigation sidebar', () => {
   });
 
   test('Dashboard link returns to root', async ({ page }) => {
-    await page.goto('/agents');
+    await page.goto('/clients');
     await page.getByRole('link', { name: 'Dashboard' }).click();
     await expect(page).toHaveURL('/');
   });

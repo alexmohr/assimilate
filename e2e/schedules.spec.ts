@@ -3,12 +3,6 @@
 
 import { expect, test } from '@playwright/test';
 
-interface ScheduleListEntry {
-  id: number;
-  name: string;
-  target_hostnames: string[];
-}
-
 test.describe('Schedules Management', () => {
   test('schedules list shows heading', async ({ page }) => {
     await page.goto('/schedules');
@@ -26,7 +20,7 @@ test.describe('Schedules Management', () => {
     await expect(page.getByText('media-weekly')).toBeVisible();
   });
 
-  test('schedules list shows associated agent hostnames', async ({ page }) => {
+  test('schedules list shows associated client hostnames', async ({ page }) => {
     await page.goto('/schedules');
     await page.waitForLoadState('networkidle');
 
@@ -72,7 +66,7 @@ test.describe('Schedules Management', () => {
     await page.goto('/schedules/1');
     await page.waitForLoadState('networkidle');
 
-    await expect(page.getByText('Targets', { exact: true })).toBeVisible();
+    await expect(page.getByText('Client', { exact: true })).toBeVisible();
     await expect(page.getByText('Repository', { exact: true })).toBeVisible();
     await expect(page.getByText('server-daily')).toBeVisible();
   });

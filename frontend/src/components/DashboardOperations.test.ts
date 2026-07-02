@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { nextTick } from 'vue'
+import { describe, expect, it, vi } from 'vitest'
 import { renderWithPlugins } from '../test-utils'
 import type { DashboardFinding, DashboardFindingKind } from '../types/dashboard'
 import NeedsAttention from './NeedsAttention.vue'
@@ -15,12 +14,6 @@ vi.mock('../utils/format', () => ({
   relativeTime: (value: string): string => `relative:${value}`,
   formatDuration: (value: number): string => `${value}s`,
 }))
-
-vi.mock('../api/client', () => ({
-  apiClient: { post: vi.fn().mockResolvedValue({}) },
-}))
-
-import { apiClient } from '../api/client'
 
 const findingKinds: DashboardFindingKind[] = [
   'backup_failed',
@@ -54,61 +47,18 @@ function finding(kind: DashboardFindingKind, index: number): DashboardFinding {
 }
 
 describe('dashboard operational components', () => {
-  beforeEach(() => {
-    vi.mocked(apiClient.post).mockReset()
-    vi.mocked(apiClient.post).mockResolvedValue({})
-  })
-
   it('renders every finding kind and direct schedule links', () => {
     const findings = findingKinds.map(finding)
     const wrapper = renderWithPlugins(NeedsAttention, { props: { findings } })
 
     findingKinds.forEach((kind) => expect(wrapper.text()).toContain(`reason-${kind}`))
     expect(wrapper.findAll('.finding-row')).toHaveLength(findingKinds.length)
-    expect(wrapper.find('.finding-row .finding-action').attributes('href')).toBe('/schedules/1')
+    expect(wrapper.find('.finding-row').attributes('href')).toBe('/schedules/1')
   })
 
   it('renders the no-problems empty state', () => {
     const wrapper = renderWithPlugins(NeedsAttention, { props: { findings: [] } })
     expect(wrapper.text()).toContain('No active problems')
-  })
-
-  it('dismiss button calls the api and emits dismissed', async () => {
-    const f = finding('backup_failed', 0)
-    const wrapper = renderWithPlugins(NeedsAttention, { props: { findings: [f] } })
-
-    await wrapper.find('.dismiss-btn').trigger('click')
-    await nextTick()
-
-    expect(apiClient.post).toHaveBeenCalledWith('/stats/findings/finding-0/dismiss')
-    expect(wrapper.emitted('dismissed')).toBeTruthy()
-  })
-
-  it('routes backup_failed activity destination to filtered activity log', () => {
-    const f: DashboardFinding = {
-      ...finding('backup_failed', 0),
-      schedule_id: 7,
-      destination: { kind: 'activity', report_id: 99 },
-    }
-    const wrapper = renderWithPlugins(NeedsAttention, { props: { findings: [f] } })
-    const href = wrapper.find('.finding-action').attributes('href')
-    expect(href).toContain('/activity')
-    expect(href).toContain('status=failed')
-    expect(href).toContain('schedule_id=7')
-    expect(href).toContain('category=backup')
-  })
-
-  it('routes backup_warning activity destination to filtered activity log', () => {
-    const f: DashboardFinding = {
-      ...finding('backup_warning', 1),
-      schedule_id: null,
-      destination: { kind: 'activity', report_id: 88 },
-    }
-    const wrapper = renderWithPlugins(NeedsAttention, { props: { findings: [f] } })
-    const href = wrapper.find('.finding-action').attributes('href')
-    expect(href).toContain('/activity')
-    expect(href).toContain('status=warning')
-    expect(href).not.toContain('schedule_id')
   })
 
   it('shows precise protection counts and host navigation', () => {

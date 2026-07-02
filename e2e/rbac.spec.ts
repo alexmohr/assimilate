@@ -32,10 +32,10 @@ test.describe('RBAC - Operator permissions', () => {
     const context = await browser.newContext({ baseURL, storageState: OPERATOR_STATE });
     const page = await context.newPage();
 
-    await page.goto('/agents');
+    await page.goto('/clients');
     await page.waitForLoadState('networkidle');
 
-    await expect(page).toHaveURL(/\/agents/);
+    await expect(page).toHaveURL(/\/clients/);
     await expect(page).not.toHaveURL(/\/login/);
     await context.close();
   });
@@ -44,10 +44,10 @@ test.describe('RBAC - Operator permissions', () => {
     const context = await browser.newContext({ baseURL, storageState: OPERATOR_STATE });
     const page = await context.newPage();
 
-    await page.goto('/repos');
+    await page.goto('/repositories');
     await page.waitForLoadState('networkidle');
 
-    await expect(page).toHaveURL(/\/repos/);
+    await expect(page).toHaveURL(/\/repositories/);
     await context.close();
   });
 
@@ -125,10 +125,10 @@ test.describe('RBAC - Viewer permissions', () => {
   test('viewer can view hosts list', async ({ browser, baseURL }) => {
     const { context, page } = await createViewerPage(browser, baseURL);
 
-    await page.goto('/agents');
+    await page.goto('/clients');
     await page.waitForLoadState('networkidle');
 
-    await expect(page).toHaveURL(/\/agents/);
+    await expect(page).toHaveURL(/\/clients/);
     await expect(page).not.toHaveURL(/\/login/);
     await context.close();
   });
@@ -136,20 +136,20 @@ test.describe('RBAC - Viewer permissions', () => {
   test('viewer does not see create/add buttons on hosts page', async ({ browser, baseURL }) => {
     const { context, page } = await createViewerPage(browser, baseURL);
 
-    await page.goto('/agents');
+    await page.goto('/clients');
     await page.waitForLoadState('networkidle');
 
-    await expect(page).toHaveURL(/\/agents/);
+    await expect(page).toHaveURL(/\/clients/);
     await context.close();
   });
 
   test('viewer does not see create/add buttons on repositories page', async ({ browser, baseURL }) => {
     const { context, page } = await createViewerPage(browser, baseURL);
 
-    await page.goto('/repos');
+    await page.goto('/repositories');
     await page.waitForLoadState('networkidle');
 
-    await expect(page).toHaveURL(/\/repos/);
+    await expect(page).toHaveURL(/\/repositories/);
     await context.close();
   });
 

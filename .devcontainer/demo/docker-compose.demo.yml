@@ -44,9 +44,10 @@ services:
       - demo-seeds:/seeds
     environment:
       BORG_SERVER_URL: http://demo:8080
+      BORG_AGENT_TOKEN: placeholder
     depends_on:
       - demo
-    entrypoint: ["/app/start-agent.sh"]
+    entrypoint: ["/app/agent"]
 
   db-server-01:
     image: assimilate-demo:local
@@ -59,9 +60,10 @@ services:
       - demo-seeds:/seeds
     environment:
       BORG_SERVER_URL: http://demo:8080
+      BORG_AGENT_TOKEN: placeholder
     depends_on:
       - demo
-    entrypoint: ["/app/start-agent.sh"]
+    entrypoint: ["/app/agent"]
 
   media-store-01:
     image: assimilate-demo:local
@@ -74,35 +76,10 @@ services:
       - demo-seeds:/seeds
     environment:
       BORG_SERVER_URL: http://demo:8080
+      BORG_AGENT_TOKEN: placeholder
     depends_on:
       - demo
-    entrypoint: ["/app/start-agent.sh"]
-
-  old-webserver:
-    image: assimilate-demo:local
-    build:
-      context: ../..
-      dockerfile: .devcontainer/demo/Dockerfile.demo
-    hostname: old-webserver
-    volumes:
-      - demo-ssh-keys:/ssh-keys
-      - demo-seeds:/seeds
-    depends_on:
-      - demo
-    entrypoint: ["/app/start-placeholder.sh"]
-
-  legacy-db-prod:
-    image: assimilate-demo:local
-    build:
-      context: ../..
-      dockerfile: .devcontainer/demo/Dockerfile.demo
-    hostname: legacy-db-prod
-    volumes:
-      - demo-ssh-keys:/ssh-keys
-      - demo-seeds:/seeds
-    depends_on:
-      - demo
-    entrypoint: ["/app/start-placeholder.sh"]
+    entrypoint: ["/app/agent"]
 
   postgres:
     image: postgres:latest

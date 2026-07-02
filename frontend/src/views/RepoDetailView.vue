@@ -496,6 +496,7 @@ onMessage<ImportProgressPayload>('ImportProgress', (payload) => {
       repo.value.import_total = payload.total
     }
     repo.value.import_status_message = payload.message
+    repo.value.importing = payload.message !== null
   }
 })
 

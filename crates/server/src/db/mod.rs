@@ -1316,14 +1316,13 @@ pub async fn list_schedules(pool: &PgPool) -> Result<Vec<ScheduleRow>, ApiError>
     let rows = sqlx::query_as!(
         ScheduleRow,
         "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
-          s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
+         s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
          s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
          s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
          s.pre_backup_commands, s.post_backup_commands, s.execution_mode, s.on_failure, \
-         s.owner_id, s.visibility, \
-         ARRAY(SELECT a.hostname FROM schedule_targets st JOIN agents a ON a.id = st.agent_id \
-         WHERE st.schedule_id = s.id ORDER BY st.execution_order, a.hostname) AS \
-         \"target_hostnames!\" FROM schedules s ORDER BY s.id",
+         s.owner_id, s.visibility, ARRAY(SELECT a.hostname FROM schedule_targets st JOIN agents a \
+         ON a.id = st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, \
+         a.hostname) AS \"target_hostnames!\" FROM schedules s ORDER BY s.id",
     )
     .fetch_all(pool)
     .await
@@ -1364,13 +1363,13 @@ pub async fn insert_schedule(
          canary_enabled, exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, \
          keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, \
          rate_limit_kbps, pre_backup_commands, post_backup_commands, execution_mode, on_failure, \
-         owner_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, \
-         $16, $17, $18, 'sequential', $19, $20) RETURNING id, repo_id, name, schedule_type, \
-         cron_expression, enabled, canary_enabled, last_run_at, next_run_at, exclude_patterns_raw, \
-         file_change_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, \
-         keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands, \
-         post_backup_commands, execution_mode, on_failure, owner_id, visibility, \
-         ARRAY[]::TEXT[] AS \"target_hostnames!\"",
+         owner_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, \
+         $17, $18, 'sequential', $19, $20) RETURNING id, repo_id, name, schedule_type, \
+         cron_expression, enabled, canary_enabled, last_run_at, next_run_at, \
+         exclude_patterns_raw, file_change_patterns_raw, ignore_global_excludes, keep_hourly, \
+         keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
+         pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, \
+         visibility, ARRAY[]::TEXT[] AS \"target_hostnames!\"",
         repo_id,
         params.name,
         params.schedule_type,
@@ -1408,8 +1407,8 @@ pub async fn update_schedule(
          exclude_patterns_raw = $6, file_change_patterns_raw = $7, ignore_global_excludes = $8, \
          keep_hourly = $9, keep_daily = $10, keep_weekly = $11, keep_monthly = $12, keep_yearly = \
          $13, compact_enabled = $14, rate_limit_kbps = $15, pre_backup_commands = $16, \
-         post_backup_commands = $17, execution_mode = 'sequential', on_failure = $18 WHERE id = $1 \
-         RETURNING id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
+         post_backup_commands = $17, execution_mode = 'sequential', on_failure = $18 WHERE id = \
+         $1 RETURNING id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, \
          ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
          compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, \
@@ -1978,8 +1977,8 @@ pub async fn get_per_agent_file_change_patterns_raw(
     agent_id: i64,
 ) -> Result<Option<String>, ApiError> {
     sqlx::query_scalar!(
-        "SELECT raw_text FROM per_agent_file_change_patterns WHERE schedule_id = $1 AND \
-         agent_id = $2",
+        "SELECT raw_text FROM per_agent_file_change_patterns WHERE schedule_id = $1 AND agent_id \
+         = $2",
         schedule_id,
         agent_id,
     )
@@ -1994,13 +1993,13 @@ pub async fn get_schedule_for_repo(
 ) -> Result<Option<ScheduleRow>, ApiError> {
     sqlx::query_as!(
         ScheduleRow,
-         "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
-          last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, \
-          ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
-          compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, \
-          execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \
-          \"target_hostnames!\" FROM schedules WHERE repo_id = $1",
-         repo_id,
+        "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
+         last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, \
+         ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
+         compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, \
+         execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \
+         \"target_hostnames!\" FROM schedules WHERE repo_id = $1",
+        repo_id,
     )
     .fetch_optional(pool)
     .await
@@ -2020,14 +2019,14 @@ pub async fn get_schedule_for_hostname_repo(
 ) -> Result<Option<ScheduleRow>, ApiError> {
     sqlx::query_as!(
         ScheduleRow,
-         "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
-          s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
-          s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
-          s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
-          s.pre_backup_commands, s.post_backup_commands, s.execution_mode, s.on_failure, \
-          s.owner_id, s.visibility, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules s \
-          JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents m ON st.agent_id = m.id \
-          WHERE m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = $3 LIMIT 1",
+        "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
+         s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
+         s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
+         s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
+         s.pre_backup_commands, s.post_backup_commands, s.execution_mode, s.on_failure, \
+         s.owner_id, s.visibility, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules s JOIN \
+         schedule_targets st ON st.schedule_id = s.id JOIN agents m ON st.agent_id = m.id WHERE \
+         m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = $3 LIMIT 1",
         hostname,
         repo_id,
         schedule_type.to_string(),
@@ -2043,16 +2042,15 @@ pub async fn list_schedules_for_repo(
 ) -> Result<Vec<ScheduleRow>, ApiError> {
     sqlx::query_as!(
         ScheduleRow,
-         "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
-          s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
-          s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
-          s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
-          s.pre_backup_commands, s.post_backup_commands, s.execution_mode, s.on_failure, \
-          s.owner_id, s.visibility, \
-          COALESCE(ARRAY(SELECT a.hostname FROM schedule_targets st JOIN agents a ON a.id = \
-          st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, a.hostname), \
-          ARRAY[]::TEXT[]) AS \"target_hostnames!\" FROM schedules s WHERE s.repo_id = $1 ORDER BY \
-          s.id",
+        "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
+         s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
+         s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
+         s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
+         s.pre_backup_commands, s.post_backup_commands, s.execution_mode, s.on_failure, \
+         s.owner_id, s.visibility, COALESCE(ARRAY(SELECT a.hostname FROM schedule_targets st JOIN \
+         agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, \
+         a.hostname), ARRAY[]::TEXT[]) AS \"target_hostnames!\" FROM schedules s WHERE s.repo_id \
+         = $1 ORDER BY s.id",
         repo_id,
     )
     .fetch_all(pool)
@@ -2078,13 +2076,13 @@ pub async fn list_schedules_for_agent(
 ) -> Result<Vec<ScheduleRow>, ApiError> {
     sqlx::query_as!(
         ScheduleRow,
-         "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
-          s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
-          s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
-          s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
-          s.pre_backup_commands, s.post_backup_commands, s.execution_mode, s.on_failure, \
-          s.owner_id, s.visibility, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules s \
-          JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 ORDER by s.id",
+        "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
+         s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
+         s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, \
+         s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, \
+         s.pre_backup_commands, s.post_backup_commands, s.execution_mode, s.on_failure, \
+         s.owner_id, s.visibility, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules s JOIN \
+         schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 ORDER by s.id",
         agent_id,
     )
     .fetch_all(pool)
@@ -2160,13 +2158,13 @@ pub async fn set_next_run_at(
 pub async fn get_schedule_by_id(pool: &PgPool, id: i64) -> Result<ScheduleRow, ApiError> {
     sqlx::query_as!(
         ScheduleRow,
-         "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
-          last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, \
-          ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
-          compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, \
-          execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \
-          \"target_hostnames!\" FROM schedules WHERE id = $1",
-         id,
+        "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
+         last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, \
+         ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
+         compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, \
+         execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \
+         \"target_hostnames!\" FROM schedules WHERE id = $1",
+        id,
     )
     .fetch_one(pool)
     .await
@@ -4865,5 +4863,6 @@ pub async fn get_enabled_schedules_for_calendar(
     )
     .fetch_all(pool)
     .await
-    .map_err(ApiError::Database)
+    .map_err(ApiError::Database)?;
+    Ok(rows)
 }

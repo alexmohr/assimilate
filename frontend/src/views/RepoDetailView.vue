@@ -86,7 +86,13 @@ type EncryptionType =
   | 'authenticated-blake2'
   | 'none'
 
-type RepoOpKind = 'agent_backup' | 'agent_check' | 'agent_verify' | 'server_sync' | 'break_lock' | 'delete_archive'
+type RepoOpKind =
+  | 'agent_backup'
+  | 'agent_check'
+  | 'agent_verify'
+  | 'server_sync'
+  | 'break_lock'
+  | 'delete_archive'
 
 interface ActiveRepoOp {
   kind: RepoOpKind

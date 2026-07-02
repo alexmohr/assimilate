@@ -187,7 +187,7 @@ pub async fn repositories(pool: &PgPool) -> Result<Vec<RepositoryRow>, ApiError>
                r.info_deduplicated_size AS deduplicated_size,
                q.warn_bytes,
                q.critical_bytes,
-               q.enabled AS quota_enabled,
+               COALESCE(q.enabled, false) AS quota_enabled,
                COUNT(DISTINCT s.id) FILTER (WHERE s.enabled = true) AS enabled_schedule_count,
                r.importing,
                r.import_error,
@@ -197,7 +197,7 @@ pub async fn repositories(pool: &PgPool) -> Result<Vec<RepositoryRow>, ApiError>
          LEFT JOIN schedules s ON s.repo_id = r.id
          WHERE r.enabled = true
          GROUP BY r.id, r.name, r.info_deduplicated_size, q.warn_bytes,
-                  q.critical_bytes, q.enabled, r.importing, r.import_error, r.last_synced_at
+                  q.critical_bytes, COALESCE(q.enabled, false), r.importing, r.import_error, r.last_synced_at
          ORDER BY r.info_deduplicated_size DESC, r.name
         "#,
     )

@@ -7,7 +7,8 @@
 # 2. Rebuilds the demo service with coverage-instrumented server and agent binaries
 #    (COVERAGE=true build arg to Dockerfile.demo).
 # 3. Mounts a .coverage directory to capture LLVM profraw files from the server
-#    and agent processes for backend code coverage.
+#    and agent processes (which are started internally by start-demo.sh) for
+#    backend code coverage.
 #
 # Usage (from repo root):
 #   VITE_COVERAGE=true npm --prefix frontend run build
@@ -19,9 +20,6 @@
 
 services:
   demo:
-    # Distinct tag: this image carries the coverage-instrumented server binary,
-    # so it must not collide with the non-instrumented assimilate-demo:local
-    # image used by the agent/placeholder services.
     image: assimilate-demo:coverage
     build:
       args:
@@ -31,24 +29,3 @@ services:
       - ../../.coverage:/tmp/coverage
     environment:
       LLVM_PROFILE_FILE: /tmp/coverage/server.profraw
-
-  web-server-01:
-    image: assimilate-demo:coverage
-    volumes:
-      - ../../.coverage:/tmp/coverage
-    environment:
-      LLVM_PROFILE_FILE: /tmp/coverage/agent-web-server-01.profraw
-
-  db-server-01:
-    image: assimilate-demo:coverage
-    volumes:
-      - ../../.coverage:/tmp/coverage
-    environment:
-      LLVM_PROFILE_FILE: /tmp/coverage/agent-db-server-01.profraw
-
-  media-store-01:
-    image: assimilate-demo:coverage
-    volumes:
-      - ../../.coverage:/tmp/coverage
-    environment:
-      LLVM_PROFILE_FILE: /tmp/coverage/agent-media-store-01.profraw

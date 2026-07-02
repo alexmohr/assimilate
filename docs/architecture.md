@@ -38,7 +38,7 @@ The project is a Cargo workspace with three crates and a frontend package.
 | Crate / Package | Role |
 |---|---|
 | `crates/server` | Axum HTTP + WebSocket server. Serves the Vue SPA, exposes the REST API, manages the agent registry, runs the scheduler, and relays SSH agent connections. |
-| `crates/agent` | Agent binary that runs on each backup machine. Connects to the server over WebSocket, receives commands, executes borg, and reports results. |
+| `crates/agent` | Client binary that runs on each backup machine. Connects to the server over WebSocket, receives commands, executes borg, and reports results. |
 | `crates/shared` | Domain types, the WebSocket protocol schema (`ServerToAgent`, `AgentToServer`, `ServerToUi`), and AES-256-GCM crypto utilities. Both server and agent depend on this crate. |
 | `frontend/` | Vue.js 3 + Vite SPA (TypeScript). Communicates with the server via REST and a WebSocket for live updates. |
 

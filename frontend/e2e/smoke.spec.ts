@@ -1,7 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expect, test } from './fixtures'
+import type { Page } from '@playwright/test'
+
+async function loginAsAdmin(page: Page): Promise<void> {
+  await page.goto('/login')
+  await page.locator('input[type="text"], input[name="username"]').fill('admin')
+  await page.locator('input[type="password"]').fill('admin')
+  await page.locator('button[type="submit"]').click()
+  await page.waitForURL((url) => !new URL(url).pathname.startsWith('/login'), { timeout: 30_000 })
+}
 
 test('login page loads', async ({ page }) => {
   await page.goto('/login')
@@ -23,11 +32,8 @@ test('logout redirects to login', async ({ page }) => {
   await loginAsAdmin(page)
   // Trigger logout via the API directly so we don't depend on nav UI details
   await page.request.post('/api/auth/logout')
-  // waitUntil: 'commit' resolves on response headers; without it Playwright
-  // throws ERR_ABORTED when the SPA route guard fires a client-side redirect
-  // before the page finishes loading.
-  await page.goto('/', { waitUntil: 'commit' })
-  await expect(page).toHaveURL(/\/login/, { timeout: 10_000 })
+  await page.goto('/')
+  await expect(page).toHaveURL(/\/login/)
 })
 
 test('dashboard does not redirect to /error', async ({ page }) => {

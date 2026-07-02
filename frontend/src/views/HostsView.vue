@@ -18,13 +18,38 @@ import { Plus, SlidersHorizontal, Server, AlertCircle } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
-import MergeAgentDialog from '../components/MergeAgentDialog.vue'
+import MergeClientDialog from '../components/MergeClientDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import CardError from '../components/CardError.vue'
 import type { DashboardOverview } from '../types/dashboard'
-import type { AgentRow } from '../types/agent'
-import type { TagRow } from '../types/tag'
-import type { CreateAgentResponse } from '../types/generated'
+
+interface AgentRow {
+  id: number
+  hostname: string
+  display_name: string | null
+  agent_version: string | null
+  agent_git_sha: string | null
+  agent_build_time: string | null
+  agent_commit_count: number | null
+  created_at: string
+  last_seen_at: string | null
+  is_connected: boolean
+  is_imported: boolean
+  is_hidden: boolean
+  default_backup_paths: string[]
+}
+
+interface CreateAgentResponse {
+  client: AgentRow
+  token: string
+}
+
+interface TagRow {
+  id: number
+  name: string
+  color: string
+  scope: string
+}
 
 interface AgentTagRow {
   agent_id: number
@@ -188,14 +213,14 @@ useEscapeKey(showMergeDialog, () => {
 useEscapeKey(showAddDialog, closeAddDialog)
 
 function isOnline(agent: AgentRow): boolean {
-  return agent.is_connected ?? false
+  return agent.is_connected
 }
 
 function isImported(agent: AgentRow): boolean {
-  return agent.is_imported ?? false
+  return agent.is_imported
 }
 
-function formatLastSeen(iso: string | null | undefined): string {
+function formatLastSeen(iso: string | null): string {
   if (!iso) return 'Never'
   const ts = new Date(iso).getTime()
   if (isNaN(ts) || ts === 0) return 'Never'
@@ -209,7 +234,7 @@ function formatLastSeen(iso: string | null | undefined): string {
   return `${days}d ago`
 }
 
-function formatVersion(v: string | null | undefined): string {
+function formatVersion(v: string | null): string {
   if (!v) return '\u2014'
   return v
 }
@@ -251,58 +276,23 @@ function toggleTagFilter(tagId: number): void {
 }
 
 async function loadAgents(): Promise<void> {
-  if (agents.value.length === 0) {
-    loading.value = true
-    error.value = null
-  }
+  loading.value = true
+  error.value = null
   try {
-    const agentsRes = await apiClient.get<AgentRow[]>('/agents', {
-      params: showHidden.value ? { include_hidden: true } : undefined,
-    })
-    agents.value = agentsRes.data
-    error.value = null
-    loading.value = false
-
-    const emptyOverview: DashboardOverview = {
-      summary: {
-        protected_hosts: 0,
-        eligible_hosts: 0,
-        needs_attention: 0,
-        running_operations: 0,
-        total_storage_bytes: 0,
-      },
-      findings: [],
-      protection: {
-        protected_hosts: 0,
-        eligible_hosts: 0,
-        protected_agent_links: [],
-        unassigned_agents: [],
-        never_succeeded_targets: 0,
-        never_succeeded_agents: [],
-        disabled_only_agents: [],
-      },
-      running_operations: [],
-      upcoming_schedules: [],
-      repository_capacity: [],
-    }
-    const [agentTagAssocRes, agentTagsRes, healthRes, scheduleCountsRes, overviewRes] =
+    const [agentsRes, agentTagAssocRes, agentTagsRes, healthRes, scheduleCountsRes, overviewRes] =
       await Promise.all([
+        apiClient.get<AgentRow[]>('/agents', {
+          params: showHidden.value ? { include_hidden: true } : undefined,
+        }),
+        apiClient.get<AgentTagRow[]>('/agent-tags').catch(() => ({ data: [] as AgentTagRow[] })),
         apiClient
-          .get<AgentTagRow[]>('/agent-tags', { timeout: 8000 })
-          .catch(() => ({ data: [] as AgentTagRow[] })),
-        apiClient
-          .get<TagRow[]>('/tags', { params: { scope: 'host' }, timeout: 8000 })
+          .get<TagRow[]>('/tags', { params: { scope: 'host' } })
           .catch(() => ({ data: [] as TagRow[] })),
-        apiClient
-          .get<HealthEntry[]>('/stats/health', { timeout: 8000 })
-          .catch(() => ({ data: [] as HealthEntry[] })),
-        apiClient
-          .get<{ agent_id: number; count: number }[]>('/stats/schedule-counts', { timeout: 8000 })
-          .catch(() => ({ data: [] as { agent_id: number; count: number }[] })),
-        apiClient
-          .get<DashboardOverview>('/stats/dashboard-overview', { timeout: 8000 })
-          .catch(() => ({ data: emptyOverview })),
+        apiClient.get<HealthEntry[]>('/stats/health'),
+        apiClient.get<{ agent_id: number; count: number }[]>('/stats/schedule-counts'),
+        apiClient.get<DashboardOverview>('/stats/dashboard-overview'),
       ])
+    agents.value = agentsRes.data
     machineScheduleCount.value = {}
     scheduleCountsRes.data.forEach((entry) => {
       machineScheduleCount.value[entry.agent_id] = entry.count
@@ -353,9 +343,7 @@ async function loadAgents(): Promise<void> {
       ),
     }
   } catch (e: unknown) {
-    if (agents.value.length === 0) {
-      error.value = extractError(e)
-    }
+    error.value = extractError(e)
   } finally {
     loading.value = false
   }
@@ -383,7 +371,7 @@ async function submitAdd(): Promise<void> {
       hostname,
       display_name: addForm.display_name.trim() || null,
     })
-    agents.value.push({ ...res.data.agent, id: Number(res.data.agent.id) })
+    agents.value.push(res.data.client)
     newToken.value = res.data.token
   } catch (e: unknown) {
     addError.value = extractError(e)
@@ -414,8 +402,7 @@ async function adoptAgent(agent: AgentRow): Promise<void> {
     if (idx !== -1) {
       agents.value[idx] = {
         ...agents.value[idx],
-        ...res.data.agent,
-        id: Number(res.data.agent.id),
+        ...res.data.client,
         is_imported: false,
         display_name: cleanDisplayName,
       }
@@ -509,12 +496,12 @@ function hostActiveBackups(agent: AgentRow): string[] {
 
 function deployButtonLabel(agent: AgentRow): string | null {
   if (!agent.agent_version) return 'Deploy'
-  const commitCount = agent.agent_commit_count ?? null
-  if (serverCommitCount.value !== null && commitCount !== null) {
-    return commitCount >= serverCommitCount.value ? null : 'Upgrade'
+  if (serverCommitCount.value !== null && agent.agent_commit_count !== null) {
+    return agent.agent_commit_count >= serverCommitCount.value ? null : 'Upgrade'
   }
-  if (!availableAgentVersion.value) return null
-  return agent.agent_version === availableAgentVersion.value ? null : 'Upgrade'
+  if (availableAgentVersion.value && agent.agent_version === availableAgentVersion.value)
+    return null
+  return 'Upgrade'
 }
 
 watch(wsStatus, (newStatus, oldStatus) => {
@@ -974,7 +961,7 @@ watch(
     <AgentDeployDialog
       v-if="showDeployDialog && deployTarget"
       :hostname="deployTarget.hostname"
-      :agent-version="deployTarget.agent_version ?? null"
+      :agent-version="deployTarget.agent_version"
       @close="showDeployDialog = false"
       @deployed="
         (version) => {
@@ -990,7 +977,7 @@ watch(
 
     <!-- Merge Agent Dialog -->
     <Teleport to="body">
-      <MergeAgentDialog
+      <MergeClientDialog
         v-if="showMergeDialog && mergeSource"
         :source="mergeSource"
         :all-agents="agents"

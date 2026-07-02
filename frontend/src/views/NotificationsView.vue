@@ -8,8 +8,6 @@ import { ref, computed, onMounted } from 'vue'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { extractError } from '../utils/error'
-import { useAsyncAction } from '../composables/useAsyncAction'
-import { formatDate } from '../utils/format'
 import { logger } from '../utils/logger'
 import {
   listChannels,
@@ -54,9 +52,10 @@ const activeTab = ref<TabId>('channels')
 const channels = ref<NotificationChannel[]>([])
 const rules = ref<NotificationRule[]>([])
 const deliveries = ref<NotificationDelivery[]>([])
-const { loading, error, run } = useAsyncAction()
+const loading = ref(false)
+const error = ref('')
 const scopeRepos = ref<ScopeOption[]>([])
-const scopeAgents = ref<ScopeOption[]>([])
+const scopeClients = ref<ScopeOption[]>([])
 const scopeSchedules = ref<ScopeOption[]>([])
 
 // Add channel wizard state
@@ -186,8 +185,8 @@ function channelScopeLabel(channel: NotificationChannel): string {
   if (s.repo_ids && s.repo_ids.length > 0) {
     parts.push(`${s.repo_ids.length} repo${s.repo_ids.length > 1 ? 's' : ''}`)
   }
-  if (s.agent_ids && s.agent_ids.length > 0) {
-    parts.push(`${s.agent_ids.length} host${s.agent_ids.length > 1 ? 's' : ''}`)
+  if (s.client_ids && s.client_ids.length > 0) {
+    parts.push(`${s.client_ids.length} host${s.client_ids.length > 1 ? 's' : ''}`)
   }
   if (s.schedule_ids && s.schedule_ids.length > 0) {
     parts.push(`${s.schedule_ids.length} schedule${s.schedule_ids.length > 1 ? 's' : ''}`)
@@ -232,10 +231,16 @@ const isPushSupported = computed((): boolean => {
 })
 
 async function loadChannels(): Promise<void> {
-  await run(async () => {
+  loading.value = true
+  error.value = ''
+  try {
     channels.value = await listChannels()
     rules.value = await listRules()
-  })
+  } catch (e: unknown) {
+    error.value = extractError(e)
+  } finally {
+    loading.value = false
+  }
 }
 
 async function loadDeliveries(): Promise<void> {
@@ -265,13 +270,13 @@ async function loadPushStatus(): Promise<void> {
 
 async function loadScopeOptions(): Promise<void> {
   try {
-    const [reposRes, agentsRes, schedulesRes] = await Promise.all([
+    const [reposRes, clientsRes, schedulesRes] = await Promise.all([
       apiClient.get<{ id: number; name: string }[]>('/repos'),
       apiClient.get<{ id: number; hostname: string; display_name: string | null }[]>('/agents'),
       apiClient.get<{ id: number; agent_id: number; repo_id: number | null }[]>('/schedules'),
     ])
     scopeRepos.value = reposRes.data.map((r) => ({ id: r.id, label: r.name }))
-    scopeAgents.value = agentsRes.data.map((c) => ({
+    scopeClients.value = clientsRes.data.map((c) => ({
       id: c.id,
       label: c.display_name ?? c.hostname,
     }))
@@ -419,7 +424,7 @@ function openEditChannel(channel: NotificationChannel): void {
 
 function editChannelType(): ChannelType {
   const ch = channels.value.find((c) => c.id === editChannelId.value)
-  return (ch?.channel_type ?? 'email') as ChannelType
+  return (ch?.channel_type as ChannelType) ?? 'email'
 }
 
 async function submitEditChannel(): Promise<void> {
@@ -628,6 +633,10 @@ async function ensurePushSubscription(): Promise<void> {
   currentPushSubscription.value = subscription
 }
 
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleString()
+}
+
 useEscapeKey(showAddChannelDialog, () => {
   showAddChannelDialog.value = false
 })
@@ -728,14 +737,12 @@ onMounted(() => {
           <div class="channel-header">
             <div class="channel-info">
               <component
-                :is="channelTypeIcon(channel.channel_type as ChannelType)"
+                :is="channelTypeIcon(channel.channel_type)"
                 :size="16"
                 class="channel-icon"
               />
               <span class="channel-name">{{ channel.name }}</span>
-              <span class="channel-type-badge">{{
-                channelTypeLabel(channel.channel_type as ChannelType)
-              }}</span>
+              <span class="channel-type-badge">{{ channelTypeLabel(channel.channel_type) }}</span>
             </div>
             <div class="channel-actions">
               <button
@@ -1051,19 +1058,19 @@ onMounted(() => {
                   </label>
                 </div>
                 <div
-                  v-if="scopeAgents.length > 0"
+                  v-if="scopeClients.length > 0"
                   class="scope-section"
                 >
                   <span class="scope-section-title">Hosts</span>
                   <label
-                    v-for="opt in filteredScopeOptions(scopeAgents)"
+                    v-for="opt in filteredScopeOptions(scopeClients)"
                     :key="'c' + opt.id"
                     class="scope-item"
                   >
                     <input
                       type="checkbox"
-                      :checked="isWizardScopeSelected('agent_ids', opt.id)"
-                      @change="toggleWizardScopeItem('agent_ids', opt.id)"
+                      :checked="isWizardScopeSelected('client_ids', opt.id)"
+                      @change="toggleWizardScopeItem('client_ids', opt.id)"
                     />
                     <span>{{ opt.label }}</span>
                   </label>
@@ -1425,19 +1432,19 @@ onMounted(() => {
                 </label>
               </div>
               <div
-                v-if="scopeAgents.length > 0"
+                v-if="scopeClients.length > 0"
                 class="scope-section"
               >
                 <span class="scope-section-title">Hosts</span>
                 <label
-                  v-for="opt in filteredScopeOptions(scopeAgents)"
+                  v-for="opt in filteredScopeOptions(scopeClients)"
                   :key="'c' + opt.id"
                   class="scope-item"
                 >
                   <input
                     type="checkbox"
-                    :checked="isScopeSelected(scopeModalChannel()!, 'agent_ids', opt.id)"
-                    @change="toggleScopeItem(scopeModalChannel()!, 'agent_ids', opt.id)"
+                    :checked="isScopeSelected(scopeModalChannel()!, 'client_ids', opt.id)"
+                    @change="toggleScopeItem(scopeModalChannel()!, 'client_ids', opt.id)"
                   />
                   <span>{{ opt.label }}</span>
                 </label>

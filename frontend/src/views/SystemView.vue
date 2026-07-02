@@ -12,13 +12,17 @@ import { extractError } from '../utils/error'
 import { formatBytes } from '../utils/format'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import TimezoneSelect from '../components/TimezoneSelect.vue'
-import type { SettingsResponse, SystemResetResponse } from '../types/generated'
 
 interface ImportResult {
   hosts_created: number
   hosts_updated: number
   schedules_created: number
   warnings: string[]
+}
+
+interface SettingsResponse {
+  retention_days: number
+  timezone: string
 }
 
 interface VersionInfo {
@@ -55,7 +59,7 @@ const settingsLoading = ref(true)
 const settingsError = ref('')
 const settingsSaving = ref(false)
 const settingsSaved = ref(false)
-const settingsForm = reactive({ timezone: '', retention_days: 7, borg_query_timeout_secs: 300 })
+const settingsForm = reactive({ timezone: '', retention_days: 7 })
 
 const versionInfo = ref<VersionInfo | null>(null)
 const versionLoading = ref(true)
@@ -78,8 +82,7 @@ onMounted(async () => {
   try {
     const res = await apiClient.get<SettingsResponse>('/system/settings')
     settingsForm.timezone = res.data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone
-    settingsForm.retention_days = Number(res.data.retention_days)
-    settingsForm.borg_query_timeout_secs = Number(res.data.borg_query_timeout_secs)
+    settingsForm.retention_days = res.data.retention_days
   } catch (e: unknown) {
     settingsError.value = extractError(e, 'Failed to load settings')
   } finally {
@@ -199,11 +202,9 @@ async function saveSettings(): Promise<void> {
     const res = await apiClient.put<SettingsResponse>('/system/settings', {
       retention_days: settingsForm.retention_days,
       timezone: settingsForm.timezone || undefined,
-      borg_query_timeout_secs: settingsForm.borg_query_timeout_secs,
     })
     settingsForm.timezone = res.data.timezone
-    settingsForm.retention_days = Number(res.data.retention_days)
-    settingsForm.borg_query_timeout_secs = Number(res.data.borg_query_timeout_secs)
+    settingsForm.retention_days = res.data.retention_days
     setTimezone(res.data.timezone || undefined)
     settingsSaved.value = true
     setTimeout(() => {
@@ -213,26 +214,6 @@ async function saveSettings(): Promise<void> {
     settingsError.value = extractError(e, 'Failed to save settings')
   } finally {
     settingsSaving.value = false
-  }
-}
-
-const showResetConfirm = ref(false)
-const resetting = ref(false)
-const resetError = ref('')
-const resetResult = ref<SystemResetResponse | null>(null)
-
-async function resetSystem(): Promise<void> {
-  resetting.value = true
-  resetError.value = ''
-  resetResult.value = null
-  try {
-    const res = await apiClient.post<SystemResetResponse>('/system/reset')
-    resetResult.value = res.data
-    showResetConfirm.value = false
-  } catch (e: unknown) {
-    resetError.value = extractError(e, 'Reset failed')
-  } finally {
-    resetting.value = false
   }
 }
 </script>
@@ -372,28 +353,6 @@ async function resetSystem(): Promise<void> {
                 class="form-input retention-input"
               />
               <span class="field-hint">Number of days to keep backup job history.</span>
-            </div>
-          </div>
-
-          <div class="setting-row">
-            <label
-              class="setting-label"
-              for="settings-borg-timeout"
-            >
-              Borg Timeout
-            </label>
-            <div class="setting-input-group">
-              <input
-                id="settings-borg-timeout"
-                v-model.number="settingsForm.borg_query_timeout_secs"
-                type="number"
-                min="1"
-                class="form-input retention-input"
-              />
-              <span class="field-hint"
-                >Maximum seconds to wait for a single <code>borg list</code> or
-                <code>borg info</code> invocation. Increase for slow or remote repositories.</span
-              >
             </div>
           </div>
 
@@ -597,40 +556,6 @@ async function resetSystem(): Promise<void> {
       </div>
     </div>
 
-    <div class="info-card danger-zone-card">
-      <div class="card-header">
-        <h3 class="info-title danger-title">Danger Zone</h3>
-      </div>
-      <p class="info-description">
-        Emergency actions to bring the system back to a safe state. Use when backups are stuck or
-        the system is in an inconsistent state.
-      </p>
-
-      <div class="danger-action">
-        <div class="danger-action-info">
-          <div class="danger-action-name">Cancel All Running Backups</div>
-          <div class="danger-action-desc">
-            Cancels all running and pending backup operations and notifies connected agents to abort
-            immediately. Schedules are left unchanged.
-          </div>
-        </div>
-        <button
-          class="btn btn-sm btn-danger"
-          @click="showResetConfirm = true"
-        >
-          Reset
-        </button>
-      </div>
-
-      <div
-        v-if="resetResult"
-        class="reset-result"
-      >
-        <span>Cancelled backups: {{ resetResult.cancelled_backups }}</span>
-        <span>Agents notified: {{ resetResult.notified_agents }}</span>
-      </div>
-    </div>
-
     <!-- Regenerate Confirmation -->
     <Teleport to="body">
       <div
@@ -676,56 +601,6 @@ async function resetSystem(): Promise<void> {
               @click="regenerateKey"
             >
               {{ regenerating ? 'Regenerating...' : 'Regenerate Key' }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
-    <!-- Reset Confirmation -->
-    <Teleport to="body">
-      <div
-        v-if="showResetConfirm"
-        class="overlay"
-        @click.self="showResetConfirm = false"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Reset System State</h2>
-            <button
-              class="close-btn"
-              @click="showResetConfirm = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p class="warning-text">This will immediately:</p>
-            <ul class="reset-list">
-              <li>Cancel all running and pending backup operations in the database</li>
-              <li>Send abort signals to all currently connected agents</li>
-            </ul>
-            <p class="warning-text warning-bold">Schedules are left unchanged.</p>
-            <div
-              v-if="resetError"
-              class="form-error"
-            >
-              {{ resetError }}
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showResetConfirm = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="resetting"
-              @click="resetSystem"
-            >
-              {{ resetting ? 'Resetting...' : 'Reset System' }}
             </button>
           </div>
         </div>
@@ -1058,61 +933,5 @@ async function resetSystem(): Promise<void> {
   padding-left: 1.25rem;
   color: var(--warning, #e6a817);
   font-size: 0.8125rem;
-}
-
-.danger-zone-card {
-  border-color: var(--danger, #dc2626);
-}
-
-.danger-title {
-  color: var(--danger, #dc2626);
-}
-
-.danger-action {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.danger-action-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.danger-action-name {
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.danger-action-desc {
-  font-size: 0.8125rem;
-  color: var(--text-secondary);
-}
-
-.reset-result {
-  display: flex;
-  gap: 1.25rem;
-  margin-top: 1rem;
-  padding: 0.75rem 1rem;
-  background: var(--bg-base);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-size: 0.875rem;
-  color: var(--text-secondary);
-  flex-wrap: wrap;
-}
-
-.reset-list {
-  margin: 0.5rem 0;
-  padding-left: 1.25rem;
-  font-size: 0.875rem;
-  color: var(--text-primary);
-
-  & li {
-    margin-bottom: 0.25rem;
-  }
 }
 </style>

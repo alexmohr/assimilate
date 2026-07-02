@@ -17,7 +17,7 @@ import {
 } from '../composables/useArchiveBrowser'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useToast } from '../composables/useToast'
-import { formatBytes, formatDate, relativeTime } from '../utils/format'
+import { formatBytes, formatDate } from '../utils/format'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
 import { useAsyncAction } from '../composables/useAsyncAction'
@@ -36,14 +36,26 @@ import ToggleSwitch from '../components/ToggleSwitch.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import QuotaPanel from '../components/QuotaPanel.vue'
 import BaseModal from '../components/BaseModal.vue'
-import BaseHostLink from '../components/BaseHostLink.vue'
-import type { ScheduleRow, ScheduleType } from '../types/schedule'
-import type { ActiveRepoOp, RepoWithStats } from '../types/repo'
-import type { TagRow } from '../types/tag'
 
 type TabId = 'overview' | 'archives' | 'schedules'
+type ScheduleType = 'backup' | 'check' | 'verify'
 
-interface AgentRow {
+interface ScheduleRow {
+  id: number
+  repo_id: number | null
+  name: string
+  schedule_type: ScheduleType
+  cron_expression: string
+  enabled: boolean
+  canary_enabled: boolean
+  last_run_at: string | null
+  next_run_at: string | null
+  execution_mode: string
+  on_failure: string
+  target_hostnames: string[]
+}
+
+interface ClientRow {
   id: number
   hostname: string
   display_name: string | null
@@ -73,6 +85,53 @@ type EncryptionType =
   | 'authenticated'
   | 'authenticated-blake2'
   | 'none'
+
+type RepoOpKind = 'agent_backup' | 'agent_check' | 'agent_verify' | 'server_sync' | 'break_lock' | 'delete_archive'
+
+interface ActiveRepoOp {
+  kind: RepoOpKind
+  actor: string
+  started_at: string
+  queued?: number
+}
+
+interface RepoWithStats {
+  id: number
+  name: string
+  repo_path: string
+  ssh_user: string
+  ssh_host: string
+  ssh_port: number
+  ssh_host_key: string | null
+  compression: string
+  encryption: string
+  enabled: boolean
+  importing: boolean
+  import_error: string | null
+  import_progress: number
+  import_total: number
+  import_status_message: string | null
+  sync_schedule: string | null
+  last_synced_at: string | null
+  archive_count: number
+  last_backup_at: string | null
+  total_original_size: number
+  total_compressed_size: number
+  total_deduplicated_size: number
+  client_count: number
+  relocation_pending: boolean
+  last_op_kind: string | null
+  last_op_at: string | null
+  last_op_by: string | null
+  current_op: ActiveRepoOp | null
+}
+
+interface TagRow {
+  id: number
+  name: string
+  color: string
+  scope: string
+}
 
 interface EditForm {
   name: string
@@ -187,8 +246,6 @@ const borgConsoleResult = ref<BorgExecResult | null>(null)
 const rescanLoading = ref(false)
 const syncLoading = ref(false)
 const resetImportLoading = ref(false)
-const resetAndSyncLoading = ref(false)
-const showResetAndSyncDialog = ref(false)
 const { success: toastSuccess, error: toastError } = useToast()
 
 interface RescanResult {
@@ -200,23 +257,19 @@ useEscapeKey(showBreakLockDialog, () => {
   showBreakLockDialog.value = false
 })
 
-useEscapeKey(showResetAndSyncDialog, () => {
-  showResetAndSyncDialog.value = false
-})
-
 // Schedules tab
 const repoSchedules = ref<ScheduleRow[]>([])
 const repoSchedulesLoading = ref(false)
 const repoSchedulesError = ref<string | null>(null)
-const scheduleAgents = ref<AgentRow[]>([])
+const scheduleClients = ref<ClientRow[]>([])
 const scheduleHealth = ref<HealthEntry[]>([])
 const scheduleExpandedError = ref<number | null>(null)
 const scheduleRunNowLoading = ref<number | null>(null)
 const { success: scheduleToastSuccess, error: scheduleToastError } = useToast()
 
-const scheduleAgentMap = computed(() => {
-  const m = new Map<string, AgentRow>()
-  scheduleAgents.value.forEach((a) => m.set(a.hostname, a))
+const scheduleClientMap = computed(() => {
+  const m = new Map<string, ClientRow>()
+  scheduleClients.value.forEach((c) => m.set(c.hostname, c))
   return m
 })
 
@@ -238,8 +291,8 @@ interface EnrichedSchedule extends ScheduleRow {
 const enrichedRepoSchedules = computed<EnrichedSchedule[]>(() =>
   repoSchedules.value.map((s) => {
     const hostLabels = s.target_hostnames.map((hostname) => {
-      const agent = scheduleAgentMap.value.get(hostname)
-      return agent?.display_name ? `${agent.display_name} (${hostname})` : hostname
+      const client = scheduleClientMap.value.get(hostname)
+      return client?.display_name ? `${client.display_name} (${hostname})` : hostname
     })
     const entries = scheduleHealthBySchedule.value.get(s.id) ?? []
     const health: HealthEntry | null =
@@ -304,13 +357,13 @@ async function loadRepoSchedules(): Promise<void> {
   repoSchedulesLoading.value = true
   repoSchedulesError.value = null
   try {
-    const [schRes, agentRes, healthRes] = await Promise.all([
+    const [schRes, clientRes, healthRes] = await Promise.all([
       apiClient.get<ScheduleRow[]>(`/repos/${repoId.value}/schedules`),
-      apiClient.get<AgentRow[]>('/agents'),
+      apiClient.get<ClientRow[]>('/clients'),
       apiClient.get<HealthEntry[]>('/stats/health'),
     ])
     repoSchedules.value = schRes.data
-    scheduleAgents.value = agentRes.data
+    scheduleClients.value = clientRes.data
     scheduleHealth.value = healthRes.data
   } catch {
     repoSchedulesError.value = 'Failed to load schedules.'
@@ -437,11 +490,6 @@ onMessage<ImportProgressPayload>('ImportProgress', (payload) => {
       repo.value.import_total = payload.total
     }
     repo.value.import_status_message = payload.message
-    if (payload.message !== null) {
-      repo.value.importing = true
-    } else {
-      repo.value.importing = false
-    }
   }
 })
 
@@ -541,7 +589,7 @@ const archiveSortModeOptions: { value: ArchiveSortMode; label: string }[] = [
 interface ArchiveGroup {
   hostname: string
   matched: boolean
-  agentHostname: string | null
+  clientHostname: string | null
   archives: ArchiveEntry[]
 }
 
@@ -589,7 +637,7 @@ const groupedArchives = computed<ArchiveGroup[]>(() => {
       groups.set(key, {
         hostname: key,
         matched: isMatched,
-        agentHostname: isMatched ? archive.agent_hostname : null,
+        clientHostname: isMatched ? archive.agent_hostname : null,
         archives: [],
       })
     }
@@ -619,6 +667,20 @@ const repoTags = computed<TagRow[]>(() =>
 const availableTags = computed<TagRow[]>(() =>
   allTags.value.filter((t) => !repoTagIds.value.includes(t.id)),
 )
+
+function formatLastBackup(iso: string | null): string {
+  if (!iso) return 'Never'
+  const ts = new Date(iso).getTime()
+  if (isNaN(ts) || ts === 0) return 'Never'
+  const diff = Date.now() - ts
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'Just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  const days = Math.floor(hrs / 24)
+  return `${days}d ago`
+}
 
 function repoOpLabel(op: ActiveRepoOp): string {
   const queued = op.queued && op.queued > 0 ? ` (+${op.queued} queued)` : ''
@@ -707,7 +769,7 @@ function startEdit(): void {
   editForm.compression = normalizeCompression(repo.value.compression)
   editForm.encryption = repo.value.encryption as EncryptionType
   editForm.enabled = repo.value.enabled
-  editForm.sync_schedule = repo.value.sync_schedule ?? null
+  editForm.sync_schedule = repo.value.sync_schedule
   editError.value = null
   isEditing.value = true
 }
@@ -955,19 +1017,6 @@ async function syncRepo(): Promise<void> {
   }
 }
 
-async function resetAndSync(): Promise<void> {
-  showResetAndSyncDialog.value = false
-  resetAndSyncLoading.value = true
-  try {
-    await apiClient.post(`/repos/${repoId.value}/reset-and-sync?build_index=true`)
-    toastSuccess('Archive metadata reset and re-import started. Progress is shown via WebSocket.')
-  } catch (e: unknown) {
-    toastError(extractError(e))
-  } finally {
-    resetAndSyncLoading.value = false
-  }
-}
-
 async function resetImport(): Promise<void> {
   resetImportLoading.value = true
   try {
@@ -1090,7 +1139,7 @@ async function resetImport(): Promise<void> {
               <dt>Status</dt>
               <dd>
                 <span
-                  class="status-badge repo-status-badge"
+                  class="status-badge"
                   :class="
                     repo.import_error
                       ? 'status-error'
@@ -1146,7 +1195,7 @@ async function resetImport(): Promise<void> {
               <dt>Deduplicated</dt>
               <dd>{{ formatBytes(repo.total_deduplicated_size) }}</dd>
               <dt>Last Backup</dt>
-              <dd>{{ relativeTime(repo.last_backup_at ?? '') }}</dd>
+              <dd>{{ formatLastBackup(repo.last_backup_at) }}</dd>
               <dt>Disk Sync</dt>
               <dd>
                 <template v-if="repo.sync_schedule">
@@ -1164,7 +1213,7 @@ async function resetImport(): Promise<void> {
                     by {{ repo.last_op_by }}
                   </template>
                   <template v-if="repo.last_op_at">
-                    — {{ relativeTime(repo.last_op_at ?? '') }}
+                    — {{ formatLastBackup(repo.last_op_at) }}
                   </template>
                 </template>
                 <template v-else>Never</template>
@@ -1173,8 +1222,8 @@ async function resetImport(): Promise<void> {
                 <dt>Current Operation</dt>
                 <dd class="current-op-running">{{ repoOpLabel(currentOp) }}</dd>
               </template>
-              <dt>Agents</dt>
-              <dd>{{ repo.agent_count }}</dd>
+              <dt>Clients</dt>
+              <dd>{{ repo.client_count }}</dd>
             </dl>
           </template>
 
@@ -1557,23 +1606,6 @@ async function resetImport(): Promise<void> {
               Delete Repository
             </button>
           </div>
-          <div class="danger-body">
-            <div class="danger-info">
-              <span class="danger-heading">Reset &amp; Re-import</span>
-              <span class="danger-desc">
-                Delete ALL archive metadata (backup reports, file indexes, tags) and re-import from
-                the borg repository on disk. Use this when archives show as unmatched despite
-                matching hostnames. The repository data on disk is NOT touched.
-              </span>
-            </div>
-            <button
-              class="btn btn-sm btn-danger"
-              :disabled="resetAndSyncLoading"
-              @click="showResetAndSyncDialog = true"
-            >
-              {{ resetAndSyncLoading ? 'Resetting...' : 'Reset &amp; Re-import' }}
-            </button>
-          </div>
         </div>
       </div>
 
@@ -1689,14 +1721,22 @@ async function resetImport(): Promise<void> {
                     @click="toggleGroup(group.hostname)"
                   >
                     <span class="group-chevron">&#9656;</span>
-                    <BaseHostLink
-                      :hostname="
-                        group.agentHostname && group.matched ? group.agentHostname : group.hostname
-                      "
+                    <RouterLink
+                      v-if="group.matched && group.clientHostname"
+                      :to="{ name: 'client-detail', params: { hostname: group.clientHostname } }"
                       class="host-link group-hostname"
-                      :class="{ 'group-unmatched': !group.matched }"
                       @click.stop
-                    />
+                    >
+                      {{ group.hostname }}
+                    </RouterLink>
+                    <RouterLink
+                      v-else
+                      :to="{ name: 'client-detail', params: { hostname: group.hostname } }"
+                      class="host-link group-hostname group-unmatched"
+                      @click.stop
+                    >
+                      {{ group.hostname }}
+                    </RouterLink>
                     <span
                       v-if="!group.matched"
                       class="match-icon match-warn"
@@ -2002,6 +2042,9 @@ async function resetImport(): Promise<void> {
               >
                 {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
               </span>
+              <span class="execution-badge">
+                {{ s.execution_mode === 'sequential' ? 'Sequential' : 'Parallel' }}
+              </span>
             </div>
             <div
               v-if="s.health?.last_error_message"
@@ -2013,11 +2056,7 @@ async function resetImport(): Promise<void> {
                 @click="toggleScheduleError(s.id)"
               >
                 <AlertCircle :size="12" />
-                {{
-                  s.health?.last_status === 'warning'
-                    ? 'Last backup had a warning'
-                    : 'Last backup failed'
-                }}
+                Last backup failed
                 <span class="toggle-arrow">{{ scheduleExpandedError === s.id ? '▴' : '▾' }}</span>
               </button>
               <pre
@@ -2295,53 +2334,6 @@ async function resetImport(): Promise<void> {
               @click="doConfirmRelocation"
             >
               {{ confirmRelocationLoading ? 'Confirming...' : 'Yes, Confirm Relocation' }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
-    <!-- Reset & Re-import Confirmation Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showResetAndSyncDialog"
-        class="overlay"
-        @click.self="showResetAndSyncDialog = false"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Reset &amp; Re-import?</h2>
-            <button
-              class="close-btn"
-              @click="showResetAndSyncDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p style="color: var(--danger); font-weight: 600">
-              This will permanently delete ALL archive metadata for
-              <strong>{{ repo?.name }}</strong> and re-import from borg. This operation cannot be
-              undone.
-            </p>
-            <p>
-              Backup reports, file indexes, tags, and archive paths will be deleted. The repository
-              data on disk (borg archives themselves) is NOT touched.
-            </p>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showResetAndSyncDialog = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="resetAndSyncLoading"
-              @click="resetAndSync"
-            >
-              {{ resetAndSyncLoading ? 'Resetting...' : 'Confirm Reset' }}
             </button>
           </div>
         </div>
@@ -3697,15 +3689,24 @@ async function resetImport(): Promise<void> {
   flex-wrap: wrap;
 }
 
-.host-count {
+.host-count,
+.execution-badge {
   display: inline-block;
   padding: 0.1rem 0.45rem;
   border-radius: 999px;
   font-size: 0.65rem;
   font-weight: 600;
   letter-spacing: 0.02em;
+}
+
+.host-count {
   background: var(--bg-hover);
   color: var(--text-secondary);
+}
+
+.execution-badge {
+  background: var(--info-subtle);
+  color: var(--info);
 }
 
 .type-badge {

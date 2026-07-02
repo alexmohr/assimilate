@@ -5,6 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { RouterLink } from 'vue-router'
 import { FilterMatchMode } from '@primevue/core/api'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
@@ -18,8 +19,6 @@ import BaseSpinner from '../components/BaseSpinner.vue'
 import RestoreWizard from '../components/RestoreWizard.vue'
 import ArchiveDiff from '../components/ArchiveDiff.vue'
 import FileSearch from '../components/FileSearch.vue'
-import BaseHostLink from '../components/BaseHostLink.vue'
-import type { ContentsResponse, ContentEntryResponse } from '../types/generated'
 
 interface RepoOption {
   id: number
@@ -39,6 +38,14 @@ interface ArchiveEntry {
   agent_hostname: string | null
 }
 
+interface ContentEntry {
+  type: string
+  path: string
+  size: number
+  mtime: string
+  mode: string
+}
+
 interface BreadcrumbSegment {
   label: string
   path: string
@@ -55,7 +62,7 @@ const archivesError = ref<string | null>(null)
 const selectedArchive = ref<ArchiveEntry | null>(null)
 
 const currentPath = ref('/')
-const contents = ref<ContentEntryResponse[]>([])
+const contents = ref<ContentEntry[]>([])
 const contentsLoading = ref(false)
 const contentsError = ref<string | null>(null)
 const indexing = ref(false)
@@ -119,12 +126,7 @@ const breadcrumbs = computed<BreadcrumbSegment[]>(() => {
   return segments
 })
 
-interface DisplayEntry {
-  type: string
-  path: string
-  size: number
-  mtime: string
-  mode: string
+interface DisplayEntry extends ContentEntry {
   displayName: string
   isDir: boolean
 }
@@ -143,11 +145,7 @@ const browserEntries = computed<DisplayEntry[]>(() => {
   const currentEntry = contents.value.find((e) => e.type === 'd' && e.path === currentDir)
   if (currentEntry) {
     entries.push({
-      type: currentEntry.type,
-      path: currentEntry.path,
-      size: Number(currentEntry.size),
-      mtime: currentEntry.mtime,
-      mode: currentEntry.mode,
+      ...currentEntry,
       displayName: '.',
       isDir: true,
     })
@@ -179,11 +177,7 @@ const browserEntries = computed<DisplayEntry[]>(() => {
   return [
     ...entries,
     ...[...dirList, ...fileList].map((e) => ({
-      type: e.type,
-      path: e.path,
-      size: Number(e.size),
-      mtime: e.mtime,
-      mode: e.mode,
+      ...e,
       displayName: e.path.split('/').pop() ?? e.path,
       isDir: e.type === 'd',
     })),
@@ -244,6 +238,11 @@ async function selectArchive(archive: ArchiveEntry): Promise<void> {
   await loadContents('/')
 }
 
+interface ContentsResponse {
+  index_status: 'pending' | 'indexing' | 'done' | 'failed'
+  entries: ContentEntry[]
+}
+
 async function loadContents(path: string): Promise<void> {
   if (selectedRepoId.value === null || !selectedArchive.value) return
   contentsLoading.value = true
@@ -276,11 +275,11 @@ function navigateTo(path: string): void {
   loadContents(path)
 }
 
-function entryName(entry: ContentEntryResponse): string {
+function entryName(entry: ContentEntry): string {
   return entry.path.split('/').pop() ?? entry.path
 }
 
-function downloadEntry(entry: ContentEntryResponse): void {
+function downloadEntry(entry: ContentEntry): void {
   if (selectedRepoId.value === null || !selectedArchive.value) return
   const archiveName = encodeURIComponent(selectedArchive.value.name)
   const encodedPath = encodeURIComponent(entry.path)
@@ -504,18 +503,22 @@ onMounted(loadRepos)
                 />
               </template>
               <template #body="{ data }">
-                <BaseHostLink
+                <RouterLink
                   v-if="data.matched === true && data.agent_hostname"
-                  :hostname="data.agent_hostname"
+                  :to="{ name: 'client-detail', params: { hostname: data.agent_hostname } }"
                   class="host-link"
                   @click.stop
-                />
-                <BaseHostLink
+                >
+                  {{ data.agent_hostname }}
+                </RouterLink>
+                <RouterLink
                   v-else-if="data.matched !== true"
-                  :hostname="data.hostname"
+                  :to="{ name: 'client-detail', params: { hostname: data.hostname } }"
                   class="unmatched-host-link"
                   @click.stop
-                />
+                >
+                  {{ data.hostname }}
+                </RouterLink>
                 <span
                   v-else
                   class="td-host"

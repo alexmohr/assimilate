@@ -98,6 +98,7 @@ dependencies = [
  "clap",
  "futures-util",
  "gethostname",
+ "glob-match",
  "nix 0.29.0",
  "rustls",
  "serde",

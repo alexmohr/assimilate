@@ -4827,14 +4827,14 @@ pub async fn get_storage_trends_by_repo(
 pub async fn get_enabled_schedules_for_calendar(
     pool: &PgPool,
 ) -> Result<Vec<ScheduleRow>, ApiError> {
-    #[allow(trivial_casts)]
-    let rows = sqlx::query_as::<_, ScheduleRow>(
+    let rows = sqlx::query_as!(
+        ScheduleRow,
         "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns_raw, file_change_patterns_raw, \
          ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
          compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, \
-         execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS target_hostnames \
-         FROM schedules WHERE enabled = true",
+         execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \
+         \"target_hostnames!\" FROM schedules WHERE enabled = true",
     )
     .fetch_all(pool)
     .await

@@ -33,6 +33,7 @@ pub struct ScheduleTargetExport {
     pub execution_order: i32,
     pub backup_sources: Vec<String>,
     pub exclude_patterns: String,
+    #[serde(default)]
     pub file_change_patterns: String,
 }
 
@@ -46,6 +47,7 @@ pub struct ScheduleExport {
     pub execution_mode: String,
     pub on_failure: String,
     pub exclude_patterns_raw: String,
+    #[serde(default)]
     pub file_change_patterns_raw: String,
     pub ignore_global_excludes: bool,
     pub keep_hourly: i32,

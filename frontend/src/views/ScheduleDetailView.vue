@@ -96,12 +96,30 @@ function serializeFileChangePatterns(rows: FileChangePatternRow[]): string {
   return rows.map((r) => (r.action === 'warn' ? r.path : `${r.path} ${r.action}`)).join('\n')
 }
 
-const fileChangePatternRows = computed<FileChangePatternRow[]>({
-  get: () => parseFileChangePatterns(form.value.file_change_patterns),
-  set: (rows) => {
-    form.value.file_change_patterns = serializeFileChangePatterns(rows)
-  },
-})
+const fileChangePatternRows = ref<FileChangePatternRow[]>([])
+let syncingFileChangePatterns = false
+
+function syncFileChangePatternsFromForm(): void {
+  if (syncingFileChangePatterns) return
+  syncingFileChangePatterns = true
+  fileChangePatternRows.value = parseFileChangePatterns(form.value.file_change_patterns)
+  syncingFileChangePatterns = false
+}
+
+function syncFileChangePatternsToForm(): void {
+  if (syncingFileChangePatterns) return
+  syncingFileChangePatterns = true
+  form.value.file_change_patterns = serializeFileChangePatterns(fileChangePatternRows.value)
+  syncingFileChangePatterns = false
+}
+
+watch(
+  () => form.value.file_change_patterns,
+  () => syncFileChangePatternsFromForm(),
+  { immediate: true },
+)
+
+watch(fileChangePatternRows, () => syncFileChangePatternsToForm(), { deep: true })
 
 function addFileChangePatternRow(): void {
   fileChangePatternRows.value = [...fileChangePatternRows.value, { path: '', action: 'warn' }]
@@ -1389,12 +1407,10 @@ watch(activeTab, (tab) => {
                     class="form-input"
                     placeholder="Path pattern (glob)"
                     spellcheck="false"
-                    @input="fileChangePatternRows.value = [...fileChangePatternRows.value]"
                   />
                   <select
                     v-model="row.action"
                     class="form-input form-select file-change-action"
-                    @change="fileChangePatternRows.value = [...fileChangePatternRows.value]"
                   >
                     <option value="warn">warn</option>
                     <option value="ignore">ignore</option>

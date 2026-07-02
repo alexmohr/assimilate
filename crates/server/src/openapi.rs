@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+use shared::responses::{
+    ArchiveEntryResponse as ArchiveEntry, ArchiveInfoResponse as ArchiveInfo,
+    CreateApiTokenResponse as CreateTokenResponse, ListApiTokensResponse as ListTokensResponse,
+};
 use utoipa::OpenApi;
 
 use crate::{
     api::{
-        agents::{AgentResponse, CreateAgentRequest, CreateAgentResponse, UpdateAgentRequest},
-        archives::{ArchiveEntry, ArchiveIndexStatus, ArchiveInfo, ContentEntry, ContentsResponse},
+        agents::{CreateAgentRequest, UpdateAgentRequest},
+        archives::{ArchiveIndexStatus, ContentEntry, ContentsResponse},
         auth::{ChangePasswordRequest, LoginRequest, LoginResponse, MeResponse},
         deploy::{DeployAgentRequest, DeployAgentResponse},
         dryrun::{DryRunFileEntry, DryRunRequest, DryRunResponse},
@@ -31,7 +35,7 @@ use crate::{
             UpdateSettingsRequest, VersionResponse,
         },
         tags::{CreateTagRequest, SetTagsRequest},
-        tokens::{CreateTokenRequest, CreateTokenResponse, ListTokensResponse},
+        tokens::CreateTokenRequest,
         users::{CreateUserRequest, UpdatePasswordRequest, UpdateRoleRequest},
     },
     db::{
@@ -163,9 +167,9 @@ use crate::{
         UserRow,
         ApiTokenRow,
         AgentRow,
-        AgentResponse,
+        shared::responses::AgentResponse,
         CreateAgentRequest,
-        CreateAgentResponse,
+        shared::responses::CreateAgentResponse,
         UpdateAgentRequest,
         RepoRow,
         RepoWithStatsRow,

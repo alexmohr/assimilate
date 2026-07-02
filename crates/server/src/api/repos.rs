@@ -2988,9 +2988,9 @@ mod tests {
         archive: &serde_json::Value,
         started_at: chrono::DateTime<chrono::Utc>,
     ) -> chrono::DateTime<chrono::Utc> {
-        if let Ok(end) = archive
+        if let Some(end) = archive
             .get("end")
-            .and_then(|v| v.as_str())
+            .and_then(serde_json::Value::as_str)
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         {
             return end.to_utc();

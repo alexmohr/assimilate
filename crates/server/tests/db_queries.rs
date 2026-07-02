@@ -4988,6 +4988,7 @@ async fn list_archive_names_needing_stats_filters_enriched(pool: PgPool) {
             original_size: 1_000,
             compressed_size: 500,
             deduplicated_size: 250,
+            repo_unique_csize: 250,
             archive_name: Some("already-enriched".to_string()),
             ..base.clone()
         },

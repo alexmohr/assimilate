@@ -59,6 +59,7 @@ const reportsLoading = ref(false)
 const reportsError = ref<string | null>(null)
 const { success: toastSuccess, error: toastError } = useToast()
 const { onMessage } = useWebSocket()
+
 const selectedAgentIds = ref<number[]>([])
 const selectedRepoId = ref<number | null>(null)
 const selectedType = ref<ScheduleType>('backup')
@@ -516,48 +517,39 @@ function parseArchiveProgress(raw: string): BorgArchiveProgress | null {
   }
 }
 
-function isThisSchedule(payload: BackupPayload): boolean {
-  if (payload.schedule_id != null) return payload.schedule_id === Number(props.id)
-  return repo.value != null && payload.target_name === repo.value.name
-}
-
 onMessage<BackupPayload>('BackupStarted', (payload) => {
-  if (!isThisSchedule(payload)) return
-  backupRunning.value = true
-  backupHostname.value = payload.hostname
-  backupArchiveName.value = payload.archive_name ?? null
-  archiveProgress.value = null
-  liveLogLines.value = []
-  backupStartedAt.value = Date.now()
-  backupElapsedSecs.value = 0
-  if (elapsedTimer !== null) clearInterval(elapsedTimer)
-  elapsedTimer = setInterval(() => {
-    if (backupStartedAt.value !== null) {
-      backupElapsedSecs.value = Math.floor((Date.now() - backupStartedAt.value) / 1000)
-    }
-  }, 1000)
+  if (repo.value && payload.target_name === repo.value.name) {
+    backupRunning.value = true
+    backupHostname.value = payload.hostname
+    backupArchiveName.value = payload.archive_name ?? null
+    archiveProgress.value = null
+    liveLogLines.value = []
+    backupStartedAt.value = Date.now()
+    backupElapsedSecs.value = 0
+    if (elapsedTimer !== null) clearInterval(elapsedTimer)
+    elapsedTimer = setInterval(() => {
+      if (backupStartedAt.value !== null) {
+        backupElapsedSecs.value = Math.floor((Date.now() - backupStartedAt.value) / 1000)
+      }
+    }, 1000)
+  }
 })
 
 onMessage<BackupPayload>('BackupCompleted', (payload) => {
-  if (!isThisSchedule(payload)) return
-  backupRunning.value = false
-  backupHostname.value = null
-  backupArchiveName.value = null
-  liveLogLines.value = []
-  if (elapsedTimer !== null) {
-    clearInterval(elapsedTimer)
-    elapsedTimer = null
+  if (repo.value && payload.target_name === repo.value.name) {
+    backupRunning.value = false
+    backupHostname.value = null
+    backupArchiveName.value = null
+    liveLogLines.value = []
+    if (elapsedTimer !== null) {
+      clearInterval(elapsedTimer)
+      elapsedTimer = null
+    }
   }
 })
 
 onMessage<BackupLogPayload>('BackupLog', (payload) => {
-  // Prefer schedule_id matching so progress arrives even before loadData() resolves
-  // selectedRepoId; fall back to repo_id when schedule_id is absent.
-  if (payload.schedule_id != null) {
-    if (payload.schedule_id !== Number(props.id)) return
-  } else if (selectedRepoId.value == null || payload.repo_id !== selectedRepoId.value) {
-    return
-  }
+  if (selectedRepoId.value == null || payload.repo_id !== selectedRepoId.value) return
   const progress = parseArchiveProgress(payload.line)
   if (progress !== null) {
     archiveProgress.value = {

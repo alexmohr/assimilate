@@ -185,36 +185,19 @@ test.describe('backup progress card', () => {
     await expect(page.locator('.live-log-card')).not.toBeVisible({ timeout: 5_000 })
   })
 
-  test('BackupLog for a different schedule is ignored', async ({ page }) => {
+  test('BackupLog for a different repo is ignored', async ({ page }) => {
     sendWsMsg(ws!, 'BackupStarted', { hostname: 'web-server-01', target_name: REPO_NAME })
     await expect(page.locator('.live-log-card')).toBeVisible({ timeout: 5_000 })
     await expect(page.locator('.live-log-empty')).toBeVisible()
 
     sendWsMsg(ws!, 'BackupLog', {
       hostname: 'web-server-01',
-      schedule_id: SCHEDULE_ID + 999,
-      repo_id: REPO_ID,
-      line: makeArchiveProgressLine(99, 1_000, '/other/file'),
-    })
-
-    // Progress placeholder should still be visible - message was for a different schedule.
-    await page.waitForTimeout(300)
-    await expect(page.locator('.live-log-empty')).toBeVisible()
-  })
-
-  test('BackupLog with null schedule_id and different repo is ignored', async ({ page }) => {
-    sendWsMsg(ws!, 'BackupStarted', { hostname: 'web-server-01', target_name: REPO_NAME })
-    await expect(page.locator('.live-log-card')).toBeVisible({ timeout: 5_000 })
-    await expect(page.locator('.live-log-empty')).toBeVisible()
-
-    sendWsMsg(ws!, 'BackupLog', {
-      hostname: 'web-server-01',
-      schedule_id: null,
+      schedule_id: SCHEDULE_ID,
       repo_id: REPO_ID + 999,
       line: makeArchiveProgressLine(99, 1_000, '/other/file'),
     })
 
-    // Progress placeholder should still be visible - null schedule_id falls back to repo_id filter.
+    // Progress placeholder should still be visible -- no data arrived for our repo.
     await page.waitForTimeout(300)
     await expect(page.locator('.live-log-empty')).toBeVisible()
   })
@@ -430,25 +413,6 @@ test.describe('backup progress card — mid-backup page load', () => {
     await expect(page.locator('.live-log-output')).toBeVisible({ timeout: 3_000 })
     await expect(page.locator('.live-log-output')).toContainText('WARNING')
   })
-
-  test('BackupLog matched by schedule_id updates progress even without repo data loaded', async ({
-    page,
-  }) => {
-    // Card is visible from DB state. Send a BackupLog using only schedule_id for matching
-    // (repo_id set to a sentinel that would fail the old repo_id filter).
-    await expect(page.locator('.live-log-card')).toBeVisible({ timeout: 5_000 })
-
-    sendWsMsg(ws!, 'BackupLog', {
-      hostname: 'web-server-01',
-      schedule_id: SCHEDULE_ID,
-      repo_id: REPO_ID,
-      line: makeArchiveProgressLine(500, 524_288_000, '/data/file.tar'),
-    })
-
-    await expect(page.locator('.live-log-empty')).not.toBeVisible({ timeout: 3_000 })
-    await expect(page.locator('.progress-body')).toContainText('500')
-    await expect(page.locator('.progress-body')).toContainText('500.0 MB')
-  })
 })
 
 async function mockActivityLogApis(page: Page): Promise<void> {
@@ -495,7 +459,7 @@ test.describe('activity log — live backup log', () => {
 
     sendWsMsg(ws!, 'BackupStarted', { hostname: 'web-server-01', target_name: REPO_NAME })
 
-    // Card not visible yet - needs at least one non-progress log line.
+    // Card not visible yet -- needs at least one non-progress log line.
     await page.waitForTimeout(300)
     await expect(page.locator('.live-session-card')).not.toBeVisible()
 
@@ -528,7 +492,7 @@ test.describe('activity log — live backup log', () => {
     })
 
     await page.waitForTimeout(400)
-    // archive_progress lines are filtered out - no card should appear.
+    // archive_progress lines are filtered out -- no card should appear.
     await expect(page.locator('.live-session-card')).not.toBeVisible()
   })
 

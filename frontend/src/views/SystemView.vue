@@ -12,13 +12,17 @@ import { extractError } from '../utils/error'
 import { formatBytes } from '../utils/format'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import TimezoneSelect from '../components/TimezoneSelect.vue'
-import type { SettingsResponse, SystemResetResponse } from '../types/generated'
 
 interface ImportResult {
   hosts_created: number
   hosts_updated: number
   schedules_created: number
   warnings: string[]
+}
+
+interface SettingsResponse {
+  retention_days: number
+  timezone: string
 }
 
 interface VersionInfo {
@@ -55,7 +59,7 @@ const settingsLoading = ref(true)
 const settingsError = ref('')
 const settingsSaving = ref(false)
 const settingsSaved = ref(false)
-const settingsForm = reactive({ timezone: '', retention_days: 7, borg_query_timeout_secs: 300 })
+const settingsForm = reactive({ timezone: '', retention_days: 7 })
 
 const versionInfo = ref<VersionInfo | null>(null)
 const versionLoading = ref(true)
@@ -78,8 +82,7 @@ onMounted(async () => {
   try {
     const res = await apiClient.get<SettingsResponse>('/system/settings')
     settingsForm.timezone = res.data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone
-    settingsForm.retention_days = Number(res.data.retention_days)
-    settingsForm.borg_query_timeout_secs = Number(res.data.borg_query_timeout_secs)
+    settingsForm.retention_days = res.data.retention_days
   } catch (e: unknown) {
     settingsError.value = extractError(e, 'Failed to load settings')
   } finally {
@@ -199,11 +202,9 @@ async function saveSettings(): Promise<void> {
     const res = await apiClient.put<SettingsResponse>('/system/settings', {
       retention_days: settingsForm.retention_days,
       timezone: settingsForm.timezone || undefined,
-      borg_query_timeout_secs: settingsForm.borg_query_timeout_secs,
     })
     settingsForm.timezone = res.data.timezone
-    settingsForm.retention_days = Number(res.data.retention_days)
-    settingsForm.borg_query_timeout_secs = Number(res.data.borg_query_timeout_secs)
+    settingsForm.retention_days = res.data.retention_days
     setTimezone(res.data.timezone || undefined)
     settingsSaved.value = true
     setTimeout(() => {
@@ -214,6 +215,11 @@ async function saveSettings(): Promise<void> {
   } finally {
     settingsSaving.value = false
   }
+}
+
+interface SystemResetResponse {
+  cancelled_backups: number
+  notified_agents: number
 }
 
 const showResetConfirm = ref(false)
@@ -372,28 +378,6 @@ async function resetSystem(): Promise<void> {
                 class="form-input retention-input"
               />
               <span class="field-hint">Number of days to keep backup job history.</span>
-            </div>
-          </div>
-
-          <div class="setting-row">
-            <label
-              class="setting-label"
-              for="settings-borg-timeout"
-            >
-              Borg Timeout
-            </label>
-            <div class="setting-input-group">
-              <input
-                id="settings-borg-timeout"
-                v-model.number="settingsForm.borg_query_timeout_secs"
-                type="number"
-                min="1"
-                class="form-input retention-input"
-              />
-              <span class="field-hint"
-                >Maximum seconds to wait for a single <code>borg list</code> or
-                <code>borg info</code> invocation. Increase for slow or remote repositories.</span
-              >
             </div>
           </div>
 

@@ -20,7 +20,6 @@ use server::{
     tunnel::TunnelManager,
     ws,
 };
-use shared::protocol::ServerToAgent;
 use sqlx::PgPool;
 use tower_http::services::{ServeDir, ServeFile};
 use tracing_subscriber::{EnvFilter, Layer as _, layer::SubscriberExt, util::SubscriberInitExt};
@@ -96,8 +95,6 @@ async fn main() -> Result<(), StartupError> {
         tracing::warn!("failed to ensure VAPID keys: {e}");
     }
 
-    let shutdown_token = tokio_util::sync::CancellationToken::new();
-
     let state = AppState {
         pool,
         encryption_key,
@@ -109,7 +106,6 @@ async fn main() -> Result<(), StartupError> {
         completion_bus: server::ws::completion_bus::CompletionBus::new(),
         repo_op_tracker: server::repo_op_tracker::RepoOpTracker::default(),
         repo_lock: server::RepoLock::default(),
-        import_tasks: server::ImportTaskRegistry::default(),
         pending_dryruns: std::sync::Arc::new(tokio::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),
@@ -122,7 +118,6 @@ async fn main() -> Result<(), StartupError> {
         pending_deletes: std::sync::Arc::new(tokio::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),
-        shutdown_token: shutdown_token.clone(),
     };
 
     tokio::spawn(server::scheduler::run(state.clone()));
@@ -134,7 +129,6 @@ async fn main() -> Result<(), StartupError> {
         let recovery_pool = state.pool.clone();
         let recovery_key = state.encryption_key;
         let recovery_broadcast = state.ui_broadcast.clone();
-        let recovery_state = state.clone();
         tokio::spawn(async move {
             let repo_ids = match db::list_importing_repo_ids(&recovery_pool).await {
                 Ok(ids) => ids,
@@ -145,50 +139,22 @@ async fn main() -> Result<(), StartupError> {
             };
             for repo_id in repo_ids {
                 tracing::info!(repo_id, "resuming interrupted import");
-                let state = recovery_state.clone();
                 let pool = recovery_pool.clone();
+                let key = recovery_key;
                 let broadcast = recovery_broadcast.clone();
                 tokio::spawn(async move {
-                    let key = recovery_key;
-                    let (task_id, cancel) = state.import_tasks.start(repo_id).await;
-
-                    server::api::repos::set_server_sync_op(&state, repo_id).await;
-                    tokio::select! {
-                        () = cancel.cancelled() => {
-                            tracing::info!(repo_id, "resumed import cancelled");
-                        }
-                        () = async {
-                            if let Err(e) = server::api::repos::sync_existing_archives(
-                                &pool,
-                                &key,
-                                repo_id,
-                                &broadcast,
-                            )
+                    if let Err(e) =
+                        server::api::repos::sync_existing_archives(&pool, &key, repo_id, &broadcast)
                             .await
-                            {
-                                tracing::warn!(repo_id, error = %e, "failed to resume import");
-                                if state.import_tasks.is_current(repo_id, task_id).await {
-                                    let _ = db::set_repo_import_error(
-                                        &pool,
-                                        repo_id,
-                                        Some(&format!("{e}")),
-                                    )
-                                    .await;
-                                }
-                            }
-                            if state.import_tasks.is_current(repo_id, task_id).await {
-                                let _ = db::set_repo_importing(&pool, repo_id, false).await;
-                                server::api::repos::clear_import_progress_state(
-                                    &pool, &broadcast, repo_id,
-                                )
-                                .await;
-                                broadcast.send(shared::protocol::ServerToUi::DataChanged);
-                            }
-                        } => {}
+                    {
+                        tracing::warn!(repo_id, error = %e, "failed to resume import");
+                        let _ =
+                            db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await;
                     }
-
-                    state.import_tasks.finish(repo_id, task_id).await;
-                    server::api::repos::clear_server_sync_op(&state, repo_id).await;
+                    let _ = db::set_repo_importing(&pool, repo_id, false).await;
+                    server::api::repos::clear_import_progress_state(&pool, &broadcast, repo_id)
+                        .await;
+                    broadcast.send(shared::protocol::ServerToUi::DataChanged);
                 });
             }
         });
@@ -209,7 +175,6 @@ async fn main() -> Result<(), StartupError> {
         .route("/api/health", get(api::health::health))
         .route("/api/auth/logout", post(api::auth::logout))
         .route("/api/auth/me", get(api::auth::me))
-        .route("/api/auth/refresh", post(api::auth::refresh_session))
         .route(
             "/api/auth/change-password",
             post(api::auth::change_password),
@@ -341,10 +306,6 @@ async fn main() -> Result<(), StartupError> {
         .route("/api/repos/{repo_id}/exec", post(api::repos::exec_borg))
         .route("/api/repos/{repo_id}/rescan", post(api::repos::rescan_repo))
         .route("/api/repos/{repo_id}/sync", post(api::repos::sync_repo))
-        .route(
-            "/api/repos/{repo_id}/reset-and-sync",
-            post(api::repos::reset_and_sync_repo),
-        )
         .route(
             "/api/repos/{repo_id}/reset-import",
             post(api::repos::reset_import),
@@ -636,9 +597,7 @@ async fn main() -> Result<(), StartupError> {
             "/api/openapi.json",
             get(|| async { Json(ApiDoc::openapi()) }),
         )
-        .merge(Scalar::with_url("/api/docs", ApiDoc::openapi()));
-    let registry = state.registry.clone();
-    let app = app
+        .merge(Scalar::with_url("/api/docs", ApiDoc::openapi()))
         .with_state(state)
         .layer(axum_middleware::from_fn(csp_headers))
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024));
@@ -668,22 +627,9 @@ async fn main() -> Result<(), StartupError> {
     tracing::info!("listening on {addr}");
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-
-    let server = axum::serve(listener, app).with_graceful_shutdown(async move {
-        shutdown_signal(registry, shutdown_token.clone()).await;
-        let _ = shutdown_tx.send(());
-    });
-
-    tokio::select! {
-        result = server => { result?; }
-        () = async {
-            let _ = shutdown_rx.await;
-            tokio::time::sleep(Duration::from_secs(10)).await;
-        } => {
-            tracing::warn!("graceful shutdown timed out after 10s, exiting");
-        }
-    }
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
 
     tunnel_manager.shutdown().await;
     Ok(())
@@ -720,10 +666,7 @@ async fn connect_with_retry(url: &str, max_connections: u32) -> Result<PgPool, S
     unreachable!()
 }
 
-async fn shutdown_signal(
-    registry: ws::registry::AgentRegistry,
-    shutdown_token: tokio_util::sync::CancellationToken,
-) {
+async fn shutdown_signal() {
     let ctrl_c = tokio::signal::ctrl_c();
 
     #[cfg(unix)]
@@ -746,25 +689,7 @@ async fn shutdown_signal(
         () = terminate => {}
     }
 
-    tracing::info!("shutdown signal received, notifying agents");
-
-    let agents = registry.connected_agents().await;
-    for hostname in &agents {
-        if let Err(e) = registry
-            .send_to(hostname, ServerToAgent::ShuttingDown)
-            .await
-        {
-            tracing::debug!(hostname = %hostname, error = %e, "failed to send shutdown message to agent");
-        }
-    }
-
-    if !agents.is_empty() {
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-
-    shutdown_token.cancel();
-
-    tracing::info!("shutting down gracefully");
+    tracing::info!("shutdown signal received, shutting down gracefully");
 }
 
 async fn bootstrap_admin(pool: &PgPool) -> Result<(), StartupError> {

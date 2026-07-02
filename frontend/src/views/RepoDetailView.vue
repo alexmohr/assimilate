@@ -187,8 +187,6 @@ const borgConsoleResult = ref<BorgExecResult | null>(null)
 const rescanLoading = ref(false)
 const syncLoading = ref(false)
 const resetImportLoading = ref(false)
-const resetAndSyncLoading = ref(false)
-const showResetAndSyncDialog = ref(false)
 const { success: toastSuccess, error: toastError } = useToast()
 
 interface RescanResult {
@@ -198,10 +196,6 @@ interface RescanResult {
 
 useEscapeKey(showBreakLockDialog, () => {
   showBreakLockDialog.value = false
-})
-
-useEscapeKey(showResetAndSyncDialog, () => {
-  showResetAndSyncDialog.value = false
 })
 
 // Schedules tab
@@ -439,8 +433,6 @@ onMessage<ImportProgressPayload>('ImportProgress', (payload) => {
     repo.value.import_status_message = payload.message
     if (payload.message !== null) {
       repo.value.importing = true
-    } else {
-      repo.value.importing = false
     }
   }
 })
@@ -952,19 +944,6 @@ async function syncRepo(): Promise<void> {
     toastError(extractError(e))
   } finally {
     syncLoading.value = false
-  }
-}
-
-async function resetAndSync(): Promise<void> {
-  showResetAndSyncDialog.value = false
-  resetAndSyncLoading.value = true
-  try {
-    await apiClient.post(`/repos/${repoId.value}/reset-and-sync?build_index=true`)
-    toastSuccess('Archive metadata reset and re-import started. Progress is shown via WebSocket.')
-  } catch (e: unknown) {
-    toastError(extractError(e))
-  } finally {
-    resetAndSyncLoading.value = false
   }
 }
 
@@ -1555,23 +1534,6 @@ async function resetImport(): Promise<void> {
               @click="showDeleteDialog = true"
             >
               Delete Repository
-            </button>
-          </div>
-          <div class="danger-body">
-            <div class="danger-info">
-              <span class="danger-heading">Reset &amp; Re-import</span>
-              <span class="danger-desc">
-                Delete ALL archive metadata (backup reports, file indexes, tags) and re-import from
-                the borg repository on disk. Use this when archives show as unmatched despite
-                matching hostnames. The repository data on disk is NOT touched.
-              </span>
-            </div>
-            <button
-              class="btn btn-sm btn-danger"
-              :disabled="resetAndSyncLoading"
-              @click="showResetAndSyncDialog = true"
-            >
-              {{ resetAndSyncLoading ? 'Resetting...' : 'Reset &amp; Re-import' }}
             </button>
           </div>
         </div>
@@ -2295,53 +2257,6 @@ async function resetImport(): Promise<void> {
               @click="doConfirmRelocation"
             >
               {{ confirmRelocationLoading ? 'Confirming...' : 'Yes, Confirm Relocation' }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
-    <!-- Reset & Re-import Confirmation Dialog -->
-    <Teleport to="body">
-      <div
-        v-if="showResetAndSyncDialog"
-        class="overlay"
-        @click.self="showResetAndSyncDialog = false"
-      >
-        <div class="dialog">
-          <div class="dialog-header">
-            <h2 class="dialog-title">Reset &amp; Re-import?</h2>
-            <button
-              class="close-btn"
-              @click="showResetAndSyncDialog = false"
-            >
-              &times;
-            </button>
-          </div>
-          <div class="dialog-body">
-            <p style="color: var(--danger); font-weight: 600">
-              This will permanently delete ALL archive metadata for
-              <strong>{{ repo?.name }}</strong> and re-import from borg. This operation cannot be
-              undone.
-            </p>
-            <p>
-              Backup reports, file indexes, tags, and archive paths will be deleted. The repository
-              data on disk (borg archives themselves) is NOT touched.
-            </p>
-          </div>
-          <div class="dialog-footer">
-            <button
-              class="btn btn-ghost"
-              @click="showResetAndSyncDialog = false"
-            >
-              Cancel
-            </button>
-            <button
-              class="btn btn-danger"
-              :disabled="resetAndSyncLoading"
-              @click="resetAndSync"
-            >
-              {{ resetAndSyncLoading ? 'Resetting...' : 'Confirm Reset' }}
             </button>
           </div>
         </div>

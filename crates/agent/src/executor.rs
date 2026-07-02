@@ -821,7 +821,6 @@ fn make_failed_report(
     started_at: chrono::DateTime<Utc>,
     error_message: String,
     run_id: Option<String>,
-    borg_command: Option<String>,
 ) -> shared::types::BackupReport {
     let finished_at = Utc::now();
     shared::types::BackupReport {
@@ -842,7 +841,7 @@ fn make_failed_report(
         warnings: Vec::new(),
         borg_version: None,
         archive_name: None,
-        borg_command,
+        borg_command: None,
         run_id,
     }
 }
@@ -895,7 +894,7 @@ async fn run_backup_task(
         repo_id,
         schedule_id,
         started_at,
-        borg_command: Some(borg_command.clone()),
+        borg_command: Some(borg_command),
         run_id: run_id.clone(),
     };
     if let Err(e) = outbound_tx.send(started_msg).await {
@@ -925,23 +924,12 @@ async fn run_backup_task(
         Err(BackupError::Skipped(reason)) => {
             error!(repo_id = ?repo_id, reason = %reason, "backup skipped, treating as failure");
             (
-                make_failed_report(
-                    repo_id,
-                    schedule_id,
-                    started_at,
-                    reason,
-                    run_id.clone(),
-                    Some(borg_command),
-                ),
+                make_failed_report(repo_id, schedule_id, started_at, reason, run_id.clone()),
                 None,
             )
         }
         Err(e) => {
             error!(repo_id = ?repo_id, error = %e, "backup failed");
-            let failed_command = e
-                .borg_command()
-                .map(std::borrow::ToOwned::to_owned)
-                .or_else(|| Some(borg_command.clone()));
             (
                 make_failed_report(
                     repo_id,
@@ -949,7 +937,6 @@ async fn run_backup_task(
                     started_at,
                     e.to_string(),
                     run_id.clone(),
-                    failed_command,
                 ),
                 None,
             )

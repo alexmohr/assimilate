@@ -4715,9 +4715,11 @@ fn compression_round_trip() {
 #[sqlx::test(migrations = "./migrations")]
 async fn storage_trends_test(pool: PgPool) {
     let empty_trends = db::get_storage_trends(&pool, None, 7).await.unwrap();
-    assert!(empty_trends
-        .iter()
-        .all(|t| t.deduplicated_size.unwrap_or(0) == 0));
+    assert!(
+        empty_trends
+            .iter()
+            .all(|t| t.deduplicated_size.unwrap_or(0) == 0)
+    );
 
     let agent = db::insert_agent(&pool, "strend-host", None, "hash", None)
         .await
@@ -4727,23 +4729,25 @@ async fn storage_trends_test(pool: PgPool) {
     insert_test_report(&pool, agent.id, repo.id).await;
 
     let trends = db::get_storage_trends(&pool, None, 7).await.unwrap();
-    assert!(trends
-        .iter()
-        .any(|t| t.deduplicated_size.unwrap_or(0) > 0));
+    assert!(trends.iter().any(|t| t.deduplicated_size.unwrap_or(0) > 0));
 
     let trends_repo = db::get_storage_trends(&pool, Some(repo.id), 7)
         .await
         .unwrap();
-    assert!(trends_repo
-        .iter()
-        .any(|t| t.deduplicated_size.unwrap_or(0) > 0));
+    assert!(
+        trends_repo
+            .iter()
+            .any(|t| t.deduplicated_size.unwrap_or(0) > 0)
+    );
 
     let trends_other = db::get_storage_trends(&pool, Some(repo.id + 999), 7)
         .await
         .unwrap();
-    assert!(trends_other
-        .iter()
-        .all(|t| t.deduplicated_size.unwrap_or(0) == 0));
+    assert!(
+        trends_other
+            .iter()
+            .all(|t| t.deduplicated_size.unwrap_or(0) == 0)
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]

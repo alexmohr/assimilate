@@ -8,7 +8,7 @@ use axum::{
 use serde::Deserialize;
 use shared::responses::RepoQuotaResponse;
 
-use super::auth::{AuthUser, Role};
+use super::auth::AuthUser;
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
@@ -34,12 +34,8 @@ pub struct UpsertQuotaRequest {
 }
 
 async fn require_operator_or_admin(state: &AppState, auth: &AuthUser) -> Result<(), ApiError> {
-    if auth.role == Role::Admin {
-        return Ok(());
-    }
-
     let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
-    if effective.can_view_all_repos {
+    if effective.can_delete_repo || effective.can_view_all_repos {
         return Ok(());
     }
 

@@ -322,7 +322,8 @@ pub async fn get_effective_permissions(
     auth: AuthUser,
     Path(user_id): Path<i64>,
 ) -> Result<Json<RoleResponse>, ApiError> {
-    if auth.role != super::auth::Role::Admin && auth.user_id != user_id {
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
+    if !effective.can_delete_repo && auth.user_id != user_id {
         return Err(ApiError::Forbidden(
             "admin access required or must be own user".to_string(),
         ));

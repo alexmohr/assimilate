@@ -9,7 +9,7 @@ import { logger } from '../utils/logger'
 export interface AuthUser {
   id: number
   username: string
-  role: 'admin' | 'user'
+  role: string
   must_change_password: boolean
   created_at: string
   last_login_at: string | null

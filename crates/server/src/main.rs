@@ -222,7 +222,6 @@ async fn main() -> Result<(), StartupError> {
             "/api/users",
             get(api::users::list_users).post(api::users::create_user),
         )
-        .route("/api/users/{id}/role", put(api::users::update_role))
         .route("/api/users/{id}/password", put(api::users::update_password))
         .route("/api/users/{id}", delete(api::users::delete_user))
         .route("/ws/agent", get(ws::handler::ws_handler))

@@ -11,7 +11,7 @@ use shared::responses::{
     AgentTagEntryResponse, ArchiveTagResponse, RepoTagEntryResponse, TagResponse,
 };
 
-use super::auth::{AuthUser, RequireAdmin, Role};
+use super::auth::{AuthUser, RequireAdmin};
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
@@ -97,12 +97,8 @@ fn normalize_tag(tag: String) -> Result<String, ApiError> {
 }
 
 async fn ensure_manage_tags(state: &AppState, auth: &AuthUser) -> Result<(), ApiError> {
-    if auth.role == Role::Admin {
-        return Ok(());
-    }
-
     let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
-    if effective.can_manage_tags {
+    if effective.can_delete_repo || effective.can_manage_tags {
         return Ok(());
     }
 

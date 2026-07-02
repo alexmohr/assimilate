@@ -96,7 +96,6 @@ async fn build_test_app(pool: PgPool) -> Router {
             "/api/users",
             get(server::api::users::list_users).post(server::api::users::create_user),
         )
-        .route("/api/users/{id}/role", put(server::api::users::update_role))
         .route("/api/users/{id}", delete(server::api::users::delete_user))
         .route(
             "/api/agents",
@@ -219,13 +218,25 @@ async fn setup_pool() -> PgPool {
 
 async fn create_test_user_and_session(pool: &PgPool) {
     let user_id: i64 = sqlx::query_scalar(
-        "INSERT INTO users (username, password_hash, role) VALUES ('integration-admin', \
-         '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'admin') ON CONFLICT \
-         (username) DO UPDATE SET username = EXCLUDED.username RETURNING id",
+        "INSERT INTO users (username, password_hash) VALUES ('integration-admin', \
+         '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx') ON CONFLICT (username) DO \
+         UPDATE SET username = EXCLUDED.username RETURNING id",
     )
     .fetch_one(pool)
     .await
     .unwrap();
+
+    let admin_role_id: i64 = sqlx::query_scalar("SELECT id FROM roles WHERE name = 'admin'")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+
+    sqlx::query("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+        .bind(user_id)
+        .bind(admin_role_id)
+        .execute(pool)
+        .await
+        .unwrap();
 
     let expires = chrono::Utc::now() + chrono::Duration::hours(24);
     sqlx::query(
@@ -1969,13 +1980,25 @@ const NON_ADMIN_SESSION_ID: &str = "non-admin-session-id-000000000000000";
 
 async fn create_non_admin_user_and_session(pool: &PgPool) {
     let user_id: i64 = sqlx::query_scalar(
-        "INSERT INTO users (username, password_hash, role) VALUES ('integration-viewer', \
-         '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'user') ON CONFLICT \
-         (username) DO UPDATE SET role = 'user' RETURNING id",
+        "INSERT INTO users (username, password_hash) VALUES ('integration-viewer', \
+         '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx') ON CONFLICT (username) DO \
+         UPDATE SET username = EXCLUDED.username RETURNING id",
     )
     .fetch_one(pool)
     .await
     .unwrap();
+
+    let viewer_role_id: i64 = sqlx::query_scalar("SELECT id FROM roles WHERE name = 'viewer'")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+
+    sqlx::query("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+        .bind(user_id)
+        .bind(viewer_role_id)
+        .execute(pool)
+        .await
+        .unwrap();
 
     let expires = chrono::Utc::now() + chrono::Duration::hours(24);
     sqlx::query(
@@ -2100,13 +2123,25 @@ const MCP_SESSION_ID: &str = "must-change-password-session-0000000";
 
 async fn create_must_change_password_user_and_session(pool: &PgPool) {
     let user_id: i64 = sqlx::query_scalar(
-        "INSERT INTO users (username, password_hash, role, must_change_password) VALUES \
-         ('mcp-user', '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'admin', \
-         true) ON CONFLICT (username) DO UPDATE SET must_change_password = true RETURNING id",
+        "INSERT INTO users (username, password_hash, must_change_password) VALUES ('mcp-user', \
+         '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', true) ON CONFLICT \
+         (username) DO UPDATE SET must_change_password = true RETURNING id",
     )
     .fetch_one(pool)
     .await
     .unwrap();
+
+    let admin_role_id: i64 = sqlx::query_scalar("SELECT id FROM roles WHERE name = 'admin'")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+
+    sqlx::query("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+        .bind(user_id)
+        .bind(admin_role_id)
+        .execute(pool)
+        .await
+        .unwrap();
 
     let expires = chrono::Utc::now() + chrono::Duration::hours(24);
     sqlx::query(

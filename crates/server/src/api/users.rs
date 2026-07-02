@@ -15,29 +15,29 @@ use crate::{
     error::{ApiError, ApiJson},
 };
 
-impl From<db::UserRow> for UserResponse {
-    fn from(row: db::UserRow) -> Self {
-        Self {
-            id: row.id,
-            username: row.username,
-            role: row.role,
-            created_at: row.created_at,
-            last_login_at: row.last_login_at,
-            must_change_password: row.must_change_password,
-        }
-    }
+async fn user_row_to_response(
+    pool: &sqlx::PgPool,
+    row: db::UserRow,
+) -> Result<UserResponse, ApiError> {
+    let role_names: Vec<String> = db::list_user_roles(pool, row.id)
+        .await?
+        .into_iter()
+        .map(|r| r.name)
+        .collect();
+    Ok(UserResponse {
+        id: row.id,
+        username: row.username,
+        role: role_names.join(","),
+        created_at: row.created_at,
+        last_login_at: row.last_login_at,
+        must_change_password: row.must_change_password,
+    })
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateUserRequest {
     pub username: String,
     pub password: String,
-    pub role: String,
-}
-
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct UpdateRoleRequest {
-    pub role: String,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -62,11 +62,11 @@ pub async fn list_users(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
 ) -> Result<Json<Vec<UserResponse>>, ApiError> {
-    let users: Vec<UserResponse> = db::list_users(&state.pool)
-        .await?
-        .into_iter()
-        .map(Into::into)
-        .collect();
+    let rows = db::list_users(&state.pool).await?;
+    let mut users = Vec::with_capacity(rows.len());
+    for row in rows {
+        users.push(user_row_to_response(&state.pool, row).await?);
+    }
     Ok(Json(users))
 }
 
@@ -98,51 +98,11 @@ pub async fn create_user(
         ));
     }
 
-    validate_role(&req.role)?;
-
     let hash = helpers::hash_password(req.password.clone()).await?;
 
-    let user: UserResponse = db::insert_user(&state.pool, &req.username, &hash, &req.role)
-        .await?
-        .into();
+    let user = db::insert_user(&state.pool, &req.username, &hash).await?;
+    let user = user_row_to_response(&state.pool, user).await?;
     Ok((StatusCode::CREATED, Json(user)))
-}
-
-#[utoipa::path(
-    put,
-    path = "/api/users/{user_id}/role",
-    tag = "Users",
-    operation_id = "update_role",
-    summary = "Update a user's role (admin only)",
-    params(
-        ("user_id" = i64, Path, description = "User ID"),
-    ),
-    request_body = UpdateRoleRequest,
-    responses(
-        (status = 200, description = "Updated user", body = UserResponse),
-        (status = 400, description = "Invalid input"),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin access required"),
-        (status = 404, description = "User not found"),
-        (status = 500, description = "Internal server error"),
-    )
-)]
-pub async fn update_role(
-    State(state): State<AppState>,
-    RequireAdmin(admin): RequireAdmin,
-    Path(user_id): Path<i64>,
-    ApiJson(req): ApiJson<UpdateRoleRequest>,
-) -> Result<Json<UserResponse>, ApiError> {
-    if admin.user_id == user_id {
-        return Err(ApiError::BadRequest("cannot change own role".to_string()));
-    }
-
-    validate_role(&req.role)?;
-
-    let user: UserResponse = db::update_user_role(&state.pool, user_id, &req.role)
-        .await?
-        .into();
-    Ok(Json(user))
 }
 
 #[utoipa::path(
@@ -213,11 +173,4 @@ pub async fn delete_user(
 
     db::delete_user(&state.pool, user_id).await?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-fn validate_role(role: &str) -> Result<(), ApiError> {
-    role.parse::<super::auth::Role>().map_err(|_| {
-        ApiError::BadRequest(format!("invalid role '{role}', must be 'admin' or 'user'"))
-    })?;
-    Ok(())
 }

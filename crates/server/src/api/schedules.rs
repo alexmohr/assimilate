@@ -57,7 +57,7 @@ impl From<db::PerAgentCommands> for PerAgentCommandsResponse {
 use uuid::Uuid;
 
 use super::{
-    auth::{AuthUser, Role},
+    auth::AuthUser,
     permissions::{check_repo_permission, is_visible_to_user},
 };
 use crate::{
@@ -159,7 +159,8 @@ pub async fn list_schedules(
     auth: AuthUser,
 ) -> Result<Json<Vec<ScheduleRow>>, ApiError> {
     let schedules = db::list_schedules(&state.pool).await?;
-    let is_admin = auth.role == Role::Admin;
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
+    let is_admin = effective.can_delete_repo;
     let mut visible = Vec::with_capacity(schedules.len());
     for s in schedules {
         if is_visible_to_user(
@@ -338,9 +339,10 @@ pub async fn update_schedule(
     ApiJson(req): ApiJson<UpdateScheduleRequest>,
 ) -> Result<Json<ScheduleRow>, ApiError> {
     let existing = db::get_schedule_by_id(&state.pool, id).await?;
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
     if let Some(rid) = existing.repo_id {
         check_repo_permission(&state.pool, &auth, rid, |p| p.can_modify_schedules).await?;
-    } else if auth.role != Role::Admin {
+    } else if !effective.can_delete_repo {
         return Err(ApiError::Forbidden(
             "only admins can edit orphaned schedules".into(),
         ));
@@ -480,9 +482,10 @@ pub async fn delete_schedule(
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     let existing = db::get_schedule_by_id(&state.pool, id).await?;
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
     if let Some(rid) = existing.repo_id {
         check_repo_permission(&state.pool, &auth, rid, |p| p.can_modify_schedules).await?;
-    } else if auth.role != Role::Admin {
+    } else if !effective.can_delete_repo {
         return Err(ApiError::Forbidden(
             "only admins can delete orphaned schedules".into(),
         ));

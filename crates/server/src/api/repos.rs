@@ -25,7 +25,7 @@ use tracing::{error, info, warn};
 
 use super::{
     archives::LOCK_WAIT_SECS,
-    auth::{AuthUser, RequireAdmin, Role},
+    auth::{AuthUser, RequireAdmin},
     helpers,
     permissions::is_visible_to_user,
 };
@@ -136,7 +136,8 @@ pub async fn list_repos(
     auth: AuthUser,
 ) -> Result<Json<Vec<RepoRow>>, ApiError> {
     let repos = db::list_all_repos(&state.pool).await?;
-    let is_admin = auth.role == Role::Admin;
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
+    let is_admin = effective.can_delete_repo;
     let mut visible = Vec::with_capacity(repos.len());
     for repo in repos {
         if is_visible_to_user(
@@ -652,7 +653,8 @@ pub async fn list_repos_with_stats(
     auth: AuthUser,
 ) -> Result<Json<Vec<RepoWithStatsRow>>, ApiError> {
     let repos = db::list_repos_with_stats(&state.pool).await?;
-    let is_admin = auth.role == Role::Admin;
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
+    let is_admin = effective.can_delete_repo;
     let mut visible = Vec::with_capacity(repos.len());
     for repo in repos {
         if is_visible_to_user(
@@ -837,7 +839,8 @@ pub async fn list_schedules_for_repo(
     Path(repo_id): Path<i64>,
 ) -> Result<Json<Vec<db::ScheduleRow>>, ApiError> {
     let schedules = db::list_schedules_for_repo(&state.pool, repo_id).await?;
-    let is_admin = auth.role == Role::Admin;
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
+    let is_admin = effective.can_delete_repo;
     let mut visible = Vec::with_capacity(schedules.len());
     for s in schedules {
         if super::permissions::is_visible_to_user(

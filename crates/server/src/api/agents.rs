@@ -19,7 +19,7 @@ use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use super::{
-    auth::{AuthUser, RequireAdmin, Role},
+    auth::{AuthUser, RequireAdmin},
     helpers,
     permissions::is_visible_to_user,
 };
@@ -143,7 +143,8 @@ pub async fn list_agents(
     auth: AuthUser,
     Query(query): Query<ListAgentsQuery>,
 ) -> Result<Json<Vec<AgentResponse>>, ApiError> {
-    let is_admin = auth.role == Role::Admin;
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
+    let is_admin = effective.can_delete_repo;
     let include_hidden = query.include_hidden && is_admin;
     let agents = db::list_agents(&state.pool, include_hidden).await?;
     let mut responses = Vec::with_capacity(agents.len());

@@ -63,9 +63,12 @@ DELETE FROM login_attempts;
 DELETE FROM users WHERE username IN ('operator1','viewer1');
 -- Reset admin password to 'admin' (bcrypt cost 10, pre-computed)
 UPDATE users SET password_hash = '$2b$10$HvauZloS2N8QIfViDXmtp.rpWOawMeLdgWdBQQDHl3jD7Mhw7C3/e', must_change_password = false WHERE username = 'admin';
-INSERT INTO users (username, password_hash, role, must_change_password)
-VALUES ('admin', '$2b$10$HvauZloS2N8QIfViDXmtp.rpWOawMeLdgWdBQQDHl3jD7Mhw7C3/e', 'admin', false)
+INSERT INTO users (username, password_hash, must_change_password)
+VALUES ('admin', '$2b$10$HvauZloS2N8QIfViDXmtp.rpWOawMeLdgWdBQQDHl3jD7Mhw7C3/e', false)
 ON CONFLICT (username) DO NOTHING;
+INSERT INTO user_roles (user_id, role_id)
+SELECT u.id, r.id FROM users u, roles r WHERE u.username = 'admin' AND r.name = 'admin'
+ON CONFLICT DO NOTHING;
 SQL
 
 echo "==> Logging in..."
@@ -326,10 +329,16 @@ api POST "/api/tags" '{"name":"archival","color":"#6366f1","scope":"repo"}' > /d
 
 echo "==> Creating additional users and roles..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<'SQL'
-INSERT INTO users (username, password_hash, role) VALUES
-    ('operator1', '$2b$12$LJ3m4sFQH/0.s3VDlIBNOeRbEEziXlg5V5X1A0x0aM0ABs3LHfMwq', 'operator'),
-    ('viewer1', '$2b$12$LJ3m4sFQH/0.s3VDlIBNOeRbEEziXlg5V5X1A0x0aM0ABs3LHfMwq', 'viewer')
+INSERT INTO users (username, password_hash) VALUES
+    ('operator1', '$2b$12$LJ3m4sFQH/0.s3VDlIBNOeRbEEziXlg5V5X1A0x0aM0ABs3LHfMwq'),
+    ('viewer1', '$2b$12$LJ3m4sFQH/0.s3VDlIBNOeRbEEziXlg5V5X1A0x0aM0ABs3LHfMwq')
 ON CONFLICT (username) DO NOTHING;
+INSERT INTO user_roles (user_id, role_id)
+SELECT u.id, r.id FROM users u, roles r WHERE u.username = 'operator1' AND r.name = 'operator'
+ON CONFLICT DO NOTHING;
+INSERT INTO user_roles (user_id, role_id)
+SELECT u.id, r.id FROM users u, roles r WHERE u.username = 'viewer1' AND r.name = 'viewer'
+ON CONFLICT DO NOTHING;
 SQL
 
 echo "==> Creating groups..."

@@ -14,7 +14,7 @@ use shared::responses::{
 use super::helpers;
 use crate::{
     AppState,
-    api::auth::{AuthUser, Role},
+    api::auth::AuthUser,
     db,
     error::{ApiError, ApiJson},
 };
@@ -95,7 +95,8 @@ pub async fn list_tokens(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<ListApiTokensResponse>, ApiError> {
-    let token_rows = if auth.role == Role::Admin {
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
+    let token_rows = if effective.can_delete_repo {
         db::list_all_api_tokens(&state.pool).await?
     } else {
         db::list_api_tokens_for_user(&state.pool, auth.user_id).await?
@@ -127,7 +128,8 @@ pub async fn delete_token(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<DeleteApiTokenResponse>, ApiError> {
-    if auth.role != Role::Admin {
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
+    if !effective.can_delete_repo {
         let owner_id = db::get_api_token_owner(&state.pool, id).await?;
         if owner_id != auth.user_id {
             return Err(ApiError::Forbidden(

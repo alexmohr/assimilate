@@ -197,7 +197,7 @@ test.describe('backup progress card', () => {
       line: makeArchiveProgressLine(99, 1_000, '/other/file'),
     })
 
-    // Progress placeholder should still be visible — no data arrived for our repo.
+    // Progress placeholder should still be visible -- no data arrived for our repo.
     await page.waitForTimeout(300)
     await expect(page.locator('.live-log-empty')).toBeVisible()
   })
@@ -459,7 +459,7 @@ test.describe('activity log — live backup log', () => {
 
     sendWsMsg(ws!, 'BackupStarted', { hostname: 'web-server-01', target_name: REPO_NAME })
 
-    // Card not visible yet — needs at least one non-progress log line.
+    // Card not visible yet -- needs at least one non-progress log line.
     await page.waitForTimeout(300)
     await expect(page.locator('.live-session-card')).not.toBeVisible()
 
@@ -492,7 +492,7 @@ test.describe('activity log — live backup log', () => {
     })
 
     await page.waitForTimeout(400)
-    // archive_progress lines are filtered out — no card should appear.
+    // archive_progress lines are filtered out -- no card should appear.
     await expect(page.locator('.live-session-card')).not.toBeVisible()
   })
 

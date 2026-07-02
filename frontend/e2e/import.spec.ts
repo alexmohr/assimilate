@@ -51,7 +51,7 @@ test('repos page shows all seeded repositories', async ({ page }) => {
   await expect(page.getByText('media-weekly')).toBeVisible()
 })
 
-// Repository detail — basic structure
+// Repository detail -- basic structure
 
 test('repo detail page loads without error', async ({ page }) => {
   await loginAsAdmin(page)
@@ -188,7 +188,7 @@ test('full resync preserves unmatched-banner', async ({ page }) => {
 
   await expect(page.getByText('Full resync started.')).toBeVisible({ timeout: 120_000 })
 
-  // Switch to archives tab — unmatched old-webserver archive must survive a resync
+  // Switch to archives tab -- unmatched old-webserver archive must survive a resync
   await page.getByRole('button', { name: 'Archives', exact: true }).click()
   await expect(page.locator('.unmatched-banner')).toBeVisible({ timeout: 10_000 })
 })
@@ -212,7 +212,7 @@ test('broken repo resync does not navigate to /error page', async ({ page }) => 
   await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
   await resyncBtn.click()
 
-  // The sync request is accepted immediately — "Full resync started." toast must appear
+  // The sync request is accepted immediately -- "Full resync started." toast must appear
   // and the page must stay on the repo detail view, never redirecting to /error
   await expect(page.locator('.toast-success').first()).toBeVisible({ timeout: 30_000 })
   await expect(page).not.toHaveURL(/\/error/)
@@ -325,7 +325,7 @@ test('full resync removes archive deleted from borg', async ({ page }) => {
 
   const container = demoContainer()
 
-  // Pick a web-server-01 archive to delete from borg (not old-webserver — that one drives
+  // Pick a web-server-01 archive to delete from borg (not old-webserver -- that one drives
   // the unmatched-banner tests).
   const listing = borgRun(container, 'borg list /backup/repos/server-daily --short')
   const toDelete = listing
@@ -335,7 +335,7 @@ test('full resync removes archive deleted from borg', async ({ page }) => {
     .find((n) => n.startsWith('web-server-01-'))
   if (!toDelete) throw new Error('no web-server-01 archive found in server-daily')
 
-  // Delete it from borg — the DB record still exists until the next resync prunes it.
+  // Delete it from borg -- the DB record still exists until the next resync prunes it.
   borgRun(container, `borg delete /backup/repos/server-daily::${toDelete}`)
 
   // Full resync should prune the stale record.
@@ -359,7 +359,7 @@ test('full resync removes archive deleted from borg', async ({ page }) => {
 
 test('import-status-msg shows waiting-for-lock during borg lock contention', async ({ page }) => {
   // This test blocks borg for LOCK_WAIT_SECS (60 s) then waits for the retry
-  // sleep ticker (~5 s into the 30 s wait) — budget at least 2 minutes.
+  // sleep ticker (~5 s into the 30 s wait) -- budget at least 2 minutes.
   test.setTimeout(180_000)
 
   await loginAsAdmin(page)
@@ -377,7 +377,7 @@ test('import-status-msg shows waiting-for-lock during borg lock contention', asy
     await resyncBtn.click()
 
     // Borg holds --lock-wait 60 s before giving up; after that the server enters
-    // a 30 s retry sleep and publishes "Waiting for lock…" every 5 s.
+    // a 30 s retry sleep and publishes "Waiting for lock..." every 5 s.
     const statusMsg = page.locator('.import-status-msg')
     await expect(statusMsg).toHaveText(/waiting for lock/i, { timeout: 90_000 })
   } finally {

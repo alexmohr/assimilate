@@ -97,7 +97,7 @@ test('after cancel the Run Now button is restored on next report poll', async ({
   await cancelBtn.click()
   await expect(page.getByText(/cancel request sent/i)).toBeVisible({ timeout: 5_000 })
 
-  // Navigate back to the same schedule — on reload the route mock returns
+  // Navigate back to the same schedule -- on reload the route mock returns
   // the cancelled report, so backupRunning becomes false.
   await page.goto(`/schedules/${id}`)
   await expect(page.getByRole('button', { name: 'Run Now' })).toBeVisible({ timeout: 10_000 })
@@ -152,7 +152,7 @@ test('Run Now triggers a backup that eventually completes', async ({ page }) => 
   await runNowBtn.click()
 
   // Wait for the agent to pick up the job (Cancel Backup appears via BackupStarted WS event).
-  // If the backup is so fast that it already completed, Run Now will still be visible — both
+  // If the backup is so fast that it already completed, Run Now will still be visible -- both
   // states are acceptable here; we just must not stay in an error state.
   const cancelOrRun = page.getByRole('button', { name: /cancel backup|run now/i })
   await expect(cancelOrRun).toBeVisible({ timeout: 15_000 })

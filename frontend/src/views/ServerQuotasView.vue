@@ -320,7 +320,7 @@ onMounted(loadData)
                 :disabled="editLoading"
                 @click="submitEdit"
               >
-                {{ editLoading ? 'Saving…' : 'Save' }}
+                {{ editLoading ? 'Saving...' : 'Save' }}
               </button>
             </div>
           </div>
@@ -355,7 +355,7 @@ onMounted(loadData)
           <dl class="quota-details">
             <dt>Warning</dt>
             <dd>
-              {{ quota.warn_bytes ? formatBytes(quota.warn_bytes) : '—' }}
+              {{ quota.warn_bytes ? formatBytes(quota.warn_bytes) : '--' }}
               <span
                 v-if="quota.warn_bytes"
                 class="action-tag"
@@ -365,7 +365,7 @@ onMounted(loadData)
             </dd>
             <dt>Critical</dt>
             <dd>
-              {{ quota.critical_bytes ? formatBytes(quota.critical_bytes) : '—' }}
+              {{ quota.critical_bytes ? formatBytes(quota.critical_bytes) : '--' }}
               <span
                 v-if="quota.critical_bytes"
                 class="action-tag"
@@ -481,7 +481,7 @@ onMounted(loadData)
             :disabled="addLoading || !addForm.ssh_host"
             @click="submitAdd"
           >
-            {{ addLoading ? 'Saving…' : 'Add Quota' }}
+            {{ addLoading ? 'Saving...' : 'Add Quota' }}
           </button>
         </div>
       </div>
@@ -511,7 +511,7 @@ onMounted(loadData)
             :disabled="deleteLoading"
             @click="submitDelete"
           >
-            {{ deleteLoading ? 'Deleting…' : 'Delete' }}
+            {{ deleteLoading ? 'Deleting...' : 'Delete' }}
           </button>
         </div>
       </div>

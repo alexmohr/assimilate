@@ -2726,6 +2726,7 @@ pub struct ArchiveStats {
     pub original_size: i64,
     pub compressed_size: i64,
     pub deduplicated_size: i64,
+    pub repo_unique_csize: i64,
     pub files_processed: i64,
     pub duration_secs: i64,
 }
@@ -2752,7 +2753,6 @@ pub async fn update_backup_report_stats(
     .await
     .map_err(ApiError::Database)?;
 
-
     if stats.repo_unique_csize > 0 {
         sqlx::query!(
             "UPDATE backup_reports SET repo_unique_csize = $3 WHERE repo_id = $1 AND archive_name \
@@ -2765,7 +2765,6 @@ pub async fn update_backup_report_stats(
         .await
         .map_err(ApiError::Database)?;
     }
-
 
     Ok(())
 }
@@ -2915,6 +2914,7 @@ pub struct SessionRow {
     pub user_id: i64,
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
+    pub remember_me: bool,
 }
 
 pub async fn insert_user(
@@ -3084,6 +3084,7 @@ pub async fn insert_session(
     session_id: &str,
     user_id: i64,
     expires_at: DateTime<Utc>,
+    remember_me: bool,
 ) -> Result<(), ApiError> {
     sqlx::query!(
         "INSERT INTO sessions (id, user_id, expires_at, remember_me) VALUES ($1, $2, $3, $4)",
@@ -3099,12 +3100,11 @@ pub async fn insert_session(
 }
 
 pub async fn get_session(pool: &PgPool, session_id: &str) -> Result<SessionRow, ApiError> {
-    sqlx::query_as!(
-        SessionRow,
+    sqlx::query_as::<_, SessionRow>(
         "SELECT id, user_id, created_at, expires_at, remember_me FROM sessions WHERE id = $1 AND \
          expires_at > NOW()",
-        session_id,
     )
+    .bind(session_id)
     .fetch_one(pool)
     .await
     .map_err(|e| match e {
@@ -4494,7 +4494,7 @@ pub struct StorageTrendRow {
     pub date: chrono::NaiveDate,
     pub original_size: i64,
     pub compressed_size: i64,
-    pub deduplicated_size: i64,
+    pub deduplicated_size: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -4504,7 +4504,7 @@ pub struct StorageTrendByRepoRow {
     pub repo_name: String,
     pub original_size: i64,
     pub compressed_size: i64,
-    pub deduplicated_size: i64,
+    pub deduplicated_size: Option<i64>,
 }
 
 /// `original_size`/`compressed_size` are the cumulative sum, across every archive taken up to

@@ -85,34 +85,36 @@ pub async fn upsert_quota(
     critical_action: QuotaAction,
     enabled: bool,
 ) -> Result<RepoQuota, sqlx::Error> {
-    sqlx::query_as!(
-        RepoQuota,
-        r#"
-        INSERT INTO repo_quotas (repo_id, warn_bytes, critical_bytes, enabled, updated_at)
-        VALUES ($1, $2, $3, $4, NOW())
-        ON CONFLICT (repo_id) DO UPDATE
-        SET warn_bytes = EXCLUDED.warn_bytes,
-            critical_bytes = EXCLUDED.critical_bytes,
-            enabled = EXCLUDED.enabled,
-            updated_at = NOW()
-        RETURNING repo_id, warn_bytes, critical_bytes, enabled, updated_at
-        "#,
-        repo_id,
-        warn_bytes,
-        critical_bytes,
-        enabled,
+    sqlx::query_as::<_, RepoQuota>(
+        r#"INSERT INTO repo_quotas (repo_id, warn_bytes, critical_bytes, warn_action,
+             critical_action, enabled, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW())
+         ON CONFLICT (repo_id) DO UPDATE
+         SET warn_bytes = EXCLUDED.warn_bytes,
+             critical_bytes = EXCLUDED.critical_bytes,
+             warn_action = EXCLUDED.warn_action,
+             critical_action = EXCLUDED.critical_action,
+             enabled = EXCLUDED.enabled,
+             updated_at = NOW()
+         RETURNING repo_id, warn_bytes, critical_bytes, warn_action, critical_action, enabled,
+                   updated_at"#,
     )
+    .bind(repo_id)
+    .bind(warn_bytes)
+    .bind(critical_bytes)
+    .bind(warn_action.to_string())
+    .bind(critical_action.to_string())
+    .bind(enabled)
     .fetch_one(pool)
     .await
 }
 
 pub async fn get_quota(pool: &PgPool, repo_id: i64) -> Result<Option<RepoQuota>, sqlx::Error> {
-    let quota = sqlx::query_as!(
-        RepoQuota,
-        "SELECT repo_id, warn_bytes, critical_bytes, enabled, updated_at FROM repo_quotas WHERE \
-         repo_id = $1",
-        repo_id,
+    sqlx::query_as::<_, RepoQuota>(
+        "SELECT repo_id, warn_bytes, critical_bytes, warn_action, critical_action, enabled, \
+         updated_at FROM repo_quotas WHERE repo_id = $1",
     )
+    .bind(repo_id)
     .fetch_optional(pool)
     .await
 }

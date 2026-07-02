@@ -239,7 +239,14 @@ pub async fn login(
     };
     let expires_at = Utc::now() + Duration::hours(ttl_hours);
 
-    db::insert_session(&state.pool, &session_id, user.id, expires_at).await?;
+    db::insert_session(
+        &state.pool,
+        &session_id,
+        user.id,
+        expires_at,
+        req.remember_me,
+    )
+    .await?;
     db::update_last_login(&state.pool, user.id).await?;
 
     let secure_flag = if std::env::var("ASSIMILATE_SECURE_COOKIES").map_or(true, |v| v != "false") {
@@ -325,11 +332,21 @@ pub async fn me(
     auth: AuthUser,
 ) -> Result<Json<MeResponse>, ApiError> {
     let user = db::get_user_by_id(&state.pool, auth.user_id).await?;
+    let (remember_me, session_expires_at) = if let Some(ref session_id) = auth.session_id {
+        match db::get_session(&state.pool, session_id).await {
+            Ok(session) => (session.remember_me, Some(session.expires_at)),
+            Err(_) => (false, None),
+        }
+    } else {
+        (false, None)
+    };
     Ok(Json(MeResponse {
         id: auth.user_id,
         username: auth.username,
         role: auth.role.to_string(),
         must_change_password: user.must_change_password,
+        remember_me,
+        session_expires_at,
     }))
 }
 

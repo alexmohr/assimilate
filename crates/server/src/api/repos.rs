@@ -2150,6 +2150,7 @@ fn enrich_archive_stats_background(
                         original_size: raw_stats["original_size"].as_i64().unwrap_or(0),
                         compressed_size: raw_stats["compressed_size"].as_i64().unwrap_or(0),
                         deduplicated_size: raw_stats["deduplicated_size"].as_i64().unwrap_or(0),
+                        repo_unique_csize: raw_stats["unique_csize"].as_i64().unwrap_or(0),
                         files_processed: raw_stats["nfiles"].as_i64().unwrap_or(0),
                         duration_secs: info["duration"].as_f64().unwrap_or(0.0) as i64,
                     };
@@ -2964,5 +2965,35 @@ mod tests {
             resp.last_op_kind,
             Some(shared::protocol::RepoOpKind::AgentBackup)
         );
+    }
+
+    fn archive_hostname(archive: &serde_json::Value) -> Option<String> {
+        let h = archive.get("hostname")?;
+        let s = h.as_str()?;
+        if s.is_empty() {
+            return None;
+        }
+        Some(s.to_owned())
+    }
+
+    fn archive_metadata_missing(archive: &serde_json::Value) -> bool {
+        archive.get("hostname").and_then(|v| v.as_str()).is_none()
+            || archive.get("end").and_then(|v| v.as_str()).is_none()
+    }
+
+    fn archive_finish_time(
+        archive: &serde_json::Value,
+        started_at: chrono::DateTime<chrono::Utc>,
+    ) -> chrono::DateTime<chrono::Utc> {
+        if let Some(end_str) = archive.get("end").and_then(|v| v.as_str()) {
+            if let Ok(end) = chrono::DateTime::parse_from_rfc3339(end_str) {
+                return end.to_utc();
+            }
+        }
+        if let Some(duration) = archive.get("duration").and_then(|v| v.as_f64()) {
+            let secs = duration as i64;
+            return started_at + chrono::Duration::seconds(secs);
+        }
+        started_at
     }
 }

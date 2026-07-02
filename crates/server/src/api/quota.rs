@@ -11,7 +11,7 @@ use shared::responses::RepoQuotaResponse;
 use super::auth::{AuthUser, Role};
 use crate::{
     AppState, db,
-    db::quota::{QuotaAction, RepoQuota, ServerQuota},
+    db::quota::{QuotaAction, ServerQuota},
     error::{ApiError, ApiJson},
 };
 
@@ -29,15 +29,6 @@ impl From<db::quota::RepoQuota> for RepoQuotaResponse {
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpsertQuotaRequest {
-    pub warn_bytes: Option<i64>,
-    pub critical_bytes: Option<i64>,
-    pub warn_action: Option<QuotaAction>,
-    pub critical_action: Option<QuotaAction>,
-    pub enabled: bool,
-}
-
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct UpsertServerQuotaRequest {
     pub warn_bytes: Option<i64>,
     pub critical_bytes: Option<i64>,
     pub warn_action: Option<QuotaAction>,
@@ -181,7 +172,7 @@ pub async fn get_server_quota(
     operation_id = "upsertServerQuota",
     summary = "Create or update a server quota configuration",
     params(("ssh_host" = String, Path, description = "SSH host")),
-    request_body = UpsertServerQuotaRequest,
+    request_body = UpsertQuotaRequest,
     responses(
         (status = 200, description = "Server quota configuration", body = ServerQuota),
         (status = 401, description = "Unauthorized"),
@@ -192,7 +183,7 @@ pub async fn upsert_server_quota(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(ssh_host): Path<String>,
-    ApiJson(req): ApiJson<UpsertServerQuotaRequest>,
+    ApiJson(req): ApiJson<UpsertQuotaRequest>,
 ) -> Result<Json<ServerQuota>, ApiError> {
     require_operator_or_admin(&state, &auth).await?;
 

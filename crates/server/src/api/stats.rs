@@ -789,7 +789,6 @@ pub async fn trends(
     Ok(Json(entries))
 }
 
-
 #[utoipa::path(
     get,
     path = "/api/stats/storage-trends",

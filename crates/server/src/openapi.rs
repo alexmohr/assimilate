@@ -19,7 +19,7 @@ use crate::{
     api::{
         agents::{CreateAgentRequest, UpdateAgentRequest},
         archives::{ContentEntry, ContentsResponse},
-        auth::{ChangePasswordRequest, LoginRequest, LoginResponse, RefreshResponse},
+        auth::{ChangePasswordRequest, LoginRequest, LoginResponse},
         deploy::{DeployAgentRequest, DeployAgentResponse},
         dryrun::{DryRunFileEntry, DryRunRequest, DryRunResponse},
         excludes::SetGlobalExcludesRequest,

@@ -5,7 +5,7 @@ import { expect, loginAsAdmin, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
 // All tests run against the demo environment seeded by seed-demo.sh.
-// No API mocking — every request hits the real server.
+// No API mocking - every request hits the real server.
 //
 // The seeded schedule used here is the first one on the list:
 // web-server-01 → server-daily repo, 30+ days of successful backups.

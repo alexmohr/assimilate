@@ -67,6 +67,8 @@ const usePerHostPaths = ref(false)
 const perHostSources = ref<Record<number, string>>({})
 const usePerHostExcludes = ref(false)
 const perHostExcludes = ref<Record<number, string>>({})
+const usePerHostFileChangePatterns = ref(false)
+const perHostFileChangePatterns = ref<Record<number, string>>({})
 const usePerAgentCmds = ref(false)
 const perAgentPreCmds = ref<Record<number, string>>({})
 const perAgentPostCmds = ref<Record<number, string>>({})
@@ -139,6 +141,7 @@ const form = ref({
   enabled: true,
   canary_enabled: true,
   exclude_patterns: '',
+  file_change_patterns: '',
   ignore_global_excludes: false,
   keep_hourly: 24,
   keep_daily: 7,
@@ -213,6 +216,7 @@ function populateForm(s: ScheduleRow): void {
     enabled: s.enabled,
     canary_enabled: s.canary_enabled,
     exclude_patterns: s.exclude_patterns_raw ?? '',
+    file_change_patterns: s.file_change_patterns_raw ?? '',
     ignore_global_excludes: s.ignore_global_excludes,
     keep_hourly: s.keep_hourly ?? 0,
     keep_daily: s.keep_daily,
@@ -315,6 +319,15 @@ async function loadData(): Promise<void> {
         }
         perHostExcludes.value = map
       }
+      const perHostFileChangePatternsEntries = sources.file_change_patterns_per_agent ?? []
+      if (perHostFileChangePatternsEntries.length > 0) {
+        usePerHostFileChangePatterns.value = true
+        const map: Record<number, string> = {}
+        for (const entry of perHostFileChangePatternsEntries) {
+          map[Number(entry.agent_id)] = entry.raw_text
+        }
+        perHostFileChangePatterns.value = map
+      }
       const perAgentCmdEntries = sources.commands_per_agent ?? []
       if (perAgentCmdEntries.length > 0) {
         usePerAgentCmds.value = true
@@ -346,6 +359,7 @@ async function save(): Promise<void> {
       enabled: form.value.enabled,
       canary_enabled: form.value.canary_enabled,
       exclude_patterns_raw: form.value.exclude_patterns,
+      file_change_patterns_raw: form.value.file_change_patterns,
       ignore_global_excludes: form.value.ignore_global_excludes,
       keep_hourly: form.value.keep_hourly,
       keep_daily: form.value.keep_daily,
@@ -378,6 +392,16 @@ async function save(): Promise<void> {
         perHost.push({ agent_id: id, raw_text })
       }
       payload.exclude_patterns_per_agent = perHost
+    }
+
+    if (usePerHostFileChangePatterns.value) {
+      payload.file_change_patterns_raw = ''
+      const perHost: { agent_id: number; raw_text: string }[] = []
+      for (const id of selectedAgentIds.value) {
+        const raw_text = perHostFileChangePatterns.value[id] ?? ''
+        perHost.push({ agent_id: id, raw_text })
+      }
+      payload.file_change_patterns_per_agent = perHost
     }
 
     if (usePerAgentCmds.value) {
@@ -1296,6 +1320,60 @@ watch(activeTab, (tab) => {
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div class="form-card">
+            <h3 class="info-title">File Change Patterns</h3>
+            <div
+              v-if="selectedAgentIds.length > 1"
+              class="form-group form-group-inline"
+            >
+              <label class="form-label">Configure per agent</label>
+              <ToggleSwitch v-model="usePerHostFileChangePatterns" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Patterns</label>
+              <textarea
+                v-if="!usePerHostFileChangePatterns"
+                v-model="form.file_change_patterns"
+                class="form-input area-input"
+                placeholder="One pattern per line&#10;Format: /path action&#10;Actions: ignore, warn (default), fatal&#10;e.g. /tmp/logs ignore&#10;/etc/config fatal"
+                spellcheck="false"
+              />
+              <div
+                v-else
+                class="per-host-paths"
+              >
+                <div
+                  v-for="agentId in selectedAgentIds"
+                  :key="agentId"
+                  class="per-host-entry"
+                >
+                  <label class="form-label">{{ agentLabel(agentId) }}</label>
+                  <textarea
+                    :value="perHostFileChangePatterns[agentId] ?? ''"
+                    class="form-input area-input area-input-sm"
+                    placeholder="File change patterns, one per line"
+                    spellcheck="false"
+                    @input="
+                      ($event) =>
+                        (perHostFileChangePatterns[agentId] = ($event.target as HTMLTextAreaElement).value)
+                    "
+                  />
+                </div>
+                <span class="field-hint">
+                  Leave an agent empty to use schedule-level file change patterns.
+                </span>
+              </div>
+              <span
+                v-if="!usePerHostFileChangePatterns"
+                class="field-hint"
+              >
+                Path patterns with actions: <code>ignore</code> (no warning), <code>warn</code>
+                (default, current behavior), <code>fatal</code> (fail backup).
+                Unconfigured files still produce warnings.
+              </span>
             </div>
           </div>
 

@@ -448,6 +448,43 @@ pub struct RepoConfig {
     pub schedules: Vec<ScheduleConfig>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema)]
+pub enum FileChangeAction {
+    Ignore,
+    #[default]
+    Warn,
+    Fatal,
+}
+
+impl fmt::Display for FileChangeAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ignore => write!(f, "ignore"),
+            Self::Warn => write!(f, "warn"),
+            Self::Fatal => write!(f, "fatal"),
+        }
+    }
+}
+
+impl FromStr for FileChangeAction {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "ignore" => Ok(Self::Ignore),
+            "warn" => Ok(Self::Warn),
+            "fatal" => Ok(Self::Fatal),
+            other => Err(format!("unknown file change action: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+pub struct FileChangePattern {
+    pub path: String,
+    pub action: FileChangeAction,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleConfig {
     #[serde(default)]
@@ -476,6 +513,8 @@ pub struct ScheduleConfig {
     pub pre_backup_commands: Vec<String>,
     #[serde(default)]
     pub post_backup_commands: Vec<String>,
+    #[serde(default)]
+    pub file_change_patterns: Vec<FileChangePattern>,
 }
 
 #[cfg(test)]

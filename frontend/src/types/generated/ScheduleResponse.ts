@@ -11,6 +11,7 @@ export type ScheduleResponse = {
   last_run_at: string | null;
   next_run_at: string | null;
   exclude_patterns_raw: string;
+  file_change_patterns_raw: string;
   ignore_global_excludes: boolean;
   keep_hourly: number;
   keep_daily: number;

@@ -273,6 +273,7 @@ pub struct ScheduleResponse {
     pub last_run_at: Option<DateTime<Utc>>,
     pub next_run_at: Option<DateTime<Utc>>,
     pub exclude_patterns_raw: String,
+    pub file_change_patterns_raw: String,
     pub ignore_global_excludes: bool,
     pub keep_hourly: i32,
     pub keep_daily: i32,
@@ -314,6 +315,7 @@ pub struct ScheduleBackupSourcesResponse {
     pub backup_sources_per_agent: Vec<PerAgentBackupSourcesResponse>,
     pub exclude_patterns_per_agent: Vec<PerAgentExcludePatternsResponse>,
     pub commands_per_agent: Vec<PerAgentCommandsResponse>,
+    pub file_change_patterns_per_agent: Vec<PerAgentFileChangePatternsResponse>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -339,6 +341,14 @@ pub struct PerAgentCommandsResponse {
     pub agent_id: i64,
     pub pre_backup_commands: String,
     pub post_backup_commands: String,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct PerAgentFileChangePatternsResponse {
+    #[ts(type = "number")]
+    pub agent_id: i64,
+    pub raw_text: String,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -1170,6 +1180,7 @@ pub struct ScheduleExportResponse {
     #[ts(type = "string")]
     pub on_failure: OnFailure,
     pub exclude_patterns_raw: String,
+    pub file_change_patterns_raw: String,
     pub ignore_global_excludes: bool,
     pub keep_hourly: i32,
     pub keep_daily: i32,

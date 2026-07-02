@@ -11,7 +11,7 @@ use shared::{
     protocol::{ServerToAgent, ServerToUi},
     responses::{
         PerAgentBackupSourcesResponse, PerAgentCommandsResponse, PerAgentExcludePatternsResponse,
-        ScheduleBackupSourcesResponse, ScheduleTargetResponse,
+        PerAgentFileChangePatternsResponse, ScheduleBackupSourcesResponse, ScheduleTargetResponse,
     },
     schedule::{calculate_next_run, validate_cron},
     types::{OnFailure, RepoId, ScheduleType},
@@ -54,6 +54,15 @@ impl From<db::PerAgentCommands> for PerAgentCommandsResponse {
         }
     }
 }
+
+impl From<db::PerAgentFileChangePatterns> for PerAgentFileChangePatternsResponse {
+    fn from(f: db::PerAgentFileChangePatterns) -> Self {
+        Self {
+            agent_id: f.agent_id,
+            raw_text: f.raw_text,
+        }
+    }
+}
 use uuid::Uuid;
 
 use super::{
@@ -88,6 +97,12 @@ pub struct AgentCommands {
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct AgentFileChangePatterns {
+    pub agent_id: i64,
+    pub raw_text: String,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateScheduleRequest {
     pub agent_ids: Vec<i64>,
     pub repo_id: i64,
@@ -112,6 +127,8 @@ pub struct CreateScheduleRequest {
     pub backup_sources_per_agent: Option<Vec<AgentBackupSources>>,
     pub exclude_patterns_per_agent: Option<Vec<AgentExcludePatterns>>,
     pub commands_per_agent: Option<Vec<AgentCommands>>,
+    pub file_change_patterns_raw: Option<String>,
+    pub file_change_patterns_per_agent: Option<Vec<AgentFileChangePatterns>>,
     #[schema(value_type = Option<String>)]
     pub on_failure: Option<OnFailure>,
 }
@@ -138,6 +155,8 @@ pub struct UpdateScheduleRequest {
     pub backup_sources_per_agent: Option<Vec<AgentBackupSources>>,
     pub exclude_patterns_per_agent: Option<Vec<AgentExcludePatterns>>,
     pub commands_per_agent: Option<Vec<AgentCommands>>,
+    pub file_change_patterns_raw: Option<String>,
+    pub file_change_patterns_per_agent: Option<Vec<AgentFileChangePatterns>>,
     pub agent_ids: Option<Vec<i64>>,
     #[schema(value_type = Option<String>)]
     pub on_failure: Option<OnFailure>,
@@ -247,6 +266,7 @@ pub async fn create_schedule(
         keep_yearly: req.keep_yearly.unwrap_or(0),
         compact_enabled: req.compact_enabled.unwrap_or(true),
         rate_limit_kbps: convert_rate_limit(req.rate_limit_kbps)?,
+        file_change_patterns_raw: req.file_change_patterns_raw.as_deref().unwrap_or(""),
         pre_backup_commands: &serde_json::to_string(&req.pre_backup_commands.unwrap_or_default())
             .unwrap_or_else(|_| "[]".to_owned()),
         post_backup_commands: &serde_json::to_string(&req.post_backup_commands.unwrap_or_default())
@@ -282,6 +302,10 @@ pub async fn create_schedule(
 
     if let Some(per_agent) = &req.commands_per_agent {
         insert_per_agent_commands(&state.pool, schedule.id, per_agent).await?;
+    }
+
+    if let Some(per_agent) = &req.file_change_patterns_per_agent {
+        insert_per_agent_file_change_patterns(&state.pool, schedule.id, per_agent).await?;
     }
 
     if enabled {
@@ -399,6 +423,7 @@ pub async fn update_schedule(
             Some(v) => Some(v),
             None => existing.rate_limit_kbps,
         },
+        file_change_patterns_raw: req.file_change_patterns_raw.as_deref().unwrap_or(""),
         pre_backup_commands: &pre_cmds_json,
         post_backup_commands: &post_cmds_json,
         on_failure: &on_failure,
@@ -447,6 +472,11 @@ pub async fn update_schedule(
     if let Some(per_agent) = &req.commands_per_agent {
         db::delete_per_agent_commands_for_schedule(&state.pool, schedule.id).await?;
         insert_per_agent_commands(&state.pool, schedule.id, per_agent).await?;
+    }
+
+    if let Some(per_agent) = &req.file_change_patterns_per_agent {
+        db::delete_per_agent_file_change_patterns_for_schedule(&state.pool, schedule.id).await?;
+        insert_per_agent_file_change_patterns(&state.pool, schedule.id, per_agent).await?;
     }
 
     if enabled {
@@ -600,6 +630,23 @@ async fn insert_per_agent_commands(
         let post =
             serde_json::to_string(&entry.post_backup_commands).unwrap_or_else(|_| "[]".to_owned());
         db::upsert_per_agent_commands(pool, schedule_id, entry.agent_id, &pre, &post).await?;
+    }
+    Ok(())
+}
+
+async fn insert_per_agent_file_change_patterns(
+    pool: &PgPool,
+    schedule_id: i64,
+    per_agent: &[AgentFileChangePatterns],
+) -> Result<(), ApiError> {
+    for entry in per_agent {
+        db::upsert_per_agent_file_change_patterns_raw(
+            pool,
+            schedule_id,
+            entry.agent_id,
+            &entry.raw_text,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -861,11 +908,18 @@ pub async fn list_schedule_backup_sources(
             .into_iter()
             .map(Into::into)
             .collect();
+    let file_change_patterns_per_agent: Vec<PerAgentFileChangePatternsResponse> =
+        db::list_all_per_agent_file_change_patterns_for_schedule(&state.pool, id)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect();
     Ok(Json(ScheduleBackupSourcesResponse {
         backup_sources,
         backup_sources_per_agent,
         exclude_patterns_per_agent,
         commands_per_agent,
+        file_change_patterns_per_agent,
     }))
 }
 

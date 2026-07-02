@@ -57,6 +57,7 @@ nav:
   - Restoring Files: restore.md
   - Storage Quotas: quotas.md
   - Global Excludes: excludes.md
+  - File Change Patterns: file-change-patterns.md
   - Activity Log: activity.md
   - SSH Tunnels: ssh-tunnels.md
   - Notifications: notifications.md

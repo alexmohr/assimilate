@@ -1005,6 +1005,7 @@ esac
                 enabled: true,
                 canary_enabled: false,
                 exclude_patterns_raw: "",
+                file_change_patterns_raw: "",
                 ignore_global_excludes: false,
                 keep_hourly: 24,
                 keep_daily: 7,

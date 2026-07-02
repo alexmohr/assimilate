@@ -1,0 +1,50 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT a.hostname, r.name AS target_name, COALESCE(SUM(br.original_size), 0)::INT8 AS \"total_original_size!\", COALESCE(SUM(br.compressed_size), 0)::INT8 AS \"total_compressed_size!\", COALESCE(SUM(br.deduplicated_size), 0)::INT8 AS \"total_deduplicated_size!\", COUNT(br.id)::INT8 AS \"report_count!\" FROM backup_reports br JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id WHERE a.is_hidden = false GROUP BY a.hostname, r.name ORDER BY a.hostname, r.name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "target_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "total_original_size!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "total_compressed_size!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "total_deduplicated_size!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "report_count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "a6e77b5382e34ebf2716556b4eeb5e3b42b32fdf06f493d0d31d63d97eb75816"
+}

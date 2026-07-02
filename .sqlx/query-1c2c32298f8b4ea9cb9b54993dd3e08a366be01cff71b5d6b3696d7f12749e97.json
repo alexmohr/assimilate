@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, original_size, compressed_size, deduplicated_size, repo_unique_csize, files_processed, duration_secs, error_message, warnings, borg_version, matched, archive_name, borg_command) SELECT t.agent_id, t.repo_id, t.started_at, t.finished_at, t.status, t.original_size, t.compressed_size, t.deduplicated_size, t.repo_unique_csize, t.files_processed, t.duration_secs, t.error_message, ARRAY[]::text[], t.borg_version, t.matched, t.archive_name, t.borg_command FROM UNNEST($1::bigint[], $2::bigint[], $3::timestamptz[], $4::timestamptz[], $5::text[], $6::bigint[], $7::bigint[], $8::bigint[], $9::bigint[], $10::bigint[], $11::bigint[], $12::text[], $13::text[], $14::bool[], $15::text[], $16::text[]) AS t(agent_id, repo_id, started_at, finished_at, status, original_size, compressed_size, deduplicated_size, repo_unique_csize, files_processed, duration_secs, error_message, borg_version, matched, archive_name, borg_command) ON CONFLICT (repo_id, agent_id, started_at, archive_name) WHERE archive_name IS NOT NULL DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int8Array",
+        "TimestamptzArray",
+        "TimestamptzArray",
+        "TextArray",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "Int8Array",
+        "TextArray",
+        "TextArray",
+        "BoolArray",
+        "TextArray",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1c2c32298f8b4ea9cb9b54993dd3e08a366be01cff71b5d6b3696d7f12749e97"
+}

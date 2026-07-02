@@ -1,0 +1,164 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands, s.post_backup_commands, s.execution_mode, s.on_failure, s.owner_id, s.visibility, ARRAY(SELECT a.hostname FROM schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, a.hostname) AS \"target_hostnames!\" FROM schedules s ORDER BY s.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "schedule_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "cron_expression",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "canary_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "last_run_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "next_run_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "exclude_patterns_raw",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "ignore_global_excludes",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 11,
+        "name": "keep_hourly",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 12,
+        "name": "keep_daily",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 13,
+        "name": "keep_weekly",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 14,
+        "name": "keep_monthly",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 15,
+        "name": "keep_yearly",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 16,
+        "name": "compact_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 17,
+        "name": "rate_limit_kbps",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 18,
+        "name": "pre_backup_commands",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 19,
+        "name": "post_backup_commands",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 20,
+        "name": "execution_mode",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 21,
+        "name": "on_failure",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 22,
+        "name": "owner_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 23,
+        "name": "visibility",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 24,
+        "name": "target_hostnames!",
+        "type_info": "TextArray"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      null
+    ]
+  },
+  "hash": "bdd62f1d86d5cfca1f2937ff68f1bf29a7506ffc64a7d2b6dbffe17c08a1709b"
+}

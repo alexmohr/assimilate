@@ -1,0 +1,164 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, last_run_at, next_run_at, exclude_patterns_raw, ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, visibility, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules WHERE enabled = true",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "schedule_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "cron_expression",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "canary_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "last_run_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "next_run_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "exclude_patterns_raw",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "ignore_global_excludes",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 11,
+        "name": "keep_hourly",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 12,
+        "name": "keep_daily",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 13,
+        "name": "keep_weekly",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 14,
+        "name": "keep_monthly",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 15,
+        "name": "keep_yearly",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 16,
+        "name": "compact_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 17,
+        "name": "rate_limit_kbps",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 18,
+        "name": "pre_backup_commands",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 19,
+        "name": "post_backup_commands",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 20,
+        "name": "execution_mode",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 21,
+        "name": "on_failure",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 22,
+        "name": "owner_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 23,
+        "name": "visibility",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 24,
+        "name": "target_hostnames!",
+        "type_info": "TextArray"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      null
+    ]
+  },
+  "hash": "6edadeb79dbdeedaf3daaacbe97a85b8fbe6a510eeb066ff35a699c1faf90728"
+}

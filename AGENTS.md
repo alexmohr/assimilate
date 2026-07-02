@@ -74,6 +74,8 @@ This regenerates the `.sqlx/` JSON cache files. Commit the updated `.sqlx/` dire
 
 CI runs `cargo sqlx prepare --check --workspace` to verify the cache is up to date with the current queries.
 
+CI also runs `scripts/check-no-raw-sqlx-queries.sh`, which fails the build if any Rust source uses sqlx's runtime (non-compile-time-checked) query constructors (`sqlx::query(`, `sqlx::query_as(`, `sqlx::query_as::<...>`, `sqlx::query_scalar(`). Always use `query!`/`query_as!`/`query_scalar!` instead, so a schema change that isn't reflected in the Rust types fails the build. The same check runs locally via the `no-raw-sqlx-queries` pre-commit hook.
+
 ### Verifying cache freshness locally
 
 ```bash

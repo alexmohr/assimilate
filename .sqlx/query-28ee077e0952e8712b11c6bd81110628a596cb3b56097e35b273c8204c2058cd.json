@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT path_id AS \"path_id!\" FROM archive_files WHERE archive_id IN (SELECT id FROM archives WHERE repo_id = $1) UNION SELECT parent_path_id FROM archive_files WHERE archive_id IN (SELECT id FROM archives WHERE repo_id = $1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "path_id!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "28ee077e0952e8712b11c6bd81110628a596cb3b56097e35b273c8204c2058cd"
+}

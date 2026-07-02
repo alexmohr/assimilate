@@ -122,4 +122,29 @@ describe('RecentActivityWidget', () => {
     expect(wrapper.text()).toContain('host-a')
     expect(wrapper.text()).toContain('host-b')
   })
+
+  it('renders error text in warning color for warning status entries', async () => {
+    mockGet.mockResolvedValue({
+      data: [
+        {
+          id: 1,
+          hostname: 'web-01',
+          target_name: 'nightly',
+          started_at: '2026-05-31T04:00:00Z',
+          finished_at: '2026-05-31T04:05:00Z',
+          status: 'warning',
+          duration_secs: 320,
+          repo_id: null,
+          archive_name: null,
+          error_message: 'low disk space on /var',
+        },
+      ],
+    })
+    const wrapper = renderWithPlugins(RecentActivityWidget)
+    await flushPromises()
+    await wrapper.find('.activity-item-clickable').trigger('click')
+    const pre = wrapper.find('pre')
+    expect(pre.exists()).toBe(true)
+    expect(pre.attributes('style')).toContain('var(--warning)')
+  })
 })

@@ -2448,7 +2448,6 @@ pub async fn cancel_backup_report(
     )
     .bind(agent_id)
     .bind(repo_id)
-    )
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
@@ -2465,7 +2464,6 @@ pub async fn cancel_all_active_backups(pool: &PgPool) -> Result<u64, ApiError> {
     .map_err(ApiError::Database)?;
     Ok(result.rows_affected())
 }
-
 
 pub async fn insert_backup_report(
     pool: &PgPool,

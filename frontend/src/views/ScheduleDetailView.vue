@@ -17,6 +17,7 @@ import { parseLines } from '../utils/validation'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import CronBuilder from '../components/CronBuilder.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
+import ArchiveFileBrowser from '../components/ArchiveFileBrowser.vue'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
@@ -59,6 +60,7 @@ const reportsLoading = ref(false)
 const reportsError = ref<string | null>(null)
 const { success: toastSuccess, error: toastError } = useToast()
 const { onMessage } = useWebSocket()
+
 const selectedAgentIds = ref<number[]>([])
 const selectedRepoId = ref<number | null>(null)
 const selectedType = ref<ScheduleType>('backup')
@@ -102,12 +104,15 @@ const estimatedRemainingSecs = computed<number | null>(() => {
   return Math.max(0, Math.round(estimatedTotal - backupElapsedSecs.value))
 })
 
-type TabId = 'settings' | 'advanced' | 'logs'
+const selectedBackupReport = ref<ReportRow | null>(null)
+
+type TabId = 'settings' | 'advanced' | 'logs' | 'backups'
 const activeTab = computed<TabId>({
   get() {
     const t = route.query.tab as string | undefined
     if (t === 'advanced') return t
     if (t === 'logs') return t
+    if (t === 'backups') return t
     return 'settings'
   },
   set(val: TabId) {
@@ -586,9 +591,19 @@ function reportStatusClass(status: string): string {
   return 'badge-failed'
 }
 
+const scheduleArchives = computed(() =>
+  reports.value
+    .filter((r) => r.archive_name && (r.status === 'success' || r.status === 'warning'))
+    .sort((a, b) => b.started_at.localeCompare(a.started_at)),
+)
+
+function selectScheduleArchive(report: ReportRow): void {
+  selectedBackupReport.value = report
+}
+
 watch(() => props.id, loadData)
 watch(activeTab, (tab) => {
-  if (tab === 'logs' && !isCreate.value) {
+  if ((tab === 'logs' || tab === 'backups') && !isCreate.value) {
     loadReports().catch(() => undefined)
   }
 })
@@ -742,6 +757,14 @@ watch(activeTab, (tab) => {
           @click="activeTab = 'advanced'"
         >
           Advanced
+        </button>
+        <button
+          v-if="isBackup && !isCreate"
+          class="tab-btn"
+          :class="{ active: activeTab === 'backups' }"
+          @click="activeTab = 'backups'"
+        >
+          Backups
         </button>
         <button
           v-if="!isCreate"
@@ -1449,9 +1472,76 @@ watch(activeTab, (tab) => {
         </div>
       </div>
 
+      <!-- Backups Tab -->
+      <div
+        v-if="activeTab === 'backups' && isBackup"
+        class="tab-content"
+      >
+        <div
+          v-if="reportsLoading"
+          class="reports-loading"
+        >
+          <BaseSpinner size="sm" />
+        </div>
+        <div
+          v-else-if="reportsError"
+          class="error-banner"
+        >
+          {{ reportsError }}
+        </div>
+        <div
+          v-else-if="scheduleArchives.length === 0"
+          class="empty-state"
+        >
+          No archives found for this schedule yet.
+        </div>
+        <div
+          v-else
+          class="archives-layout"
+        >
+          <div class="archive-list-panel">
+            <table class="reports-table">
+              <thead>
+                <tr>
+                  <th>Archive</th>
+                  <th>Host</th>
+                  <th>Date</th>
+                  <th>Size</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="r in scheduleArchives"
+                  :key="r.id"
+                  class="report-row archive-row"
+                  :class="{ 'archive-row-selected': selectedBackupReport?.id === r.id }"
+                  @click="selectScheduleArchive(r)"
+                >
+                  <td class="cell-mono">{{ r.archive_name }}</td>
+                  <td class="cell-host">
+                    {{
+                      agentMap.get(r.agent_id ?? 0)?.display_name ??
+                      agentMap.get(r.agent_id ?? 0)?.hostname ??
+                      `#${r.agent_id ?? 0}`
+                    }}
+                  </td>
+                  <td class="cell-ts">{{ formatDateShort(r.started_at) }}</td>
+                  <td class="cell-size">{{ formatBytes(r.original_size) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <ArchiveFileBrowser
+            :repo-id="selectedRepoId"
+            :archive-name="selectedBackupReport?.archive_name ?? null"
+          />
+        </div>
+      </div>
+
       <!-- Save bar -->
       <div
-        v-if="activeTab !== 'logs'"
+        v-if="activeTab !== 'logs' && activeTab !== 'backups'"
         class="save-bar"
       >
         <div
@@ -2425,5 +2515,32 @@ watch(activeTab, (tab) => {
   word-break: break-all;
   line-height: 1.5;
   padding: 0.05rem 0;
+}
+
+.archives-layout {
+  display: grid;
+  grid-template-columns: 40% 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+.archive-list-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.archive-row {
+  cursor: pointer;
+}
+
+.archive-row:hover td {
+  background: var(--bg-hover);
+}
+
+.archive-row-selected td {
+  background: var(--accent-subtle);
+  color: var(--text-primary);
 }
 </style>

@@ -216,83 +216,6 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     }
 
-    // If the user cancelled a backup while this agent was offline, notify the
-    // agent now so it can kill the corresponding borg process.
-    if let Ok(rows) = sqlx::query_scalar!(
-        "SELECT DISTINCT repo_id FROM backup_reports WHERE agent_id = $1 AND status = 'cancelled' \
-         AND NOT cancellation_acknowledged",
-        agent_id,
-    )
-    .fetch_all(&state.pool)
-    .await
-    {
-        for repo_id in rows {
-            let msg = ServerToAgent::CancelBackup {
-                repo_id: shared::types::RepoId(repo_id),
-            };
-            if let Ok(json) = serde_json::to_string(&msg)
-                && let Err(e) = ws_sink.send(Message::Text(json.into())).await
-            {
-                tracing::warn!(
-                    hostname = %hostname,
-                    repo_id,
-                    error = %e,
-                    "failed to notify agent of cancelled backup on reconnect"
-                );
-            }
-        }
-    }
-
-    // Execute any pending backup runs that were triggered (e.g. "Run Now") while
-    // this agent was offline. The backup_report is already in the DB as 'pending'
-    // and will be updated to 'started' when the agent reports BackupStarted.
-    #[derive(sqlx::FromRow)]
-    struct PendingBackupRow {
-        repo_id: i64,
-        schedule_id: Option<i64>,
-        run_id: Option<String>,
-    }
-    if let Ok(rows) = sqlx::query_as!(
-        PendingBackupRow,
-        "SELECT repo_id, schedule_id, run_id FROM backup_reports WHERE agent_id = $1 AND status = \
-         'pending' ORDER BY started_at ASC",
-        agent_id,
-    )
-    .fetch_all(&state.pool)
-    .await
-    {
-        for row in rows {
-            let PendingBackupRow {
-                repo_id,
-                schedule_id,
-                run_id,
-            } = row;
-            let msg = ServerToAgent::RunBackupNow {
-                repo_id: shared::types::RepoId(repo_id),
-                schedule_id,
-                request_id: None,
-                run_id,
-            };
-            if let Ok(json) = serde_json::to_string(&msg)
-                && let Err(e) = ws_sink.send(Message::Text(json.into())).await
-            {
-                tracing::warn!(
-                    hostname = %hostname,
-                    repo_id,
-                    error = %e,
-                    "failed to send pending RunBackupNow on reconnect"
-                );
-            } else {
-                tracing::info!(
-                    hostname = %hostname,
-                    repo_id,
-                    schedule_id,
-                    "sent pending RunBackupNow on reconnect"
-                );
-            }
-        }
-    }
-
     tokio::spawn(ping_loop(ping_tx));
 
     loop {
@@ -399,23 +322,6 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                     hostname = %hostname,
                     error = %e,
                     "failed to insert backup started row"
-                );
-            }
-            // If the agent restarted and is starting a new backup, any existing
-            // 'started' rows for this agent+repo are orphaned - fail them.
-            if let Err(e) = db::fail_other_started_backups(
-                &state.pool,
-                agent_id,
-                repo_id.0,
-                run_id.as_deref(),
-                hostname,
-            )
-            .await
-            {
-                tracing::error!(
-                    hostname = %hostname,
-                    error = %e,
-                    "failed to clean up orphaned backup rows"
                 );
             }
             state
@@ -1114,14 +1020,6 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                     repo_id = ?repo_id,
                     error = %e,
                     "failed to update cancelled backup report"
-                );
-            }
-            if let Err(e) = db::acknowledge_cancellation(&state.pool, agent_id, repo_id.0).await {
-                tracing::error!(
-                    hostname = %hostname,
-                    repo_id = ?repo_id,
-                    error = %e,
-                    "failed to acknowledge cancellation"
                 );
             }
             state.ui_broadcast.send(ServerToUi::DataChanged);

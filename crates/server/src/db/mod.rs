@@ -1312,16 +1312,16 @@ pub async fn set_global_excludes_raw(pool: &PgPool, raw_text: &str) -> Result<()
 }
 
 pub async fn list_schedules(pool: &PgPool) -> Result<Vec<ScheduleRow>, ApiError> {
-    #[allow(trivial_casts)]
-    let rows = sqlx::query_as::<_, ScheduleRow>(
+    let rows = sqlx::query_as!(
+        ScheduleRow,
         "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, \
          s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, \
          s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, \
          s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands, \
          s.post_backup_commands, s.execution_mode, s.on_failure, s.owner_id, s.visibility, \
          ARRAY(SELECT a.hostname FROM schedule_targets st JOIN agents a ON a.id = st.agent_id \
-         WHERE st.schedule_id = s.id ORDER BY st.execution_order, a.hostname) AS target_hostnames \
-         FROM schedules s ORDER BY s.id",
+         WHERE st.schedule_id = s.id ORDER BY st.execution_order, a.hostname) AS \
+         \"target_hostnames!\" FROM schedules s ORDER BY s.id",
     )
     .fetch_all(pool)
     .await
@@ -2016,15 +2016,16 @@ pub async fn list_due_schedules(
     pool: &PgPool,
     now: DateTime<Utc>,
 ) -> Result<Vec<DueScheduleRow>, ApiError> {
-    #[allow(trivial_casts)]
-    sqlx::query_as::<_, DueScheduleRow>(
-        "SELECT s.id AS schedule_id, s.repo_id, st.agent_id, a.hostname, s.schedule_type, \
-         s.cron_expression, s.on_failure, st.execution_order FROM schedules s JOIN repos r ON \
-         r.id = s.repo_id JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id \
-         = st.agent_id WHERE s.enabled = true AND r.enabled = true AND a.is_hidden = false AND \
-         s.next_run_at IS NOT NULL AND s.next_run_at <= $1 ORDER BY s.id, st.execution_order",
+    sqlx::query_as!(
+        DueScheduleRow,
+        "SELECT s.id AS schedule_id, s.repo_id AS \"repo_id!\", st.agent_id, a.hostname, \
+         s.schedule_type, s.cron_expression, s.on_failure, st.execution_order FROM schedules s \
+         JOIN repos r ON r.id = s.repo_id JOIN schedule_targets st ON st.schedule_id = s.id JOIN \
+         agents a ON a.id = st.agent_id WHERE s.enabled = true AND r.enabled = true AND \
+         a.is_hidden = false AND s.next_run_at IS NOT NULL AND s.next_run_at <= $1 ORDER BY s.id, \
+         st.execution_order",
+        now,
     )
-    .bind(now)
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)
@@ -2665,7 +2666,7 @@ pub async fn bulk_insert_backup_reports(
         borg_commands.push(p.borg_command.as_deref());
     }
 
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
          original_size, compressed_size, deduplicated_size, repo_unique_csize, files_processed, \
          duration_secs, error_message, warnings, borg_version, matched, archive_name, \
@@ -2680,23 +2681,23 @@ pub async fn bulk_insert_backup_reports(
          files_processed, duration_secs, error_message, borg_version, matched, archive_name, \
          borg_command) ON CONFLICT (repo_id, agent_id, started_at, archive_name) WHERE \
          archive_name IS NOT NULL DO NOTHING",
+        &agent_ids,
+        &repo_ids,
+        &started_ats,
+        &finished_ats,
+        &statuses as &[&str],
+        &original_sizes,
+        &compressed_sizes,
+        &deduplicated_sizes,
+        &repo_unique_csizes,
+        &files_processed_v,
+        &duration_secs_v,
+        &error_messages as &[Option<&str>],
+        &borg_versions as &[Option<&str>],
+        &matcheds,
+        &archive_names as &[Option<&str>],
+        &borg_commands as &[Option<&str>],
     )
-    .bind(&agent_ids)
-    .bind(&repo_ids)
-    .bind(&started_ats)
-    .bind(&finished_ats)
-    .bind(&statuses)
-    .bind(&original_sizes)
-    .bind(&compressed_sizes)
-    .bind(&deduplicated_sizes)
-    .bind(&repo_unique_csizes)
-    .bind(&files_processed_v)
-    .bind(&duration_secs_v)
-    .bind(&error_messages)
-    .bind(&borg_versions)
-    .bind(&matcheds)
-    .bind(&archive_names)
-    .bind(&borg_commands)
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
@@ -2817,14 +2818,14 @@ pub async fn list_reports_for_schedule(
 }
 
 pub async fn get_storage_stats(pool: &PgPool) -> Result<Vec<StorageStatRow>, ApiError> {
-    #[allow(trivial_casts)]
-    sqlx::query_as::<_, StorageStatRow>(
+    sqlx::query_as!(
+        StorageStatRow,
         "SELECT a.hostname, r.name AS target_name, COALESCE(SUM(br.original_size), 0)::INT8 AS \
-         total_original_size, COALESCE(SUM(br.compressed_size), 0)::INT8 AS \
-         total_compressed_size, COALESCE(SUM(br.deduplicated_size), 0)::INT8 AS \
-         total_deduplicated_size, COUNT(br.id)::INT8 AS report_count FROM backup_reports br JOIN \
-         agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id WHERE a.is_hidden = \
-         false GROUP BY a.hostname, r.name ORDER BY a.hostname, r.name",
+         \"total_original_size!\", COALESCE(SUM(br.compressed_size), 0)::INT8 AS \
+         \"total_compressed_size!\", COALESCE(SUM(br.deduplicated_size), 0)::INT8 AS \
+         \"total_deduplicated_size!\", COUNT(br.id)::INT8 AS \"report_count!\" FROM \
+         backup_reports br JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id \
+         WHERE a.is_hidden = false GROUP BY a.hostname, r.name ORDER BY a.hostname, r.name",
     )
     .fetch_all(pool)
     .await
@@ -3479,13 +3480,16 @@ pub async fn get_database_storage(
             .await
             .map_err(ApiError::Database)?;
 
-    #[allow(trivial_casts)]
-    let relations = sqlx::query_as::<_, DatabaseRelationSizeRow>(
-        "SELECT relname::TEXT AS table_name, pg_relation_size(relid)::BIGINT AS table_bytes, \
-         pg_indexes_size(relid)::BIGINT AS index_bytes, (pg_total_relation_size(relid) - \
-         pg_relation_size(relid) - pg_indexes_size(relid))::BIGINT AS toast_bytes, \
-         pg_total_relation_size(relid)::BIGINT AS total_bytes FROM \
-         pg_catalog.pg_statio_user_tables ORDER BY total_bytes DESC, table_name ASC",
+    let relations = sqlx::query_as!(
+        DatabaseRelationSizeRow,
+        "WITH sizes AS ( SELECT relname::TEXT AS table_name, pg_relation_size(relid)::BIGINT AS \
+         table_bytes, pg_indexes_size(relid)::BIGINT AS index_bytes, \
+         (pg_total_relation_size(relid) - pg_relation_size(relid) - \
+         pg_indexes_size(relid))::BIGINT AS toast_bytes, pg_total_relation_size(relid)::BIGINT AS \
+         total_bytes FROM pg_catalog.pg_statio_user_tables ) SELECT table_name AS \
+         \"table_name!\", table_bytes AS \"table_bytes!\", index_bytes AS \"index_bytes!\", \
+         toast_bytes AS \"toast_bytes!\", total_bytes AS \"total_bytes!\" FROM sizes ORDER BY \
+         total_bytes DESC, table_name ASC",
     )
     .fetch_all(pool)
     .await
@@ -3596,21 +3600,21 @@ pub struct RepoWithStatsRow {
 }
 
 pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow>, ApiError> {
-    #[allow(trivial_casts)]
-    sqlx::query_as::<_, RepoWithStatsRow>(
+    sqlx::query_as!(
+        RepoWithStatsRow,
         "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.ssh_host_key, \
          r.compression, r.encryption, r.enabled, r.importing, r.import_error, r.import_progress, \
          r.import_total, r.import_status_message, r.owner_id, r.visibility, r.sync_schedule, \
-         r.last_synced_at, r.info_archive_count::INT8 AS archive_count, agg.last_backup_at, \
+         r.last_synced_at, r.info_archive_count::INT8 AS \"archive_count!\", agg.last_backup_at, \
          r.info_original_size AS total_original_size, r.info_compressed_size AS \
          total_compressed_size, r.info_deduplicated_size AS total_deduplicated_size, \
-         COALESCE(agg.agent_count, 0) AS agent_count, COALESCE(agg.unmatched_count, 0) AS \
-         unmatched_count, r.relocation_pending, r.last_op_kind, r.last_op_at, r.last_op_by FROM \
-         repos r LEFT JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' \
-         THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, \
-         COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM \
-         backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true ORDER \
-         BY r.name",
+         COALESCE(agg.agent_count, 0) AS \"agent_count!\", COALESCE(agg.unmatched_count, 0) AS \
+         \"unmatched_count!\", r.relocation_pending, r.last_op_kind, r.last_op_at, r.last_op_by \
+         FROM repos r LEFT JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > \
+         '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT \
+         br.agent_id) AS agent_count, COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = \
+         false) AS unmatched_count FROM backup_reports br WHERE br.repo_id = r.id AND br.status = \
+         'success') agg ON true ORDER BY r.name",
     )
     .fetch_all(pool)
     .await
@@ -3621,23 +3625,23 @@ pub async fn get_repo_with_stats(
     pool: &PgPool,
     repo_id: i64,
 ) -> Result<RepoWithStatsRow, ApiError> {
-    #[allow(trivial_casts)]
-    sqlx::query_as::<_, RepoWithStatsRow>(
+    sqlx::query_as!(
+        RepoWithStatsRow,
         "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.ssh_host_key, \
          r.compression, r.encryption, r.enabled, r.importing, r.import_error, r.import_progress, \
          r.import_total, r.import_status_message, r.owner_id, r.visibility, r.sync_schedule, \
-         r.last_synced_at, r.info_archive_count::INT8 AS archive_count, agg.last_backup_at, \
+         r.last_synced_at, r.info_archive_count::INT8 AS \"archive_count!\", agg.last_backup_at, \
          r.info_original_size AS total_original_size, r.info_compressed_size AS \
          total_compressed_size, r.info_deduplicated_size AS total_deduplicated_size, \
-         COALESCE(agg.agent_count, 0) AS agent_count, COALESCE(agg.unmatched_count, 0) AS \
-         unmatched_count, r.relocation_pending, r.last_op_kind, r.last_op_at, r.last_op_by FROM \
-         repos r LEFT JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' \
-         THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, \
-         COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM \
-         backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true WHERE \
-         r.id = $1",
+         COALESCE(agg.agent_count, 0) AS \"agent_count!\", COALESCE(agg.unmatched_count, 0) AS \
+         \"unmatched_count!\", r.relocation_pending, r.last_op_kind, r.last_op_at, r.last_op_by \
+         FROM repos r LEFT JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > \
+         '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT \
+         br.agent_id) AS agent_count, COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = \
+         false) AS unmatched_count FROM backup_reports br WHERE br.repo_id = r.id AND br.status = \
+         'success') agg ON true WHERE r.id = $1",
+        repo_id,
     )
-    .bind(repo_id)
     .fetch_one(pool)
     .await
     .map_err(|e| match e {
@@ -3844,13 +3848,13 @@ pub struct DashboardSummaryRow {
 }
 
 pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow, ApiError> {
-    #[allow(trivial_casts)]
-    sqlx::query_as::<_, DashboardSummaryRow>(
-        "SELECT (SELECT COUNT(*) FROM agents WHERE is_hidden = false) AS total_agents, (SELECT \
-         COUNT(*) FROM repos) AS total_repos, (SELECT COUNT(*) FROM schedules WHERE enabled = \
-         true) AS active_schedules, (SELECT COUNT(*) FROM schedules) AS total_schedules, \
-         COALESCE((SELECT SUM(info_deduplicated_size) FROM repos), 0)::INT8 AS \
-         total_storage_bytes, (SELECT MAX(finished_at) FROM backup_reports WHERE status = \
+    sqlx::query_as!(
+        DashboardSummaryRow,
+        "SELECT (SELECT COUNT(*) FROM agents WHERE is_hidden = false) AS \"total_agents!\", \
+         (SELECT COUNT(*) FROM repos) AS \"total_repos!\", (SELECT COUNT(*) FROM schedules WHERE \
+         enabled = true) AS \"active_schedules!\", (SELECT COUNT(*) FROM schedules) AS \
+         \"total_schedules!\", COALESCE((SELECT SUM(info_deduplicated_size) FROM repos), 0)::INT8 \
+         AS \"total_storage_bytes!\", (SELECT MAX(finished_at) FROM backup_reports WHERE status = \
          'success' AND finished_at > '1970-01-01T00:00:00Z') AS last_backup_at, (SELECT \
          MIN(s.next_run_at) FROM schedules s JOIN repos r ON r.id = s.repo_id WHERE s.enabled = \
          true AND r.enabled = true AND s.next_run_at IS NOT NULL AND s.next_run_at > NOW()) AS \
@@ -3863,17 +3867,17 @@ pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow,
          WHERE s.enabled = true AND r.enabled = true AND s.next_run_at IS NOT NULL AND \
          s.next_run_at > NOW() ORDER BY s.next_run_at LIMIT 1) AS next_backup_schedule_id, \
          (SELECT COUNT(*) FROM backup_reports WHERE status = 'success' AND started_at > NOW() - \
-         INTERVAL '30 days') AS success_30d, (SELECT COUNT(*) FROM backup_reports WHERE status != \
-         'success' AND started_at > NOW() - INTERVAL '30 days') AS failed_30d, (SELECT COUNT(*) \
-         FROM backup_reports WHERE started_at > NOW() - INTERVAL '30 days') AS total_30d, (SELECT \
-         MAX(finished_at) FROM backup_reports WHERE status = 'failed' AND finished_at > \
-         '1970-01-01T00:00:00Z') AS last_failure_at, (SELECT MAX(finished_at) FROM backup_reports \
-         WHERE status = 'warning' AND finished_at > '1970-01-01T00:00:00Z') AS last_warning_at, \
-         (SELECT br.schedule_id FROM backup_reports br WHERE br.schedule_id IS NOT NULL AND \
-         br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at \
-         DESC LIMIT 1) AS last_failure_schedule_id, (SELECT br.schedule_id FROM backup_reports br \
-         WHERE br.schedule_id IS NOT NULL AND br.status = 'warning' AND br.finished_at > \
-         '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS \
+         INTERVAL '30 days') AS \"success_30d!\", (SELECT COUNT(*) FROM backup_reports WHERE \
+         status != 'success' AND started_at > NOW() - INTERVAL '30 days') AS \"failed_30d!\", \
+         (SELECT COUNT(*) FROM backup_reports WHERE started_at > NOW() - INTERVAL '30 days') AS \
+         \"total_30d!\", (SELECT MAX(finished_at) FROM backup_reports WHERE status = 'failed' AND \
+         finished_at > '1970-01-01T00:00:00Z') AS last_failure_at, (SELECT MAX(finished_at) FROM \
+         backup_reports WHERE status = 'warning' AND finished_at > '1970-01-01T00:00:00Z') AS \
+         last_warning_at, (SELECT br.schedule_id FROM backup_reports br WHERE br.schedule_id IS \
+         NOT NULL AND br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY \
+         br.finished_at DESC LIMIT 1) AS last_failure_schedule_id, (SELECT br.schedule_id FROM \
+         backup_reports br WHERE br.schedule_id IS NOT NULL AND br.status = 'warning' AND \
+         br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS \
          last_warning_schedule_id, (SELECT br.error_message FROM backup_reports br WHERE \
          br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at \
          DESC LIMIT 1) AS last_failure_message, (SELECT br.warnings[1] FROM backup_reports br \
@@ -4628,13 +4632,14 @@ pub async fn delete_archive_records_by_names(
     .map_err(ApiError::Database)?;
 
     // Collect candidate path IDs before the cascade delete removes archive_files.
-    let candidate_ids: Vec<i64> = sqlx::query_scalar(
-        "SELECT path_id FROM archive_files WHERE archive_id IN (SELECT id FROM archives WHERE \
-         repo_id = $1 AND name = ANY($2)) UNION SELECT parent_path_id FROM archive_files WHERE \
-         archive_id IN (SELECT id FROM archives WHERE repo_id = $1 AND name = ANY($2))",
+    let candidate_ids: Vec<i64> = sqlx::query_scalar!(
+        "SELECT path_id AS \"path_id!\" FROM archive_files WHERE archive_id IN (SELECT id FROM \
+         archives WHERE repo_id = $1 AND name = ANY($2)) UNION SELECT parent_path_id FROM \
+         archive_files WHERE archive_id IN (SELECT id FROM archives WHERE repo_id = $1 AND name = \
+         ANY($2))",
+        repo_id,
+        names,
     )
-    .bind(repo_id)
-    .bind(names)
     .fetch_all(&mut *tx)
     .await
     .map_err(ApiError::Database)?;
@@ -4671,13 +4676,12 @@ pub async fn delete_all_repo_archive_data(pool: &PgPool, repo_id: i64) -> Result
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
 
     // Collect candidate path IDs before the cascade delete removes archive_files.
-    let candidate_ids: Vec<i64> = sqlx::query_scalar(
-        "SELECT path_id FROM archive_files WHERE archive_id IN (SELECT id FROM archives WHERE \
-         repo_id = $1) UNION SELECT parent_path_id FROM archive_files WHERE archive_id IN (SELECT \
-         id FROM archives WHERE repo_id = $1)",
+    let candidate_ids: Vec<i64> = sqlx::query_scalar!(
+        "SELECT path_id AS \"path_id!\" FROM archive_files WHERE archive_id IN (SELECT id FROM \
+         archives WHERE repo_id = $1) UNION SELECT parent_path_id FROM archive_files WHERE \
+         archive_id IN (SELECT id FROM archives WHERE repo_id = $1)",
+        repo_id,
     )
-    .bind(repo_id)
-    .bind(repo_id)
     .fetch_all(&mut *tx)
     .await
     .map_err(ApiError::Database)?;
@@ -4731,22 +4735,24 @@ pub async fn get_storage_trends_by_repo(
     days: i64,
 ) -> Result<Vec<StorageTrendByRepoRow>, ApiError> {
     let days_i32 = i32::try_from(days).unwrap_or(30);
-    sqlx::query_as::<_, StorageTrendByRepoRow>(
+    sqlx::query_as!(
+        StorageTrendByRepoRow,
         "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => $1))::date, \
          CURRENT_DATE, '1 day'::interval )::date AS date ), repos_list AS ( SELECT DISTINCT r.id \
          AS repo_id, r.name AS repo_name FROM repos r JOIN backup_reports br ON br.repo_id = r.id \
-         ) SELECT d.date, rl.repo_id, rl.repo_name, COALESCE(totals.original_size, 0)::INT8 AS \
-         original_size, COALESCE(totals.compressed_size, 0)::INT8 AS compressed_size, \
-         NULLIF(COALESCE(latest.repo_unique_csize, 0), 0)::INT8 AS deduplicated_size FROM days d \
-         CROSS JOIN repos_list rl LEFT JOIN LATERAL ( SELECT SUM(br.original_size) AS \
+         ) SELECT d.date AS \"date!\", rl.repo_id AS \"repo_id!\", rl.repo_name AS \
+         \"repo_name!\", COALESCE(totals.original_size, 0)::INT8 AS \"original_size!\", \
+         COALESCE(totals.compressed_size, 0)::INT8 AS \"compressed_size!\", \
+         NULLIF(COALESCE(latest.repo_unique_csize, 0), 0)::INT8 AS \"deduplicated_size?\" FROM \
+         days d CROSS JOIN repos_list rl LEFT JOIN LATERAL ( SELECT SUM(br.original_size) AS \
          original_size, SUM(br.compressed_size) AS compressed_size FROM backup_reports br WHERE \
          br.repo_id = rl.repo_id AND br.started_at::date <= d.date AND br.status = 'success' ) \
          totals ON true LEFT JOIN LATERAL ( SELECT br.repo_unique_csize FROM backup_reports br \
          WHERE br.repo_id = rl.repo_id AND br.started_at::date <= d.date AND br.status = \
          'success' ORDER BY br.started_at DESC LIMIT 1 ) latest ON true ORDER BY d.date, \
          rl.repo_name",
+        days_i32,
     )
-    .bind(days_i32)
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)
@@ -4755,16 +4761,15 @@ pub async fn get_storage_trends_by_repo(
 pub async fn get_enabled_schedules_for_calendar(
     pool: &PgPool,
 ) -> Result<Vec<ScheduleRow>, ApiError> {
-    #[allow(trivial_casts)]
-    let rows = sqlx::query_as::<_, ScheduleRow>(
+    sqlx::query_as!(
+        ScheduleRow,
         "SELECT id, repo_id, name, schedule_type, cron_expression, enabled, canary_enabled, \
          last_run_at, next_run_at, exclude_patterns_raw, ignore_global_excludes, keep_hourly, \
          keep_daily, keep_weekly, keep_monthly, keep_yearly, compact_enabled, rate_limit_kbps, \
          pre_backup_commands, post_backup_commands, execution_mode, on_failure, owner_id, \
-         visibility, ARRAY[]::TEXT[] AS target_hostnames FROM schedules WHERE enabled = true",
+         visibility, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules WHERE enabled = true",
     )
     .fetch_all(pool)
     .await
-    .map_err(ApiError::Database);
-    rows
+    .map_err(ApiError::Database)
 }

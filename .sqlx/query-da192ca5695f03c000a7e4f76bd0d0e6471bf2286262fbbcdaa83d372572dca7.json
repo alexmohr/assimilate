@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ), repos_list AS ( SELECT DISTINCT r.id AS repo_id, r.name AS repo_name FROM repos r JOIN backup_reports br ON br.repo_id = r.id ) SELECT d.date AS \"date!\", rl.repo_id AS \"repo_id!\", rl.repo_name AS \"repo_name!\", COALESCE(totals.original_size, 0)::INT8 AS \"original_size!\", COALESCE(totals.compressed_size, 0)::INT8 AS \"compressed_size!\", NULLIF(COALESCE(latest.repo_unique_csize, 0), 0)::INT8 AS \"deduplicated_size?\" FROM days d CROSS JOIN repos_list rl LEFT JOIN LATERAL ( SELECT SUM(br.original_size) AS original_size, SUM(br.compressed_size) AS compressed_size FROM backup_reports br WHERE br.repo_id = rl.repo_id AND br.started_at::date <= d.date AND br.status = 'success' ) totals ON true LEFT JOIN LATERAL ( SELECT br.repo_unique_csize FROM backup_reports br WHERE br.repo_id = rl.repo_id AND br.started_at::date <= d.date AND br.status = 'success' ORDER BY br.started_at DESC LIMIT 1 ) latest ON true ORDER BY d.date, rl.repo_name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "date!",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 1,
+        "name": "repo_id!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "repo_name!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "original_size!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "compressed_size!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "deduplicated_size?",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      false,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "da192ca5695f03c000a7e4f76bd0d0e6471bf2286262fbbcdaa83d372572dca7"
+}

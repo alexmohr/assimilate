@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.id AS schedule_id, s.repo_id AS \"repo_id!\", st.agent_id, a.hostname, s.schedule_type, s.cron_expression, s.on_failure, st.execution_order FROM schedules s JOIN repos r ON r.id = s.repo_id JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents a ON a.id = st.agent_id WHERE s.enabled = true AND r.enabled = true AND a.is_hidden = false AND s.next_run_at IS NOT NULL AND s.next_run_at <= $1 ORDER BY s.id, st.execution_order",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "schedule_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "repo_id!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "agent_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "hostname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "schedule_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "cron_expression",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "on_failure",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "execution_order",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "8e6fb5506048cb50b38d65a79d17d07b5d954e7854c4da144a8caaa1df72f492"
+}

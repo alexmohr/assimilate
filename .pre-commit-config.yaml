@@ -88,6 +88,12 @@ repos:
         entry: python3 scripts/no-typography-in-comments.py
         language: system
         files: '\.(rs|py|toml|yml|yaml|c|h|kt|kts|sh|proto|fbs|puml|json|xml|ts|tsx|vue|js|mjs|cjs)$|^Dockerfile$'
+      - id: no-raw-sqlx-queries
+        name: no raw (runtime) sqlx queries
+        entry: scripts/check-no-raw-sqlx-queries.sh
+        language: system
+        types: [rust]
+        pass_filenames: false
       - id: fmt-nightly
         name: cargo fmt (nightly)
         entry: cargo +nightly fmt -- --config error_on_unformatted=true,error_on_line_overflow=true,format_strings=true,group_imports=StdExternalCrate,imports_granularity=Crate

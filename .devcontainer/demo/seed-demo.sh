@@ -31,7 +31,7 @@ api() {
 # whichever sync is in flight to finish.
 sync_repo() {
     STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/api/repos/$1/sync" -H "$AUTH_HEADER")
-    if [ "$STATUS" != "202" ] && [ "$STATUS" != "409" ]; then
+    if [ "$STATUS" != "200" ] && [ "$STATUS" != "202" ] && [ "$STATUS" != "409" ]; then
         echo "sync request for repo $1 failed with status $STATUS" >&2
         exit 1
     fi

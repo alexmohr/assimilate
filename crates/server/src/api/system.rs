@@ -135,7 +135,6 @@ pub async fn ssh_regenerate_key(
 pub struct SettingsResponse {
     pub retention_days: i64,
     pub timezone: String,
-    pub borg_query_timeout_secs: u64,
 }
 
 #[utoipa::path(
@@ -165,20 +164,9 @@ pub async fn get_settings(
 
     let timezone = db::get_schedule_timezone(&state.pool).await?;
 
-    let borg_query_timeout_secs = db::get_setting(&state.pool, "borg_query_timeout_secs")
-        .await?
-        .and_then(|v| {
-            v.parse::<u64>().inspect_err(|e| {
-                tracing::warn!(value = %v, error = %e, "failed to parse borg_query_timeout_secs setting");
-            }).ok()
-        })
-        .filter(|&s| s > 0)
-        .unwrap_or(300);
-
     Ok(Json(SettingsResponse {
         retention_days,
         timezone: timezone.name().to_owned(),
-        borg_query_timeout_secs,
     }))
 }
 
@@ -186,7 +174,6 @@ pub async fn get_settings(
 pub struct UpdateSettingsRequest {
     pub retention_days: i64,
     pub timezone: Option<String>,
-    pub borg_query_timeout_secs: Option<u64>,
 }
 
 #[utoipa::path(
@@ -221,13 +208,6 @@ pub async fn update_settings(
             .map_err(|_| ApiError::BadRequest(format!("invalid timezone: {timezone}")))?;
     }
 
-    let borg_query_timeout_secs = body.borg_query_timeout_secs.unwrap_or(300);
-    if borg_query_timeout_secs == 0 {
-        return Err(ApiError::BadRequest(
-            "borg_query_timeout_secs must be greater than zero".to_string(),
-        ));
-    }
-
     db::set_setting(
         &state.pool,
         "retention_days",
@@ -237,19 +217,11 @@ pub async fn update_settings(
 
     db::set_setting(&state.pool, "timezone", &timezone).await?;
 
-    db::set_setting(
-        &state.pool,
-        "borg_query_timeout_secs",
-        &borg_query_timeout_secs.to_string(),
-    )
-    .await?;
-
     let effective_tz = db::get_schedule_timezone(&state.pool).await?;
 
     Ok(Json(SettingsResponse {
         retention_days: body.retention_days,
         timezone: effective_tz.name().to_owned(),
-        borg_query_timeout_secs,
     }))
 }
 
@@ -316,9 +288,9 @@ pub async fn get_version(_admin: RequireAdmin) -> Result<Json<VersionResponse>, 
 
     let git_sha = option_env!("GIT_SHA").unwrap_or_default();
     let server_version = if git_sha.is_empty() {
-        env!("APP_VERSION").to_owned()
+        env!("CARGO_PKG_VERSION").to_owned()
     } else {
-        format!("{}+{}", env!("APP_VERSION"), git_sha)
+        format!("{}+{}", env!("CARGO_PKG_VERSION"), git_sha)
     };
     let build_timestamp = option_env!("BUILD_TIMESTAMP").unwrap_or("unknown");
     let server_commit_count = option_env!("GIT_COMMIT_COUNT")

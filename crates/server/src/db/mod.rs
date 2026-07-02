@@ -1113,6 +1113,24 @@ pub async fn delete_repo(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
     Ok(())
 }
 
+pub async fn disable_schedule(pool: &PgPool, schedule_id: i64) -> Result<(), ApiError> {
+    sqlx::query("UPDATE schedules SET enabled = false WHERE id = $1")
+        .bind(schedule_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+pub async fn disable_all_schedules_for_repo(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
+    sqlx::query("UPDATE schedules SET enabled = false WHERE repo_id = $1")
+        .bind(repo_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(())
+}
+
 pub async fn list_enabled_tunnels(pool: &PgPool) -> Result<Vec<SshTunnel>, ApiError> {
     sqlx::query_as!(
         SshTunnel,
@@ -2708,9 +2726,9 @@ pub struct ArchiveStats {
     pub original_size: i64,
     pub compressed_size: i64,
     pub deduplicated_size: i64,
+    pub repo_unique_csize: i64,
     pub files_processed: i64,
     pub duration_secs: i64,
-    pub repo_unique_csize: i64,
 }
 
 pub async fn update_backup_report_stats(
@@ -3082,12 +3100,11 @@ pub async fn insert_session(
 }
 
 pub async fn get_session(pool: &PgPool, session_id: &str) -> Result<SessionRow, ApiError> {
-    sqlx::query_as!(
-        SessionRow,
+    sqlx::query_as::<_, SessionRow>(
         "SELECT id, user_id, created_at, expires_at, remember_me FROM sessions WHERE id = $1 AND \
          expires_at > NOW()",
-        session_id,
     )
+    .bind(session_id)
     .fetch_one(pool)
     .await
     .map_err(|e| match e {
@@ -3113,7 +3130,6 @@ pub async fn extend_session(
     .map_err(ApiError::Database)?;
     Ok(())
 }
-
 pub async fn delete_session(pool: &PgPool, session_id: &str) -> Result<(), ApiError> {
     sqlx::query!("DELETE FROM sessions WHERE id = $1", session_id)
         .execute(pool)
@@ -4563,12 +4579,9 @@ pub async fn list_archive_names_for_repo(
     Ok(names.into_iter().collect())
 }
 
-/// Archive names that need a `borg info` run.
-///
-/// Covers two cases:
-/// - All sizes are still zero (archive was imported but never enriched).
-/// - `repo_unique_csize` is zero even though other sizes are populated (archive was enriched
-///   before `repo_unique_csize` was tracked).
+/// Archive names whose stats have not been filled in yet (all sizes still zero).
+/// A resync only re-runs `borg info` for these: immutable archives that already
+/// carry stats never need to be queried again.
 pub async fn list_archive_names_needing_stats(
     pool: &PgPool,
     repo_id: i64,

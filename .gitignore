@@ -37,5 +37,7 @@ docs_html/
 __pycache__/
 *.pyc
 
+
 # Claude Code
 .claude/
+playwright-report/

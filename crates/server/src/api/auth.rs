@@ -7,7 +7,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header, request::Parts},
     response::{IntoResponse, Response},
 };
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 use shared::responses::{MeResponse, PreferencesResponse, RefreshSessionResponse};
 use uuid::Uuid;
@@ -182,13 +182,6 @@ pub struct LoginRequest {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct LoginResponse {
     pub user: db::UserRow,
-    pub session_expires_at: DateTime<Utc>,
-    pub remember_me: bool,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct RefreshResponse {
-    pub session_expires_at: DateTime<Utc>,
 }
 
 #[utoipa::path(
@@ -240,7 +233,7 @@ pub async fn login(
 
     let session_id = Uuid::new_v4().to_string();
     let (ttl_hours, max_age_secs) = if req.remember_me {
-        (24 * 7, 7 * 86400)
+        (24 * 30, 30 * 86400)
     } else {
         (24, 86400)
     };
@@ -265,11 +258,7 @@ pub async fn login(
         "session={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age_secs}{secure_flag}"
     );
 
-    let body = Json(LoginResponse {
-        user,
-        session_expires_at: expires_at,
-        remember_me: req.remember_me,
-    });
+    let body = Json(LoginResponse { user });
     let mut response = body.into_response();
     response.headers_mut().insert(
         header::SET_COOKIE,
@@ -343,19 +332,21 @@ pub async fn me(
     auth: AuthUser,
 ) -> Result<Json<MeResponse>, ApiError> {
     let user = db::get_user_by_id(&state.pool, auth.user_id).await?;
-    let (session_expires_at, remember_me) = if let Some(ref session_id) = auth.session_id {
-        let session = db::get_session(&state.pool, session_id).await?;
-        (Some(session.expires_at), session.remember_me)
+    let (remember_me, session_expires_at) = if let Some(ref session_id) = auth.session_id {
+        match db::get_session(&state.pool, session_id).await {
+            Ok(session) => (session.remember_me, Some(session.expires_at)),
+            Err(_) => (false, None),
+        }
     } else {
-        (None, false)
+        (false, None)
     };
     Ok(Json(MeResponse {
         id: auth.user_id,
         username: auth.username,
         role: auth.role.to_string(),
         must_change_password: user.must_change_password,
-        session_expires_at,
         remember_me,
+        session_expires_at,
     }))
 }
 

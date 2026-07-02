@@ -5,8 +5,9 @@ ARG COVERAGE=false
 # cargo-chef splits dependency compilation from source compilation so the
 # (expensive, rarely-changing) dependency layer can be restored from the
 # GitHub Actions build cache instead of recompiling on every CI run.
-FROM rust:1.96 AS chef
+FROM rust:1-trixie AS chef
 RUN cargo install cargo-chef --locked
+
 WORKDIR /src
 
 FROM chef AS planner
@@ -37,7 +38,6 @@ RUN if [ "$COVERAGE" = "true" ]; then \
       cp target/debug/server target/release/server && \
       cp target/debug/agent target/release/agent; \
     fi
-
 FROM node:24-slim AS frontend
 
 WORKDIR /app

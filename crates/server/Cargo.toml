@@ -40,7 +40,6 @@ web-push = { workspace = true }
 p256 = { workspace = true }
 base64 = { workspace = true }
 glob-match = { workspace = true }
-nix = { workspace = true }
 utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
 utoipa-axum = "0.1"
 utoipa-scalar = { version = "0.3", features = ["axum"] }

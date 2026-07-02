@@ -10,13 +10,23 @@ import { formatBytes } from '../utils/format'
 import { extractError } from '../utils/error'
 import ToggleSwitch from './ToggleSwitch.vue'
 
+type QuotaAction = 'notify_only' | 'block_backups' | 'disable_schedule'
+
 interface QuotaData {
   warn_bytes: number
   critical_bytes: number
+  warn_action: QuotaAction
+  critical_action: QuotaAction
   enabled: boolean
 }
 
 type QuotaStatus = 'ok' | 'warning' | 'critical'
+
+const QUOTA_ACTIONS: { value: QuotaAction; label: string }[] = [
+  { value: 'notify_only', label: 'Notify only' },
+  { value: 'block_backups', label: 'Block all backups + notify' },
+  { value: 'disable_schedule', label: 'Disable schedule + notify' },
+]
 
 const props = defineProps<{ repoId: number; isAdmin: boolean; currentUsageBytes: number }>()
 
@@ -30,6 +40,8 @@ const editError = ref<string | null>(null)
 const editForm = reactive({
   warn_gb: 0,
   critical_gb: 0,
+  warn_action: 'notify_only' as QuotaAction,
+  critical_action: 'notify_only' as QuotaAction,
   enabled: true,
 })
 
@@ -69,6 +81,10 @@ const progressBarClass = computed((): string => {
   return 'bar-ok'
 })
 
+function actionLabel(action: QuotaAction): string {
+  return QUOTA_ACTIONS.find((a) => a.value === action)?.label ?? action
+}
+
 function bytesToGb(bytes: number): number {
   return Math.round((bytes / 1073741824) * 100) / 100
 }
@@ -99,6 +115,8 @@ function startEdit(): void {
   if (!quota.value) return
   editForm.warn_gb = bytesToGb(quota.value.warn_bytes)
   editForm.critical_gb = bytesToGb(quota.value.critical_bytes)
+  editForm.warn_action = quota.value.warn_action ?? 'notify_only'
+  editForm.critical_action = quota.value.critical_action ?? 'notify_only'
   editForm.enabled = quota.value.enabled
   editError.value = null
   isEditing.value = true
@@ -107,6 +125,8 @@ function startEdit(): void {
 function startNewQuota(): void {
   editForm.warn_gb = 0
   editForm.critical_gb = 0
+  editForm.warn_action = 'notify_only'
+  editForm.critical_action = 'notify_only'
   editForm.enabled = true
   editError.value = null
   isEditing.value = true
@@ -124,6 +144,8 @@ async function saveQuota(): Promise<void> {
     await apiClient.put(`/repos/${props.repoId}/quota`, {
       warn_bytes: gbToBytes(editForm.warn_gb),
       critical_bytes: gbToBytes(editForm.critical_gb),
+      warn_action: editForm.warn_action,
+      critical_action: editForm.critical_action,
       enabled: editForm.enabled,
     })
     isEditing.value = false
@@ -212,8 +234,12 @@ onMounted(loadQuota)
         <dl class="quota-details">
           <dt>Warning threshold</dt>
           <dd>{{ formatBytes(quota.warn_bytes) }}</dd>
+          <dt>Warning action</dt>
+          <dd>{{ actionLabel(quota.warn_action) }}</dd>
           <dt>Critical threshold</dt>
           <dd>{{ formatBytes(quota.critical_bytes) }}</dd>
+          <dt>Critical action</dt>
+          <dd>{{ actionLabel(quota.critical_action) }}</dd>
         </dl>
       </template>
     </template>
@@ -232,6 +258,21 @@ onMounted(loadQuota)
             />
           </div>
           <div class="field">
+            <label class="field-label">Warning action</label>
+            <select
+              v-model="editForm.warn_action"
+              class="input"
+            >
+              <option
+                v-for="a in QUOTA_ACTIONS"
+                :key="a.value"
+                :value="a.value"
+              >
+                {{ a.label }}
+              </option>
+            </select>
+          </div>
+          <div class="field">
             <label class="field-label">Critical (GB)</label>
             <input
               v-model.number="editForm.critical_gb"
@@ -240,6 +281,21 @@ onMounted(loadQuota)
               min="0"
               step="0.1"
             />
+          </div>
+          <div class="field">
+            <label class="field-label">Critical action</label>
+            <select
+              v-model="editForm.critical_action"
+              class="input"
+            >
+              <option
+                v-for="a in QUOTA_ACTIONS"
+                :key="a.value"
+                :value="a.value"
+              >
+                {{ a.label }}
+              </option>
+            </select>
           </div>
           <div class="field field-full toggle-row">
             <span class="toggle-row-label">Enabled</span>
@@ -416,7 +472,7 @@ onMounted(loadQuota)
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0 1rem;
+  gap: 0.75rem 1rem;
 }
 
 .field-full {

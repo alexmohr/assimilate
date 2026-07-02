@@ -1,9 +1,5 @@
 # File Change Patterns
 
-!!! note "New in Assimilate"
-
-    File change pattern configuration was added in release X.Y.Z.
-
 File change patterns let you control how warnings about files that change during a backup are handled. By default, any file that is modified while being backed up generates a warning. You can configure specific path patterns to:
 
 - **ignore** — suppress the warning entirely

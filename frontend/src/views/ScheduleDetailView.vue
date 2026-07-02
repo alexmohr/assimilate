@@ -69,6 +69,51 @@ const usePerHostExcludes = ref(false)
 const perHostExcludes = ref<Record<number, string>>({})
 const usePerHostFileChangePatterns = ref(false)
 const perHostFileChangePatterns = ref<Record<number, string>>({})
+
+interface FileChangePatternRow {
+  path: string
+  action: 'ignore' | 'warn' | 'fatal'
+}
+
+function parseFileChangePatterns(raw: string): FileChangePatternRow[] {
+  return raw
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith('#'))
+    .map((line) => {
+      const lastSpace = line.lastIndexOf(' ')
+      if (lastSpace > 0) {
+        const action = line.slice(lastSpace + 1).trim()
+        if (action === 'ignore' || action === 'fatal') {
+          return { path: line.slice(0, lastSpace).trim(), action }
+        }
+      }
+      return { path: line, action: 'warn' }
+    })
+}
+
+function serializeFileChangePatterns(rows: FileChangePatternRow[]): string {
+  return rows
+    .map((r) => (r.action === 'warn' ? r.path : `${r.path} ${r.action}`))
+    .join('\n')
+}
+
+const fileChangePatternRows = computed<FileChangePatternRow[]>({
+  get: () => parseFileChangePatterns(form.value.file_change_patterns),
+  set: (rows) => {
+    form.value.file_change_patterns = serializeFileChangePatterns(rows)
+  },
+})
+
+function addFileChangePatternRow(): void {
+  fileChangePatternRows.value = [...fileChangePatternRows.value, { path: '', action: 'warn' }]
+}
+
+function removeFileChangePatternRow(index: number): void {
+  const rows = [...fileChangePatternRows.value]
+  rows.splice(index, 1)
+  fileChangePatternRows.value = rows
+}
 const usePerAgentCmds = ref(false)
 const perAgentPreCmds = ref<Record<number, string>>({})
 const perAgentPostCmds = ref<Record<number, string>>({})
@@ -1334,13 +1379,44 @@ watch(activeTab, (tab) => {
             </div>
             <div class="form-group">
               <label class="form-label">Patterns</label>
-              <textarea
-                v-if="!usePerHostFileChangePatterns"
-                v-model="form.file_change_patterns"
-                class="form-input area-input"
-                placeholder="One pattern per line&#10;Format: /path action&#10;Actions: ignore, warn (default), fatal&#10;e.g. /tmp/logs ignore&#10;/etc/config fatal"
-                spellcheck="false"
-              />
+              <div v-if="!usePerHostFileChangePatterns">
+                <div
+                  v-for="(row, index) in fileChangePatternRows"
+                  :key="index"
+                  class="file-change-row"
+                >
+                  <input
+                    v-model="row.path"
+                    type="text"
+                    class="form-input"
+                    placeholder="Path pattern (glob)"
+                    spellcheck="false"
+                    @input="fileChangePatternRows.value = [...fileChangePatternRows.value]"
+                  />
+                  <select
+                    v-model="row.action"
+                    class="form-input form-select file-change-action"
+                    @change="fileChangePatternRows.value = [...fileChangePatternRows.value]"
+                  >
+                    <option value="warn">warn</option>
+                    <option value="ignore">ignore</option>
+                    <option value="fatal">fatal</option>
+                  </select>
+                  <button
+                    class="btn btn-sm btn-danger"
+                    title="Remove"
+                    @click="removeFileChangePatternRow(index)"
+                  >
+                    &times;
+                  </button>
+                </div>
+                <button
+                  class="btn btn-sm btn-secondary"
+                  @click="addFileChangePatternRow()"
+                >
+                  + Add pattern
+                </button>
+              </div>
               <div
                 v-else
                 class="per-host-paths"
@@ -2503,5 +2579,26 @@ watch(activeTab, (tab) => {
   word-break: break-all;
   line-height: 1.5;
   padding: 0.05rem 0;
+}
+
+.file-change-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.file-change-row .form-input {
+  flex: 1;
+}
+
+.file-change-action {
+  width: auto;
+  min-width: 8rem;
+  flex-shrink: 0;
+}
+
+.file-change-row .btn {
+  flex-shrink: 0;
 }
 </style>

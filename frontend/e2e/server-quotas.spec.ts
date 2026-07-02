@@ -13,7 +13,7 @@ const TEST_QUOTA = {
   enabled: true,
 }
 
-// ── Page access ──────────────────────────────────────────────────────────────
+// Page access
 
 test('server quotas page loads for admin without error', async ({ page }) => {
   await loginAsAdmin(page)
@@ -39,7 +39,7 @@ test('server quotas page shows Add Quota button for admin', async ({ page }) => 
   })
 })
 
-// ── CRUD workflow via real API ────────────────────────────────────────────────
+// CRUD workflow via real API
 
 test('can create, view, and delete a server quota', async ({ page }) => {
   await loginAsAdmin(page)

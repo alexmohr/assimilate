@@ -2762,7 +2762,10 @@ mod tests {
     #[test]
     fn archive_hostname_returns_hostname_when_present() {
         let archive = serde_json::json!({"hostname": "web-01.example.com"});
-        assert_eq!(archive_hostname(&archive), Some("web-01.example.com"));
+        assert_eq!(
+            archive_hostname(&archive),
+            Some("web-01.example.com".to_string())
+        );
     }
 
     #[test]

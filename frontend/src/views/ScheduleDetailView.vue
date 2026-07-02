@@ -93,9 +93,7 @@ function parseFileChangePatterns(raw: string): FileChangePatternRow[] {
 }
 
 function serializeFileChangePatterns(rows: FileChangePatternRow[]): string {
-  return rows
-    .map((r) => (r.action === 'warn' ? r.path : `${r.path} ${r.action}`))
-    .join('\n')
+  return rows.map((r) => (r.action === 'warn' ? r.path : `${r.path} ${r.action}`)).join('\n')
 }
 
 const fileChangePatternRows = computed<FileChangePatternRow[]>({
@@ -1434,7 +1432,9 @@ watch(activeTab, (tab) => {
                     spellcheck="false"
                     @input="
                       ($event) =>
-                        (perHostFileChangePatterns[agentId] = ($event.target as HTMLTextAreaElement).value)
+                        (perHostFileChangePatterns[agentId] = (
+                          $event.target as HTMLTextAreaElement
+                        ).value)
                     "
                   />
                 </div>
@@ -1446,8 +1446,8 @@ watch(activeTab, (tab) => {
                 v-if="!usePerHostFileChangePatterns"
                 class="field-hint"
               >
-                Path patterns with actions: <code>ignore</code> (no warning), <code>warn</code>
-                (default, current behavior), <code>fatal</code> (fail backup).
+                Path patterns with actions: <code>ignore</code> (no warning),
+                <code>warn</code> (default, current behavior), <code>fatal</code> (fail backup).
                 Unconfigured files still produce warnings.
               </span>
             </div>

@@ -10,8 +10,6 @@ File change patterns let you control how warnings about files that change during
 
 File change patterns can be configured at the **schedule level** (applies to all targeted agents) or **per agent** (overrides the schedule-level patterns for specific hosts).
 
-![File change patterns section](assets/screenshots/file-change-patterns.png)
-
 ### Schedule-level patterns
 
 Navigate to **Schedules** → select a schedule → **File Change Patterns** section.

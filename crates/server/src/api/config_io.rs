@@ -144,11 +144,10 @@ pub async fn export_config(
             .collect();
         let per_agent_file_change_patterns =
             db::list_all_per_agent_file_change_patterns_for_schedule(&state.pool, sched.id).await?;
-        let per_agent_file_change_patterns_map: HashMap<i64, &str> =
-            per_agent_file_change_patterns
-                .iter()
-                .map(|f| (f.agent_id, f.raw_text.as_str()))
-                .collect();
+        let per_agent_file_change_patterns_map: HashMap<i64, &str> = per_agent_file_change_patterns
+            .iter()
+            .map(|f| (f.agent_id, f.raw_text.as_str()))
+            .collect();
 
         let targets = target_rows
             .iter()

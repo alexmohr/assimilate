@@ -305,13 +305,12 @@ fn parse_raw_file_change_patterns(raw: &str) -> Vec<shared::types::FileChangePat
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .map(|line| {
             let parts: Vec<&str> = line.rsplitn(2, ' ').collect();
-            let (path, action_str) = if parts.len() == 2
-                && matches!(parts[0], "ignore" | "warn" | "fatal")
-            {
-                (parts[1].trim(), parts[0])
-            } else {
-                (line, "warn")
-            };
+            let (path, action_str) =
+                if parts.len() == 2 && matches!(parts[0], "ignore" | "warn" | "fatal") {
+                    (parts[1].trim(), parts[0])
+                } else {
+                    (line, "warn")
+                };
             let action = action_str.parse().unwrap_or_default();
             shared::types::FileChangePattern {
                 path: path.to_string(),

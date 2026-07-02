@@ -97,29 +97,6 @@ function serializeFileChangePatterns(rows: FileChangePatternRow[]): string {
 }
 
 const fileChangePatternRows = ref<FileChangePatternRow[]>([])
-let syncingFileChangePatterns = false
-
-function syncFileChangePatternsFromForm(): void {
-  if (syncingFileChangePatterns) return
-  syncingFileChangePatterns = true
-  fileChangePatternRows.value = parseFileChangePatterns(form.value.file_change_patterns)
-  syncingFileChangePatterns = false
-}
-
-function syncFileChangePatternsToForm(): void {
-  if (syncingFileChangePatterns) return
-  syncingFileChangePatterns = true
-  form.value.file_change_patterns = serializeFileChangePatterns(fileChangePatternRows.value)
-  syncingFileChangePatterns = false
-}
-
-watch(
-  () => form.value.file_change_patterns,
-  () => syncFileChangePatternsFromForm(),
-  { immediate: true },
-)
-
-watch(fileChangePatternRows, () => syncFileChangePatternsToForm(), { deep: true })
 
 function addFileChangePatternRow(): void {
   fileChangePatternRows.value = [...fileChangePatternRows.value, { path: '', action: 'warn' }]
@@ -291,7 +268,34 @@ function populateForm(s: ScheduleRow): void {
   }
   selectedRepoId.value = s.repo_id ?? null
   onFailure.value = (s.on_failure as 'stop' | 'continue') ?? 'stop'
+  syncFileChangePatternsFromForm()
 }
+
+let syncingFileChangePatterns = false
+
+function syncFileChangePatternsFromForm(): void {
+  if (syncingFileChangePatterns) return
+  syncingFileChangePatterns = true
+  fileChangePatternRows.value = parseFileChangePatterns(form.value.file_change_patterns)
+  syncingFileChangePatterns = false
+}
+
+function syncFileChangePatternsToForm(): void {
+  if (syncingFileChangePatterns) return
+  syncingFileChangePatterns = true
+  form.value.file_change_patterns = serializeFileChangePatterns(fileChangePatternRows.value)
+  syncingFileChangePatterns = false
+}
+
+watch(
+  () => form.value.file_change_patterns,
+  () => syncFileChangePatternsFromForm(),
+)
+
+watch(fileChangePatternRows, () => syncFileChangePatternsToForm(), { deep: true })
+
+// Sync initial form state
+syncFileChangePatternsFromForm()
 
 function scheduleTypeLabel(t: string): string {
   switch (t) {

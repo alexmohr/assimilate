@@ -22,6 +22,21 @@ api() {
     fi
 }
 
+# Triggers a repo sync, tolerating a 409 ("sync already in progress"). Repos
+# with a sync_schedule are picked up immediately by the scheduler once
+# configured (by design, so a never-synced repo starts syncing as soon as a
+# schedule is set), so this explicit sync call can legitimately race with
+# that scheduler-initiated sync. Either way the repo ends up syncing, which
+# is all callers here actually need; wait_for_imports() below waits for
+# whichever sync is in flight to finish.
+sync_repo() {
+    STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/api/repos/$1/sync" -H "$AUTH_HEADER")
+    if [ "$STATUS" != "202" ] && [ "$STATUS" != "409" ]; then
+        echo "sync request for repo $1 failed with status $STATUS" >&2
+        exit 1
+    fi
+}
+
 echo "==> Creating borg repositories on disk..."
 for REPO_NAME in server-daily database-hourly media-weekly; do
     REPO_DIR="/backup/repos/$REPO_NAME"
@@ -176,9 +191,9 @@ wait_for_enrichment() {
 }
 
 echo "==> Syncing repos to import borg archives..."
-api POST "/api/repos/$REPO_DAILY_ID/sync" > /dev/null
-api POST "/api/repos/$REPO_HOURLY_ID/sync" > /dev/null
-api POST "/api/repos/$REPO_WEEKLY_ID/sync" > /dev/null
+sync_repo "$REPO_DAILY_ID"
+sync_repo "$REPO_HOURLY_ID"
+sync_repo "$REPO_WEEKLY_ID"
 
 echo "==> Waiting for archive import to complete..."
 wait_for_imports

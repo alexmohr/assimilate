@@ -222,7 +222,6 @@ async fn main() -> Result<(), StartupError> {
             "/api/users",
             get(api::users::list_users).post(api::users::create_user),
         )
-        .route("/api/users/{id}/role", put(api::users::update_role))
         .route("/api/users/{id}/password", put(api::users::update_password))
         .route("/api/users/{id}", delete(api::users::delete_user))
         .route("/ws/agent", get(ws::handler::ws_handler))
@@ -779,10 +778,22 @@ async fn bootstrap_admin(pool: &PgPool) -> Result<(), StartupError> {
 
     let hash = bcrypt::hash("admin", 10)?;
 
-    sqlx::query!(
-        "INSERT INTO users (username, password_hash, role, must_change_password) VALUES ('admin', \
-         $1, 'admin', true)",
+    let user_id: i64 = sqlx::query_scalar!(
+        "INSERT INTO users (username, password_hash, must_change_password) VALUES ('admin', $1, \
+         true) RETURNING id",
         &hash,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    let admin_role_id: i64 = sqlx::query_scalar!("SELECT id FROM roles WHERE name = 'admin'",)
+        .fetch_one(pool)
+        .await?;
+
+    sqlx::query!(
+        "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        user_id,
+        admin_role_id,
     )
     .execute(pool)
     .await?;

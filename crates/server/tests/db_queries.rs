@@ -1999,11 +1999,10 @@ async fn dashboard_summary_empty(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn user_crud(pool: PgPool) {
-    let user = db::insert_user(&pool, "testuser", "hashed_pw", "admin")
+    let user = db::insert_user(&pool, "testuser", "hashed_pw")
         .await
         .unwrap();
     assert_eq!(user.username, "testuser");
-    assert_eq!(user.role, "admin");
     assert!(!user.must_change_password);
 
     let fetched = db::get_user_by_username(&pool, "testuser").await.unwrap();
@@ -2021,9 +2020,7 @@ async fn user_crud(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn user_password_hash(pool: PgPool) {
-    db::insert_user(&pool, "pwuser", "the_hash", "user")
-        .await
-        .unwrap();
+    db::insert_user(&pool, "pwuser", "the_hash").await.unwrap();
 
     let (user, hash) = db::get_user_password_hash(&pool, "pwuser").await.unwrap();
     assert_eq!(user.username, "pwuser");
@@ -2032,17 +2029,24 @@ async fn user_password_hash(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn user_update_role(pool: PgPool) {
-    let user = db::insert_user(&pool, "roleuser", "hash", "user")
+    let user = db::insert_user(&pool, "roleuser", "hash").await.unwrap();
+
+    let admin_role = db::list_roles(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|r| r.name == "admin")
+        .unwrap();
+    db::set_user_roles(&pool, user.id, &[admin_role.id])
         .await
         .unwrap();
-
-    let updated = db::update_user_role(&pool, user.id, "admin").await.unwrap();
-    assert_eq!(updated.role, "admin");
+    let roles = db::list_user_roles(&pool, user.id).await.unwrap();
+    assert!(roles.iter().any(|r| r.name == "admin"));
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn user_update_password(pool: PgPool) {
-    let user = db::insert_user(&pool, "passuser", "old_hash", "user")
+    let user = db::insert_user(&pool, "passuser", "old_hash")
         .await
         .unwrap();
 
@@ -2056,9 +2060,7 @@ async fn user_update_password(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn user_update_last_login(pool: PgPool) {
-    let user = db::insert_user(&pool, "loginuser", "hash", "user")
-        .await
-        .unwrap();
+    let user = db::insert_user(&pool, "loginuser", "hash").await.unwrap();
 
     db::update_last_login(&pool, user.id).await.unwrap();
 
@@ -2068,9 +2070,7 @@ async fn user_update_last_login(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn user_delete(pool: PgPool) {
-    let user = db::insert_user(&pool, "deluser", "hash", "user")
-        .await
-        .unwrap();
+    let user = db::insert_user(&pool, "deluser", "hash").await.unwrap();
 
     db::delete_user(&pool, user.id).await.unwrap();
 
@@ -2080,9 +2080,7 @@ async fn user_delete(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn user_preferences(pool: PgPool) {
-    let user = db::insert_user(&pool, "prefuser", "hash", "user")
-        .await
-        .unwrap();
+    let user = db::insert_user(&pool, "prefuser", "hash").await.unwrap();
 
     let prefs = serde_json::json!({"theme": "dark", "lang": "en"});
     db::set_user_preferences(&pool, user.id, &prefs)
@@ -2096,9 +2094,7 @@ async fn user_preferences(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn session_crud(pool: PgPool) {
-    let user = db::insert_user(&pool, "sessuser", "hash", "user")
-        .await
-        .unwrap();
+    let user = db::insert_user(&pool, "sessuser", "hash").await.unwrap();
 
     let expires = Utc::now() + Duration::hours(24);
     db::insert_session(&pool, "sess_abc123", user.id, expires, false)
@@ -2118,9 +2114,7 @@ async fn session_crud(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn session_expired(pool: PgPool) {
-    let user = db::insert_user(&pool, "expuser", "hash", "user")
-        .await
-        .unwrap();
+    let user = db::insert_user(&pool, "expuser", "hash").await.unwrap();
 
     let expired = Utc::now() - Duration::hours(1);
     db::insert_session(&pool, "sess_expired", user.id, expired, false)
@@ -2133,9 +2127,7 @@ async fn session_expired(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn session_delete_expired(pool: PgPool) {
-    let user = db::insert_user(&pool, "cleanuser", "hash", "user")
-        .await
-        .unwrap();
+    let user = db::insert_user(&pool, "cleanuser", "hash").await.unwrap();
 
     let expired = Utc::now() - Duration::hours(1);
     db::insert_session(&pool, "sess_old", user.id, expired, false)
@@ -2148,7 +2140,7 @@ async fn session_delete_expired(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn session_remember_me(pool: PgPool) {
-    let user = db::insert_user(&pool, "rememberuser", "hash", "user")
+    let user = db::insert_user(&pool, "rememberuser", "hash")
         .await
         .unwrap();
 
@@ -2164,9 +2156,7 @@ async fn session_remember_me(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn session_extend(pool: PgPool) {
-    let user = db::insert_user(&pool, "extenduser", "hash", "user")
-        .await
-        .unwrap();
+    let user = db::insert_user(&pool, "extenduser", "hash").await.unwrap();
 
     let original_expires = Utc::now() + Duration::hours(1);
     db::insert_session(&pool, "sess_extend", user.id, original_expires, true)
@@ -2208,9 +2198,7 @@ async fn login_attempts(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn api_token_crud(pool: PgPool) {
-    let user = db::insert_user(&pool, "tokenuser", "hash", "user")
-        .await
-        .unwrap();
+    let user = db::insert_user(&pool, "tokenuser", "hash").await.unwrap();
 
     let token = db::insert_api_token(&pool, user.id, "My Token", "token_hash_abc")
         .await
@@ -2243,9 +2231,7 @@ async fn api_token_crud(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn repo_permissions_crud(pool: PgPool) {
-    let user = db::insert_user(&pool, "permuser", "hash", "user")
-        .await
-        .unwrap();
+    let user = db::insert_user(&pool, "permuser", "hash").await.unwrap();
     let repo = create_test_repo(&pool).await;
 
     let perm = db::upsert_repo_permission(
@@ -2510,12 +2496,8 @@ async fn groups_crud(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn group_members(pool: PgPool) {
-    let user1 = db::insert_user(&pool, "grp-user1", "hash", "user")
-        .await
-        .unwrap();
-    let user2 = db::insert_user(&pool, "grp-user2", "hash", "user")
-        .await
-        .unwrap();
+    let user1 = db::insert_user(&pool, "grp-user1", "hash").await.unwrap();
+    let user2 = db::insert_user(&pool, "grp-user2", "hash").await.unwrap();
     let group = db::insert_group(&pool, "team", None).await.unwrap();
 
     db::set_group_members(&pool, group.id, &[user1.id, user2.id])
@@ -2534,9 +2516,7 @@ async fn group_members(pool: PgPool) {
         .unwrap();
     assert!(shared);
 
-    let user3 = db::insert_user(&pool, "grp-user3", "hash", "user")
-        .await
-        .unwrap();
+    let user3 = db::insert_user(&pool, "grp-user3", "hash").await.unwrap();
     let not_shared = db::user_shares_group_with(&pool, user1.id, user3.id)
         .await
         .unwrap();
@@ -2612,9 +2592,7 @@ async fn roles_crud(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn user_roles_and_effective_permissions(pool: PgPool) {
-    let user = db::insert_user(&pool, "rbac-user", "hash", "user")
-        .await
-        .unwrap();
+    let user = db::insert_user(&pool, "rbac-user", "hash").await.unwrap();
 
     let role1 = db::insert_role(
         &pool,
@@ -5445,7 +5423,7 @@ async fn run_id_update_scoped_to_agent(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn dismiss_finding_roundtrip(pool: PgPool) {
-    let user = db::insert_user(&pool, "dismiss-user", "hash", "admin")
+    let user = db::insert_user(&pool, "dismiss-user", "hash")
         .await
         .unwrap();
 
@@ -5471,7 +5449,7 @@ async fn dismiss_finding_roundtrip(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn dismiss_finding_idempotent(pool: PgPool) {
-    let user = db::insert_user(&pool, "dismiss-idem-user", "hash", "admin")
+    let user = db::insert_user(&pool, "dismiss-idem-user", "hash")
         .await
         .unwrap();
 
@@ -5490,7 +5468,7 @@ async fn dismiss_finding_idempotent(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn undismiss_finding_removes_entry(pool: PgPool) {
-    let user = db::insert_user(&pool, "undismiss-user", "hash", "admin")
+    let user = db::insert_user(&pool, "undismiss-user", "hash")
         .await
         .unwrap();
 
@@ -5515,10 +5493,10 @@ async fn undismiss_finding_removes_entry(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn dismissed_findings_are_per_user(pool: PgPool) {
-    let user_a = db::insert_user(&pool, "dismiss-user-a", "hash", "admin")
+    let user_a = db::insert_user(&pool, "dismiss-user-a", "hash")
         .await
         .unwrap();
-    let user_b = db::insert_user(&pool, "dismiss-user-b", "hash", "admin")
+    let user_b = db::insert_user(&pool, "dismiss-user-b", "hash")
         .await
         .unwrap();
 
@@ -5627,14 +5605,11 @@ async fn clear_relocation_for_host_ignores_unregistered_host(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn check_repo_permission_view_all_is_view_only(pool: PgPool) {
     use server::{
-        api::{
-            auth::{AuthUser, Role},
-            permissions::check_repo_permission,
-        },
+        api::{auth::AuthUser, permissions::check_repo_permission},
         error::ApiError,
     };
 
-    let user = db::insert_user(&pool, "view-all-user", "hash", "user")
+    let user = db::insert_user(&pool, "view-all-user", "hash")
         .await
         .unwrap();
 
@@ -5690,7 +5665,6 @@ async fn check_repo_permission_view_all_is_view_only(pool: PgPool) {
     let auth = AuthUser {
         user_id: user.id,
         username: "view-all-user".to_string(),
-        role: Role::User,
         session_id: None,
     };
 

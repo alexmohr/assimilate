@@ -23,43 +23,10 @@ use crate::{
 const MAX_LOGIN_ATTEMPTS: i64 = 5;
 const LOGIN_WINDOW_MINUTES: i32 = 15;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Role {
-    Admin,
-    User,
-}
-
-impl std::fmt::Display for Role {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            Self::Admin => "admin",
-            Self::User => "user",
-        };
-        f.write_str(s)
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("invalid role: {0}")]
-pub struct InvalidRole(pub String);
-
-impl std::str::FromStr for Role {
-    type Err = InvalidRole;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "admin" => Ok(Self::Admin),
-            "user" => Ok(Self::User),
-            other => Err(InvalidRole(other.to_owned())),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct AuthUser {
     pub user_id: i64,
     pub username: String,
-    pub role: Role,
     pub session_id: Option<String>,
 }
 
@@ -83,10 +50,6 @@ impl FromRequestParts<AppState> for AuthUser {
         let session_id = extract_session_cookie(parts)?;
         let session = db::get_session(&state.pool, &session_id).await?;
         let user = db::get_user_by_id(&state.pool, session.user_id).await?;
-        let role = user
-            .role
-            .parse::<Role>()
-            .map_err(|_| ApiError::Internal(format!("invalid role in database: {}", user.role)))?;
 
         if user.must_change_password {
             let path = parts.uri.path();
@@ -100,7 +63,6 @@ impl FromRequestParts<AppState> for AuthUser {
         Ok(Self {
             user_id: user.id,
             username: user.username,
-            role,
             session_id: Some(session_id),
         })
     }
@@ -122,15 +84,10 @@ async fn try_bearer_auth(parts: &Parts, state: &AppState) -> Result<Option<AuthU
     db::update_api_token_last_used(&state.pool, &token_hash).await?;
 
     let user = db::get_user_by_id(&state.pool, lookup.user_id).await?;
-    let role = user
-        .role
-        .parse::<Role>()
-        .map_err(|_| ApiError::Internal(format!("invalid role in database: {}", user.role)))?;
 
     Ok(Some(AuthUser {
         user_id: user.id,
         username: user.username,
-        role,
         session_id: None,
     }))
 }
@@ -145,7 +102,8 @@ impl FromRequestParts<AppState> for RequireAdmin {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let auth_user = AuthUser::from_request_parts(parts, state).await?;
-        if auth_user.role != Role::Admin {
+        let effective = db::get_effective_permissions(&state.pool, auth_user.user_id).await?;
+        if !effective.can_delete_repo {
             return Err(ApiError::Forbidden("admin access required".to_string()));
         }
         Ok(Self(auth_user))
@@ -349,10 +307,17 @@ pub async fn me(
     } else {
         (None, false)
     };
+    let role_names: Vec<String> = db::list_user_roles(&state.pool, auth.user_id)
+        .await?
+        .into_iter()
+        .map(|r| r.name)
+        .collect();
+    let role = role_names.join(",");
+
     Ok(Json(MeResponse {
         id: auth.user_id,
         username: auth.username,
-        role: auth.role.to_string(),
+        role,
         must_change_password: user.must_change_password,
         session_expires_at,
         remember_me,

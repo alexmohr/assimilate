@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, username, role, must_change_password, created_at, last_login_at FROM users WHERE id = $1",
+  "query": "SELECT id, username, must_change_password, created_at, last_login_at FROM users WHERE username = $1",
   "describe": {
     "columns": [
       {
@@ -15,28 +15,23 @@
       },
       {
         "ordinal": 2,
-        "name": "role",
-        "type_info": "Text"
-      },
-      {
-        "ordinal": 3,
         "name": "must_change_password",
         "type_info": "Bool"
       },
       {
-        "ordinal": 4,
+        "ordinal": 3,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 5,
+        "ordinal": 4,
         "name": "last_login_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
       "Left": [
-        "Int8"
+        "Text"
       ]
     },
     "nullable": [
@@ -44,9 +39,8 @@
       false,
       false,
       false,
-      false,
       true
     ]
   },
-  "hash": "a115bfff5eb26baaa8b8e457d0178eff801aa5b775e46566189722709fcfd8dd"
+  "hash": "5144531d6e42d4cb0c3b1fa9fa351838aaf25ad14cdc4416d3c824ebace8efc0"
 }

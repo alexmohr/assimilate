@@ -8,7 +8,7 @@ use axum::{
 use serde::Deserialize;
 use shared::responses::RepoPermissionResponse;
 
-use super::auth::{AuthUser, RequireAdmin, Role};
+use super::auth::{AuthUser, RequireAdmin};
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
@@ -139,7 +139,8 @@ pub async fn check_repo_permission(
     repo_id: i64,
     check: impl Fn(&db::RepoPermissionRow) -> bool,
 ) -> Result<(), ApiError> {
-    if auth.role == Role::Admin {
+    let effective = db::get_effective_permissions(pool, auth.user_id).await?;
+    if effective.can_delete_repo {
         return Ok(());
     }
 
@@ -148,7 +149,6 @@ pub async fn check_repo_permission(
         return Ok(());
     }
 
-    let effective = db::get_effective_permissions(pool, auth.user_id).await?;
     if effective.can_view_all_repos {
         let view_only = db::RepoPermissionRow {
             user_id: auth.user_id,

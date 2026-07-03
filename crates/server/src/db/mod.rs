@@ -2885,7 +2885,6 @@ pub async fn get_health_summary(pool: &PgPool) -> Result<Vec<HealthRow>, ApiErro
 pub struct UserRow {
     pub id: i64,
     pub username: String,
-    pub role: String,
     pub must_change_password: bool,
     pub created_at: DateTime<Utc>,
     pub last_login_at: Option<DateTime<Utc>>,
@@ -2904,15 +2903,13 @@ pub async fn insert_user(
     pool: &PgPool,
     username: &str,
     password_hash: &str,
-    role: &str,
 ) -> Result<UserRow, ApiError> {
     sqlx::query_as!(
         UserRow,
-        "INSERT INTO users (username, password_hash, role) VALUES ($1, $2, $3) RETURNING id, \
-         username, role, must_change_password, created_at, last_login_at",
+        "INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id, username, \
+         must_change_password, created_at, last_login_at",
         username,
         password_hash,
-        role,
     )
     .fetch_one(pool)
     .await
@@ -2922,8 +2919,8 @@ pub async fn insert_user(
 pub async fn get_user_by_username(pool: &PgPool, username: &str) -> Result<UserRow, ApiError> {
     sqlx::query_as!(
         UserRow,
-        "SELECT id, username, role, must_change_password, created_at, last_login_at FROM users \
-         WHERE username = $1",
+        "SELECT id, username, must_change_password, created_at, last_login_at FROM users WHERE \
+         username = $1",
         username,
     )
     .fetch_one(pool)
@@ -2943,7 +2940,6 @@ pub async fn get_user_password_hash(
         id: i64,
         username: String,
         password_hash: String,
-        role: String,
         must_change_password: bool,
         created_at: DateTime<Utc>,
         last_login_at: Option<DateTime<Utc>>,
@@ -2951,8 +2947,8 @@ pub async fn get_user_password_hash(
 
     let row = sqlx::query_as!(
         FullRow,
-        "SELECT id, username, password_hash, role, must_change_password, created_at, \
-         last_login_at FROM users WHERE username = $1",
+        "SELECT id, username, password_hash, must_change_password, created_at, last_login_at FROM \
+         users WHERE username = $1",
         username,
     )
     .fetch_one(pool)
@@ -2965,7 +2961,6 @@ pub async fn get_user_password_hash(
     let user = UserRow {
         id: row.id,
         username: row.username,
-        role: row.role,
         must_change_password: row.must_change_password,
         created_at: row.created_at,
         last_login_at: row.last_login_at,
@@ -2976,8 +2971,8 @@ pub async fn get_user_password_hash(
 pub async fn get_user_by_id(pool: &PgPool, user_id: i64) -> Result<UserRow, ApiError> {
     sqlx::query_as!(
         UserRow,
-        "SELECT id, username, role, must_change_password, created_at, last_login_at FROM users \
-         WHERE id = $1",
+        "SELECT id, username, must_change_password, created_at, last_login_at FROM users WHERE id \
+         = $1",
         user_id,
     )
     .fetch_one(pool)
@@ -2991,32 +2986,12 @@ pub async fn get_user_by_id(pool: &PgPool, user_id: i64) -> Result<UserRow, ApiE
 pub async fn list_users(pool: &PgPool) -> Result<Vec<UserRow>, ApiError> {
     sqlx::query_as!(
         UserRow,
-        "SELECT id, username, role, must_change_password, created_at, last_login_at FROM users \
-         ORDER BY id",
+        "SELECT id, username, must_change_password, created_at, last_login_at FROM users ORDER BY \
+         id",
     )
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)
-}
-
-pub async fn update_user_role(
-    pool: &PgPool,
-    user_id: i64,
-    role: &str,
-) -> Result<UserRow, ApiError> {
-    sqlx::query_as!(
-        UserRow,
-        "UPDATE users SET role = $2 WHERE id = $1 RETURNING id, username, role, \
-         must_change_password, created_at, last_login_at",
-        user_id,
-        role,
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| match e {
-        sqlx::Error::RowNotFound => ApiError::NotFound(format!("user {user_id} not found")),
-        other => ApiError::Database(other),
-    })
 }
 
 pub async fn delete_user(pool: &PgPool, user_id: i64) -> Result<(), ApiError> {

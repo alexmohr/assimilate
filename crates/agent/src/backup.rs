@@ -404,12 +404,12 @@ impl BackupEngine {
             )));
         }
 
-        let warnings = parse_warnings(&stderr);
-        let warnings = filter_file_change_warnings(warnings, &target.file_change_patterns)?;
-
         match exit_code {
             0 => {
                 let stats = parse_json_stats(&output.stdout)?;
+                let warnings = parse_warnings(&stderr);
+                let warnings =
+                    filter_file_change_warnings(warnings, &target.file_change_patterns)?;
                 let status = if warnings.is_empty() {
                     BackupStatus::Success
                 } else {
@@ -429,6 +429,9 @@ impl BackupEngine {
                 })
             }
             1 if stderr_has_warnings(&stderr) => {
+                let warnings = parse_warnings(&stderr);
+                let warnings =
+                    filter_file_change_warnings(warnings, &target.file_change_patterns)?;
                 let summary = warnings.join("; ");
                 warn!("Borg reported warnings: {summary}");
                 let stats = parse_json_stats(&output.stdout)?;
@@ -1169,6 +1172,34 @@ mod tests {
         assert!(
             matches!(err, BackupError::BorgFailed(_)),
             "Expected BorgFailed, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_unrelated_fatal_exit_is_not_masked_by_fatal_pattern() {
+        // Regression test: an unrelated hard failure (e.g. repository error,
+        // exit code 2) must surface its own message even if the stderr also
+        // happens to contain a warning that matches a `fatal` file-change
+        // pattern. The fatal-pattern check must only apply on the exit-code
+        // paths that actually determine success/warning status.
+        let engine = BackupEngine::with_config(
+            mock_borg_path(),
+            vec![("MOCK_BORG_FATAL_UNRELATED".to_owned(), "1".to_owned())],
+        );
+        let mut target = test_target();
+        target.file_change_patterns = vec![FileChangePattern {
+            path: "*/etc/config*".to_owned(),
+            action: shared::types::FileChangeAction::Fatal,
+        }];
+
+        let result = engine.run_backup(&target, None, None).await;
+        let err = result.unwrap_err();
+        let BackupError::BorgFailed(msg) = &err else {
+            panic!("Expected BorgFailed, got: {err:?}");
+        };
+        assert!(
+            msg.contains("Repository ID mismatch"),
+            "Expected the original borg failure message, got: {err:?}"
         );
     }
 

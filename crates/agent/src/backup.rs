@@ -523,6 +523,10 @@ impl BackupEngine {
 
         args.push(format!("::{archive_name}"));
 
+        if !backup_sources.is_empty() {
+            args.push("--".to_owned());
+        }
+
         for source in backup_sources {
             args.push(source.clone());
         }
@@ -706,6 +710,7 @@ impl BackupEngine {
             "--dry-run",
             "--lock-wait",
             "600",
+            "--",
             archive_ref.as_str(),
         ];
         let output = self
@@ -798,6 +803,7 @@ impl BackupEngine {
             "extract",
             "--lock-wait",
             "600",
+            "--",
             archive_ref.as_str(),
             canary_relative.as_str(),
         ];
@@ -1086,6 +1092,40 @@ mod tests {
 
         assert!(args.iter().any(|arg| arg == "--remote-ratelimit"));
         assert!(args.iter().any(|arg| arg == "5000"));
+    }
+
+    #[test]
+    fn borg_create_args_includes_separator_before_sources() {
+        let target = test_target();
+        let args = BackupEngine::borg_create_args(
+            &target,
+            &target.backup_sources,
+            Path::new("/tmp/excludes"),
+            "archive-name",
+        );
+        let archive_spec_pos = args.iter().position(|a| a.starts_with("::"));
+        let separator_pos = args.iter().position(|a| a == "--");
+        let sources_start = args
+            .iter()
+            .position(|a| a.as_str() == target.backup_sources[0]);
+
+        assert_eq!(separator_pos, Some(archive_spec_pos.unwrap() + 1));
+        assert_eq!(sources_start, Some(separator_pos.unwrap() + 1));
+    }
+
+    #[test]
+    fn borg_create_args_no_separator_when_no_sources() {
+        let target = BackupTarget {
+            backup_sources: vec![],
+            ..test_target()
+        };
+        let args = BackupEngine::borg_create_args(
+            &target,
+            &target.backup_sources,
+            Path::new("/tmp/excludes"),
+            "archive-name",
+        );
+        assert!(!args.iter().any(|a| a == "--"));
     }
 
     #[test]

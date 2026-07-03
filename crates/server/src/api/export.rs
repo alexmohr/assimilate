@@ -27,6 +27,11 @@ pub struct ExportQuery {
 }
 
 fn validate_export_path(path: &str) -> Result<(), ApiError> {
+    if path.starts_with('-') {
+        return Err(ApiError::BadRequest(
+            "paths must not start with '-'".to_string(),
+        ));
+    }
     if path.starts_with('/') {
         return Err(ApiError::BadRequest(
             "absolute paths not allowed".to_string(),
@@ -102,6 +107,7 @@ pub async fn export_archive(
         "-".to_owned(),
     ];
     if let Some(ref p) = export_path {
+        args.push("--".to_owned());
         args.push(p.clone());
     }
 
@@ -157,6 +163,13 @@ mod tests {
     #[test]
     fn empty_path_selects_the_whole_archive() {
         assert!(validate_export_path("").is_ok());
+    }
+
+    #[test]
+    fn validate_export_path_rejects_leading_dash() {
+        assert!(validate_export_path("-").is_err());
+        assert!(validate_export_path("-something").is_err());
+        assert!(validate_export_path("--flag").is_err());
     }
 
     #[test]

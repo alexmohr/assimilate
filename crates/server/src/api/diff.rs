@@ -149,6 +149,7 @@ pub async fn diff_archives(
                 "--json-lines",
                 "--lock-wait",
                 LOCK_WAIT_SECS,
+                "--",
                 repo_archive1.as_str(),
                 query.archive2.as_str(),
             ],

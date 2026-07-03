@@ -80,6 +80,7 @@ pub async fn download_files(
         repo_archive.clone(),
         "-".to_owned(),
     ];
+    args.push("--".to_owned());
     args.extend(body.paths.clone());
 
     let mut child = Borg::new()

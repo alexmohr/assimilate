@@ -14,6 +14,11 @@ import { useAsyncAction } from '../composables/useAsyncAction'
 import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
 import { parseLines } from '../utils/validation'
+import {
+  parseFileChangePatterns,
+  serializeFileChangePatterns,
+  type FileChangePatternRow,
+} from '../utils/fileChangePatterns'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import CronBuilder from '../components/CronBuilder.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
@@ -69,32 +74,6 @@ const usePerHostExcludes = ref(false)
 const perHostExcludes = ref<Record<number, string>>({})
 const usePerHostFileChangePatterns = ref(false)
 const perHostFileChangePatterns = ref<Record<number, string>>({})
-
-interface FileChangePatternRow {
-  path: string
-  action: 'ignore' | 'warn' | 'fatal'
-}
-
-function parseFileChangePatterns(raw: string): FileChangePatternRow[] {
-  return raw
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0 && !l.startsWith('#'))
-    .map((line) => {
-      const lastSpace = line.lastIndexOf(' ')
-      if (lastSpace > 0) {
-        const action = line.slice(lastSpace + 1).trim()
-        if (action === 'ignore' || action === 'fatal') {
-          return { path: line.slice(0, lastSpace).trim(), action }
-        }
-      }
-      return { path: line, action: 'warn' }
-    })
-}
-
-function serializeFileChangePatterns(rows: FileChangePatternRow[]): string {
-  return rows.map((r) => (r.action === 'warn' ? r.path : `${r.path} ${r.action}`)).join('\n')
-}
 
 const fileChangePatternRows = ref<FileChangePatternRow[]>([])
 
@@ -1409,7 +1388,7 @@ watch(activeTab, (tab) => {
                     v-model="row.path"
                     type="text"
                     class="form-input"
-                    placeholder="Path pattern (glob)"
+                    placeholder="Glob against warning text, e.g. */etc/config*"
                     spellcheck="false"
                   />
                   <select
@@ -1466,9 +1445,11 @@ watch(activeTab, (tab) => {
                 v-if="!usePerHostFileChangePatterns"
                 class="field-hint"
               >
-                Path patterns with actions: <code>ignore</code> (no warning),
-                <code>warn</code> (default, current behavior), <code>fatal</code> (fail backup).
-                Unconfigured files still produce warnings.
+                Glob patterns matched against the full warning message, with actions:
+                <code>ignore</code> (no warning), <code>warn</code> (default, current behavior),
+                <code>fatal</code> (fail backup). A bare path will not match - wrap it in
+                <code>*</code>, e.g. <code>*/etc/config*</code>. Unconfigured files still produce
+                warnings.
               </span>
             </div>
           </div>
@@ -1609,7 +1590,7 @@ watch(activeTab, (tab) => {
                     class="error-snippet"
                     :title="r.error_message"
                     >{{ r.error_message.slice(0, 80)
-                    }}{{ r.error_message.length > 80 ? '\u2026' : '' }}</span
+                    }}{{ r.error_message.length > 80 ? '…' : '' }}</span
                   >
                   <span
                     v-else

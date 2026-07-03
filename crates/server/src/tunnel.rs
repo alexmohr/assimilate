@@ -263,11 +263,30 @@ impl TunnelManager {
                     }
                 };
 
+                let expected_host_key = match &current.ssh_host_key {
+                    Some(key) if !key.is_empty() => Some(key.clone()),
+                    _ => match crate::ssh::scan_host_key(&current.ssh_host, ssh_port).await {
+                        Ok(scanned) => {
+                            if let Err(e) =
+                                db::update_tunnel_ssh_host_key(&manager.pool, current.id, &scanned)
+                                    .await
+                            {
+                                error!(tunnel_id, "failed to persist scanned SSH host key: {e}");
+                            }
+                            Some(scanned)
+                        }
+                        Err(e) => {
+                            warn!(tunnel_id, "failed to scan SSH host key: {e}");
+                            None
+                        }
+                    },
+                };
+
                 let handler = TunnelSshHandler {
                     server_addr: manager.server_addr,
                     ui_broadcast: manager.ui_broadcast.clone(),
                     agent_id: current.agent_id,
-                    expected_host_key: None,
+                    expected_host_key,
                 };
 
                 let session = tokio::select! {
@@ -498,6 +517,7 @@ mod tests {
         time::Duration,
     };
 
+    use russh::client::Handler;
     use tokio::sync::Notify;
     use tokio_util::sync::CancellationToken;
 
@@ -600,6 +620,69 @@ mod tests {
 
         assert!(task_finished.load(Ordering::SeqCst));
         assert!(mgr.tunnel_status(1).await.is_none());
+    }
+
+    fn ssh_handler_accepts_when_keys_match() {
+        let key_b64 = "AAAAC3NzaC1lZDI1NTE5AAAAINwxkbeQjd0zydveueMhRPJE+cxoP0DNuUcYAwqmOs6S";
+        let public = russh::keys::parse_public_key_base64(key_b64).unwrap();
+        let expected = public.to_openssh().unwrap();
+
+        let addr: SocketAddr = "127.0.0.1:2222".parse().unwrap();
+        let mut handler = super::TunnelSshHandler {
+            server_addr: addr,
+            ui_broadcast: crate::ws::ui_broadcast::UiBroadcast::new(),
+            agent_id: 1,
+            expected_host_key: Some(expected),
+        };
+
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(handler.check_server_key(&public));
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+    }
+
+    #[test]
+    fn ssh_handler_rejects_when_keys_differ() {
+        let key1_b64 = "AAAAC3NzaC1lZDI1NTE5AAAAINwxkbeQjd0zydveueMhRPJE+cxoP0DNuUcYAwqmOs6S";
+        let key2_b64 = "AAAAC3NzaC1lZDI1NTE5AAAAIC2A0E0TgtMfIkRqPBL6S1a60f1VMJEbaDsaeS2KJoC8";
+        let public1 = russh::keys::parse_public_key_base64(key1_b64).unwrap();
+        let public2 = russh::keys::parse_public_key_base64(key2_b64).unwrap();
+        let expected = public1.to_openssh().unwrap();
+
+        let addr: SocketAddr = "127.0.0.1:2222".parse().unwrap();
+        let mut handler = super::TunnelSshHandler {
+            server_addr: addr,
+            ui_broadcast: crate::ws::ui_broadcast::UiBroadcast::new(),
+            agent_id: 1,
+            expected_host_key: Some(expected),
+        };
+
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(handler.check_server_key(&public2));
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    #[test]
+    fn ssh_handler_accepts_when_no_expected_key() {
+        let key_b64 = "AAAAC3NzaC1lZDI1NTE5AAAAINwxkbeQjd0zydveueMhRPJE+cxoP0DNuUcYAwqmOs6S";
+        let public = russh::keys::parse_public_key_base64(key_b64).unwrap();
+
+        let addr: SocketAddr = "127.0.0.1:2222".parse().unwrap();
+        let mut handler = super::TunnelSshHandler {
+            server_addr: addr,
+            ui_broadcast: crate::ws::ui_broadcast::UiBroadcast::new(),
+            agent_id: 1,
+            expected_host_key: None,
+        };
+
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(handler.check_server_key(&public));
+        assert!(result.is_ok());
+        assert!(result.unwrap());
     }
 
     /// Regression: stop_tunnel must release the write lock before awaiting

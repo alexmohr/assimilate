@@ -494,6 +494,7 @@ async fn tunnel_crud(pool: PgPool) {
             ssh_port: Some(2222),
             tunnel_port: 2200,
             enabled: Some(true),
+            ssh_host_key: None,
         },
     )
     .await
@@ -525,6 +526,7 @@ async fn tunnel_crud(pool: PgPool) {
             ssh_port: None,
             tunnel_port: None,
             enabled: Some(false),
+            ssh_host_key: None,
         },
     )
     .await
@@ -555,6 +557,7 @@ async fn tunnel_defaults(pool: PgPool) {
             ssh_port: None,
             tunnel_port: 3000,
             enabled: None,
+            ssh_host_key: None,
         },
     )
     .await
@@ -2794,6 +2797,7 @@ async fn ssh_tunnel_crud(pool: PgPool) {
             ssh_port: Some(2222),
             tunnel_port: 2200,
             enabled: Some(true),
+            ssh_host_key: None,
         },
     )
     .await
@@ -2825,6 +2829,7 @@ async fn ssh_tunnel_crud(pool: PgPool) {
             ssh_port: Some(2022),
             tunnel_port: Some(2201),
             enabled: Some(false),
+            ssh_host_key: None,
         },
     )
     .await
@@ -2855,6 +2860,7 @@ async fn ssh_tunnel_crud(pool: PgPool) {
             ssh_port: None,
             tunnel_port: 2300,
             enabled: None,
+            ssh_host_key: None,
         },
     )
     .await

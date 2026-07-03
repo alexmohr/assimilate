@@ -40,7 +40,10 @@ System settings are stored in the database and managed through the UI or the `/a
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `retention_days` | `7` | Number of days to retain backup-run *history* (failed/cancelled runs without an archive) and system event log entries. Reports that represent an actual archive are never pruned by age — their lifecycle follows borg and repository sync — so imported archives with old timestamps are not affected. Set to `0` to disable automatic cleanup. |
+| `retention_days` | `7` | Legacy setting — number of days to retain backup-run *history* (failed/cancelled runs without an archive) and system event log entries. Replaced by the three independent settings below on first save, but still read as a fallback. |
+| `report_retention_days` | `retention_days` (or `0`) | Days to keep successful/archived backup reports. Reports with an archive are pruned by this window. `0` = keep forever. |
+| `failed_report_retention_days` | `365` | Days to keep failed/archive-less backup reports. `0` = keep forever. |
+| `system_event_retention_days` | `retention_days` (or `90`) | Days to keep system event log entries. `0` = keep forever. |
 | `timezone` | `UTC` | Timezone used for displaying timestamps in the UI and for scheduling cron-based backups (e.g., `Europe/Berlin`, `America/New_York`). |
 
 ## Database Storage

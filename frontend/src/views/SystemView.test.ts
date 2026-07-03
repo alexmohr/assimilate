@@ -45,7 +45,14 @@ function setupSuccessMocks(): void {
     }
     if (url === '/system/settings') {
       return Promise.resolve({
-        data: { timezone: 'Europe/Berlin', retention_days: 30, borg_query_timeout_secs: 600 },
+        data: {
+          timezone: 'Europe/Berlin',
+          retention_days: 30,
+          report_retention_days: 365,
+          failed_report_retention_days: 365,
+          system_event_retention_days: 90,
+          borg_query_timeout_secs: 600,
+        },
       })
     }
     if (url === '/system/version') {
@@ -148,6 +155,51 @@ describe('SystemView', () => {
     expect(input.element.value).toBe('30')
   })
 
+  it('renders Report Retention input', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    expect(wrapper.find('#settings-report-retention').exists()).toBe(true)
+  })
+
+  it('populates report retention from API response', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    const input = wrapper.find<HTMLInputElement>('#settings-report-retention')
+    expect(input.element.value).toBe('365')
+  })
+
+  it('renders Failed Report Retention input', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    expect(wrapper.find('#settings-failed-retention').exists()).toBe(true)
+  })
+
+  it('populates failed report retention from API response', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    const input = wrapper.find<HTMLInputElement>('#settings-failed-retention')
+    expect(input.element.value).toBe('365')
+  })
+
+  it('renders System Event Retention input', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    expect(wrapper.find('#settings-event-retention').exists()).toBe(true)
+  })
+
+  it('populates system event retention from API response', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    const input = wrapper.find<HTMLInputElement>('#settings-event-retention')
+    expect(input.element.value).toBe('90')
+  })
+
   it('renders Borg Timeout input', async () => {
     setupSuccessMocks()
     const wrapper = renderWithPlugins(SystemView)
@@ -191,7 +243,14 @@ describe('SystemView', () => {
       }
       if (url === '/system/settings') {
         return Promise.resolve({
-          data: { timezone: 'UTC', retention_days: 7, borg_query_timeout_secs: 300 },
+          data: {
+            timezone: 'UTC',
+            retention_days: 7,
+            report_retention_days: 0,
+            failed_report_retention_days: 365,
+            system_event_retention_days: 90,
+            borg_query_timeout_secs: 300,
+          },
         })
       }
       if (url === '/system/version') {

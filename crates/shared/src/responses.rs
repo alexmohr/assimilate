@@ -626,6 +626,12 @@ pub struct SshPublicKeyResponse {
 pub struct SettingsResponse {
     #[ts(type = "number")]
     pub retention_days: i64,
+    #[ts(type = "number")]
+    pub report_retention_days: i64,
+    #[ts(type = "number")]
+    pub failed_report_retention_days: i64,
+    #[ts(type = "number")]
+    pub system_event_retention_days: i64,
     pub timezone: String,
     #[ts(type = "number")]
     pub borg_query_timeout_secs: u64,

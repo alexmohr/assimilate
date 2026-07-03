@@ -10,6 +10,7 @@ import { apiClient } from '../api/client'
 import { useWebSocket } from '../composables/useWebSocket'
 import { formatBytes, relativeTime } from '../utils/format'
 import { logger } from '../utils/logger'
+import { normalizeBackupStatus } from '../utils/backupStatus'
 import BaseSkeleton from '../components/BaseSkeleton.vue'
 import TrendsChart from '../components/TrendsChart.vue'
 import BackupCalendar from '../components/BackupCalendar.vue'
@@ -227,13 +228,16 @@ const overdueCount = computed((): number => health.value.filter((h) => h.is_over
 
 const successTotal = computed((): number => successActivity.value.length)
 const successCount = computed(
-  (): number => successActivity.value.filter((a) => a.status === 'success').length,
+  (): number =>
+    successActivity.value.filter((a) => normalizeBackupStatus(a.status) === 'success').length,
 )
 const warnedCount = computed(
-  (): number => successActivity.value.filter((a) => a.status === 'warning').length,
+  (): number =>
+    successActivity.value.filter((a) => normalizeBackupStatus(a.status) === 'warning').length,
 )
 const failedCount = computed(
-  (): number => successActivity.value.filter((a) => a.status === 'failed').length,
+  (): number =>
+    successActivity.value.filter((a) => normalizeBackupStatus(a.status) === 'failed').length,
 )
 
 const successRate = computed((): number => {

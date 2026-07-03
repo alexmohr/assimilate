@@ -23,6 +23,10 @@ interface CalendarDay {
   events: CalendarEvent[]
 }
 
+function isScheduledEvent(status: string): status is 'scheduled' {
+  return status === 'scheduled'
+}
+
 interface ScheduledItem {
   repo_name: string
   datetime: string
@@ -52,7 +56,7 @@ async function fetchScheduled(): Promise<void> {
     const all: ScheduledItem[] = []
     for (const day of [...r1.data, ...r2.data]) {
       for (const evt of day.events) {
-        if (evt.status === 'scheduled') {
+        if (isScheduledEvent(evt.status)) {
           const iso = `${day.date}T${evt.time}:00Z`
           const evtTs = new Date(iso).getTime()
           if (evtTs > nowTs) {

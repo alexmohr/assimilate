@@ -8,9 +8,13 @@ import type {
   PushSubscriptionResponse,
 } from './generated'
 
-export type NotificationChannel = Omit<NotificationChannelResponse, 'scope' | 'config'> & {
+export type NotificationChannel = Omit<
+  NotificationChannelResponse,
+  'scope' | 'config' | 'channel_type'
+> & {
   scope: ChannelScope
   config: ChannelConfig
+  channel_type: ChannelType
 }
 export type NotificationRule = Omit<
   NotificationRuleResponse,

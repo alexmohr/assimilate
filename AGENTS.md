@@ -197,6 +197,16 @@ The "no string comparisons for control flow" rule is enforced in CI by a custom 
 * After changing the lint itself, update its UI test fixtures (`lints/no_string_control_flow/ui/`) and re-run `cargo test` inside the lint crate.
 * The lint crate is pinned to its own nightly toolchain (`lints/no_string_control_flow/rust-toolchain`), independent of the workspace's `+nightly`. Bump it with `cargo dylint upgrade lints/no_string_control_flow` when it stops building against current dependencies, and update the CI step's `cargo-dylint`/`dylint-link` install version if the `dylint_linting` major version changes.
 
+### Frontend equivalent: `local/no-string-literal-control-flow` ESLint rule
+
+The same rule is enforced for the frontend by a type-aware custom ESLint rule at `frontend/eslint-rules/no-string-literal-control-flow.js`, wired into `frontend/eslint.config.js` as `local/no-string-literal-control-flow`. Unlike a syntax-only `no-restricted-syntax` rule, it uses the TypeScript checker (via type-aware parsing, `parserOptions.projectService`) to flag a comparison or `switch` only when the non-literal operand's type is the *wide* `string` — not when it's already a narrow string-literal union/enum being compared to one of its own members. That distinction matters because TypeScript's idiomatic "enum" (a `type Foo = 'a' | 'b'` union) is itself expressed via string literals, so a syntax-only rule can't tell a real violation from already-correct code.
+
+* Exempt inside functions with a TS type-predicate return type (`function isFoo(x): x is Foo`) or a return type that is itself a narrow string-literal union — the direct equivalent of Rust's `from`/`from_str`/`try_from`/`deserialize` exemption.
+* Also exempt for `typeof` checks and `KeyboardEvent.key` comparisons (a DOM API contract, like Rust's `tracing::field::Field::name()` case), and for comparisons against the empty string literal (presence checks, not domain state).
+* A few remaining sites are legitimately string-based (env var/localStorage boolean flags, `window.location.protocol`, PrimeVue's own untyped prop contracts) and carry a `// eslint-disable-next-line local/no-string-literal-control-flow -- reason` comment.
+* Backend response fields the Rust side serializes as plain strings (e.g. `status: string` on report/activity rows) are normalized once via shared helpers like `frontend/src/utils/backupStatus.ts` rather than compared ad hoc at each call site.
+* Run it locally with `npm run lint` in `frontend/`; it runs alongside the existing ESLint rules, no separate command needed.
+
 ## Style Guide
 
 ### Prefer `map_or`

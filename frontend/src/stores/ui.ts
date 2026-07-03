@@ -8,6 +8,7 @@ import { readStorage, writeStorage } from '../utils/storage'
 const STORAGE_KEY = 'assimilate-sidebar-collapsed'
 
 export const useUiStore = defineStore('ui', () => {
+  // eslint-disable-next-line local/no-string-literal-control-flow -- boolean flag persisted as the literal string "true"/"false" in localStorage, not domain state
   const sidebarCollapsed = ref(readStorage(STORAGE_KEY) === 'true')
   const sidebarMobileOpen = ref(false)
 

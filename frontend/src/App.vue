@@ -20,8 +20,10 @@ router.isReady().then(() => {
   routerReady.value = true
 })
 
+const FULL_PAGE_ROUTE_NAMES = new Set(['login', 'not-found', 'error'])
+
 const isFullPage = computed(
-  () => route.name === 'login' || route.name === 'not-found' || route.name === 'error',
+  () => typeof route.name === 'string' && FULL_PAGE_ROUTE_NAMES.has(route.name),
 )
 
 // Only redirect to the error page for unrecoverable render errors (TypeError, ReferenceError, etc.).

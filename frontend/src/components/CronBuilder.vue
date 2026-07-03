@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { cronToHuman } from '../utils/cron'
+import { cronToHuman, CRON_ANY, CRON_TOP_OF_HOUR } from '../utils/cron'
 import { getConfiguredTimezone } from '../composables/useTimezone'
 
 type Frequency = 'hourly' | 'daily' | 'weekly' | 'monthly'
@@ -80,10 +80,10 @@ function parseExpressionToHelper(expr: string): boolean {
 
   const [min, hour, dom, month, dow] = parts
 
-  if (month !== '*') return false
+  if (month !== CRON_ANY) return false
 
   const hourlyMatch = hour.match(/^\*\/(\d+)$/)
-  if (hourlyMatch && min === '0' && dom === '*' && dow === '*') {
+  if (hourlyMatch && min === CRON_TOP_OF_HOUR && dom === CRON_ANY && dow === CRON_ANY) {
     frequency.value = 'hourly'
     hourlyInterval.value = parseInt(hourlyMatch[1], 10)
     return true
@@ -97,12 +97,12 @@ function parseExpressionToHelper(expr: string): boolean {
   timeMinute.value = minNum
   timeHour.value = hourNum
 
-  if (dom === '*' && dow === '*') {
+  if (dom === CRON_ANY && dow === CRON_ANY) {
     frequency.value = 'daily'
     return true
   }
 
-  if (dom === '*' && dow !== '*') {
+  if (dom === CRON_ANY && dow !== CRON_ANY) {
     const dayParts = dow.split(',')
     const days = dayParts.map((d) => parseInt(d, 10))
     if (days.some((d) => isNaN(d) || d < 0 || d > 7)) return false
@@ -111,7 +111,7 @@ function parseExpressionToHelper(expr: string): boolean {
     return true
   }
 
-  if (dow === '*' && dom !== '*') {
+  if (dow === CRON_ANY && dom !== CRON_ANY) {
     const domNum = parseInt(dom, 10)
     if (isNaN(domNum) || domNum < 1 || domNum > 31) return false
     frequency.value = 'monthly'
@@ -137,7 +137,7 @@ function validateCron(expr: string): string | null {
 
   for (let i = 0; i < 5; i++) {
     const field = parts[i]
-    if (field === '*') continue
+    if (field === CRON_ANY) continue
 
     const segments = field.split(',')
     for (const seg of segments) {
@@ -145,7 +145,7 @@ function validateCron(expr: string): string | null {
       if (stepMatch) {
         const step = parseInt(stepMatch[2], 10)
         if (step < 1) return `Invalid step in ${names[i]} field`
-        if (stepMatch[1] !== '*') {
+        if (stepMatch[1] !== CRON_ANY) {
           const rangeMatch = stepMatch[1].match(/^(\d+)(?:-(\d+))?$/)
           if (!rangeMatch) return `Invalid range in ${names[i]} field`
         }
@@ -234,14 +234,14 @@ function matchesCron(expr: string, date: Date): boolean {
 }
 
 function fieldMatches(field: string, value: number, isDow: boolean): boolean {
-  if (field === '*') return true
+  if (field === CRON_ANY) return true
 
   const segments = field.split(',')
   for (const seg of segments) {
     const stepMatch = seg.match(/^(\*|\d+(?:-\d+)?)\/(\d+)$/)
     if (stepMatch) {
       const step = parseInt(stepMatch[2], 10)
-      if (stepMatch[1] === '*') {
+      if (stepMatch[1] === CRON_ANY) {
         if (value % step === 0) return true
       } else {
         const rangeMatch = stepMatch[1].match(/^(\d+)(?:-(\d+))?$/)

@@ -9,6 +9,7 @@ import { useRouter } from 'vue-router'
 import { apiClient } from '../api/client'
 import { formatDuration } from '../utils/format'
 import { logger } from '../utils/logger'
+import { normalizeBackupStatus } from '../utils/backupStatus'
 
 interface ActivityEntry {
   id: number
@@ -57,10 +58,10 @@ watch([selectedDays, selectedRepoId], () => {
 
 const totalCount = computed((): number => entries.value.length)
 const successCount = computed(
-  (): number => entries.value.filter((e) => e.status === 'success').length,
+  (): number => entries.value.filter((e) => normalizeBackupStatus(e.status) === 'success').length,
 )
 const failedCount = computed(
-  (): number => entries.value.filter((e) => e.status !== 'success').length,
+  (): number => entries.value.filter((e) => normalizeBackupStatus(e.status) !== 'success').length,
 )
 const successRate = computed((): number => {
   if (totalCount.value === 0) return 0

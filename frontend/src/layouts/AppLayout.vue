@@ -54,9 +54,11 @@ const authStore = useAuthStore()
 const uiStore = useUiStore()
 const route = useRoute()
 
-const isAdmin = computed(() => authStore.user?.role === 'admin')
+const ROOT_PATH = '/'
+
+const isAdmin = computed(() => authStore.isAdmin)
 const isFullWidth = computed(() => route.path.startsWith('/activity'))
-const isDashboard = computed(() => route.path === '/')
+const isDashboard = computed(() => route.path === ROOT_PATH)
 const settingsOpen = ref(false)
 
 const mainNav = [

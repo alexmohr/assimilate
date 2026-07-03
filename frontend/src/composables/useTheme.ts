@@ -18,12 +18,13 @@ function getSystemPreference(): ResolvedTheme {
   return 'light'
 }
 
+function isTheme(v: string): v is Theme {
+  return v === 'light' || v === 'dark' || v === 'auto'
+}
+
 function getStoredTheme(): Theme | null {
   const stored = readStorage(STORAGE_KEY)
-  if (stored === 'light' || stored === 'dark' || stored === 'auto') {
-    return stored
-  }
-  return null
+  return stored !== undefined && isTheme(stored) ? stored : null
 }
 
 function resolveTheme(t: Theme): ResolvedTheme {
@@ -83,7 +84,7 @@ export function useTheme(): {
     try {
       const res = await apiClient.get<{ theme?: string }>('/auth/preferences')
       const backendTheme = res.data?.theme
-      if (backendTheme === 'light' || backendTheme === 'dark' || backendTheme === 'auto') {
+      if (backendTheme !== undefined && isTheme(backendTheme)) {
         syncing = true
         theme.value = backendTheme
         writeStorage(STORAGE_KEY, backendTheme)

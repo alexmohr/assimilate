@@ -15,6 +15,8 @@ vi.mock('../utils/cron', () => ({
     if (expr === '0 */6 * * *') return 'Every 6 hours'
     return ''
   },
+  CRON_ANY: '*',
+  CRON_TOP_OF_HOUR: '0',
 }))
 
 function mountCronBuilder(modelValue: string): ReturnType<typeof mount> {

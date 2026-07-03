@@ -20,6 +20,7 @@ import { useToast } from '../composables/useToast'
 import { formatBytes, formatDate, relativeTime } from '../utils/format'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
+import { normalizeBackupStatus, type NormalizedBackupStatus } from '../utils/backupStatus'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
 import {
@@ -38,7 +39,7 @@ import QuotaPanel from '../components/QuotaPanel.vue'
 import BaseModal from '../components/BaseModal.vue'
 import BaseHostLink from '../components/BaseHostLink.vue'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
-import type { ActiveRepoOp, RepoWithStats } from '../types/repo'
+import type { ActiveRepoOp, RepoOpKind, RepoWithStats } from '../types/repo'
 import type { TagRow } from '../types/tag'
 
 type TabId = 'overview' | 'archives' | 'schedules'
@@ -244,7 +245,9 @@ const enrichedRepoSchedules = computed<EnrichedSchedule[]>(() =>
     const entries = scheduleHealthBySchedule.value.get(s.id) ?? []
     const health: HealthEntry | null =
       entries.find((h) => h.is_overdue) ??
-      entries.find((h) => h.last_status === 'failed') ??
+      entries.find(
+        (h) => h.last_status !== null && normalizeBackupStatus(h.last_status) === 'failed',
+      ) ??
       entries[0] ??
       null
     return { ...s, hostLabels, health }
@@ -262,19 +265,25 @@ function scheduleTypeLabel(t: ScheduleType): string {
   }
 }
 
+function scheduleHealthStatus(entry: HealthEntry | null): NormalizedBackupStatus | null {
+  return entry?.last_status != null ? normalizeBackupStatus(entry.last_status) : null
+}
+
 function scheduleStatusClass(entry: HealthEntry | null): string {
   if (!entry) return ''
   if (entry.is_overdue) return 'status-overdue'
-  switch (entry.last_status) {
+  switch (scheduleHealthStatus(entry)) {
     case 'success':
       return 'status-success'
     case 'warning':
       return 'status-warning'
     case 'failed':
+    case 'cancelled':
       return 'status-failed'
     case 'started':
+    case 'pending':
       return 'status-started'
-    default:
+    case null:
       return ''
   }
 }
@@ -282,16 +291,18 @@ function scheduleStatusClass(entry: HealthEntry | null): string {
 function scheduleStatusLabel(entry: HealthEntry | null): string {
   if (!entry) return ''
   if (entry.is_overdue) return 'Overdue'
-  switch (entry.last_status) {
+  switch (scheduleHealthStatus(entry)) {
     case 'success':
       return 'Success'
     case 'warning':
       return 'Warning'
     case 'failed':
+    case 'cancelled':
       return 'Failed'
     case 'started':
+    case 'pending':
       return 'Running'
-    default:
+    case null:
       return 'No data'
   }
 }
@@ -610,7 +621,7 @@ function isGroupCollapsed(hostname: string): boolean {
   return collapsedGroups.value.has(hostname)
 }
 
-const isAdmin = computed(() => authStore.user?.role === 'admin')
+const isAdmin = computed(() => authStore.isAdmin)
 
 const repoTags = computed<TagRow[]>(() =>
   allTags.value.filter((t) => repoTagIds.value.includes(t.id)),
@@ -638,8 +649,22 @@ function repoOpLabel(op: ActiveRepoOp): string {
   }
 }
 
+function classifyLastOpKind(kind: string | null): RepoOpKind | 'unknown' {
+  if (
+    kind === 'agent_backup' ||
+    kind === 'server_sync' ||
+    kind === 'break_lock' ||
+    kind === 'delete_archive' ||
+    kind === 'agent_check' ||
+    kind === 'agent_verify'
+  ) {
+    return kind
+  }
+  return 'unknown'
+}
+
 function lastOpLabel(kind: string | null): string {
-  switch (kind) {
+  switch (classifyLastOpKind(kind)) {
     case 'agent_backup':
       return 'Agent backup'
     case 'server_sync':
@@ -648,7 +673,11 @@ function lastOpLabel(kind: string | null): string {
       return 'Break lock'
     case 'delete_archive':
       return 'Delete archive'
-    default:
+    case 'agent_check':
+      return 'Integrity check'
+    case 'agent_verify':
+      return 'Verify'
+    case 'unknown':
       return kind ?? 'Unknown'
   }
 }

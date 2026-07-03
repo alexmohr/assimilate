@@ -16,6 +16,7 @@ import { useWebSocket } from '../composables/useWebSocket'
 import { useMobile } from '../composables/useMobile'
 import { formatDuration, formatBytes, formatDateShort } from '../utils/format'
 import { logger } from '../utils/logger'
+import { normalizeBackupStatus } from '../utils/backupStatus'
 import type { ReportRow } from '../types/report'
 
 interface ActivityRow {
@@ -59,6 +60,41 @@ interface LogEntry {
 type CategoryFilter = 'all' | 'backup' | 'system' | 'logs'
 type StatusFilter = 'all' | 'success' | 'warning' | 'failed' | 'started' | 'pending'
 type LogLevel = '' | 'error' | 'warn' | 'info' | 'debug' | 'trace'
+
+// Target names are open-ended (arbitrary hostnames from data), so "all" can't
+// be expressed as a closed literal union alongside them. Naming the sentinel
+// keeps the comparison out of raw-literal territory.
+const ALL_TARGETS_FILTER = 'all'
+
+function isCategoryFilter(value: string): value is CategoryFilter {
+  return value === 'all' || value === 'backup' || value === 'system' || value === 'logs'
+}
+
+function isQueryBackupStatus(value: string): value is 'success' | 'warning' | 'failed' {
+  return value === 'success' || value === 'warning' || value === 'failed'
+}
+
+type EventTypeClass = 'success' | 'warning' | 'failed' | 'other'
+
+function classifyEventType(eventType: string): EventTypeClass {
+  switch (eventType) {
+    case 'repo_sync':
+    case 'agent_connected':
+    case 'backup_complete':
+      return 'success'
+    case 'repo_sync_slow':
+    case 'backup_warning':
+    case 'agent_disconnected':
+      return 'warning'
+    case 'repo_sync_failed':
+    case 'backup_failed':
+    case 'auth_failed':
+    case 'error':
+      return 'failed'
+    default:
+      return 'other'
+  }
+}
 
 const rows = ref<ActivityRow[]>([])
 const systemEvents = ref<SystemEvent[]>([])
@@ -105,7 +141,7 @@ const hasActiveFilters = computed((): boolean => {
   }
   return (
     filterMachine.value !== '' ||
-    filterTarget.value !== 'all' ||
+    filterTarget.value !== ALL_TARGETS_FILTER ||
     filterStatus.value !== 'all' ||
     filterFrom.value !== '' ||
     filterTo.value !== '' ||
@@ -116,7 +152,7 @@ const hasActiveFilters = computed((): boolean => {
 
 onMounted(async () => {
   const catParam = route.query.category as string | undefined
-  if (catParam === 'all' || catParam === 'backup' || catParam === 'system' || catParam === 'logs') {
+  if (catParam !== undefined && isCategoryFilter(catParam)) {
     activeCategory.value = catParam
   }
   const targetParam = route.query.target as string | undefined
@@ -129,7 +165,7 @@ onMounted(async () => {
     activeCategory.value = 'backup'
   }
   const statusParam = route.query.status as string | undefined
-  if (statusParam === 'success' || statusParam === 'warning' || statusParam === 'failed') {
+  if (statusParam !== undefined && isQueryBackupStatus(statusParam)) {
     filterStatus.value = statusParam
     activeCategory.value = 'backup'
   }
@@ -356,16 +392,11 @@ const filtered = computed(() => {
     if (filterMachine.value && r.hostname !== filterMachine.value) {
       return false
     }
-    if (filterTarget.value !== 'all' && r.target_name !== filterTarget.value) {
+    if (filterTarget.value !== ALL_TARGETS_FILTER && r.target_name !== filterTarget.value) {
       return false
     }
-    if (filterStatus.value !== 'all') {
-      const s = r.status.toLowerCase()
-      if (filterStatus.value === 'success' && s !== 'success') return false
-      if (filterStatus.value === 'warning' && s !== 'warning') return false
-      if (filterStatus.value === 'failed' && s !== 'failed' && s !== 'error') return false
-      if (filterStatus.value === 'started' && s !== 'started') return false
-      if (filterStatus.value === 'pending' && s !== 'pending') return false
+    if (filterStatus.value !== 'all' && normalizeBackupStatus(r.status) !== filterStatus.value) {
+      return false
     }
     if (filterFrom.value) {
       if (new Date(r.started_at) < new Date(filterFrom.value)) return false
@@ -431,30 +462,31 @@ const unifiedRows = computed<UnifiedRow[]>(() => {
 })
 
 function statusClass(status: string): string {
-  const s = status.toLowerCase()
-  if (s === 'success') return 'badge-success'
-  if (s === 'warning') return 'badge-warning'
-  if (s === 'started') return 'badge-started'
-  if (s === 'pending') return 'badge-pending'
-  return 'badge-failed'
+  switch (normalizeBackupStatus(status)) {
+    case 'success':
+      return 'badge-success'
+    case 'warning':
+      return 'badge-warning'
+    case 'started':
+      return 'badge-started'
+    case 'pending':
+      return 'badge-pending'
+    case 'cancelled':
+      return 'badge-cancelled'
+    case 'failed':
+      return 'badge-failed'
+  }
 }
 
 function eventTypeClass(eventType: string): string {
-  switch (eventType) {
-    case 'repo_sync':
-    case 'agent_connected':
-    case 'backup_complete':
+  switch (classifyEventType(eventType)) {
+    case 'success':
       return 'badge-success'
-    case 'repo_sync_slow':
-    case 'backup_warning':
-    case 'agent_disconnected':
+    case 'warning':
       return 'badge-warning'
-    case 'repo_sync_failed':
-    case 'backup_failed':
-    case 'auth_failed':
-    case 'error':
+    case 'failed':
       return 'badge-failed'
-    default:
+    case 'other':
       return 'badge-started'
   }
 }

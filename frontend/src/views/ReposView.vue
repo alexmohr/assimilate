@@ -73,6 +73,8 @@ interface TestConnState {
   result: { ssh_ok: boolean; borg_installed: boolean; borg_version?: string; error?: string } | null
 }
 
+const ROOT_PATH = '/'
+
 interface DirEntry {
   name: string
   is_dir: boolean
@@ -299,8 +301,8 @@ function onPathInput(): void {
 function syncBrowserToPath(): void {
   if (!browser.showBrowser || !sshReady.value) return
   const pathValue = repoForm.repo_path.trim()
-  if (pathValue.endsWith('/') || pathValue === '/') {
-    const dir = pathValue === '/' ? '/' : pathValue.replace(/\/+$/, '')
+  if (pathValue.endsWith('/') || pathValue === ROOT_PATH) {
+    const dir = pathValue === ROOT_PATH ? ROOT_PATH : pathValue.replace(/\/+$/, '')
     if (dir !== browser.path) {
       browseDir(dir || '/')
     }
@@ -346,7 +348,7 @@ async function fetchAutocomplete(): Promise<void> {
 function selectAutocomplete(entry: DirEntry): void {
   const pathValue = repoForm.repo_path.trim()
   const parentDir = pathValue.substring(0, pathValue.lastIndexOf('/')) || ''
-  repoForm.repo_path = parentDir === '/' ? `/${entry.name}` : `${parentDir}/${entry.name}`
+  repoForm.repo_path = parentDir === ROOT_PATH ? `/${entry.name}` : `${parentDir}/${entry.name}`
   showAutocomplete.value = false
   autocompleteEntries.value = []
 }
@@ -369,7 +371,7 @@ async function confirmCreateFolder(): Promise<void> {
     folderModal.error = 'Folder name is required.'
     return
   }
-  const newPath = browser.path === '/' ? `/${name}` : `${browser.path}/${name}`
+  const newPath = browser.path === ROOT_PATH ? `/${name}` : `${browser.path}/${name}`
   try {
     await apiClient.post('/ssh/mkdir', {
       ssh_host: repoForm.ssh_host.trim(),
@@ -643,7 +645,7 @@ onMounted(loadRepos)
     <div class="page-header">
       <h1 class="page-title">Repositories</h1>
       <div
-        v-if="authStore.user?.role === 'admin'"
+        v-if="authStore.isAdmin"
         class="header-actions"
       >
         <button

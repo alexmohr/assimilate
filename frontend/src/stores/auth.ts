@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { apiClient } from '../api/client'
 import { logger } from '../utils/logger'
 
@@ -18,8 +18,13 @@ export interface AuthUser {
 // Refresh the session when this much time remains before expiry.
 const REFRESH_THRESHOLD_MS = 24 * 60 * 60 * 1000
 
+// `role` is an open RBAC role name (custom roles are supported), but "admin"
+// is the one built-in role the UI special-cases.
+const ADMIN_ROLE_NAME = 'admin'
+
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<AuthUser | null>(null)
+  const isAdmin = computed(() => user.value?.role === ADMIN_ROLE_NAME)
   const loading = ref(false)
   const sessionExpiresAt = ref<string | null>(null)
   const rememberMe = ref(false)
@@ -106,5 +111,5 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  return { user, loading, fetchMe, login, changePassword, logout }
+  return { user, loading, isAdmin, fetchMe, login, changePassword, logout }
 })

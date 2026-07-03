@@ -14,6 +14,7 @@ import { useAsyncAction } from '../composables/useAsyncAction'
 import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
 import { parseLines } from '../utils/validation'
+import { normalizeBackupStatus } from '../utils/backupStatus'
 import {
   FileChangeAction,
   parseFileChangePatterns,
@@ -43,7 +44,11 @@ const props = defineProps<{ id: string }>()
 const route = useRoute()
 const router = useRouter()
 
-const isCreate = computed(() => props.id === 'new')
+// The route param is either a numeric schedule id or this sentinel for the
+// "create new schedule" route.
+const NEW_SCHEDULE_ROUTE_ID = 'new'
+
+const isCreate = computed(() => props.id === NEW_SCHEDULE_ROUTE_ID)
 
 const schedule = ref<ScheduleRow | null>(null)
 const agents = ref<AgentRow[]>([])
@@ -113,7 +118,11 @@ const MAX_LIVE_LOG_LINES = 200
 let elapsedTimer: ReturnType<typeof setInterval> | null = null
 
 const lastSuccessfulReport = computed<ReportRow | null>(
-  () => reports.value.find((r) => r.status === 'success' || r.status === 'warning') ?? null,
+  () =>
+    reports.value.find((r) => {
+      const status = normalizeBackupStatus(r.status)
+      return status === 'success' || status === 'warning'
+    }) ?? null,
 )
 
 const estimatedRemainingSecs = computed<number | null>(() => {
@@ -280,7 +289,7 @@ watch(fileChangePatternRows, () => syncFileChangePatternsToForm(), { deep: true 
 // Sync initial form state
 syncFileChangePatternsFromForm()
 
-function scheduleTypeLabel(t: string): string {
+function scheduleTypeLabel(t: ScheduleType): string {
   switch (t) {
     case 'backup':
       return 'Backup'
@@ -288,8 +297,6 @@ function scheduleTypeLabel(t: string): string {
       return 'Integrity Check'
     case 'verify':
       return 'Verify (extract dry-run)'
-    default:
-      return t
   }
 }
 
@@ -327,9 +334,10 @@ async function loadData(): Promise<void> {
       scheduleTargets.value = targetsRes.data
       selectedRepoId.value = schedRes.data.repo_id ?? null
       reports.value = recentReportsRes.data
-      const runningReport = recentReportsRes.data.find(
-        (r) => r.status === 'pending' || r.status === 'started',
-      )
+      const runningReport = recentReportsRes.data.find((r) => {
+        const status = normalizeBackupStatus(r.status)
+        return status === 'pending' || status === 'started'
+      })
       backupRunning.value = runningReport !== undefined
       if (runningReport) {
         const agent = agentMap.value.get(runningReport.agent_id ?? 0)
@@ -537,7 +545,10 @@ async function loadReports(): Promise<void> {
       params: { limit: 100 },
     })
     reports.value = res.data
-    backupRunning.value = res.data.some((r) => r.status === 'pending' || r.status === 'started')
+    backupRunning.value = res.data.some((r) => {
+      const status = normalizeBackupStatus(r.status)
+      return status === 'pending' || status === 'started'
+    })
   } catch (e: unknown) {
     reportsError.value = extractError(e, 'Failed to load reports')
   } finally {
@@ -650,12 +661,20 @@ onMessage<{ repo_id: number }>('DataChanged', () => {
 })
 
 function reportStatusClass(status: string): string {
-  const s = status.toLowerCase()
-  if (s === 'success') return 'badge-success'
-  if (s === 'warning') return 'badge-warning'
-  if (s === 'started') return 'badge-started'
-  if (s === 'cancelled') return 'badge-cancelled'
-  return 'badge-failed'
+  switch (normalizeBackupStatus(status)) {
+    case 'success':
+      return 'badge-success'
+    case 'warning':
+      return 'badge-warning'
+    case 'started':
+      return 'badge-started'
+    case 'cancelled':
+      return 'badge-cancelled'
+    case 'pending':
+      return 'badge-pending'
+    case 'failed':
+      return 'badge-failed'
+  }
 }
 
 watch(() => props.id, loadData)

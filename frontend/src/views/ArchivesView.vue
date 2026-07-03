@@ -44,6 +44,23 @@ interface BreadcrumbSegment {
   path: string
 }
 
+// borg's raw `list` entry-type character ("d" directory, "-" regular file, "l"
+// symlink, ...); an external format contract, not app-owned domain state.
+const DIRECTORY_ENTRY_TYPE = 'd'
+
+const ROOT_PATH = '/'
+const CURRENT_DIR_MARKER = '.'
+const PARENT_DIR_MARKER = '..'
+
+type ArchiveIndexStatus = 'pending' | 'indexing' | 'done' | 'failed'
+
+function normalizeIndexStatus(status: string): ArchiveIndexStatus {
+  if (status === 'done') return 'done'
+  if (status === 'failed') return 'failed'
+  if (status === 'indexing') return 'indexing'
+  return 'pending'
+}
+
 const repos = ref<RepoOption[]>([])
 const reposLoading = ref(false)
 const reposError = ref<string | null>(null)
@@ -78,11 +95,12 @@ function startPolling(archiveName: string, pendingPath: string): void {
       const res = await apiClient.get<{ status: string; error?: string }>(
         `/repos/${selectedRepoId.value}/archives/${encodeURIComponent(archiveName)}/index-status`,
       )
-      if (res.data.status === 'done') {
+      const status = normalizeIndexStatus(res.data.status)
+      if (status === 'done') {
         stopPolling()
         indexing.value = false
         await loadContents(pendingPath)
-      } else if (res.data.status === 'failed') {
+      } else if (status === 'failed') {
         stopPolling()
         indexing.value = false
         contentsError.value = res.data.error ?? 'Archive indexing failed'
@@ -108,7 +126,7 @@ const archiveFilters = ref({
 
 const breadcrumbs = computed<BreadcrumbSegment[]>(() => {
   const path = currentPath.value
-  if (path === '/') return [{ label: '/', path: '/' }]
+  if (path === ROOT_PATH) return [{ label: '/', path: ROOT_PATH }]
   const parts = path.replace(/^\//, '').split('/')
   const segments: BreadcrumbSegment[] = [{ label: '~', path: '/' }]
   let accumulated = ''
@@ -132,15 +150,17 @@ interface DisplayEntry {
 const browserEntries = computed<DisplayEntry[]>(() => {
   const currentDir = currentPath.value.replace(/^\//, '')
   const dirList = contents.value
-    .filter((e) => e.type === 'd' && e.path !== currentDir)
+    .filter((e) => e.type === DIRECTORY_ENTRY_TYPE && e.path !== currentDir)
     .sort((a, b) => a.path.localeCompare(b.path))
   const fileList = contents.value
-    .filter((e) => e.type !== 'd')
+    .filter((e) => e.type !== DIRECTORY_ENTRY_TYPE)
     .sort((a, b) => a.path.localeCompare(b.path))
 
   const entries: DisplayEntry[] = []
 
-  const currentEntry = contents.value.find((e) => e.type === 'd' && e.path === currentDir)
+  const currentEntry = contents.value.find(
+    (e) => e.type === DIRECTORY_ENTRY_TYPE && e.path === currentDir,
+  )
   if (currentEntry) {
     entries.push({
       type: currentEntry.type,
@@ -151,7 +171,7 @@ const browserEntries = computed<DisplayEntry[]>(() => {
       displayName: '.',
       isDir: true,
     })
-  } else if (currentPath.value === '/') {
+  } else if (currentPath.value === ROOT_PATH) {
     entries.push({
       type: 'd',
       path: '',
@@ -163,7 +183,7 @@ const browserEntries = computed<DisplayEntry[]>(() => {
     })
   }
 
-  if (currentPath.value !== '/') {
+  if (currentPath.value !== ROOT_PATH) {
     const parentPath = currentPath.value.replace(/\/[^/]+$/, '') || '/'
     entries.push({
       type: 'd',
@@ -185,7 +205,7 @@ const browserEntries = computed<DisplayEntry[]>(() => {
       mtime: e.mtime,
       mode: e.mode,
       displayName: e.path.split('/').pop() ?? e.path,
-      isDir: e.type === 'd',
+      isDir: e.type === DIRECTORY_ENTRY_TYPE,
     })),
   ]
 })
@@ -213,7 +233,7 @@ async function onRepoChange(): Promise<void> {
   archives.value = []
   selectedArchive.value = null
   contents.value = []
-  currentPath.value = '/'
+  currentPath.value = ROOT_PATH
   archivesError.value = null
   contentsError.value = null
   if (selectedRepoId.value === null) return
@@ -238,28 +258,31 @@ async function selectArchive(archive: ArchiveEntry): Promise<void> {
   stopPolling()
   indexing.value = false
   selectedArchive.value = archive
-  currentPath.value = '/'
+  currentPath.value = ROOT_PATH
   contents.value = []
   contentsError.value = null
-  await loadContents('/')
+  await loadContents(ROOT_PATH)
 }
 
 async function loadContents(path: string): Promise<void> {
   if (selectedRepoId.value === null || !selectedArchive.value) return
   contentsLoading.value = true
   contentsError.value = null
-  const normalizedPath = path === '/' ? '/' : `/${path.replace(/^\//, '')}`
+  const normalizedPath = path === ROOT_PATH ? ROOT_PATH : `/${path.replace(/^\//, '')}`
   currentPath.value = normalizedPath
   try {
-    const apiPath = normalizedPath === '/' ? undefined : normalizedPath.replace(/^\//, '')
+    const apiPath = normalizedPath === ROOT_PATH ? undefined : normalizedPath.replace(/^\//, '')
     const res = await apiClient.get<ContentsResponse>(
       `/repos/${selectedRepoId.value}/archives/${encodeURIComponent(selectedArchive.value.name)}/contents`,
       { params: apiPath ? { path: apiPath } : {} },
     )
     const { index_status, entries } = res.data
-    if (index_status === 'done' || index_status === 'failed') {
+    const status = normalizeIndexStatus(index_status)
+    if (status === 'done' || status === 'failed') {
       indexing.value = false
-      contents.value = entries.filter((e) => e.path !== '.' && e.path !== '..')
+      contents.value = entries.filter(
+        (e) => e.path !== CURRENT_DIR_MARKER && e.path !== PARENT_DIR_MARKER,
+      )
     } else {
       indexing.value = true
       contents.value = []
@@ -284,7 +307,7 @@ function downloadEntry(entry: ContentEntryResponse): void {
   if (selectedRepoId.value === null || !selectedArchive.value) return
   const archiveName = encodeURIComponent(selectedArchive.value.name)
   const encodedPath = encodeURIComponent(entry.path)
-  const isDir = entry.type === 'd'
+  const isDir = entry.type === DIRECTORY_ENTRY_TYPE
   const url = isDir
     ? `/api/repos/${selectedRepoId.value}/archives/${archiveName}/export?path=${encodedPath}`
     : `/api/repos/${selectedRepoId.value}/archives/${archiveName}/extract?path=${encodedPath}`

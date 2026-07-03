@@ -14,6 +14,7 @@ import { useClipboard } from '../composables/useClipboard'
 import { useMobile } from '../composables/useMobile'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
+import { normalizeBackupStatus } from '../utils/backupStatus'
 import { Plus, SlidersHorizontal, Server, AlertCircle } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -65,7 +66,7 @@ function coverageFilterFromQuery(value: unknown): CoverageFilter {
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
-const isAdmin = computed(() => authStore.user?.role === 'admin')
+const isAdmin = computed(() => authStore.isAdmin)
 const agents = ref<AgentRow[]>([])
 const showHidden = ref(false)
 const machineScheduleCount = ref<Record<number, number>>({})
@@ -328,13 +329,14 @@ async function loadAgents(): Promise<void> {
         }
       }
       hMap[entry.hostname].total++
-      if (entry.last_status === 'failed') {
+      const status = entry.last_status !== null ? normalizeBackupStatus(entry.last_status) : null
+      if (status === 'failed') {
         hMap[entry.hostname].failed++
         if (entry.last_error_message) {
           hMap[entry.hostname].last_error_message = entry.last_error_message
         }
       }
-      if (entry.last_status === 'warning') hMap[entry.hostname].warning++
+      if (status === 'warning') hMap[entry.hostname].warning++
       if (entry.is_overdue) hMap[entry.hostname].overdue++
     })
     healthByHost.value = hMap

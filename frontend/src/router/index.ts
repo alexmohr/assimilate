@@ -128,7 +128,7 @@ router.beforeEach(async (to) => {
     return { name: 'change-password' }
   }
 
-  if (to.meta.requiresAdmin && authStore.user.role !== 'admin') {
+  if (to.meta.requiresAdmin && !authStore.isAdmin) {
     return { name: 'dashboard' }
   }
 

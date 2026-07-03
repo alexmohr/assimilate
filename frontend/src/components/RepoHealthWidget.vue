@@ -7,6 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { relativeTime } from '../utils/format'
+import { normalizeBackupStatus } from '../utils/backupStatus'
 
 interface HealthEntry {
   repo_id: number
@@ -25,9 +26,10 @@ const hasMore = computed((): boolean => props.health.length > 8)
 
 function statusColor(entry: HealthEntry): string {
   if (entry.is_overdue) return 'var(--danger)'
-  if (entry.last_status === 'success') return 'var(--success)'
-  if (entry.last_status === 'warning') return 'var(--warning)'
-  if (entry.last_status === 'started') return 'var(--info)'
+  const status = entry.last_status !== null ? normalizeBackupStatus(entry.last_status) : null
+  if (status === 'success') return 'var(--success)'
+  if (status === 'warning') return 'var(--warning)'
+  if (status === 'started' || status === 'pending') return 'var(--info)'
   return 'var(--danger)'
 }
 </script>

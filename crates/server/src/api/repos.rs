@@ -18,7 +18,7 @@ use shared::{
         MigrateEncryptionResponse, PassphraseResponse, RepoHostKeyResponse, RepoResponse,
         RepoWithStatsResponse, RescanResponse, SyncResponse,
     },
-    types::{BorgEncryption, build_repo_url},
+    types::{BORG_REPO_ENV_KEY, BorgEncryption, build_repo_url},
 };
 use sqlx::PgPool;
 use tracing::{error, info, warn};
@@ -1060,7 +1060,7 @@ pub async fn exec_borg(
     );
 
     let mut env = helpers::borg_base_env(&passphrase);
-    env.insert("BORG_REPO".to_owned(), repo_url);
+    env.insert(BORG_REPO_ENV_KEY.to_owned(), repo_url);
 
     info!(repo_id, name = %repo.name, subcommand = %subcommand, "admin executing borg command");
 

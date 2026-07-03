@@ -23,7 +23,8 @@ import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import SshKeyDeployPanel from '../components/SshKeyDeployPanel.vue'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
-import type { ScheduleRow } from '../types/schedule'
+import type { ScheduleRow, ScheduleType } from '../types/schedule'
+import { normalizeBackupStatus } from '../utils/backupStatus'
 import type { TagRow } from '../types/tag'
 import type { CreateAgentResponse } from '../types/generated'
 
@@ -91,7 +92,7 @@ const newTagName = ref('')
 const newTagColor = ref('#6b7280')
 const createTagLoading = ref(false)
 
-const isAdmin = computed(() => authStore.user?.role === 'admin')
+const isAdmin = computed(() => authStore.isAdmin)
 const isImported = computed(() => agent.value?.is_imported ?? false)
 
 const hostTags = computed<TagRow[]>(() =>
@@ -481,7 +482,7 @@ function isOnline(agent: AgentRow): boolean {
 }
 
 function handleResultClick(r: ReportRow): void {
-  if (r.status === 'success') {
+  if (normalizeBackupStatus(r.status) === 'success') {
     const query: Record<string, string> = { tab: 'archives' }
     if (r.archive_name) {
       query.archive = r.archive_name
@@ -549,7 +550,7 @@ function repoNameForSchedule(s: ScheduleRow): string {
   )
 }
 
-function scheduleTypeLabel(t: string): string {
+function scheduleTypeLabel(t: ScheduleType): string {
   switch (t) {
     case 'backup':
       return 'Backup'
@@ -557,8 +558,6 @@ function scheduleTypeLabel(t: string): string {
       return 'Integrity Check'
     case 'verify':
       return 'Verify (extract dry-run)'
-    default:
-      return t
   }
 }
 

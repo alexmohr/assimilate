@@ -8,6 +8,7 @@ use std::{
     time::Instant,
 };
 
+use shared::types::BORG_REPO_ENV_KEY;
 use tokio::{
     io::{AsyncBufReadExt as _, AsyncReadExt as _, BufReader},
     process::Command,
@@ -291,7 +292,7 @@ impl Borg {
 
         let repo = env
             .iter()
-            .find(|(k, _)| k == "BORG_REPO")
+            .find(|(k, _)| k == BORG_REPO_ENV_KEY)
             .map(|(_, v)| v.clone());
         let combined_env: Vec<_> = env.iter().chain(self.extra_env.iter()).cloned().collect();
 
@@ -339,7 +340,7 @@ impl Borg {
 
         let repo = env
             .iter()
-            .find(|(k, _)| k == "BORG_REPO")
+            .find(|(k, _)| k == BORG_REPO_ENV_KEY)
             .map(|(_, v)| v.clone());
         let combined_env: Vec<_> = env.iter().chain(self.extra_env.iter()).cloned().collect();
 

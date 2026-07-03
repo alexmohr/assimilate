@@ -11,6 +11,7 @@ use std::{
     time::Instant,
 };
 
+use shared::types::BORG_REPO_ENV_KEY;
 use tokio::{
     io::AsyncReadExt as _,
     process::{Child, ChildStderr, ChildStdin, ChildStdout, Command},
@@ -239,7 +240,7 @@ impl Borg {
         cmd.kill_on_drop(false);
         let child = cmd.spawn()?;
 
-        let repo = env.get("BORG_REPO").cloned();
+        let repo = env.get(BORG_REPO_ENV_KEY).cloned();
         let env_vec: Vec<_> = env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         let mut guard = ServerChild::new(child, self.binary.clone(), repo, env_vec);
         let result = guard.wait_with_output().await;
@@ -295,7 +296,7 @@ impl Borg {
         cmd.kill_on_drop(false);
         let child = cmd.spawn()?;
 
-        let repo = env.get("BORG_REPO").cloned();
+        let repo = env.get(BORG_REPO_ENV_KEY).cloned();
         let env_vec: Vec<_> = env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         Ok(ServerChild::new(child, self.binary.clone(), repo, env_vec))
     }
@@ -321,7 +322,7 @@ impl Borg {
         cmd.kill_on_drop(false);
         let child = cmd.spawn()?;
 
-        let repo = env.get("BORG_REPO").cloned();
+        let repo = env.get(BORG_REPO_ENV_KEY).cloned();
         let env_vec: Vec<_> = env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         Ok(ServerChild::new(child, self.binary.clone(), repo, env_vec))
     }

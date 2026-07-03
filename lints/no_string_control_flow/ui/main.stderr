@@ -1,0 +1,41 @@
+warning: comparing a string against a literal to drive control flow
+  --> $DIR/main.rs:12:8
+   |
+LL |     if status == "active" {
+   |        ^^^^^^^^^^^^^^^^^^
+   |
+   = help: parse this into an enum at the boundary and compare that instead
+   = note: `#[warn(no_string_control_flow)]` on by default
+
+warning: comparing a string against a literal to drive control flow
+  --> $DIR/main.rs:20:5
+   |
+LL |     status != "inactive"
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: parse this into an enum at the boundary and compare that instead
+
+warning: matching on a string literal to drive control flow
+  --> $DIR/main.rs:24:5
+   |
+LL | /     match status {
+LL | |         "active" => Status::Active,
+LL | |         "inactive" => Status::Inactive,
+LL | |         _ => Status::Inactive,
+LL | |     }
+   | |_____^
+   |
+   = help: parse this into an enum at the boundary and match on that instead
+
+warning: matching on a string literal to drive control flow
+  --> $DIR/main.rs:32:5
+   |
+LL | /     match status {
+LL | |         "active" | "enabled" => true,
+LL | |         _ => false,
+LL | |     }
+   | |_____^
+   |
+   = help: parse this into an enum at the boundary and match on that instead
+
+warning: 4 warnings emitted

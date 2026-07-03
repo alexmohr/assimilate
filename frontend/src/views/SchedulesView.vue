@@ -15,6 +15,7 @@ import { useMobile } from '../composables/useMobile'
 import { useToast } from '../composables/useToast'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
+import { normalizeBackupStatus, type NormalizedBackupStatus } from '../utils/backupStatus'
 import {
   Plus,
   Clock,
@@ -132,7 +133,9 @@ const enrichedSchedules = computed<EnrichedSchedule[]>(() =>
     const entries = healthBySchedule.value.get(s.id) ?? []
     const healthEntry: HealthEntry | null =
       entries.find((h) => h.is_overdue) ??
-      entries.find((h) => h.last_status === 'failed') ??
+      entries.find(
+        (h) => h.last_status !== null && normalizeBackupStatus(h.last_status) === 'failed',
+      ) ??
       entries[0] ??
       null
     const isRunning = entries.some(
@@ -158,11 +161,11 @@ const filteredSchedules = computed(() => {
   if (filterHealth.value === 'overdue') {
     list = list.filter((s) => s.health?.is_overdue)
   } else if (filterHealth.value === 'success') {
-    list = list.filter((s) => s.health?.last_status === 'success')
+    list = list.filter((s) => healthStatus(s.health) === 'success')
   } else if (filterHealth.value === 'warning') {
-    list = list.filter((s) => s.health?.last_status === 'warning')
+    list = list.filter((s) => healthStatus(s.health) === 'warning')
   } else if (filterHealth.value === 'failed') {
-    list = list.filter((s) => s.health?.last_status === 'failed')
+    list = list.filter((s) => healthStatus(s.health) === 'failed')
   }
 
   if (filterText.value.trim()) {
@@ -206,19 +209,25 @@ function toggleSort(field: SortField): void {
   }
 }
 
+function healthStatus(entry: HealthEntry | null | undefined): NormalizedBackupStatus | null {
+  return entry?.last_status != null ? normalizeBackupStatus(entry.last_status) : null
+}
+
 function statusClass(entry: HealthEntry | null): string {
   if (!entry) return ''
   if (entry.is_overdue) return 'status-overdue'
-  switch (entry.last_status) {
+  switch (healthStatus(entry)) {
     case 'success':
       return 'status-success'
     case 'warning':
       return 'status-warning'
     case 'failed':
+    case 'cancelled':
       return 'status-failed'
     case 'started':
+    case 'pending':
       return 'status-started'
-    default:
+    case null:
       return ''
   }
 }
@@ -226,16 +235,18 @@ function statusClass(entry: HealthEntry | null): string {
 function statusLabel(entry: HealthEntry | null): string {
   if (!entry) return ''
   if (entry.is_overdue) return 'Overdue'
-  switch (entry.last_status) {
+  switch (healthStatus(entry)) {
     case 'success':
       return 'Success'
     case 'warning':
       return 'Warning'
     case 'failed':
+    case 'cancelled':
       return 'Failed'
     case 'started':
+    case 'pending':
       return 'Running'
-    default:
+    case null:
       return 'No data'
   }
 }

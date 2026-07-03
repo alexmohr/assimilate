@@ -13,6 +13,23 @@ import type {
 export type { ContentEntry }
 export type { ArchiveEntry }
 
+// borg's raw `list` entry-type character ("d" directory, "-" regular file, "l"
+// symlink, ...); an external format contract, not app-owned domain state.
+const DIRECTORY_ENTRY_TYPE = 'd'
+
+const ROOT_PATH = '/'
+const CURRENT_DIR_MARKER = '.'
+const PARENT_DIR_MARKER = '..'
+
+type ArchiveIndexStatus = 'pending' | 'indexing' | 'done' | 'failed'
+
+function normalizeIndexStatus(status: string): ArchiveIndexStatus {
+  if (status === 'done') return 'done'
+  if (status === 'failed') return 'failed'
+  if (status === 'indexing') return 'indexing'
+  return 'pending'
+}
+
 export interface BreadcrumbSegment {
   label: string
   path: string
@@ -75,11 +92,12 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
         const res = await apiClient.get<{ status: string; file_count?: number; error?: string }>(
           `/repos/${repoId.value}/archives/${encodeURIComponent(archiveName)}/index-status`,
         )
-        if (res.data.status === 'done') {
+        const status = normalizeIndexStatus(res.data.status)
+        if (status === 'done') {
           stopPolling()
           indexing.value = false
           await loadContents(pendingPath)
-        } else if (res.data.status === 'failed') {
+        } else if (status === 'failed') {
           stopPolling()
           indexing.value = false
           contentsError.value = res.data.error ?? 'Archive indexing failed'
@@ -98,7 +116,7 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
 
   const breadcrumbs = computed<BreadcrumbSegment[]>(() => {
     const path = currentPath.value
-    if (path === '/') return [{ label: '~', path: '/' }]
+    if (path === ROOT_PATH) return [{ label: '~', path: ROOT_PATH }]
     const parts = path.replace(/^\//, '').split('/')
     const segments: BreadcrumbSegment[] = [{ label: '~', path: '/' }]
     let accumulated = ''
@@ -113,14 +131,16 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     const currentDir = currentPath.value.replace(/^\//, '')
     const entries: DirDisplayEntry[] = []
 
-    const currentEntry = contents.value.find((e) => e.type === 'd' && e.path === currentDir)
+    const currentEntry = contents.value.find(
+      (e) => e.type === DIRECTORY_ENTRY_TYPE && e.path === currentDir,
+    )
     if (currentEntry) {
       entries.push({ ...currentEntry, displayName: '.' })
-    } else if (currentPath.value === '/') {
+    } else if (currentPath.value === ROOT_PATH) {
       entries.push({ type: 'd', path: '', size: 0, mtime: '', mode: '', displayName: '.' })
     }
 
-    if (currentPath.value !== '/') {
+    if (currentPath.value !== ROOT_PATH) {
       const parentPath = currentPath.value.replace(/\/[^/]+$/, '') || '/'
       entries.push({
         type: 'd',
@@ -134,7 +154,7 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
 
     const childDirs = contents.value
       .filter((e) => {
-        if (e.type !== 'd' || e.path === currentDir) return false
+        if (e.type !== DIRECTORY_ENTRY_TYPE || e.path === currentDir) return false
         const parent = e.path.includes('/') ? e.path.substring(0, e.path.lastIndexOf('/')) : ''
         return parent === currentDir
       })
@@ -149,7 +169,7 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     const currentDir = currentPath.value.replace(/^\//, '')
     return contents.value
       .filter((e) => {
-        if (e.type === 'd') return false
+        if (e.type === DIRECTORY_ENTRY_TYPE) return false
         const parent = e.path.includes('/') ? e.path.substring(0, e.path.lastIndexOf('/')) : ''
         return parent === currentDir
       })
@@ -183,18 +203,21 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     if (!selectedArchive.value) return
     contentsLoading.value = true
     contentsError.value = null
-    const normalizedPath = path === '/' ? '/' : `/${path.replace(/^\//, '')}`
+    const normalizedPath = path === ROOT_PATH ? ROOT_PATH : `/${path.replace(/^\//, '')}`
     currentPath.value = normalizedPath
     try {
-      const apiPath = normalizedPath === '/' ? undefined : normalizedPath.replace(/^\//, '')
+      const apiPath = normalizedPath === ROOT_PATH ? undefined : normalizedPath.replace(/^\//, '')
       const res = await apiClient.get<ContentsResponse>(
         `/repos/${repoId.value}/archives/${encodeURIComponent(selectedArchive.value.name)}/contents`,
         { params: apiPath ? { path: apiPath } : {} },
       )
       const { index_status, entries } = res.data
-      if (index_status === 'done' || index_status === 'failed') {
+      const status = normalizeIndexStatus(index_status)
+      if (status === 'done' || status === 'failed') {
         indexing.value = false
-        contents.value = entries.filter((e) => e.path !== '.' && e.path !== '..')
+        contents.value = entries.filter(
+          (e) => e.path !== CURRENT_DIR_MARKER && e.path !== PARENT_DIR_MARKER,
+        )
       } else {
         // pending or indexing - show spinner and poll
         indexing.value = true
@@ -220,7 +243,7 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     if (!selectedArchive.value) return
     const archiveName = encodeURIComponent(selectedArchive.value.name)
     const encodedPath = encodeURIComponent(entry.path)
-    const isDir = entry.type === 'd'
+    const isDir = entry.type === DIRECTORY_ENTRY_TYPE
     const url = isDir
       ? entry.path.length > 0
         ? `/api/repos/${repoId.value}/archives/${archiveName}/export?path=${encodeURIComponent(entry.path)}`
@@ -260,7 +283,7 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
 
   async function deleteArchive(entry: ContentEntry): Promise<boolean> {
     const archive = selectedArchive.value
-    if (!archive || entry.type !== 'd' || entry.path.length > 0) return false
+    if (!archive || entry.type !== DIRECTORY_ENTRY_TYPE || entry.path.length > 0) return false
     return deleteArchiveByName(archive)
   }
 

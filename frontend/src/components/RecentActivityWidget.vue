@@ -9,6 +9,7 @@ import { useRouter } from 'vue-router'
 import { apiClient } from '../api/client'
 import { relativeTime, formatDuration } from '../utils/format'
 import { logger } from '../utils/logger'
+import { normalizeBackupStatus } from '../utils/backupStatus'
 
 interface ActivityEntry {
   id: number
@@ -41,7 +42,7 @@ async function fetchActivity(): Promise<void> {
 }
 
 function onItemClick(item: ActivityEntry): void {
-  if (item.status === 'success' && item.repo_id) {
+  if (normalizeBackupStatus(item.status) === 'success' && item.repo_id) {
     const query: Record<string, string> = { tab: 'archives' }
     if (item.archive_name) {
       query.archive = item.archive_name
@@ -65,10 +66,18 @@ onUnmounted(() => {
 })
 
 function statusColor(status: string): string {
-  if (status === 'success') return 'var(--success)'
-  if (status === 'warning') return 'var(--warning)'
-  if (status === 'started') return 'var(--info)'
-  return 'var(--danger)'
+  switch (normalizeBackupStatus(status)) {
+    case 'success':
+      return 'var(--success)'
+    case 'warning':
+      return 'var(--warning)'
+    case 'started':
+    case 'pending':
+      return 'var(--info)'
+    case 'failed':
+    case 'cancelled':
+      return 'var(--danger)'
+  }
 }
 
 function liveRelativeTime(iso: string): string {

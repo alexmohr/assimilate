@@ -163,7 +163,7 @@ function channelTypeIcon(ct: ChannelType): typeof Mail {
   return BellRing
 }
 
-function deliveryStatusClass(status: string): string {
+function deliveryStatusClass(status: NotificationDelivery['status']): string {
   if (status === 'sent') return 'status-sent'
   if (status === 'failed') return 'status-failed'
   return 'status-pending'

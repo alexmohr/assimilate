@@ -20,7 +20,7 @@ type AuditEntry = AuditEntryResponse
 type AuditResponse = AuditLogResponse
 
 const authStore = useAuthStore()
-const isAdmin = computed(() => authStore.user?.role === 'admin')
+const isAdmin = computed(() => authStore.isAdmin)
 
 const entries = ref<AuditEntry[]>([])
 const total = ref(0)
@@ -281,12 +281,27 @@ onMounted(fetchAuditLog)
 </template>
 
 <script lang="ts">
-function actionBadgeClass(action: string): string {
+type AuditActionCategory = 'danger' | 'success' | 'warning' | 'neutral'
+
+function classifyAuditAction(action: string): AuditActionCategory {
   const a = action.toLowerCase()
-  if (a === 'delete' || a === 'remove') return 'badge-danger'
-  if (a === 'create' || a === 'add') return 'badge-success'
-  if (a === 'update' || a === 'edit') return 'badge-warning'
-  return 'badge-neutral'
+  if (a === 'delete' || a === 'remove') return 'danger'
+  if (a === 'create' || a === 'add') return 'success'
+  if (a === 'update' || a === 'edit') return 'warning'
+  return 'neutral'
+}
+
+function actionBadgeClass(action: string): string {
+  switch (classifyAuditAction(action)) {
+    case 'danger':
+      return 'badge-danger'
+    case 'success':
+      return 'badge-success'
+    case 'warning':
+      return 'badge-warning'
+    case 'neutral':
+      return 'badge-neutral'
+  }
 }
 </script>
 

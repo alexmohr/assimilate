@@ -689,6 +689,15 @@ fn inject_env_vars(content: &str, server_url: &str, token: &str) -> String {
     replace_or_insert_environment(&result, "BORG_AGENT_TOKEN", token)
 }
 
+#[allow(
+    unknown_lints,
+    reason = "no_string_control_flow is a workspace-local dylint lint, unknown to plain \
+              rustc/clippy"
+)]
+#[allow(
+    no_string_control_flow,
+    reason = "\"[Service]\" is a systemd unit-file section header token, not domain state"
+)]
 fn replace_or_insert_environment(content: &str, key: &str, value: &str) -> String {
     let assignment = format!("{key}=");
     let mut replaced = false;
@@ -722,13 +731,39 @@ fn replace_or_insert_environment(content: &str, key: &str, value: &str) -> Strin
     result
 }
 
-fn canonical_arch(raw: &str) -> String {
-    match raw.trim() {
-        "x86_64" => "x86_64".to_owned(),
-        "aarch64" | "arm64" => "aarch64".to_owned(),
-        "armv7l" | "armhf" => "armv7".to_owned(),
-        other => other.to_owned(),
+/// Canonical CPU architecture names used to pick the right agent binary.
+/// `Other` passes unrecognized `uname -m` output through unchanged.
+enum Architecture {
+    X86_64,
+    Aarch64,
+    Armv7,
+    Other(String),
+}
+
+impl From<&str> for Architecture {
+    fn from(raw: &str) -> Self {
+        match raw {
+            "x86_64" => Self::X86_64,
+            "aarch64" | "arm64" => Self::Aarch64,
+            "armv7l" | "armhf" => Self::Armv7,
+            other => Self::Other(other.to_owned()),
+        }
     }
+}
+
+impl std::fmt::Display for Architecture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::X86_64 => write!(f, "x86_64"),
+            Self::Aarch64 => write!(f, "aarch64"),
+            Self::Armv7 => write!(f, "armv7"),
+            Self::Other(raw) => write!(f, "{raw}"),
+        }
+    }
+}
+
+fn canonical_arch(raw: &str) -> String {
+    Architecture::from(raw.trim()).to_string()
 }
 
 async fn detect_remote_arch(

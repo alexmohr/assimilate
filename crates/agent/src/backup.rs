@@ -9,9 +9,10 @@ use std::{
 };
 
 use chrono::Utc;
+use serde::Deserialize;
 use shared::{
     ssh::{borg_rsh, borg_rsh_with_known_hosts},
-    types::{BackupStatus, Compression, FileChangePattern, build_repo_url},
+    types::{BORG_REPO_ENV_KEY, BackupStatus, Compression, FileChangePattern, build_repo_url},
 };
 use tokio::{process::Command, sync::mpsc};
 use tracing::{error, info, warn};
@@ -341,7 +342,7 @@ impl BackupEngine {
         );
 
         let mut env = vec![
-            ("BORG_REPO".to_owned(), repo_url),
+            (BORG_REPO_ENV_KEY.to_owned(), repo_url),
             ("BORG_PASSPHRASE".to_owned(), target.passphrase.clone()),
             ("BORG_HOST_ID".to_owned(), target.hostname.clone()),
             ("BORG_RSH".to_owned(), borg_rsh_for_target(target)),
@@ -930,21 +931,69 @@ fn parse_json_stats(stdout: &[u8]) -> Result<ParsedStats, BackupError> {
     })
 }
 
+/// The `type` field of a borg `--log-json` line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum BorgLogRecordType {
+    LogMessage,
+    #[serde(other)]
+    Other,
+}
+
+/// The `levelname` field of a borg `--log-json` log message line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+enum BorgLogLevel {
+    #[serde(rename = "DEBUG")]
+    Debug,
+    #[serde(rename = "INFO")]
+    Info,
+    #[serde(rename = "WARNING")]
+    Warning,
+    #[serde(rename = "ERROR")]
+    Error,
+    #[serde(rename = "CRITICAL")]
+    Critical,
+    #[serde(other)]
+    Other,
+}
+
+impl BorgLogLevel {
+    fn is_warning_or_error(self) -> bool {
+        matches!(self, Self::Warning | Self::Error)
+    }
+}
+
+/// The `msgid` field of a borg `--log-json` log message line. Borg emits many
+/// message ids; only `BackupFileNotFoundError` is meaningful to the agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+enum BorgMsgId {
+    BackupFileNotFoundError,
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Deserialize)]
+struct BorgLogLine {
+    #[serde(rename = "type")]
+    record_type: BorgLogRecordType,
+    #[serde(default)]
+    levelname: Option<BorgLogLevel>,
+    #[serde(default)]
+    msgid: Option<BorgMsgId>,
+    #[serde(default)]
+    message: Option<String>,
+}
+
 pub(crate) fn parse_warnings(stderr: &str) -> Vec<String> {
     stderr
         .lines()
         .filter_map(|line| {
-            let value: serde_json::Value = serde_json::from_str(line).ok()?;
-            let msg_type = value.get("type")?.as_str()?;
-            if msg_type != "log_message" {
+            let record: BorgLogLine = serde_json::from_str(line).ok()?;
+            if record.record_type != BorgLogRecordType::LogMessage {
                 return None;
             }
-            let level = value.get("levelname").and_then(serde_json::Value::as_str);
-            match level {
-                Some("WARNING" | "ERROR") => value
-                    .get("message")
-                    .and_then(serde_json::Value::as_str)
-                    .map(std::borrow::ToOwned::to_owned),
+            match record.levelname {
+                Some(level) if level.is_warning_or_error() => record.message,
                 Some(_) | None => None,
             }
         })
@@ -953,18 +1002,13 @@ pub(crate) fn parse_warnings(stderr: &str) -> Vec<String> {
 
 pub(crate) fn stderr_has_warnings(stderr: &str) -> bool {
     stderr.lines().any(|line| {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        let Ok(record) = serde_json::from_str::<BorgLogLine>(line) else {
             return false;
         };
-        let is_log = value
-            .get("type")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|t| t == "log_message");
-        let is_warning = value
-            .get("levelname")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|l| l == "WARNING" || l == "ERROR");
-        is_log && is_warning
+        record.record_type == BorgLogRecordType::LogMessage
+            && record
+                .levelname
+                .is_some_and(BorgLogLevel::is_warning_or_error)
     })
 }
 
@@ -1005,19 +1049,12 @@ pub(crate) fn parse_source_not_found_errors(stderr: &str) -> Vec<String> {
     stderr
         .lines()
         .filter_map(|line| {
-            let value: serde_json::Value = serde_json::from_str(line).ok()?;
-            if value.get("type")?.as_str()? != "log_message" {
+            let record: BorgLogLine = serde_json::from_str(line).ok()?;
+            if record.record_type != BorgLogRecordType::LogMessage {
                 return None;
             }
-            if value
-                .get("msgid")
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|id| id == "BackupFileNotFoundError")
-            {
-                value
-                    .get("message")
-                    .and_then(serde_json::Value::as_str)
-                    .map(std::borrow::ToOwned::to_owned)
+            if record.msgid == Some(BorgMsgId::BackupFileNotFoundError) {
+                record.message
             } else {
                 None
             }

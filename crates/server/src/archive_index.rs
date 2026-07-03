@@ -28,12 +28,18 @@ pub enum IndexStatus {
     Failed,
 }
 
-pub fn get_index_status_from_str(s: &str) -> IndexStatus {
-    match s {
-        "indexing" => IndexStatus::Indexing,
-        "done" => IndexStatus::Done,
-        "failed" => IndexStatus::Failed,
-        _ => IndexStatus::Pending,
+impl std::str::FromStr for IndexStatus {
+    type Err = std::convert::Infallible;
+
+    /// Any value other than a recognized status (including an absent DB row,
+    /// which callers represent as an empty string) is treated as `Pending`.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "indexing" => Self::Indexing,
+            "done" => Self::Done,
+            "failed" => Self::Failed,
+            _ => Self::Pending,
+        })
     }
 }
 
@@ -69,7 +75,7 @@ pub async fn get_index_status(
     .await
     .map_err(ApiError::Database)?;
 
-    Ok(row.map(|s: String| get_index_status_from_str(&s)))
+    Ok(row.map(|s: String| s.parse().unwrap_or(IndexStatus::Pending)))
 }
 
 /// Rows inserted per statement. Large archives are written in chunks so a single
@@ -574,6 +580,21 @@ pub async fn query_dir(
 
 #[cfg(test)]
 mod tests {
+    use super::IndexStatus;
+
+    #[test]
+    fn index_status_parses_known_values() {
+        assert_eq!("indexing".parse(), Ok(IndexStatus::Indexing));
+        assert_eq!("done".parse(), Ok(IndexStatus::Done));
+        assert_eq!("failed".parse(), Ok(IndexStatus::Failed));
+    }
+
+    #[test]
+    fn index_status_defaults_to_pending_for_unknown_values() {
+        assert_eq!("".parse(), Ok(IndexStatus::Pending));
+        assert_eq!("bogus".parse(), Ok(IndexStatus::Pending));
+    }
+
     #[test]
     fn parent_path_for_root_file() {
         let path = "README.md";

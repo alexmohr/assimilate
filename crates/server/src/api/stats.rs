@@ -416,12 +416,34 @@ fn repository_finding(
     }
 }
 
+/// Sort-order classification of a [`DashboardFindingResponse::severity`] wire
+/// value. Kept internal to `severity_rank`; the API's `severity` field stays
+/// a plain string since the frontend renders it directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Severity {
+    Critical,
+    Warning,
+    Info,
+    Unknown,
+}
+
+impl From<&str> for Severity {
+    fn from(s: &str) -> Self {
+        match s {
+            "critical" => Self::Critical,
+            "warning" => Self::Warning,
+            "info" => Self::Info,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 fn severity_rank(severity: &str) -> u8 {
-    match severity {
-        "critical" => 0,
-        "warning" => 1,
-        "info" => 2,
-        _ => 3,
+    match Severity::from(severity) {
+        Severity::Critical => 0,
+        Severity::Warning => 1,
+        Severity::Info => 2,
+        Severity::Unknown => 3,
     }
 }
 
@@ -1113,6 +1135,13 @@ mod tests {
             schedule_enabled: row.schedule_enabled,
         };
         assert_eq!(response.last_status, Some(BackupStatus::Success));
+    }
+
+    #[test]
+    fn severity_rank_orders_critical_before_warning_before_info() {
+        assert!(super::severity_rank("critical") < super::severity_rank("warning"));
+        assert!(super::severity_rank("warning") < super::severity_rank("info"));
+        assert!(super::severity_rank("info") < super::severity_rank("bogus"));
     }
 
     #[test]

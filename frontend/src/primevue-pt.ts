@@ -3,14 +3,27 @@
 
 import type { PrimeVuePTOptions } from 'primevue/config'
 
+// PrimeVue's own `severity`/`variant` prop values (an external, open-ended
+// contract -- PrimeVue supports more values than these two), not app-owned
+// domain state.
+const SEVERITY_DANGER = 'danger'
+const SEVERITY_SECONDARY = 'secondary'
+const VARIANT_TEXT = 'text'
+const VARIANT_LINK = 'link'
+
 function buttonRootClasses(options: {
   props: { severity?: string; variant?: string; text?: boolean }
 }): string {
   const severity = options.props.severity ?? ''
   const variant = options.props.variant ?? ''
 
-  if (severity === 'danger') return 'btn btn-danger'
-  if (severity === 'secondary' || variant === 'text' || variant === 'link' || options.props.text) {
+  if (severity === SEVERITY_DANGER) return 'btn btn-danger'
+  if (
+    severity === SEVERITY_SECONDARY ||
+    variant === VARIANT_TEXT ||
+    variant === VARIANT_LINK ||
+    options.props.text
+  ) {
     return 'btn btn-ghost'
   }
   return 'btn btn-primary'

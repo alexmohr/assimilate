@@ -26,6 +26,16 @@ interface CalendarDay {
   events: CalendarEvent[]
 }
 
+type CalendarEventStatus = 'success' | 'failed' | 'warning' | 'scheduled' | 'other'
+
+function classifyCalendarEventStatus(status: string): CalendarEventStatus {
+  if (status === 'success') return 'success'
+  if (status === 'failed') return 'failed'
+  if (status === 'warning') return 'warning'
+  if (status === 'scheduled') return 'scheduled'
+  return 'other'
+}
+
 interface RepoOption {
   id: number
   name: string
@@ -141,10 +151,17 @@ function selectDay(cell: GridCell): void {
 }
 
 function eventColor(status: string): string {
-  if (status === 'success') return 'var(--success)'
-  if (status === 'failed') return 'var(--danger)'
-  if (status === 'warning') return 'var(--warning)'
-  return 'var(--info)'
+  switch (classifyCalendarEventStatus(status)) {
+    case 'success':
+      return 'var(--success)'
+    case 'failed':
+      return 'var(--danger)'
+    case 'warning':
+      return 'var(--warning)'
+    case 'scheduled':
+    case 'other':
+      return 'var(--info)'
+  }
 }
 
 const router = useRouter()
@@ -158,13 +175,14 @@ const errorPopup = ref<{
 } | null>(null)
 
 function onEventClick(evt: CalendarEvent): void {
-  if (evt.status === 'success' && evt.repo_id) {
+  const status = classifyCalendarEventStatus(evt.status)
+  if (status === 'success' && evt.repo_id) {
     const query: Record<string, string> = { tab: 'archives' }
     if (evt.archive_name) {
       query.archive = evt.archive_name
     }
     router.push({ name: 'repo-detail', params: { id: String(evt.repo_id) }, query })
-  } else if (evt.status === 'failed') {
+  } else if (status === 'failed') {
     errorPopup.value = {
       repo_name: evt.repo_name,
       repo_id: evt.repo_id,
@@ -172,7 +190,7 @@ function onEventClick(evt: CalendarEvent): void {
       time: evt.time,
       message: evt.error_message ?? 'No error details available.',
     }
-  } else if (evt.status === 'warning') {
+  } else if (status === 'warning') {
     errorPopup.value = {
       repo_name: evt.repo_name,
       repo_id: evt.repo_id,
@@ -180,7 +198,7 @@ function onEventClick(evt: CalendarEvent): void {
       time: evt.time,
       message: evt.error_message ?? 'No warning details available.',
     }
-  } else if (evt.status === 'scheduled' && evt.schedule_id) {
+  } else if (status === 'scheduled' && evt.schedule_id) {
     router.push(`/schedules/${evt.schedule_id}`)
   }
 }

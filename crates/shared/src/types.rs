@@ -13,6 +13,9 @@ fn default_keep_hourly() -> u32 {
     24
 }
 
+/// Name of the environment variable borg reads the repository URL from.
+pub const BORG_REPO_ENV_KEY: &str = "BORG_REPO";
+
 pub fn build_repo_url(ssh_user: &str, ssh_host: &str, ssh_port: u16, repo_path: &str) -> String {
     format!(
         "ssh://{ssh_user}@{ssh_host}:{ssh_port}/{}",
@@ -136,10 +139,10 @@ impl<'de> Deserialize<'de> for Compression {
                     "None" => Ok(Compression::None),
                     "Lz4" => Ok(Compression::Lz4),
                     "Zstd" => Ok(Compression::Zstd {
-                        level: level.unwrap_or(3),
+                        level: level.unwrap_or(DEFAULT_ZSTD_LEVEL),
                     }),
                     "Zlib" => Ok(Compression::Zlib {
-                        level: level.unwrap_or(6),
+                        level: level.unwrap_or(DEFAULT_ZLIB_LEVEL),
                     }),
                     other => Err(serde::de::Error::custom(format!(
                         "unknown compression type: {other}"
@@ -162,6 +165,11 @@ impl fmt::Display for Compression {
     }
 }
 
+/// Default zstd level used when a bare "zstd" (no explicit level) is parsed.
+const DEFAULT_ZSTD_LEVEL: i32 = 3;
+/// Default zlib level used when a bare "zlib" (no explicit level) is parsed.
+const DEFAULT_ZLIB_LEVEL: i32 = 6;
+
 impl FromStr for Compression {
     type Err = String;
 
@@ -169,6 +177,12 @@ impl FromStr for Compression {
         match s {
             "none" => Ok(Compression::None),
             "lz4" => Ok(Compression::Lz4),
+            "zstd" => Ok(Compression::Zstd {
+                level: DEFAULT_ZSTD_LEVEL,
+            }),
+            "zlib" => Ok(Compression::Zlib {
+                level: DEFAULT_ZLIB_LEVEL,
+            }),
             other => {
                 if let Some(level_str) = other.strip_prefix("zstd,") {
                     let level = level_str

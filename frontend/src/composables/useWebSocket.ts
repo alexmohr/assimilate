@@ -29,6 +29,7 @@ let backoffMs = 1_000
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
 function buildUrl(): string {
+  // eslint-disable-next-line local/no-string-literal-control-flow -- window.location.protocol is a DOM API value, not domain state
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
   return `${proto}://${window.location.host}/ws/ui`
 }

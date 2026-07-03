@@ -833,6 +833,25 @@ pub async fn update_repo_last_synced(pool: &PgPool, repo_id: i64) -> Result<(), 
     Ok(())
 }
 
+pub async fn check_agent_repo_access(
+    pool: &PgPool,
+    agent_id: i64,
+    repo_id: i64,
+) -> Result<bool, ApiError> {
+    sqlx::query_scalar!(
+        "SELECT EXISTS(
+           SELECT 1 FROM schedule_targets st
+           JOIN schedules s ON s.id = st.schedule_id
+           WHERE st.agent_id = $1 AND s.repo_id = $2
+         ) AS \"exists!\"",
+        agent_id,
+        repo_id,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
 /// Authoritative repository statistics parsed from `borg info --json`
 /// (`cache.stats`) and `borg list --json`. This is the single source of truth
 /// for repo size and archive counts; never derive these from `backup_reports`.

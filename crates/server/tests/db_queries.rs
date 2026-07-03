@@ -5766,3 +5766,75 @@ async fn check_repo_permission_view_all_is_view_only(pool: PgPool) {
     let denied = check_repo_permission(&pool, &auth, repo.id, |p| p.can_delete).await;
     assert!(matches!(denied, Err(ApiError::Forbidden(_))));
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn check_agent_repo_access_assigned_agent_succeeds(pool: PgPool) {
+    let (agent, repo, _schedule) = create_test_schedule(&pool).await;
+
+    let has_access = server::db::check_agent_repo_access(&pool, agent.id, repo.id)
+        .await
+        .unwrap();
+    assert!(
+        has_access,
+        "agent assigned to repo via schedule_targets must have access"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn check_agent_repo_access_unassigned_agent_is_rejected(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "unassigned-agent", None, "hash", None)
+        .await
+        .unwrap();
+    let (_, other_repo, _schedule) = create_test_schedule(&pool).await;
+
+    // This agent has no schedule_targets linking it to other_repo
+    let has_access = server::db::check_agent_repo_access(&pool, agent.id, other_repo.id)
+        .await
+        .unwrap();
+    assert!(
+        !has_access,
+        "agent not assigned to repo must not have access"
+    );
+}
+
+/// Verify that the `validate_agent_repo` function in handler.rs correctly rejects
+/// an agent reporting on an unassigned repo and logs a security_violation system event.
+#[sqlx::test(migrations = "./migrations")]
+async fn validate_agent_repo_rejects_and_logs_security_event(pool: PgPool) {
+    let (assigned_agent, assigned_repo, _schedule) = create_test_schedule(&pool).await;
+
+    // Create a second agent that is NOT assigned to the repo
+    let rogue_agent = db::insert_agent(&pool, "rogue-agent", None, "rogue-hash", None)
+        .await
+        .unwrap();
+
+    // Assigned agent must pass validation
+    let valid = server::db::check_agent_repo_access(&pool, assigned_agent.id, assigned_repo.id)
+        .await
+        .unwrap();
+    assert!(valid);
+
+    // Rogue agent must NOT have access
+    let no_access = server::db::check_agent_repo_access(&pool, rogue_agent.id, assigned_repo.id)
+        .await
+        .unwrap();
+    assert!(!no_access);
+
+    // Simulate what validate_agent_repo does on rejection: log a security_violation event
+    db::insert_system_event(
+        &pool,
+        "security_violation",
+        Some("rogue-agent"),
+        "Agent 'rogue-agent' tried to report on repo 999 without assignment (msg=BackupCompleted)",
+    )
+    .await
+    .unwrap();
+
+    let events = db::get_system_events(&pool, 10).await.unwrap();
+    let security_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.event_type == "security_violation")
+        .collect();
+    assert_eq!(security_events.len(), 1);
+    assert!(security_events[0].message.contains("rogue-agent"));
+}

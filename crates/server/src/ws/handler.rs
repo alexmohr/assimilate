@@ -15,6 +15,7 @@ use shared::{
     protocol::{AgentToServer, ServerToAgent, ServerToUi},
     types::ScheduleType,
 };
+use sqlx::PgPool;
 use tokio::sync::mpsc;
 
 use crate::{
@@ -352,6 +353,43 @@ fn extract_archive_name(borg_command: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+async fn validate_agent_repo(
+    pool: &PgPool,
+    agent_id: i64,
+    repo_id: i64,
+    hostname: &str,
+    msg_type: &str,
+) -> bool {
+    let Ok(has_access) = db::check_agent_repo_access(pool, agent_id, repo_id).await else {
+        return false;
+    };
+    if has_access {
+        return true;
+    }
+    tracing::warn!(
+        security = true,
+        hostname = %hostname,
+        agent_id = agent_id,
+        repo_id = repo_id,
+        msg_type = %msg_type,
+        "agent tried to report on a repo it is not assigned to"
+    );
+    if let Err(e) = db::insert_system_event(
+        pool,
+        "security_violation",
+        Some(hostname),
+        &format!(
+            "Agent '{hostname}' (id={agent_id}) tried to report on repo {repo_id} without \
+             assignment (msg={msg_type})"
+        ),
+    )
+    .await
+    {
+        tracing::error!(error = %e, "failed to insert security_violation system event");
+    }
+    false
+}
+
 async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: &AppState) {
     let msg = match serde_json::from_str::<AgentToServer>(text) {
         Ok(m) => m,
@@ -384,6 +422,11 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 started_at = %started_at,
                 "backup started"
             );
+            if !validate_agent_repo(&state.pool, agent_id, repo_id.0, hostname, "BackupStarted")
+                .await
+            {
+                return;
+            }
             if let Err(e) = db::insert_backup_started(
                 &state.pool,
                 agent_id,
@@ -457,6 +500,17 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 status = ?report.status,
                 "backup completed"
             );
+            if !validate_agent_repo(
+                &state.pool,
+                agent_id,
+                report.repo_id.0,
+                hostname,
+                "BackupCompleted",
+            )
+            .await
+            {
+                return;
+            }
             let outcome_success = !matches!(&report.status, shared::types::BackupStatus::Failed);
             let status = match report.status {
                 shared::types::BackupStatus::Success => "success",
@@ -794,6 +848,10 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 status = ?status,
                 "status update"
             );
+            // Guard is applied for future-proofing even though StatusUpdate
+            // is currently a no-op.
+            let _ = validate_agent_repo(&state.pool, agent_id, repo_id.0, hostname, "StatusUpdate")
+                .await;
         }
         AgentToServer::BackupRejected { repo_id, reason } => {
             tracing::warn!(
@@ -821,6 +879,11 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 duration_secs,
                 "check completed"
             );
+            if !validate_agent_repo(&state.pool, agent_id, repo_id.0, hostname, "CheckCompleted")
+                .await
+            {
+                return;
+            }
             state.completion_bus.publish(OperationOutcome {
                 hostname: hostname.to_owned(),
                 repo_id: repo_id.0,
@@ -895,6 +958,17 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 files_verified,
                 "verify completed"
             );
+            if !validate_agent_repo(
+                &state.pool,
+                agent_id,
+                repo_id.0,
+                hostname,
+                "VerifyCompleted",
+            )
+            .await
+            {
+                return;
+            }
             state.completion_bus.publish(OperationOutcome {
                 hostname: hostname.to_owned(),
                 repo_id: repo_id.0,
@@ -923,6 +997,11 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 success,
                 "canary verification completed"
             );
+            if !validate_agent_repo(&state.pool, agent_id, repo_id.0, hostname, "CanaryVerified")
+                .await
+            {
+                return;
+            }
             let schedule_id = db::get_schedule_for_hostname_repo(
                 &state.pool,
                 hostname,
@@ -1323,6 +1402,38 @@ exit 0
         )
         .await
         .expect("insert repo");
+
+        // Link agent to repo via a schedule so the validate_agent_repo guard passes
+        let schedule = crate::db::insert_schedule(
+            &pool,
+            repo.id,
+            &crate::db::ScheduleParams {
+                name: "test-schedule",
+                schedule_type: "backup",
+                cron_expression: "0 3 * * *",
+                enabled: true,
+                canary_enabled: false,
+                exclude_patterns_raw: "",
+                file_change_patterns_raw: "",
+                ignore_global_excludes: false,
+                keep_hourly: 24,
+                keep_daily: 7,
+                keep_weekly: 4,
+                keep_monthly: 6,
+                keep_yearly: 1,
+                compact_enabled: true,
+                rate_limit_kbps: None,
+                pre_backup_commands: "",
+                post_backup_commands: "",
+                on_failure: "stop",
+            },
+            None,
+        )
+        .await
+        .expect("insert schedule");
+        crate::db::insert_schedule_targets(&pool, schedule.id, &[(agent.id, 0)])
+            .await
+            .expect("insert schedule target");
 
         let borg_binary = write_fake_borg_binary().await;
         let _borg_guard = crate::borg::override_binary_for_tests(borg_binary);

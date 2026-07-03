@@ -11,7 +11,7 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 
-use crate::{AppState, db};
+use crate::{AppState, api::tokens::hash_token, db};
 
 pub async fn ui_ws_handler(
     ws: WebSocketUpgrade,
@@ -22,7 +22,10 @@ pub async fn ui_ws_handler(
         return StatusCode::UNAUTHORIZED.into_response();
     };
 
-    if db::get_session(&state.pool, &session_id).await.is_err() {
+    if db::get_session(&state.pool, &hash_token(&session_id))
+        .await
+        .is_err()
+    {
         return StatusCode::UNAUTHORIZED.into_response();
     }
 

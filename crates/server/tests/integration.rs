@@ -2010,11 +2010,12 @@ async fn create_non_admin_user_and_session(pool: &PgPool) {
         .unwrap();
 
     let expires = chrono::Utc::now() + chrono::Duration::hours(24);
+    let hashed_id = hash_session_id(NON_ADMIN_SESSION_ID);
     sqlx::query(
         "INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3) ON CONFLICT (id) DO \
          UPDATE SET expires_at = EXCLUDED.expires_at",
     )
-    .bind(NON_ADMIN_SESSION_ID)
+    .bind(&hashed_id)
     .bind(user_id)
     .bind(expires)
     .execute(pool)

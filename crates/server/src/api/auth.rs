@@ -9,7 +9,6 @@ use axum::{
 };
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use shared::responses::{MeResponse, PreferencesResponse, RefreshSessionResponse};
 use uuid::Uuid;
 
@@ -49,7 +48,7 @@ impl FromRequestParts<AppState> for AuthUser {
         }
 
         let session_id = extract_session_cookie(parts)?;
-        let hashed_id = hash_session_id(&session_id);
+        let hashed_id = hash_token(&session_id);
         let session = db::get_session(&state.pool, &hashed_id).await?;
         let user = db::get_user_by_id(&state.pool, session.user_id).await?;
 
@@ -110,13 +109,6 @@ impl FromRequestParts<AppState> for RequireAdmin {
         }
         Ok(Self(auth_user))
     }
-}
-
-fn hash_session_id(session_id: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(session_id.as_bytes());
-    let result = hasher.finalize();
-    result.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn extract_session_cookie(parts: &Parts) -> Result<String, ApiError> {
@@ -213,7 +205,7 @@ pub async fn login(
     };
     let expires_at = Utc::now() + Duration::hours(ttl_hours);
 
-    let hashed_id = hash_session_id(&session_id);
+    let hashed_id = hash_token(&session_id);
     db::insert_session(
         &state.pool,
         &hashed_id,
@@ -276,7 +268,7 @@ pub async fn logout(State(state): State<AppState>, auth: AuthUser) -> Result<Res
             "cannot logout with token auth".to_string(),
         ));
     };
-    db::delete_session(&state.pool, &hash_session_id(session_id)).await?;
+    db::delete_session(&state.pool, &hash_token(session_id)).await?;
 
     let secure_flag = if std::env::var("ASSIMILATE_SECURE_COOKIES").map_or(true, |v| v != "false") {
         "; Secure"
@@ -312,7 +304,7 @@ pub async fn me(
 ) -> Result<Json<MeResponse>, ApiError> {
     let user = db::get_user_by_id(&state.pool, auth.user_id).await?;
     let (session_expires_at, remember_me) = if let Some(ref session_id) = auth.session_id {
-        let hashed_id = hash_session_id(session_id);
+        let hashed_id = hash_token(session_id);
         let session = db::get_session(&state.pool, &hashed_id).await?;
         (Some(session.expires_at), session.remember_me)
     } else {
@@ -358,7 +350,7 @@ pub async fn refresh_session(
         ));
     };
 
-    let hashed_id = hash_session_id(session_id);
+    let hashed_id = hash_token(session_id);
     let session = db::get_session(&state.pool, &hashed_id).await?;
     if !session.remember_me {
         return Err(ApiError::BadRequest(

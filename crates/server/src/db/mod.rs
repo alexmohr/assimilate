@@ -833,6 +833,9 @@ pub async fn update_repo_last_synced(pool: &PgPool, repo_id: i64) -> Result<(), 
     Ok(())
 }
 
+/// Returns `true` if the agent is linked to the repo via at least one
+/// schedule target (i.e., the agent is assigned a schedule whose target
+/// repo matches `repo_id`).
 pub async fn check_agent_repo_access(
     pool: &PgPool,
     agent_id: i64,

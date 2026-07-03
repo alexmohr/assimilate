@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+// normalize-stderr-test: "(\n)\n$" -> "$1"
+
 enum Status {
     Active,
     Inactive,

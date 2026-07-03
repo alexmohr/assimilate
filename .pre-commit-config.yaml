@@ -60,7 +60,7 @@ repos:
         args:
           [
             '--ignore-paths',
-            'tests/mock-borg/borg,excludes.common,excludes.local.example,frontend/src/types/generated/*.ts,.sqlx,lints/no_string_control_flow/rust-toolchain,lints/no_string_control_flow/ui/main.stderr',
+            'tests/mock-borg/borg,excludes.common,excludes.local.example,frontend/src/types/generated/*.ts,.sqlx',
             '--copyright',
             'Alexander Mohr',
             '--template',

@@ -13,6 +13,7 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use tempfile::TempDir;
 use tokio::sync::Mutex;
@@ -20,6 +21,13 @@ use tower::{Service, ServiceExt};
 
 const TEST_SESSION_ID: &str = "test-integration-session-id-00000000";
 static BORG_BINARY_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn hash_session_id(session_id: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(session_id.as_bytes());
+    let result = hasher.finalize();
+    result.iter().map(|b| format!("{b:02x}")).collect()
+}
 
 struct BorgBinaryGuard {
     previous: Option<String>,
@@ -239,11 +247,12 @@ async fn create_test_user_and_session(pool: &PgPool) {
         .unwrap();
 
     let expires = chrono::Utc::now() + chrono::Duration::hours(24);
+    let hashed_id = hash_session_id(TEST_SESSION_ID);
     sqlx::query(
         "INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3) ON CONFLICT (id) DO \
          UPDATE SET expires_at = EXCLUDED.expires_at",
     )
-    .bind(TEST_SESSION_ID)
+    .bind(&hashed_id)
     .bind(user_id)
     .bind(expires)
     .execute(pool)
@@ -2144,11 +2153,12 @@ async fn create_must_change_password_user_and_session(pool: &PgPool) {
         .unwrap();
 
     let expires = chrono::Utc::now() + chrono::Duration::hours(24);
+    let hashed_id = hash_session_id(MCP_SESSION_ID);
     sqlx::query(
         "INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3) ON CONFLICT (id) DO \
          UPDATE SET expires_at = EXCLUDED.expires_at",
     )
-    .bind(MCP_SESSION_ID)
+    .bind(&hashed_id)
     .bind(user_id)
     .bind(expires)
     .execute(pool)

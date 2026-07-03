@@ -89,6 +89,12 @@ export AGENT_TOKEN_1="$WEB01_TOKEN"
 export AGENT_TOKEN_2="$DB01_TOKEN"
 export AGENT_TOKEN_3="$MEDIA_TOKEN"
 
+echo "==> Setting an agent-level default file change pattern on db-server-01 (fallback for every schedule targeting this host)..."
+api PUT "/api/agents/db-server-01" '{
+    "display_name": "Primary Database",
+    "default_file_change_patterns_raw": "*/var/lib/postgresql/*.tmp* ignore\n*checkpoint_wal* warn"
+}' > /dev/null
+
 echo "==> Registering repositories..."
 REPO_DAILY_ID=$(api POST "/api/repos" "{
     \"name\": \"server-daily\",

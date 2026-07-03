@@ -47,6 +47,8 @@ pub struct UpdateAgentRequest {
     pub default_pre_backup_commands: Vec<String>,
     #[serde(default)]
     pub default_post_backup_commands: Vec<String>,
+    #[serde(default)]
+    pub default_file_change_patterns_raw: String,
 }
 
 /// Builds an [`AgentResponse`] for `agent`, resolving live connection and
@@ -69,6 +71,7 @@ async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentRespons
         default_exclude_patterns: agent.default_exclude_patterns,
         default_pre_backup_commands: agent.default_pre_backup_commands,
         default_post_backup_commands: agent.default_post_backup_commands,
+        default_file_change_patterns_raw: agent.default_file_change_patterns_raw,
         is_connected,
         is_imported: agent.agent_token_hash == IMPORTED_TOKEN_HASH,
         is_hidden: agent.is_hidden,
@@ -226,6 +229,7 @@ pub async fn update_agent(
             default_exclude_patterns: &req.default_exclude_patterns,
             default_pre_backup_commands: &pre_cmds,
             default_post_backup_commands: &post_cmds,
+            default_file_change_patterns_raw: &req.default_file_change_patterns_raw,
         },
     )
     .await?;
@@ -311,6 +315,7 @@ pub async fn regenerate_token(
             default_exclude_patterns: agent.default_exclude_patterns,
             default_pre_backup_commands: agent.default_pre_backup_commands,
             default_post_backup_commands: agent.default_post_backup_commands,
+            default_file_change_patterns_raw: agent.default_file_change_patterns_raw,
             is_connected: false,
             is_imported: false,
             is_hidden: agent.is_hidden,

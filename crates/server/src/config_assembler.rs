@@ -117,8 +117,15 @@ pub async fn assemble_config(
         let effective_file_change_patterns_raw = per_agent_file_change_patterns_raw
             .as_deref()
             .unwrap_or(&schedule.file_change_patterns_raw);
-        let file_change_patterns =
+        // Schedule-level (or per-agent-schedule override) patterns are checked
+        // first, since `filter_file_change_warnings` on the agent uses
+        // first-match-wins; the agent's own defaults are appended as a
+        // fallback so they only apply to warnings the schedule didn't cover.
+        let mut file_change_patterns =
             parse_raw_file_change_patterns(effective_file_change_patterns_raw);
+        file_change_patterns.extend(parse_raw_file_change_patterns(
+            &agent.default_file_change_patterns_raw,
+        ));
 
         let schedule_config = ScheduleConfig {
             id: schedule.id,

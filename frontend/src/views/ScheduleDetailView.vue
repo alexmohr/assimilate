@@ -15,13 +15,8 @@ import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
 import { parseLines } from '../utils/validation'
 import { normalizeBackupStatus } from '../utils/backupStatus'
-import {
-  FileChangeAction,
-  parseFileChangePatterns,
-  serializeFileChangePatterns,
-  type FileChangePatternRow,
-} from '../utils/fileChangePatterns'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
+import FileChangePatternsEditor from '../components/FileChangePatternsEditor.vue'
 import CronBuilder from '../components/CronBuilder.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import type { AgentRow } from '../types/agent'
@@ -81,20 +76,6 @@ const perHostExcludes = ref<Record<number, string>>({})
 const usePerHostFileChangePatterns = ref(false)
 const perHostFileChangePatterns = ref<Record<number, string>>({})
 
-const fileChangePatternRows = ref<FileChangePatternRow[]>([])
-
-function addFileChangePatternRow(): void {
-  fileChangePatternRows.value = [
-    ...fileChangePatternRows.value,
-    { path: '', action: FileChangeAction.Warn },
-  ]
-}
-
-function removeFileChangePatternRow(index: number): void {
-  const rows = [...fileChangePatternRows.value]
-  rows.splice(index, 1)
-  fileChangePatternRows.value = rows
-}
 const usePerAgentCmds = ref(false)
 const perAgentPreCmds = ref<Record<number, string>>({})
 const perAgentPostCmds = ref<Record<number, string>>({})
@@ -260,34 +241,7 @@ function populateForm(s: ScheduleRow): void {
   }
   selectedRepoId.value = s.repo_id ?? null
   onFailure.value = (s.on_failure as 'stop' | 'continue') ?? 'stop'
-  syncFileChangePatternsFromForm()
 }
-
-let syncingFileChangePatterns = false
-
-function syncFileChangePatternsFromForm(): void {
-  if (syncingFileChangePatterns) return
-  syncingFileChangePatterns = true
-  fileChangePatternRows.value = parseFileChangePatterns(form.value.file_change_patterns)
-  syncingFileChangePatterns = false
-}
-
-function syncFileChangePatternsToForm(): void {
-  if (syncingFileChangePatterns) return
-  syncingFileChangePatterns = true
-  form.value.file_change_patterns = serializeFileChangePatterns(fileChangePatternRows.value)
-  syncingFileChangePatterns = false
-}
-
-watch(
-  () => form.value.file_change_patterns,
-  () => syncFileChangePatternsFromForm(),
-)
-
-watch(fileChangePatternRows, () => syncFileChangePatternsToForm(), { deep: true })
-
-// Sync initial form state
-syncFileChangePatternsFromForm()
 
 function scheduleTypeLabel(t: ScheduleType): string {
   switch (t) {
@@ -1401,42 +1355,10 @@ watch(activeTab, (tab) => {
             </div>
             <div class="form-group">
               <label class="form-label">Patterns</label>
-              <div v-if="!usePerHostFileChangePatterns">
-                <div
-                  v-for="(row, index) in fileChangePatternRows"
-                  :key="index"
-                  class="file-change-row"
-                >
-                  <input
-                    v-model="row.path"
-                    type="text"
-                    class="form-input"
-                    placeholder="Glob against warning text, e.g. */etc/config*"
-                    spellcheck="false"
-                  />
-                  <select
-                    v-model="row.action"
-                    class="form-input form-select file-change-action"
-                  >
-                    <option :value="FileChangeAction.Warn">warn</option>
-                    <option :value="FileChangeAction.Ignore">ignore</option>
-                    <option :value="FileChangeAction.Fatal">fatal</option>
-                  </select>
-                  <button
-                    class="btn btn-sm btn-danger"
-                    title="Remove"
-                    @click="removeFileChangePatternRow(index)"
-                  >
-                    &times;
-                  </button>
-                </div>
-                <button
-                  class="btn btn-sm btn-secondary"
-                  @click="addFileChangePatternRow()"
-                >
-                  + Add pattern
-                </button>
-              </div>
+              <FileChangePatternsEditor
+                v-if="!usePerHostFileChangePatterns"
+                v-model="form.file_change_patterns"
+              />
               <div
                 v-else
                 class="per-host-paths"
@@ -1464,16 +1386,6 @@ watch(activeTab, (tab) => {
                   Leave an agent empty to use schedule-level file change patterns.
                 </span>
               </div>
-              <span
-                v-if="!usePerHostFileChangePatterns"
-                class="field-hint"
-              >
-                Glob patterns matched against the full warning message, with actions:
-                <code>ignore</code> (no warning), <code>warn</code> (default, current behavior),
-                <code>fatal</code> (fail backup). A bare path will not match - wrap it in
-                <code>*</code>, e.g. <code>*/etc/config*</code>. Unconfigured files still produce
-                warnings.
-              </span>
             </div>
           </div>
 
@@ -2603,26 +2515,5 @@ watch(activeTab, (tab) => {
   word-break: break-all;
   line-height: 1.5;
   padding: 0.05rem 0;
-}
-
-.file-change-row {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  margin-bottom: 0.5rem;
-}
-
-.file-change-row .form-input {
-  flex: 1;
-}
-
-.file-change-action {
-  width: auto;
-  min-width: 8rem;
-  flex-shrink: 0;
-}
-
-.file-change-row .btn {
-  flex-shrink: 0;
 }
 </style>

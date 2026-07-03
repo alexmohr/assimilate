@@ -55,7 +55,14 @@ const settingsLoading = ref(true)
 const settingsError = ref('')
 const settingsSaving = ref(false)
 const settingsSaved = ref(false)
-const settingsForm = reactive({ timezone: '', retention_days: 7, borg_query_timeout_secs: 300 })
+const settingsForm = reactive({
+  timezone: '',
+  retention_days: 7,
+  report_retention_days: 0,
+  failed_report_retention_days: 365,
+  system_event_retention_days: 90,
+  borg_query_timeout_secs: 300,
+})
 
 const versionInfo = ref<VersionInfo | null>(null)
 const versionLoading = ref(true)
@@ -79,6 +86,9 @@ onMounted(async () => {
     const res = await apiClient.get<SettingsResponse>('/system/settings')
     settingsForm.timezone = res.data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone
     settingsForm.retention_days = Number(res.data.retention_days)
+    settingsForm.report_retention_days = Number(res.data.report_retention_days)
+    settingsForm.failed_report_retention_days = Number(res.data.failed_report_retention_days)
+    settingsForm.system_event_retention_days = Number(res.data.system_event_retention_days)
     settingsForm.borg_query_timeout_secs = Number(res.data.borg_query_timeout_secs)
   } catch (e: unknown) {
     settingsError.value = extractError(e, 'Failed to load settings')
@@ -198,11 +208,17 @@ async function saveSettings(): Promise<void> {
   try {
     const res = await apiClient.put<SettingsResponse>('/system/settings', {
       retention_days: settingsForm.retention_days,
+      report_retention_days: settingsForm.report_retention_days,
+      failed_report_retention_days: settingsForm.failed_report_retention_days,
+      system_event_retention_days: settingsForm.system_event_retention_days,
       timezone: settingsForm.timezone || undefined,
       borg_query_timeout_secs: settingsForm.borg_query_timeout_secs,
     })
     settingsForm.timezone = res.data.timezone
     settingsForm.retention_days = Number(res.data.retention_days)
+    settingsForm.report_retention_days = Number(res.data.report_retention_days)
+    settingsForm.failed_report_retention_days = Number(res.data.failed_report_retention_days)
+    settingsForm.system_event_retention_days = Number(res.data.system_event_retention_days)
     settingsForm.borg_query_timeout_secs = Number(res.data.borg_query_timeout_secs)
     setTimezone(res.data.timezone || undefined)
     settingsSaved.value = true
@@ -372,6 +388,67 @@ async function resetSystem(): Promise<void> {
                 class="form-input retention-input"
               />
               <span class="field-hint">Number of days to keep backup job history.</span>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <label
+              class="setting-label"
+              for="settings-report-retention"
+            >
+              Report Retention (days)
+            </label>
+            <div class="setting-input-group">
+              <input
+                id="settings-report-retention"
+                v-model.number="settingsForm.report_retention_days"
+                type="number"
+                min="0"
+                class="form-input retention-input"
+              />
+              <span class="field-hint"
+                >Days to keep successful/archived reports. 0 = keep forever.</span
+              >
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <label
+              class="setting-label"
+              for="settings-failed-retention"
+            >
+              Failed Report Retention (days)
+            </label>
+            <div class="setting-input-group">
+              <input
+                id="settings-failed-retention"
+                v-model.number="settingsForm.failed_report_retention_days"
+                type="number"
+                min="0"
+                class="form-input retention-input"
+              />
+              <span class="field-hint"
+                >Days to keep failed/archive-less reports. 0 = keep forever.</span
+              >
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <label
+              class="setting-label"
+              for="settings-event-retention"
+            >
+              System Event Retention (days)
+            </label>
+            <div class="setting-input-group">
+              <input
+                id="settings-event-retention"
+                v-model.number="settingsForm.system_event_retention_days"
+                type="number"
+                min="0"
+                class="form-input retention-input"
+              />
+              <span class="field-hint">Days to keep system events. 0 = keep forever.</span>
             </div>
           </div>
 

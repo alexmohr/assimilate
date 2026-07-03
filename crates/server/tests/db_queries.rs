@@ -5805,6 +5805,165 @@ async fn delete_backup_reports_before_keeps_archive_rows(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn delete_backup_reports_with_archive_before_test(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "del-arch-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+    let old = now - Duration::days(100);
+
+    // Old archived report — should be deleted
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            schedule_id: None,
+            started_at: old,
+            finished_at: old,
+            status: "success".to_string(),
+            original_size: 100,
+            compressed_size: 50,
+            deduplicated_size: 25,
+            repo_unique_csize: 0,
+            files_processed: 10,
+            duration_secs: 60,
+            error_message: None,
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: Some("old-archive".to_string()),
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    // Recent archived report — must be kept
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            schedule_id: None,
+            started_at: now,
+            finished_at: now,
+            status: "success".to_string(),
+            original_size: 200,
+            compressed_size: 100,
+            deduplicated_size: 50,
+            repo_unique_csize: 0,
+            files_processed: 20,
+            duration_secs: 120,
+            error_message: None,
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: Some("recent-archive".to_string()),
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let cutoff = now - Duration::days(30);
+    let deleted = db::delete_backup_reports_with_archive_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 1);
+
+    let names = db::list_archive_names_for_repo(&pool, repo.id)
+        .await
+        .unwrap();
+    assert!(names.contains("recent-archive"));
+    assert!(!names.contains("old-archive"));
+    assert_eq!(names.len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_backup_reports_with_archive_before_keeps_null_archive(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "del-arch-null-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+    let old = now - Duration::days(100);
+
+    // Old report with NULL archive_name — must NOT be deleted (handled by delete_backup_reports_before)
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            schedule_id: None,
+            started_at: old,
+            finished_at: old,
+            status: "failed".to_string(),
+            original_size: 0,
+            compressed_size: 0,
+            deduplicated_size: 0,
+            repo_unique_csize: 0,
+            files_processed: 0,
+            duration_secs: 0,
+            error_message: Some("error".to_string()),
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: None,
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    // Old report with archive_name — should be deleted
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            schedule_id: None,
+            started_at: old,
+            finished_at: old,
+            status: "success".to_string(),
+            original_size: 100,
+            compressed_size: 50,
+            deduplicated_size: 25,
+            repo_unique_csize: 0,
+            files_processed: 10,
+            duration_secs: 60,
+            error_message: None,
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: Some("archived-report".to_string()),
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let cutoff = now - Duration::days(30);
+    let deleted = db::delete_backup_reports_with_archive_before(&pool, cutoff)
+        .await
+        .unwrap();
+    // Only the row WITH an archive_name should be deleted
+    assert_eq!(deleted, 1);
+
+    // The archive-less row should still exist
+    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].archive_name, None);
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn audit_filter_by_target_type(pool: PgPool) {
     db::audit::insert_audit_entry(
         &pool,

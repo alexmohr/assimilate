@@ -622,6 +622,7 @@ mod tests {
         assert!(mgr.tunnel_status(1).await.is_none());
     }
 
+    #[test]
     fn ssh_handler_accepts_when_keys_match() {
         let key_b64 = "AAAAC3NzaC1lZDI1NTE5AAAAINwxkbeQjd0zydveueMhRPJE+cxoP0DNuUcYAwqmOs6S";
         let public = russh::keys::parse_public_key_base64(key_b64).unwrap();

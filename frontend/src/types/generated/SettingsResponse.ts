@@ -2,6 +2,9 @@
 
 export type SettingsResponse = {
   retention_days: number;
+  report_retention_days: number;
+  failed_report_retention_days: number;
+  system_event_retention_days: number;
   timezone: string;
   borg_query_timeout_secs: number;
 };

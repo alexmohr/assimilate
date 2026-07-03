@@ -39,4 +39,4 @@ __pycache__/
 
 # Claude Code
 .claude/
-playwright-report
+/playwright-report/

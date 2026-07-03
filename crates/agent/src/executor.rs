@@ -1123,6 +1123,7 @@ pub fn backup_target_from_repo(
         post_backup_commands: schedule.map_or_else(Vec::new, |s| s.post_backup_commands.clone()),
         skip_targets: Vec::new(),
         exclude_patterns: schedule.map_or_else(Vec::new, |s| s.exclude_patterns.clone()),
+        file_change_patterns: schedule.map_or_else(Vec::new, |s| s.file_change_patterns.clone()),
         ssh_auth_sock: None,
         canary_enabled: schedule.is_some_and(|s| s.canary_enabled),
         accept_relocation: repo.accept_relocation,
@@ -1725,6 +1726,7 @@ mod tests {
             compact_enabled: true,
             pre_backup_commands: Vec::new(),
             post_backup_commands: Vec::new(),
+            file_change_patterns: Vec::new(),
         }
     }
 

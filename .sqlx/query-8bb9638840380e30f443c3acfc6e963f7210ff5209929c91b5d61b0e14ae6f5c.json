@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO per_agent_file_change_patterns (schedule_id, agent_id, raw_text) VALUES ($1, $2, $3) ON CONFLICT (schedule_id, agent_id) DO UPDATE SET raw_text = EXCLUDED.raw_text",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8bb9638840380e30f443c3acfc6e963f7210ff5209929c91b5d61b0e14ae6f5c"
+}

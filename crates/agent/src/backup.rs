@@ -10,7 +10,7 @@ use std::{
 use chrono::Utc;
 use shared::{
     ssh::{borg_rsh, borg_rsh_with_known_hosts},
-    types::{BackupStatus, Compression, build_repo_url},
+    types::{BackupStatus, Compression, FileChangePattern, build_repo_url},
 };
 use tokio::{process::Command, sync::mpsc};
 use tracing::{error, info, warn};
@@ -69,6 +69,7 @@ pub struct BackupTarget {
     pub ssh_auth_sock: Option<PathBuf>,
     pub canary_enabled: bool,
     pub accept_relocation: bool,
+    pub file_change_patterns: Vec<FileChangePattern>,
 }
 
 impl Default for BackupTarget {
@@ -100,6 +101,7 @@ impl Default for BackupTarget {
             ssh_auth_sock: None,
             canary_enabled: false,
             accept_relocation: false,
+            file_change_patterns: Vec::new(),
         }
     }
 }
@@ -406,6 +408,7 @@ impl BackupEngine {
             0 => {
                 let stats = parse_json_stats(&output.stdout)?;
                 let warnings = parse_warnings(&stderr);
+                let warnings = filter_file_change_warnings(warnings, &target.file_change_patterns)?;
                 let status = if warnings.is_empty() {
                     BackupStatus::Success
                 } else {
@@ -426,6 +429,7 @@ impl BackupEngine {
             }
             1 if stderr_has_warnings(&stderr) => {
                 let warnings = parse_warnings(&stderr);
+                let warnings = filter_file_change_warnings(warnings, &target.file_change_patterns)?;
                 let summary = warnings.join("; ");
                 warn!("Borg reported warnings: {summary}");
                 let stats = parse_json_stats(&output.stdout)?;
@@ -966,6 +970,34 @@ pub(crate) fn stderr_has_warnings(stderr: &str) -> bool {
 /// but represent a configuration error - a configured source directory did
 /// not exist at backup time - and must be surfaced as a hard failure rather
 /// than a silent warning.
+pub(crate) fn filter_file_change_warnings(
+    warnings: Vec<String>,
+    patterns: &[FileChangePattern],
+) -> Result<Vec<String>, BackupError> {
+    let mut filtered = Vec::new();
+    for warning in warnings {
+        let found = patterns
+            .iter()
+            .find(|p| glob_match::glob_match(&p.path, &warning));
+        if let Some(pattern) = found {
+            match &pattern.action {
+                shared::types::FileChangeAction::Ignore => {}
+                shared::types::FileChangeAction::Fatal => {
+                    return Err(BackupError::BorgFailed(format!(
+                        "file change pattern matched fatal: {warning}"
+                    )));
+                }
+                shared::types::FileChangeAction::Warn => {
+                    filtered.push(warning);
+                }
+            }
+        } else {
+            filtered.push(warning);
+        }
+    }
+    Ok(filtered)
+}
+
 pub(crate) fn parse_source_not_found_errors(stderr: &str) -> Vec<String> {
     stderr
         .lines()
@@ -1036,6 +1068,7 @@ mod tests {
             ssh_auth_sock: None,
             canary_enabled: false,
             accept_relocation: false,
+            file_change_patterns: Vec::new(),
         }
     }
 
@@ -1140,6 +1173,34 @@ mod tests {
         assert!(
             matches!(err, BackupError::BorgFailed(_)),
             "Expected BorgFailed, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_unrelated_fatal_exit_is_not_masked_by_fatal_pattern() {
+        // Regression test: an unrelated hard failure (e.g. repository error,
+        // exit code 2) must surface its own message even if the stderr also
+        // happens to contain a warning that matches a `fatal` file-change
+        // pattern. The fatal-pattern check must only apply on the exit-code
+        // paths that actually determine success/warning status.
+        let engine = BackupEngine::with_config(
+            mock_borg_path(),
+            vec![("MOCK_BORG_FATAL_UNRELATED".to_owned(), "1".to_owned())],
+        );
+        let mut target = test_target();
+        target.file_change_patterns = vec![FileChangePattern {
+            path: "*/etc/config*".to_owned(),
+            action: shared::types::FileChangeAction::Fatal,
+        }];
+
+        let result = engine.run_backup(&target, None, None).await;
+        let err = result.unwrap_err();
+        let BackupError::BorgFailed(msg) = &err else {
+            panic!("Expected BorgFailed, got: {err:?}");
+        };
+        assert!(
+            msg.contains("Repository ID mismatch"),
+            "Expected the original borg failure message, got: {err:?}"
         );
     }
 
@@ -1429,6 +1490,43 @@ mod tests {
             !log.contains("--keep-yearly"),
             "keep-yearly should not appear when zero, but found in: {log}"
         );
+    }
+
+    #[test]
+    fn test_filter_file_change_warnings_passthrough() {
+        let warnings = vec!["file changed".to_owned(), "other warning".to_owned()];
+        let result = filter_file_change_warnings(warnings, &[]).unwrap();
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_filter_file_change_warnings_ignore() {
+        // Note: glob-match * does not match /, so patterns match warning message suffixes
+        let patterns = vec![FileChangePattern {
+            path: "*test.log: file changed".to_owned(),
+            action: shared::types::FileChangeAction::Ignore,
+        }];
+        let warnings = vec![
+            "test.log: file changed".to_owned(),
+            "other warning".to_owned(),
+        ];
+        let result = filter_file_change_warnings(warnings, &patterns).unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(result[0].contains("other warning"));
+    }
+
+    #[test]
+    fn test_filter_file_change_warnings_fatal() {
+        let patterns = vec![FileChangePattern {
+            path: "*test.conf: file changed".to_owned(),
+            action: shared::types::FileChangeAction::Fatal,
+        }];
+        let warnings = vec![
+            "test.conf: file changed".to_owned(),
+            "other warning".to_owned(),
+        ];
+        let result = filter_file_change_warnings(warnings, &patterns);
+        assert!(result.is_err());
     }
 
     #[tokio::test]

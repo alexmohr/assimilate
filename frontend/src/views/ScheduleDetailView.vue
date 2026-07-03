@@ -14,6 +14,12 @@ import { useAsyncAction } from '../composables/useAsyncAction'
 import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
 import { parseLines } from '../utils/validation'
+import {
+  FileChangeAction,
+  parseFileChangePatterns,
+  serializeFileChangePatterns,
+  type FileChangePatternRow,
+} from '../utils/fileChangePatterns'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import CronBuilder from '../components/CronBuilder.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
@@ -67,6 +73,23 @@ const usePerHostPaths = ref(false)
 const perHostSources = ref<Record<number, string>>({})
 const usePerHostExcludes = ref(false)
 const perHostExcludes = ref<Record<number, string>>({})
+const usePerHostFileChangePatterns = ref(false)
+const perHostFileChangePatterns = ref<Record<number, string>>({})
+
+const fileChangePatternRows = ref<FileChangePatternRow[]>([])
+
+function addFileChangePatternRow(): void {
+  fileChangePatternRows.value = [
+    ...fileChangePatternRows.value,
+    { path: '', action: FileChangeAction.Warn },
+  ]
+}
+
+function removeFileChangePatternRow(index: number): void {
+  const rows = [...fileChangePatternRows.value]
+  rows.splice(index, 1)
+  fileChangePatternRows.value = rows
+}
 const usePerAgentCmds = ref(false)
 const perAgentPreCmds = ref<Record<number, string>>({})
 const perAgentPostCmds = ref<Record<number, string>>({})
@@ -139,6 +162,7 @@ const form = ref({
   enabled: true,
   canary_enabled: true,
   exclude_patterns: '',
+  file_change_patterns: '',
   ignore_global_excludes: false,
   keep_hourly: 24,
   keep_daily: 7,
@@ -213,6 +237,7 @@ function populateForm(s: ScheduleRow): void {
     enabled: s.enabled,
     canary_enabled: s.canary_enabled,
     exclude_patterns: s.exclude_patterns_raw ?? '',
+    file_change_patterns: s.file_change_patterns_raw ?? '',
     ignore_global_excludes: s.ignore_global_excludes,
     keep_hourly: s.keep_hourly ?? 0,
     keep_daily: s.keep_daily,
@@ -226,7 +251,34 @@ function populateForm(s: ScheduleRow): void {
   }
   selectedRepoId.value = s.repo_id ?? null
   onFailure.value = (s.on_failure as 'stop' | 'continue') ?? 'stop'
+  syncFileChangePatternsFromForm()
 }
+
+let syncingFileChangePatterns = false
+
+function syncFileChangePatternsFromForm(): void {
+  if (syncingFileChangePatterns) return
+  syncingFileChangePatterns = true
+  fileChangePatternRows.value = parseFileChangePatterns(form.value.file_change_patterns)
+  syncingFileChangePatterns = false
+}
+
+function syncFileChangePatternsToForm(): void {
+  if (syncingFileChangePatterns) return
+  syncingFileChangePatterns = true
+  form.value.file_change_patterns = serializeFileChangePatterns(fileChangePatternRows.value)
+  syncingFileChangePatterns = false
+}
+
+watch(
+  () => form.value.file_change_patterns,
+  () => syncFileChangePatternsFromForm(),
+)
+
+watch(fileChangePatternRows, () => syncFileChangePatternsToForm(), { deep: true })
+
+// Sync initial form state
+syncFileChangePatternsFromForm()
 
 function scheduleTypeLabel(t: string): string {
   switch (t) {
@@ -315,6 +367,15 @@ async function loadData(): Promise<void> {
         }
         perHostExcludes.value = map
       }
+      const perHostFileChangePatternsEntries = sources.file_change_patterns_per_agent ?? []
+      if (perHostFileChangePatternsEntries.length > 0) {
+        usePerHostFileChangePatterns.value = true
+        const map: Record<number, string> = {}
+        for (const entry of perHostFileChangePatternsEntries) {
+          map[Number(entry.agent_id)] = entry.raw_text
+        }
+        perHostFileChangePatterns.value = map
+      }
       const perAgentCmdEntries = sources.commands_per_agent ?? []
       if (perAgentCmdEntries.length > 0) {
         usePerAgentCmds.value = true
@@ -346,6 +407,7 @@ async function save(): Promise<void> {
       enabled: form.value.enabled,
       canary_enabled: form.value.canary_enabled,
       exclude_patterns_raw: form.value.exclude_patterns,
+      file_change_patterns_raw: form.value.file_change_patterns,
       ignore_global_excludes: form.value.ignore_global_excludes,
       keep_hourly: form.value.keep_hourly,
       keep_daily: form.value.keep_daily,
@@ -378,6 +440,16 @@ async function save(): Promise<void> {
         perHost.push({ agent_id: id, raw_text })
       }
       payload.exclude_patterns_per_agent = perHost
+    }
+
+    if (usePerHostFileChangePatterns.value) {
+      payload.file_change_patterns_raw = ''
+      const perHost: { agent_id: number; raw_text: string }[] = []
+      for (const id of selectedAgentIds.value) {
+        const raw_text = perHostFileChangePatterns.value[id] ?? ''
+        perHost.push({ agent_id: id, raw_text })
+      }
+      payload.file_change_patterns_per_agent = perHost
     }
 
     if (usePerAgentCmds.value) {
@@ -1296,6 +1368,93 @@ watch(activeTab, (tab) => {
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div class="form-card">
+            <h3 class="info-title">File Change Patterns</h3>
+            <div
+              v-if="selectedAgentIds.length > 1"
+              class="form-group form-group-inline"
+            >
+              <label class="form-label">Configure per agent</label>
+              <ToggleSwitch v-model="usePerHostFileChangePatterns" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Patterns</label>
+              <div v-if="!usePerHostFileChangePatterns">
+                <div
+                  v-for="(row, index) in fileChangePatternRows"
+                  :key="index"
+                  class="file-change-row"
+                >
+                  <input
+                    v-model="row.path"
+                    type="text"
+                    class="form-input"
+                    placeholder="Glob against warning text, e.g. */etc/config*"
+                    spellcheck="false"
+                  />
+                  <select
+                    v-model="row.action"
+                    class="form-input form-select file-change-action"
+                  >
+                    <option :value="FileChangeAction.Warn">warn</option>
+                    <option :value="FileChangeAction.Ignore">ignore</option>
+                    <option :value="FileChangeAction.Fatal">fatal</option>
+                  </select>
+                  <button
+                    class="btn btn-sm btn-danger"
+                    title="Remove"
+                    @click="removeFileChangePatternRow(index)"
+                  >
+                    &times;
+                  </button>
+                </div>
+                <button
+                  class="btn btn-sm btn-secondary"
+                  @click="addFileChangePatternRow()"
+                >
+                  + Add pattern
+                </button>
+              </div>
+              <div
+                v-else
+                class="per-host-paths"
+              >
+                <div
+                  v-for="agentId in selectedAgentIds"
+                  :key="agentId"
+                  class="per-host-entry"
+                >
+                  <label class="form-label">{{ agentLabel(agentId) }}</label>
+                  <textarea
+                    :value="perHostFileChangePatterns[agentId] ?? ''"
+                    class="form-input area-input area-input-sm"
+                    placeholder="File change patterns, one per line"
+                    spellcheck="false"
+                    @input="
+                      ($event) =>
+                        (perHostFileChangePatterns[agentId] = (
+                          $event.target as HTMLTextAreaElement
+                        ).value)
+                    "
+                  />
+                </div>
+                <span class="field-hint">
+                  Leave an agent empty to use schedule-level file change patterns.
+                </span>
+              </div>
+              <span
+                v-if="!usePerHostFileChangePatterns"
+                class="field-hint"
+              >
+                Glob patterns matched against the full warning message, with actions:
+                <code>ignore</code> (no warning), <code>warn</code> (default, current behavior),
+                <code>fatal</code> (fail backup). A bare path will not match - wrap it in
+                <code>*</code>, e.g. <code>*/etc/config*</code>. Unconfigured files still produce
+                warnings.
+              </span>
             </div>
           </div>
 
@@ -2425,5 +2584,26 @@ watch(activeTab, (tab) => {
   word-break: break-all;
   line-height: 1.5;
   padding: 0.05rem 0;
+}
+
+.file-change-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.file-change-row .form-input {
+  flex: 1;
+}
+
+.file-change-action {
+  width: auto;
+  min-width: 8rem;
+  flex-shrink: 0;
+}
+
+.file-change-row .btn {
+  flex-shrink: 0;
 }
 </style>

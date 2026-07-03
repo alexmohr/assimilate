@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT raw_text FROM per_agent_file_change_patterns WHERE schedule_id = $1 AND agent_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "raw_text",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "da984d000810ddaf78fe22116ad3086c7402438cac0436c4419945dd91575434"
+}

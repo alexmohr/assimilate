@@ -611,6 +611,7 @@ async fn create_test_schedule(pool: &PgPool) -> (AgentRow, RepoRow, ScheduleRow)
             enabled: true,
             canary_enabled: false,
             exclude_patterns_raw: "",
+            file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 24,
             keep_daily: 7,
@@ -661,6 +662,7 @@ async fn schedule_update(pool: PgPool) {
             enabled: false,
             canary_enabled: true,
             exclude_patterns_raw: "*.cache",
+            file_change_patterns_raw: "",
             ignore_global_excludes: true,
             keep_hourly: 24,
             keep_daily: 14,
@@ -781,6 +783,7 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             enabled: true,
             canary_enabled: false,
             exclude_patterns_raw: "",
+            file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 0,
             keep_daily: 7,
@@ -812,6 +815,7 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             enabled: true,
             canary_enabled: false,
             exclude_patterns_raw: "",
+            file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 0,
             keep_daily: 0,
@@ -1034,6 +1038,86 @@ async fn excludes_per_agent_crud(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn file_change_patterns_per_agent_crud(pool: PgPool) {
+    let (agent, _, schedule) = create_test_schedule(&pool).await;
+
+    let agent2 = db::insert_agent(&pool, "host-two-fcp", None, "hash2fcp", None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        db::get_per_agent_file_change_patterns_raw(&pool, schedule.id, agent.id)
+            .await
+            .unwrap(),
+        None
+    );
+
+    db::upsert_per_agent_file_change_patterns_raw(
+        &pool,
+        schedule.id,
+        agent.id,
+        "*/etc/config* ignore\n*/var/log* fatal",
+    )
+    .await
+    .unwrap();
+    db::upsert_per_agent_file_change_patterns_raw(&pool, schedule.id, agent2.id, "*/tmp* warn")
+        .await
+        .unwrap();
+
+    assert_eq!(
+        db::get_per_agent_file_change_patterns_raw(&pool, schedule.id, agent.id)
+            .await
+            .unwrap(),
+        Some("*/etc/config* ignore\n*/var/log* fatal".to_owned())
+    );
+
+    let all_per_agent =
+        db::list_all_per_agent_file_change_patterns_for_schedule(&pool, schedule.id)
+            .await
+            .unwrap();
+    assert_eq!(all_per_agent.len(), 2);
+    assert_eq!(all_per_agent[0].agent_id, agent.id);
+    assert_eq!(
+        all_per_agent[0].raw_text,
+        "*/etc/config* ignore\n*/var/log* fatal"
+    );
+    assert_eq!(all_per_agent[1].agent_id, agent2.id);
+    assert_eq!(all_per_agent[1].raw_text, "*/tmp* warn");
+
+    // Upsert updates the existing row rather than inserting a duplicate
+    db::upsert_per_agent_file_change_patterns_raw(
+        &pool,
+        schedule.id,
+        agent.id,
+        "*/etc/config* fatal",
+    )
+    .await
+    .unwrap();
+    let all_per_agent =
+        db::list_all_per_agent_file_change_patterns_for_schedule(&pool, schedule.id)
+            .await
+            .unwrap();
+    assert_eq!(all_per_agent.len(), 2);
+    assert_eq!(all_per_agent[0].raw_text, "*/etc/config* fatal");
+
+    db::delete_per_agent_file_change_patterns_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+
+    let all_per_agent =
+        db::list_all_per_agent_file_change_patterns_for_schedule(&pool, schedule.id)
+            .await
+            .unwrap();
+    assert!(all_per_agent.is_empty());
+    assert_eq!(
+        db::get_per_agent_file_change_patterns_raw(&pool, schedule.id, agent.id)
+            .await
+            .unwrap(),
+        None
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn global_excludes_preserves_blank_lines_and_comments(pool: PgPool) {
     let raw = "# System paths\n/proc\n/sys\n\n# Cache files\n*.cache\npp:__pycache__";
     db::set_global_excludes_raw(&pool, raw).await.unwrap();
@@ -1069,6 +1153,7 @@ async fn schedule_excludes_raw_text_round_trip(pool: PgPool) {
             enabled: true,
             canary_enabled: false,
             exclude_patterns_raw: raw,
+            file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 24,
             keep_daily: 7,
@@ -1146,6 +1231,7 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
             enabled: true,
             canary_enabled: false,
             exclude_patterns_raw: "# logs\n*.log\n\n*.tmp",
+            file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 24,
             keep_daily: 7,
@@ -1502,6 +1588,7 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
             enabled: true,
             canary_enabled: false,
             exclude_patterns_raw: "",
+            file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 24,
             keep_daily: 7,
@@ -1582,6 +1669,7 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             enabled: true,
             canary_enabled: false,
             exclude_patterns_raw: "",
+            file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 24,
             keep_daily: 7,
@@ -1615,6 +1703,7 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             enabled: false,
             canary_enabled: false,
             exclude_patterns_raw: "",
+            file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 24,
             keep_daily: 7,
@@ -4334,6 +4423,7 @@ async fn repo_relocation_per_host_multi_agent(pool: PgPool) {
             enabled: true,
             canary_enabled: false,
             exclude_patterns_raw: "",
+            file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 24,
             keep_daily: 7,
@@ -4538,6 +4628,7 @@ async fn reports_carry_repo_name_and_fall_back_to_it_when_schedule_unnamed(pool:
             enabled: true,
             canary_enabled: false,
             exclude_patterns_raw: "",
+            file_change_patterns_raw: "",
             ignore_global_excludes: false,
             keep_hourly: 0,
             keep_daily: 7,

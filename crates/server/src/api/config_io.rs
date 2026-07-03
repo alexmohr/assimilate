@@ -33,6 +33,8 @@ pub struct ScheduleTargetExport {
     pub execution_order: i32,
     pub backup_sources: Vec<String>,
     pub exclude_patterns: String,
+    #[serde(default)]
+    pub file_change_patterns: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
@@ -45,6 +47,8 @@ pub struct ScheduleExport {
     pub execution_mode: String,
     pub on_failure: String,
     pub exclude_patterns_raw: String,
+    #[serde(default)]
+    pub file_change_patterns_raw: String,
     pub ignore_global_excludes: bool,
     pub keep_hourly: i32,
     pub keep_daily: i32,
@@ -140,6 +144,12 @@ pub async fn export_config(
             .iter()
             .map(|e| (e.agent_id, e.raw_text.as_str()))
             .collect();
+        let per_agent_file_change_patterns =
+            db::list_all_per_agent_file_change_patterns_for_schedule(&state.pool, sched.id).await?;
+        let per_agent_file_change_patterns_map: HashMap<i64, &str> = per_agent_file_change_patterns
+            .iter()
+            .map(|f| (f.agent_id, f.raw_text.as_str()))
+            .collect();
 
         let targets = target_rows
             .iter()
@@ -153,6 +163,11 @@ pub async fn export_config(
                         .map(|v| (*v).clone())
                         .unwrap_or_default(),
                     exclude_patterns: per_agent_excludes_map
+                        .get(&t.agent_id)
+                        .copied()
+                        .unwrap_or("")
+                        .to_owned(),
+                    file_change_patterns: per_agent_file_change_patterns_map
                         .get(&t.agent_id)
                         .copied()
                         .unwrap_or("")
@@ -175,6 +190,7 @@ pub async fn export_config(
             execution_mode: sched.execution_mode.clone(),
             on_failure: sched.on_failure.clone(),
             exclude_patterns_raw: sched.exclude_patterns_raw.clone(),
+            file_change_patterns_raw: sched.file_change_patterns_raw.clone(),
             ignore_global_excludes: sched.ignore_global_excludes,
             keep_hourly: sched.keep_hourly,
             keep_daily: sched.keep_daily,
@@ -352,6 +368,7 @@ pub async fn import_config(
             enabled: sched.enabled,
             canary_enabled: sched.canary_enabled,
             exclude_patterns_raw: &sched.exclude_patterns_raw,
+            file_change_patterns_raw: &sched.file_change_patterns_raw,
             ignore_global_excludes: sched.ignore_global_excludes,
             keep_hourly: sched.keep_hourly,
             keep_daily: sched.keep_daily,
@@ -395,6 +412,15 @@ pub async fn import_config(
                     new_sched.id,
                     agent_id,
                     &target.exclude_patterns,
+                )
+                .await?;
+            }
+            if !target.file_change_patterns.is_empty() {
+                db::upsert_per_agent_file_change_patterns_raw(
+                    &state.pool,
+                    new_sched.id,
+                    agent_id,
+                    &target.file_change_patterns,
                 )
                 .await?;
             }

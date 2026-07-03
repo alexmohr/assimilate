@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands, s.post_backup_commands, s.execution_mode, s.on_failure, s.owner_id, s.visibility, COALESCE(ARRAY(SELECT a.hostname FROM schedule_targets st JOIN agents a ON a.id = st.agent_id WHERE st.schedule_id = s.id ORDER BY st.execution_order, a.hostname), ARRAY[]::TEXT[]) AS \"target_hostnames!\" FROM schedules s WHERE s.repo_id = $1 ORDER BY s.id",
+  "query": "SELECT s.id, s.repo_id, s.name, s.schedule_type, s.cron_expression, s.enabled, s.canary_enabled, s.last_run_at, s.next_run_at, s.exclude_patterns_raw, s.file_change_patterns_raw, s.ignore_global_excludes, s.keep_hourly, s.keep_daily, s.keep_weekly, s.keep_monthly, s.keep_yearly, s.compact_enabled, s.rate_limit_kbps, s.pre_backup_commands, s.post_backup_commands, s.execution_mode, s.on_failure, s.owner_id, s.visibility, ARRAY[]::TEXT[] AS \"target_hostnames!\" FROM schedules s JOIN schedule_targets st ON st.schedule_id = s.id JOIN agents m ON st.agent_id = m.id WHERE m.hostname = $1 AND s.repo_id = $2 AND s.schedule_type = $3 LIMIT 1",
   "describe": {
     "columns": [
       {
@@ -55,83 +55,90 @@
       },
       {
         "ordinal": 10,
+        "name": "file_change_patterns_raw",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
         "name": "ignore_global_excludes",
         "type_info": "Bool"
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "keep_hourly",
         "type_info": "Int4"
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "keep_daily",
         "type_info": "Int4"
       },
       {
-        "ordinal": 13,
+        "ordinal": 14,
         "name": "keep_weekly",
         "type_info": "Int4"
       },
       {
-        "ordinal": 14,
+        "ordinal": 15,
         "name": "keep_monthly",
         "type_info": "Int4"
       },
       {
-        "ordinal": 15,
+        "ordinal": 16,
         "name": "keep_yearly",
         "type_info": "Int4"
       },
       {
-        "ordinal": 16,
+        "ordinal": 17,
         "name": "compact_enabled",
         "type_info": "Bool"
       },
       {
-        "ordinal": 17,
+        "ordinal": 18,
         "name": "rate_limit_kbps",
         "type_info": "Int4"
       },
       {
-        "ordinal": 18,
+        "ordinal": 19,
         "name": "pre_backup_commands",
         "type_info": "Text"
       },
       {
-        "ordinal": 19,
+        "ordinal": 20,
         "name": "post_backup_commands",
         "type_info": "Text"
       },
       {
-        "ordinal": 20,
+        "ordinal": 21,
         "name": "execution_mode",
         "type_info": "Text"
       },
       {
-        "ordinal": 21,
+        "ordinal": 22,
         "name": "on_failure",
         "type_info": "Text"
       },
       {
-        "ordinal": 22,
+        "ordinal": 23,
         "name": "owner_id",
         "type_info": "Int8"
       },
       {
-        "ordinal": 23,
+        "ordinal": 24,
         "name": "visibility",
         "type_info": "Text"
       },
       {
-        "ordinal": 24,
+        "ordinal": 25,
         "name": "target_hostnames!",
         "type_info": "TextArray"
       }
     ],
     "parameters": {
       "Left": [
-        "Int8"
+        "Text",
+        "Int8",
+        "Text"
       ]
     },
     "nullable": [
@@ -152,6 +159,7 @@
       false,
       false,
       false,
+      false,
       true,
       false,
       false,
@@ -162,5 +170,5 @@
       null
     ]
   },
-  "hash": "939cd33ed3a18f42cbc4921081f54d667472a877d7cea3a912413a5815508c47"
+  "hash": "20cd48e7e4ed74b67ecc8b37a3d113ac438ad7e4d9898e40f592cf028135c3c7"
 }

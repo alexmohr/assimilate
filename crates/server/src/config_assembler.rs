@@ -112,6 +112,14 @@ pub async fn assemble_config(
 
         let per_agent_cmds = db::get_per_agent_commands(pool, schedule.id, agent.id).await?;
 
+        let per_agent_file_change_patterns_raw =
+            db::get_per_agent_file_change_patterns_raw(pool, schedule.id, agent.id).await?;
+        let effective_file_change_patterns_raw = per_agent_file_change_patterns_raw
+            .as_deref()
+            .unwrap_or(&schedule.file_change_patterns_raw);
+        let file_change_patterns =
+            parse_raw_file_change_patterns(effective_file_change_patterns_raw);
+
         let schedule_config = ScheduleConfig {
             id: schedule.id,
             schedule_type: schedule_type_from_str(&schedule.schedule_type)?,
@@ -128,6 +136,7 @@ pub async fn assemble_config(
             keep_monthly,
             keep_yearly,
             compact_enabled: schedule.compact_enabled,
+            file_change_patterns,
             pre_backup_commands: {
                 let agent_defaults: Vec<String> =
                     serde_json::from_str(&agent.default_pre_backup_commands)
@@ -290,9 +299,33 @@ fn schedule_type_from_str(s: &str) -> Result<ScheduleType, ApiError> {
         .map_err(|e| ApiError::Internal(format!("invalid schedule type in database: {e}")))
 }
 
+// Mirrors `parseFileChangePatterns` in
+// `frontend/src/utils/fileChangePatterns.ts` - keep the two grammars in
+// sync when changing either one.
+fn parse_raw_file_change_patterns(raw: &str) -> Vec<shared::types::FileChangePattern> {
+    raw.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|line| {
+            let parts: Vec<&str> = line.rsplitn(2, ' ').collect();
+            let (path, action_str) =
+                if parts.len() == 2 && matches!(parts[0], "ignore" | "warn" | "fatal") {
+                    (parts[1].trim(), parts[0])
+                } else {
+                    (line, "warn")
+                };
+            let action = action_str.parse().unwrap_or_default();
+            shared::types::FileChangePattern {
+                path: path.to_string(),
+                action,
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_raw_excludes;
+    use super::{parse_raw_excludes, parse_raw_file_change_patterns};
 
     #[test]
     fn empty_input_returns_empty() {
@@ -351,5 +384,42 @@ mod tests {
         // inline # is part of a valid borg pattern.
         let input = "re:/tmp/[^/]+\\.sock$";
         assert_eq!(parse_raw_excludes(input), vec!["re:/tmp/[^/]+\\.sock$"]);
+    }
+
+    #[test]
+    fn parse_raw_file_change_patterns_defaults_to_warn() {
+        let input = "/etc/passwd\n/var/log";
+        let patterns = parse_raw_file_change_patterns(input);
+        assert_eq!(patterns.len(), 2);
+        assert_eq!(patterns[0].path, "/etc/passwd");
+        assert_eq!(patterns[0].action, shared::types::FileChangeAction::Warn);
+        assert_eq!(patterns[1].path, "/var/log");
+        assert_eq!(patterns[1].action, shared::types::FileChangeAction::Warn);
+    }
+
+    #[test]
+    fn parse_raw_file_change_patterns_with_actions() {
+        let input = "/tmp ignore\n/etc warn\n/var/log fatal";
+        let patterns = parse_raw_file_change_patterns(input);
+        assert_eq!(patterns.len(), 3);
+        assert_eq!(patterns[0].path, "/tmp");
+        assert_eq!(patterns[0].action, shared::types::FileChangeAction::Ignore);
+        assert_eq!(patterns[1].path, "/etc");
+        assert_eq!(patterns[1].action, shared::types::FileChangeAction::Warn);
+        assert_eq!(patterns[2].path, "/var/log");
+        assert_eq!(patterns[2].action, shared::types::FileChangeAction::Fatal);
+    }
+
+    #[test]
+    fn parse_raw_file_change_patterns_blank_and_comment_lines_stripped() {
+        let input = "# comment\n/tmp ignore\n\n# another\n/var/log fatal";
+        let patterns = parse_raw_file_change_patterns(input);
+        assert_eq!(patterns.len(), 2);
+    }
+
+    #[test]
+    fn parse_raw_file_change_patterns_empty_input() {
+        let patterns = parse_raw_file_change_patterns("");
+        assert!(patterns.is_empty());
     }
 }

@@ -9,6 +9,7 @@ export type ScheduleExportResponse = {
   execution_mode: string;
   on_failure: string;
   exclude_patterns_raw: string;
+  file_change_patterns_raw: string;
   ignore_global_excludes: boolean;
   keep_hourly: number;
   keep_daily: number;

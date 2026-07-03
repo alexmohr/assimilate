@@ -779,18 +779,16 @@ async fn bootstrap_admin(pool: &PgPool) -> Result<(), StartupError> {
     let hash = bcrypt::hash("admin", 10)?;
 
     let user_id: i64 = sqlx::query_scalar!(
-        "INSERT INTO users (username, password_hash, must_change_password) VALUES ('admin', \
-         $1, true) RETURNING id",
+        "INSERT INTO users (username, password_hash, must_change_password) VALUES ('admin', $1, \
+         true) RETURNING id",
         &hash,
     )
     .fetch_one(pool)
     .await?;
 
-    let admin_role_id: i64 = sqlx::query_scalar!(
-        "SELECT id FROM roles WHERE name = 'admin'",
-    )
-    .fetch_one(pool)
-    .await?;
+    let admin_role_id: i64 = sqlx::query_scalar!("SELECT id FROM roles WHERE name = 'admin'",)
+        .fetch_one(pool)
+        .await?;
 
     sqlx::query!(
         "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",

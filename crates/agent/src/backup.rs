@@ -408,8 +408,7 @@ impl BackupEngine {
             0 => {
                 let stats = parse_json_stats(&output.stdout)?;
                 let warnings = parse_warnings(&stderr);
-                let warnings =
-                    filter_file_change_warnings(warnings, &target.file_change_patterns)?;
+                let warnings = filter_file_change_warnings(warnings, &target.file_change_patterns)?;
                 let status = if warnings.is_empty() {
                     BackupStatus::Success
                 } else {
@@ -430,8 +429,7 @@ impl BackupEngine {
             }
             1 if stderr_has_warnings(&stderr) => {
                 let warnings = parse_warnings(&stderr);
-                let warnings =
-                    filter_file_change_warnings(warnings, &target.file_change_patterns)?;
+                let warnings = filter_file_change_warnings(warnings, &target.file_change_patterns)?;
                 let summary = warnings.join("; ");
                 warn!("Borg reported warnings: {summary}");
                 let stats = parse_json_stats(&output.stdout)?;

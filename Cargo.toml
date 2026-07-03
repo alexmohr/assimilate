@@ -5,6 +5,9 @@
 members = ["crates/server", "crates/agent", "crates/shared"]
 resolver = "2"
 
+[workspace.metadata.dylint]
+libraries = [{ path = "lints/no_string_control_flow" }]
+
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }

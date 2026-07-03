@@ -23,6 +23,37 @@ use crate::{
 const MAX_LOGIN_ATTEMPTS: i64 = 5;
 const LOGIN_WINDOW_MINUTES: i32 = 15;
 
+/// Whether the session cookie should carry the `Secure` attribute.
+///
+/// Defaults to `Secure` fail-safe: only an explicit `ASSIMILATE_SECURE_COOKIES=false`
+/// disables it (e.g. for local HTTP development).
+enum CookieSecurity {
+    Secure,
+    Insecure,
+}
+
+impl From<Option<String>> for CookieSecurity {
+    fn from(env_value: Option<String>) -> Self {
+        match env_value.as_deref() {
+            Some("false") => Self::Insecure,
+            _ => Self::Secure,
+        }
+    }
+}
+
+impl CookieSecurity {
+    fn cookie_flag(self) -> &'static str {
+        match self {
+            Self::Secure => "; Secure",
+            Self::Insecure => "",
+        }
+    }
+}
+
+fn secure_cookie_flag() -> &'static str {
+    CookieSecurity::from(std::env::var("ASSIMILATE_SECURE_COOKIES").ok()).cookie_flag()
+}
+
 #[derive(Debug, Clone)]
 pub struct AuthUser {
     pub user_id: i64,
@@ -216,11 +247,7 @@ pub async fn login(
     .await?;
     db::update_last_login(&state.pool, user.id).await?;
 
-    let secure_flag = if std::env::var("ASSIMILATE_SECURE_COOKIES").map_or(true, |v| v != "false") {
-        "; Secure"
-    } else {
-        ""
-    };
+    let secure_flag = secure_cookie_flag();
     let cookie = format!(
         "session={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age_secs}{secure_flag}"
     );
@@ -270,11 +297,7 @@ pub async fn logout(State(state): State<AppState>, auth: AuthUser) -> Result<Res
     };
     db::delete_session(&state.pool, &hash_token(session_id)).await?;
 
-    let secure_flag = if std::env::var("ASSIMILATE_SECURE_COOKIES").map_or(true, |v| v != "false") {
-        "; Secure"
-    } else {
-        ""
-    };
+    let secure_flag = secure_cookie_flag();
     let cookie = format!("session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0{secure_flag}");
     let mut response = StatusCode::NO_CONTENT.into_response();
     response.headers_mut().insert(
@@ -361,11 +384,7 @@ pub async fn refresh_session(
     let new_expires_at = Utc::now() + Duration::days(7);
     db::extend_session(&state.pool, &hashed_id, new_expires_at).await?;
 
-    let secure_flag = if std::env::var("ASSIMILATE_SECURE_COOKIES").map_or(true, |v| v != "false") {
-        "; Secure"
-    } else {
-        ""
-    };
+    let secure_flag = secure_cookie_flag();
     let max_age_secs = 7 * 86400_i64;
     let cookie = format!(
         "session={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age_secs}{secure_flag}"
@@ -467,4 +486,30 @@ pub async fn update_preferences(
     }
     db::set_user_preferences(&state.pool, auth.user_id, &body).await?;
     Ok(Json(PreferencesResponse { inner: body }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CookieSecurity;
+
+    #[test]
+    fn cookie_security_defaults_to_secure_when_unset() {
+        assert_eq!(CookieSecurity::from(None).cookie_flag(), "; Secure");
+    }
+
+    #[test]
+    fn cookie_security_is_insecure_when_explicitly_false() {
+        assert_eq!(
+            CookieSecurity::from(Some("false".to_string())).cookie_flag(),
+            ""
+        );
+    }
+
+    #[test]
+    fn cookie_security_is_secure_for_any_other_value() {
+        assert_eq!(
+            CookieSecurity::from(Some("0".to_string())).cookie_flag(),
+            "; Secure"
+        );
+    }
 }

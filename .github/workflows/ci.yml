@@ -37,6 +37,14 @@ jobs:
           cargo +nightly fmt -- --config error_on_unformatted=true,error_on_line_overflow=true,format_strings=true,group_imports=StdExternalCrate,imports_granularity=Crate #magic___^_^___line
       - name: Clippy
         run: cargo +nightly clippy --workspace -- -D warnings
+      - name: Install dylint toolchain
+        run: |
+          toolchain=$(grep '^channel' lints/no_string_control_flow/rust-toolchain | cut -d'"' -f2)
+          rustup toolchain install "$toolchain" --profile minimal --component rustc-dev --component llvm-tools-preview
+      - name: Install cargo-dylint
+        run: cargo install cargo-dylint@6.0.1 dylint-link@6.0.1 --locked
+      - name: Enforce no string-based control flow (dylint)
+        run: RUSTFLAGS="-D no_string_control_flow" cargo dylint --all --workspace
       - name: Tests
         run: cargo test --workspace --lib --bins
       - name: Apply database migrations

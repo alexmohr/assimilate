@@ -169,6 +169,21 @@ pub async fn check_repo_permission(
     ))
 }
 
+/// Mirrors the `repos.visibility` / `schedules.visibility` text column.
+enum RepoVisibility {
+    Shared,
+    Private,
+}
+
+impl From<&str> for RepoVisibility {
+    fn from(s: &str) -> Self {
+        match s {
+            "shared" => Self::Shared,
+            _ => Self::Private,
+        }
+    }
+}
+
 pub async fn is_visible_to_user(
     pool: &sqlx::PgPool,
     user_id: i64,
@@ -184,12 +199,70 @@ pub async fn is_visible_to_user(
         return Ok(true);
     }
 
-    if visibility == "shared" {
-        if let Some(owner) = owner_id {
-            return db::user_shares_group_with(pool, user_id, owner).await;
-        }
-        return Ok(true);
+    match RepoVisibility::from(visibility) {
+        RepoVisibility::Shared => match owner_id {
+            Some(owner) => db::user_shares_group_with(pool, user_id, owner).await,
+            None => Ok(true),
+        },
+        RepoVisibility::Private => Ok(false),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_visible_to_user;
+
+    fn dummy_pool() -> sqlx::PgPool {
+        sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap()
     }
 
-    Ok(false)
+    #[tokio::test]
+    async fn admin_can_see_everything() {
+        let pool = dummy_pool();
+        assert!(
+            is_visible_to_user(&pool, 1, Some(2), "private", true)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn owner_can_see_their_own_private_repo() {
+        let pool = dummy_pool();
+        assert!(
+            is_visible_to_user(&pool, 1, Some(1), "private", false)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn private_repo_is_hidden_from_non_owner() {
+        let pool = dummy_pool();
+        assert!(
+            !is_visible_to_user(&pool, 1, Some(2), "private", false)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn shared_repo_with_no_owner_is_visible() {
+        let pool = dummy_pool();
+        assert!(
+            is_visible_to_user(&pool, 1, None, "shared", false)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn unowned_repo_defaults_to_private_semantics() {
+        let pool = dummy_pool();
+        assert!(
+            !is_visible_to_user(&pool, 1, None, "private", false)
+                .await
+                .unwrap()
+        );
+    }
 }

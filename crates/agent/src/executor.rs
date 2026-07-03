@@ -15,7 +15,10 @@ use chrono::Utc;
 use shared::{
     protocol::AgentToServer,
     ssh::{borg_rsh, borg_rsh_with_known_hosts, known_hosts_host},
-    types::{AgentConfig, BorgEncryption, DryRunFile, RepoConfig, RepoId, build_repo_url},
+    types::{
+        AgentConfig, BORG_REPO_ENV_KEY, BorgEncryption, DryRunFile, RepoConfig, RepoId,
+        build_repo_url,
+    },
 };
 use tokio::{
     sync::{Mutex, Semaphore, mpsc},
@@ -1566,7 +1569,7 @@ fn build_borg_env(target: &BackupTarget) -> Vec<(String, String)> {
     );
 
     let mut env = vec![
-        ("BORG_REPO".to_owned(), repo_url),
+        (BORG_REPO_ENV_KEY.to_owned(), repo_url),
         ("BORG_PASSPHRASE".to_owned(), target.passphrase.clone()),
         ("BORG_HOST_ID".to_owned(), target.hostname.clone()),
         ("BORG_RSH".to_owned(), borg_rsh_for_target(target)),

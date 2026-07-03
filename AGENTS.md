@@ -182,6 +182,21 @@ as the `e2e` flag, which is merged with the `unit` flag (Rust + Vitest) by the
 * Do not use string comparisons for control flow. Use enums or structs instead.
 * Prefer newtypes for domain identifiers (e.g., `struct MachineId(i64)`, `struct AgentToken(String)`).
 
+### Enforcement: `no_string_control_flow` lint
+
+The "no string comparisons for control flow" rule is enforced in CI by a custom [dylint](https://github.com/trailofrust/dylint) lint at `lints/no_string_control_flow/`. It denies `==`/`!=` comparisons and `match` arms that test a `&str`/`String` value against a string literal.
+
+* It is exempt inside `from`, `from_str`, `try_from`, and `deserialize` functions — the sanctioned boundary where a raw string is parsed into an enum. Everywhere else, parse into an enum first and branch on that.
+* A small number of sites are legitimately string-based (env var key lookups, third-party API contracts like `tracing::field::Field::name()` or `url::Url::scheme()`, or literal path/text-format tokens like borg's `"."` or a systemd `"[Service]"` header). These carry a paired `#[allow(unknown_lints, reason = "...")]` + `#[allow(no_string_control_flow, reason = "...")]`, since `no_string_control_flow` is unknown to plain `rustc`/`clippy` outside the dylint driver.
+* Run it locally with:
+  ```bash
+  rustup toolchain install "$(grep '^channel' lints/no_string_control_flow/rust-toolchain | cut -d'"' -f2)" --profile minimal --component rustc-dev --component llvm-tools-preview
+  cargo install cargo-dylint dylint-link --locked
+  RUSTFLAGS="-D no_string_control_flow" cargo dylint --all --workspace
+  ```
+* After changing the lint itself, update its UI test fixtures (`lints/no_string_control_flow/ui/`) and re-run `cargo test` inside the lint crate.
+* The lint crate is pinned to its own nightly toolchain (`lints/no_string_control_flow/rust-toolchain`), independent of the workspace's `+nightly`. Bump it with `cargo dylint upgrade lints/no_string_control_flow` when it stops building against current dependencies, and update the CI step's `cargo-dylint`/`dylint-link` install version if the `dylint_linting` major version changes.
+
 ## Style Guide
 
 ### Prefer `map_or`

@@ -82,14 +82,39 @@ fn level_matches(entry_level: &str, min_level: &str) -> bool {
     entry_ord <= min_ord
 }
 
+/// Ordering classification of a `tracing` level name. Only used to rank log
+/// entries by severity for the `min_level` filter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LogLevel {
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+    Unknown,
+}
+
+impl From<&str> for LogLevel {
+    fn from(level: &str) -> Self {
+        match level.to_uppercase().as_str() {
+            "ERROR" => Self::Error,
+            "WARN" => Self::Warn,
+            "INFO" => Self::Info,
+            "DEBUG" => Self::Debug,
+            "TRACE" => Self::Trace,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 fn level_ord(level: &str) -> u8 {
-    match level.to_uppercase().as_str() {
-        "ERROR" => 0,
-        "WARN" => 1,
-        "INFO" => 2,
-        "DEBUG" => 3,
-        "TRACE" => 4,
-        _ => 5,
+    match LogLevel::from(level) {
+        LogLevel::Error => 0,
+        LogLevel::Warn => 1,
+        LogLevel::Info => 2,
+        LogLevel::Debug => 3,
+        LogLevel::Trace => 4,
+        LogLevel::Unknown => 5,
     }
 }
 
@@ -105,6 +130,16 @@ impl MessageVisitor {
     }
 }
 
+#[allow(
+    unknown_lints,
+    reason = "no_string_control_flow is a workspace-local dylint lint, unknown to plain \
+              rustc/clippy"
+)]
+#[allow(
+    no_string_control_flow,
+    reason = "\"message\" is tracing's own reserved field name for the format-args value, not \
+              domain state"
+)]
 impl Visit for MessageVisitor {
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
         if field.name() == "message" || self.message.is_empty() {

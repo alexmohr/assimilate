@@ -1462,25 +1462,8 @@ pub fn compression_to_str(c: &Compression) -> String {
 }
 
 pub fn compression_from_str(s: &str) -> Result<Compression, ApiError> {
-    if s == "none" {
-        return Ok(Compression::None);
-    }
-    if s == "lz4" {
-        return Ok(Compression::Lz4);
-    }
-    if let Some(level_str) = s.strip_prefix("zstd,") {
-        let level = level_str
-            .parse::<i32>()
-            .map_err(|_| ApiError::Internal(format!("invalid zstd level: {level_str}")))?;
-        return Ok(Compression::Zstd { level });
-    }
-    if let Some(level_str) = s.strip_prefix("zlib,") {
-        let level = level_str
-            .parse::<i32>()
-            .map_err(|_| ApiError::Internal(format!("invalid zlib level: {level_str}")))?;
-        return Ok(Compression::Zlib { level });
-    }
-    Err(ApiError::Internal(format!("unknown compression: {s}")))
+    s.parse::<Compression>()
+        .map_err(|e| ApiError::Internal(format!("invalid compression: {e}")))
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

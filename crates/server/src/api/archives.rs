@@ -132,28 +132,74 @@ pub fn classify_borg_error(exit_code: i32, stderr: &str) -> ApiError {
     ApiError::Internal(format!("borg command failed (exit {exit_code}): {stderr}"))
 }
 
+enum ContentType {
+    TextPlain,
+    TextHtml,
+    TextCss,
+    Javascript,
+    Json,
+    Xml,
+    Pdf,
+    Zip,
+    Gzip,
+    Tar,
+    Png,
+    Jpeg,
+    Gif,
+    Svg,
+    OctetStream,
+}
+
+impl From<&str> for ContentType {
+    fn from(ext: &str) -> Self {
+        match ext {
+            "txt" | "log" | "conf" | "cfg" | "ini" => Self::TextPlain,
+            "html" | "htm" => Self::TextHtml,
+            "css" => Self::TextCss,
+            "js" => Self::Javascript,
+            "json" => Self::Json,
+            "xml" => Self::Xml,
+            "pdf" => Self::Pdf,
+            "zip" => Self::Zip,
+            "gz" | "gzip" => Self::Gzip,
+            "tar" => Self::Tar,
+            "png" => Self::Png,
+            "jpg" | "jpeg" => Self::Jpeg,
+            "gif" => Self::Gif,
+            "svg" => Self::Svg,
+            _ => Self::OctetStream,
+        }
+    }
+}
+
+impl ContentType {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::TextPlain => "text/plain",
+            Self::TextHtml => "text/html",
+            Self::TextCss => "text/css",
+            Self::Javascript => "application/javascript",
+            Self::Json => "application/json",
+            Self::Xml => "application/xml",
+            Self::Pdf => "application/pdf",
+            Self::Zip => "application/zip",
+            Self::Gzip => "application/gzip",
+            Self::Tar => "application/x-tar",
+            Self::Png => "image/png",
+            Self::Jpeg => "image/jpeg",
+            Self::Gif => "image/gif",
+            Self::Svg => "image/svg+xml",
+            Self::OctetStream => "application/octet-stream",
+        }
+    }
+}
+
 fn content_type_for_extension(filename: &str) -> &'static str {
     let ext = Path::new(filename)
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("");
-    match ext {
-        "txt" | "log" | "conf" | "cfg" | "ini" => "text/plain",
-        "html" | "htm" => "text/html",
-        "css" => "text/css",
-        "js" => "application/javascript",
-        "json" => "application/json",
-        "xml" => "application/xml",
-        "pdf" => "application/pdf",
-        "zip" => "application/zip",
-        "gz" | "gzip" => "application/gzip",
-        "tar" => "application/x-tar",
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "svg" => "image/svg+xml",
-        _ => "application/octet-stream",
-    }
+    ContentType::from(ext).as_str()
 }
 
 fn ensure_utc_suffix(ts: &str) -> String {
@@ -537,6 +583,16 @@ async fn run_archive_deletion(
 // Strip the leading "./" or bare "." that borg emits when archives are
 // created with "borg create repo::name ." so the API always returns
 // clean relative paths (e.g. "var/www" instead of "./var/www").
+#[allow(
+    unknown_lints,
+    reason = "no_string_control_flow is a workspace-local dylint lint, unknown to plain \
+              rustc/clippy"
+)]
+#[allow(
+    no_string_control_flow,
+    reason = "\".\" is borg's literal path-syntax token for the archive root, not domain state \
+              with an enum representation"
+)]
 pub(crate) fn normalize_path(p: &str) -> String {
     if p == "." {
         String::new()

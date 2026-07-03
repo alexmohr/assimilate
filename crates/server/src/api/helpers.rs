@@ -3,11 +3,9 @@
 
 use std::collections::HashMap;
 
-use shared::ssh::borg_rsh;
+use shared::{ssh::borg_rsh, types::Compression};
 
 use crate::{error::ApiError, ssh};
-
-const VALID_COMPRESSIONS: &[&str] = &["none", "lz4", "zstd", "zlib"];
 
 /// Builds the base borg environment shared by all server-side borg invocations:
 /// the repository passphrase, the SSH command, and the server's `SSH_AUTH_SOCK`
@@ -46,33 +44,18 @@ pub fn validate_non_empty(value: &str, field_name: &str) -> Result<(), ApiError>
 /// Validates and normalizes the compression string from API requests.
 /// Accepts: "none", "lz4", "zstd", "zstd,3", "zlib", "zlib,6", or None (defaults to "lz4").
 pub fn validate_compression(value: Option<&str>) -> Result<String, ApiError> {
-    let Some(s) = value else {
-        return Ok("lz4".to_string());
-    };
-    let s = s.trim();
-    if s.is_empty() {
-        return Ok("lz4".to_string());
-    }
-    let base = s.split(',').next().unwrap_or(s);
-    if !VALID_COMPRESSIONS.contains(&base) {
-        return Err(ApiError::BadRequest(format!(
-            "invalid compression: '{s}'. Valid values: none, lz4, zstd, zstd,<level>, zlib, \
-             zlib,<level>"
-        )));
-    }
-    if let Some(level_str) = s.strip_prefix("zstd,").or_else(|| s.strip_prefix("zlib,"))
-        && level_str.parse::<i32>().is_err()
-    {
-        return Err(ApiError::BadRequest(format!(
-            "invalid compression level in '{s}'"
-        )));
-    }
-    let normalized = match s {
-        "zstd" => "zstd,3".to_string(),
-        "zlib" => "zlib,6".to_string(),
-        other => other.to_string(),
-    };
-    Ok(normalized)
+    let s = value
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("lz4");
+    s.parse::<Compression>()
+        .map(|c| c.to_string())
+        .map_err(|e| {
+            ApiError::BadRequest(format!(
+                "invalid compression: {e}. Valid values: none, lz4, zstd, zstd,<level>, zlib, \
+                 zlib,<level>"
+            ))
+        })
 }
 
 /// Hashes a password using bcrypt in a blocking task.
@@ -125,5 +108,40 @@ pub async fn validate_path_exists(
 pub async fn push_config_to_all_agents(state: &crate::AppState) {
     for hostname in state.registry.connected_agents().await {
         crate::config_assembler::push_config_to_agent(state, &hostname).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_compression;
+
+    #[test]
+    fn validate_compression_defaults_to_lz4_when_absent() {
+        assert_eq!(validate_compression(None).unwrap(), "lz4");
+        assert_eq!(validate_compression(Some("")).unwrap(), "lz4");
+        assert_eq!(validate_compression(Some("  ")).unwrap(), "lz4");
+    }
+
+    #[test]
+    fn validate_compression_normalizes_bare_zstd_and_zlib() {
+        assert_eq!(validate_compression(Some("zstd")).unwrap(), "zstd,3");
+        assert_eq!(validate_compression(Some("zlib")).unwrap(), "zlib,6");
+    }
+
+    #[test]
+    fn validate_compression_passes_through_explicit_levels() {
+        assert_eq!(validate_compression(Some("zstd,9")).unwrap(), "zstd,9");
+        assert_eq!(validate_compression(Some("none")).unwrap(), "none");
+        assert_eq!(validate_compression(Some("lz4")).unwrap(), "lz4");
+    }
+
+    #[test]
+    fn validate_compression_rejects_unknown_algorithm() {
+        assert!(validate_compression(Some("brotli")).is_err());
+    }
+
+    #[test]
+    fn validate_compression_rejects_invalid_level() {
+        assert!(validate_compression(Some("zstd,abc")).is_err());
     }
 }

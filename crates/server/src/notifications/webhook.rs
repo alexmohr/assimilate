@@ -28,13 +28,30 @@ fn is_private_ip(ip: IpAddr) -> bool {
     }
 }
 
+enum WebhookScheme {
+    Http,
+    Https,
+    Other,
+}
+
+impl From<&str> for WebhookScheme {
+    fn from(scheme: &str) -> Self {
+        match scheme {
+            "http" => Self::Http,
+            "https" => Self::Https,
+            _ => Self::Other,
+        }
+    }
+}
+
 async fn validate_webhook_url(url: &str) -> Result<(), NotificationError> {
     let parsed = reqwest::Url::parse(url)
         .map_err(|e| NotificationError::Config(format!("invalid webhook URL: {e}")))?;
 
-    match parsed.scheme() {
-        "http" | "https" => {}
-        scheme => {
+    let scheme = parsed.scheme();
+    match WebhookScheme::from(scheme) {
+        WebhookScheme::Http | WebhookScheme::Https => {}
+        WebhookScheme::Other => {
             return Err(NotificationError::Config(format!(
                 "webhook URL scheme '{scheme}' is not allowed; use http or https"
             )));

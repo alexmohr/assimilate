@@ -11,6 +11,9 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 * Run `cargo +nightly clippy --workspace -- -D warnings` to check for common mistakes.
 * Run `cargo test --workspace` to run all tests.
 * Clippy pedantic is enforced at workspace level (`deny`). Do not disable or suppress clippy warnings.
+* Additional restriction lints are denied workspace-wide: `unwrap_used`, `expect_used`, `panic`, `todo`, `unimplemented`, `dbg_macro`, `print_stdout`, `print_stderr` (all allowed in test code via `clippy.toml`), and `allow_attributes_without_reason` (every `#[allow]` must carry a `reason = "..."` — and still requires human approval per the rules below).
+* Run `cargo deny check` to audit Rust dependencies (RUSTSEC advisories, yanked versions, licenses, duplicate versions). Configuration lives in `deny.toml`; CI runs this in the `deps-audit` job. **Never add entries to the `ignore` list in `deny.toml`** — only a human may suppress an advisory, same as the npm audit allowlist.
+* Frontend lint runs with `--max-warnings=0`: ESLint warnings fail CI, not just errors.
 
 ## Pre-commit
 

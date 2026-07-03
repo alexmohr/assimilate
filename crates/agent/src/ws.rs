@@ -156,7 +156,10 @@ async fn connect_and_run(
     }
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "message dispatch match; split tracked in #116"
+)]
 async fn handle_text_message(
     text: &str,
     exec_cmd_tx: &mpsc::Sender<ExecutorCommand>,

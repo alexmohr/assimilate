@@ -991,7 +991,10 @@ pub(crate) fn parse_source_not_found_errors(stderr: &str) -> Vec<String> {
 }
 
 #[cfg(test)]
-#[allow(clippy::indexing_slicing)]
+#[allow(
+    clippy::indexing_slicing,
+    reason = "test-only assertions on known fixtures"
+)]
 mod tests {
     use super::*;
 

@@ -13,6 +13,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AI_TOOLS: 'claude|copilot|chatgpt|openai|anthropic|gemini|cursor|codeium|tabnine|amazon.?q|codewhisperer|devin|aider|cody|continue\.dev'
+      # The repository's own agent account may author commits on PRs opened
+      # by the repository owner.
+      AGENT_LOGIN: 'alexmohr-agent'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,7 +61,7 @@ jobs:
             "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits?per_page=100" \
             --paginate \
             --jq '.[].author.login // empty')
-          MISMATCHED=$(echo "$COMMIT_LOGINS" | grep -vE "^${PR_AUTHOR}$" | grep -v "^$" || true)
+          MISMATCHED=$(echo "$COMMIT_LOGINS" | grep -vE "^(${PR_AUTHOR}|${AGENT_LOGIN})$" | grep -v "^$" || true)
           if [ -n "$MISMATCHED" ]; then
             echo "Commits authored by a different GitHub account than PR opener '$PR_AUTHOR':"
             echo "$MISMATCHED"

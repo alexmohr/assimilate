@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+unmaintained = "workspace"
+ignore = [
+    # Marvin Attack timing sidechannel in the `rsa` crate. No fixed release
+    # exists yet. Pulled in transitively via web-push -> jwt-simple ->
+    # superboring and via russh/ssh-key; neither exposes RSA decryption with
+    # attacker-observable timing in this project (Ed25519 keys are used).
+    # Remove once rsa publishes a fix and the parents update.
+    "RUSTSEC-2023-0071",
+]
+
+[licenses]
+version = 2
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "CDLA-Permissive-2.0",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

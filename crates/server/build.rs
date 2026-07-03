@@ -33,10 +33,11 @@ fn resolve_git_commit_count() -> Option<u32> {
         .and_then(|s| s.trim().parse().ok())
 }
 
-fn main() {
-    let app_version = std::env::var("APP_VERSION_OVERRIDE").unwrap_or_else(|_| {
-        std::env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION must be set")
-    });
+fn main() -> Result<(), std::env::VarError> {
+    let app_version = match std::env::var("APP_VERSION_OVERRIDE") {
+        Ok(v) => v,
+        Err(_) => std::env::var("CARGO_PKG_VERSION")?,
+    };
 
     let sha = resolve_git_sha().unwrap_or_default();
     let commit_count = resolve_git_commit_count().unwrap_or(0);
@@ -48,4 +49,5 @@ fn main() {
     println!("cargo::rustc-env=BUILD_TIMESTAMP={build_timestamp}");
     println!("cargo::rerun-if-changed=../.git/HEAD");
     println!("cargo::rerun-if-changed=../.git/refs/");
+    Ok(())
 }

@@ -47,6 +47,12 @@ export default tseslint.config(
     },
   },
   {
+    files: ['**/*.test.ts', 'src/test-utils/**'],
+    rules: {
+      'vue/one-component-per-file': 'off',
+    },
+  },
+  {
     ignores: ['dist/', 'node_modules/', 'src/types/generated/'],
   },
 )

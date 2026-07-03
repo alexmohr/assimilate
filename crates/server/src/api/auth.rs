@@ -48,7 +48,8 @@ impl FromRequestParts<AppState> for AuthUser {
         }
 
         let session_id = extract_session_cookie(parts)?;
-        let session = db::get_session(&state.pool, &session_id).await?;
+        let hashed_id = hash_token(&session_id);
+        let session = db::get_session(&state.pool, &hashed_id).await?;
         let user = db::get_user_by_id(&state.pool, session.user_id).await?;
 
         if user.must_change_password {
@@ -204,9 +205,10 @@ pub async fn login(
     };
     let expires_at = Utc::now() + Duration::hours(ttl_hours);
 
+    let hashed_id = hash_token(&session_id);
     db::insert_session(
         &state.pool,
-        &session_id,
+        &hashed_id,
         user.id,
         expires_at,
         req.remember_me,
@@ -266,7 +268,7 @@ pub async fn logout(State(state): State<AppState>, auth: AuthUser) -> Result<Res
             "cannot logout with token auth".to_string(),
         ));
     };
-    db::delete_session(&state.pool, session_id).await?;
+    db::delete_session(&state.pool, &hash_token(session_id)).await?;
 
     let secure_flag = if std::env::var("ASSIMILATE_SECURE_COOKIES").map_or(true, |v| v != "false") {
         "; Secure"
@@ -302,7 +304,8 @@ pub async fn me(
 ) -> Result<Json<MeResponse>, ApiError> {
     let user = db::get_user_by_id(&state.pool, auth.user_id).await?;
     let (session_expires_at, remember_me) = if let Some(ref session_id) = auth.session_id {
-        let session = db::get_session(&state.pool, session_id).await?;
+        let hashed_id = hash_token(session_id);
+        let session = db::get_session(&state.pool, &hashed_id).await?;
         (Some(session.expires_at), session.remember_me)
     } else {
         (None, false)
@@ -347,7 +350,8 @@ pub async fn refresh_session(
         ));
     };
 
-    let session = db::get_session(&state.pool, session_id).await?;
+    let hashed_id = hash_token(session_id);
+    let session = db::get_session(&state.pool, &hashed_id).await?;
     if !session.remember_me {
         return Err(ApiError::BadRequest(
             "not a remember-me session".to_string(),
@@ -355,7 +359,7 @@ pub async fn refresh_session(
     }
 
     let new_expires_at = Utc::now() + Duration::days(7);
-    db::extend_session(&state.pool, session_id, new_expires_at).await?;
+    db::extend_session(&state.pool, &hashed_id, new_expires_at).await?;
 
     let secure_flag = if std::env::var("ASSIMILATE_SECURE_COOKIES").map_or(true, |v| v != "false") {
         "; Secure"

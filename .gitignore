@@ -40,3 +40,6 @@ __pycache__/
 # Claude Code
 .claude/
 /playwright-report/
+
+# REUSE sidecar files for sqlx offline cache
+.sqlx/*.license

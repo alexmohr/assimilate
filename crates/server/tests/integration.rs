@@ -239,11 +239,12 @@ async fn create_test_user_and_session(pool: &PgPool) {
         .unwrap();
 
     let expires = chrono::Utc::now() + chrono::Duration::hours(24);
+    let hashed_id = server::api::tokens::hash_token(TEST_SESSION_ID);
     sqlx::query(
         "INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3) ON CONFLICT (id) DO \
          UPDATE SET expires_at = EXCLUDED.expires_at",
     )
-    .bind(TEST_SESSION_ID)
+    .bind(&hashed_id)
     .bind(user_id)
     .bind(expires)
     .execute(pool)
@@ -1498,6 +1499,70 @@ async fn test_auth_me_without_session() {
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
+#[sqlx::test(migrations = "./migrations")]
+async fn test_sessions_stored_as_hashes_not_plaintext(pool: sqlx::PgPool) {
+    let plaintext_id = "verify-hash-storage-session-000000000000";
+
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash) VALUES ('hash-verify-user', \
+         '$2b$12$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let admin_role_id: i64 = sqlx::query_scalar("SELECT id FROM roles WHERE name = 'admin'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    sqlx::query("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+        .bind(user_id)
+        .bind(admin_role_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let expires = chrono::Utc::now() + chrono::Duration::hours(24);
+    let hashed_id = server::api::tokens::hash_token(plaintext_id);
+    sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3)")
+        .bind(&hashed_id)
+        .bind(user_id)
+        .bind(expires)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Verify the stored session id is NOT the plaintext value
+    let stored_id: String = sqlx::query_scalar("SELECT id FROM sessions WHERE user_id = $1")
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_ne!(
+        stored_id, plaintext_id,
+        "session id must not be stored in plaintext"
+    );
+
+    // Verify the stored session id IS the SHA-256 hash of the plaintext
+    let expected_hash = server::api::tokens::hash_token(plaintext_id);
+    assert_eq!(
+        stored_id, expected_hash,
+        "stored session id must be SHA-256 hash of the original session id"
+    );
+
+    // Also verify that a lookup with the hashed value finds the session
+    let found_session = server::db::get_session(&pool, &hashed_id).await.unwrap();
+    assert_eq!(found_session.user_id, user_id);
+
+    // Verify that a lookup with the plaintext does NOT find a session
+    let plaintext_lookup = server::db::get_session(&pool, plaintext_id).await;
+    assert!(
+        plaintext_lookup.is_err(),
+        "looking up session by plaintext should fail"
+    );
+}
+
 // -- Excludes API tests --
 
 /// Helper: insert a schedule directly into the DB (bypasses SSH check in the API).
@@ -2001,11 +2066,12 @@ async fn create_non_admin_user_and_session(pool: &PgPool) {
         .unwrap();
 
     let expires = chrono::Utc::now() + chrono::Duration::hours(24);
+    let hashed_id = server::api::tokens::hash_token(NON_ADMIN_SESSION_ID);
     sqlx::query(
         "INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3) ON CONFLICT (id) DO \
          UPDATE SET expires_at = EXCLUDED.expires_at",
     )
-    .bind(NON_ADMIN_SESSION_ID)
+    .bind(&hashed_id)
     .bind(user_id)
     .bind(expires)
     .execute(pool)
@@ -2144,11 +2210,12 @@ async fn create_must_change_password_user_and_session(pool: &PgPool) {
         .unwrap();
 
     let expires = chrono::Utc::now() + chrono::Duration::hours(24);
+    let hashed_id = server::api::tokens::hash_token(MCP_SESSION_ID);
     sqlx::query(
         "INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3) ON CONFLICT (id) DO \
          UPDATE SET expires_at = EXCLUDED.expires_at",
     )
-    .bind(MCP_SESSION_ID)
+    .bind(&hashed_id)
     .bind(user_id)
     .bind(expires)
     .execute(pool)

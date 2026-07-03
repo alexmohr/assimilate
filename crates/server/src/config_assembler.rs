@@ -299,6 +299,9 @@ fn schedule_type_from_str(s: &str) -> Result<ScheduleType, ApiError> {
         .map_err(|e| ApiError::Internal(format!("invalid schedule type in database: {e}")))
 }
 
+// Mirrors `parseFileChangePatterns` in
+// `frontend/src/utils/fileChangePatterns.ts` - keep the two grammars in
+// sync when changing either one.
 fn parse_raw_file_change_patterns(raw: &str) -> Vec<shared::types::FileChangePattern> {
     raw.lines()
         .map(str::trim)

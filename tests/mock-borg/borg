@@ -20,6 +20,14 @@ fi
 
 case "$SUBCOMMAND" in
   create)
+    if [[ "${MOCK_BORG_FATAL_UNRELATED:-0}" == "1" ]]; then
+      if [[ " $* " == *" --log-json "* ]]; then
+        printf '%s\n' '{"type": "log_message", "time": 1704067200, "levelname": "WARNING", "name": "borg.archive", "msgid": "FileChangedWarning", "message": "/etc/config: file changed while we backed it up"}' >&2
+      fi
+      printf '%s\n' 'borg: Fatal: Repository ID mismatch.' >&2
+      exit 2
+    fi
+
     if [[ "${MOCK_BORG_SIMULATE_WARNING:-0}" == "1" ]]; then
       if [[ " $* " == *" --log-json "* ]]; then
         printf '%s\n' '{"type": "log_message", "time": 1704067200, "levelname": "WARNING", "name": "borg.archive", "msgid": "FileChangedWarning", "message": "/tmp/test.log: file changed while we backed it up"}' >&2

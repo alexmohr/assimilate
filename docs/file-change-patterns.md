@@ -19,18 +19,18 @@ File change patterns can be configured at the **schedule level** (applies to all
 
 Navigate to **Schedules** → select a schedule → **File Change Patterns** section.
 
-Each line contains an optional action keyword followed by a glob pattern:
+Each line contains an optional action keyword followed by a glob pattern. Patterns are matched against the full warning message text (see [Pattern Syntax](#pattern-syntax) below), so they typically need a leading or trailing `*`:
 
 ```text
-/tmp/logs ignore
-/etc/config fatal
-/var/www/cache warn
+*/tmp/logs* ignore
+*/etc/config* fatal
+*/var/www/cache* warn
 ```
 
 If no action is specified, `warn` is assumed:
 
 ```text
-/tmp/logs          ← equivalent to `/tmp/logs warn`
+*/tmp/logs*          ← equivalent to `*/tmp/logs* warn`
 ```
 
 ### Per-agent patterns
@@ -52,7 +52,7 @@ Patterns use the same shell glob matching as the rest of Assimilate:
 - `*` matches any number of characters within a path component (does not match `/`)
 - `?` matches any single character
 
-The pattern is matched against the full warning message text. For example, a warning message like `/var/log/nginx/access.log: file changed while we backed it up` can be matched with a pattern like `access.log: file changed while we backed it up` or the simpler `*access.log*`.
+The pattern is matched against the full warning message text, not just the file path — a bare path like `/etc/config` will only match if the *entire* message is exactly `/etc/config`, which is never the case. Use `*` to match the surrounding message text. For example, a warning message like `/var/log/nginx/access.log: file changed while we backed it up` can be matched with a pattern like `*access.log: file changed while we backed it up` or the simpler `*access.log*`.
 
 ## Backward Compatibility
 

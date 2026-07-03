@@ -907,6 +907,7 @@ pub async fn extract_file(
                 "--lock-wait",
                 LOCK_WAIT_SECS,
                 repo_archive.as_str(),
+                "--",
                 query.path.as_str(),
             ],
             &env,

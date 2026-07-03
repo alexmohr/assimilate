@@ -3117,6 +3117,7 @@ pub struct UserRow {
     pub must_change_password: bool,
     pub created_at: DateTime<Utc>,
     pub last_login_at: Option<DateTime<Utc>>,
+    pub locked_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -3136,7 +3137,7 @@ pub async fn insert_user(
     sqlx::query_as!(
         UserRow,
         "INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id, username, \
-         must_change_password, created_at, last_login_at",
+         must_change_password, created_at, last_login_at, locked_until",
         username,
         password_hash,
     )
@@ -3148,8 +3149,8 @@ pub async fn insert_user(
 pub async fn get_user_by_username(pool: &PgPool, username: &str) -> Result<UserRow, ApiError> {
     sqlx::query_as!(
         UserRow,
-        "SELECT id, username, must_change_password, created_at, last_login_at FROM users WHERE \
-         username = $1",
+        "SELECT id, username, must_change_password, created_at, last_login_at, locked_until FROM \
+         users WHERE username = $1",
         username,
     )
     .fetch_one(pool)
@@ -3172,12 +3173,13 @@ pub async fn get_user_password_hash(
         must_change_password: bool,
         created_at: DateTime<Utc>,
         last_login_at: Option<DateTime<Utc>>,
+        locked_until: Option<DateTime<Utc>>,
     }
 
     let row = sqlx::query_as!(
         FullRow,
-        "SELECT id, username, password_hash, must_change_password, created_at, last_login_at FROM \
-         users WHERE username = $1",
+        "SELECT id, username, password_hash, must_change_password, created_at, last_login_at, \
+         locked_until FROM users WHERE username = $1",
         username,
     )
     .fetch_one(pool)
@@ -3193,6 +3195,7 @@ pub async fn get_user_password_hash(
         must_change_password: row.must_change_password,
         created_at: row.created_at,
         last_login_at: row.last_login_at,
+        locked_until: row.locked_until,
     };
     Ok((user, row.password_hash))
 }
@@ -3200,8 +3203,8 @@ pub async fn get_user_password_hash(
 pub async fn get_user_by_id(pool: &PgPool, user_id: i64) -> Result<UserRow, ApiError> {
     sqlx::query_as!(
         UserRow,
-        "SELECT id, username, must_change_password, created_at, last_login_at FROM users WHERE id \
-         = $1",
+        "SELECT id, username, must_change_password, created_at, last_login_at, locked_until FROM \
+         users WHERE id = $1",
         user_id,
     )
     .fetch_one(pool)
@@ -3215,8 +3218,8 @@ pub async fn get_user_by_id(pool: &PgPool, user_id: i64) -> Result<UserRow, ApiE
 pub async fn list_users(pool: &PgPool) -> Result<Vec<UserRow>, ApiError> {
     sqlx::query_as!(
         UserRow,
-        "SELECT id, username, must_change_password, created_at, last_login_at FROM users ORDER BY \
-         id",
+        "SELECT id, username, must_change_password, created_at, last_login_at, locked_until FROM \
+         users ORDER BY id",
     )
     .fetch_all(pool)
     .await
@@ -3389,6 +3392,86 @@ pub async fn insert_login_attempt(
     .await
     .map_err(ApiError::Database)?;
     Ok(())
+}
+
+/// Count failed login attempts for a username across ALL IPs within the given
+/// window (account-scoped, not per-IP).
+pub async fn count_failed_login_attempts_by_username(
+    pool: &PgPool,
+    username: &str,
+    window_minutes: i32,
+) -> Result<i64, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct CountRow {
+        count: Option<i64>,
+    }
+
+    let row = sqlx::query_as!(
+        CountRow,
+        "SELECT COUNT(*) as count FROM login_attempts WHERE username = $1 AND success = false AND \
+         attempted_at > NOW() - ($2 || ' minutes')::INTERVAL",
+        username,
+        window_minutes.to_string(),
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(row.count.unwrap_or(0))
+}
+
+pub async fn set_account_lockout(
+    pool: &PgPool,
+    username: &str,
+    locked_until: DateTime<Utc>,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE users SET locked_until = $1 WHERE username = $2",
+        locked_until,
+        username,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+pub async fn clear_account_lockout(pool: &PgPool, username: &str) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE users SET locked_until = NULL WHERE username = $1",
+        username,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// Return the number of lockout periods that have already elapsed for this
+/// user (used for exponential-backoff). This counts distinct "lockout episodes"
+/// by looking at how many times a full lockout window has elapsed since the
+/// first failed attempt in a series. Simpler: return the total number of
+/// failed attempts within a longer window as a proxy for escalation level.
+pub async fn count_lockout_escalation_level(
+    pool: &PgPool,
+    username: &str,
+    window_minutes: i32,
+) -> Result<i64, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct CountRow {
+        count: Option<i64>,
+    }
+
+    let row = sqlx::query_as!(
+        CountRow,
+        "SELECT COUNT(*) as count FROM login_attempts WHERE username = $1 AND success = false AND \
+         attempted_at > NOW() - ($2 || ' minutes')::INTERVAL",
+        username,
+        window_minutes.to_string(),
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(row.count.unwrap_or(0))
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]

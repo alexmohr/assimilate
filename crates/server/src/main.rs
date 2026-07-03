@@ -18,7 +18,10 @@ use server::{
     middleware::csp_headers,
     notifications::NotificationService,
     openapi::ApiDoc,
-    rate_limit::{RateLimiter, rate_limit_middleware},
+    rate_limit::{
+        IpRateLimitMiddlewareState, IpRateLimiter, UserRateLimiter,
+        auth_tracking_middleware, ip_rate_limit_middleware,
+    },
     tunnel::TunnelManager,
     ws,
 };
@@ -105,6 +108,8 @@ async fn main() -> Result<(), StartupError> {
 
     let shutdown_token = tokio_util::sync::CancellationToken::new();
 
+    let user_rate_limiter = UserRateLimiter::new(60, Duration::from_secs(60));
+
     let state = AppState {
         pool,
         encryption_key,
@@ -131,6 +136,7 @@ async fn main() -> Result<(), StartupError> {
         )),
         shutdown_token: shutdown_token.clone(),
         client_ip_resolver: client_ip_resolver.clone(),
+        user_rate_limiter: user_rate_limiter.clone(),
     };
 
     tokio::spawn(server::scheduler::run(state.clone()));
@@ -202,18 +208,27 @@ async fn main() -> Result<(), StartupError> {
         });
     }
 
-    let login_rate_limiter = RateLimiter::new(10, Duration::from_secs(60), client_ip_resolver);
+    let login_ip_limiter = IpRateLimiter::new(10, Duration::from_secs(60), client_ip_resolver.clone());
+    let login_rate_limit_state = IpRateLimitMiddlewareState {
+        limiter: login_ip_limiter,
+        resolver: client_ip_resolver.clone(),
+    };
 
     let login_router = Router::new()
         .route("/api/auth/login", post(api::auth::login))
         .layer(axum_middleware::from_fn_with_state(
-            login_rate_limiter,
-            rate_limit_middleware,
+            login_rate_limit_state,
+            ip_rate_limit_middleware,
         ))
         .with_state(state.clone());
 
+    // Apply per-user rate limiting to all authenticated routes.
     let app = Router::new()
         .merge(login_router)
+        .layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            auth_tracking_middleware,
+        ))
         .route("/api/health", get(api::health::health))
         .route("/api/auth/logout", post(api::auth::logout))
         .route("/api/auth/me", get(api::auth::me))

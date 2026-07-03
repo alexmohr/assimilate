@@ -278,7 +278,7 @@ pub async fn login(
         return Err(ApiError::Unauthorized("invalid credentials".to_string()));
     }
 
-    // Login succeeded — clear any account lockout
+    // Login succeeded - clear any account lockout
     db::clear_account_lockout(&state.pool, &req.username).await?;
 
     let session_id = Uuid::new_v4().to_string();

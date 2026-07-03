@@ -41,13 +41,15 @@ enum StartupError {
     Bcrypt(#[from] bcrypt::BcryptError),
     #[error("crypto error: {0}")]
     Crypto(#[from] shared::crypto::CryptoError),
+    #[error("failed to install rustls crypto provider")]
+    RustlsProvider,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), StartupError> {
     rustls::crypto::ring::default_provider()
         .install_default()
-        .expect("Failed to install rustls crypto provider");
+        .map_err(|_| StartupError::RustlsProvider)?;
 
     let log_buffer = LogBuffer::default();
 
@@ -728,10 +730,15 @@ async fn shutdown_signal(
 
     #[cfg(unix)]
     let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to install SIGTERM handler")
-            .recv()
-            .await;
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sigterm) => {
+                sigterm.recv().await;
+            }
+            Err(e) => {
+                tracing::error!("failed to install SIGTERM handler, relying on Ctrl+C only: {e}");
+                std::future::pending::<()>().await;
+            }
+        }
     };
 
     #[cfg(not(unix))]

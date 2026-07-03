@@ -23,8 +23,14 @@ use tracing_subscriber::EnvFilter;
 #[cfg(unix)]
 async fn shutdown_signal() {
     use tokio::signal::unix::{SignalKind, signal as unix_signal};
-    let mut sigterm =
-        unix_signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+    let Ok(mut sigterm) = unix_signal(SignalKind::terminate()) else {
+        tracing::error!("failed to install SIGTERM handler, relying on Ctrl+C only");
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            tracing::error!("Failed to listen for Ctrl+C: {e}");
+        }
+        tracing::info!("Received Ctrl+C, shutting down");
+        return;
+    };
     tokio::select! {
         _ = sigterm.recv() => tracing::info!("Received SIGTERM, shutting down"),
         res = tokio::signal::ctrl_c() => {
@@ -63,11 +69,17 @@ pub struct Args {
     token: String,
 }
 
+#[derive(Debug, thiserror::Error)]
+enum StartupError {
+    #[error("failed to install rustls crypto provider")]
+    RustlsProvider,
+}
+
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), StartupError> {
     rustls::crypto::ring::default_provider()
         .install_default()
-        .expect("Failed to install rustls crypto provider");
+        .map_err(|_| StartupError::RustlsProvider)?;
 
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -97,6 +109,7 @@ async fn main() {
         }
         () = shutdown_signal() => {}
     }
+    Ok(())
 }
 
 fn normalize_ws_url(url: &str) -> String {

@@ -5,6 +5,7 @@
 name = "shared"
 version = "0.1.0"
 edition = "2024"
+publish = false
 description = "Shared domain types, WebSocket protocol schema, and crypto utilities for Assimilate"
 license = "Apache-2.0"
 repository = "https://github.com/alexmohr/assimilate"

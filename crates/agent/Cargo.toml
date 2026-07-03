@@ -5,6 +5,7 @@
 name = "agent"
 version = "0.1.0"
 edition = "2024"
+publish = false
 description = "Agent binary that runs on backup machines and connects to the Assimilate server"
 license = "Apache-2.0"
 repository = "https://github.com/alexmohr/assimilate"

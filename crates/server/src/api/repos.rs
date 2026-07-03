@@ -2297,7 +2297,11 @@ fn enrich_archive_stats_background(
                     };
 
                     let raw_stats = &info["stats"];
-                    #[allow(clippy::cast_possible_truncation)]
+                    #[allow(
+                        clippy::cast_possible_truncation,
+                        reason = "borg durations are small positive second counts; removal \
+                                  tracked in #284"
+                    )]
                     let archive_stats = db::ArchiveStats {
                         original_size: raw_stats["original_size"].as_i64().unwrap_or(0),
                         compressed_size: raw_stats["compressed_size"].as_i64().unwrap_or(0),

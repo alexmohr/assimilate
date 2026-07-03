@@ -384,7 +384,10 @@ impl Executor {
         });
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "params-struct refactor tracked in #284"
+    )]
     async fn handle_init_repo(
         &self,
         repo_path: &str,
@@ -529,7 +532,10 @@ impl Executor {
         });
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "params-struct refactor tracked in #284"
+    )]
     async fn handle_restore_files(
         &self,
         repo_id: RepoId,
@@ -1196,7 +1202,10 @@ async fn run_verify_task(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "params-struct refactor tracked in #284"
+)]
 async fn run_dry_run_task(
     repo_id: RepoId,
     mut target: BackupTarget,
@@ -1298,7 +1307,10 @@ async fn run_dry_run_task(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "params-struct refactor tracked in #284"
+)]
 async fn run_restore_task(
     repo_id: RepoId,
     mut target: BackupTarget,
@@ -1579,7 +1591,10 @@ fn build_borg_env(target: &BackupTarget) -> Vec<(String, String)> {
 }
 
 #[cfg(test)]
-#[allow(clippy::indexing_slicing)]
+#[allow(
+    clippy::indexing_slicing,
+    reason = "test-only assertions on known fixtures"
+)]
 mod tests {
     use super::*;
 

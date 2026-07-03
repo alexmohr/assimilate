@@ -190,6 +190,15 @@ jobs:
         run: pip install -r docs/requirements.txt
       - name: Build docs (strict)
         run: mkdocs build --strict
+  deps-audit:
+    name: Rust Dependency Audit (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check advisories, licenses, bans and sources
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest

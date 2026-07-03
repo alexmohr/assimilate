@@ -20,7 +20,10 @@ use server::{
     middleware::csp_headers,
     notifications::NotificationService,
     openapi::ApiDoc,
-    rate_limit::{RateLimiter, rate_limit_middleware},
+    rate_limit::{
+        IpRateLimitMiddlewareState, IpRateLimiter, UserRateLimiter,
+        auth_tracking_middleware, ip_rate_limit_middleware,
+    },
     tunnel::TunnelManager,
     ws,
 };
@@ -117,7 +120,7 @@ async fn main() -> Result<(), StartupError> {
     let registry = state.registry.clone();
     let task_registry = state.task_registry.clone();
     let background_task_tracker = state.background_task_tracker.clone();
-    let app = build_router(login_router)
+    let app = build_router(&state, login_router)
         .with_state(state)
         .layer(axum_middleware::from_fn(csp_headers))
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024));
@@ -229,6 +232,8 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
     } = args;
     let task_registry = shared::task_registry::TaskRegistry::default();
 
+    let user_rate_limiter = UserRateLimiter::new(60, Duration::from_secs(60));
+
     AppState {
         pool,
         encryption_key,
@@ -249,6 +254,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         shutdown_token,
         client_ip_resolver,
         task_registry,
+        user_rate_limiter,
     }
 }
 
@@ -363,44 +369,22 @@ fn spawn_background_tasks(state: &AppState, tunnel_manager: &TunnelManager) {
 }
 
 fn build_login_router(state: &AppState, client_ip_resolver: ClientIpResolver) -> Router<AppState> {
-    let login_rate_limiter = RateLimiter::new(10, Duration::from_mins(1), client_ip_resolver);
+    let login_ip_limiter = IpRateLimiter::new(10, Duration::from_secs(60), client_ip_resolver.clone());
+    let login_rate_limit_state = IpRateLimitMiddlewareState {
+        limiter: login_ip_limiter,
+        resolver: client_ip_resolver.clone(),
+    };
 
     Router::new()
         .route("/api/auth/login", post(api::auth::login))
         .layer(axum_middleware::from_fn_with_state(
-            login_rate_limiter,
-            rate_limit_middleware,
+            login_rate_limit_state,
+            ip_rate_limit_middleware,
         ))
         .with_state(state.clone())
 }
 
-fn core_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/health", get(api::health::health))
-        .route("/api/auth/logout", post(api::auth::logout))
-        .route("/api/auth/me", get(api::auth::me))
-        .route("/api/auth/refresh", post(api::auth::refresh_session))
-        .route(
-            "/api/auth/change-password",
-            post(api::auth::change_password),
-        )
-        .route(
-            "/api/auth/preferences",
-            get(api::auth::get_preferences).put(api::auth::update_preferences),
-        )
-        .route(
-            "/api/users",
-            get(api::users::list_users).post(api::users::create_user),
-        )
-        .route("/api/users/{id}/password", put(api::users::update_password))
-        .route("/api/users/{id}", delete(api::users::delete_user))
-        .route("/ws/agent", get(ws::handler::ws_handler))
-        .route("/ws/ui", get(ws::ui_handler::ui_ws_handler))
-        .route(
-            "/ws/ssh-agent/{hostname}",
-            get(ws::ssh_relay::ssh_relay_handler),
-        )
-}
+
 
 fn agent_routes() -> Router<AppState> {
     Router::new()
@@ -867,9 +851,40 @@ fn misc_routes() -> Router<AppState> {
         .merge(Scalar::with_url("/api/docs", ApiDoc::openapi()))
 }
 
-fn build_router(login_router: Router<AppState>) -> Router<AppState> {
+fn build_router(state: &AppState, login_router: Router<AppState>) -> Router<AppState> {
+    let authenticated_routes = Router::new()
+        .merge(login_router)
+        .layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            auth_tracking_middleware,
+        ))
+        .route("/api/health", get(api::health::health))
+        .route("/api/auth/logout", post(api::auth::logout))
+        .route("/api/auth/me", get(api::auth::me))
+        .route("/api/auth/refresh", post(api::auth::refresh_session))
+        .route(
+            "/api/auth/change-password",
+            post(api::auth::change_password),
+        )
+        .route(
+            "/api/auth/preferences",
+            get(api::auth::get_preferences).put(api::auth::update_preferences),
+        )
+        .route(
+            "/api/users",
+            get(api::users::list_users).post(api::users::create_user),
+        )
+        .route("/api/users/{id}/password", put(api::users::update_password))
+        .route("/api/users/{id}", delete(api::users::delete_user))
+        .route("/ws/agent", get(ws::handler::ws_handler))
+        .route("/ws/ui", get(ws::ui_handler::ui_ws_handler))
+        .route(
+            "/ws/ssh-agent/{hostname}",
+            get(ws::ssh_relay::ssh_relay_handler),
+        );
+
     Router::new()
-        .merge(core_routes())
+        .merge(authenticated_routes)
         .merge(agent_routes())
         .merge(repo_routes())
         .merge(schedule_and_config_routes())
@@ -880,7 +895,6 @@ fn build_router(login_router: Router<AppState>) -> Router<AppState> {
         .merge(tunnel_routes())
         .merge(notification_routes())
         .merge(misc_routes())
-        .merge(login_router)
 }
 
 async fn configure_docs_and_static(app: Router) -> Router {

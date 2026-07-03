@@ -62,6 +62,7 @@ use crate::{
     client_ip::ClientIpResolver,
     log_buffer::LogBuffer,
     notifications::NotificationService,
+    rate_limit::UserRateLimiter,
     repo_op_tracker::RepoOpTracker,
     tunnel::TunnelManager,
     ws::{completion_bus::CompletionBus, registry::AgentRegistry, ui_broadcast::UiBroadcast},
@@ -225,4 +226,6 @@ pub struct AppState {
     /// so `main`'s shutdown can join them instead of abandoning them mid-work when
     /// the process exits.
     pub task_registry: shared::task_registry::TaskRegistry,
+
+    pub user_rate_limiter: UserRateLimiter,
 }

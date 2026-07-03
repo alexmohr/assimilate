@@ -81,6 +81,11 @@ fn build_test_state(pool: PgPool) -> server::AppState {
         shutdown_token: tokio_util::sync::CancellationToken::new(),
         client_ip_resolver: server::client_ip::ClientIpResolver::new(),
         task_registry: shared::task_registry::TaskRegistry::default(),
+
+        user_rate_limiter: server::rate_limit::UserRateLimiter::new(
+            60,
+            std::time::Duration::from_secs(60),
+        ),
     }
 }
 

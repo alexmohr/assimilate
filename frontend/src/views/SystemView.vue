@@ -348,7 +348,10 @@ async function resetSystem(): Promise<void> {
           {{ settingsError }}
         </div>
 
-        <form class="settings-form">
+        <form
+          class="settings-form"
+          @submit.prevent="saveSettings"
+        >
           <div class="setting-row">
             <label
               class="setting-label"
@@ -479,8 +482,8 @@ async function resetSystem(): Promise<void> {
           <div class="settings-actions">
             <button
               class="btn btn-primary"
+              type="submit"
               :disabled="settingsSaving"
-              @click="saveSettings"
             >
               {{ settingsSaving ? 'Saving...' : 'Save' }}
             </button>

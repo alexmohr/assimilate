@@ -13,6 +13,7 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
+use server::api::tokens::hash_token;
 use sqlx::PgPool;
 use tempfile::TempDir;
 use tokio::sync::Mutex;
@@ -239,7 +240,7 @@ async fn create_test_user_and_session(pool: &PgPool) {
         .unwrap();
 
     let expires = chrono::Utc::now() + chrono::Duration::hours(24);
-    let hashed_id = server::api::tokens::hash_token(TEST_SESSION_ID);
+    let hashed_id = hash_token(TEST_SESSION_ID);
     sqlx::query(
         "INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3) ON CONFLICT (id) DO \
          UPDATE SET expires_at = EXCLUDED.expires_at",

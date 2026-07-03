@@ -227,6 +227,31 @@ impl Borg {
         Self { binary, extra_env }
     }
 
+    /// Build a full argument list by joining `flags` with `positional` args using a `--`
+    /// separator. The separator is omitted when `positional` is empty.
+    ///
+    /// This prevents argument injection via leading-dash paths by ensuring the `--`
+    /// end-of-options marker is structurally guaranteed rather than left to individual
+    /// call sites to insert.
+    pub fn args_with_positional(
+        flags: &[impl AsRef<OsStr>],
+        positional: &[impl AsRef<OsStr>],
+    ) -> Vec<String> {
+        let mut args: Vec<String> = flags
+            .iter()
+            .map(|a| a.as_ref().to_string_lossy().into_owned())
+            .collect();
+        if !positional.is_empty() {
+            args.push("--".to_owned());
+            args.extend(
+                positional
+                    .iter()
+                    .map(|a| a.as_ref().to_string_lossy().into_owned()),
+            );
+        }
+        args
+    }
+
     /// Run borg and wait for it to finish, logging subcommand, exit code, and elapsed time.
     ///
     /// `extra_env` entries (used in tests) are appended after `env`.

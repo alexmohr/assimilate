@@ -73,15 +73,16 @@ pub async fn download_files(
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
     let repo_archive = format!("{borg_repo}::{archive_name}");
 
-    let mut args: Vec<String> = vec![
-        "export-tar".to_owned(),
-        "--lock-wait".to_owned(),
-        LOCK_WAIT_SECS.to_owned(),
-        repo_archive.clone(),
-        "-".to_owned(),
-    ];
-    args.push("--".to_owned());
-    args.extend(body.paths.clone());
+    let args = Borg::args_with_positional(
+        &[
+            "export-tar",
+            "--lock-wait",
+            LOCK_WAIT_SECS,
+            repo_archive.as_str(),
+            "-",
+        ],
+        &body.paths,
+    );
 
     let mut child = Borg::new()
         .spawn(&args, &env)

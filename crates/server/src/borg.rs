@@ -251,6 +251,31 @@ impl Borg {
     ///
     /// Returns a [`ServerChild`] that sends SIGTERM on drop (instead of SIGKILL),
     /// escalating to SIGKILL + break-lock after 30 seconds.
+    /// Build a full argument list by joining `flags` with `positional` args using a `--`
+    /// separator. The separator is omitted when `positional` is empty.
+    ///
+    /// This prevents argument injection via leading-dash paths (see #242) by ensuring
+    /// the `--` end-of-options marker is structurally guaranteed rather than left to
+    /// individual call sites to insert.
+    pub fn args_with_positional(
+        flags: &[impl AsRef<OsStr>],
+        positional: &[impl AsRef<OsStr>],
+    ) -> Vec<String> {
+        let mut args: Vec<String> = flags
+            .iter()
+            .map(|a| a.as_ref().to_string_lossy().into_owned())
+            .collect();
+        if !positional.is_empty() {
+            args.push("--".to_owned());
+            args.extend(
+                positional
+                    .iter()
+                    .map(|a| a.as_ref().to_string_lossy().into_owned()),
+            );
+        }
+        args
+    }
+
     pub fn spawn<A: AsRef<OsStr>>(
         &self,
         args: &[A],

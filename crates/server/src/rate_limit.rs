@@ -154,7 +154,7 @@ pub async fn auth_tracking_middleware(
     req: Request,
     next: Next,
 ) -> Response {
-    // Try to extract AuthUser — this duplicates the extraction that the handler
+    // Try to extract AuthUser - this duplicates the extraction that the handler
     // will do, but it's cheap (reads headers + one DB lookup, cached by sqlx).
     let (mut parts, body) = req.into_parts();
     let auth_user = crate::api::auth::AuthUser::from_request_parts(&mut parts, &state)

@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO repo_stats (repo_id, original_size, compressed_size, deduplicated_size, total_chunks, unique_chunks, archive_count, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW()) ON CONFLICT (repo_id) DO UPDATE SET original_size = EXCLUDED.original_size, compressed_size = EXCLUDED.compressed_size, deduplicated_size = EXCLUDED.deduplicated_size, total_chunks = EXCLUDED.total_chunks, unique_chunks = EXCLUDED.unique_chunks, archive_count = EXCLUDED.archive_count, updated_at = EXCLUDED.updated_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "815a1b7186acbd130b248b08963edb3883ca9095faf655f5d75f4fe71018e7e3"
+}

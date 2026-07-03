@@ -1,0 +1,196 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.ssh_host_key, r.compression, r.encryption, r.enabled, r.owner_id, r.visibility, r.sync_schedule, r.relocation_pending, COALESCE(rs.original_size, 0) AS \"total_original_size!\", COALESCE(rs.compressed_size, 0) AS \"total_compressed_size!\", COALESCE(rs.deduplicated_size, 0) AS \"total_deduplicated_size!\", COALESCE(rs.archive_count::INT8, 0) AS \"archive_count!\", rs.last_synced_at, COALESCE(ris.importing, false) AS \"importing!\", ris.error AS import_error, COALESCE(ris.progress, 0) AS \"import_progress!\", COALESCE(ris.total, 0) AS \"import_total!\", ris.status_message AS import_status_message, rlo.kind AS last_op_kind, rlo.at AS last_op_at, rlo.by_text AS last_op_by, agg.last_backup_at, COALESCE(agg.agent_count, 0) AS \"agent_count!\", COALESCE(agg.unmatched_count, 0) AS \"unmatched_count!\" FROM repos r LEFT JOIN repo_stats rs ON rs.repo_id = r.id LEFT JOIN repo_import_state ris ON ris.repo_id = r.id LEFT JOIN repo_last_op rlo ON rlo.repo_id = r.id LEFT JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true WHERE r.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "repo_path",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "ssh_user",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "ssh_host",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "ssh_port",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "ssh_host_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "compression",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "encryption",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 10,
+        "name": "owner_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 11,
+        "name": "visibility",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "sync_schedule",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "relocation_pending",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 14,
+        "name": "total_original_size!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 15,
+        "name": "total_compressed_size!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 16,
+        "name": "total_deduplicated_size!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 17,
+        "name": "archive_count!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 18,
+        "name": "last_synced_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 19,
+        "name": "importing!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 20,
+        "name": "import_error",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 21,
+        "name": "import_progress!",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 22,
+        "name": "import_total!",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 23,
+        "name": "import_status_message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 24,
+        "name": "last_op_kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 25,
+        "name": "last_op_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 26,
+        "name": "last_op_by",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 27,
+        "name": "last_backup_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 28,
+        "name": "agent_count!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 29,
+        "name": "unmatched_count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      false,
+      null,
+      null,
+      null,
+      null,
+      true,
+      null,
+      true,
+      null,
+      null,
+      true,
+      true,
+      true,
+      true,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "fc031537ca54adb31a77a6db2753b99c990ade43ac7da6f934adb2d2adfd17d1"
+}

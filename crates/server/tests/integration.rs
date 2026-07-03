@@ -453,11 +453,12 @@ async fn wait_for_import_completion(pool: &PgPool, repo_id: i64) {
 
     timeout(Duration::from_secs(30), async move {
         loop {
-            let importing: bool = sqlx::query_scalar("SELECT importing FROM repos WHERE id = $1")
-                .bind(repo_id)
-                .fetch_one(pool)
-                .await
-                .unwrap();
+            let importing: bool =
+                sqlx::query_scalar("SELECT importing FROM repo_import_state WHERE repo_id = $1")
+                    .bind(repo_id)
+                    .fetch_one(pool)
+                    .await
+                    .unwrap();
             if !importing {
                 return;
             }
@@ -1142,11 +1143,12 @@ async fn test_sync_repo_returns_409_when_already_importing() {
     assert_eq!(resp.status(), StatusCode::CONFLICT);
 
     // flag must still be true (we didn't touch it)
-    let importing: bool = sqlx::query_scalar("SELECT importing FROM repos WHERE id = $1")
-        .bind(repo_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let importing: bool =
+        sqlx::query_scalar("SELECT importing FROM repo_import_state WHERE repo_id = $1")
+            .bind(repo_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(
         importing,
         "importing should remain true after rejected sync"
@@ -2361,11 +2363,12 @@ async fn test_sync_empty_repo_does_not_hang_when_borg_info_hangs() {
     // SAFETY: env var must remain set until the background task finishes.
     unsafe { std::env::remove_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS") };
 
-    let importing: bool = sqlx::query_scalar("SELECT importing FROM repos WHERE id = $1")
-        .bind(repo_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let importing: bool =
+        sqlx::query_scalar("SELECT importing FROM repo_import_state WHERE repo_id = $1")
+            .bind(repo_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(
         !importing,
         "importing must be cleared even when borg info hangs"
@@ -2397,9 +2400,14 @@ async fn test_scheduler_dispatches_repo_syncs_concurrently() {
 
     // Both repos are enabled and have a sync schedule that is already due.
     for repo_id in [repo_a, repo_b] {
+        sqlx::query("UPDATE repos SET enabled = true, sync_schedule = '* * * * *' WHERE id = $1")
+            .bind(repo_id)
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query(
-            "UPDATE repos SET enabled = true, sync_schedule = '* * * * *', last_synced_at = \
-             '1970-01-01T00:00:00Z' WHERE id = $1",
+            "INSERT INTO repo_stats (repo_id, last_synced_at) VALUES ($1, '1970-01-01T00:00:00Z') \
+             ON CONFLICT (repo_id) DO UPDATE SET last_synced_at = EXCLUDED.last_synced_at",
         )
         .bind(repo_id)
         .execute(&pool)
@@ -2436,12 +2444,13 @@ async fn test_scheduler_dispatches_repo_syncs_concurrently() {
     for repo_id in [repo_a, repo_b] {
         tokio::time::timeout(std::time::Duration::from_secs(BORG_DELAY_SECS + 5), async {
             loop {
-                let importing: bool =
-                    sqlx::query_scalar("SELECT importing FROM repos WHERE id = $1")
-                        .bind(repo_id)
-                        .fetch_one(&pool)
-                        .await
-                        .unwrap();
+                let importing: bool = sqlx::query_scalar(
+                    "SELECT importing FROM repo_import_state WHERE repo_id = $1",
+                )
+                .bind(repo_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
                 if !importing {
                     return;
                 }

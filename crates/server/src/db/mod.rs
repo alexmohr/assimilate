@@ -169,7 +169,6 @@ pub struct RepoRow {
     pub owner_id: Option<i64>,
     pub visibility: String,
     pub sync_schedule: Option<String>,
-    pub last_synced_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -749,7 +748,7 @@ pub struct UpdateRepoParams<'a> {
 }
 
 pub async fn list_importing_repo_ids(pool: &PgPool) -> Result<Vec<i64>, ApiError> {
-    let rows = sqlx::query_scalar!("SELECT id FROM repos WHERE importing = true")
+    let rows = sqlx::query_scalar!("SELECT repo_id FROM repo_import_state WHERE importing = true")
         .fetch_all(pool)
         .await
         .map_err(ApiError::Database)?;
@@ -762,7 +761,8 @@ pub async fn set_repo_importing(
     importing: bool,
 ) -> Result<(), ApiError> {
     sqlx::query!(
-        "UPDATE repos SET importing = $2 WHERE id = $1",
+        "INSERT INTO repo_import_state (repo_id, importing) VALUES ($1, $2) ON CONFLICT (repo_id) \
+         DO UPDATE SET importing = EXCLUDED.importing",
         repo_id,
         importing
     )
@@ -778,7 +778,8 @@ pub async fn set_repo_import_error(
     error: Option<&str>,
 ) -> Result<(), ApiError> {
     sqlx::query!(
-        "UPDATE repos SET import_error = $2 WHERE id = $1",
+        "INSERT INTO repo_import_state (repo_id, error) VALUES ($1, $2) ON CONFLICT (repo_id) DO \
+         UPDATE SET error = EXCLUDED.error",
         repo_id,
         error
     )
@@ -794,7 +795,8 @@ pub async fn set_import_status_message(
     msg: Option<&str>,
 ) -> Result<(), ApiError> {
     sqlx::query!(
-        "UPDATE repos SET import_status_message = $2 WHERE id = $1",
+        "INSERT INTO repo_import_state (repo_id, status_message) VALUES ($1, $2) ON CONFLICT \
+         (repo_id) DO UPDATE SET status_message = EXCLUDED.status_message",
         repo_id,
         msg
     )
@@ -811,7 +813,8 @@ pub async fn update_repo_import_progress(
     total: i64,
 ) -> Result<(), ApiError> {
     sqlx::query!(
-        "UPDATE repos SET import_progress = $2, import_total = $3 WHERE id = $1",
+        "INSERT INTO repo_import_state (repo_id, progress, total) VALUES ($1, $2, $3) ON CONFLICT \
+         (repo_id) DO UPDATE SET progress = EXCLUDED.progress, total = EXCLUDED.total",
         repo_id,
         i32::try_from(progress).unwrap_or(i32::MAX),
         i32::try_from(total).unwrap_or(i32::MAX),
@@ -824,7 +827,8 @@ pub async fn update_repo_import_progress(
 
 pub async fn update_repo_last_synced(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
     sqlx::query!(
-        "UPDATE repos SET last_synced_at = NOW() WHERE id = $1",
+        "INSERT INTO repo_stats (repo_id, last_synced_at) VALUES ($1, NOW()) ON CONFLICT \
+         (repo_id) DO UPDATE SET last_synced_at = EXCLUDED.last_synced_at",
         repo_id
     )
     .execute(pool)
@@ -852,9 +856,13 @@ pub async fn update_repo_info_stats(
     stats: &RepoInfoStats,
 ) -> Result<(), ApiError> {
     sqlx::query!(
-        "UPDATE repos SET info_original_size = $2, info_compressed_size = $3, \
-         info_deduplicated_size = $4, info_total_chunks = $5, info_unique_chunks = $6, \
-         info_archive_count = $7, info_updated_at = NOW() WHERE id = $1",
+        "INSERT INTO repo_stats (repo_id, original_size, compressed_size, deduplicated_size, \
+         total_chunks, unique_chunks, archive_count, updated_at) VALUES ($1, $2, $3, $4, $5, $6, \
+         $7, NOW()) ON CONFLICT (repo_id) DO UPDATE SET original_size = EXCLUDED.original_size, \
+         compressed_size = EXCLUDED.compressed_size, deduplicated_size = \
+         EXCLUDED.deduplicated_size, total_chunks = EXCLUDED.total_chunks, unique_chunks = \
+         EXCLUDED.unique_chunks, archive_count = EXCLUDED.archive_count, updated_at = \
+         EXCLUDED.updated_at",
         repo_id,
         stats.original_size,
         stats.compressed_size,
@@ -981,7 +989,7 @@ pub async fn insert_repo(
         "INSERT INTO repos (name, repo_path, ssh_user, ssh_host, ssh_port, passphrase_encrypted, \
          compression, encryption, owner_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING \
          id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, enabled, \
-         owner_id, visibility, sync_schedule, last_synced_at",
+         owner_id, visibility, sync_schedule",
         params.name,
         params.repo_path,
         params.ssh_user,
@@ -1023,7 +1031,7 @@ pub async fn update_repo(
         "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = $6, \
          compression = $7, encryption = $8, enabled = $9, sync_schedule = $10 WHERE id = $1 \
          RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, \
-         enabled, owner_id, visibility, sync_schedule, last_synced_at",
+         enabled, owner_id, visibility, sync_schedule",
         params.repo_id,
         params.name,
         params.repo_path,
@@ -1060,7 +1068,7 @@ pub async fn update_repo_and_set_relocation_pending(
         "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = $6, \
          compression = $7, encryption = $8, enabled = $9, sync_schedule = $10, relocation_pending \
          = true WHERE id = $1 RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, \
-         compression, encryption, enabled, owner_id, visibility, sync_schedule, last_synced_at",
+         compression, encryption, enabled, owner_id, visibility, sync_schedule",
         params.repo_id,
         params.name,
         params.repo_path,
@@ -1487,7 +1495,38 @@ pub async fn list_all_repos(pool: &PgPool) -> Result<Vec<RepoRow>, ApiError> {
     sqlx::query_as!(
         RepoRow,
         "SELECT id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, \
-         enabled, owner_id, visibility, sync_schedule, last_synced_at FROM repos ORDER BY name",
+         enabled, owner_id, visibility, sync_schedule FROM repos ORDER BY name",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct RepoRowWithSync {
+    pub id: i64,
+    pub name: String,
+    pub repo_path: String,
+    pub ssh_user: String,
+    pub ssh_host: String,
+    pub ssh_port: i32,
+    pub compression: String,
+    pub encryption: String,
+    pub enabled: bool,
+    pub owner_id: Option<i64>,
+    pub visibility: String,
+    pub sync_schedule: Option<String>,
+    pub last_synced_at: Option<DateTime<Utc>>,
+}
+
+pub async fn list_repos_with_sync_schedule(
+    pool: &PgPool,
+) -> Result<Vec<RepoRowWithSync>, ApiError> {
+    sqlx::query_as!(
+        RepoRowWithSync,
+        "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.compression, \
+         r.encryption, r.enabled, r.owner_id, r.visibility, r.sync_schedule, rs.last_synced_at \
+         FROM repos r LEFT JOIN repo_stats rs ON rs.repo_id = r.id ORDER BY r.name",
     )
     .fetch_all(pool)
     .await
@@ -1518,9 +1557,9 @@ pub async fn list_repos_for_agent_public(
     sqlx::query_as!(
         RepoRow,
         "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, \
-         r.compression, r.encryption, r.enabled, r.owner_id, r.visibility, r.sync_schedule, \
-         r.last_synced_at FROM repos r JOIN schedules s ON s.repo_id = r.id JOIN schedule_targets \
-         st ON st.schedule_id = s.id WHERE st.agent_id = $1 ORDER BY r.id",
+         r.compression, r.encryption, r.enabled, r.owner_id, r.visibility, r.sync_schedule FROM \
+         repos r JOIN schedules s ON s.repo_id = r.id JOIN schedule_targets st ON st.schedule_id \
+         = s.id WHERE st.agent_id = $1 ORDER BY r.id",
         agent_id,
     )
     .fetch_all(pool)
@@ -3652,18 +3691,23 @@ pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow
     sqlx::query_as!(
         RepoWithStatsRow,
         "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.ssh_host_key, \
-         r.compression, r.encryption, r.enabled, r.importing, r.import_error, r.import_progress, \
-         r.import_total, r.import_status_message, r.owner_id, r.visibility, r.sync_schedule, \
-         r.last_synced_at, r.info_archive_count::INT8 AS \"archive_count!\", agg.last_backup_at, \
-         r.info_original_size AS total_original_size, r.info_compressed_size AS \
-         total_compressed_size, r.info_deduplicated_size AS total_deduplicated_size, \
+         r.compression, r.encryption, r.enabled, r.owner_id, r.visibility, r.sync_schedule, \
+         r.relocation_pending, COALESCE(rs.original_size, 0) AS \"total_original_size!\", \
+         COALESCE(rs.compressed_size, 0) AS \"total_compressed_size!\", \
+         COALESCE(rs.deduplicated_size, 0) AS \"total_deduplicated_size!\", \
+         COALESCE(rs.archive_count::INT8, 0) AS \"archive_count!\", rs.last_synced_at, \
+         COALESCE(ris.importing, false) AS \"importing!\", ris.error AS import_error, \
+         COALESCE(ris.progress, 0) AS \"import_progress!\", COALESCE(ris.total, 0) AS \
+         \"import_total!\", ris.status_message AS import_status_message, rlo.kind AS \
+         last_op_kind, rlo.at AS last_op_at, rlo.by_text AS last_op_by, agg.last_backup_at, \
          COALESCE(agg.agent_count, 0) AS \"agent_count!\", COALESCE(agg.unmatched_count, 0) AS \
-         \"unmatched_count!\", r.relocation_pending, r.last_op_kind, r.last_op_at, r.last_op_by \
-         FROM repos r LEFT JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > \
-         '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT \
-         br.agent_id) AS agent_count, COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = \
-         false) AS unmatched_count FROM backup_reports br WHERE br.repo_id = r.id AND br.status = \
-         'success') agg ON true ORDER BY r.name",
+         \"unmatched_count!\" FROM repos r LEFT JOIN repo_stats rs ON rs.repo_id = r.id LEFT JOIN \
+         repo_import_state ris ON ris.repo_id = r.id LEFT JOIN repo_last_op rlo ON rlo.repo_id = \
+         r.id LEFT JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' \
+         THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, \
+         COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM \
+         backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true ORDER \
+         BY r.name",
     )
     .fetch_all(pool)
     .await
@@ -3677,18 +3721,23 @@ pub async fn get_repo_with_stats(
     sqlx::query_as!(
         RepoWithStatsRow,
         "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.ssh_host_key, \
-         r.compression, r.encryption, r.enabled, r.importing, r.import_error, r.import_progress, \
-         r.import_total, r.import_status_message, r.owner_id, r.visibility, r.sync_schedule, \
-         r.last_synced_at, r.info_archive_count::INT8 AS \"archive_count!\", agg.last_backup_at, \
-         r.info_original_size AS total_original_size, r.info_compressed_size AS \
-         total_compressed_size, r.info_deduplicated_size AS total_deduplicated_size, \
+         r.compression, r.encryption, r.enabled, r.owner_id, r.visibility, r.sync_schedule, \
+         r.relocation_pending, COALESCE(rs.original_size, 0) AS \"total_original_size!\", \
+         COALESCE(rs.compressed_size, 0) AS \"total_compressed_size!\", \
+         COALESCE(rs.deduplicated_size, 0) AS \"total_deduplicated_size!\", \
+         COALESCE(rs.archive_count::INT8, 0) AS \"archive_count!\", rs.last_synced_at, \
+         COALESCE(ris.importing, false) AS \"importing!\", ris.error AS import_error, \
+         COALESCE(ris.progress, 0) AS \"import_progress!\", COALESCE(ris.total, 0) AS \
+         \"import_total!\", ris.status_message AS import_status_message, rlo.kind AS \
+         last_op_kind, rlo.at AS last_op_at, rlo.by_text AS last_op_by, agg.last_backup_at, \
          COALESCE(agg.agent_count, 0) AS \"agent_count!\", COALESCE(agg.unmatched_count, 0) AS \
-         \"unmatched_count!\", r.relocation_pending, r.last_op_kind, r.last_op_at, r.last_op_by \
-         FROM repos r LEFT JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > \
-         '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT \
-         br.agent_id) AS agent_count, COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = \
-         false) AS unmatched_count FROM backup_reports br WHERE br.repo_id = r.id AND br.status = \
-         'success') agg ON true WHERE r.id = $1",
+         \"unmatched_count!\" FROM repos r LEFT JOIN repo_stats rs ON rs.repo_id = r.id LEFT JOIN \
+         repo_import_state ris ON ris.repo_id = r.id LEFT JOIN repo_last_op rlo ON rlo.repo_id = \
+         r.id LEFT JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' \
+         THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, \
+         COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM \
+         backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true WHERE \
+         r.id = $1",
         repo_id,
     )
     .fetch_one(pool)
@@ -3707,11 +3756,13 @@ pub async fn update_repo_last_op(
     by: &str,
 ) -> Result<(), ApiError> {
     sqlx::query!(
-        "UPDATE repos SET last_op_kind = $1, last_op_at = $2, last_op_by = $3 WHERE id = $4",
+        "INSERT INTO repo_last_op (repo_id, kind, at, by_text) VALUES ($1, $2, $3, $4) ON \
+         CONFLICT (repo_id) DO UPDATE SET kind = EXCLUDED.kind, at = EXCLUDED.at, by_text = \
+         EXCLUDED.by_text",
+        repo_id,
         kind,
         at,
         by,
-        repo_id,
     )
     .execute(pool)
     .await
@@ -3902,7 +3953,7 @@ pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow,
         "SELECT (SELECT COUNT(*) FROM agents WHERE is_hidden = false) AS \"total_agents!\", \
          (SELECT COUNT(*) FROM repos) AS \"total_repos!\", (SELECT COUNT(*) FROM schedules WHERE \
          enabled = true) AS \"active_schedules!\", (SELECT COUNT(*) FROM schedules) AS \
-         \"total_schedules!\", COALESCE((SELECT SUM(info_deduplicated_size) FROM repos), 0)::INT8 \
+         \"total_schedules!\", COALESCE((SELECT SUM(deduplicated_size) FROM repo_stats), 0)::INT8 \
          AS \"total_storage_bytes!\", (SELECT MAX(finished_at) FROM backup_reports WHERE status = \
          'success' AND finished_at > '1970-01-01T00:00:00Z') AS last_backup_at, (SELECT \
          MIN(s.next_run_at) FROM schedules s JOIN repos r ON r.id = s.repo_id WHERE s.enabled = \
@@ -3963,8 +4014,9 @@ pub struct StorageBreakdownRow {
 pub async fn get_storage_breakdown(pool: &PgPool) -> Result<Vec<StorageBreakdownRow>, ApiError> {
     sqlx::query_as!(
         StorageBreakdownRow,
-        "SELECT r.name, r.info_compressed_size AS compressed_size, r.info_deduplicated_size AS \
-         deduplicated_size FROM repos r ORDER BY r.info_deduplicated_size DESC",
+        "SELECT r.name, COALESCE(rs.compressed_size, 0)::INT8 AS \"compressed_size!\", \
+         COALESCE(rs.deduplicated_size, 0)::INT8 AS \"deduplicated_size!\" FROM repos r LEFT JOIN \
+         repo_stats rs ON rs.repo_id = r.id ORDER BY rs.deduplicated_size DESC NULLS LAST",
     )
     .fetch_all(pool)
     .await

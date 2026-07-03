@@ -3887,7 +3887,6 @@ async fn repo_sync_schedule_default(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
 
     assert_eq!(repo.sync_schedule.as_deref(), Some("0 0,12 * * *"));
-    assert!(repo.last_synced_at.is_none());
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -4182,13 +4181,24 @@ async fn bulk_insert_keeps_distinct_archives_sharing_start_second(pool: PgPool) 
 #[sqlx::test(migrations = "./migrations")]
 async fn repo_last_synced_at_updates(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
-    assert!(repo.last_synced_at.is_none());
+
+    // Initially no row in repo_stats
+    let before: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM repo_stats WHERE repo_id = $1")
+        .bind(repo.id)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(before.is_none());
 
     db::update_repo_last_synced(&pool, repo.id).await.unwrap();
 
-    let all = db::list_all_repos(&pool).await.unwrap();
-    let updated = all.iter().find(|r| r.id == repo.id).unwrap();
-    assert!(updated.last_synced_at.is_some());
+    let after: Option<(chrono::DateTime<chrono::Utc>,)> =
+        sqlx::query_as("SELECT last_synced_at FROM repo_stats WHERE repo_id = $1")
+            .bind(repo.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+    assert!(after.is_some());
 }
 
 #[sqlx::test(migrations = "./migrations")]

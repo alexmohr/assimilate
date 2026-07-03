@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.compression, r.encryption, r.enabled, r.owner_id, r.visibility, r.sync_schedule, r.last_synced_at FROM repos r JOIN schedules s ON s.repo_id = r.id JOIN schedule_targets st ON st.schedule_id = s.id WHERE st.agent_id = $1 ORDER BY r.id",
+  "query": "SELECT r.id, r.name, r.repo_path, r.ssh_user, r.ssh_host, r.ssh_port, r.compression, r.encryption, r.enabled, r.owner_id, r.visibility, r.sync_schedule, rs.last_synced_at FROM repos r LEFT JOIN repo_stats rs ON rs.repo_id = r.id ORDER BY r.name",
   "describe": {
     "columns": [
       {
@@ -70,9 +70,7 @@
       }
     ],
     "parameters": {
-      "Left": [
-        "Int8"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
@@ -90,5 +88,5 @@
       true
     ]
   },
-  "hash": "99d791c3611614da9550f267b4e02cc0158a146e566ff76235b2ac3f45169581"
+  "hash": "88db038ef2ba8958019c80f43a1df791febb80f73162324662d663a0dc8d4ba5"
 }

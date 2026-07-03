@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO repo_import_state (repo_id, progress, total) VALUES ($1, $2, $3) ON CONFLICT (repo_id) DO UPDATE SET progress = EXCLUDED.progress, total = EXCLUDED.total",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0fe1a444438eac4ee9c1037d6883535d592c28e4a5f8ac04a45cb297e73f6be5"
+}

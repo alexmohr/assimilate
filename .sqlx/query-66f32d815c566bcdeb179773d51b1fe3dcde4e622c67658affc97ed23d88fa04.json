@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = $6, compression = $7, encryption = $8, enabled = $9, sync_schedule = $10, relocation_pending = true WHERE id = $1 RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, enabled, owner_id, visibility, sync_schedule, last_synced_at",
+  "query": "SELECT id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, enabled, owner_id, visibility, sync_schedule FROM repos ORDER BY name",
   "describe": {
     "columns": [
       {
@@ -62,26 +62,10 @@
         "ordinal": 11,
         "name": "sync_schedule",
         "type_info": "Text"
-      },
-      {
-        "ordinal": 12,
-        "name": "last_synced_at",
-        "type_info": "Timestamptz"
       }
     ],
     "parameters": {
-      "Left": [
-        "Int8",
-        "Text",
-        "Text",
-        "Text",
-        "Text",
-        "Int4",
-        "Text",
-        "Text",
-        "Bool",
-        "Text"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
@@ -95,9 +79,8 @@
       false,
       true,
       false,
-      true,
       true
     ]
   },
-  "hash": "8bf047f6f3f4407856b9e1a12f6add881e272febf6665407218ee69bcb3e1cb8"
+  "hash": "66f32d815c566bcdeb179773d51b1fe3dcde4e622c67658affc97ed23d88fa04"
 }

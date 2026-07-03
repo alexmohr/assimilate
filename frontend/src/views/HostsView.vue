@@ -469,16 +469,11 @@ onMessage('AgentConnected', () => loadAgents().catch(logger.error))
 onMessage('AgentDisconnected', () => loadAgents().catch(logger.error))
 onMessage('DataChanged', () => loadAgents().catch(logger.error))
 
-interface BackupPayload {
-  hostname: string
-  target_name: string
-}
-
 const activeBackupsByHost = ref<Record<string, string[]>>({})
 
 const availableAgentVersion = ref<string | null>(null)
 const serverCommitCount = ref<number | null>(null)
-onMessage<BackupPayload>('BackupStarted', (payload) => {
+onMessage('BackupStarted', (payload) => {
   const list = activeBackupsByHost.value[payload.hostname] ?? []
   if (!list.includes(payload.target_name)) {
     activeBackupsByHost.value = {
@@ -488,7 +483,7 @@ onMessage<BackupPayload>('BackupStarted', (payload) => {
   }
 })
 
-onMessage<BackupPayload>('BackupCompleted', (payload) => {
+onMessage('BackupCompleted', (payload) => {
   const list = activeBackupsByHost.value[payload.hostname]
   if (list) {
     const filtered = list.filter((t) => t !== payload.target_name)

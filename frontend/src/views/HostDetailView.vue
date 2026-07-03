@@ -684,20 +684,15 @@ onMessage('DataChanged', () => loadAgent().catch(logger.error))
 onMessage('AgentConnected', () => loadAgent().catch(logger.error))
 onMessage('AgentDisconnected', () => loadAgent().catch(logger.error))
 
-interface BackupPayload {
-  hostname: string
-  target_name: string
-}
-
 const activeBackups = ref<string[]>([])
 
-onMessage<BackupPayload>('BackupStarted', (payload) => {
+onMessage('BackupStarted', (payload) => {
   if (payload.hostname === props.hostname && !activeBackups.value.includes(payload.target_name)) {
     activeBackups.value = [...activeBackups.value, payload.target_name]
   }
 })
 
-onMessage<BackupPayload>('BackupCompleted', (payload) => {
+onMessage('BackupCompleted', (payload) => {
   if (payload.hostname === props.hostname) {
     activeBackups.value = activeBackups.value.filter((t) => t !== payload.target_name)
   }

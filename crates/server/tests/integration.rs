@@ -86,6 +86,7 @@ async fn build_test_app(pool: PgPool) -> Router {
         repo_lock: server::RepoLock::default(),
         import_tasks: server::ImportTaskRegistry::default(),
         shutdown_token: tokio_util::sync::CancellationToken::new(),
+        client_ip_resolver: server::client_ip::ClientIpResolver::new(),
     };
 
     Router::new()

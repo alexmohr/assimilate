@@ -46,6 +46,7 @@ which = "7"
 ssh-key = { version = "0.6", features = ["ed25519", "std", "rand_core"] }
 lz4_flex = "0.11"
 nix = { version = "0.29", features = ["signal", "process"] }
+ipnetwork = "0.20"
 
 [workspace.lints.clippy]
 pedantic = { level = "deny", priority = -1 }

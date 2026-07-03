@@ -11,7 +11,9 @@ use axum::{
     routing::{delete, get, post, put},
 };
 use server::{
-    AppState, api, db,
+    AppState, api,
+    client_ip::ClientIpResolver,
+    db,
     log_buffer::{LogBuffer, LogBufferLayer},
     middleware::csp_headers,
     notifications::NotificationService,
@@ -98,6 +100,9 @@ async fn main() -> Result<(), StartupError> {
         tracing::warn!("failed to ensure VAPID keys: {e}");
     }
 
+    let client_ip_resolver =
+        ClientIpResolver::from_env(std::env::var("ASSIMILATE_TRUSTED_PROXIES").ok());
+
     let shutdown_token = tokio_util::sync::CancellationToken::new();
 
     let state = AppState {
@@ -125,6 +130,7 @@ async fn main() -> Result<(), StartupError> {
             std::collections::HashMap::new(),
         )),
         shutdown_token: shutdown_token.clone(),
+        client_ip_resolver: client_ip_resolver.clone(),
     };
 
     tokio::spawn(server::scheduler::run(state.clone()));
@@ -196,7 +202,7 @@ async fn main() -> Result<(), StartupError> {
         });
     }
 
-    let login_rate_limiter = RateLimiter::new(10, Duration::from_secs(60));
+    let login_rate_limiter = RateLimiter::new(10, Duration::from_secs(60), client_ip_resolver);
 
     let login_router = Router::new()
         .route("/api/auth/login", post(api::auth::login))
@@ -671,7 +677,11 @@ async fn main() -> Result<(), StartupError> {
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
-    let server = axum::serve(listener, app).with_graceful_shutdown(async move {
+    let server = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
         shutdown_signal(registry, shutdown_token.clone()).await;
         let _ = shutdown_tx.send(());
     });
@@ -760,7 +770,11 @@ async fn shutdown_signal(
             .send_to(hostname, ServerToAgent::ShuttingDown)
             .await
         {
-            tracing::debug!(hostname = %hostname, error = %e, "failed to send shutdown message to agent");
+            tracing::debug!(
+                hostname = %hostname,
+                error = %e,
+                "failed to send shutdown message to agent"
+            );
         }
     }
 

@@ -9,18 +9,21 @@ use std::{
 };
 
 use axum::{
-    extract::Request,
+    extract::{ConnectInfo, Request},
     http::StatusCode,
     middleware::Next,
     response::{IntoResponse, Response},
 };
 use tokio::sync::Mutex;
 
+use crate::client_ip::ClientIpResolver;
+
 #[derive(Clone)]
 pub struct RateLimiter {
     state: Arc<Mutex<RateLimiterState>>,
     max_requests: u32,
     window: Duration,
+    resolver: ClientIpResolver,
 }
 
 struct RateLimiterState {
@@ -29,7 +32,7 @@ struct RateLimiterState {
 }
 
 impl RateLimiter {
-    pub fn new(max_requests: u32, window: Duration) -> Self {
+    pub fn new(max_requests: u32, window: Duration, resolver: ClientIpResolver) -> Self {
         Self {
             state: Arc::new(Mutex::new(RateLimiterState {
                 requests: HashMap::new(),
@@ -37,6 +40,7 @@ impl RateLimiter {
             })),
             max_requests,
             window,
+            resolver,
         }
     }
 
@@ -65,25 +69,17 @@ impl RateLimiter {
     }
 }
 
-fn extract_client_ip(req: &Request) -> Option<IpAddr> {
-    req.headers()
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .and_then(|s| s.trim().parse().ok())
-        .or_else(|| {
-            req.extensions()
-                .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-                .map(|ci| ci.0.ip())
-        })
-}
-
 pub async fn rate_limit_middleware(
     axum::extract::State(limiter): axum::extract::State<RateLimiter>,
     req: Request,
     next: Next,
 ) -> Response {
-    let ip = extract_client_ip(&req).unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    let peer_ip = req
+        .extensions()
+        .get::<ConnectInfo<std::net::SocketAddr>>()
+        .map_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), |ci| ci.0.ip());
+
+    let ip = limiter.resolver.resolve(peer_ip, req.headers());
 
     if limiter.check(ip).await {
         next.run(req).await

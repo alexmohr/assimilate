@@ -4,6 +4,7 @@
 pub mod api;
 pub mod archive_index;
 pub mod borg;
+pub mod client_ip;
 pub mod config_assembler;
 pub mod db;
 pub mod error;
@@ -32,6 +33,7 @@ use tokio::sync::{Mutex, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    client_ip::ClientIpResolver,
     log_buffer::LogBuffer,
     notifications::NotificationService,
     repo_op_tracker::RepoOpTracker,
@@ -147,4 +149,5 @@ pub struct AppState {
     pub pending_migrations: PendingMigrations,
     pub pending_deletes: PendingDeletes,
     pub shutdown_token: CancellationToken,
+    pub client_ip_resolver: ClientIpResolver,
 }

@@ -1187,6 +1187,7 @@ mod tests {
                 std::collections::HashMap::new(),
             )),
             shutdown_token: tokio_util::sync::CancellationToken::new(),
+            client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
         }
     }
 

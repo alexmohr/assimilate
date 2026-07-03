@@ -625,7 +625,18 @@ pub struct SshPublicKeyResponse {
 #[ts(export)]
 pub struct SettingsResponse {
     #[ts(type = "number")]
+    /// Number of days to retain backup records.
     pub retention_days: i64,
+    #[ts(type = "number")]
+    /// Number of days to retain successful/archived backup reports. 0 = keep forever.
+    pub report_retention_days: i64,
+    #[ts(type = "number")]
+    /// Number of days to retain failed/archive-less backup reports. 0 = keep forever.
+    pub failed_report_retention_days: i64,
+    #[ts(type = "number")]
+    /// Number of days to retain system event log entries. 0 = keep forever.
+    pub system_event_retention_days: i64,
+    /// Timezone setting.
     pub timezone: String,
     #[ts(type = "number")]
     pub borg_query_timeout_secs: u64,

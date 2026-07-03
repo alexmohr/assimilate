@@ -4675,6 +4675,20 @@ pub async fn delete_backup_reports_before(
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
+pub async fn delete_backup_reports_with_archive_before(
+    pool: &PgPool,
+    before: DateTime<Utc>,
+) -> Result<u64, ApiError> {
+    let result = sqlx::query!(
+        "DELETE FROM backup_reports WHERE started_at < $1 AND archive_name IS NOT NULL",
+        before,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(result.rows_affected())
+}
+
 pub async fn get_user_preferences(
     pool: &PgPool,
     user_id: i64,

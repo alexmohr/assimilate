@@ -608,4 +608,43 @@ mod tests {
         child.wait().await.unwrap();
         drop(child); // must not panic
     }
+
+    #[test]
+    fn args_with_positional_includes_separator_when_positional_nonempty() {
+        let result =
+            Borg::args_with_positional(&["create", "--dry-run"], &["/some/path", "/other"]);
+        assert_eq!(
+            result,
+            vec![
+                "create".to_owned(),
+                "--dry-run".to_owned(),
+                "--".to_owned(),
+                "/some/path".to_owned(),
+                "/other".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn args_with_positional_omits_separator_when_positional_empty() {
+        let result = Borg::args_with_positional(&["list", "--json"], &[] as &[&str]);
+        assert_eq!(result, vec!["list".to_owned(), "--json".to_owned(),]);
+    }
+
+    #[test]
+    fn args_with_positional_works_with_empty_flags() {
+        let result = Borg::args_with_positional(&[] as &[&str], &["/path"]);
+        assert_eq!(result, vec!["--".to_owned(), "/path".to_owned(),]);
+    }
+
+    #[test]
+    fn args_with_positional_works_with_osstr_impls() {
+        let flag = OsStr::new("create");
+        let path = OsStr::new("/data");
+        let result = Borg::args_with_positional(&[flag], &[path]);
+        assert_eq!(
+            result,
+            vec!["create".to_owned(), "--".to_owned(), "/data".to_owned(),]
+        );
+    }
 }

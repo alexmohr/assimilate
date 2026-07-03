@@ -1038,6 +1038,86 @@ async fn excludes_per_agent_crud(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn file_change_patterns_per_agent_crud(pool: PgPool) {
+    let (agent, _, schedule) = create_test_schedule(&pool).await;
+
+    let agent2 = db::insert_agent(&pool, "host-two-fcp", None, "hash2fcp", None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        db::get_per_agent_file_change_patterns_raw(&pool, schedule.id, agent.id)
+            .await
+            .unwrap(),
+        None
+    );
+
+    db::upsert_per_agent_file_change_patterns_raw(
+        &pool,
+        schedule.id,
+        agent.id,
+        "*/etc/config* ignore\n*/var/log* fatal",
+    )
+    .await
+    .unwrap();
+    db::upsert_per_agent_file_change_patterns_raw(&pool, schedule.id, agent2.id, "*/tmp* warn")
+        .await
+        .unwrap();
+
+    assert_eq!(
+        db::get_per_agent_file_change_patterns_raw(&pool, schedule.id, agent.id)
+            .await
+            .unwrap(),
+        Some("*/etc/config* ignore\n*/var/log* fatal".to_owned())
+    );
+
+    let all_per_agent =
+        db::list_all_per_agent_file_change_patterns_for_schedule(&pool, schedule.id)
+            .await
+            .unwrap();
+    assert_eq!(all_per_agent.len(), 2);
+    assert_eq!(all_per_agent[0].agent_id, agent.id);
+    assert_eq!(
+        all_per_agent[0].raw_text,
+        "*/etc/config* ignore\n*/var/log* fatal"
+    );
+    assert_eq!(all_per_agent[1].agent_id, agent2.id);
+    assert_eq!(all_per_agent[1].raw_text, "*/tmp* warn");
+
+    // Upsert updates the existing row rather than inserting a duplicate
+    db::upsert_per_agent_file_change_patterns_raw(
+        &pool,
+        schedule.id,
+        agent.id,
+        "*/etc/config* fatal",
+    )
+    .await
+    .unwrap();
+    let all_per_agent =
+        db::list_all_per_agent_file_change_patterns_for_schedule(&pool, schedule.id)
+            .await
+            .unwrap();
+    assert_eq!(all_per_agent.len(), 2);
+    assert_eq!(all_per_agent[0].raw_text, "*/etc/config* fatal");
+
+    db::delete_per_agent_file_change_patterns_for_schedule(&pool, schedule.id)
+        .await
+        .unwrap();
+
+    let all_per_agent =
+        db::list_all_per_agent_file_change_patterns_for_schedule(&pool, schedule.id)
+            .await
+            .unwrap();
+    assert!(all_per_agent.is_empty());
+    assert_eq!(
+        db::get_per_agent_file_change_patterns_raw(&pool, schedule.id, agent.id)
+            .await
+            .unwrap(),
+        None
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn global_excludes_preserves_blank_lines_and_comments(pool: PgPool) {
     let raw = "# System paths\n/proc\n/sys\n\n# Cache files\n*.cache\npp:__pycache__";
     db::set_global_excludes_raw(&pool, raw).await.unwrap();

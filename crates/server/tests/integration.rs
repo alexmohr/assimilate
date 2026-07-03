@@ -13,7 +13,6 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
-
 use sqlx::PgPool;
 use tempfile::TempDir;
 use tokio::sync::Mutex;
@@ -1526,23 +1525,20 @@ async fn test_sessions_stored_as_hashes_not_plaintext(pool: sqlx::PgPool) {
 
     let expires = chrono::Utc::now() + chrono::Duration::hours(24);
     let hashed_id = server::api::tokens::hash_token(plaintext_id);
-    sqlx::query(
-        "INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3)",
-    )
-    .bind(&hashed_id)
-    .bind(user_id)
-    .bind(expires)
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3)")
+        .bind(&hashed_id)
+        .bind(user_id)
+        .bind(expires)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     // Verify the stored session id is NOT the plaintext value
-    let stored_id: String =
-        sqlx::query_scalar("SELECT id FROM sessions WHERE user_id = $1")
-            .bind(user_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let stored_id: String = sqlx::query_scalar("SELECT id FROM sessions WHERE user_id = $1")
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_ne!(
         stored_id, plaintext_id,
         "session id must not be stored in plaintext"

@@ -227,6 +227,31 @@ impl Borg {
         Self { binary, extra_env }
     }
 
+    /// Build a full argument list by joining `flags` with `positional` args using a `--`
+    /// separator. The separator is omitted when `positional` is empty.
+    ///
+    /// This prevents argument injection via leading-dash paths by ensuring the `--`
+    /// end-of-options marker is structurally guaranteed rather than left to individual
+    /// call sites to insert.
+    pub fn args_with_positional(
+        flags: &[impl AsRef<OsStr>],
+        positional: &[impl AsRef<OsStr>],
+    ) -> Vec<String> {
+        let mut args: Vec<String> = flags
+            .iter()
+            .map(|a| a.as_ref().to_string_lossy().into_owned())
+            .collect();
+        if !positional.is_empty() {
+            args.push("--".to_owned());
+            args.extend(
+                positional
+                    .iter()
+                    .map(|a| a.as_ref().to_string_lossy().into_owned()),
+            );
+        }
+        args
+    }
+
     /// Run borg and wait for it to finish, logging subcommand, exit code, and elapsed time.
     ///
     /// `extra_env` entries (used in tests) are appended after `env`.
@@ -322,5 +347,49 @@ impl Borg {
         let result = guard.wait_with_output().await;
         log_run_result(&subcommand, start.elapsed().as_millis(), &result);
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn args_with_positional_includes_separator_when_positional_nonempty() {
+        let result =
+            Borg::args_with_positional(&["create", "--dry-run"], &["/some/path", "/other"]);
+        assert_eq!(
+            result,
+            vec![
+                "create".to_owned(),
+                "--dry-run".to_owned(),
+                "--".to_owned(),
+                "/some/path".to_owned(),
+                "/other".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn args_with_positional_omits_separator_when_positional_empty() {
+        let result = Borg::args_with_positional(&["list", "--json"], &[] as &[&str]);
+        assert_eq!(result, vec!["list".to_owned(), "--json".to_owned(),]);
+    }
+
+    #[test]
+    fn args_with_positional_works_with_empty_flags() {
+        let result = Borg::args_with_positional(&[] as &[&str], &["/path"]);
+        assert_eq!(result, vec!["--".to_owned(), "/path".to_owned(),]);
+    }
+
+    #[test]
+    fn args_with_positional_works_with_osstr_impls() {
+        let flag = OsStr::new("create");
+        let path = OsStr::new("/data");
+        let result = Borg::args_with_positional(&[flag], &[path]);
+        assert_eq!(
+            result,
+            vec!["create".to_owned(), "--".to_owned(), "/data".to_owned(),]
+        );
     }
 }

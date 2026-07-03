@@ -47,6 +47,11 @@ pub fn validate_path(path: &str) -> Result<(), ApiError> {
     if path.is_empty() {
         return Err(ApiError::BadRequest("path must not be empty".to_string()));
     }
+    if path.starts_with('-') {
+        return Err(ApiError::BadRequest(
+            "paths must not start with '-'".to_string(),
+        ));
+    }
     if path.starts_with('/') {
         return Err(ApiError::BadRequest(
             "absolute paths not allowed".to_string(),
@@ -435,6 +440,7 @@ async fn run_archive_deletion(
                 "delete",
                 "--lock-wait",
                 LOCK_WAIT_SECS,
+                "--",
                 repo_archive.as_str(),
             ],
             &env,
@@ -901,6 +907,7 @@ pub async fn extract_file(
                 "--lock-wait",
                 LOCK_WAIT_SECS,
                 repo_archive.as_str(),
+                "--",
                 query.path.as_str(),
             ],
             &env,
@@ -951,6 +958,12 @@ pub async fn extract_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_path_rejects_leading_dash() {
+        let err = validate_path("-").unwrap_err();
+        assert!(err.to_string().contains("must not start with '-'"));
+    }
 
     #[test]
     fn validate_path_rejects_empty() {

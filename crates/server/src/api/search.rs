@@ -105,6 +105,7 @@ pub async fn search_archive(
                 LOCK_WAIT_SECS,
                 "--pattern",
                 borg_pattern.as_str(),
+                "--",
                 repo_archive.as_str(),
             ],
             &env,
@@ -288,7 +289,14 @@ async fn list_archives_sorted(
 ) -> Result<Vec<ArchiveEntryBrief>, ApiError> {
     let output = Borg::new()
         .run(
-            &["list", "--json", "--lock-wait", LOCK_WAIT_SECS, borg_repo],
+            &[
+                "list",
+                "--json",
+                "--lock-wait",
+                LOCK_WAIT_SECS,
+                "--",
+                borg_repo,
+            ],
             env,
         )
         .await
@@ -339,6 +347,7 @@ async fn search_in_archive(
                 LOCK_WAIT_SECS,
                 "--pattern",
                 borg_pattern,
+                "--",
                 repo_archive.as_str(),
             ],
             env,

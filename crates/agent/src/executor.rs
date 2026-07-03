@@ -1240,16 +1240,18 @@ async fn run_dry_run_task(
 
     let env_vars = build_borg_env(&target);
 
-    let mut args = vec![
-        "create".to_owned(),
-        "--dry-run".to_owned(),
-        "--list".to_owned(),
-        "--log-json".to_owned(),
-        "--exclude-from".to_owned(),
-        exclude_file.path().to_string_lossy().into_owned(),
-        archive_spec,
-    ];
-    args.extend(backup_sources.iter().cloned());
+    let args = Borg::args_with_positional(
+        &[
+            "create",
+            "--dry-run",
+            "--list",
+            "--log-json",
+            "--exclude-from",
+            exclude_file.path().to_string_lossy().as_ref(),
+            archive_spec.as_str(),
+        ],
+        &backup_sources,
+    );
 
     info!(repo_id = ?repo_id, "running borg create --dry-run");
 
@@ -1413,13 +1415,8 @@ async fn run_restore_task(
 }
 
 fn restore_args(archive_name: &str, paths: &[String]) -> Vec<String> {
-    let mut args = vec![
-        "extract".to_owned(),
-        "--log-json".to_owned(),
-        format!("::{archive_name}"),
-    ];
-    args.extend(paths.iter().cloned());
-    args
+    let archive_spec = format!("::{archive_name}");
+    Borg::args_with_positional(&["extract", "--log-json", &archive_spec], paths)
 }
 
 async fn run_delete_archives_task(
@@ -1441,6 +1438,7 @@ async fn run_delete_archives_task(
             "delete".to_owned(),
             "--lock-wait".to_owned(),
             "600".to_owned(),
+            "--".to_owned(),
             format!("::{archive_name}"),
         ];
 
@@ -1618,6 +1616,7 @@ mod tests {
                 "extract",
                 "--log-json",
                 "::archive-1",
+                "--",
                 "etc/hosts",
                 "var/lib/app"
             ]

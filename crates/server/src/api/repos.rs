@@ -1574,8 +1574,15 @@ async fn run_borg_list_with_retry(
     ))
 }
 
-fn borg_list_args(borg_repo: &str) -> [&str; 5] {
-    ["list", "--json", "--lock-wait", LOCK_WAIT_SECS, borg_repo]
+fn borg_list_args(borg_repo: &str) -> [&str; 6] {
+    [
+        "list",
+        "--json",
+        "--lock-wait",
+        LOCK_WAIT_SECS,
+        "--",
+        borg_repo,
+    ]
 }
 
 /// Refreshes the authoritative repo statistics from `borg info --json`
@@ -1590,7 +1597,14 @@ async fn refresh_repo_info_stats(
     archive_count: i64,
     timeout: Duration,
 ) {
-    let args = ["info", "--json", "--lock-wait", LOCK_WAIT_SECS, borg_repo];
+    let args = [
+        "info",
+        "--json",
+        "--lock-wait",
+        LOCK_WAIT_SECS,
+        "--",
+        borg_repo,
+    ];
     let output = match tokio::time::timeout(timeout, Borg::new().run(&args, env)).await {
         Ok(Ok(output)) => output,
         Ok(Err(e)) => {
@@ -1686,6 +1700,7 @@ async fn fetch_archive_metadata_with_retry(
         "--json",
         "--lock-wait",
         LOCK_WAIT_SECS,
+        "--",
         repo_archive.as_str(),
     ];
 
@@ -3042,6 +3057,7 @@ mod tests {
                 "--json",
                 "--lock-wait",
                 LOCK_WAIT_SECS,
+                "--",
                 "ssh://borg@example.test/repo"
             ]
         );

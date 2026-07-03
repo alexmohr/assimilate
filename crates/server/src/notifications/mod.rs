@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 pub mod email;
+pub mod net;
 pub mod web_push;
 pub mod webhook;
 
@@ -163,18 +164,12 @@ pub struct NotificationEvent {
 #[derive(Debug, Clone)]
 pub struct NotificationService {
     pool: PgPool,
-    http_client: reqwest::Client,
 }
 
 impl NotificationService {
     #[must_use]
-    pub fn new(pool: PgPool, http_client: reqwest::Client) -> Self {
-        Self { pool, http_client }
-    }
-
-    #[must_use]
-    pub fn http_client(&self) -> &reqwest::Client {
-        &self.http_client
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
     }
 
     #[must_use]
@@ -275,21 +270,14 @@ pub async fn dispatch(
 
     for channel in channels {
         let pool = service.pool.clone();
-        let http_client = service.http_client.clone();
         let payload = payload.clone();
         let channel_config = channel.config.clone();
         let channel_id = channel.id;
         let event_type_str = event.event_type.to_string();
 
         tokio::spawn(async move {
-            let result = deliver_to_channel(
-                channel.channel_type,
-                &channel_config,
-                &payload,
-                &http_client,
-                &pool,
-            )
-            .await;
+            let result =
+                deliver_to_channel(channel.channel_type, &channel_config, &payload, &pool).await;
 
             let (status, error_message) = match &result {
                 Ok(()) => ("delivered".to_owned(), None),
@@ -327,7 +315,6 @@ pub async fn deliver_to_channel(
     channel_type: ChannelType,
     config: &serde_json::Value,
     payload: &serde_json::Value,
-    http_client: &reqwest::Client,
     pool: &PgPool,
 ) -> Result<(), NotificationError> {
     match channel_type {
@@ -337,7 +324,7 @@ pub async fn deliver_to_channel(
         }
         ChannelType::Webhook => {
             let cfg: webhook::WebhookConfig = serde_json::from_value(config.clone())?;
-            webhook::send(http_client, &cfg, payload).await
+            webhook::send(&cfg, payload).await
         }
         ChannelType::WebPush => {
             #[derive(Deserialize)]
@@ -383,6 +370,13 @@ pub async fn deliver_to_channel(
             });
 
             for sub in &subscriptions {
+                if let Err(e) = self::net::validate_outbound_url(&sub.endpoint)
+                    .await
+                    .map(|_| ())
+                {
+                    tracing::warn!(endpoint = %sub.endpoint, error = %e, "skipping push subscription with non-routable endpoint");
+                    continue;
+                }
                 match web_push::send(
                     &vapid_private_key,
                     sub.endpoint.clone(),

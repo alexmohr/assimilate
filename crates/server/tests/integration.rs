@@ -65,10 +65,7 @@ async fn build_test_app(pool: PgPool) -> Router {
         ui_broadcast,
         tunnel_manager,
         log_buffer: server::log_buffer::LogBuffer::default(),
-        notification_service: server::notifications::NotificationService::new(
-            pool,
-            reqwest::Client::new(),
-        ),
+        notification_service: server::notifications::NotificationService::new(pool),
         pending_dryruns: std::sync::Arc::new(tokio::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),

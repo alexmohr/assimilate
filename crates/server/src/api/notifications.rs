@@ -332,7 +332,6 @@ pub async fn test_channel(
         channel.channel_type,
         &channel.config,
         &payload,
-        state.notification_service.http_client(),
         state.notification_service.pool(),
     )
     .await
@@ -441,6 +440,13 @@ pub async fn subscribe_push(
             "endpoint must not be empty".to_owned(),
         ));
     }
+
+    let (_url, _addrs) = crate::notifications::net::validate_outbound_url(&req.endpoint)
+        .await
+        .map_err(|e| match e {
+            crate::notifications::NotificationError::Config(msg) => ApiError::BadRequest(msg),
+            other => ApiError::Internal(other.to_string()),
+        })?;
 
     let sub: PushSubscription = sqlx::query_as!(
         PushSubscription,

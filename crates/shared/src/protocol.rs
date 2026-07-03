@@ -275,8 +275,9 @@ pub enum TunnelStatus {
     Error { message: String },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "type", content = "payload")]
+#[ts(export)]
 pub enum ServerToUi {
     AgentConnected {
         hostname: String,
@@ -290,6 +291,7 @@ pub enum ServerToUi {
         #[serde(default)]
         archive_name: Option<String>,
         #[serde(default)]
+        #[ts(type = "number | null")]
         schedule_id: Option<i64>,
     },
     BackupCompleted {
@@ -320,24 +322,29 @@ pub enum ServerToUi {
     },
     DataChanged,
     ImportProgress {
+        #[ts(type = "number")]
         repo_id: i64,
         progress: i32,
         total: i32,
         message: Option<String>,
     },
     TunnelStatusChanged {
+        #[ts(type = "number")]
         agent_id: i64,
         hostname: String,
         status: TunnelStatus,
     },
     RepoOpChanged {
+        #[ts(type = "number")]
         repo_id: i64,
         op: Option<ActiveRepoOp>,
     },
     BackupLog {
         hostname: String,
         #[serde(default)]
+        #[ts(type = "number | null")]
         schedule_id: Option<i64>,
+        #[ts(type = "number")]
         repo_id: i64,
         line: String,
     },

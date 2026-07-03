@@ -63,15 +63,20 @@ Agent tokens are scoped to a single agent. Revoking an agent removes its token.
 
 ## Role-Based Access Control
 
-Assimilate has two roles: **Admin** and **User**.
+Assimilate has two layered access-control systems:
 
-| Capability | Admin | User |
-|------------|-------|------|
+1. **Account role** (`users.role`) — a single coarse classification per user: `admin` or `user`. Only `admin` accounts can manage users and roles.
+2. **RBAC roles** (`user_roles`) — granular, multi-assignable roles that bundle system-wide capabilities (e.g. create agents, manage schedules). A user can hold several RBAC roles at once. See [Access Control](access-control.md) for the full capability matrix.
+
+Beyond roles, per-repository permissions control what a user can do on individual repositories.
+
+| Capability | Account `admin` | Account `user` |
+|------------|-----------------|----------------|
 | Manage users and roles | ✓ | ✗ |
-| Create and delete agents | ✓ | ✗ |
-| View and manage all repositories | ✓ | per-repo permission |
+| Create and delete agents | depends on RBAC | depends on RBAC |
+| View and manage all repositories | depends on RBAC | per-repo permission |
 | Manage API tokens (all users) | ✓ | own tokens only |
-| Configure SSH tunnels | ✓ | ✗ |
+| Configure SSH tunnels | depends on RBAC | depends on RBAC |
 | View system information | ✓ | ✗ |
 | Trigger backups | ✓ | per-repo permission |
 | Browse archives | ✓ | per-repo permission |

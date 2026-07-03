@@ -21,21 +21,35 @@ graph TD
 
 ## Roles
 
-A role is a named bundle of **system-wide capabilities**. Each user is assigned exactly one role. Roles control whether a user can create agents, manage repositories, configure schedules, and similar administrative actions.
+Assimilate has two distinct role systems that are layered together:
 
-Roles do **not** control which specific repositories a user can see or interact with — that is the job of groups and per-repo permissions.
+1. **Account role** (`users.role`) — a coarse classification stored on the user record: `admin` or `user`.
+2. **RBAC roles** (`user_roles`) — granular, multi-assignable roles that bundle **system-wide capabilities**. A user can hold several RBAC roles at once.
 
-![Roles](assets/screenshots/roles.png)
+Both systems affect what a user can do, but they serve different purposes.
 
-### Built-in Roles
+### Account Role
 
-Assimilate ships with three built-in roles that cannot be deleted:
+Every user record has a single `role` field with two possible values:
+
+| Role | Description |
+|------|-------------|
+| `admin` | Superuser. Can manage users, roles, and all system settings. Bypasses all permission checks. |
+| `user` | Regular user. Subject to RBAC roles and per-repository permissions for access. |
+
+This is the only role that controls **user management** itself — only `admin` accounts can create or delete users and assign roles.
+
+### RBAC Roles
+
+Independent of the account role, users can be assigned one or more RBAC roles via the **Roles** tab in the user editor. Built-in roles cannot be deleted:
 
 | Role | Description |
 |------|-------------|
 | **admin** | Full access to everything. Bypasses all permission checks. |
 | **operator** | Can create and manage agents, repos, and schedules but cannot manage users or system settings. |
 | **viewer** | Read-only access. Cannot create or modify resources. |
+
+![Roles](assets/screenshots/roles.png)
 
 ### Custom Roles
 
@@ -60,9 +74,12 @@ Admins can create custom roles with any combination of these capabilities:
 
 Use roles when you need to control **what kind of actions** a user can perform across the system:
 
-- A new team member who should only monitor backups → assign the **viewer** role.
-- A DevOps engineer who manages infrastructure but should not administer users → create an **operator** role or a custom role with appropriate capabilities.
-- A service account that only triggers backups → create a minimal custom role with no create/delete capabilities and use an API token.
+- A new team member who should only monitor backups → assign the **viewer** RBAC role.
+- A DevOps engineer who manages infrastructure but should not administer users → create an **operator** RBAC role or a custom role with appropriate capabilities.
+- A service account that only triggers backups → create a minimal custom RBAC role with no create/delete capabilities and use an API token.
+- An external auditor who needs read-only access → **viewer** RBAC role. Keep their account role as `user` so they cannot manage other users.
+
+Roles do **not** control which specific repositories a user can see or interact with — that is the job of groups and per-repo permissions.
 
 ## Groups
 

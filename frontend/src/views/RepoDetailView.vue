@@ -411,18 +411,6 @@ async function acceptHostKey(): Promise<void> {
   }
 }
 
-interface RepoOpChangedPayload {
-  repo_id: number
-  op: ActiveRepoOp | null
-}
-
-interface ImportProgressPayload {
-  repo_id: number
-  progress: number
-  total: number
-  message: string | null
-}
-
 const { onMessage } = useWebSocket()
 
 onMessage('DataChanged', () => {
@@ -430,7 +418,7 @@ onMessage('DataChanged', () => {
   loadArchives().catch(logger.error)
 })
 
-onMessage<ImportProgressPayload>('ImportProgress', (payload) => {
+onMessage('ImportProgress', (payload) => {
   if (repo.value && repo.value.id === payload.repo_id) {
     if (payload.progress >= 0) {
       repo.value.import_progress = payload.progress
@@ -445,7 +433,7 @@ onMessage<ImportProgressPayload>('ImportProgress', (payload) => {
   }
 })
 
-onMessage<RepoOpChangedPayload>('RepoOpChanged', (payload) => {
+onMessage('RepoOpChanged', (payload) => {
   if (repo.value && payload.repo_id === repo.value.id) {
     currentOp.value = payload.op
   }

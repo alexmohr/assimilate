@@ -557,20 +557,6 @@ async function cancelBackup(): Promise<void> {
   }
 }
 
-interface BackupPayload {
-  hostname: string
-  target_name: string
-  archive_name?: string | null
-  schedule_id?: number | null
-}
-
-interface BackupLogPayload {
-  hostname: string
-  schedule_id: number | null
-  repo_id: number
-  line: string
-}
-
 interface BorgArchiveProgress {
   type: 'archive_progress'
   nfiles: number
@@ -588,13 +574,13 @@ function parseArchiveProgress(raw: string): BorgArchiveProgress | null {
   }
 }
 
-function isThisSchedule(payload: BackupPayload): boolean {
-  if (payload.schedule_id != null) return payload.schedule_id === Number(props.id)
-  return repo.value != null && payload.target_name === repo.value.name
-}
-
-onMessage<BackupPayload>('BackupStarted', (payload) => {
-  if (!isThisSchedule(payload)) return
+onMessage('BackupStarted', (payload) => {
+  if (payload.schedule_id != null && payload.schedule_id !== Number(props.id)) return
+  if (
+    payload.schedule_id == null &&
+    !(repo.value != null && payload.target_name === repo.value.name)
+  )
+    return
   backupRunning.value = true
   backupHostname.value = payload.hostname
   backupArchiveName.value = payload.archive_name ?? null
@@ -610,19 +596,20 @@ onMessage<BackupPayload>('BackupStarted', (payload) => {
   }, 1000)
 })
 
-onMessage<BackupPayload>('BackupCompleted', (payload) => {
-  if (!isThisSchedule(payload)) return
-  backupRunning.value = false
-  backupHostname.value = null
-  backupArchiveName.value = null
-  liveLogLines.value = []
-  if (elapsedTimer !== null) {
-    clearInterval(elapsedTimer)
-    elapsedTimer = null
+onMessage('BackupCompleted', (payload) => {
+  if (repo.value != null && payload.target_name === repo.value.name) {
+    backupRunning.value = false
+    backupHostname.value = null
+    backupArchiveName.value = null
+    liveLogLines.value = []
+    if (elapsedTimer !== null) {
+      clearInterval(elapsedTimer)
+      elapsedTimer = null
+    }
   }
 })
 
-onMessage<BackupLogPayload>('BackupLog', (payload) => {
+onMessage('BackupLog', (payload) => {
   // Prefer schedule_id matching so progress arrives even before loadData() resolves
   // selectedRepoId; fall back to repo_id when schedule_id is absent.
   if (payload.schedule_id != null) {
@@ -643,7 +630,7 @@ onMessage<BackupLogPayload>('BackupLog', (payload) => {
   }
 })
 
-onMessage<{ repo_id: number }>('DataChanged', () => {
+onMessage('DataChanged', () => {
   if (!isCreate.value) {
     loadReports().catch(() => undefined)
   }

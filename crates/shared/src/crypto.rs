@@ -25,6 +25,10 @@ pub enum CryptoError {
     KeyDerivationFailed,
 }
 
+/// Derive a 256-bit key from a secret using HKDF with SHA-256.
+///
+/// # Errors
+/// Returns [`CryptoError::KeyDerivationFailed`] if HKDF expansion fails.
 pub fn derive_key(secret: &[u8]) -> Result<[u8; 32], CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(None, secret);
     let mut key = [0u8; 32];
@@ -33,6 +37,11 @@ pub fn derive_key(secret: &[u8]) -> Result<[u8; 32], CryptoError> {
     Ok(key)
 }
 
+/// Encrypt a passphrase using AES-256-GCM. Returns the nonce concatenated with
+/// the ciphertext.
+///
+/// # Errors
+/// Returns [`CryptoError::EncryptionFailed`] if encryption fails.
 pub fn encrypt_passphrase(plaintext: &str, key: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
     let cipher = Aes256Gcm::new(key.into());
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
@@ -40,12 +49,18 @@ pub fn encrypt_passphrase(plaintext: &str, key: &[u8; 32]) -> Result<Vec<u8>, Cr
         .encrypt(&nonce, plaintext.as_bytes())
         .map_err(|_| CryptoError::EncryptionFailed)?;
 
-    let mut output = Vec::with_capacity(NONCE_SIZE + ciphertext.len());
+    let mut output = Vec::with_capacity(NONCE_SIZE.saturating_add(ciphertext.len()));
     output.extend_from_slice(&nonce);
     output.extend_from_slice(&ciphertext);
     Ok(output)
 }
 
+/// Decrypt a passphrase that was encrypted with [`encrypt_passphrase`].
+///
+/// # Errors
+/// Returns [`CryptoError::InvalidCiphertext`] if the data is too short,
+/// [`CryptoError::DecryptionFailed`] if decryption fails, or
+/// [`CryptoError::InvalidUtf8`] if the result is not valid UTF-8.
 pub fn decrypt_passphrase(data: &[u8], key: &[u8; 32]) -> Result<String, CryptoError> {
     if data.len() <= NONCE_SIZE {
         return Err(CryptoError::InvalidCiphertext);

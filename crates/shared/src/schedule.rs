@@ -8,6 +8,10 @@ use croner::Cron;
 /// Calculate the next run time for a cron expression, evaluating in the given
 /// timezone. The cron expression is interpreted in the target timezone (e.g.,
 /// "0 2 * * *" means 02:00 in `tz`), and the result is returned as UTC.
+///
+/// # Errors
+/// Returns a human-readable error string if the cron expression is invalid,
+/// no next occurrence can be found, or the resulting local time is ambiguous.
 pub fn calculate_next_run(
     cron_expression: &str,
     from: DateTime<Utc>,
@@ -36,6 +40,10 @@ pub fn calculate_next_run(
         })
 }
 
+/// Validate a cron expression string.
+///
+/// # Errors
+/// Returns a human-readable error string if the expression cannot be parsed.
 pub fn validate_cron(expression: &str) -> Result<(), String> {
     Cron::new(expression)
         .parse()
@@ -46,6 +54,9 @@ pub fn validate_cron(expression: &str) -> Result<(), String> {
 /// Parse a timezone string (IANA format like "Europe/Berlin") into a `Tz`.
 /// When the string is empty, detects the system's local timezone.
 /// Returns UTC only if the system timezone cannot be determined.
+///
+/// # Errors
+/// Returns a human-readable error string if the timezone string is invalid.
 pub fn parse_timezone(tz_str: &str) -> Result<Tz, String> {
     if tz_str.eq_ignore_ascii_case("utc") {
         return Ok(chrono_tz::UTC);

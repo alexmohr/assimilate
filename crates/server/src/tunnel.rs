@@ -280,7 +280,6 @@ impl TunnelManager {
                     scanned_key.as_deref(),
                 )
                 .await;
-
                 let handler = TunnelSshHandler {
                     server_addr: manager.server_addr,
                     ui_broadcast: manager.ui_broadcast.clone(),
@@ -709,7 +708,6 @@ mod tests {
         assert!(result.is_ok());
         assert!(result.unwrap());
     }
-
     /// Regression: stop_tunnel must release the write lock before awaiting
     /// task completion so that the task's cancellation path (which calls
     /// set_status and needs the write lock) can proceed without deadlocking.

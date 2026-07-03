@@ -65,6 +65,7 @@ pub struct UserListResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
+#[allow(clippy::struct_excessive_bools, reason = "API response struct with many boolean fields")]
 pub struct AgentResponse {
     #[ts(type = "number")]
     pub id: i64,
@@ -259,6 +260,7 @@ pub struct MigrateEncryptionResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
+#[allow(clippy::struct_excessive_bools, reason = "API response struct with many boolean fields")]
 pub struct ScheduleResponse {
     #[ts(type = "number")]
     pub id: i64,
@@ -576,6 +578,7 @@ pub struct GroupMembersResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
+#[allow(clippy::struct_excessive_bools, reason = "API response struct with permission booleans")]
 pub struct RoleResponse {
     #[ts(type = "number")]
     pub id: i64,
@@ -603,6 +606,7 @@ pub struct RoleListResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
+#[allow(clippy::struct_excessive_bools, reason = "API response struct with permission booleans")]
 pub struct RepoPermissionResponse {
     #[ts(type = "number")]
     pub user_id: i64,
@@ -1168,6 +1172,7 @@ pub struct HostExportResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
+#[allow(clippy::struct_excessive_bools, reason = "API export struct with many boolean fields")]
 pub struct ScheduleExportResponse {
     pub name: String,
     #[ts(type = "string")]

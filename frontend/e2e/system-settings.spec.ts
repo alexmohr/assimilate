@@ -24,6 +24,9 @@ async function interceptSystemApis(page: Page): Promise<void> {
           body: JSON.stringify({
             timezone: 'UTC',
             retention_days: 7,
+            report_retention_days: 365,
+            failed_report_retention_days: 365,
+            system_event_retention_days: 90,
             borg_query_timeout_secs: 300,
           }),
         })
@@ -65,6 +68,14 @@ test('system settings page renders borg timeout input', async ({ page }) => {
   await expect(page.locator('#settings-borg-timeout')).toHaveValue('300')
 })
 
+test('system settings page renders report retention input', async ({ page }) => {
+  await loginAsAdmin(page)
+  await interceptSystemApis(page)
+  await page.goto('/system')
+  await expect(page.locator('#settings-report-retention')).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('#settings-report-retention')).toHaveValue('365')
+})
+
 test('admin can update borg timeout and save settings', async ({ page }) => {
   await loginAsAdmin(page)
   await interceptSystemApis(page)
@@ -81,6 +92,9 @@ test('admin can update borg timeout and save settings', async ({ page }) => {
           body: JSON.stringify({
             timezone: 'UTC',
             retention_days: 7,
+            report_retention_days: 365,
+            failed_report_retention_days: 365,
+            system_event_retention_days: 90,
             borg_query_timeout_secs: 600,
           }),
         })

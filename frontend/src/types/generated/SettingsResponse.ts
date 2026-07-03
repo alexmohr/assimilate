@@ -8,6 +8,9 @@ export type SettingsResponse = {
    * Number of days to retain backup records.
    */
   retention_days: number;
+  report_retention_days: number;
+  failed_report_retention_days: number;
+  system_event_retention_days: number;
   /**
    * Timezone setting.
    */

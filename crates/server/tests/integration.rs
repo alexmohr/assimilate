@@ -87,6 +87,10 @@ async fn build_test_app(pool: PgPool) -> Router {
         import_tasks: server::ImportTaskRegistry::default(),
         shutdown_token: tokio_util::sync::CancellationToken::new(),
         client_ip_resolver: server::client_ip::ClientIpResolver::new(),
+        user_rate_limiter: server::rate_limit::UserRateLimiter::new(
+            60,
+            std::time::Duration::from_secs(60),
+        ),
     };
 
     Router::new()

@@ -2464,6 +2464,53 @@ async fn login_attempts(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(count_other_ip, 0);
+
+    // Username-only count includes all IPs
+    let count_by_user = db::count_failed_login_attempts_by_username(&pool, "user1", 60)
+        .await
+        .unwrap();
+    assert_eq!(count_by_user, 2);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn account_lockout(pool: PgPool) {
+    // Create a user first
+    db::insert_user(&pool, "lockuser", "hash").await.unwrap();
+
+    // Insert some failed login attempts for the user
+    for _ in 0..3 {
+        db::insert_login_attempt(&pool, "lockuser", "192.168.1.1", false)
+            .await
+            .unwrap();
+    }
+
+    // Verify count across all IPs
+    let count = db::count_failed_login_attempts_by_username(&pool, "lockuser", 60)
+        .await
+        .unwrap();
+    assert_eq!(count, 3);
+
+    // Set a lockout
+    let lock_time = Utc::now() + Duration::minutes(30);
+    db::set_account_lockout(&pool, "lockuser", lock_time)
+        .await
+        .unwrap();
+
+    // Verify user is locked
+    let user = db::get_user_by_username(&pool, "lockuser").await.unwrap();
+    assert!(user.locked_until.is_some());
+    assert!(user.locked_until.unwrap() > Utc::now());
+
+    // Clear lockout
+    db::clear_account_lockout(&pool, "lockuser").await.unwrap();
+    let user = db::get_user_by_username(&pool, "lockuser").await.unwrap();
+    assert!(user.locked_until.is_none());
+
+    // Escalation level
+    let level = db::count_lockout_escalation_level(&pool, "lockuser", 1440)
+        .await
+        .unwrap();
+    assert_eq!(level, 3);
 }
 
 #[sqlx::test(migrations = "./migrations")]

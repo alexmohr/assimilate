@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT COUNT(*)::BIGINT FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",
+  "query": "SELECT COUNT(*) as count FROM login_attempts WHERE username = $1 AND success = false AND attempted_at > NOW() - ($2 || ' minutes')::INTERVAL",
   "describe": {
     "columns": [
       {
@@ -11,7 +11,7 @@
     ],
     "parameters": {
       "Left": [
-        "Int8",
+        "Text",
         "Text"
       ]
     },
@@ -19,5 +19,5 @@
       null
     ]
   },
-  "hash": "664c8eed3feb07fa811ae225b7a161b1305663ad800204ac3f01fa08315483b3"
+  "hash": "98e8c230ee68c6597866e07c2a5c6ec96fe5a2e140f0ea81b01d2d853e9f6fbe"
 }

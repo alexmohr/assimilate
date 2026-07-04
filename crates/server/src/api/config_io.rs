@@ -24,6 +24,8 @@ pub struct HostExport {
     pub default_exclude_patterns: Vec<String>,
     pub default_pre_backup_commands: String,
     pub default_post_backup_commands: String,
+    #[serde(default)]
+    pub default_file_change_patterns_raw: String,
     pub hostname_patterns: Vec<String>,
 }
 
@@ -113,6 +115,7 @@ pub async fn export_config(
             default_exclude_patterns: agent.default_exclude_patterns.clone(),
             default_pre_backup_commands: agent.default_pre_backup_commands.clone(),
             default_post_backup_commands: agent.default_post_backup_commands.clone(),
+            default_file_change_patterns_raw: agent.default_file_change_patterns_raw.clone(),
             hostname_patterns: patterns.into_iter().map(|p| p.pattern).collect(),
         });
     }
@@ -266,6 +269,7 @@ pub async fn import_config(
                     default_exclude_patterns: &host.default_exclude_patterns,
                     default_pre_backup_commands: &host.default_pre_backup_commands,
                     default_post_backup_commands: &host.default_post_backup_commands,
+                    default_file_change_patterns_raw: &host.default_file_change_patterns_raw,
                 },
             )
             .await?;
@@ -294,6 +298,7 @@ pub async fn import_config(
                     default_exclude_patterns: &host.default_exclude_patterns,
                     default_pre_backup_commands: &host.default_pre_backup_commands,
                     default_post_backup_commands: &host.default_post_backup_commands,
+                    default_file_change_patterns_raw: &host.default_file_change_patterns_raw,
                 },
             )
             .await?;

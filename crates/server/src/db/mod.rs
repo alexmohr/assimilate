@@ -34,8 +34,8 @@ pub async fn resolve_agent_for_hostname(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
          default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, agent_token_hash, is_hidden FROM agents WHERE hostname = \
-         $1 AND agent_token_hash != 'imported:no-auth'",
+         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         is_hidden FROM agents WHERE hostname = $1 AND agent_token_hash != 'imported:no-auth'",
         hostname,
     )
     .fetch_optional(pool)
@@ -61,7 +61,8 @@ pub async fn merge_agent(pool: &PgPool, source_id: i64, target_id: i64) -> Resul
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
          default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, agent_token_hash, is_hidden FROM agents WHERE id = $1",
+         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         is_hidden FROM agents WHERE id = $1",
         source_id,
     )
     .fetch_optional(&mut *tx)
@@ -149,6 +150,8 @@ pub struct AgentRow {
     pub default_exclude_patterns: Vec<String>,
     pub default_pre_backup_commands: String,
     pub default_post_backup_commands: String,
+    #[serde(default)]
+    pub default_file_change_patterns_raw: String,
     #[serde(skip)]
     pub agent_token_hash: String,
     #[serde(default)]
@@ -278,7 +281,8 @@ pub async fn get_agent_by_hostname(pool: &PgPool, hostname: &str) -> Result<Agen
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
          default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, agent_token_hash, is_hidden FROM agents WHERE hostname = $1",
+         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         is_hidden FROM agents WHERE hostname = $1",
         hostname,
     )
     .fetch_one(pool)
@@ -295,7 +299,8 @@ pub async fn get_agent_by_id(pool: &PgPool, agent_id: i64) -> Result<AgentRow, A
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
          default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, agent_token_hash, is_hidden FROM agents WHERE id = $1",
+         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         is_hidden FROM agents WHERE id = $1",
         agent_id,
     )
     .fetch_one(pool)
@@ -383,8 +388,8 @@ pub async fn list_agents(pool: &PgPool, include_hidden: bool) -> Result<Vec<Agen
             "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
              agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
              default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-             default_post_backup_commands, agent_token_hash, is_hidden FROM agents ORDER BY \
-             hostname",
+             default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+             is_hidden FROM agents ORDER BY hostname",
         )
         .fetch_all(pool)
         .await
@@ -395,8 +400,8 @@ pub async fn list_agents(pool: &PgPool, include_hidden: bool) -> Result<Vec<Agen
             "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
              agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
              default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-             default_post_backup_commands, agent_token_hash, is_hidden FROM agents WHERE \
-             is_hidden = false ORDER BY hostname",
+             default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+             is_hidden FROM agents WHERE is_hidden = false ORDER BY hostname",
         )
         .fetch_all(pool)
         .await
@@ -415,7 +420,7 @@ pub async fn set_agent_hidden(
          display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
          default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, \
-         agent_token_hash, is_hidden",
+         default_file_change_patterns_raw, agent_token_hash, is_hidden",
         hostname,
         hidden,
     )
@@ -438,7 +443,8 @@ pub async fn get_or_create_agent_by_hostname(
         "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
          agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
          default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, agent_token_hash, is_hidden FROM agents WHERE hostname = $1",
+         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         is_hidden FROM agents WHERE hostname = $1",
         hostname,
     )
     .fetch_optional(pool)
@@ -455,7 +461,8 @@ pub async fn get_or_create_agent_by_hostname(
          $3, NULL) RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
          agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
          default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, agent_token_hash, is_hidden",
+         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         is_hidden",
         hostname,
         Some(format!("{hostname} (imported)")),
         "imported:no-auth",
@@ -478,7 +485,8 @@ pub async fn insert_agent(
          $3, $4) RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
          agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
          default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, agent_token_hash, is_hidden",
+         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         is_hidden",
         hostname,
         display_name,
         token_hash,
@@ -495,6 +503,7 @@ pub struct AgentDefaults<'a> {
     pub default_exclude_patterns: &'a [String],
     pub default_pre_backup_commands: &'a str,
     pub default_post_backup_commands: &'a str,
+    pub default_file_change_patterns_raw: &'a str,
 }
 
 pub async fn insert_agent_with_paths(
@@ -506,11 +515,13 @@ pub async fn insert_agent_with_paths(
     sqlx::query_as!(
         AgentRow,
         "INSERT INTO agents (hostname, display_name, agent_token_hash, default_backup_paths, \
-         default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, hostname, display_name, agent_version, \
-         agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, \
-         visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
-         default_post_backup_commands, agent_token_hash, is_hidden",
+         default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, \
+         default_file_change_patterns_raw) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, \
+         hostname, display_name, agent_version, agent_git_sha, agent_build_time, \
+         agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
+         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         is_hidden",
         hostname,
         defaults.display_name,
         token_hash,
@@ -518,6 +529,7 @@ pub async fn insert_agent_with_paths(
         defaults.default_exclude_patterns,
         defaults.default_pre_backup_commands,
         defaults.default_post_backup_commands,
+        defaults.default_file_change_patterns_raw,
     )
     .fetch_one(pool)
     .await
@@ -534,11 +546,12 @@ pub async fn update_agent(
         AgentRow,
         "UPDATE agents SET hostname = $2, display_name = $3, default_backup_paths = $4, \
          default_exclude_patterns = $5, default_pre_backup_commands = $6, \
-         default_post_backup_commands = $7 WHERE hostname = $1 RETURNING id, hostname, \
-         display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
-         created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
-         default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, \
-         agent_token_hash, is_hidden",
+         default_post_backup_commands = $7, default_file_change_patterns_raw = $8 WHERE hostname \
+         = $1 RETURNING id, hostname, display_name, agent_version, agent_git_sha, \
+         agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, \
+         default_backup_paths, default_exclude_patterns, default_pre_backup_commands, \
+         default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, \
+         is_hidden",
         hostname,
         new_hostname,
         defaults.display_name,
@@ -546,6 +559,7 @@ pub async fn update_agent(
         defaults.default_exclude_patterns,
         defaults.default_pre_backup_commands,
         defaults.default_post_backup_commands,
+        defaults.default_file_change_patterns_raw,
     )
     .fetch_one(pool)
     .await
@@ -566,7 +580,7 @@ pub async fn regenerate_agent_token(
          display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, \
          created_at, last_seen_at, owner_id, visibility, default_backup_paths, \
          default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, \
-         agent_token_hash, is_hidden",
+         default_file_change_patterns_raw, agent_token_hash, is_hidden",
         hostname,
         token_hash,
     )

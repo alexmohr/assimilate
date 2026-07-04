@@ -145,11 +145,13 @@ async fn agent_update(pool: PgPool) {
             default_exclude_patterns: &[],
             default_pre_backup_commands: "[]",
             default_post_backup_commands: "[]",
+            default_file_change_patterns_raw: "*/tmp/* ignore",
         },
     )
     .await
     .unwrap();
     assert_eq!(updated.display_name.as_deref(), Some("New Name"));
+    assert_eq!(updated.default_file_change_patterns_raw, "*/tmp/* ignore");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1295,6 +1297,86 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
     // Effective patterns from schedule excludes
     assert!(patterns.contains(&"*.log"));
     assert!(patterns.contains(&"*.tmp"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool) {
+    let encryption_key = shared::crypto::derive_key(b"test-assembly-key-for-file-change").unwrap();
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+
+    db::update_schedule(
+        &pool,
+        schedule.id,
+        &ScheduleParams {
+            name: "test-schedule",
+            schedule_type: "backup",
+            cron_expression: "0 3 * * *",
+            enabled: true,
+            canary_enabled: false,
+            exclude_patterns_raw: "",
+            file_change_patterns_raw: "*/schedule-specific* ignore",
+            ignore_global_excludes: false,
+            keep_hourly: 24,
+            keep_daily: 7,
+            keep_weekly: 4,
+            keep_monthly: 6,
+            keep_yearly: 1,
+            compact_enabled: true,
+            rate_limit_kbps: None,
+            pre_backup_commands: "",
+            post_backup_commands: "",
+            on_failure: "stop",
+        },
+    )
+    .await
+    .unwrap();
+
+    db::update_agent(
+        &pool,
+        &agent.hostname,
+        &agent.hostname,
+        db::AgentDefaults {
+            display_name: agent.display_name.as_deref(),
+            default_backup_paths: &agent.default_backup_paths,
+            default_exclude_patterns: &agent.default_exclude_patterns,
+            default_pre_backup_commands: &agent.default_pre_backup_commands,
+            default_post_backup_commands: &agent.default_post_backup_commands,
+            default_file_change_patterns_raw: "*/agent-fallback* fatal",
+        },
+    )
+    .await
+    .unwrap();
+
+    let passphrase_encrypted =
+        shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
+    sqlx::query(
+        "UPDATE repos SET passphrase_encrypted = $1, ssh_host_key = $2, enabled = true WHERE id = \
+         $3",
+    )
+    .bind(passphrase_encrypted.as_slice())
+    .bind("ssh-ed25519 AAAATEST")
+    .bind(repo.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    db::insert_backup_source_for_schedule(&pool, schedule.id, "/home", 0)
+        .await
+        .unwrap();
+
+    let config = server::config_assembler::assemble_config(&pool, &encryption_key, &agent.hostname)
+        .await
+        .unwrap();
+
+    let patterns = &config.repos[0].schedules[0].file_change_patterns;
+    assert_eq!(patterns.len(), 2);
+    // Schedule-level pattern must come first: `filter_file_change_warnings`
+    // uses first-match-wins, so the schedule's own configuration must win
+    // over the agent-wide fallback.
+    assert_eq!(patterns[0].path, "*/schedule-specific*");
+    assert_eq!(patterns[0].action, shared::types::FileChangeAction::Ignore);
+    assert_eq!(patterns[1].path, "*/agent-fallback*");
+    assert_eq!(patterns[1].action, shared::types::FileChangeAction::Fatal);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -5428,6 +5510,7 @@ async fn agent_insert_with_paths(pool: PgPool) {
             default_exclude_patterns: &excludes,
             default_pre_backup_commands: "[]",
             default_post_backup_commands: "[]",
+            default_file_change_patterns_raw: "*/etc/config* fatal",
         },
     )
     .await
@@ -5437,6 +5520,10 @@ async fn agent_insert_with_paths(pool: PgPool) {
     assert_eq!(agent.display_name.as_deref(), Some("Paths Host"));
     assert_eq!(agent.default_backup_paths, paths);
     assert_eq!(agent.default_exclude_patterns, excludes);
+    assert_eq!(
+        agent.default_file_change_patterns_raw,
+        "*/etc/config* fatal"
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]

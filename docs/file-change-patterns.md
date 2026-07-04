@@ -13,7 +13,11 @@ File change patterns let you control how warnings about files that change during
 
 ## Configuration
 
-File change patterns can be configured at the **schedule level** (applies to all targeted agents) or **per agent** (overrides the schedule-level patterns for specific hosts).
+File change patterns can be configured at three levels:
+
+- **Schedule level** — applies to every agent targeted by the schedule.
+- **Per-agent override within a schedule** — overrides the schedule-level patterns for specific hosts, when a schedule targets multiple agents.
+- **Agent default** — configured once on the host itself and applied as a fallback to *every* schedule that targets it, so you don't have to repeat the same patterns on every schedule.
 
 ### Schedule-level patterns
 
@@ -33,9 +37,24 @@ If no action is specified, `warn` is assumed:
 */tmp/logs*          ← equivalent to `*/tmp/logs* warn`
 ```
 
-### Per-agent patterns
+### Per-agent override within a schedule
 
-When a schedule targets multiple agents, you can toggle **Configure per agent** and provide different patterns for each host.
+When a schedule targets multiple agents, you can toggle **Configure per agent** and provide different patterns for each host. A host with an empty override falls back to the schedule-level patterns above.
+
+### Agent default patterns
+
+Navigate to **Agents** → select a host → **Default File Change Patterns** section. Patterns are entered the same way as at the schedule level (glob plus optional action). These patterns apply to every schedule that targets the host, so they're useful for host-specific noise (e.g. a database's WAL files) that would otherwise need to be repeated on every schedule backing up that host.
+
+![Default file change patterns configured on a host](assets/screenshots/host-file-change-patterns.png)
+
+### Precedence
+
+For a given agent and schedule, patterns are checked in this order, and the **first match wins**:
+
+1. The per-agent override for that schedule, if one is configured; otherwise the schedule-level patterns.
+2. The agent's default patterns, checked only for warnings the previous step didn't match.
+
+This means schedule-specific configuration always takes priority over a host's defaults, while the host's defaults still catch anything the schedule doesn't explicitly handle.
 
 ## Action Reference
 

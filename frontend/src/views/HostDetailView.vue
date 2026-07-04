@@ -21,6 +21,8 @@ import BaseSpinner from '../components/BaseSpinner.vue'
 import MergeAgentDialog from '../components/MergeAgentDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import SshKeyDeployPanel from '../components/SshKeyDeployPanel.vue'
+import FileChangePatternsEditor from '../components/FileChangePatternsEditor.vue'
+import { parseFileChangePatterns } from '../utils/fileChangePatterns'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
@@ -176,6 +178,7 @@ async function savePaths(): Promise<void> {
       default_exclude_patterns: agent.value.default_exclude_patterns,
       default_pre_backup_commands: parseAgentCommands(agent.value.default_pre_backup_commands),
       default_post_backup_commands: parseAgentCommands(agent.value.default_post_backup_commands),
+      default_file_change_patterns_raw: agent.value.default_file_change_patterns_raw,
     })
     agent.value = { ...agent.value, ...res.data }
     editingPaths.value = false
@@ -236,6 +239,9 @@ async function saveIdentity(): Promise<void> {
       display_name: identityDisplayName.value.trim() || null,
       default_backup_paths: agent.value.default_backup_paths,
       default_exclude_patterns: agent.value.default_exclude_patterns,
+      default_pre_backup_commands: parseAgentCommands(agent.value.default_pre_backup_commands),
+      default_post_backup_commands: parseAgentCommands(agent.value.default_post_backup_commands),
+      default_file_change_patterns_raw: agent.value.default_file_change_patterns_raw,
     })
     if (hostnameChanged) {
       pendingAliasOldHostname.value = oldHostname
@@ -385,6 +391,7 @@ async function saveExcludes(): Promise<void> {
       default_exclude_patterns: parseLines(excludesText.value),
       default_pre_backup_commands: parseAgentCommands(agent.value.default_pre_backup_commands),
       default_post_backup_commands: parseAgentCommands(agent.value.default_post_backup_commands),
+      default_file_change_patterns_raw: agent.value.default_file_change_patterns_raw,
     })
     agent.value = { ...agent.value, ...res.data }
     editingExcludes.value = false
@@ -392,6 +399,44 @@ async function saveExcludes(): Promise<void> {
     excludesError.value = extractError(e)
   } finally {
     excludesSaving.value = false
+  }
+}
+
+// Default file change patterns
+const editingFileChangePatterns = ref(false)
+const fileChangePatternsText = ref('')
+const fileChangePatternsSaving = ref(false)
+const fileChangePatternsError = ref<string | null>(null)
+
+function startEditFileChangePatterns(): void {
+  fileChangePatternsText.value = agent.value?.default_file_change_patterns_raw ?? ''
+  fileChangePatternsError.value = null
+  editingFileChangePatterns.value = true
+}
+
+function cancelEditFileChangePatterns(): void {
+  editingFileChangePatterns.value = false
+}
+
+async function saveFileChangePatterns(): Promise<void> {
+  if (!agent.value) return
+  fileChangePatternsSaving.value = true
+  fileChangePatternsError.value = null
+  try {
+    const res = await apiClient.put<AgentRow>(`/agents/${agent.value.hostname}`, {
+      display_name: agent.value.display_name,
+      default_backup_paths: agent.value.default_backup_paths,
+      default_exclude_patterns: agent.value.default_exclude_patterns,
+      default_pre_backup_commands: parseAgentCommands(agent.value.default_pre_backup_commands),
+      default_post_backup_commands: parseAgentCommands(agent.value.default_post_backup_commands),
+      default_file_change_patterns_raw: fileChangePatternsText.value,
+    })
+    agent.value = { ...agent.value, ...res.data }
+    editingFileChangePatterns.value = false
+  } catch (e: unknown) {
+    fileChangePatternsError.value = extractError(e)
+  } finally {
+    fileChangePatternsSaving.value = false
   }
 }
 
@@ -424,6 +469,7 @@ async function saveHookCmds(): Promise<void> {
       default_exclude_patterns: agent.value.default_exclude_patterns,
       default_pre_backup_commands: parseLines(preCmdsText.value),
       default_post_backup_commands: parseLines(postCmdsText.value),
+      default_file_change_patterns_raw: agent.value.default_file_change_patterns_raw,
     })
     agent.value = { ...agent.value, ...res.data }
     editingHookCmds.value = false
@@ -1151,6 +1197,78 @@ watch(wsStatus, (newStatus, oldStatus) => {
                 @click="saveExcludes"
               >
                 {{ excludesSaving ? 'Saving...' : 'Save' }}
+              </button>
+            </div>
+          </template>
+        </div>
+
+        <!-- Default File Change Patterns -->
+        <div class="info-card">
+          <h3 class="info-title">Default File Change Patterns</h3>
+          <template v-if="!editingFileChangePatterns">
+            <div
+              v-if="
+                parseFileChangePatterns(agent.default_file_change_patterns_raw ?? '').length > 0
+              "
+              class="paths-list"
+            >
+              <code
+                v-for="(p, idx) in parseFileChangePatterns(
+                  agent.default_file_change_patterns_raw ?? '',
+                )"
+                :key="idx"
+                class="path-item mono"
+              >
+                {{ p.path }} <span class="fcp-action-badge">{{ p.action }}</span>
+              </code>
+            </div>
+            <span
+              v-else
+              class="muted"
+              >No default file change patterns configured.</span
+            >
+            <span class="field-hint"
+              >Applied to every schedule targeting this host, as a fallback for warnings not matched
+              by a schedule-level pattern.</span
+            >
+            <div class="info-actions">
+              <button
+                v-if="!isImported"
+                class="btn btn-sm btn-ghost"
+                @click="startEditFileChangePatterns"
+              >
+                Edit
+              </button>
+            </div>
+          </template>
+          <template v-else>
+            <FileChangePatternsEditor v-model="fileChangePatternsText">
+              <template #hint>
+                Glob patterns matched against the full warning message, with actions:
+                <code>ignore</code> (no warning), <code>warn</code> (default), <code>fatal</code>
+                (fail backup). Checked after schedule-level patterns, as a fallback for this host.
+              </template>
+            </FileChangePatternsEditor>
+            <div
+              v-if="fileChangePatternsError"
+              class="form-error"
+            >
+              {{ fileChangePatternsError }}
+            </div>
+            <div class="info-actions">
+              <button
+                class="btn btn-sm btn-ghost"
+                :disabled="fileChangePatternsSaving"
+                @click="cancelEditFileChangePatterns"
+              >
+                Cancel
+              </button>
+              <button
+                class="btn btn-sm btn-primary"
+                :disabled="fileChangePatternsSaving"
+                @click="saveFileChangePatterns"
+              >
+                {{ fileChangePatternsSaving ? 'Saving...' : 'Save' }}
               </button>
             </div>
           </template>
@@ -2521,6 +2639,15 @@ watch(wsStatus, (newStatus, oldStatus) => {
   background: var(--bg-input);
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
+}
+
+.fcp-action-badge {
+  font-family: var(--font-sans, sans-serif);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .cmd-area {

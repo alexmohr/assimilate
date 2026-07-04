@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { flushPromises, type VueWrapper } from '@vue/test-utils'
+import { flushPromises, type DOMWrapper, type VueWrapper } from '@vue/test-utils'
 import { ref, type ComponentPublicInstance } from 'vue'
 import { renderWithPlugins } from '../test-utils'
 import HostDetailView from './HostDetailView.vue'
@@ -429,5 +429,84 @@ describe('HostDetailView — schedules tab', () => {
     await openSchedulesTab(wrapper)
 
     expect(wrapper.text()).toContain('No schedules for this agent.')
+  })
+})
+
+describe('HostDetailView — default file change patterns', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('shows empty state when no default patterns are configured', async () => {
+    setupApi()
+    const wrapper = renderWithPlugins(HostDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('No default file change patterns configured.')
+  })
+
+  it('lists parsed patterns with their action', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents')
+        return Promise.resolve({
+          data: [
+            {
+              ...mockAgent,
+              default_file_change_patterns_raw: '*/tmp/* ignore\n*/etc/config* fatal',
+            },
+          ],
+        })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(HostDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('*/tmp/*')
+    expect(text).toContain('ignore')
+    expect(text).toContain('*/etc/config*')
+    expect(text).toContain('fatal')
+  })
+
+  it('saves edited default file change patterns', async () => {
+    setupApi()
+    vi.mocked(apiClient.put).mockResolvedValue({
+      data: { ...mockAgent, default_file_change_patterns_raw: '*/var/log* ignore' },
+    })
+    const wrapper = renderWithPlugins(HostDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const findCard = (): DOMWrapper<Element> =>
+      wrapper.findAll('.info-card').find((c) => c.text().includes('Default File Change Patterns'))!
+
+    await findCard().find('button').trigger('click')
+    await findCard()
+      .findAll('button')
+      .find((b) => b.text() === '+ Add pattern')!
+      .trigger('click')
+    await findCard().find('input[type="text"]').setValue('*/var/log*')
+    await findCard().findAll('select').at(-1)!.setValue('ignore')
+
+    const saveBtn = findCard()
+      .findAll('button')
+      .find((b) => b.text() === 'Save')!
+    await saveBtn.trigger('click')
+    await flushPromises()
+
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/agents/test-host',
+      expect.objectContaining({ default_file_change_patterns_raw: '*/var/log* ignore' }),
+    )
   })
 })

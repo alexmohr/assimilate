@@ -14,6 +14,7 @@ export type AgentResponse = {
   default_exclude_patterns: Array<string>;
   default_pre_backup_commands: string;
   default_post_backup_commands: string;
+  default_file_change_patterns_raw: string;
   is_connected: boolean;
   is_imported: boolean;
   is_hidden: boolean;

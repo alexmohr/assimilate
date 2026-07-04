@@ -80,6 +80,7 @@ pub struct AgentResponse {
     pub default_exclude_patterns: Vec<String>,
     pub default_pre_backup_commands: String,
     pub default_post_backup_commands: String,
+    pub default_file_change_patterns_raw: String,
     pub is_connected: bool,
     pub is_imported: bool,
     pub is_hidden: bool,

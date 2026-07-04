@@ -332,7 +332,6 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
                 tracing::warn!(value = %v, error = %e, "failed to parse report_retention_days setting");
             }).ok()
         })
-        .or(legacy_retention)
         .unwrap_or(0);
 
     let failed_days = db::get_setting(pool, "failed_report_retention_days")
@@ -342,6 +341,7 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
                 tracing::warn!(value = %v, error = %e, "failed to parse failed_report_retention_days setting");
             }).ok()
         })
+        .or(legacy_retention)
         .unwrap_or(365);
 
     let event_days = db::get_setting(pool, "system_event_retention_days")

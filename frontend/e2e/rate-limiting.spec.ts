@@ -4,10 +4,9 @@
 import { expect, test } from './fixtures'
 
 test('too many failed login attempts returns 429', async ({ page }) => {
-  const attempts = Array.from({ length: 15 }, (_, i) => i)
   let got429 = false
 
-  for (const _ of attempts) {
+  for (let i = 0; i < 15; i++) {
     const resp = await page.request.post('/api/auth/login', {
       data: { username: 'admin', password: 'wrong-password' },
     })

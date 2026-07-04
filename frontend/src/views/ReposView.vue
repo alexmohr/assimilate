@@ -615,18 +615,11 @@ async function testConnection(): Promise<void> {
   }
 }
 
-interface ImportProgressPayload {
-  repo_id: number
-  progress: number
-  total: number
-  message: string | null
-}
-
 const { onMessage } = useWebSocket()
 
 onMessage('DataChanged', () => loadRepos().catch(logger.error))
 
-onMessage<ImportProgressPayload>('ImportProgress', (payload) => {
+onMessage('ImportProgress', (payload) => {
   const repo = repos.value.find((r) => r.id === payload.repo_id)
   if (repo) {
     if (payload.progress >= 0) {

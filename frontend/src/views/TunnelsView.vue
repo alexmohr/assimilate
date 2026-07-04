@@ -248,13 +248,10 @@ useEscapeKey(showErrorDialog, () => {
 })
 
 const { onMessage } = useWebSocket()
-onMessage(
-  'TunnelStatusChanged',
-  (data: { agent_id: number; hostname: string; status: TunnelStatus }) => {
-    const tunnel = tunnels.value.find((t) => t.agent_id === data.agent_id)
-    if (tunnel) tunnel.status = data.status
-  },
-)
+onMessage('TunnelStatusChanged', (data) => {
+  const tunnel = tunnels.value.find((t) => t.agent_id === data.agent_id)
+  if (tunnel) tunnel.status = data.status
+})
 
 onMounted(() => {
   loadTunnels().catch(logger.error)

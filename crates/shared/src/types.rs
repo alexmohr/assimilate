@@ -23,14 +23,17 @@ pub fn build_repo_url(ssh_user: &str, ssh_host: &str, ssh_port: u16, repo_path: 
     )
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AgentId(pub i64);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AgentId(#[ts(type = "number")] pub i64);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct RepoId(pub i64);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RepoId(#[ts(type = "number")] pub i64);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ReportId(pub i64);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ReportId(#[ts(type = "number")] pub i64);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct OperationId(pub String);
@@ -405,24 +408,32 @@ pub struct Schedule {
     pub keep_yearly: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct BackupReport {
     pub id: ReportId,
     pub agent_id: AgentId,
     pub repo_id: RepoId,
     #[serde(default)]
+    #[ts(type = "number | null")]
     pub schedule_id: Option<i64>,
     pub started_at: DateTime<Utc>,
     pub finished_at: DateTime<Utc>,
     pub status: BackupStatus,
+    #[ts(type = "number")]
     pub original_size: i64,
+    #[ts(type = "number")]
     pub compressed_size: i64,
+    #[ts(type = "number")]
     pub deduplicated_size: i64,
     /// Total unique compressed size of the repository at backup time (`cache.stats.unique_csize`).
     /// This is the actual on-disk usage of the repository.
     #[serde(default)]
+    #[ts(type = "number")]
     pub repo_unique_csize: i64,
+    #[ts(type = "number")]
     pub files_processed: i64,
+    #[ts(type = "number")]
     pub duration_secs: i64,
     pub error_message: Option<String>,
     #[serde(default)]

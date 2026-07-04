@@ -212,42 +212,39 @@ onMessage('DataChanged', () => fetchData(true).catch(logger.error))
 onMessage('AgentConnected', () => fetchData(true).catch(logger.error))
 onMessage('AgentDisconnected', () => fetchData(true).catch(logger.error))
 
-onMessage<{ hostname: string; target_name: string }>('BackupStarted', (payload) => {
+onMessage('BackupStarted', (payload) => {
   const key = liveSessionKey(payload.hostname, payload.target_name)
   const next = new Map(liveBackupSessions.value)
   next.set(key, { hostname: payload.hostname, target_name: payload.target_name, lines: [] })
   liveBackupSessions.value = next
 })
 
-onMessage<{ hostname: string; target_name: string }>('BackupCompleted', (payload) => {
+onMessage('BackupCompleted', (payload) => {
   const key = liveSessionKey(payload.hostname, payload.target_name)
   const next = new Map(liveBackupSessions.value)
   next.delete(key)
   liveBackupSessions.value = next
 })
 
-onMessage<{ hostname: string; repo_id: number; schedule_id: number | null; line: string }>(
-  'BackupLog',
-  (payload) => {
-    try {
-      const obj = JSON.parse(payload.line) as Record<string, unknown>
-      if (obj['type'] === 'archive_progress') return
-    } catch {
-      // non-JSON line - show it
+onMessage('BackupLog', (payload) => {
+  try {
+    const obj = JSON.parse(payload.line) as Record<string, unknown>
+    if (obj['type'] === 'archive_progress') return
+  } catch {
+    // non-JSON line - show it
+  }
+  const sessions = new Map(liveBackupSessions.value)
+  for (const [key, session] of sessions) {
+    if (session.hostname === payload.hostname) {
+      sessions.set(key, {
+        ...session,
+        lines: [...session.lines.slice(-(MAX_ACTIVITY_LOG_LINES - 1)), payload.line],
+      })
+      break
     }
-    const sessions = new Map(liveBackupSessions.value)
-    for (const [key, session] of sessions) {
-      if (session.hostname === payload.hostname) {
-        sessions.set(key, {
-          ...session,
-          lines: [...session.lines.slice(-(MAX_ACTIVITY_LOG_LINES - 1)), payload.line],
-        })
-        break
-      }
-    }
-    liveBackupSessions.value = sessions
-  },
-)
+  }
+  liveBackupSessions.value = sessions
+})
 
 const activeLiveSessions = computed<LiveBackupSession[]>(() =>
   [...liveBackupSessions.value.values()].filter((s) => s.lines.length > 0),

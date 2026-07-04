@@ -2,27 +2,29 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { ref, onUnmounted } from 'vue'
+import type { ServerToUi } from '../types/generated/ServerToUi'
 import { logger } from '../utils/logger'
+
+type ServerToUiPayload<T extends ServerToUi['type']> =
+  Extract<ServerToUi, { type: T }> extends { payload: infer P } ? P : undefined
 
 export type WsConnectionStatus = 'connected' | 'disconnected' | 'reconnecting'
 
-type MessageCallback<T> = (data: T) => void
-
-interface WsMessage<T = unknown> {
-  type: string
-  payload: T
+type OnMessage = {
+  <T extends ServerToUi['type']>(type: T, callback: (data: ServerToUiPayload<T>) => void): void
+  <T>(type: string, callback: (data: T) => void): void
 }
 
 interface UseWebSocketReturn {
   status: ReturnType<typeof ref<WsConnectionStatus>>
-  onMessage: <T>(type: string, callback: MessageCallback<T>) => void
+  onMessage: OnMessage
   forceReconnect: () => void
 }
 
 const MAX_BACKOFF_MS = 30_000
 
 const status = ref<WsConnectionStatus>('disconnected')
-const listeners = new Map<string, Set<MessageCallback<unknown>>>()
+const listeners = new Map<string, Set<(data: unknown) => void>>()
 
 let socket: WebSocket | null = null
 let backoffMs = 1_000
@@ -43,9 +45,9 @@ function connect(): void {
   })
 
   socket.addEventListener('message', (event: MessageEvent<string>) => {
-    let parsed: WsMessage
+    let parsed: { type: string; payload: unknown }
     try {
-      parsed = JSON.parse(event.data) as WsMessage
+      parsed = JSON.parse(event.data) as { type: string; payload: unknown }
     } catch {
       return
     }
@@ -110,16 +112,16 @@ document.addEventListener('visibilitychange', () => {
 })
 
 export function useWebSocket(): UseWebSocketReturn {
-  const localHandlers: Array<{ type: string; cb: MessageCallback<unknown> }> = []
+  const localHandlers: Array<{ type: string; cb: (data: unknown) => void }> = []
 
-  function onMessage<T>(type: string, callback: MessageCallback<T>): void {
+  const onMessage = ((type: string, callback: (data: unknown) => void): void => {
     if (!listeners.has(type)) {
       listeners.set(type, new Set())
     }
-    const cb = callback as MessageCallback<unknown>
+    const cb = callback as (data: unknown) => void
     listeners.get(type)!.add(cb)
     localHandlers.push({ type, cb })
-  }
+  }) as OnMessage
 
   onUnmounted(() => {
     for (const { type, cb } of localHandlers) {

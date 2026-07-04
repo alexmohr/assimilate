@@ -82,15 +82,6 @@ interface ActivityEntry {
   duration_secs: number
 }
 
-interface BackupPayload {
-  hostname: string
-  target_name: string
-}
-
-interface AgentPayload {
-  hostname: string
-}
-
 interface RepoOption {
   id: number
   name: string
@@ -184,13 +175,13 @@ function toggleSegment(name: string): void {
 
 const { onMessage, status: wsStatus } = useWebSocket()
 
-onMessage<BackupPayload>('BackupCompleted', (payload) => {
+onMessage('BackupCompleted', (payload) => {
   activeBackups.value = activeBackups.value.filter(
     (b) => !(b.hostname === payload.hostname && b.target_name === payload.target_name),
   )
   fetchAll().catch(logger.error)
 })
-onMessage<BackupPayload>('BackupStarted', (payload) => {
+onMessage('BackupStarted', (payload) => {
   const exists = activeBackups.value.some(
     (b) => b.hostname === payload.hostname && b.target_name === payload.target_name,
   )
@@ -203,10 +194,10 @@ onMessage<BackupPayload>('BackupStarted', (payload) => {
   }
   fetchAll().catch(logger.error)
 })
-onMessage<AgentPayload>('AgentConnected', () => {
+onMessage('AgentConnected', () => {
   fetchAll().catch(logger.error)
 })
-onMessage<AgentPayload>('AgentDisconnected', () => {
+onMessage('AgentDisconnected', () => {
   fetchAll().catch(logger.error)
 })
 

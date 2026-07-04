@@ -53,6 +53,7 @@ DELETE FROM ssh_tunnels WHERE agent_id IN (SELECT id FROM agents WHERE hostname 
 DELETE FROM agent_hostname_patterns WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod','unassigned-01','offline-due-01','disabled-only-01');
 DELETE FROM repo_quotas WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly'));
+DELETE FROM server_quotas WHERE ssh_host = 'localhost';
 DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly'));
 DELETE FROM notification_rules;
 DELETE FROM notification_channels;
@@ -371,11 +372,18 @@ SQL
 
 echo "==> Setting up repo quotas..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
-INSERT INTO repo_quotas (repo_id, warn_bytes, critical_bytes, enabled) VALUES
-    ($REPO_DAILY_ID, 10737418240, 16106127360, true),
-    ($REPO_HOURLY_ID, 5368709120, 8589934592, true),
-    ($REPO_WEEKLY_ID, 1, 1099511627776, true)
+INSERT INTO repo_quotas (repo_id, warn_bytes, critical_bytes, warn_action, critical_action, enabled) VALUES
+    ($REPO_DAILY_ID, 10737418240, 16106127360, 'notify_only', 'block_backups', true),
+    ($REPO_HOURLY_ID, 5368709120, 8589934592, 'notify_only', 'disable_schedule', true),
+    ($REPO_WEEKLY_ID, 1, 1099511627776, 'notify_only', 'notify_only', true)
 ON CONFLICT (repo_id) DO NOTHING;
+SQL
+
+echo "==> Setting up server quota (shared localhost host)..."
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
+INSERT INTO server_quotas (ssh_host, warn_bytes, critical_bytes, warn_action, critical_action, enabled) VALUES
+    ('localhost', 21474836480, 32212254720, 'notify_only', 'block_backups', true)
+ON CONFLICT (ssh_host) DO NOTHING;
 SQL
 
 echo "==> Adding system events..."

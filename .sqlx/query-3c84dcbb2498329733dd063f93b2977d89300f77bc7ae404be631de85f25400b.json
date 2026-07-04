@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE ssh_tunnels SET ssh_host = COALESCE($2, ssh_host), ssh_user = COALESCE($3, ssh_user), ssh_port = COALESCE($4, ssh_port), tunnel_port = COALESCE($5, tunnel_port), enabled = COALESCE($6, enabled) WHERE id = $1 RETURNING id, agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, enabled, created_at",
+  "query": "INSERT INTO ssh_tunnels (agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, enabled, ssh_host_key) VALUES ($1, $2, $3, COALESCE($4, 22), $5, COALESCE($6, true), $7) RETURNING id, agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, ssh_host_key, enabled, created_at",
   "describe": {
     "columns": [
       {
@@ -35,11 +35,16 @@
       },
       {
         "ordinal": 6,
+        "name": "ssh_host_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
         "name": "enabled",
         "type_info": "Bool"
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "created_at",
         "type_info": "Timestamptz"
       }
@@ -51,7 +56,8 @@
         "Text",
         "Int4",
         "Int4",
-        "Bool"
+        "Bool",
+        "Text"
       ]
     },
     "nullable": [
@@ -61,9 +67,10 @@
       false,
       false,
       false,
+      true,
       false,
       false
     ]
   },
-  "hash": "f257ece4e2f1dc64fdb01ed2d23db1244eb50158a3bb1fcb1c80a9872f20efba"
+  "hash": "3c84dcbb2498329733dd063f93b2977d89300f77bc7ae404be631de85f25400b"
 }

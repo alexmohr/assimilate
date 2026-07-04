@@ -263,11 +263,29 @@ impl TunnelManager {
                     }
                 };
 
+                let scanned_key = match &current.ssh_host_key {
+                    Some(key) if !key.is_empty() => None,
+                    _ => match crate::ssh::scan_host_key(&current.ssh_host, ssh_port).await {
+                        Ok(k) => Some(k),
+                        Err(e) => {
+                            warn!(tunnel_id, "failed to scan SSH host key: {e}");
+                            None
+                        }
+                    },
+                };
+                let expected_host_key = resolve_and_persist_host_key(
+                    &manager.pool,
+                    current.id,
+                    current.ssh_host_key.clone(),
+                    scanned_key.as_deref(),
+                )
+                .await;
+
                 let handler = TunnelSshHandler {
                     server_addr: manager.server_addr,
                     ui_broadcast: manager.ui_broadcast.clone(),
                     agent_id: current.agent_id,
-                    expected_host_key: None,
+                    expected_host_key,
                 };
 
                 let session = tokio::select! {
@@ -487,6 +505,30 @@ impl TunnelManager {
     }
 }
 
+/// Resolves the expected SSH host key for a tunnel connection.
+///
+/// When `existing_key` is `Some` and non-empty it is returned as-is and
+/// `scanned_key` is ignored (no DB write).  Otherwise `scanned_key` is
+/// persisted via `db::update_tunnel_ssh_host_key` and returned.
+/// Returns `None` when neither key is available.
+async fn resolve_and_persist_host_key(
+    pool: &sqlx::PgPool,
+    tunnel_id: i64,
+    existing_key: Option<String>,
+    scanned_key: Option<&str>,
+) -> Option<String> {
+    match existing_key {
+        Some(key) if !key.is_empty() => Some(key),
+        _ => {
+            let scanned = scanned_key?;
+            if let Err(e) = db::update_tunnel_ssh_host_key(pool, tunnel_id, scanned).await {
+                error!(tunnel_id, "failed to persist scanned SSH host key: {e}");
+            }
+            Some(scanned.to_owned())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -498,11 +540,13 @@ mod tests {
         time::Duration,
     };
 
+    use russh::client::Handler;
     use tokio::sync::Notify;
     use tokio_util::sync::CancellationToken;
 
     use super::{
-        TunnelManager, TunnelState, TunnelTaskCompletion, tunnel_ssh_config, tunnel_target_addr,
+        TunnelManager, TunnelState, TunnelTaskCompletion, resolve_and_persist_host_key,
+        tunnel_ssh_config, tunnel_target_addr,
     };
     use crate::ws::ui_broadcast::UiBroadcast;
 
@@ -602,6 +646,70 @@ mod tests {
         assert!(mgr.tunnel_status(1).await.is_none());
     }
 
+    #[test]
+    fn ssh_handler_accepts_when_keys_match() {
+        let key_b64 = "AAAAC3NzaC1lZDI1NTE5AAAAINwxkbeQjd0zydveueMhRPJE+cxoP0DNuUcYAwqmOs6S";
+        let public = russh::keys::parse_public_key_base64(key_b64).unwrap();
+        let expected = public.to_openssh().unwrap();
+
+        let addr: SocketAddr = "127.0.0.1:2222".parse().unwrap();
+        let mut handler = super::TunnelSshHandler {
+            server_addr: addr,
+            ui_broadcast: crate::ws::ui_broadcast::UiBroadcast::new(),
+            agent_id: 1,
+            expected_host_key: Some(expected),
+        };
+
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(handler.check_server_key(&public));
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+    }
+
+    #[test]
+    fn ssh_handler_rejects_when_keys_differ() {
+        let key1_b64 = "AAAAC3NzaC1lZDI1NTE5AAAAINwxkbeQjd0zydveueMhRPJE+cxoP0DNuUcYAwqmOs6S";
+        let key2_b64 = "AAAAC3NzaC1lZDI1NTE5AAAAIC2A0E0TgtMfIkRqPBL6S1a60f1VMJEbaDsaeS2KJoC8";
+        let public1 = russh::keys::parse_public_key_base64(key1_b64).unwrap();
+        let public2 = russh::keys::parse_public_key_base64(key2_b64).unwrap();
+        let expected = public1.to_openssh().unwrap();
+
+        let addr: SocketAddr = "127.0.0.1:2222".parse().unwrap();
+        let mut handler = super::TunnelSshHandler {
+            server_addr: addr,
+            ui_broadcast: crate::ws::ui_broadcast::UiBroadcast::new(),
+            agent_id: 1,
+            expected_host_key: Some(expected),
+        };
+
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(handler.check_server_key(&public2));
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    #[test]
+    fn ssh_handler_accepts_when_no_expected_key() {
+        let key_b64 = "AAAAC3NzaC1lZDI1NTE5AAAAINwxkbeQjd0zydveueMhRPJE+cxoP0DNuUcYAwqmOs6S";
+        let public = russh::keys::parse_public_key_base64(key_b64).unwrap();
+
+        let addr: SocketAddr = "127.0.0.1:2222".parse().unwrap();
+        let mut handler = super::TunnelSshHandler {
+            server_addr: addr,
+            ui_broadcast: crate::ws::ui_broadcast::UiBroadcast::new(),
+            agent_id: 1,
+            expected_host_key: None,
+        };
+
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(handler.check_server_key(&public));
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+    }
+
     /// Regression: stop_tunnel must release the write lock before awaiting
     /// task completion so that the task's cancellation path (which calls
     /// set_status and needs the write lock) can proceed without deadlocking.
@@ -635,5 +743,51 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), mgr.stop_tunnel(42))
             .await
             .expect("stop_tunnel deadlocked while holding the write lock");
+    }
+
+    #[tokio::test]
+    async fn resolve_returns_existing_key_when_present() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
+        let result =
+            resolve_and_persist_host_key(&pool, 1, Some("ssh-ed25519 AAAA".to_string()), None)
+                .await;
+        assert_eq!(result, Some("ssh-ed25519 AAAA".to_string()));
+    }
+
+    #[tokio::test]
+    async fn resolve_returns_scanned_key_when_no_existing() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
+        let scanned = "ssh-ed25519 AABB";
+        let result = resolve_and_persist_host_key(&pool, 1, None, Some(scanned)).await;
+        assert_eq!(result, Some(scanned.to_string()));
+    }
+
+    #[tokio::test]
+    async fn resolve_returns_scanned_key_when_existing_is_empty() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
+        let scanned = "ssh-ed25519 AACC";
+        let result =
+            resolve_and_persist_host_key(&pool, 1, Some(String::new()), Some(scanned)).await;
+        assert_eq!(result, Some(scanned.to_string()));
+    }
+
+    #[tokio::test]
+    async fn resolve_returns_none_when_no_keys() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
+        let result = resolve_and_persist_host_key(&pool, 1, None, None).await;
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn resolve_ignores_scanned_key_when_existing_present() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
+        let result = resolve_and_persist_host_key(
+            &pool,
+            1,
+            Some("ssh-ed25519 EXISTING".to_string()),
+            Some("ssh-ed25519 SCANNED"),
+        )
+        .await;
+        assert_eq!(result, Some("ssh-ed25519 EXISTING".to_string()));
     }
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, enabled, created_at FROM ssh_tunnels ORDER BY id",
+  "query": "SELECT id, agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, ssh_host_key, enabled, created_at FROM ssh_tunnels WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -35,17 +35,24 @@
       },
       {
         "ordinal": 6,
+        "name": "ssh_host_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
         "name": "enabled",
         "type_info": "Bool"
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "created_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Int8"
+      ]
     },
     "nullable": [
       false,
@@ -54,9 +61,10 @@
       false,
       false,
       false,
+      true,
       false,
       false
     ]
   },
-  "hash": "56fd71cff8c1c935d306edd5d5678b64585379341ec5779724af6a5d2d3d72ad"
+  "hash": "4ae1af94a627c9c8a487a55731712eb10034de4f8b5ffc0d3c9e0d0d9d9c184c"
 }

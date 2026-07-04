@@ -126,6 +126,7 @@ pub async fn create_tunnel(
             ssh_port: req.ssh_port,
             tunnel_port: req.tunnel_port,
             enabled: req.enabled,
+            ssh_host_key: None,
         },
     )
     .await?;
@@ -162,6 +163,7 @@ pub async fn update_tunnel(
             ssh_port: req.ssh_port,
             tunnel_port: req.tunnel_port,
             enabled: req.enabled,
+            ssh_host_key: None,
         },
     )
     .await?;
@@ -198,6 +200,7 @@ pub async fn enable_tunnel(
             ssh_port: None,
             tunnel_port: None,
             enabled: Some(true),
+            ssh_host_key: None,
         },
     )
     .await?;
@@ -241,6 +244,7 @@ pub async fn disable_tunnel(
             ssh_port: None,
             tunnel_port: None,
             enabled: Some(false),
+            ssh_host_key: None,
         },
     )
     .await?;

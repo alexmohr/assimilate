@@ -189,6 +189,7 @@ pub struct SshTunnel {
     pub ssh_user: String,
     pub ssh_port: i32,
     pub tunnel_port: i32,
+    pub ssh_host_key: Option<String>,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
 }
@@ -201,6 +202,7 @@ pub struct NewSshTunnel {
     pub ssh_port: Option<i32>,
     pub tunnel_port: i32,
     pub enabled: Option<bool>,
+    pub ssh_host_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -210,6 +212,7 @@ pub struct UpdateSshTunnel {
     pub ssh_port: Option<i32>,
     pub tunnel_port: Option<i32>,
     pub enabled: Option<bool>,
+    pub ssh_host_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
@@ -1139,8 +1142,8 @@ pub async fn delete_repo(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
 pub async fn list_enabled_tunnels(pool: &PgPool) -> Result<Vec<SshTunnel>, ApiError> {
     sqlx::query_as!(
         SshTunnel,
-        "SELECT id, agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, enabled, created_at FROM \
-         ssh_tunnels WHERE enabled = true ORDER BY id",
+        "SELECT id, agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, ssh_host_key, enabled, \
+         created_at FROM ssh_tunnels WHERE enabled = true ORDER BY id",
     )
     .fetch_all(pool)
     .await
@@ -1150,8 +1153,8 @@ pub async fn list_enabled_tunnels(pool: &PgPool) -> Result<Vec<SshTunnel>, ApiEr
 pub async fn list_all_tunnels(pool: &PgPool) -> Result<Vec<SshTunnel>, ApiError> {
     sqlx::query_as!(
         SshTunnel,
-        "SELECT id, agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, enabled, created_at FROM \
-         ssh_tunnels ORDER BY id",
+        "SELECT id, agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, ssh_host_key, enabled, \
+         created_at FROM ssh_tunnels ORDER BY id",
     )
     .fetch_all(pool)
     .await
@@ -1161,8 +1164,8 @@ pub async fn list_all_tunnels(pool: &PgPool) -> Result<Vec<SshTunnel>, ApiError>
 pub async fn get_tunnel_by_id(pool: &PgPool, id: i64) -> Result<SshTunnel, ApiError> {
     sqlx::query_as!(
         SshTunnel,
-        "SELECT id, agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, enabled, created_at FROM \
-         ssh_tunnels WHERE id = $1",
+        "SELECT id, agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, ssh_host_key, enabled, \
+         created_at FROM ssh_tunnels WHERE id = $1",
         id,
     )
     .fetch_one(pool)
@@ -1176,8 +1179,8 @@ pub async fn get_tunnel_by_id(pool: &PgPool, id: i64) -> Result<SshTunnel, ApiEr
 pub async fn get_tunnel_by_agent_id(pool: &PgPool, agent_id: i64) -> Result<SshTunnel, ApiError> {
     sqlx::query_as!(
         SshTunnel,
-        "SELECT id, agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, enabled, created_at FROM \
-         ssh_tunnels WHERE agent_id = $1",
+        "SELECT id, agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, ssh_host_key, enabled, \
+         created_at FROM ssh_tunnels WHERE agent_id = $1",
         agent_id,
     )
     .fetch_one(pool)
@@ -1193,15 +1196,17 @@ pub async fn get_tunnel_by_agent_id(pool: &PgPool, agent_id: i64) -> Result<SshT
 pub async fn insert_tunnel(pool: &PgPool, params: &NewSshTunnel) -> Result<SshTunnel, ApiError> {
     sqlx::query_as!(
         SshTunnel,
-        "INSERT INTO ssh_tunnels (agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, enabled) \
-         VALUES ($1, $2, $3, COALESCE($4, 22), $5, COALESCE($6, true)) RETURNING id, agent_id, \
-         ssh_host, ssh_user, ssh_port, tunnel_port, enabled, created_at",
+        "INSERT INTO ssh_tunnels (agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, enabled, \
+         ssh_host_key) VALUES ($1, $2, $3, COALESCE($4, 22), $5, COALESCE($6, true), $7) \
+         RETURNING id, agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, ssh_host_key, \
+         enabled, created_at",
         params.agent_id,
         params.ssh_host,
         params.ssh_user,
         params.ssh_port,
         params.tunnel_port,
         params.enabled,
+        params.ssh_host_key,
     )
     .fetch_one(pool)
     .await
@@ -1217,14 +1222,16 @@ pub async fn update_tunnel(
         SshTunnel,
         "UPDATE ssh_tunnels SET ssh_host = COALESCE($2, ssh_host), ssh_user = COALESCE($3, \
          ssh_user), ssh_port = COALESCE($4, ssh_port), tunnel_port = COALESCE($5, tunnel_port), \
-         enabled = COALESCE($6, enabled) WHERE id = $1 RETURNING id, agent_id, ssh_host, \
-         ssh_user, ssh_port, tunnel_port, enabled, created_at",
+         enabled = COALESCE($6, enabled), ssh_host_key = COALESCE($7, ssh_host_key) WHERE id = $1 \
+         RETURNING id, agent_id, ssh_host, ssh_user, ssh_port, tunnel_port, ssh_host_key, \
+         enabled, created_at",
         id,
         params.ssh_host,
         params.ssh_user,
         params.ssh_port,
         params.tunnel_port,
         params.enabled,
+        params.ssh_host_key,
     )
     .fetch_one(pool)
     .await
@@ -1232,6 +1239,22 @@ pub async fn update_tunnel(
         sqlx::Error::RowNotFound => ApiError::NotFound(format!("ssh tunnel {id} not found")),
         other => ApiError::Database(other),
     })
+}
+
+pub async fn update_tunnel_ssh_host_key(
+    pool: &PgPool,
+    id: i64,
+    ssh_host_key: &str,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE ssh_tunnels SET ssh_host_key = $2 WHERE id = $1",
+        id,
+        ssh_host_key,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
 }
 
 pub async fn delete_tunnel(pool: &PgPool, id: i64) -> Result<(), ApiError> {

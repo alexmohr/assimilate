@@ -496,6 +496,7 @@ async fn tunnel_crud(pool: PgPool) {
             ssh_port: Some(2222),
             tunnel_port: 2200,
             enabled: Some(true),
+            ssh_host_key: None,
         },
     )
     .await
@@ -527,6 +528,7 @@ async fn tunnel_crud(pool: PgPool) {
             ssh_port: None,
             tunnel_port: None,
             enabled: Some(false),
+            ssh_host_key: None,
         },
     )
     .await
@@ -557,6 +559,7 @@ async fn tunnel_defaults(pool: PgPool) {
             ssh_port: None,
             tunnel_port: 3000,
             enabled: None,
+            ssh_host_key: None,
         },
     )
     .await
@@ -564,6 +567,102 @@ async fn tunnel_defaults(pool: PgPool) {
 
     assert_eq!(tunnel.ssh_port, 22);
     assert!(tunnel.enabled);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn tunnel_ssh_host_key_persist_and_coalesce(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "key-persist-host", None, "hash", None)
+        .await
+        .unwrap();
+
+    let tunnel = db::insert_tunnel(
+        &pool,
+        &NewSshTunnel {
+            agent_id: agent.id,
+            ssh_host: "key-test.example.com".to_string(),
+            ssh_user: "borg".to_string(),
+            ssh_port: Some(2222),
+            tunnel_port: 2200,
+            enabled: Some(true),
+            ssh_host_key: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    db::update_tunnel_ssh_host_key(&pool, tunnel.id, "ssh-ed25519 AAAAPINNED")
+        .await
+        .unwrap();
+
+    let fetched = db::get_tunnel_by_id(&pool, tunnel.id).await.unwrap();
+    assert_eq!(
+        fetched.ssh_host_key.as_deref(),
+        Some("ssh-ed25519 AAAAPINNED")
+    );
+
+    let updated = db::update_tunnel(
+        &pool,
+        tunnel.id,
+        &UpdateSshTunnel {
+            ssh_host: Some("updated.example.com".to_string()),
+            ssh_user: None,
+            ssh_port: None,
+            tunnel_port: None,
+            enabled: Some(true),
+            ssh_host_key: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(updated.ssh_host, "updated.example.com");
+    assert_eq!(
+        updated.ssh_host_key.as_deref(),
+        Some("ssh-ed25519 AAAAPINNED"),
+        "COALESCE must preserve the previously-pinned SSH host key"
+    );
+
+    let updated2 = db::update_tunnel(
+        &pool,
+        tunnel.id,
+        &UpdateSshTunnel {
+            ssh_host: None,
+            ssh_user: Some("root".to_string()),
+            ssh_port: None,
+            tunnel_port: None,
+            enabled: None,
+            ssh_host_key: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        updated2.ssh_host_key.as_deref(),
+        Some("ssh-ed25519 AAAAPINNED"),
+        "COALESCE must still preserve the pinned key when other fields are updated"
+    );
+
+    let updated3 = db::update_tunnel(
+        &pool,
+        tunnel.id,
+        &UpdateSshTunnel {
+            ssh_host: None,
+            ssh_user: None,
+            ssh_port: None,
+            tunnel_port: None,
+            enabled: None,
+            ssh_host_key: Some("ssh-ed25519 AAAAREPLACED".to_string()),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        updated3.ssh_host_key.as_deref(),
+        Some("ssh-ed25519 AAAAREPLACED"),
+        "Explicit SSH host key update must replace the old value"
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2876,6 +2975,7 @@ async fn ssh_tunnel_crud(pool: PgPool) {
             ssh_port: Some(2222),
             tunnel_port: 2200,
             enabled: Some(true),
+            ssh_host_key: None,
         },
     )
     .await
@@ -2907,6 +3007,7 @@ async fn ssh_tunnel_crud(pool: PgPool) {
             ssh_port: Some(2022),
             tunnel_port: Some(2201),
             enabled: Some(false),
+            ssh_host_key: None,
         },
     )
     .await
@@ -2937,6 +3038,7 @@ async fn ssh_tunnel_crud(pool: PgPool) {
             ssh_port: None,
             tunnel_port: 2300,
             enabled: None,
+            ssh_host_key: None,
         },
     )
     .await

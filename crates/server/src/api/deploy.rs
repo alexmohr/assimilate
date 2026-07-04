@@ -315,6 +315,7 @@ mod tests {
             ssh_port: 22,
             tunnel_port: 18080,
             enabled: true,
+            ssh_host_key: None,
             created_at: chrono::Utc::now(),
         };
 
@@ -334,6 +335,7 @@ mod tests {
             ssh_port: 22,
             tunnel_port: 18080,
             enabled: false,
+            ssh_host_key: None,
             created_at: chrono::Utc::now(),
         };
 

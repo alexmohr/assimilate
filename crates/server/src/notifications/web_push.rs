@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+use isahc::{HttpClient, config::Configurable};
 use web_push::{
     ContentEncoding, IsahcWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient,
     WebPushMessageBuilder,
 };
 
-use super::NotificationError;
+use super::{NotificationError, net};
 
 pub async fn send(
     vapid_private_key: &str,
@@ -15,6 +16,8 @@ pub async fn send(
     auth: String,
     payload: &serde_json::Value,
 ) -> Result<(), NotificationError> {
+    net::validate_outbound_url(&endpoint).await?;
+
     let subscription = SubscriptionInfo::new(endpoint, p256dh, auth);
 
     let mut sig_builder = VapidSignatureBuilder::from_base64(vapid_private_key, &subscription)
@@ -35,8 +38,12 @@ pub async fn send(
         .build()
         .map_err(|e| NotificationError::Config(format!("web push message build error: {e}")))?;
 
-    let client = IsahcWebPushClient::new()
-        .map_err(|e| NotificationError::Config(format!("web push client error: {e}")))?;
+    let client = IsahcWebPushClient::from(
+        HttpClient::builder()
+            .redirect_policy(isahc::config::RedirectPolicy::None)
+            .build()
+            .map_err(|e| NotificationError::Config(format!("web push client error: {e}")))?,
+    );
 
     client.send(message).await?;
 

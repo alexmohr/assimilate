@@ -64,22 +64,27 @@ impl ClientIpResolver {
             return peer_ip;
         }
 
-        // If the connecting peer is not itself a trusted proxy, do not honour
-        // the X-Forwarded-For header -- this prevents external parties from
-        // spoofing their IP.
-        if !self.is_trusted(&peer_ip) {
-            tracing::info!(%peer_ip, "peer IP is not a trusted proxy, returning peer IP");
-            return peer_ip;
-        }
-
         // Collect all X-Forwarded-For values from potentially multiple header
-        // lines (RFC 7230-style duplicate headers).
+        // lines (RFC 7230-style duplicate headers) so we can log the raw value
+        // even when the peer is not trusted.
         let xff_value: String = headers
             .get_all("x-forwarded-for")
             .iter()
             .filter_map(|v| v.to_str().ok())
             .collect::<Vec<_>>()
             .join(",");
+
+        // If the connecting peer is not itself a trusted proxy, do not honour
+        // the X-Forwarded-For header -- this prevents external parties from
+        // spoofing their IP.
+        if !self.is_trusted(&peer_ip) {
+            if xff_value.is_empty() {
+                tracing::info!(%peer_ip, "peer IP is not a trusted proxy, returning peer IP");
+            } else {
+                tracing::info!(%peer_ip, %xff_value, "rejecting spoofed XFF from untrusted peer");
+            }
+            return peer_ip;
+        }
         if xff_value.is_empty() {
             tracing::debug!(%peer_ip, "no X-Forwarded-For from trusted proxy, using peer IP");
             return peer_ip;

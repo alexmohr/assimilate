@@ -263,24 +263,23 @@ impl TunnelManager {
                     }
                 };
 
-                let expected_host_key = match &current.ssh_host_key {
-                    Some(key) if !key.is_empty() => Some(key.clone()),
+                let scanned_key = match &current.ssh_host_key {
+                    Some(key) if !key.is_empty() => None,
                     _ => match crate::ssh::scan_host_key(&current.ssh_host, ssh_port).await {
-                        Ok(scanned) => {
-                            if let Err(e) =
-                                db::update_tunnel_ssh_host_key(&manager.pool, current.id, &scanned)
-                                    .await
-                            {
-                                error!(tunnel_id, "failed to persist scanned SSH host key: {e}");
-                            }
-                            Some(scanned)
-                        }
+                        Ok(k) => Some(k),
                         Err(e) => {
                             warn!(tunnel_id, "failed to scan SSH host key: {e}");
                             None
                         }
                     },
                 };
+                let expected_host_key = resolve_and_persist_host_key(
+                    &manager.pool,
+                    current.id,
+                    current.ssh_host_key.clone(),
+                    scanned_key.as_deref(),
+                )
+                .await;
 
                 let handler = TunnelSshHandler {
                     server_addr: manager.server_addr,
@@ -506,6 +505,30 @@ impl TunnelManager {
     }
 }
 
+/// Resolves the expected SSH host key for a tunnel connection.
+///
+/// When `existing_key` is `Some` and non-empty it is returned as-is and
+/// `scanned_key` is ignored (no DB write).  Otherwise `scanned_key` is
+/// persisted via `db::update_tunnel_ssh_host_key` and returned.
+/// Returns `None` when neither key is available.
+async fn resolve_and_persist_host_key(
+    pool: &sqlx::PgPool,
+    tunnel_id: i64,
+    existing_key: Option<String>,
+    scanned_key: Option<&str>,
+) -> Option<String> {
+    match existing_key {
+        Some(key) if !key.is_empty() => Some(key),
+        _ => {
+            let scanned = scanned_key?;
+            if let Err(e) = db::update_tunnel_ssh_host_key(pool, tunnel_id, scanned).await {
+                error!(tunnel_id, "failed to persist scanned SSH host key: {e}");
+            }
+            Some(scanned.to_owned())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -522,7 +545,8 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::{
-        TunnelManager, TunnelState, TunnelTaskCompletion, tunnel_ssh_config, tunnel_target_addr,
+        TunnelManager, TunnelState, TunnelTaskCompletion, resolve_and_persist_host_key,
+        tunnel_ssh_config, tunnel_target_addr,
     };
     use crate::ws::ui_broadcast::UiBroadcast;
 
@@ -719,5 +743,51 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), mgr.stop_tunnel(42))
             .await
             .expect("stop_tunnel deadlocked while holding the write lock");
+    }
+
+    #[tokio::test]
+    async fn resolve_returns_existing_key_when_present() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
+        let result =
+            resolve_and_persist_host_key(&pool, 1, Some("ssh-ed25519 AAAA".to_string()), None)
+                .await;
+        assert_eq!(result, Some("ssh-ed25519 AAAA".to_string()));
+    }
+
+    #[tokio::test]
+    async fn resolve_returns_scanned_key_when_no_existing() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
+        let scanned = "ssh-ed25519 AABB";
+        let result = resolve_and_persist_host_key(&pool, 1, None, Some(scanned)).await;
+        assert_eq!(result, Some(scanned.to_string()));
+    }
+
+    #[tokio::test]
+    async fn resolve_returns_scanned_key_when_existing_is_empty() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
+        let scanned = "ssh-ed25519 AACC";
+        let result =
+            resolve_and_persist_host_key(&pool, 1, Some(String::new()), Some(scanned)).await;
+        assert_eq!(result, Some(scanned.to_string()));
+    }
+
+    #[tokio::test]
+    async fn resolve_returns_none_when_no_keys() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
+        let result = resolve_and_persist_host_key(&pool, 1, None, None).await;
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn resolve_ignores_scanned_key_when_existing_present() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
+        let result = resolve_and_persist_host_key(
+            &pool,
+            1,
+            Some("ssh-ed25519 EXISTING".to_string()),
+            Some("ssh-ed25519 SCANNED"),
+        )
+        .await;
+        assert_eq!(result, Some("ssh-ed25519 EXISTING".to_string()));
     }
 }

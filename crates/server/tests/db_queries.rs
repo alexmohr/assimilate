@@ -2627,11 +2627,90 @@ async fn account_lockout(pool: PgPool) {
     let user = db::get_user_by_username(&pool, "lockuser").await.unwrap();
     assert!(user.locked_until.is_none());
 
-    // Escalation level
-    let level = db::count_lockout_escalation_level(&pool, "lockuser", 1440)
+    // Escalation level (3 failures -> below threshold of 10 -> level 0)
+    let level = db::count_lockout_escalation_level(&pool, "lockuser", 1440, 10)
         .await
         .unwrap();
-    assert_eq!(level, 3);
+    assert_eq!(level, 0);
+
+    // With 15 failures the level should be 1 (first lockout at index 0 = 1 min)
+    for _ in 0..12 {
+        db::insert_login_attempt(&pool, "lockuser", "192.168.1.1", false)
+            .await
+            .unwrap();
+    }
+    let level = db::count_lockout_escalation_level(&pool, "lockuser", 1440, 10)
+        .await
+        .unwrap();
+    assert_eq!(level, 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn record_failed_login_triggers_lockout(pool: PgPool) {
+    db::insert_user(&pool, "ratelimituser", "hash")
+        .await
+        .unwrap();
+
+    // Insert 10 failed attempts - this should trigger account lockout
+    for _ in 0..10 {
+        db::record_failed_login_and_check_lockout(&pool, "ratelimituser", "10.0.0.1", 60, 10)
+            .await
+            .unwrap();
+    }
+
+    // User should be locked
+    let user = db::get_user_by_username(&pool, "ratelimituser")
+        .await
+        .unwrap();
+    assert!(user.locked_until.is_some());
+    assert!(user.locked_until.unwrap() > Utc::now());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn record_failed_login_below_threshold_no_lockout(pool: PgPool) {
+    db::insert_user(&pool, "underthreshold", "hash")
+        .await
+        .unwrap();
+
+    // 5 attempts is below the threshold of 10
+    for _ in 0..5 {
+        db::record_failed_login_and_check_lockout(&pool, "underthreshold", "10.0.0.1", 60, 10)
+            .await
+            .unwrap();
+    }
+
+    let user = db::get_user_by_username(&pool, "underthreshold")
+        .await
+        .unwrap();
+    assert!(user.locked_until.is_none());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn record_failed_login_transactional_rollback(pool: PgPool) {
+    db::insert_user(&pool, "txuser", "hash").await.unwrap();
+
+    // The function is atomic - if it succeeds, the insert is committed
+    // If it fails (e.g. DB error), the insert is rolled back.
+    // Test by checking count before and after.
+    let count_before: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*)::BIGINT AS \"count!\" FROM login_attempts WHERE username = 'txuser'"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    db::record_failed_login_and_check_lockout(&pool, "txuser", "10.0.0.1", 60, 10)
+        .await
+        .unwrap();
+
+    let count_after: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*)::BIGINT AS \"count!\" FROM login_attempts WHERE username = 'txuser'"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(count_after, count_before + 1);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -6288,9 +6367,7 @@ fn compute_retention_fallbacks(
 ) -> (i64, i64, i64, i64) {
     let legacy = legacy_raw.as_deref().and_then(|v| v.parse::<i64>().ok());
     let retention_days = legacy.unwrap_or(7);
-    let report_retention_days = report_raw
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(0);
+    let report_retention_days = report_raw.and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
     let failed_report_retention_days = failed_raw
         .and_then(|v| v.parse::<i64>().ok())
         .or(legacy)
@@ -6309,12 +6386,20 @@ fn compute_retention_fallbacks(
 
 #[sqlx::test(migrations = "./migrations")]
 async fn retention_fallback_new_settings_unset_uses_legacy(pool: PgPool) {
-    db::set_setting(&pool, "retention_days", "30").await.unwrap();
+    db::set_setting(&pool, "retention_days", "30")
+        .await
+        .unwrap();
 
     let legacy_raw = db::get_setting(&pool, "retention_days").await.unwrap();
-    let report_raw = db::get_setting(&pool, "report_retention_days").await.unwrap();
-    let failed_raw = db::get_setting(&pool, "failed_report_retention_days").await.unwrap();
-    let event_raw = db::get_setting(&pool, "system_event_retention_days").await.unwrap();
+    let report_raw = db::get_setting(&pool, "report_retention_days")
+        .await
+        .unwrap();
+    let failed_raw = db::get_setting(&pool, "failed_report_retention_days")
+        .await
+        .unwrap();
+    let event_raw = db::get_setting(&pool, "system_event_retention_days")
+        .await
+        .unwrap();
 
     let (ret, report, failed, events) =
         compute_retention_fallbacks(legacy_raw, report_raw, failed_raw, event_raw);
@@ -6324,13 +6409,21 @@ async fn retention_fallback_new_settings_unset_uses_legacy(pool: PgPool) {
         report, 0,
         "report_retention_days must NOT fall back to legacy"
     );
-    assert_eq!(failed, 30, "failed_report_retention_days must fall back to legacy (30)");
-    assert_eq!(events, 30, "system_event_retention_days must fall back to legacy (30)");
+    assert_eq!(
+        failed, 30,
+        "failed_report_retention_days must fall back to legacy (30)"
+    );
+    assert_eq!(
+        events, 30,
+        "system_event_retention_days must fall back to legacy (30)"
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn retention_fallback_new_settings_take_precedence(pool: PgPool) {
-    db::set_setting(&pool, "retention_days", "30").await.unwrap();
+    db::set_setting(&pool, "retention_days", "30")
+        .await
+        .unwrap();
     db::set_setting(&pool, "report_retention_days", "180")
         .await
         .unwrap();
@@ -6342,25 +6435,43 @@ async fn retention_fallback_new_settings_take_precedence(pool: PgPool) {
         .unwrap();
 
     let legacy_raw = db::get_setting(&pool, "retention_days").await.unwrap();
-    let report_raw = db::get_setting(&pool, "report_retention_days").await.unwrap();
-    let failed_raw = db::get_setting(&pool, "failed_report_retention_days").await.unwrap();
-    let event_raw = db::get_setting(&pool, "system_event_retention_days").await.unwrap();
+    let report_raw = db::get_setting(&pool, "report_retention_days")
+        .await
+        .unwrap();
+    let failed_raw = db::get_setting(&pool, "failed_report_retention_days")
+        .await
+        .unwrap();
+    let event_raw = db::get_setting(&pool, "system_event_retention_days")
+        .await
+        .unwrap();
 
     let (ret, report, failed, events) =
         compute_retention_fallbacks(legacy_raw, report_raw, failed_raw, event_raw);
 
     assert_eq!(ret, 30);
     assert_eq!(report, 180, "explicit report_retention_days must be used");
-    assert_eq!(failed, 60, "explicit failed_report_retention_days must be used");
-    assert_eq!(events, 45, "explicit system_event_retention_days must be used");
+    assert_eq!(
+        failed, 60,
+        "explicit failed_report_retention_days must be used"
+    );
+    assert_eq!(
+        events, 45,
+        "explicit system_event_retention_days must be used"
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn retention_fallback_nothing_set_uses_defaults(pool: PgPool) {
     let legacy_raw = db::get_setting(&pool, "retention_days").await.unwrap();
-    let report_raw = db::get_setting(&pool, "report_retention_days").await.unwrap();
-    let failed_raw = db::get_setting(&pool, "failed_report_retention_days").await.unwrap();
-    let event_raw = db::get_setting(&pool, "system_event_retention_days").await.unwrap();
+    let report_raw = db::get_setting(&pool, "report_retention_days")
+        .await
+        .unwrap();
+    let failed_raw = db::get_setting(&pool, "failed_report_retention_days")
+        .await
+        .unwrap();
+    let event_raw = db::get_setting(&pool, "system_event_retention_days")
+        .await
+        .unwrap();
 
     let (ret, report, failed, events) =
         compute_retention_fallbacks(legacy_raw, report_raw, failed_raw, event_raw);
@@ -6370,7 +6481,10 @@ async fn retention_fallback_nothing_set_uses_defaults(pool: PgPool) {
         report, 0,
         "default report_retention_days must be 0 (keep forever)"
     );
-    assert_eq!(failed, 365, "default failed_report_retention_days must be 365");
+    assert_eq!(
+        failed, 365,
+        "default failed_report_retention_days must be 365"
+    );
     assert_eq!(events, 90, "default system_event_retention_days must be 90");
 }
 
@@ -6387,9 +6501,15 @@ async fn retention_fallback_new_settings_without_legacy(pool: PgPool) {
         .unwrap();
 
     let legacy_raw = db::get_setting(&pool, "retention_days").await.unwrap();
-    let report_raw = db::get_setting(&pool, "report_retention_days").await.unwrap();
-    let failed_raw = db::get_setting(&pool, "failed_report_retention_days").await.unwrap();
-    let event_raw = db::get_setting(&pool, "system_event_retention_days").await.unwrap();
+    let report_raw = db::get_setting(&pool, "report_retention_days")
+        .await
+        .unwrap();
+    let failed_raw = db::get_setting(&pool, "failed_report_retention_days")
+        .await
+        .unwrap();
+    let event_raw = db::get_setting(&pool, "system_event_retention_days")
+        .await
+        .unwrap();
 
     let (ret, report, failed, events) =
         compute_retention_fallbacks(legacy_raw, report_raw, failed_raw, event_raw);

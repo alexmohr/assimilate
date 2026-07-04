@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+use std::net::SocketAddr;
+
 use axum::{
     Json,
-    extract::{FromRequestParts, State},
+    extract::{ConnectInfo, FromRequestParts, State},
     http::{HeaderMap, StatusCode, header, request::Parts},
     response::{IntoResponse, Response},
 };
@@ -197,10 +199,14 @@ pub struct RefreshResponse {
 )]
 pub async fn login(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     ApiJson(req): ApiJson<LoginRequest>,
 ) -> Result<Response, ApiError> {
-    let ip = extract_client_ip(&headers);
+    let ip = state
+        .client_ip_resolver
+        .resolve(peer.ip(), &headers)
+        .to_string();
 
     let failed_count =
         db::count_failed_login_attempts(&state.pool, &req.username, &ip, LOGIN_WINDOW_MINUTES)
@@ -265,15 +271,6 @@ pub async fn login(
             .map_err(|e| ApiError::Internal(format!("failed to build cookie header: {e}")))?,
     );
     Ok(response)
-}
-
-fn extract_client_ip(headers: &HeaderMap) -> String {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string())
 }
 
 #[utoipa::path(

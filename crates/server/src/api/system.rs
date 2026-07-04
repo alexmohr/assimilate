@@ -237,7 +237,6 @@ pub async fn get_settings(
                 tracing::warn!(value = %v, error = %e, "failed to parse report_retention_days setting");
             }).ok()
         })
-        .or(legacy)
         .unwrap_or(0);
 
     let failed_report_retention_days = db::get_setting(&state.pool, "failed_report_retention_days")
@@ -247,6 +246,7 @@ pub async fn get_settings(
                 tracing::warn!(value = %v, error = %e, "failed to parse failed_report_retention_days setting");
             }).ok()
         })
+        .or(legacy)
         .unwrap_or(365);
 
     let system_event_retention_days = db::get_setting(&state.pool, "system_event_retention_days")

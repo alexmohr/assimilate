@@ -11,7 +11,6 @@ use axum::{
 };
 use lz4_flex::frame::FrameEncoder;
 use serde::Deserialize;
-use tokio::io::AsyncReadExt;
 use tokio_util::io::{ReaderStream, SyncIoBridge};
 
 use super::{
@@ -124,23 +123,24 @@ pub async fn export_archive(
 
     let (reader, writer) = tokio::io::duplex(64 * 1024);
 
+    // Pipe borg's stdout through the lz4 encoder as it arrives, rather than
+    // buffering the whole tar in memory first. Aborting the download (browser
+    // cancel, client disconnect) drops `reader`, which makes writes into
+    // `writer` fail, so the copy below returns early and `child` is dropped
+    // (SIGTERM, escalating to SIGKILL + break-lock) instead of running to
+    // completion regardless of the client.
     tokio::spawn(async move {
-        let mut stdout = borg_stdout;
-        let mut buf = Vec::new();
-        let read_result =
-            tokio::time::timeout(Duration::from_secs(300), stdout.read_to_end(&mut buf)).await;
-        let _r = tokio::time::timeout(Duration::from_secs(30), child.wait()).await;
+        let mut sync_stdout = SyncIoBridge::new(borg_stdout);
+        let sync_writer = SyncIoBridge::new(writer);
+        tokio::task::spawn_blocking(move || {
+            let mut encoder = FrameEncoder::new(sync_writer);
+            std::io::copy(&mut sync_stdout, &mut encoder).ok();
+            encoder.finish().ok();
+        })
+        .await
+        .ok();
 
-        if matches!(read_result, Ok(Ok(_))) {
-            let bridge = SyncIoBridge::new(writer);
-            tokio::task::spawn_blocking(move || {
-                let mut encoder = FrameEncoder::new(bridge);
-                std::io::copy(&mut buf.as_slice(), &mut encoder).ok();
-                encoder.finish().ok();
-            })
-            .await
-            .ok();
-        }
+        let _r = tokio::time::timeout(Duration::from_secs(30), child.wait()).await;
     });
 
     let stream = ReaderStream::new(reader);

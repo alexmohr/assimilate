@@ -40,7 +40,6 @@ fn index_status_to_string(s: &crate::archive_index::IndexStatus) -> String {
     .to_string()
 }
 
-const EXTRACT_TIMEOUT: Duration = Duration::from_secs(300);
 pub const LOCK_WAIT_SECS: &str = "60";
 
 pub fn validate_path(path: &str) -> Result<(), ApiError> {
@@ -914,14 +913,6 @@ pub async fn get_archive_index_status(
     Ok(Json(response))
 }
 
-/// Resolves to `true` if the timeout elapsed before completion was signalled.
-async fn timed_out_before_done(done_rx: oneshot::Receiver<()>, timeout: Duration) -> bool {
-    tokio::select! {
-        () = tokio::time::sleep(timeout) => true,
-        _ = done_rx => false,
-    }
-}
-
 #[utoipa::path(
     get,
     path = "/api/repos/{repo_id}/archives/{archive_name}/extract",
@@ -992,13 +983,13 @@ pub async fn extract_file(
     });
     let body = Body::from_stream(stream);
 
-    // Kill the child only if the stream did not complete within the timeout.
-    // Dropping ServerChild sends SIGTERM first (graceful lock release), escalating
-    // to SIGKILL + break-lock after 30 seconds if the process does not exit.
+    // Hold the child alive until the stream finishes or the connection is closed,
+    // then drop it. Dropping ServerChild sends SIGTERM first (graceful lock
+    // release), escalating to SIGKILL + break-lock after 30 seconds if the
+    // process has not already exited on its own.
     tokio::spawn(async move {
-        if timed_out_before_done(done_rx, EXTRACT_TIMEOUT).await {
-            drop(child);
-        }
+        let _ = done_rx.await;
+        drop(child);
     });
 
     Ok((
@@ -1256,20 +1247,5 @@ mod tests {
         cases.iter().for_each(|(filename, expected)| {
             assert_eq!(content_type_for_extension(filename), *expected);
         });
-    }
-
-    #[tokio::test]
-    async fn timed_out_before_done_returns_false_when_signalled_first() {
-        let (done_tx, done_rx) = oneshot::channel::<()>();
-        drop(done_tx);
-
-        assert!(!timed_out_before_done(done_rx, Duration::from_secs(60)).await);
-    }
-
-    #[tokio::test]
-    async fn timed_out_before_done_returns_true_when_timeout_elapses() {
-        let (_done_tx, done_rx) = oneshot::channel::<()>();
-
-        assert!(timed_out_before_done(done_rx, Duration::from_millis(10)).await);
     }
 }

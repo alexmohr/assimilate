@@ -3,6 +3,7 @@
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
 import { mount } from '@vue/test-utils'
+import axios from 'axios'
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -244,5 +245,56 @@ describe('RestoreWizard', () => {
     await wrapper.vm.$nextTick()
 
     expect(wrapper.find('.form-error').text()).toBe('Restore failed')
+  })
+
+  it('shows a Cancel Download button while downloading and cancels without an error', async () => {
+    let capturedSignal: AbortSignal | undefined
+    mockPost.mockImplementation(
+      (_url: string, _body: unknown, config: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          capturedSignal = config.signal
+          capturedSignal?.addEventListener('abort', () => {
+            reject(new axios.CanceledError())
+          })
+        }),
+    )
+
+    const wrapper = mountWizard()
+
+    await wrapper.find('.step-content select').setValue(ARCHIVES[0].name)
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Next')!
+      .trigger('click')
+    await wrapper.vm.$nextTick()
+
+    await wrapper.find('textarea').setValue('/etc/nginx/nginx.conf')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Next')!
+      .trigger('click')
+    await wrapper.vm.$nextTick()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Next')!
+      .trigger('click')
+    await wrapper.vm.$nextTick()
+
+    await wrapper.find('button.btn-primary').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    const cancelBtn = wrapper.findAll('button').find((b) => b.text() === 'Cancel Download')
+    expect(cancelBtn).toBeDefined()
+    expect(capturedSignal?.aborted).toBe(false)
+
+    await cancelBtn!.trigger('click')
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    expect(capturedSignal?.aborted).toBe(true)
+    expect(wrapper.find('.form-error').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Restore completed successfully.')
+    expect(wrapper.findAll('button').find((b) => b.text() === 'Restore')).toBeDefined()
   })
 })

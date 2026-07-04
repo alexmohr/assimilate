@@ -458,4 +458,174 @@ describe('RepoDetailView', () => {
     expect(wrapper.text()).toContain('db-hourly')
     expect(vi.mocked(apiClient.get)).toHaveBeenCalledWith('/repos/2')
   })
+
+  describe('archive filter via ?archive= query parameter', () => {
+    const archiveA = {
+      name: 'web-server-01-backup-2026-06-04T02:00:00',
+      start: '2026-06-04T02:00:00',
+      hostname: 'web-server-01',
+      comment: '',
+      original_size: 1_000,
+      deduplicated_size: 500,
+      matched: true,
+      agent_hostname: 'web-server-01',
+    }
+    const archiveB = {
+      name: 'db-server-01-backup-2026-06-04T03:00:00',
+      start: '2026-06-04T03:00:00',
+      hostname: 'db-server-01',
+      comment: '',
+      original_size: 2_000,
+      deduplicated_size: 1_000,
+      matched: true,
+      agent_hostname: 'db-server-01',
+    }
+
+    beforeEach(() => {
+      mockBrowserArchives.value = [archiveA, archiveB]
+      mockSortedArchives.value = [archiveA, archiveB]
+      setupApiSuccess()
+    })
+
+    it('AC-U1: archive filter computed returns null when no ?archive= query is present', async () => {
+      const wrapper = renderWithPlugins(RepoDetailView, {
+        props: { id: '1' },
+        storeState: { auth: { user: { role: 'admin' } } },
+      })
+      await flushPromises()
+
+      expect(wrapper.find('.archive-filter-banner').exists()).toBe(false)
+
+      const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')
+      await archivesTab!.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.findAll('.archive-row').length).toBe(2)
+    })
+
+    it('AC-U2: archive filter computed returns the archive name when ?archive=<name> is present', async () => {
+      const wrapper = renderWithPlugins(RepoDetailView, {
+        props: { id: '1' },
+        storeState: { auth: { user: { role: 'admin' } } },
+      })
+      await flushPromises()
+
+      await wrapper.vm.$router.replace({ query: { archive: archiveA.name } })
+      await flushPromises()
+
+      expect(wrapper.vm.archiveFilterName).toBe(archiveA.name)
+      expect(wrapper.vm.hasArchiveFilter).toBe(true)
+    })
+
+    it('AC-U3: archive list is filtered to show only the named archive', async () => {
+      const wrapper = renderWithPlugins(RepoDetailView, {
+        props: { id: '1' },
+        storeState: { auth: { user: { role: 'admin' } } },
+      })
+      await flushPromises()
+
+      // Navigate to archives tab with the archive filter
+      await wrapper.vm.$router.replace({
+        query: { tab: 'archives', archive: archiveA.name },
+      })
+      await flushPromises()
+
+      expect(wrapper.findAll('.archive-row').length).toBe(1)
+      expect(wrapper.find('.archive-filter-banner').text()).toContain(
+        `Showing only ${archiveA.name}`,
+      )
+    })
+
+    it('AC-U4: clicking "Show all archives" clears the filter', async () => {
+      const wrapper = renderWithPlugins(RepoDetailView, {
+        props: { id: '1' },
+        storeState: { auth: { user: { role: 'admin' } } },
+      })
+      await flushPromises()
+
+      // Navigate to archives tab with the archive filter
+      await wrapper.vm.$router.replace({
+        query: { tab: 'archives', archive: archiveA.name },
+      })
+      await flushPromises()
+
+      expect(wrapper.find('.archive-filter-banner').exists()).toBe(true)
+
+      const showAllBtn = wrapper.findAll('button').find((b) => b.text() === 'Show all archives')
+      await showAllBtn!.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.archive-filter-banner').exists()).toBe(false)
+      expect(wrapper.findAll('.archive-row').length).toBe(2)
+    })
+
+    it('AC-U5: archive filter with non-existent name shows "No matching archives"', async () => {
+      const wrapper = renderWithPlugins(RepoDetailView, {
+        props: { id: '1' },
+        storeState: { auth: { user: { role: 'admin' } } },
+      })
+      await flushPromises()
+
+      await wrapper.vm.$router.replace({
+        query: { tab: 'archives', archive: 'nonexistent-archive' },
+      })
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('No matching archives.')
+      expect(wrapper.find('.archive-filter-banner').exists()).toBe(true)
+      expect(wrapper.find('.archive-filter-banner').text()).toContain(
+        'Showing only nonexistent-archive',
+      )
+    })
+
+    it('AC-U6: filter works correctly with different sort modes', async () => {
+      const wrapper = renderWithPlugins(RepoDetailView, {
+        props: { id: '1' },
+        storeState: { auth: { user: { role: 'admin' } } },
+      })
+      await flushPromises()
+
+      await wrapper.vm.$router.replace({
+        query: { tab: 'archives', archive: archiveA.name },
+      })
+      await flushPromises()
+
+      const sortModes = [
+        'date-desc',
+        'date-asc',
+        'size-desc',
+        'size-asc',
+        'dedup-desc',
+        'dedup-asc',
+      ] as const
+
+      for (const mode of sortModes) {
+        wrapper.vm.archiveSortMode = mode
+        await flushPromises()
+
+        expect(wrapper.findAll('.archive-row').length).toBe(1)
+        expect(wrapper.find('.archive-filter-banner').exists()).toBe(true)
+      }
+    })
+
+    it('AC-U7: clear archive filter via function call', async () => {
+      const wrapper = renderWithPlugins(RepoDetailView, {
+        props: { id: '1' },
+        storeState: { auth: { user: { role: 'admin' } } },
+      })
+      await flushPromises()
+
+      await wrapper.vm.$router.replace({ query: { archive: archiveA.name } })
+      await flushPromises()
+
+      expect(wrapper.vm.hasArchiveFilter).toBe(true)
+      expect(wrapper.vm.archiveFilterName).toBe(archiveA.name)
+
+      wrapper.vm.clearArchiveFilter()
+      await flushPromises()
+
+      expect(wrapper.vm.hasArchiveFilter).toBe(false)
+      expect(wrapper.vm.archiveFilterName).toBeNull()
+    })
+  })
 })

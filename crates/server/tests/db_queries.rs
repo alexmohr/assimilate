@@ -5713,7 +5713,7 @@ async fn delete_backup_reports_with_archive_before_test(pool: PgPool) {
     let now = Utc::now();
     let old = now - Duration::days(100);
 
-    // Old archived report — should be deleted
+    // Old archived report -- should be deleted
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
@@ -5741,7 +5741,7 @@ async fn delete_backup_reports_with_archive_before_test(pool: PgPool) {
     .await
     .unwrap();
 
-    // Recent archived report — must be kept
+    // Recent archived report -- must be kept
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
@@ -5820,7 +5820,7 @@ async fn delete_backup_reports_with_archive_before_keeps_null_archive(pool: PgPo
     .await
     .unwrap();
 
-    // Old report with archive_name — should be deleted
+    // Old report with archive_name -- should be deleted
     db::insert_backup_report(
         &pool,
         &InsertReportParams {

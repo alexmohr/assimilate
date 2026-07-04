@@ -45,7 +45,7 @@ pub(crate) fn is_private_ip(ip: IpAddr) -> bool {
                 // of RFC 1918 private space.  Ipv6Addr::is_unique_local()
                 // is nightly-only, so check the first two hex digits.
                 let segments = v6.segments();
-                (segments[0] & 0xfe00) == 0xfc00
+                (segments[0] & 0xFE00) == 0xFC00
             }
         }
     }

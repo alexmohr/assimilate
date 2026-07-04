@@ -353,7 +353,7 @@ fn extract_archive_name(borg_command: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-async fn validate_agent_repo(
+pub(crate) async fn validate_agent_repo(
     pool: &PgPool,
     agent_id: i64,
     repo_id: i64,
@@ -361,6 +361,13 @@ async fn validate_agent_repo(
     msg_type: &str,
 ) -> bool {
     let Ok(has_access) = db::check_agent_repo_access(pool, agent_id, repo_id).await else {
+        tracing::error!(
+            hostname = %hostname,
+            agent_id = agent_id,
+            repo_id = repo_id,
+            msg_type = %msg_type,
+            "validate_agent_repo: DB error checking agent repo access"
+        );
         return false;
     };
     if has_access {
@@ -860,6 +867,11 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 reason = %reason,
                 "backup rejected by agent"
             );
+            if !validate_agent_repo(&state.pool, agent_id, repo_id.0, hostname, "BackupRejected")
+                .await
+            {
+                return;
+            }
             state.completion_bus.publish(OperationOutcome {
                 hostname: hostname.to_owned(),
                 repo_id: repo_id.0,
@@ -1060,6 +1072,9 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
             schedule_id,
             line,
         } => {
+            if !validate_agent_repo(&state.pool, agent_id, repo_id.0, hostname, "BackupLog").await {
+                return;
+            }
             state.ui_broadcast.send(ServerToUi::BackupLog {
                 hostname: hostname.to_owned(),
                 schedule_id,
@@ -1182,6 +1197,17 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 repo_id = ?repo_id,
                 "backup cancelled by agent"
             );
+            if !validate_agent_repo(
+                &state.pool,
+                agent_id,
+                repo_id.0,
+                hostname,
+                "BackupCancelled",
+            )
+            .await
+            {
+                return;
+            }
             state.completion_bus.publish(OperationOutcome {
                 hostname: hostname.to_owned(),
                 repo_id: repo_id.0,
@@ -1482,5 +1508,227 @@ exit 0
         })
         .await
         .expect("timed out waiting for archive indexing");
+    }
+
+    /// Create a test agent+repo+schedule triple linked via schedule_targets.
+    /// Returns (agent, repo, schedule).
+    async fn create_agent_repo_schedule(
+        pool: &PgPool,
+    ) -> (
+        crate::db::AgentRow,
+        crate::db::RepoRow,
+        crate::db::ScheduleRow,
+    ) {
+        let agent = crate::db::insert_agent(pool, "test-handler-host", None, "hash", None)
+            .await
+            .expect("insert agent");
+        let passphrase_encrypted = encrypt_passphrase(
+            "test-passphrase",
+            &derive_key(b"handler-test-secret-key").unwrap(),
+        )
+        .expect("encrypt passphrase");
+        let repo = crate::db::insert_repo(
+            pool,
+            &crate::db::InsertRepoParams {
+                name: "handler-test-repo",
+                repo_path: "/backups/handler-test",
+                ssh_user: "user",
+                ssh_host: "host.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+            },
+        )
+        .await
+        .expect("insert repo");
+        let schedule = crate::db::insert_schedule(
+            pool,
+            repo.id,
+            &crate::db::ScheduleParams {
+                name: "test-schedule",
+                schedule_type: "backup",
+                cron_expression: "0 3 * * *",
+                enabled: true,
+                canary_enabled: false,
+                exclude_patterns_raw: "",
+                file_change_patterns_raw: "",
+                ignore_global_excludes: false,
+                keep_hourly: 24,
+                keep_daily: 7,
+                keep_weekly: 4,
+                keep_monthly: 6,
+                keep_yearly: 1,
+                compact_enabled: true,
+                rate_limit_kbps: None,
+                pre_backup_commands: "",
+                post_backup_commands: "",
+                on_failure: "stop",
+            },
+            None,
+        )
+        .await
+        .expect("insert schedule");
+        crate::db::insert_schedule_targets(pool, schedule.id, &[(agent.id, 0)])
+            .await
+            .expect("insert schedule target");
+        (agent, repo, schedule)
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn validate_agent_repo_rejects_rogue_agent(pool: PgPool) {
+        let (assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        let rogue_agent = crate::db::insert_agent(&pool, "rogue-agent", None, "rogue-hash", None)
+            .await
+            .expect("insert rogue agent");
+
+        // Assigned agent passes
+        assert!(
+            validate_agent_repo(
+                &pool,
+                assigned_agent.id,
+                assigned_repo.id,
+                &assigned_agent.hostname,
+                "Test",
+            )
+            .await
+        );
+
+        // Rogue agent is rejected
+        assert!(
+            !validate_agent_repo(
+                &pool,
+                rogue_agent.id,
+                assigned_repo.id,
+                &rogue_agent.hostname,
+                "BackupStarted",
+            )
+            .await
+        );
+
+        // A security_violation event was logged
+        let events = crate::db::get_system_events(&pool, 10)
+            .await
+            .expect("get system events");
+        let security_events: Vec<_> = events
+            .iter()
+            .filter(|e| e.event_type == "security_violation")
+            .collect();
+        assert_eq!(security_events.len(), 1);
+        assert!(security_events[0].message.contains("rogue-agent"));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn handle_agent_message_backup_started_rejects_rogue_agent(pool: PgPool) {
+        let (_assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        let rogue_agent = crate::db::insert_agent(&pool, "rogue-backup-agent", None, "hash", None)
+            .await
+            .expect("insert rogue agent");
+
+        let state = build_test_state(pool.clone());
+
+        let msg = serde_json::to_string(&AgentToServer::BackupStarted {
+            repo_id: RepoId(assigned_repo.id),
+            schedule_id: None,
+            started_at: chrono::Utc::now(),
+            borg_command: Some("borg create --compression lz4 ::archive-name".into()),
+            run_id: None,
+        })
+        .expect("serialize");
+
+        handle_agent_message(&msg, &rogue_agent.hostname, rogue_agent.id, &state).await;
+
+        // Verify no backup_report was created for the rogue agent
+        let reports = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM backup_reports WHERE agent_id = $1",
+            rogue_agent.id,
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("query reports");
+        assert_eq!(reports.unwrap_or(0), 0);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn handle_agent_message_backup_log_rejects_rogue_agent(pool: PgPool) {
+        let (_assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        let rogue_agent = crate::db::insert_agent(&pool, "rogue-log-agent", None, "hash", None)
+            .await
+            .expect("insert rogue agent");
+
+        let state = build_test_state(pool.clone());
+
+        let msg = serde_json::to_string(&AgentToServer::BackupLog {
+            repo_id: RepoId(assigned_repo.id),
+            schedule_id: None,
+            line: "some log line".into(),
+        })
+        .expect("serialize");
+
+        handle_agent_message(&msg, &rogue_agent.hostname, rogue_agent.id, &state).await;
+
+        // Verify a security_violation was logged (BackupLog is guarded)
+        let events = crate::db::get_system_events(&pool, 10)
+            .await
+            .expect("get system events");
+        let security_events: Vec<_> = events
+            .iter()
+            .filter(|e| e.event_type == "security_violation")
+            .collect();
+        assert_eq!(security_events.len(), 1);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn handle_agent_message_backup_cancelled_rejects_rogue_agent(pool: PgPool) {
+        let (_assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        let rogue_agent = crate::db::insert_agent(&pool, "rogue-cancel-agent", None, "hash", None)
+            .await
+            .expect("insert rogue agent");
+
+        let state = build_test_state(pool.clone());
+
+        let msg = serde_json::to_string(&AgentToServer::BackupCancelled {
+            repo_id: RepoId(assigned_repo.id),
+        })
+        .expect("serialize");
+
+        handle_agent_message(&msg, &rogue_agent.hostname, rogue_agent.id, &state).await;
+
+        let events = crate::db::get_system_events(&pool, 10)
+            .await
+            .expect("get system events");
+        let security_events: Vec<_> = events
+            .iter()
+            .filter(|e| e.event_type == "security_violation")
+            .collect();
+        assert_eq!(security_events.len(), 1);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn handle_agent_message_backup_rejected_rejects_rogue_agent(pool: PgPool) {
+        let (_assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        let rogue_agent = crate::db::insert_agent(&pool, "rogue-reject-agent", None, "hash", None)
+            .await
+            .expect("insert rogue agent");
+
+        let state = build_test_state(pool.clone());
+
+        let msg = serde_json::to_string(&AgentToServer::BackupRejected {
+            repo_id: RepoId(assigned_repo.id),
+            reason: "security test".into(),
+        })
+        .expect("serialize");
+
+        handle_agent_message(&msg, &rogue_agent.hostname, rogue_agent.id, &state).await;
+
+        let events = crate::db::get_system_events(&pool, 10)
+            .await
+            .expect("get system events");
+        let security_events: Vec<_> = events
+            .iter()
+            .filter(|e| e.event_type == "security_violation")
+            .collect();
+        assert_eq!(security_events.len(), 1);
     }
 }

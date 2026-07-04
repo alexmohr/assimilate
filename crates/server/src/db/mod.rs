@@ -5,6 +5,7 @@ pub mod audit;
 pub mod dashboard;
 pub mod patterns;
 pub mod quota;
+pub mod server_quota;
 pub mod tags;
 
 use chrono::{DateTime, Utc};
@@ -2236,6 +2237,45 @@ pub async fn set_next_run_at(
     Ok(())
 }
 
+pub async fn set_schedule_enabled(
+    pool: &PgPool,
+    schedule_id: i64,
+    enabled: bool,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE schedules SET enabled = $2 WHERE id = $1",
+        schedule_id,
+        enabled,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// IDs of every schedule belonging to a repo whose `ssh_host` matches, used to enforce a
+/// `server_quotas` `block_backups` action across all repos sharing that host.
+pub async fn list_schedule_ids_for_ssh_host(
+    pool: &PgPool,
+    ssh_host: &str,
+) -> Result<Vec<i64>, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        id: i64,
+    }
+
+    let rows = sqlx::query_as!(
+        Row,
+        "SELECT s.id FROM schedules s JOIN repos r ON r.id = s.repo_id WHERE r.ssh_host = $1",
+        ssh_host,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    Ok(rows.into_iter().map(|r| r.id).collect())
+}
+
 pub async fn get_schedule_by_id(pool: &PgPool, id: i64) -> Result<ScheduleRow, ApiError> {
     sqlx::query_as!(
         ScheduleRow,
@@ -2360,6 +2400,23 @@ pub async fn get_repo_name(pool: &PgPool, repo_id: i64) -> Result<String, ApiErr
         })?;
 
     Ok(row.name)
+}
+
+pub async fn get_repo_ssh_host(pool: &PgPool, repo_id: i64) -> Result<String, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        ssh_host: String,
+    }
+
+    let row = sqlx::query_as!(Row, "SELECT ssh_host FROM repos WHERE id = $1", repo_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => ApiError::NotFound(format!("repo {repo_id} not found")),
+            other => ApiError::Database(other),
+        })?;
+
+    Ok(row.ssh_host)
 }
 
 /// Resolves a schedule's display name, falling back to `default_name` (typically

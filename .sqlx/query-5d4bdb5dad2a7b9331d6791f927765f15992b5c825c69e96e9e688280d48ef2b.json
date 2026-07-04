@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        INSERT INTO repo_quotas (repo_id, warn_bytes, critical_bytes, enabled, updated_at)\n        VALUES ($1, $2, $3, $4, NOW())\n        ON CONFLICT (repo_id) DO UPDATE\n        SET warn_bytes = EXCLUDED.warn_bytes,\n            critical_bytes = EXCLUDED.critical_bytes,\n            enabled = EXCLUDED.enabled,\n            updated_at = NOW()\n        RETURNING repo_id, warn_bytes, critical_bytes, enabled, updated_at\n        ",
+  "query": "SELECT repo_id, warn_bytes, critical_bytes, warn_action, critical_action, enabled, updated_at FROM repo_quotas WHERE repo_id = $1",
   "describe": {
     "columns": [
       {
@@ -20,21 +20,28 @@
       },
       {
         "ordinal": 3,
+        "name": "warn_action",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "critical_action",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
         "name": "enabled",
         "type_info": "Bool"
       },
       {
-        "ordinal": 4,
+        "ordinal": 6,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
       "Left": [
-        "Int8",
-        "Int8",
-        "Int8",
-        "Bool"
+        "Int8"
       ]
     },
     "nullable": [
@@ -42,8 +49,10 @@
       true,
       true,
       false,
+      false,
+      false,
       false
     ]
   },
-  "hash": "480fbb1b12a6c9f1636ebba39496ae92ada32b1f7e9a9b9282abe213e1c158aa"
+  "hash": "5d4bdb5dad2a7b9331d6791f927765f15992b5c825c69e96e9e688280d48ef2b"
 }

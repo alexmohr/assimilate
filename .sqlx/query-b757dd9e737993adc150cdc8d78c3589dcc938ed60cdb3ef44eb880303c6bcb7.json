@@ -1,0 +1,68 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            r.ssh_host AS \"ssh_host!\",\n            COUNT(DISTINCT r.id) AS \"repo_count!\",\n            COALESCE(SUM(rs.deduplicated_size)::bigint, 0) AS \"total_deduplicated_size!\",\n            sq.warn_bytes AS \"warn_bytes?\",\n            sq.critical_bytes AS \"critical_bytes?\",\n            sq.warn_action AS \"warn_action?\",\n            sq.critical_action AS \"critical_action?\",\n            sq.enabled AS \"enabled?\",\n            sq.updated_at AS \"updated_at?\"\n        FROM repos r\n        LEFT JOIN repo_stats rs ON rs.repo_id = r.id\n        LEFT JOIN server_quotas sq ON sq.ssh_host = r.ssh_host\n        GROUP BY\n            r.ssh_host, sq.warn_bytes, sq.critical_bytes, sq.warn_action, sq.critical_action,\n            sq.enabled, sq.updated_at\n        ORDER BY r.ssh_host\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ssh_host!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "repo_count!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "total_deduplicated_size!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "warn_bytes?",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "critical_bytes?",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "warn_action?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "critical_action?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "enabled?",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "updated_at?",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      null,
+      null,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "b757dd9e737993adc150cdc8d78c3589dcc938ed60cdb3ef44eb880303c6bcb7"
+}

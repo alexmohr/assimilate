@@ -23,6 +23,7 @@ use crate::{
     api::repos::sync_new_archives,
     archive_index, config_assembler, db,
     notifications::{self, EventType, NotificationEvent},
+    quota_enforcement,
     ws::{completion_bus::OperationOutcome, ui_broadcast::ActiveBackupSnapshot},
 };
 
@@ -669,6 +670,79 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                             tracing::error!(error = %e, "notification dispatch failed");
                         }
                     });
+
+                    if let Some(action) = quota.action_for(quota_status) {
+                        quota_enforcement::enforce_repo_quota_action(
+                            state,
+                            report.repo_id.0,
+                            report.schedule_id,
+                            action,
+                        )
+                        .await;
+                    }
+                }
+            }
+
+            if let Ok(ssh_host) = db::get_repo_ssh_host(&state.pool, report.repo_id.0).await
+                && let Ok(Some(server_quota)) =
+                    db::server_quota::get_server_quota(&state.pool, &ssh_host).await
+                && let Ok(total_deduplicated_size) =
+                    db::server_quota::total_deduplicated_size_for_ssh_host(&state.pool, &ssh_host)
+                        .await
+            {
+                let quota_status = server_quota.status(total_deduplicated_size);
+                if !matches!(quota_status, db::quota::QuotaStatus::Ok) {
+                    let quota_label = match quota_status {
+                        db::quota::QuotaStatus::Ok => "ok",
+                        db::quota::QuotaStatus::Warning => "warning",
+                        db::quota::QuotaStatus::Critical => "critical",
+                    };
+                    tracing::warn!(
+                        hostname = %hostname,
+                        ssh_host = %ssh_host,
+                        total_deduplicated_size,
+                        quota_status = quota_label,
+                        "server quota exceeded"
+                    );
+
+                    let event_type = match quota_status {
+                        db::quota::QuotaStatus::Ok => EventType::BackupSuccess,
+                        db::quota::QuotaStatus::Warning => EventType::BackupWarning,
+                        db::quota::QuotaStatus::Critical => EventType::BackupFailed,
+                    };
+                    let message = format!(
+                        "Server quota {quota_label} for host {ssh_host}: combined deduplicated \
+                         size {total_deduplicated_size} bytes exceeds configured limits",
+                    );
+                    let quota_event = NotificationEvent {
+                        event_type,
+                        hostname: hostname.to_owned(),
+                        repo_name: repo_name.clone(),
+                        status: quota_label.to_owned(),
+                        error_message: Some(message),
+                        timestamp: chrono::Utc::now(),
+                        repo_id: Some(report.repo_id.0),
+                        agent_id: Some(agent_id),
+                        schedule_id: None,
+                        schedule_name: None,
+                        archive_name: None,
+                    };
+                    let service = state.notification_service.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = notifications::dispatch(&service, quota_event).await {
+                            tracing::error!(error = %e, "notification dispatch failed");
+                        }
+                    });
+
+                    if let Some(action) = server_quota.action_for(quota_status) {
+                        quota_enforcement::enforce_server_quota_action(
+                            state,
+                            &ssh_host,
+                            report.schedule_id,
+                            action,
+                        )
+                        .await;
+                    }
                 }
             }
 

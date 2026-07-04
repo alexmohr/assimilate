@@ -8,8 +8,8 @@ use ts_rs::TS;
 use crate::{
     protocol::{RepoOpKind, TunnelStatus},
     types::{
-        BackupStatus, BorgEncryption, Compression, ExecutionMode, OnFailure, ScheduleType,
-        SearchEntry,
+        BackupStatus, BorgEncryption, Compression, ExecutionMode, OnFailure, QuotaAction,
+        ScheduleType, SearchEntry,
     },
 };
 
@@ -772,8 +772,29 @@ pub struct RepoQuotaResponse {
     pub warn_bytes: Option<i64>,
     #[ts(type = "number | null")]
     pub critical_bytes: Option<i64>,
+    pub warn_action: QuotaAction,
+    pub critical_action: QuotaAction,
     pub enabled: bool,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct ServerQuotaResponse {
+    pub ssh_host: String,
+    #[ts(type = "number")]
+    pub repo_count: i64,
+    #[ts(type = "number")]
+    pub total_deduplicated_size: i64,
+    pub configured: bool,
+    #[ts(type = "number | null")]
+    pub warn_bytes: Option<i64>,
+    #[ts(type = "number | null")]
+    pub critical_bytes: Option<i64>,
+    pub warn_action: QuotaAction,
+    pub critical_action: QuotaAction,
+    pub enabled: bool,
+    pub updated_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

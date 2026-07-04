@@ -1,0 +1,63 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO server_quotas\n            (ssh_host, warn_bytes, critical_bytes, warn_action, critical_action, enabled,\n             updated_at)\n        VALUES ($1, $2, $3, $4, $5, $6, NOW())\n        ON CONFLICT (ssh_host) DO UPDATE\n        SET warn_bytes = EXCLUDED.warn_bytes,\n            critical_bytes = EXCLUDED.critical_bytes,\n            warn_action = EXCLUDED.warn_action,\n            critical_action = EXCLUDED.critical_action,\n            enabled = EXCLUDED.enabled,\n            updated_at = NOW()\n        RETURNING\n            ssh_host, warn_bytes, critical_bytes, warn_action, critical_action, enabled, updated_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ssh_host",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "warn_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "critical_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "warn_action",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "critical_action",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Int8",
+        "Text",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "c5f64ffe9348648779d8ac6b5b01aa47f5e9a01f4d27766e705e769d5b7ae57b"
+}

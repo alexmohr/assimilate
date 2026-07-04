@@ -22,6 +22,7 @@ import {
   ChevronRight,
   Clock,
   Database,
+  HardDrive,
   KeyRound,
   LayoutGrid,
   Lock,
@@ -44,6 +45,7 @@ const iconMap: Record<string, Component> = {
   repos: Database,
   roles: Lock,
   schedules: Clock,
+  'server-quotas': HardDrive,
   system: Wrench,
   tokens: KeyRound,
   tunnels: Cable,
@@ -96,6 +98,11 @@ const settingsNav = computed((): NavGroup[] => {
   ]
   if (isAdmin.value) {
     groups[0].items.push({ to: '/system', label: 'System', icon: 'system' })
+    groups[0].items.push({
+      to: '/server-quotas',
+      label: 'Server Quotas',
+      icon: 'server-quotas',
+    })
     groups.push({
       label: 'Access Control',
       items: [

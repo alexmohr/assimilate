@@ -1,17 +1,16 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT COUNT(*)::BIGINT FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",
+  "query": "SELECT COUNT(*) AS \"count!\" FROM repos WHERE ssh_host = $1",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "count",
+        "name": "count!",
         "type_info": "Int8"
       }
     ],
     "parameters": {
       "Left": [
-        "Int8",
         "Text"
       ]
     },
@@ -19,5 +18,5 @@
       null
     ]
   },
-  "hash": "664c8eed3feb07fa811ae225b7a161b1305663ad800204ac3f01fa08315483b3"
+  "hash": "5a96a71d7a318830a322378f90e3624cbb9099d7f7e4b671efb9f15e543d6c53"
 }

@@ -527,6 +527,15 @@ async fn main() -> Result<(), StartupError> {
             get(api::quota::get_quota).put(api::quota::upsert_quota),
         )
         .route(
+            "/api/server-quotas",
+            get(api::server_quotas::list_server_quotas),
+        )
+        .route(
+            "/api/server-quotas/{ssh_host}",
+            put(api::server_quotas::upsert_server_quota)
+                .delete(api::server_quotas::delete_server_quota),
+        )
+        .route(
             "/api/users/{id}/permissions",
             get(api::permissions::list_for_user),
         )

@@ -48,6 +48,8 @@ describe('QuotaPanel', () => {
       data: {
         warn_bytes: 10_737_418_240,
         critical_bytes: 21_474_836_480,
+        warn_action: 'notify_only',
+        critical_action: 'notify_only',
         enabled: true,
       },
     })
@@ -66,6 +68,8 @@ describe('QuotaPanel', () => {
       data: {
         warn_bytes: 1_073_741_824,
         critical_bytes: 10_737_418_240,
+        warn_action: 'block_backups',
+        critical_action: 'notify_only',
         enabled: true,
       },
     })
@@ -76,6 +80,7 @@ describe('QuotaPanel', () => {
     expect(wrapper.find('.bar-warn').exists()).toBe(true)
     expect(wrapper.find('.badge-warn').exists()).toBe(true)
     expect(wrapper.text()).toContain('Warning')
+    expect(wrapper.text()).toContain('Block backups')
   })
 
   it('renders critical state when usage exceeds critical threshold', async () => {
@@ -83,6 +88,8 @@ describe('QuotaPanel', () => {
       data: {
         warn_bytes: 1_073_741_824,
         critical_bytes: 5_368_709_120,
+        warn_action: 'notify_only',
+        critical_action: 'disable_schedule',
         enabled: true,
       },
     })
@@ -93,6 +100,7 @@ describe('QuotaPanel', () => {
     expect(wrapper.find('.bar-crit').exists()).toBe(true)
     expect(wrapper.find('.badge-crit').exists()).toBe(true)
     expect(wrapper.text()).toContain('Critical')
+    expect(wrapper.text()).toContain('Disable schedule')
   })
 
   it('shows disabled message when quota is not enabled', async () => {
@@ -100,6 +108,8 @@ describe('QuotaPanel', () => {
       data: {
         warn_bytes: 0,
         critical_bytes: 0,
+        warn_action: 'notify_only',
+        critical_action: 'notify_only',
         enabled: false,
       },
     })
@@ -112,7 +122,13 @@ describe('QuotaPanel', () => {
 
   it('shows Edit button for admin users', async () => {
     mockGet.mockResolvedValue({
-      data: { warn_bytes: 0, critical_bytes: 0, enabled: true },
+      data: {
+        warn_bytes: 0,
+        critical_bytes: 0,
+        warn_action: 'notify_only',
+        critical_action: 'notify_only',
+        enabled: true,
+      },
     })
     const wrapper = renderWithPlugins(QuotaPanel, {
       props: { repoId: 1, isAdmin: true, currentUsageBytes: 0 },
@@ -123,13 +139,55 @@ describe('QuotaPanel', () => {
 
   it('does not show Edit button for non-admin users', async () => {
     mockGet.mockResolvedValue({
-      data: { warn_bytes: 0, critical_bytes: 0, enabled: true },
+      data: {
+        warn_bytes: 0,
+        critical_bytes: 0,
+        warn_action: 'notify_only',
+        critical_action: 'notify_only',
+        enabled: true,
+      },
     })
     const wrapper = renderWithPlugins(QuotaPanel, {
       props: { repoId: 1, isAdmin: false, currentUsageBytes: 0 },
     })
     await flushPromises()
     expect(wrapper.text()).not.toContain('Edit')
+  })
+
+  it('saves selected quota actions when editing', async () => {
+    mockGet.mockResolvedValue({
+      data: {
+        warn_bytes: 1_073_741_824,
+        critical_bytes: 2_147_483_648,
+        warn_action: 'notify_only',
+        critical_action: 'notify_only',
+        enabled: true,
+      },
+    })
+    const mockPut = vi.mocked(apiClient.put)
+    mockPut.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(QuotaPanel, {
+      props: { repoId: 1, isAdmin: true, currentUsageBytes: 0 },
+    })
+    await flushPromises()
+
+    await wrapper.find('button.btn-ghost').trigger('click')
+    await nextTick()
+
+    const selects = wrapper.findAll('select')
+    await selects[0]?.setValue('block_backups')
+    await selects[1]?.setValue('disable_schedule')
+
+    await wrapper.find('button.btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(mockPut).toHaveBeenCalledWith(
+      '/repos/1/quota',
+      expect.objectContaining({
+        warn_action: 'block_backups',
+        critical_action: 'disable_schedule',
+      }),
+    )
   })
 
   it('shows error message when API fails', async () => {

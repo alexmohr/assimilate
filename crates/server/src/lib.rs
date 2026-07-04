@@ -12,6 +12,7 @@ pub mod log_buffer;
 pub mod middleware;
 pub mod notifications;
 pub mod openapi;
+pub mod quota_enforcement;
 pub mod rate_limit;
 pub mod repo_op_tracker;
 pub mod scheduler;

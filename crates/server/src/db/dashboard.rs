@@ -184,22 +184,24 @@ pub async fn repositories(pool: &PgPool) -> Result<Vec<RepositoryRow>, ApiError>
         r#"
         SELECT r.id AS repo_id,
                r.name AS repo_name,
-               r.info_deduplicated_size AS deduplicated_size,
+               COALESCE(rs.deduplicated_size, 0)::INT8 AS "deduplicated_size!",
                q.warn_bytes,
                q.critical_bytes,
                COALESCE(q.enabled, false) AS quota_enabled,
                COUNT(DISTINCT s.id) FILTER (WHERE s.enabled = true) AS enabled_schedule_count,
-               r.importing,
-               r.import_error,
-               r.last_synced_at
+               COALESCE(ris.importing, false) AS "importing!",
+               ris.error AS import_error,
+               rs.last_synced_at
          FROM repos r
+         LEFT JOIN repo_stats rs ON rs.repo_id = r.id
+         LEFT JOIN repo_import_state ris ON ris.repo_id = r.id
          LEFT JOIN repo_quotas q ON q.repo_id = r.id
          LEFT JOIN schedules s ON s.repo_id = r.id
          WHERE r.enabled = true
-          GROUP BY r.id, r.name, r.info_deduplicated_size, q.warn_bytes,
-                   q.critical_bytes, COALESCE(q.enabled, false),
-                   r.importing, r.import_error, r.last_synced_at
-         ORDER BY r.info_deduplicated_size DESC, r.name
+          GROUP BY r.id, r.name, rs.deduplicated_size, rs.last_synced_at,
+                   q.warn_bytes, q.critical_bytes, COALESCE(q.enabled, false),
+                   ris.importing, ris.error
+         ORDER BY rs.deduplicated_size DESC NULLS LAST, r.name
         "#,
     )
     .fetch_all(pool)

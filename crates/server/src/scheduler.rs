@@ -116,7 +116,7 @@ pub async fn run_repo_sync(
     repo_op_tracker: &RepoOpTracker,
     repo_lock: &RepoLock,
 ) {
-    let repos = match db::list_all_repos(pool).await {
+    let repos = match db::list_repos_with_sync_schedule(pool).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, "failed to list repos for sync");

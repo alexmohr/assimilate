@@ -54,7 +54,6 @@ impl From<RepoRow> for RepoResponse {
             owner_id: row.owner_id,
             visibility: row.visibility,
             sync_schedule: row.sync_schedule,
-            last_synced_at: row.last_synced_at,
         }
     }
 }
@@ -3222,7 +3221,6 @@ mod tests {
             owner_id: None,
             visibility: "private".into(),
             sync_schedule: None,
-            last_synced_at: None,
         };
         let resp = RepoResponse::from(row);
         assert_eq!(resp.compression, shared::types::Compression::Lz4);
@@ -3244,7 +3242,6 @@ mod tests {
             owner_id: None,
             visibility: "private".into(),
             sync_schedule: None,
-            last_synced_at: None,
         };
         let resp = RepoResponse::from(row);
         assert_eq!(resp.compression, shared::types::Compression::Lz4);
@@ -3265,7 +3262,6 @@ mod tests {
             owner_id: None,
             visibility: "private".into(),
             sync_schedule: None,
-            last_synced_at: None,
         };
         let resp = RepoResponse::from(row);
         assert_eq!(resp.encryption, shared::types::BorgEncryption::Repokey);

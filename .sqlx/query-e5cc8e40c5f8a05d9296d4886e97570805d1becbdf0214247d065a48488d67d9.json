@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.name, COALESCE(rs.compressed_size, 0)::INT8 AS \"compressed_size!\", COALESCE(rs.deduplicated_size, 0)::INT8 AS \"deduplicated_size!\" FROM repos r LEFT JOIN repo_stats rs ON rs.repo_id = r.id ORDER BY rs.deduplicated_size DESC NULLS LAST",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "compressed_size!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "deduplicated_size!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "e5cc8e40c5f8a05d9296d4886e97570805d1becbdf0214247d065a48488d67d9"
+}

@@ -1,0 +1,170 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT (SELECT COUNT(*) FROM agents WHERE is_hidden = false) AS \"total_agents!\", (SELECT COUNT(*) FROM repos) AS \"total_repos!\", (SELECT COUNT(*) FROM schedules WHERE enabled = true) AS \"active_schedules!\", (SELECT COUNT(*) FROM schedules) AS \"total_schedules!\", COALESCE((SELECT SUM(deduplicated_size) FROM repo_stats), 0)::INT8 AS \"total_storage_bytes!\", (SELECT MAX(finished_at) FROM backup_reports WHERE status = 'success' AND finished_at > '1970-01-01T00:00:00Z') AS last_backup_at, (SELECT MIN(s.next_run_at) FROM schedules s JOIN repos r ON r.id = s.repo_id WHERE s.enabled = true AND r.enabled = true AND s.next_run_at IS NOT NULL AND s.next_run_at > NOW()) AS next_backup_at, (SELECT br.schedule_id FROM backup_reports br WHERE br.schedule_id IS NOT NULL ORDER BY br.finished_at DESC LIMIT 1) AS last_backup_schedule_id, (SELECT br.repo_id FROM backup_reports br WHERE br.status = 'success' ORDER BY br.finished_at DESC LIMIT 1) AS last_backup_repo_id, (SELECT br.archive_name FROM backup_reports br WHERE br.status = 'success' ORDER BY br.finished_at DESC LIMIT 1) AS last_backup_archive_name, (SELECT s.id FROM schedules s JOIN repos r ON r.id = s.repo_id WHERE s.enabled = true AND r.enabled = true AND s.next_run_at IS NOT NULL AND s.next_run_at > NOW() ORDER BY s.next_run_at LIMIT 1) AS next_backup_schedule_id, (SELECT COUNT(*) FROM backup_reports WHERE status = 'success' AND started_at > NOW() - INTERVAL '30 days') AS \"success_30d!\", (SELECT COUNT(*) FROM backup_reports WHERE status != 'success' AND started_at > NOW() - INTERVAL '30 days') AS \"failed_30d!\", (SELECT COUNT(*) FROM backup_reports WHERE started_at > NOW() - INTERVAL '30 days') AS \"total_30d!\", (SELECT MAX(finished_at) FROM backup_reports WHERE status = 'failed' AND finished_at > '1970-01-01T00:00:00Z') AS last_failure_at, (SELECT MAX(finished_at) FROM backup_reports WHERE status = 'warning' AND finished_at > '1970-01-01T00:00:00Z') AS last_warning_at, (SELECT br.schedule_id FROM backup_reports br WHERE br.schedule_id IS NOT NULL AND br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS last_failure_schedule_id, (SELECT br.schedule_id FROM backup_reports br WHERE br.schedule_id IS NOT NULL AND br.status = 'warning' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS last_warning_schedule_id, (SELECT br.error_message FROM backup_reports br WHERE br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS last_failure_message, (SELECT br.warnings[1] FROM backup_reports br WHERE br.status = 'warning' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS last_warning_message, (SELECT br.repo_id FROM backup_reports br WHERE br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS last_failure_repo_id, (SELECT br.repo_id FROM backup_reports br WHERE br.status = 'warning' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS last_warning_repo_id, (SELECT r.name FROM backup_reports br JOIN repos r ON r.id = br.repo_id WHERE br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS last_failure_repo_name, (SELECT r.name FROM backup_reports br JOIN repos r ON r.id = br.repo_id WHERE br.status = 'warning' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS last_warning_repo_name, (SELECT s.cron_expression FROM backup_reports br JOIN schedules s ON s.id = br.schedule_id WHERE br.status = 'failed' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS last_failure_schedule_name, (SELECT s.cron_expression FROM backup_reports br JOIN schedules s ON s.id = br.schedule_id WHERE br.status = 'warning' AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1) AS last_warning_schedule_name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "total_agents!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "total_repos!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "active_schedules!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "total_schedules!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "total_storage_bytes!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "last_backup_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "next_backup_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "last_backup_schedule_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "last_backup_repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 9,
+        "name": "last_backup_archive_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "next_backup_schedule_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 11,
+        "name": "success_30d!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 12,
+        "name": "failed_30d!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 13,
+        "name": "total_30d!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 14,
+        "name": "last_failure_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 15,
+        "name": "last_warning_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 16,
+        "name": "last_failure_schedule_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 17,
+        "name": "last_warning_schedule_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 18,
+        "name": "last_failure_message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 19,
+        "name": "last_warning_message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 20,
+        "name": "last_failure_repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 21,
+        "name": "last_warning_repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 22,
+        "name": "last_failure_repo_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 23,
+        "name": "last_warning_repo_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 24,
+        "name": "last_failure_schedule_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 25,
+        "name": "last_warning_schedule_name",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "a906bc331269d3747a6334ab490914de4acc705fbd78e0d1c916ecdbcb2ea2b7"
+}

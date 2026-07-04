@@ -148,7 +148,6 @@ pub struct RepoResponse {
     pub owner_id: Option<i64>,
     pub visibility: String,
     pub sync_schedule: Option<String>,
-    pub last_synced_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

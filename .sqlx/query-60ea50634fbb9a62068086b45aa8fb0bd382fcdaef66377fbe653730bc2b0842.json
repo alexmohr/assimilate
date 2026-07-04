@@ -1,0 +1,74 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT r.id AS repo_id,\n               r.name AS repo_name,\n               COALESCE(rs.deduplicated_size, 0)::INT8 AS \"deduplicated_size!\",\n               q.warn_bytes,\n               q.critical_bytes,\n               COALESCE(q.enabled, false) AS quota_enabled,\n               COUNT(DISTINCT s.id) FILTER (WHERE s.enabled = true) AS enabled_schedule_count,\n               COALESCE(ris.importing, false) AS \"importing!\",\n               ris.error AS import_error,\n               rs.last_synced_at\n         FROM repos r\n         LEFT JOIN repo_stats rs ON rs.repo_id = r.id\n         LEFT JOIN repo_import_state ris ON ris.repo_id = r.id\n         LEFT JOIN repo_quotas q ON q.repo_id = r.id\n         LEFT JOIN schedules s ON s.repo_id = r.id\n         WHERE r.enabled = true\n          GROUP BY r.id, r.name, rs.deduplicated_size, rs.last_synced_at,\n                   q.warn_bytes, q.critical_bytes, COALESCE(q.enabled, false),\n                   ris.importing, ris.error\n         ORDER BY rs.deduplicated_size DESC NULLS LAST, r.name\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "repo_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "deduplicated_size!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "warn_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "critical_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "quota_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "enabled_schedule_count",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "importing!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "import_error",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "last_synced_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      true,
+      true,
+      null,
+      null,
+      null,
+      true,
+      true
+    ]
+  },
+  "hash": "60ea50634fbb9a62068086b45aa8fb0bd382fcdaef66377fbe653730bc2b0842"
+}

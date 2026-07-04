@@ -13,5 +13,4 @@ export type RepoResponse = {
   owner_id: number | null;
   visibility: string;
   sync_schedule: string | null;
-  last_synced_at: string | null;
 };

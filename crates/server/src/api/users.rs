@@ -15,7 +15,7 @@ use crate::{
     error::{ApiError, ApiJson},
 };
 
-async fn user_row_to_response(
+pub(crate) async fn user_row_to_response(
     pool: &sqlx::PgPool,
     row: db::UserRow,
 ) -> Result<UserResponse, ApiError> {

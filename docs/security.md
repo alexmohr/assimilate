@@ -63,27 +63,26 @@ Agent tokens are scoped to a single agent. Revoking an agent removes its token.
 
 ## Role-Based Access Control
 
-Assimilate has two layered access-control systems:
+Assimilate uses a single RBAC layer: users are assigned one or more **roles** via the `user_roles` table. Each role bundles system-wide capabilities (e.g. create agents, manage schedules). A user's effective permissions are the union of all capabilities across every role they hold. See [Access Control](access-control.md) for the full capability matrix.
 
-1. **Account role** (`users.role`) — a single coarse classification per user: `admin` or `user`. Only `admin` accounts can manage users and roles.
-2. **RBAC roles** (`user_roles`) — granular, multi-assignable roles that bundle system-wide capabilities (e.g. create agents, manage schedules). A user can hold several RBAC roles at once. See [Access Control](access-control.md) for the full capability matrix.
+The **admin bypass** is determined by the `can_delete_repo` capability — a user with this permission (from any role they hold) passes all permission checks. The built-in `admin` role grants this capability; custom roles can also include it.
 
 Beyond roles, per-repository permissions control what a user can do on individual repositories.
 
-| Capability | Account `admin` | Account `user` |
-|------------|-----------------|----------------|
+| Capability | With `can_delete_repo` | Without `can_delete_repo` |
+|------------|------------------------|---------------------------|
 | Manage users and roles | ✓ | ✗ |
-| Create and delete agents | depends on RBAC | depends on RBAC |
-| View and manage all repositories | depends on RBAC | per-repo permission |
+| Create and delete agents | ✓ | depends on other RBAC capabilities |
+| View and manage all repositories | ✓ | per-repo permission |
 | Manage API tokens (all users) | ✓ | own tokens only |
-| Configure SSH tunnels | depends on RBAC | depends on RBAC |
+| Configure SSH tunnels | ✓ | depends on other RBAC capabilities |
 | View system information | ✓ | ✗ |
 | Trigger backups | ✓ | per-repo permission |
 | Browse archives | ✓ | per-repo permission |
 
 ### Per-Repository Permissions
 
-Admins can grant non-admin users fine-grained access to individual repositories:
+Users with `can_view_all_repos` can see all repositories. For others, fine-grained access to individual repositories is granted by admins:
 
 | Permission | Effect |
 |------------|--------|
@@ -93,7 +92,7 @@ Admins can grant non-admin users fine-grained access to individual repositories:
 | `can_extract` | User can browse and extract archive contents |
 | `can_delete` | User can delete archives |
 
-Permissions are managed by admins under **Settings → Users**.
+Permissions are managed by admins under **Settings → Access Control**.
 
 ## Brute-Force Protection
 

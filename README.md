@@ -41,7 +41,7 @@ The docs are served by the app at `/docs/` when running. Source files:
 |---|---|
 | Getting Started | [docs/getting-started.md](docs/getting-started.md) |
 | Configuration | [docs/configuration.md](docs/configuration.md) |
-| Hosts & Agent Management | [docs/hosts.md](docs/hosts.md) |
+| Hosts & Agent Management | [docs/agents.md](docs/agents.md) |
 | Repository Management | [docs/repositories.md](docs/repositories.md) |
 | Scheduling & Retention | [docs/scheduling.md](docs/scheduling.md) |
 | Archives | [docs/archives.md](docs/archives.md) |

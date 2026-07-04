@@ -3,12 +3,16 @@
 
 import { expect, test } from './fixtures'
 
+// Use a non-existent username so these tests don't lock the admin account
+// and break subsequent e2e tests.
+const NONEXISTENT_USER = 'nonexistent-rate-limit-test-user'
+
 test('too many failed login attempts returns 429', async ({ page }) => {
   let got429 = false
 
   for (let i = 0; i < 15; i++) {
     const resp = await page.request.post('/api/auth/login', {
-      data: { username: 'admin', password: 'wrong-password' },
+      data: { username: NONEXISTENT_USER, password: 'wrong-password' },
     })
     if (resp.status() === 429) {
       got429 = true
@@ -19,44 +23,18 @@ test('too many failed login attempts returns 429', async ({ page }) => {
   expect(got429).toBe(true)
 })
 
-test('locked account returns 401 not 429', async ({ page }) => {
-  // Trigger account lockout by sending many failed attempts.
-  // The login endpoint returns 401 for both invalid credentials and
-  // locked accounts, never 429 for account-scoped lockout.
-  for (let i = 0; i < 20; i++) {
-    const resp = await page.request.post('/api/auth/login', {
-      data: { username: 'admin', password: 'wrong-password' },
-    })
-    // Once the account is locked, every response should be 401 (not 429)
-    // to prevent account enumeration.
-    if (resp.status() === 401) {
-      // Continue until we see the lockout has been triggered
-      // (the 429 from IP rate limiting may also appear)
-    }
-  }
-
-  // After exhausting both IP rate limit and account lockout,
-  // repeated attempts should return 401 if the account is locked
-  // or 429 if only the IP is rate-limited. Both are acceptable;
-  // what matters is that we never leak whether the account exists.
-  const resp = await page.request.post('/api/auth/login', {
-    data: { username: 'admin', password: 'wrong-password' },
-  })
-  expect([401, 429]).toContain(resp.status())
-})
-
-test('successful login after rate limiting cools down', async ({ page }) => {
-  // Exhaust the rate limiter
+test('rate limited requests return same error format', async ({ page }) => {
+  // Exhaust the IP rate limiter with a non-existent user
+  let resp
   for (let i = 0; i < 10; i++) {
-    await page.request.post('/api/auth/login', {
-      data: { username: 'admin', password: 'wrong-password' },
+    resp = await page.request.post('/api/auth/login', {
+      data: { username: NONEXISTENT_USER, password: 'wrong-password' },
+      headers: { 'Content-Type': 'application/json' },
     })
   }
 
-  // The rate limiter is per-minute, so this may still be 429.
-  // Just verify the endpoint doesn't return 500.
-  const resp = await page.request.post('/api/auth/login', {
-    data: { username: 'admin', password: 'admin' },
-  })
-  expect([200, 429]).toContain(resp.status())
+  // Verify the 429 response has the expected structure
+  expect(resp!.status()).toBe(429)
+  const body = await resp!.json()
+  expect(body).toHaveProperty('error')
 })

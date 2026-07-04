@@ -26,8 +26,8 @@ The server streams data live from the borg repository. For details on the export
 
 ![Archive Browser - Download](assets/screenshots/archive-browse.png)
 
-!!! warning "Streaming timeout"
-    Large downloads stream data live over SSH. The server enforces a 5-minute per-file timeout and a 10-minute archive-export timeout. For multi-GB restores, use agent-side restore instead.
+!!! note "Large downloads"
+    Large downloads stream data live over SSH and are not time-limited by the server. For multi-GB restores, agent-side restore avoids holding a browser connection open for the duration of the transfer.
 
 ## Agent-Side Restore
 

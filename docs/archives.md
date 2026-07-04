@@ -81,8 +81,8 @@ To pull in new archives and index their contents, use **Full Resync** (admin onl
 
 The download uses the correct `Content-Type` for common file types (text, images, JSON, etc.) and falls back to `application/octet-stream` for unknown extensions.
 
-!!! warning "Large file extractions"
-    Extraction streams data live from the borg repository over SSH. Downloading very large files (multi-GB) will hold an SSH connection open for the duration of the transfer. The server enforces a 5-minute timeout — extractions that exceed this limit are cancelled. For large restores, consider running `borg extract` directly on the agent machine or repository host.
+!!! note "Large file extractions"
+    Extraction streams data live from the borg repository over SSH and is not time-limited by the server. Downloading very large files (multi-GB) will hold an SSH connection open for the duration of the transfer. For large restores, consider running `borg extract` directly on the agent machine or repository host.
 
 Only users with the **extract** permission on the repository can download files. Users with view-only access can browse archive contents but cannot download.
 
@@ -144,8 +144,8 @@ To download an entire archive or a subtree as a compressed tar archive:
 3. Optionally specify a sub-path to export only part of the archive tree.
 4. Click **Download tar.lz4**. The server pipes `borg export-tar` output through lz4 compression and streams it to your browser.
 
-!!! warning "Large exports"
-    Exporting a full archive streams all data live from the borg repository. Exports of large archives (multi-GB) may take several minutes. The server enforces a 10-minute streaming timeout. For very large restores, run `borg export-tar` directly on the agent machine.
+!!! note "Large exports"
+    Exporting a full archive streams all data live from the borg repository and is not time-limited by the server. Exports of large archives (multi-GB) may take several minutes. For very large restores, run `borg export-tar` directly on the agent machine.
 
 The exported file is named `<archive-name>.tar.lz4`. You can decompress it with:
 

@@ -1,6 +1,6 @@
 # Access Control
 
-Assimilate uses a layered access-control model with **roles**, **groups**, and **per-repository permissions**. This page explains how they interact and when to use each.
+Assimilate uses a role-based access-control model with **roles**, **groups**, and **per-repository permissions**. This page explains how they interact and when to use each.
 
 ## Overview
 
@@ -21,21 +21,17 @@ graph TD
 
 ## Roles
 
-A role is a named bundle of **system-wide capabilities**. Each user is assigned exactly one role. Roles control whether a user can create agents, manage repositories, configure schedules, and similar administrative actions.
+Users are assigned one or more roles via the **Roles** tab in the user editor. Each role bundles a set of system-wide capabilities. A user's effective permissions are the union of all capabilities across every role they hold.
 
-Roles do **not** control which specific repositories a user can see or interact with — that is the job of groups and per-repo permissions.
-
-![Roles](assets/screenshots/roles.png)
-
-### Built-in Roles
-
-Assimilate ships with three built-in roles that cannot be deleted:
+Built-in roles cannot be deleted:
 
 | Role | Description |
 |------|-------------|
-| **admin** | Full access to everything. Bypasses all permission checks. |
+| **admin** | Full access to everything. The `can_delete_repo` permission serves as the admin bypass — all permission checks pass for users with this capability. |
 | **operator** | Can create and manage agents, repos, and schedules but cannot manage users or system settings. |
 | **viewer** | Read-only access. Cannot create or modify resources. |
+
+![Roles](assets/screenshots/roles.png)
 
 ### Custom Roles
 
@@ -56,17 +52,24 @@ Admins can create custom roles with any combination of these capabilities:
 | View All Repos | See all repositories regardless of per-repo permissions |
 | Manage Tunnels | Configure SSH reverse tunnels |
 
+### Admin Bypass
+
+A user with a role that grants `can_delete_repo` bypasses all permission checks — they can view, modify, and delete any resource in the system. The admin built-in role includes this capability. Custom roles can also grant it.
+
 ### When to Use Roles
 
 Use roles when you need to control **what kind of actions** a user can perform across the system:
 
 - A new team member who should only monitor backups → assign the **viewer** role.
-- A DevOps engineer who manages infrastructure but should not administer users → create an **operator** role or a custom role with appropriate capabilities.
+- A DevOps engineer who manages infrastructure but should not administer users → assign the **operator** role or a custom role with appropriate capabilities.
 - A service account that only triggers backups → create a minimal custom role with no create/delete capabilities and use an API token.
+- An external auditor who needs read-only access → **viewer** role.
+
+Roles do **not** control which specific repositories a user can see or interact with — that is the job of groups and per-repo permissions.
 
 ## Groups
 
-A group is a collection of users that share the same **per-repository permissions**. When you grant a group access to a repository, every member of that group gains that access.
+A group is a collection of users that share the same **per-repository permissions**. When you grant a group access to a repository, every member of the group gains that access.
 
 Groups do **not** grant system capabilities — they only control which repositories their members can access and what operations they can perform on those repositories.
 
@@ -96,7 +99,7 @@ Use groups when you need to control **which repositories** a set of users can ac
 
 When evaluating whether a user can perform an action on a repository:
 
-1. **Admin role** — admins bypass all permission checks (always allowed).
+1. **Admin bypass** — if the user has `can_delete_repo` in any of their roles, the action is always allowed.
 2. **Direct user grant** — if the user has been granted the permission directly on the repository, it is allowed.
 3. **Group membership** — if any group the user belongs to has been granted the permission on the repository, it is allowed.
 4. **Deny by default** — if none of the above apply, the action is denied.

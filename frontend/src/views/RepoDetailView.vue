@@ -537,6 +537,21 @@ const archiveSortModeOptions: { value: ArchiveSortMode; label: string }[] = [
   { value: 'dedup-asc', label: 'Dedup smallest first' },
 ]
 
+// When navigating from an agent backup tab with ?archive=xxx, filter the list
+// to show only that archive instead of every archive in the repo.
+const archiveFilterName = computed<string | null>(() => {
+  const a = route.query.archive
+  return typeof a === 'string' && a.length > 0 ? a : null
+})
+
+const hasArchiveFilter = computed(() => archiveFilterName.value !== null)
+
+function clearArchiveFilter(): void {
+  const query = { ...route.query }
+  delete query.archive
+  router.replace({ query })
+}
+
 interface ArchiveGroup {
   hostname: string
   matched: boolean
@@ -561,22 +576,36 @@ const orderedArchives = computed<ArchiveEntry[]>(() => {
   const compareByDedup = (left: ArchiveEntry, right: ArchiveEntry): number =>
     left.deduplicated_size - right.deduplicated_size
 
+  let sorted: ArchiveEntry[]
   switch (archiveSortMode.value) {
     case 'date-desc':
-      return [...filteredArchives.value].sort((a, b) => compareByDate(b, a))
+      sorted = [...filteredArchives.value].sort((a, b) => compareByDate(b, a))
+      break
     case 'date-asc':
-      return [...filteredArchives.value].sort(compareByDate)
+      sorted = [...filteredArchives.value].sort(compareByDate)
+      break
     case 'size-desc':
-      return [...filteredArchives.value].sort((a, b) => compareBySize(b, a))
+      sorted = [...filteredArchives.value].sort((a, b) => compareBySize(b, a))
+      break
     case 'size-asc':
-      return [...filteredArchives.value].sort(compareBySize)
+      sorted = [...filteredArchives.value].sort(compareBySize)
+      break
     case 'dedup-desc':
-      return [...filteredArchives.value].sort((a, b) => compareByDedup(b, a))
+      sorted = [...filteredArchives.value].sort((a, b) => compareByDedup(b, a))
+      break
     case 'dedup-asc':
-      return [...filteredArchives.value].sort(compareByDedup)
-    default:
-      return filteredArchives.value
+      sorted = [...filteredArchives.value].sort(compareByDedup)
+      break
   }
+
+  // Additional filter: when navigating from an agent backup via ?archive=xxx,
+  // show only the matching archive in the list
+  const filterName = archiveFilterName.value
+  if (filterName) {
+    return sorted.filter((a) => a.name === filterName)
+  }
+
+  return sorted
 })
 
 const groupedArchives = computed<ArchiveGroup[]>(() => {
@@ -1683,6 +1712,20 @@ async function resetImport(): Promise<void> {
                   @click="groupArchivesByHost = !groupArchivesByHost"
                 >
                   {{ groupArchivesByHost ? 'Grouped by host' : 'Flat list' }}
+                </button>
+              </div>
+              <div
+                v-if="hasArchiveFilter"
+                class="archive-filter-banner"
+              >
+                <span>
+                  Showing only <strong>{{ archiveFilterName }}</strong>
+                </span>
+                <button
+                  class="btn btn-sm btn-ghost"
+                  @click="clearArchiveFilter"
+                >
+                  Show all archives
                 </button>
               </div>
               <div
@@ -3052,6 +3095,17 @@ async function resetImport(): Promise<void> {
 
 .archive-controls .filter-input {
   flex: 1;
+}
+
+.archive-filter-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  background: var(--accent-subtle, oklch(0.95 0.03 250));
+  border-bottom: 1px solid var(--border);
+  font-size: 0.82rem;
+  color: var(--text-primary);
 }
 
 .archive-sort-select {

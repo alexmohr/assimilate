@@ -225,10 +225,6 @@ async fn main() -> Result<(), StartupError> {
     // Apply per-user rate limiting to all authenticated routes.
     let app = Router::new()
         .merge(login_router)
-        .layer(axum_middleware::from_fn_with_state(
-            state.clone(),
-            auth_tracking_middleware,
-        ))
         .route("/api/health", get(api::health::health))
         .route("/api/auth/logout", post(api::auth::logout))
         .route("/api/auth/me", get(api::auth::me))
@@ -667,7 +663,11 @@ async fn main() -> Result<(), StartupError> {
             "/api/openapi.json",
             get(|| async { Json(ApiDoc::openapi()) }),
         )
-        .merge(Scalar::with_url("/api/docs", ApiDoc::openapi()));
+        .merge(Scalar::with_url("/api/docs", ApiDoc::openapi()))
+        .layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            auth_tracking_middleware,
+        ));
     let registry = state.registry.clone();
     let app = app
         .with_state(state)

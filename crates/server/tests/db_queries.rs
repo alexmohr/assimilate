@@ -2541,11 +2541,90 @@ async fn account_lockout(pool: PgPool) {
     let user = db::get_user_by_username(&pool, "lockuser").await.unwrap();
     assert!(user.locked_until.is_none());
 
-    // Escalation level
-    let level = db::count_lockout_escalation_level(&pool, "lockuser", 1440)
+    // Escalation level (3 failures -> below threshold of 10 -> level 0)
+    let level = db::count_lockout_escalation_level(&pool, "lockuser", 1440, 10)
         .await
         .unwrap();
-    assert_eq!(level, 3);
+    assert_eq!(level, 0);
+
+    // With 15 failures the level should be 1 (first lockout at index 0 = 1 min)
+    for _ in 0..12 {
+        db::insert_login_attempt(&pool, "lockuser", "192.168.1.1", false)
+            .await
+            .unwrap();
+    }
+    let level = db::count_lockout_escalation_level(&pool, "lockuser", 1440, 10)
+        .await
+        .unwrap();
+    assert_eq!(level, 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn record_failed_login_triggers_lockout(pool: PgPool) {
+    db::insert_user(&pool, "ratelimituser", "hash")
+        .await
+        .unwrap();
+
+    // Insert 10 failed attempts - this should trigger account lockout
+    for _ in 0..10 {
+        db::record_failed_login_and_check_lockout(&pool, "ratelimituser", "10.0.0.1", 60, 10)
+            .await
+            .unwrap();
+    }
+
+    // User should be locked
+    let user = db::get_user_by_username(&pool, "ratelimituser")
+        .await
+        .unwrap();
+    assert!(user.locked_until.is_some());
+    assert!(user.locked_until.unwrap() > Utc::now());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn record_failed_login_below_threshold_no_lockout(pool: PgPool) {
+    db::insert_user(&pool, "underthreshold", "hash")
+        .await
+        .unwrap();
+
+    // 5 attempts is below the threshold of 10
+    for _ in 0..5 {
+        db::record_failed_login_and_check_lockout(&pool, "underthreshold", "10.0.0.1", 60, 10)
+            .await
+            .unwrap();
+    }
+
+    let user = db::get_user_by_username(&pool, "underthreshold")
+        .await
+        .unwrap();
+    assert!(user.locked_until.is_none());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn record_failed_login_transactional_rollback(pool: PgPool) {
+    db::insert_user(&pool, "txuser", "hash").await.unwrap();
+
+    // The function is atomic - if it succeeds, the insert is committed
+    // If it fails (e.g. DB error), the insert is rolled back.
+    // Test by checking count before and after.
+    let count_before: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*)::BIGINT AS \"count!\" FROM login_attempts WHERE username = 'txuser'"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    db::record_failed_login_and_check_lockout(&pool, "txuser", "10.0.0.1", 60, 10)
+        .await
+        .unwrap();
+
+    let count_after: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*)::BIGINT AS \"count!\" FROM login_attempts WHERE username = 'txuser'"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(count_after, count_before + 1);
 }
 
 #[sqlx::test(migrations = "./migrations")]

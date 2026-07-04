@@ -30,9 +30,6 @@ const MAX_ACCOUNT_FAILURES: i64 = 10;
 /// Window within which account-scoped failures are counted.
 const ACCOUNT_LOCKOUT_WINDOW_MINUTES: i32 = 30;
 
-/// Exponential backoff durations for account lockout (indexed by escalation level).
-const LOCKOUT_DURATIONS_MINUTES: &[i64] = &[1, 5, 15, 60, 1440];
-
 /// Whether the session cookie should carry the `Secure` attribute.
 ///
 /// Defaults to `Secure` fail-safe: only an explicit `ASSIMILATE_SECURE_COOKIES=false`
@@ -209,23 +206,22 @@ pub async fn login(
         .resolve(peer.ip(), &headers)
         .to_string();
 
-    // 1. Account-scoped lockout check (independent of source IP)
-    let user_row = db::get_user_by_username(&state.pool, &req.username)
+    // Single user lookup (password hash + lockout + user info in one query).
+    // Return 401 for both nonexistent and locked accounts to prevent enumeration.
+    let (user, hash) = db::get_user_password_hash(&state.pool, &req.username)
         .await
         .map_err(|e| match e {
             ApiError::NotFound(_) => ApiError::Unauthorized("invalid credentials".to_string()),
             other => other,
         })?;
-    if let Some(locked_until) = user_row.locked_until
+
+    if let Some(locked_until) = user.locked_until
         && locked_until > Utc::now()
     {
-        return Err(ApiError::TooManyRequests(
-            "Account is temporarily locked due to too many failed login attempts. Try again later."
-                .to_string(),
-        ));
+        return Err(ApiError::Unauthorized("invalid credentials".to_string()));
     }
 
-    // 2. Per-IP rate limit check (existing)
+    // Per-IP rate limit check
     let failed_count =
         db::count_failed_login_attempts(&state.pool, &req.username, &ip, LOGIN_WINDOW_MINUTES)
             .await?;
@@ -235,44 +231,28 @@ pub async fn login(
         ));
     }
 
-    let (user, hash) = db::get_user_password_hash(&state.pool, &req.username)
-        .await
-        .map_err(|e| match e {
-            ApiError::NotFound(_) => ApiError::Unauthorized("invalid credentials".to_string()),
-            other => other,
-        })?;
-
     let password = req.password.clone();
     let valid = helpers::verify_password(password, hash)
         .await
         .map_err(|_| ApiError::Unauthorized("invalid credentials".to_string()))?;
 
     if !valid {
-        db::insert_login_attempt(&state.pool, &req.username, &ip, false).await?;
-
-        // Check if account-scoped failures exceed the threshold
-        let account_fails = db::count_failed_login_attempts_by_username(
+        // Atomic transaction: insert failed attempt, check threshold, set lockout
+        db::record_failed_login_and_check_lockout(
             &state.pool,
             &req.username,
+            &ip,
             ACCOUNT_LOCKOUT_WINDOW_MINUTES,
+            MAX_ACCOUNT_FAILURES,
         )
         .await?;
-        if account_fails >= MAX_ACCOUNT_FAILURES {
-            let level =
-                db::count_lockout_escalation_level(&state.pool, &req.username, 24 * 60).await?;
-            let idx = ((level / MAX_ACCOUNT_FAILURES)
-                .min(i64::try_from(LOCKOUT_DURATIONS_MINUTES.len()).unwrap_or(1) - 1))
-                as usize;
-            let duration_minutes = LOCKOUT_DURATIONS_MINUTES[idx];
-            let locked_until = Utc::now() + Duration::minutes(duration_minutes);
-            db::set_account_lockout(&state.pool, &req.username, locked_until).await?;
-        }
 
         return Err(ApiError::Unauthorized("invalid credentials".to_string()));
     }
 
     // Login succeeded - clear any account lockout
     db::clear_account_lockout(&state.pool, &req.username).await?;
+    db::insert_login_attempt(&state.pool, &req.username, &ip, true).await?;
 
     let user_resp = users::user_row_to_response(&state.pool, user).await?;
     let session_id = Uuid::new_v4().to_string();

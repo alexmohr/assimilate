@@ -769,3 +769,15 @@ When adding a new user-facing feature or documentation page, update `seed-demo.s
 * Every new feature **must** have at least one Playwright e2e test covering the happy path. In addition, unit tests for both frontend (Vitest) and backend (Rust `#[cfg(test)]`) must be added to cover edge cases and non-trivial logic.
 * If a legitimate refactor changes observable behavior, update the tests and explain why in the commit message.
 * When in doubt, stop and ask; never silently "fix" a test to unblock work.
+
+## Reviews
+
+* Reviews must be done with maximum strictness; findings are never optional.
+* Logic is never to be duplicated instead of reused.
+* New code shall have test coverage.
+* User-facing functions should be tested via e2e tests.
+* Use GitHub's review and changes-requested functions for all reviews.
+* `changes requested` label should be set when something is found, and `ready to merge` once the PR looks good.
+* If a PR is behind the main branch, this must be flagged as changes requested. Only a fully rebased branch is acceptable.
+* When a comment is addressed, the agent shall reply with "solved please re-review" and leave the comment unresolved.
+* The agent that addresses a review comment must never resolve it — only the comment author resolves it.

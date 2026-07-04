@@ -5,6 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import axios from 'axios'
 import { apiClient } from '../api/client'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import BaseModal from './BaseModal.vue'
@@ -38,6 +39,7 @@ const targetPath = ref('')
 const hostname = ref('')
 const { loading: executing, error, run } = useAsyncAction()
 const success = ref(false)
+const downloadAbortController = ref<AbortController | null>(null)
 
 const totalSteps = 4
 
@@ -79,6 +81,7 @@ function reset(): void {
 }
 
 function close(): void {
+  downloadAbortController.value?.abort()
   reset()
   emit('close')
 }
@@ -102,20 +105,29 @@ async function execute(): Promise<void> {
 
   await run(async () => {
     if (restoreMethod.value === 'download') {
-      const response = await apiClient.post(
-        `/repos/${props.repoId}/archives/${archiveEncoded}/download`,
-        { paths: paths.value },
-        { responseType: 'blob' },
-      )
-      const blob = response.data as Blob
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `restore-${selectedArchiveName.value}.tar`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
+      const controller = new AbortController()
+      downloadAbortController.value = controller
+      try {
+        const response = await apiClient.post(
+          `/repos/${props.repoId}/archives/${archiveEncoded}/download`,
+          { paths: paths.value },
+          { responseType: 'blob', signal: controller.signal },
+        )
+        const blob = response.data as Blob
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `restore-${selectedArchiveName.value}.tar`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+      } catch (e) {
+        if (axios.isCancel(e)) return
+        throw e
+      } finally {
+        downloadAbortController.value = null
+      }
     } else {
       await apiClient.post(`/repos/${props.repoId}/archives/${archiveEncoded}/restore`, {
         paths: paths.value,
@@ -125,6 +137,10 @@ async function execute(): Promise<void> {
     }
     success.value = true
   })
+}
+
+function cancelDownload(): void {
+  downloadAbortController.value?.abort()
 }
 </script>
 
@@ -299,12 +315,19 @@ async function execute(): Promise<void> {
           Next
         </button>
         <button
-          v-if="step === totalSteps"
+          v-if="step === totalSteps && !(executing && restoreMethod === 'download')"
           class="btn btn-primary"
           :disabled="!canProceed || executing"
           @click="execute"
         >
           {{ executing ? 'Restoring...' : 'Restore' }}
+        </button>
+        <button
+          v-if="step === totalSteps && executing && restoreMethod === 'download'"
+          class="btn btn-ghost"
+          @click="cancelDownload"
+        >
+          Cancel Download
         </button>
       </template>
     </template>

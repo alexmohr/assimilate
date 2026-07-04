@@ -27,7 +27,7 @@ The server streams data live from the borg repository. For details on the export
 ![Archive Browser - Download](assets/screenshots/archive-browse.png)
 
 !!! note "Large downloads"
-    Large downloads stream data live over SSH and are not time-limited by the server. For multi-GB restores, agent-side restore avoids holding a browser connection open for the duration of the transfer.
+    Large downloads stream data live over SSH and are not time-limited by the server. For multi-GB restores, agent-side restore avoids holding a browser connection open for the duration of the transfer. When downloading through the restore wizard's **Download to browser** option, a **Cancel Download** button is shown while the transfer is in progress; cancelling stops the transfer and the underlying `borg` process on the server immediately.
 
 ## Agent-Side Restore
 

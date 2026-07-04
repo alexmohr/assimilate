@@ -6,7 +6,7 @@
 # Assimilate
 
 [![CI](https://github.com/alexmohr/assimilate/actions/workflows/ci.yml/badge.svg)](https://github.com/alexmohr/assimilate/actions/workflows/ci.yml)
-[![Coverage Status](https://coveralls.io/repos/github/alexmohr/assimilate/badge.svg?branch=main)](https://coveralls.io/github/alexmohr/assimilate?branch=main)
+[![Coverage](https://img.shields.io/coverallsCoverage/github/alexmohr/assimilate?branch=main)](https://coveralls.io/github/alexmohr/assimilate?branch=main)
 
 A self-hosted BorgBackup management server — web UI, multi-host agent orchestration, and scheduled backups with a REST API.
 

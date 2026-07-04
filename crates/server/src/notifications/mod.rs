@@ -370,19 +370,21 @@ pub async fn deliver_to_channel(
             });
 
             for sub in &subscriptions {
-                if let Err(e) = self::net::validate_outbound_url(&sub.endpoint)
-                    .await
-                    .map(|_| ())
-                {
-                    tracing::warn!(endpoint = %sub.endpoint, error = %e, "skipping push subscription with non-routable endpoint");
-                    continue;
-                }
+                let (url, addrs) = match self::net::validate_outbound_url(&sub.endpoint).await {
+                    Ok(result) => result,
+                    Err(e) => {
+                        tracing::warn!(endpoint = %sub.endpoint, error = %e, "skipping push subscription with non-routable endpoint");
+                        continue;
+                    }
+                };
                 match web_push::send(
                     &vapid_private_key,
                     sub.endpoint.clone(),
                     sub.p256dh.clone(),
                     sub.auth.clone(),
                     &push_payload,
+                    &url,
+                    &addrs,
                 )
                 .await
                 {

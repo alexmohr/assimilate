@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use isahc::{HttpClient, config::Configurable};
+use std::net::SocketAddr;
+
+use isahc::{
+    HttpClient,
+    config::{Configurable, ResolveMap},
+};
+use reqwest::Url;
 use web_push::{
     ContentEncoding, IsahcWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient,
     WebPushMessageBuilder,
 };
 
-use super::{NotificationError, net};
+use super::NotificationError;
 
 pub async fn send(
     vapid_private_key: &str,
@@ -15,9 +21,9 @@ pub async fn send(
     p256dh: String,
     auth: String,
     payload: &serde_json::Value,
+    url: &Url,
+    addrs: &[SocketAddr],
 ) -> Result<(), NotificationError> {
-    net::validate_outbound_url(&endpoint).await?;
-
     let subscription = SubscriptionInfo::new(endpoint, p256dh, auth);
 
     let mut sig_builder = VapidSignatureBuilder::from_base64(vapid_private_key, &subscription)
@@ -38,9 +44,19 @@ pub async fn send(
         .build()
         .map_err(|e| NotificationError::Config(format!("web push message build error: {e}")))?;
 
+    let host = url
+        .host_str()
+        .ok_or_else(|| NotificationError::Config("push endpoint URL has no host".to_string()))?;
+    let port = url.port_or_known_default().unwrap_or(443);
+
+    let resolve_map = addrs.iter().fold(ResolveMap::new(), |map, addr| {
+        map.add(host, port, addr.ip())
+    });
+
     let client = IsahcWebPushClient::from(
         HttpClient::builder()
             .redirect_policy(isahc::config::RedirectPolicy::None)
+            .dns_resolve(resolve_map)
             .build()
             .map_err(|e| NotificationError::Config(format!("web push client error: {e}")))?,
     );

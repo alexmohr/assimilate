@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
@@ -1791,7 +1791,7 @@ pub struct LogEntryResponse {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 /// Response containing config export.
 pub struct ConfigExportResponse {
@@ -1805,7 +1805,7 @@ pub struct ConfigExportResponse {
     pub schedules: Vec<ScheduleExportResponse>,
 }
 
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 /// Response containing host export.
 pub struct HostExportResponse {
@@ -1821,11 +1821,24 @@ pub struct HostExportResponse {
     pub default_pre_backup_commands: String,
     /// Default commands to run after backups.
     pub default_post_backup_commands: String,
+    #[serde(default)]
+    pub default_file_change_patterns_raw: String,
     /// Hostname pattern aliases.
     pub hostname_patterns: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct ScheduleTargetExportResponse {
+    pub hostname: String,
+    pub execution_order: i32,
+    pub backup_sources: Vec<String>,
+    pub exclude_patterns: String,
+    #[serde(default)]
+    pub file_change_patterns: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 #[allow(
     clippy::struct_excessive_bools,
@@ -1854,6 +1867,7 @@ pub struct ScheduleExportResponse {
     pub on_failure: OnFailure,
     /// Raw exclude patterns.
     pub exclude_patterns_raw: String,
+    #[serde(default)]
     /// Raw file change detection patterns.
     pub file_change_patterns_raw: String,
     /// Whether global exclude patterns are ignored.
@@ -1872,21 +1886,14 @@ pub struct ScheduleExportResponse {
     pub compact_enabled: bool,
     /// Rate limit in kilobytes per second.
     pub rate_limit_kbps: Option<i32>,
-    /// Commands to run before the backup.
-    pub pre_backup_commands: String,
-    /// Commands to run after the backup.
-    pub post_backup_commands: String,
-    /// Backup source paths.
+    pub pre_backup_commands: Vec<String>,
+    pub post_backup_commands: Vec<String>,
     pub backup_sources: Vec<String>,
-    /// Hostnames targeted by this schedule.
-    pub target_hostnames: Vec<String>,
-    /// Name of the repository.
-    pub repo_name: String,
-    /// List of tags.
-    pub tags: Vec<String>,
+    pub targets: Vec<ScheduleTargetExportResponse>,
+    pub repo_name: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 /// Response containing import result.
 pub struct ImportResultResponse {

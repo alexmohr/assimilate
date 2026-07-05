@@ -2542,7 +2542,7 @@ async fn account_lockout(pool: PgPool) {
     assert!(user.locked_until.is_none());
 
     // Escalation level (3 failures -> below threshold of 10 -> level 0)
-    let level = db::count_lockout_escalation_level(&pool, "lockuser", 1440, 10)
+    let level = db::count_lockout_escalation_level(&pool, "lockuser", 10)
         .await
         .unwrap();
     assert_eq!(level, 0);
@@ -2553,7 +2553,7 @@ async fn account_lockout(pool: PgPool) {
             .await
             .unwrap();
     }
-    let level = db::count_lockout_escalation_level(&pool, "lockuser", 1440, 10)
+    let level = db::count_lockout_escalation_level(&pool, "lockuser", 10)
         .await
         .unwrap();
     assert_eq!(level, 1);
@@ -2567,7 +2567,7 @@ async fn record_failed_login_triggers_lockout(pool: PgPool) {
 
     // Insert 10 failed attempts - this should trigger account lockout
     for _ in 0..10 {
-        db::record_failed_login_and_check_lockout(&pool, "ratelimituser", "10.0.0.1", 60, 10)
+        db::record_failed_login_and_check_lockout(&pool, "ratelimituser", "10.0.0.1", 10)
             .await
             .unwrap();
     }
@@ -2581,6 +2581,155 @@ async fn record_failed_login_triggers_lockout(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn lockout_escalation_reaches_60min_tier(pool: PgPool) {
+    // The LOCKOUT_DURATIONS are [1, 5, 15, 60, 1440] minutes.
+    // With max_account_failures = 5:
+    //   - 5  failures (0-4)  -> level 0 = 1 minute
+    //   - 10 failures (5-9)  -> level 1 = 5 minutes
+    //   - 15 failures (10-14) -> level 2 = 15 minutes
+    //   - 20 failures (15-19) -> level 3 = 60 minutes
+    //   - 25 failures (20-24) -> level 4 = 1440 minutes (24h)
+
+    db::insert_user(&pool, "escalation60", "hash")
+        .await
+        .unwrap();
+
+    // 20 failures -> level 3 -> 60 min lockout
+    for _ in 0..20 {
+        db::record_failed_login_and_check_lockout(&pool, "escalation60", "10.0.0.1", 5)
+            .await
+            .unwrap();
+    }
+
+    let user = db::get_user_by_username(&pool, "escalation60")
+        .await
+        .unwrap();
+    let locked_until = user.locked_until.expect("user should be locked");
+
+    // Lockout duration should be >= 59 minutes (60 min tier, with some slack for test timing)
+    let duration_min = (locked_until - Utc::now()).num_minutes();
+    assert!(
+        duration_min >= 55,
+        "expected ~60 min lockout, got {duration_min} min"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn lockout_escalation_reaches_24h_tier(pool: PgPool) {
+    db::insert_user(&pool, "escalation24h", "hash")
+        .await
+        .unwrap();
+
+    // 25 failures -> level 4 -> 1440 min (24h) lockout
+    for _ in 0..25 {
+        db::record_failed_login_and_check_lockout(&pool, "escalation24h", "10.0.0.1", 5)
+            .await
+            .unwrap();
+    }
+
+    let user = db::get_user_by_username(&pool, "escalation24h")
+        .await
+        .unwrap();
+    let locked_until = user.locked_until.expect("user should be locked");
+
+    let duration_min = (locked_until - Utc::now()).num_minutes();
+    assert!(
+        duration_min >= 1430,
+        "expected ~1440 min lockout, got {duration_min} min"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn lockout_escalation_resets_after_successful_login(pool: PgPool) {
+    // Verify that the consecutive-failure window resets after a successful login.
+    db::insert_user(&pool, "escalationreset", "hash")
+        .await
+        .unwrap();
+
+    // 10 failures -> level 0 -> locked
+    for _ in 0..10 {
+        db::record_failed_login_and_check_lockout(&pool, "escalationreset", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+
+    let user = db::get_user_by_username(&pool, "escalationreset")
+        .await
+        .unwrap();
+    assert!(user.locked_until.is_some());
+
+    // Simulate a successful login
+    db::clear_account_lockout(&pool, "escalationreset")
+        .await
+        .unwrap();
+    db::insert_login_attempt(&pool, "escalationreset", "10.0.0.1", true)
+        .await
+        .unwrap();
+
+    // Now the count should be 0 (reset by success)
+    let count = db::count_failed_attempts_since_last_success(&pool, "escalationreset")
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+
+    // 5 more failures (below threshold of 10)
+    for _ in 0..5 {
+        db::record_failed_login_and_check_lockout(&pool, "escalationreset", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+
+    let user = db::get_user_by_username(&pool, "escalationreset")
+        .await
+        .unwrap();
+    assert!(user.locked_until.is_none(), "should not be locked yet");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn lockout_escalation_sliding_window_keeps_count_across_lockouts(pool: PgPool) {
+    // Simulate the attack scenario: attacker accumulates failures across
+    // multiple lockout periods. The consecutive-failure counter persists
+    // as long as there's no successful login in between.
+    db::insert_user(&pool, "slidingwindow", "hash")
+        .await
+        .unwrap();
+
+    // Phase 1: 10 failures -> lockout triggered
+    for _ in 0..10 {
+        db::record_failed_login_and_check_lockout(&pool, "slidingwindow", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+    let user = db::get_user_by_username(&pool, "slidingwindow")
+        .await
+        .unwrap();
+    assert!(user.locked_until.is_some());
+
+    // Simulate lockout expires (clear it, but NO successful login)
+    db::clear_account_lockout(&pool, "slidingwindow")
+        .await
+        .unwrap();
+
+    // Phase 2: 10 more failures -> level 1 (5 min lockout)
+    for _ in 0..10 {
+        db::record_failed_login_and_check_lockout(&pool, "slidingwindow", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+    let user = db::get_user_by_username(&pool, "slidingwindow")
+        .await
+        .unwrap();
+    let locked_until = user
+        .locked_until
+        .expect("user should be locked after phase 2");
+    let duration_min = (locked_until - Utc::now()).num_minutes();
+    assert!(
+        duration_min >= 2,
+        "expected level 1 (5 min), got {duration_min} min"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn record_failed_login_below_threshold_no_lockout(pool: PgPool) {
     db::insert_user(&pool, "underthreshold", "hash")
         .await
@@ -2588,7 +2737,7 @@ async fn record_failed_login_below_threshold_no_lockout(pool: PgPool) {
 
     // 5 attempts is below the threshold of 10
     for _ in 0..5 {
-        db::record_failed_login_and_check_lockout(&pool, "underthreshold", "10.0.0.1", 60, 10)
+        db::record_failed_login_and_check_lockout(&pool, "underthreshold", "10.0.0.1", 10)
             .await
             .unwrap();
     }
@@ -2613,7 +2762,7 @@ async fn record_failed_login_transactional_rollback(pool: PgPool) {
     .await
     .unwrap();
 
-    db::record_failed_login_and_check_lockout(&pool, "txuser", "10.0.0.1", 60, 10)
+    db::record_failed_login_and_check_lockout(&pool, "txuser", "10.0.0.1", 10)
         .await
         .unwrap();
 

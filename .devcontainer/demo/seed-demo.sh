@@ -333,9 +333,18 @@ WHERE br.schedule_id IS NULL
 SQL
 
 echo "==> Adding global excludes..."
-for PATTERN in "pp:__pycache__" "pp:.cache" "pp:node_modules" "*.pyc" "*.swp" "*~" "/proc" "/sys" "/tmp"; do
-    api POST "/api/excludes" "{\"pattern\": \"$PATTERN\"}" > /dev/null 2>&1 || true
-done
+# /api/excludes stores a single raw_text blob (one pattern per line) - it is not
+# a per-pattern collection endpoint.
+EXCLUDES_RAW_TEXT="pp:__pycache__
+pp:.cache
+pp:node_modules
+*.pyc
+*.swp
+*~
+/proc
+/sys
+/tmp"
+api PUT "/api/excludes" "$(jq -n --arg raw_text "$EXCLUDES_RAW_TEXT" '{raw_text: $raw_text}')" > /dev/null
 
 echo "==> Creating tags..."
 api POST "/api/tags" '{"name":"production","color":"#ef4444","scope":"agent"}' > /dev/null 2>&1 || true

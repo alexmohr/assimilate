@@ -59,10 +59,12 @@ test.describe('Archive browsing & diff journey', () => {
 
     // Indexing an archive's contents on first access can take a while - allow
     // more time than the default 5s before the directory listing renders.
+    // The demo backs up a mktemp -d directory, so the archive root contains a
+    // single "tmp" entry rather than the backed-up paths (etc/, var/) directly.
     const browserPanel = page.locator('.browser-panel').last()
     await expect(browserPanel.getByText('Name')).toBeVisible({ timeout: 30_000 })
     await expect(browserPanel.getByText('Modified')).toBeVisible()
-    await expect(browserPanel.getByText('etc')).toBeVisible()
+    await expect(browserPanel.getByText('tmp', { exact: true })).toBeVisible()
   })
 
   test('file browser breadcrumb shows root path', async ({ page }) => {
@@ -90,13 +92,14 @@ test.describe('Archive browsing & diff journey', () => {
       .click()
     await page.waitForTimeout(1000)
 
+    // The demo backs up a mktemp -d directory, so the archive root's sole entry is "tmp".
     const browserPanel = page.locator('.browser-panel').last()
-    const etcEntry = browserPanel.getByText('etc')
-    await expect(etcEntry).toBeVisible({ timeout: 30_000 })
-    await etcEntry.click()
+    const tmpEntry = browserPanel.getByText('tmp', { exact: true })
+    await expect(tmpEntry).toBeVisible({ timeout: 30_000 })
+    await tmpEntry.click()
     await page.waitForTimeout(1000)
 
-    await expect(page.locator('.archive-breadcrumb')).toContainText('etc')
+    await expect(page.locator('.archive-breadcrumb')).toContainText('tmp')
   })
 
   test('archive tags API endpoint is accessible and returns structured data', async ({ page }) => {

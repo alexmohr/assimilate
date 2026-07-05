@@ -34,10 +34,13 @@ test.describe('Hosts management', () => {
     await page.goto('/agents')
     await page.waitForLoadState('networkidle')
 
-    // Demo agents have no agent_version so they show a Deploy button (not imported).
+    // unassigned-01 is a placeholder with no backing container, so it never connects
+    // and never reports an agent_version - unlike web-server-01, which runs a real
+    // agent binary that reports its own version once connected (showing "Upgrade" or
+    // nothing instead of "Deploy").
     const deployBtn = page
       .locator('.host-card')
-      .filter({ hasText: 'web-server-01' })
+      .filter({ hasText: 'unassigned-01' })
       .locator('.card-actions button', { hasText: /Deploy|Upgrade/ })
       .first()
     await expect(deployBtn).toBeVisible({ timeout: 15_000 })

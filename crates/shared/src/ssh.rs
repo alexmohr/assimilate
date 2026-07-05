@@ -3,6 +3,7 @@
 
 use std::path::Path;
 
+#[must_use]
 pub fn borg_rsh() -> String {
     [
         "ssh",
@@ -15,6 +16,7 @@ pub fn borg_rsh() -> String {
     .join(" ")
 }
 
+#[must_use]
 pub fn borg_rsh_with_known_hosts(path: &Path) -> String {
     [
         "ssh",
@@ -28,6 +30,7 @@ pub fn borg_rsh_with_known_hosts(path: &Path) -> String {
     .join(" ")
 }
 
+#[must_use]
 pub fn known_hosts_host(host: &str, port: u16) -> String {
     if port == 22 {
         host.to_owned()

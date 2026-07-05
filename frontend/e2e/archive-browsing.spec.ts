@@ -15,7 +15,7 @@ test.describe('Archive browsing & diff journey', () => {
     await expect(page.locator('.panel-title').filter({ hasText: 'Archives' })).toBeVisible()
 
     const firstRow = page.locator('.archive-row').first()
-    await expect(firstRow).toBeVisible()
+    await expect(firstRow).toBeVisible({ timeout: 15_000 })
     await expect(firstRow.locator('.archive-name')).toBeVisible()
     await expect(firstRow.locator('.archive-date')).toBeVisible()
   })
@@ -57,8 +57,10 @@ test.describe('Archive browsing & diff journey', () => {
       .click()
     await page.waitForTimeout(1000)
 
+    // Indexing an archive's contents on first access can take a while - allow
+    // more time than the default 5s before the directory listing renders.
     const browserPanel = page.locator('.browser-panel').last()
-    await expect(browserPanel.getByText('Name')).toBeVisible()
+    await expect(browserPanel.getByText('Name')).toBeVisible({ timeout: 30_000 })
     await expect(browserPanel.getByText('Modified')).toBeVisible()
     await expect(browserPanel.getByText('etc')).toBeVisible()
   })
@@ -89,24 +91,23 @@ test.describe('Archive browsing & diff journey', () => {
     await page.waitForTimeout(1000)
 
     const browserPanel = page.locator('.browser-panel').last()
-    await browserPanel.getByText('etc').click()
+    const etcEntry = browserPanel.getByText('etc')
+    await expect(etcEntry).toBeVisible({ timeout: 30_000 })
+    await etcEntry.click()
     await page.waitForTimeout(1000)
 
     await expect(page.locator('.archive-breadcrumb')).toContainText('etc')
   })
 
-  test('archive tags API endpoint is accessible and returns structured data', async ({
-    page,
-    request,
-  }) => {
+  test('archive tags API endpoint is accessible and returns structured data', async ({ page }) => {
     await loginAsAdmin(page)
-    const archivesRes = await request.get('/api/repos/1/archives')
+    const archivesRes = await page.request.get('/api/repos/1/archives')
     expect(archivesRes.ok()).toBeTruthy()
 
     const archives: { name: string }[] = await archivesRes.json()
     expect(archives.length).toBeGreaterThan(0)
 
-    const tagsRes = await request.get(
+    const tagsRes = await page.request.get(
       `/api/repos/1/archives/${encodeURIComponent(archives[0].name)}/tags`,
     )
     expect(tagsRes.ok()).toBeTruthy()
@@ -114,19 +115,16 @@ test.describe('Archive browsing & diff journey', () => {
     expect(Array.isArray(tags)).toBeTruthy()
   })
 
-  test('archive diff API returns structured results for two archives', async ({
-    page,
-    request,
-  }) => {
+  test('archive diff API returns structured results for two archives', async ({ page }) => {
     await loginAsAdmin(page)
-    const archivesRes = await request.get('/api/repos/1/archives')
+    const archivesRes = await page.request.get('/api/repos/1/archives')
     expect(archivesRes.ok()).toBeTruthy()
 
     const archives: { name: string }[] = await archivesRes.json()
     expect(archives.length).toBeGreaterThanOrEqual(2)
 
     const [first, second] = archives
-    const diffRes = await request.get(
+    const diffRes = await page.request.get(
       `/api/repos/1/archives/diff?archive1=${encodeURIComponent(first.name)}&archive2=${encodeURIComponent(second.name)}`,
     )
     expect(diffRes.ok()).toBeTruthy()

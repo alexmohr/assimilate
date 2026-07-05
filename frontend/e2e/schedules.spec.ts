@@ -16,12 +16,12 @@ test.describe('Schedules management', () => {
     await page.waitForLoadState('networkidle')
 
     await expect(page.getByRole('heading', { name: 'Schedules' })).toBeVisible()
-    await expect(page.getByText('server-daily')).toBeVisible()
-    await expect(page.getByText('database-hourly')).toBeVisible()
-    await expect(page.getByText('media-weekly')).toBeVisible()
-    await expect(page.getByText('web-server-01')).toBeVisible()
-    await expect(page.getByText('db-server-01')).toBeVisible()
-    await expect(page.getByText('media-store-01')).toBeVisible()
+    await expect(page.getByText('server-daily').first()).toBeVisible()
+    await expect(page.getByText('database-hourly').first()).toBeVisible()
+    await expect(page.getByText('media-weekly').first()).toBeVisible()
+    await expect(page.getByText('web-server-01').first()).toBeVisible()
+    await expect(page.getByText('db-server-01').first()).toBeVisible()
+    await expect(page.getByText('media-store-01').first()).toBeVisible()
   })
 
   test('clicking a schedule navigates to detail page', async ({ page }) => {
@@ -59,9 +59,10 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules/1')
     await page.waitForLoadState('networkidle')
 
-    await expect(page.getByText('Targets', { exact: true })).toBeVisible()
-    await expect(page.getByText('Repository', { exact: true })).toBeVisible()
-    await expect(page.getByText('server-daily')).toBeVisible()
+    const infoCard = page.locator('.info-card')
+    await expect(infoCard.getByText('Targets', { exact: true })).toBeVisible()
+    await expect(infoCard.getByText('Repository', { exact: true })).toBeVisible()
+    await expect(page.getByText('server-daily').first()).toBeVisible()
   })
 
   test('schedule detail Logs link navigates to activity log filtered by schedule', async ({
@@ -75,14 +76,11 @@ test.describe('Schedules management', () => {
     await expect(page).toHaveURL(/\/activity\?category=backup&schedule_id=1/)
   })
 
-  test('schedule detail with per-host backup sources loads without error', async ({
-    request,
-    page,
-  }) => {
+  test('schedule detail with per-host backup sources loads without error', async ({ page }) => {
     await loginAsAdmin(page)
 
     // Find the multi-agent schedule seeded with backup_sources_per_agent.
-    const listResp = await request.get('/api/schedules')
+    const listResp = await page.request.get('/api/schedules')
     expect(listResp.ok()).toBe(true)
     const schedules = (await listResp.json()) as ScheduleListEntry[]
 

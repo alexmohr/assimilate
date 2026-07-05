@@ -21,9 +21,9 @@ test.describe('Dashboard widgets', () => {
     ).toBeVisible()
   })
 
-  test('Online Agents stat uses correct field names from API', async ({ page, request }) => {
+  test('Online Agents stat uses correct field names from API', async ({ page }) => {
     await loginAsAdmin(page)
-    const resp = await request.get('/api/stats/summary')
+    const resp = await page.request.get('/api/stats/summary')
     expect(resp.ok()).toBe(true)
     const body = (await resp.json()) as Record<string, unknown>
 

@@ -10,12 +10,17 @@ test.describe('Settings journey', () => {
     await page.waitForLoadState('networkidle')
 
     await expect(page.getByRole('heading', { name: 'Global Excludes' })).toBeVisible()
-    await expect(page.getByRole('textbox')).toBeVisible()
-
     const patterns = page.getByRole('textbox')
-    const value = await patterns.inputValue()
-    expect(value).toContain('node_modules')
-    expect(value).toContain('__pycache__')
+    await expect(patterns).toBeVisible()
+
+    // The textarea renders as soon as loading flips false, which can happen a
+    // moment before the fetched raw_text is actually applied to it - poll
+    // instead of reading the value once.
+    await expect(async () => {
+      const value = await patterns.inputValue()
+      expect(value).toContain('node_modules')
+      expect(value).toContain('__pycache__')
+    }).toPass({ timeout: 15_000 })
   })
 
   test('notifications page shows configured channels', async ({ page }) => {

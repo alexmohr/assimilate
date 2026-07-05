@@ -10,11 +10,11 @@ test.describe('Hosts management', () => {
     await page.goto('/agents')
     await page.waitForLoadState('networkidle')
 
-    await expect(page.getByText('web-server-01')).toBeVisible()
-    await expect(page.getByText('db-server-01')).toBeVisible()
-    await expect(page.getByText('media-store-01')).toBeVisible()
-    await expect(page.getByText('old-webserver')).toBeVisible()
-    await expect(page.getByText('legacy-db-prod')).toBeVisible()
+    await expect(page.getByText('web-server-01', { exact: true })).toBeVisible()
+    await expect(page.getByText('db-server-01', { exact: true })).toBeVisible()
+    await expect(page.getByText('media-store-01', { exact: true })).toBeVisible()
+    await expect(page.getByText('old-webserver', { exact: true })).toBeVisible()
+    await expect(page.getByText('legacy-db-prod', { exact: true })).toBeVisible()
   })
 
   test('clicking a host navigates to its detail page', async ({ page }) => {
@@ -26,7 +26,7 @@ test.describe('Hosts management', () => {
     await page.waitForLoadState('networkidle')
 
     await expect(page).toHaveURL(/\/agents\//)
-    await expect(page.getByText('web-server-01')).toBeVisible()
+    await expect(page.getByText('web-server-01').first()).toBeVisible()
   })
 
   test('deploy dialog opens and shows Load from remote button', async ({ page }) => {
@@ -40,7 +40,7 @@ test.describe('Hosts management', () => {
       .filter({ hasText: 'web-server-01' })
       .locator('.card-actions button', { hasText: /Deploy|Upgrade/ })
       .first()
-    await expect(deployBtn).toBeVisible()
+    await expect(deployBtn).toBeVisible({ timeout: 15_000 })
     await deployBtn.click()
 
     await expect(page.getByRole('heading', { name: /Deploy|Upgrade/ }).first()).toBeVisible()

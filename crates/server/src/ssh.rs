@@ -631,8 +631,6 @@ pub struct DeployAgentParams<'a> {
     pub remote_path: &'a str,
     pub server_url: &'a str,
     pub token: &'a str,
-    pub use_sudo: bool,
-    pub sudo_password: Option<&'a str>,
     pub password: Option<&'a str>,
     pub systemd_service_content: Option<&'a str>,
 }
@@ -659,20 +657,63 @@ WantedBy=multi-user.target
     )
 }
 
-async fn exec_sudo_command(
-    session: &client::Handle<SshClientHandler>,
-    command: &str,
-    password: Option<&str>,
-) -> Result<(u32, String, String), SshError> {
-    let sudo_cmd = match password {
+/// Build a sudo command string from a base command and optional password.
+fn build_sudo_cmd(command: &str, password: Option<&str>) -> String {
+    match password {
         Some(pw) => format!(
             "echo {} | sudo -S sh -c {}",
             shell_escape(pw),
             shell_escape(command)
         ),
         None => format!("sudo sh -c {}", shell_escape(command)),
-    };
-    exec_command(session, &sudo_cmd).await
+    }
+}
+
+async fn exec_sudo_command(
+    session: &client::Handle<SshClientHandler>,
+    command: &str,
+    password: Option<&str>,
+) -> Result<(u32, String, String), SshError> {
+    exec_command(session, &build_sudo_cmd(command, password)).await
+}
+
+/// Execute a command with sudo. If sudo fails for any reason (not installed, not in sudoers,
+/// password required, etc.), automatically retry the command without sudo.
+///
+/// This ensures the deploy works for both root users (where sudo is unnecessary but harmless),
+/// non-root users with passwordless sudo, non-root users connecting without a password where
+/// sudo prompts would otherwise hang, and machines where sudo is not installed at all.
+/// The only cost of a sudo failure + retry is one additional SSH round trip.
+async fn exec_with_sudo_fallback(
+    session: &client::Handle<SshClientHandler>,
+    command: &str,
+    password: Option<&str>,
+) -> Result<(u32, String, String), SshError> {
+    let (exit_code, stdout, stderr) = exec_sudo_command(session, command, password).await?;
+    resolve_fallback(exit_code, stdout, stderr, || exec_command(session, command)).await
+}
+
+/// If the command under sudo exited non-zero, retry the same command without sudo.
+///
+/// The common causes are: sudo not installed (exit 127), user not in sudoers, or
+/// sudo requiring a password when none was provided.  In all these cases the command
+/// should be re-run without sudo so that the actual command result (success or a
+/// meaningful error) is what the caller sees.
+async fn resolve_fallback<F, Fut>(
+    exit_code: u32,
+    stdout: String,
+    stderr: String,
+    fallback: F,
+) -> Result<(u32, String, String), SshError>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<(u32, String, String), SshError>>,
+{
+    if exit_code == 0 {
+        Ok((exit_code, stdout, stderr))
+    } else {
+        fallback().await
+    }
 }
 
 fn build_write_unit_cmd(content: &str, path: &str) -> String {
@@ -831,21 +872,12 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
         shell_escape(&upload_path),
     );
 
-    if params.use_sudo {
-        let (exit_code, _, stderr) =
-            exec_sudo_command(&session, &move_cmd, params.sudo_password).await?;
-        if exit_code != 0 {
-            return Err(SshError::Exec(format!(
-                "sudo mv/chmod failed (exit {exit_code}): {stderr}"
-            )));
-        }
-    } else {
-        let (exit_code, _, stderr) = exec_command(&session, &move_cmd).await?;
-        if exit_code != 0 {
-            return Err(SshError::Exec(format!(
-                "mv/chmod failed (exit {exit_code}): {stderr}"
-            )));
-        }
+    let (exit_code, _, stderr) =
+        exec_with_sudo_fallback(&session, &move_cmd, params.password).await?;
+    if exit_code != 0 {
+        return Err(SshError::Exec(format!(
+            "mv/chmod failed (exit {exit_code}): {stderr}"
+        )));
     }
 
     let unit_content = params.systemd_service_content.map_or_else(
@@ -856,40 +888,22 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
     let unit_path = "/etc/systemd/system/assimilate-agent.service";
     let write_cmd = build_write_unit_cmd(&unit_content, unit_path);
 
-    if params.use_sudo {
-        let (exit_code, _, stderr) =
-            exec_sudo_command(&session, &write_cmd, params.sudo_password).await?;
-        if exit_code != 0 {
-            return Err(SshError::Exec(format!(
-                "failed to write systemd unit via sudo (exit {exit_code}): {stderr}"
-            )));
-        }
+    let (exit_code, _, stderr) =
+        exec_with_sudo_fallback(&session, &write_cmd, params.password).await?;
+    if exit_code != 0 {
+        return Err(SshError::Exec(format!(
+            "failed to write systemd unit (exit {exit_code}): {stderr}"
+        )));
+    }
 
-        let enable_cmd = "systemctl daemon-reload && systemctl enable assimilate-agent && \
-                          systemctl restart assimilate-agent";
-        let (exit_code, _, stderr) =
-            exec_sudo_command(&session, enable_cmd, params.sudo_password).await?;
-        if exit_code != 0 {
-            return Err(SshError::Exec(format!(
-                "systemctl enable/restart via sudo failed (exit {exit_code}): {stderr}"
-            )));
-        }
-    } else {
-        let (exit_code, _, stderr) = exec_command(&session, &write_cmd).await?;
-        if exit_code != 0 {
-            return Err(SshError::Exec(format!(
-                "failed to write systemd unit (exit {exit_code}): {stderr}"
-            )));
-        }
-
-        let enable_cmd = "systemctl daemon-reload && systemctl enable assimilate-agent && \
-                          systemctl restart assimilate-agent";
-        let (exit_code, _, stderr) = exec_command(&session, enable_cmd).await?;
-        if exit_code != 0 {
-            return Err(SshError::Exec(format!(
-                "systemctl enable/restart failed (exit {exit_code}): {stderr}"
-            )));
-        }
+    let enable_cmd = "systemctl daemon-reload && systemctl enable assimilate-agent && systemctl \
+                      restart assimilate-agent";
+    let (exit_code, _, stderr) =
+        exec_with_sudo_fallback(&session, enable_cmd, params.password).await?;
+    if exit_code != 0 {
+        return Err(SshError::Exec(format!(
+            "systemctl enable/restart failed (exit {exit_code}): {stderr}"
+        )));
     }
 
     info!(host = %params.host, "agent deployed and service restarted");
@@ -901,8 +915,6 @@ pub struct ReadFileParams<'a> {
     pub user: &'a str,
     pub port: u16,
     pub password: Option<&'a str>,
-    pub use_sudo: bool,
-    pub sudo_password: Option<&'a str>,
     pub path: &'a str,
 }
 
@@ -913,11 +925,8 @@ pub async fn read_remote_file(params: &ReadFileParams<'_>) -> Result<Option<Stri
     };
 
     let cat_cmd = format!("cat {}", shell_escape(params.path));
-    let (exit_code, stdout, _stderr) = if params.use_sudo {
-        exec_sudo_command(&session, &cat_cmd, params.sudo_password).await?
-    } else {
-        exec_command(&session, &cat_cmd).await?
-    };
+    let (exit_code, stdout, _stderr) =
+        exec_with_sudo_fallback(&session, &cat_cmd, params.password).await?;
 
     if exit_code != 0 {
         return Ok(None);
@@ -1026,6 +1035,92 @@ mod tests {
         assert!(result.contains("Environment=BORG_AGENT_TOKEN=mytoken"));
         assert!(!result.contains("https://other.com"));
         assert!(!result.contains("othertoken"));
+    }
+
+    #[test]
+    fn build_sudo_cmd_no_password() {
+        let cmd = build_sudo_cmd("echo hello", None);
+        assert_eq!(cmd, "sudo sh -c 'echo hello'");
+    }
+
+    #[test]
+    fn build_sudo_cmd_with_password() {
+        let cmd = build_sudo_cmd("echo hello", Some("mypass"));
+        assert_eq!(cmd, "echo 'mypass' | sudo -S sh -c 'echo hello'");
+    }
+
+    #[test]
+    fn build_sudo_cmd_with_special_chars_in_password() {
+        let cmd = build_sudo_cmd("echo test", Some("pa$$word ' quote"));
+        assert!(cmd.starts_with("echo 'pa$$word '\\'' quote'"));
+        assert!(cmd.contains("sudo -S sh -c 'echo test'"));
+    }
+
+    #[test]
+    fn build_sudo_cmd_with_special_chars_in_command() {
+        let cmd = build_sudo_cmd("cat /etc/sys d/it's.service", None);
+        assert_eq!(cmd, "sudo sh -c 'cat /etc/sys d/it'\\''s.service'");
+    }
+
+    #[tokio::test]
+    async fn resolve_fallback_calls_fallback_on_exit_127() {
+        let result = resolve_fallback(127, String::new(), String::new(), || async {
+            Ok((0, "fallback-executed".to_string(), String::new()))
+        })
+        .await;
+        let (code, stdout, _) = result.unwrap();
+        assert_eq!(code, 0);
+        assert_eq!(stdout, "fallback-executed");
+    }
+
+    #[tokio::test]
+    async fn resolve_fallback_returns_original_on_exit_0() {
+        let result = resolve_fallback(0, "sudo-ok".to_string(), String::new(), || async {
+            panic!("fallback must not be called for exit code 0")
+        })
+        .await;
+        let (code, stdout, _) = result.unwrap();
+        assert_eq!(code, 0);
+        assert_eq!(stdout, "sudo-ok");
+    }
+
+    #[tokio::test]
+    async fn resolve_fallback_preserves_stderr_and_stdout_on_success() {
+        let result = resolve_fallback(0, "output".to_string(), "error-msg".to_string(), || async {
+            panic!("fallback must not be called for exit code 0")
+        })
+        .await;
+        let (code, stdout, stderr) = result.unwrap();
+        assert_eq!(code, 0);
+        assert_eq!(stdout, "output");
+        assert_eq!(stderr, "error-msg");
+    }
+
+    #[tokio::test]
+    async fn resolve_fallback_retries_on_sudo_auth_failure() {
+        let result = resolve_fallback(
+            1,
+            String::new(),
+            "sudo: a password is required".to_string(),
+            || async { Ok((0, "ran-without-sudo".to_string(), String::new())) },
+        )
+        .await;
+        let (code, stdout, _) = result.unwrap();
+        assert_eq!(code, 0);
+        assert_eq!(stdout, "ran-without-sudo");
+    }
+
+    #[tokio::test]
+    async fn resolve_fallback_propagates_fallback_error() {
+        let err = resolve_fallback(127, String::new(), String::new(), || async {
+            Err(SshError::Exec("fallback failed".to_string()))
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("fallback failed"),
+            "error should propagate from fallback"
+        );
     }
 
     #[test]

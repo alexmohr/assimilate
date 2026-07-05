@@ -5892,7 +5892,7 @@ async fn delete_backup_reports_with_archive_before_keeps_null_archive(pool: PgPo
     let now = Utc::now();
     let old = now - Duration::days(100);
 
-    // Old report with NULL archive_name — must NOT be deleted (handled by delete_backup_reports_before)
+    // Old report with NULL archive_name — not deleted by this function
     db::insert_backup_report(
         &pool,
         &InsertReportParams {

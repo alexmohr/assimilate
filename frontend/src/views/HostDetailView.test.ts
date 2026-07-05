@@ -34,6 +34,8 @@ vi.mock('../utils/logger', () => ({
 
 vi.mock('../utils/error', () => ({
   extractError: (_e: unknown, fallback?: string) => fallback ?? 'Unknown error',
+  extractBlobError: async (_e: unknown, fallback?: string): Promise<string> =>
+    fallback ?? 'Unknown error',
 }))
 
 vi.mock('../components/MergeAgentDialog.vue', () => ({

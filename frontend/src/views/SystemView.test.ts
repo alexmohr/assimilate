@@ -29,6 +29,7 @@ vi.mock('../composables/useTimezone', () => ({
 
 vi.mock('../utils/error', () => ({
   extractError: (_e: unknown, fallback: string) => fallback,
+  extractBlobError: async (_e: unknown, fallback: string): Promise<string> => fallback,
 }))
 
 import { apiClient } from '../api/client'

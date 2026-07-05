@@ -16,6 +16,10 @@ vi.mock('../utils/error', () => ({
     if (e instanceof Error) return e.message
     return 'Unknown error'
   },
+  extractBlobError: async (e: unknown): Promise<string> => {
+    if (e instanceof Error) return e.message
+    return 'Unknown error'
+  },
 }))
 
 import { apiClient } from '../api/client'

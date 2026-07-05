@@ -772,6 +772,7 @@ When adding a new user-facing feature or documentation page, update `seed-demo.s
 
 ## Reviews
 
+* If not stated otherwise, pull requests should always be squashed during merge.
 * Reviews must be done with maximum strictness; findings are never optional.
 * Logic is never to be duplicated instead of reused.
 * New code shall have test coverage.

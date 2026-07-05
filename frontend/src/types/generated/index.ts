@@ -98,6 +98,7 @@ export type { ScheduleBackupSourcesResponse } from './ScheduleBackupSourcesRespo
 export type { ScheduleCountByAgentListResponse } from './ScheduleCountByAgentListResponse'
 export type { ScheduleCountByAgentResponse } from './ScheduleCountByAgentResponse'
 export type { ScheduleExportResponse } from './ScheduleExportResponse'
+export type { ScheduleTargetExportResponse } from './ScheduleTargetExportResponse'
 export type { ScheduleListResponse } from './ScheduleListResponse'
 export type { ScheduleResponse } from './ScheduleResponse'
 export type { ScheduleTargetListResponse } from './ScheduleTargetListResponse'

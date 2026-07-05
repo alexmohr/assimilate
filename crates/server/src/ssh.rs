@@ -677,13 +677,13 @@ async fn exec_sudo_command(
     exec_command(session, &build_sudo_cmd(command, password)).await
 }
 
-/// Execute a command with sudo, falling back to without sudo if sudo itself is not installed.
+/// Execute a command with sudo. If sudo fails for any reason (not installed, not in sudoers,
+/// password required, etc.), automatically retry the command without sudo.
 ///
-/// Exit code 127 from the outer shell means a command was not found. We treat this as
-/// "sudo is not installed" and retry without sudo. In the unlikely case that sudo IS
-/// installed but the inner command (e.g. `mv`, `cat`, `systemctl`) happens to exit with
-/// 127, the fallback will re-run that command without sudo and propagate its actual exit
-/// code --- still correct, just one extra SSH round trip.
+/// This ensures the deploy works for both root users (where sudo is unnecessary but harmless),
+/// non-root users with passwordless sudo, non-root users connecting without a password where
+/// sudo prompts would otherwise hang, and machines where sudo is not installed at all.
+/// The only cost of a sudo failure + retry is one additional SSH round trip.
 async fn exec_with_sudo_fallback(
     session: &client::Handle<SshClientHandler>,
     command: &str,
@@ -693,7 +693,12 @@ async fn exec_with_sudo_fallback(
     resolve_fallback(exit_code, stdout, stderr, || exec_command(session, command)).await
 }
 
-/// If a sudo command exits with 127 (command not found), retry without sudo.
+/// If the command under sudo exited non-zero, retry the same command without sudo.
+///
+/// The common causes are: sudo not installed (exit 127), user not in sudoers, or
+/// sudo requiring a password when none was provided.  In all these cases the command
+/// should be re-run without sudo so that the actual command result (success or a
+/// meaningful error) is what the caller sees.
 async fn resolve_fallback<F, Fut>(
     exit_code: u32,
     stdout: String,
@@ -704,10 +709,10 @@ where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<(u32, String, String), SshError>>,
 {
-    if exit_code == 127 {
-        fallback().await
-    } else {
+    if exit_code == 0 {
         Ok((exit_code, stdout, stderr))
+    } else {
+        fallback().await
     }
 }
 
@@ -1069,9 +1074,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_fallback_returns_original_when_not_127() {
+    async fn resolve_fallback_returns_original_on_exit_0() {
         let result = resolve_fallback(0, "sudo-ok".to_string(), String::new(), || async {
-            panic!("fallback must not be called for non-127 exit code")
+            panic!("fallback must not be called for exit code 0")
         })
         .await;
         let (code, stdout, _) = result.unwrap();
@@ -1080,15 +1085,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_fallback_preserves_stderr_and_stdout_when_not_127() {
-        let result = resolve_fallback(1, "output".to_string(), "error-msg".to_string(), || async {
-            panic!("fallback must not be called for non-127 exit code")
+    async fn resolve_fallback_preserves_stderr_and_stdout_on_success() {
+        let result = resolve_fallback(0, "output".to_string(), "error-msg".to_string(), || async {
+            panic!("fallback must not be called for exit code 0")
         })
         .await;
         let (code, stdout, stderr) = result.unwrap();
-        assert_eq!(code, 1);
+        assert_eq!(code, 0);
         assert_eq!(stdout, "output");
         assert_eq!(stderr, "error-msg");
+    }
+
+    #[tokio::test]
+    async fn resolve_fallback_retries_on_sudo_auth_failure() {
+        let result = resolve_fallback(
+            1,
+            String::new(),
+            "sudo: a password is required".to_string(),
+            || async { Ok((0, "ran-without-sudo".to_string(), String::new())) },
+        )
+        .await;
+        let (code, stdout, _) = result.unwrap();
+        assert_eq!(code, 0);
+        assert_eq!(stdout, "ran-without-sudo");
     }
 
     #[tokio::test]

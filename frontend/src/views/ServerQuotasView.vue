@@ -8,20 +8,11 @@ import { ref, reactive, onMounted } from 'vue'
 import { listServerQuotas, upsertServerQuota, deleteServerQuota } from '../api/serverQuotas'
 import { formatBytes } from '../utils/format'
 import { extractError } from '../utils/error'
+import { actionLabel, bytesToGb, gbToBytes } from '../utils/quota'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import type { QuotaAction, ServerQuotaResponse } from '../types/generated'
-
-const QUOTA_ACTION_LABELS: Record<QuotaAction, string> = {
-  notify_only: 'Notify only',
-  block_backups: 'Block backups',
-  disable_schedule: 'Disable schedule',
-}
-
-function actionLabel(action: QuotaAction): string {
-  return QUOTA_ACTION_LABELS[action]
-}
 
 function statusFor(quota: ServerQuotaResponse): 'ok' | 'warning' | 'critical' {
   if (!quota.configured || !quota.enabled) return 'ok'
@@ -31,14 +22,9 @@ function statusFor(quota: ServerQuotaResponse): 'ok' | 'warning' | 'critical' {
   return 'ok'
 }
 
-function bytesToGb(bytes: number | null): number {
-  if (bytes === null) return 0
-  return Math.round((bytes / 1073741824) * 100) / 100
-}
-
-function gbToBytes(gb: number): number | null {
-  if (gb <= 0) return null
-  return Math.round(gb * 1073741824)
+/** `quota.warn_bytes`/`critical_bytes` are `null` only when no quota is configured yet. */
+function bytesToGbOrZero(bytes: number | null): number {
+  return bytes === null ? 0 : bytesToGb(bytes)
 }
 
 const quotas = ref<ServerQuotaResponse[]>([])
@@ -64,8 +50,8 @@ async function loadQuotas(): Promise<void> {
 }
 
 function startEdit(quota: ServerQuotaResponse): void {
-  editForm.warn_gb = bytesToGb(quota.warn_bytes)
-  editForm.critical_gb = bytesToGb(quota.critical_bytes)
+  editForm.warn_gb = bytesToGbOrZero(quota.warn_bytes)
+  editForm.critical_gb = bytesToGbOrZero(quota.critical_bytes)
   editForm.warn_action = quota.warn_action
   editForm.critical_action = quota.critical_action
   editForm.enabled = quota.configured ? quota.enabled : true

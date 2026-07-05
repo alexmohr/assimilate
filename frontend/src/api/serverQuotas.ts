@@ -5,8 +5,8 @@ import { apiClient } from './client'
 import type { QuotaAction, ServerQuotaResponse } from '../types/generated'
 
 export interface UpsertServerQuotaRequest {
-  warn_bytes: number | null
-  critical_bytes: number | null
+  warn_bytes: number
+  critical_bytes: number
   warn_action: QuotaAction
   critical_action: QuotaAction
   enabled: boolean

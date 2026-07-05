@@ -398,6 +398,56 @@ pub(crate) async fn validate_agent_repo(
     false
 }
 
+fn quota_status_label(status: db::quota::QuotaStatus) -> &'static str {
+    match status {
+        db::quota::QuotaStatus::Ok => "ok",
+        db::quota::QuotaStatus::Warning => "warning",
+        db::quota::QuotaStatus::Critical => "critical",
+    }
+}
+
+fn quota_event_type(status: db::quota::QuotaStatus) -> EventType {
+    match status {
+        db::quota::QuotaStatus::Ok => EventType::BackupSuccess,
+        db::quota::QuotaStatus::Warning => EventType::BackupWarning,
+        db::quota::QuotaStatus::Critical => EventType::BackupFailed,
+    }
+}
+
+/// Dispatches the notification for a repo- or server-quota breach. Shared by both the
+/// per-repo and per-host (shared SSH host) quota checks in [`handle_agent_message`], which
+/// otherwise duplicate this status-to-label, status-to-`EventType`, and dispatch logic almost
+/// verbatim.
+async fn dispatch_quota_breach_notification(
+    state: &AppState,
+    hostname: &str,
+    agent_id: i64,
+    repo_name: &str,
+    repo_id: i64,
+    quota_status: db::quota::QuotaStatus,
+    message: String,
+) {
+    let quota_event = NotificationEvent {
+        event_type: quota_event_type(quota_status),
+        hostname: hostname.to_owned(),
+        repo_name: repo_name.to_owned(),
+        status: quota_status_label(quota_status).to_owned(),
+        error_message: Some(message),
+        timestamp: chrono::Utc::now(),
+        repo_id: Some(repo_id),
+        agent_id: Some(agent_id),
+        schedule_id: None,
+        schedule_name: None,
+        archive_name: None,
+    };
+    let service = state.notification_service.clone();
+    tokio::spawn(async move {
+        if let Err(e) = notifications::dispatch(&service, quota_event).await {
+            tracing::error!(error = %e, "notification dispatch failed");
+        }
+    });
+}
+
 async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: &AppState) {
     let msg = match serde_json::from_str::<AgentToServer>(text) {
         Ok(m) => m,
@@ -628,48 +678,31 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
             if let Ok(Some(quota)) = db::quota::get_quota(&state.pool, report.repo_id.0).await {
                 let quota_status = db::quota::evaluate_quota(&quota, report.deduplicated_size);
                 if !matches!(quota_status, db::quota::QuotaStatus::Ok) {
-                    let quota_label = match quota_status {
-                        db::quota::QuotaStatus::Ok => "ok",
-                        db::quota::QuotaStatus::Warning => "warning",
-                        db::quota::QuotaStatus::Critical => "critical",
-                    };
                     tracing::warn!(
                         hostname = %hostname,
                         repo_id = ?report.repo_id,
                         deduplicated_size = report.deduplicated_size,
-                        quota_status = quota_label,
+                        quota_status = quota_status_label(quota_status),
                         "repository quota exceeded"
                     );
 
-                    let event_type = match quota_status {
-                        db::quota::QuotaStatus::Ok => EventType::BackupSuccess,
-                        db::quota::QuotaStatus::Warning => EventType::BackupWarning,
-                        db::quota::QuotaStatus::Critical => EventType::BackupFailed,
-                    };
                     let message = format!(
-                        "Repository quota {quota_label} for repo {}: deduplicated size {} bytes \
-                         exceeds configured limits",
-                        repo_name, report.deduplicated_size,
+                        "Repository quota {} for repo {}: deduplicated size {} bytes exceeds \
+                         configured limits",
+                        quota_status_label(quota_status),
+                        repo_name,
+                        report.deduplicated_size,
                     );
-                    let quota_event = NotificationEvent {
-                        event_type,
-                        hostname: hostname.to_owned(),
-                        repo_name: repo_name.clone(),
-                        status: quota_label.to_owned(),
-                        error_message: Some(message),
-                        timestamp: chrono::Utc::now(),
-                        repo_id: Some(report.repo_id.0),
-                        agent_id: Some(agent_id),
-                        schedule_id: None,
-                        schedule_name: None,
-                        archive_name: None,
-                    };
-                    let service = state.notification_service.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = notifications::dispatch(&service, quota_event).await {
-                            tracing::error!(error = %e, "notification dispatch failed");
-                        }
-                    });
+                    dispatch_quota_breach_notification(
+                        state,
+                        hostname,
+                        agent_id,
+                        &repo_name,
+                        report.repo_id.0,
+                        quota_status,
+                        message,
+                    )
+                    .await;
 
                     if let Some(action) = quota.action_for(quota_status) {
                         quota_enforcement::enforce_repo_quota_action(
@@ -686,53 +719,45 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
             if let Ok(ssh_host) = db::get_repo_ssh_host(&state.pool, report.repo_id.0).await
                 && let Ok(Some(server_quota)) =
                     db::server_quota::get_server_quota(&state.pool, &ssh_host).await
-                && let Ok(total_deduplicated_size) =
-                    db::server_quota::total_deduplicated_size_for_ssh_host(&state.pool, &ssh_host)
-                        .await
+                && let Ok(siblings_deduplicated_size) =
+                    db::server_quota::total_deduplicated_size_for_ssh_host_excluding(
+                        &state.pool,
+                        &ssh_host,
+                        report.repo_id.0,
+                    )
+                    .await
             {
+                // Combine the just-completed backup's fresh `report.deduplicated_size` with the
+                // (possibly stale, since `repo_stats` is only refreshed by a sync/rescan) snapshot
+                // for sibling repos on the host, so a breach on an otherwise idle host is caught
+                // immediately rather than only after an unrelated rescan.
+                let total_deduplicated_size = siblings_deduplicated_size + report.deduplicated_size;
                 let quota_status = server_quota.status(total_deduplicated_size);
                 if !matches!(quota_status, db::quota::QuotaStatus::Ok) {
-                    let quota_label = match quota_status {
-                        db::quota::QuotaStatus::Ok => "ok",
-                        db::quota::QuotaStatus::Warning => "warning",
-                        db::quota::QuotaStatus::Critical => "critical",
-                    };
                     tracing::warn!(
                         hostname = %hostname,
                         ssh_host = %ssh_host,
                         total_deduplicated_size,
-                        quota_status = quota_label,
+                        quota_status = quota_status_label(quota_status),
                         "server quota exceeded"
                     );
 
-                    let event_type = match quota_status {
-                        db::quota::QuotaStatus::Ok => EventType::BackupSuccess,
-                        db::quota::QuotaStatus::Warning => EventType::BackupWarning,
-                        db::quota::QuotaStatus::Critical => EventType::BackupFailed,
-                    };
                     let message = format!(
-                        "Server quota {quota_label} for host {ssh_host}: combined deduplicated \
-                         size {total_deduplicated_size} bytes exceeds configured limits",
+                        "Server quota {} for host {ssh_host}: combined deduplicated size {} bytes \
+                         exceeds configured limits",
+                        quota_status_label(quota_status),
+                        total_deduplicated_size,
                     );
-                    let quota_event = NotificationEvent {
-                        event_type,
-                        hostname: hostname.to_owned(),
-                        repo_name: repo_name.clone(),
-                        status: quota_label.to_owned(),
-                        error_message: Some(message),
-                        timestamp: chrono::Utc::now(),
-                        repo_id: Some(report.repo_id.0),
-                        agent_id: Some(agent_id),
-                        schedule_id: None,
-                        schedule_name: None,
-                        archive_name: None,
-                    };
-                    let service = state.notification_service.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = notifications::dispatch(&service, quota_event).await {
-                            tracing::error!(error = %e, "notification dispatch failed");
-                        }
-                    });
+                    dispatch_quota_breach_notification(
+                        state,
+                        hostname,
+                        agent_id,
+                        &repo_name,
+                        report.repo_id.0,
+                        quota_status,
+                        message,
+                    )
+                    .await;
 
                     if let Some(action) = server_quota.action_for(quota_status) {
                         quota_enforcement::enforce_server_quota_action(

@@ -159,11 +159,9 @@ pub async fn list_server_quotas_with_usage(
 
     Ok(rows
         .into_iter()
-        .map(|row| ServerQuotaWithUsage {
-            ssh_host: row.ssh_host,
-            repo_count: row.repo_count,
-            total_deduplicated_size: row.total_deduplicated_size,
-            quota: match (
+        .map(|row| {
+            let ssh_host = row.ssh_host;
+            let quota = match (
                 row.warn_action,
                 row.critical_action,
                 row.enabled,
@@ -171,7 +169,7 @@ pub async fn list_server_quotas_with_usage(
             ) {
                 (Some(warn_action), Some(critical_action), Some(enabled), Some(updated_at)) => {
                     Some(ServerQuota {
-                        ssh_host: String::new(),
+                        ssh_host: ssh_host.clone(),
                         warn_bytes: row.warn_bytes,
                         critical_bytes: row.critical_bytes,
                         warn_action,
@@ -181,7 +179,13 @@ pub async fn list_server_quotas_with_usage(
                     })
                 }
                 _ => None,
-            },
+            };
+            ServerQuotaWithUsage {
+                ssh_host,
+                repo_count: row.repo_count,
+                total_deduplicated_size: row.total_deduplicated_size,
+                quota,
+            }
         })
         .collect())
 }
@@ -206,6 +210,38 @@ pub async fn total_deduplicated_size_for_ssh_host(
         WHERE r.ssh_host = $1
         "#,
         ssh_host,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(row.total)
+}
+
+/// Total deduplicated size across every repo sharing `ssh_host` *other than* `exclude_repo_id`,
+/// from the authoritative `repo_stats` snapshot. Used to combine a just-completed backup's own
+/// (fresh) `report.deduplicated_size` with its sibling repos' (possibly stale, since
+/// `repo_stats` is only refreshed by a sync/rescan) snapshot, so a quota breach on an otherwise
+/// idle host is detected immediately rather than only after an unrelated rescan.
+pub async fn total_deduplicated_size_for_ssh_host_excluding(
+    pool: &PgPool,
+    ssh_host: &str,
+    exclude_repo_id: i64,
+) -> Result<i64, sqlx::Error> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        total: i64,
+    }
+
+    let row = sqlx::query_as!(
+        Row,
+        r#"
+        SELECT COALESCE(SUM(rs.deduplicated_size)::bigint, 0) AS "total!"
+        FROM repos r
+        LEFT JOIN repo_stats rs ON rs.repo_id = r.id
+        WHERE r.ssh_host = $1 AND r.id != $2
+        "#,
+        ssh_host,
+        exclude_repo_id,
     )
     .fetch_one(pool)
     .await?;

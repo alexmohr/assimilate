@@ -8,6 +8,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { apiClient } from '../api/client'
 import { formatBytes } from '../utils/format'
 import { extractError } from '../utils/error'
+import { actionLabel, bytesToGb, gbToBytes } from '../utils/quota'
 import type { QuotaAction } from '../types/generated'
 import ToggleSwitch from './ToggleSwitch.vue'
 
@@ -20,16 +21,6 @@ interface QuotaData {
 }
 
 type QuotaStatus = 'ok' | 'warning' | 'critical'
-
-const QUOTA_ACTION_LABELS: Record<QuotaAction, string> = {
-  notify_only: 'Notify only',
-  block_backups: 'Block backups',
-  disable_schedule: 'Disable schedule',
-}
-
-function actionLabel(action: QuotaAction): string {
-  return QUOTA_ACTION_LABELS[action]
-}
 
 const props = defineProps<{ repoId: number; isAdmin: boolean; currentUsageBytes: number }>()
 
@@ -83,14 +74,6 @@ const progressBarClass = computed((): string => {
   if (s === 'critical') return 'bar-crit'
   return 'bar-ok'
 })
-
-function bytesToGb(bytes: number): number {
-  return Math.round((bytes / 1073741824) * 100) / 100
-}
-
-function gbToBytes(gb: number): number {
-  return Math.round(gb * 1073741824)
-}
 
 async function loadQuota(): Promise<void> {
   loading.value = true

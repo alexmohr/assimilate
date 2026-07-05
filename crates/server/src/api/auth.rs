@@ -201,12 +201,6 @@ pub async fn login(
         Err(other) => return Err(other),
     };
 
-    if let Some(locked_until) = user.locked_until
-        && locked_until > Utc::now()
-    {
-        return Err(ApiError::Unauthorized("invalid credentials".to_string()));
-    }
-
     // Per-IP rate limit check
     let failed_count =
         db::count_failed_login_attempts(&state.pool, &req.username, &ip, LOGIN_WINDOW_MINUTES)
@@ -217,10 +211,22 @@ pub async fn login(
         ));
     }
 
+    // Run the (real or dummy) bcrypt verification unconditionally, before
+    // branching on lockout state, so that the locked/not-found/wrong-password
+    // outcomes are indistinguishable by response timing. Branching on
+    // `locked_until` before this call would let an attacker detect the exact
+    // moment a candidate username gets locked out by watching responses go
+    // fast again, re-opening the username-enumeration side channel.
     let password = req.password.clone();
     let valid = helpers::verify_password(password, hash)
         .await
         .map_err(|_| ApiError::Unauthorized("invalid credentials".to_string()))?;
+
+    if let Some(locked_until) = user.locked_until
+        && locked_until > Utc::now()
+    {
+        return Err(ApiError::Unauthorized("invalid credentials".to_string()));
+    }
 
     if !valid {
         // Atomic transaction: insert failed attempt, check threshold, set lockout

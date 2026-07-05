@@ -158,7 +158,7 @@ These values are compiled into the server and are not runtime-configurable witho
 | Parameter | Value | Description |
 |-----------|-------|-------------|
 | Login rate limit (per-IP) | `5 attempts per 15 minutes` | IP-address-scoped rate limit on login attempts. Returns 429 when exceeded. |
-| Account lockout threshold | `10 failed attempts per 30 minutes` | Number of failed attempts (across all IPs) before the account is temporarily locked. Returns 401 (same as invalid credentials) to prevent enumeration. |
+| Account lockout threshold | `10 consecutive failed attempts since last successful login` | Number of failed attempts (across all IPs) before the account is temporarily locked. Returns 401 (same as invalid credentials) to prevent enumeration. |
 | Lockout duration (exponential backoff) | `1 min → 5 min → 15 min → 1 hr → 24 hr` | Escalating lockout durations based on consecutive lockout cycles. Resets on successful login. |
 | API rate limit (per-user) | `60 requests per 60 seconds` | Sliding-window rate limit applied to all authenticated API routes. Returns 429 when exceeded. |
 | Session cookie | `HttpOnly; SameSite=Lax; Path=/; Max-Age=86400` | Session cookie attributes. Sessions expire after 24 hours (7 days with remember-me). |

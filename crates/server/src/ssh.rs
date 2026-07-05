@@ -165,6 +165,22 @@ pub fn load_server_private_key() -> Result<PrivateKey, SshError> {
     })
 }
 
+/// Runs [`read_server_public_key`] on a blocking-safe thread; the read is a
+/// small file syscall but must not run directly on the async executor.
+pub(crate) async fn read_server_public_key_async() -> Result<String, SshError> {
+    tokio::task::spawn_blocking(read_server_public_key)
+        .await
+        .map_err(|e| SshError::Auth(format!("key loading task failed: {e}")))?
+}
+
+/// Runs [`load_server_private_key`] on a blocking-safe thread; see
+/// [`read_server_public_key_async`].
+pub(crate) async fn load_server_private_key_async() -> Result<PrivateKey, SshError> {
+    tokio::task::spawn_blocking(load_server_private_key)
+        .await
+        .map_err(|e| SshError::Auth(format!("key loading task failed: {e}")))?
+}
+
 pub(crate) async fn connect_with_key(
     host: &str,
     user: &str,
@@ -178,7 +194,7 @@ pub(crate) async fn connect_with_key(
         .await
         .map_err(|e| SshError::Connection(format!("{host}:{port}: {e}")))?;
 
-    let key = load_server_private_key()?;
+    let key = load_server_private_key_async().await?;
     let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), None);
 
     let auth_result = session
@@ -338,7 +354,7 @@ pub async fn deploy_key(req: &DeployKeyRequest) -> DeployKeyResponse {
         };
     }
 
-    let our_key = match read_server_public_key() {
+    let our_key = match read_server_public_key_async().await {
         Ok(k) => k,
         Err(e) => {
             return DeployKeyResponse {
@@ -819,6 +835,19 @@ async fn detect_remote_arch(
     Ok(canonical_arch(&stdout))
 }
 
+async fn list_agent_binaries(dir: &std::path::Path) -> Vec<String> {
+    let mut available = Vec::new();
+    if let Ok(mut entries) = tokio::fs::read_dir(dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with("agent-") {
+                available.push(name);
+            }
+        }
+    }
+    available
+}
+
 pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError> {
     let session = match params.password {
         Some(pw) => connect_with_password(params.host, params.user, params.port, pw).await?,
@@ -829,16 +858,8 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
     let arch = detect_remote_arch(&session).await?;
     let binary_path = params.binary_dir.join(format!("agent-{arch}"));
 
-    if !binary_path.exists() {
-        let available: Vec<String> = std::fs::read_dir(params.binary_dir)
-            .map(|entries| {
-                entries
-                    .filter_map(|e| e.ok())
-                    .filter(|e| e.file_name().to_string_lossy().starts_with("agent-"))
-                    .map(|e| e.file_name().to_string_lossy().into_owned())
-                    .collect()
-            })
-            .unwrap_or_default();
+    if !tokio::fs::try_exists(&binary_path).await.unwrap_or(false) {
+        let available = list_agent_binaries(params.binary_dir).await;
         return Err(SshError::Io(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!(
@@ -1222,5 +1243,60 @@ mod tests {
         let written = std::fs::read_to_string(&tmp).unwrap();
         std::fs::remove_file(&tmp).unwrap();
         assert_eq!(written, custom);
+    }
+
+    #[tokio::test]
+    async fn list_agent_binaries_filters_by_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("agent-x86_64"), b"").unwrap();
+        std::fs::write(dir.path().join("agent-aarch64"), b"").unwrap();
+        std::fs::write(dir.path().join("README.md"), b"").unwrap();
+
+        let mut found = list_agent_binaries(dir.path()).await;
+        found.sort();
+        assert_eq!(found, vec!["agent-aarch64", "agent-x86_64"]);
+    }
+
+    #[tokio::test]
+    async fn list_agent_binaries_empty_for_missing_dir() {
+        let found = list_agent_binaries(std::path::Path::new("/no-such-dir-assimilate-test")).await;
+        assert!(found.is_empty());
+    }
+
+    // Combined into one test: both helpers read from SSH_KEY_DIR, mutating the
+    // shared env var races if split across parallel tests.
+    #[tokio::test]
+    async fn ssh_key_helpers_read_from_ssh_key_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("SSH_KEY_DIR", dir.path()) };
+
+        assert!(matches!(
+            read_server_public_key_async().await,
+            Err(SshError::PublicKeyNotFound(_))
+        ));
+        assert!(matches!(
+            load_server_private_key_async().await,
+            Err(SshError::PublicKeyNotFound(_))
+        ));
+
+        let private_key = ssh_key::PrivateKey::random(
+            &mut ssh_key::rand_core::OsRng,
+            ssh_key::Algorithm::Ed25519,
+        )
+        .unwrap();
+        let private_pem = private_key.to_openssh(ssh_key::LineEnding::LF).unwrap();
+        std::fs::write(dir.path().join("id_ed25519"), private_pem.as_bytes()).unwrap();
+        let public_str = private_key.public_key().to_openssh().unwrap();
+        let public_line = format!("{public_str} assimilate-test");
+        std::fs::write(
+            dir.path().join("id_ed25519.pub"),
+            format!("{public_line}\n"),
+        )
+        .unwrap();
+
+        assert_eq!(read_server_public_key_async().await.unwrap(), public_line);
+        assert!(load_server_private_key_async().await.is_ok());
+
+        unsafe { std::env::remove_var("SSH_KEY_DIR") };
     }
 }

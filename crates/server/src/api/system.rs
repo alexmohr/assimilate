@@ -11,7 +11,7 @@ use shared::{
 };
 use ssh_key::{Algorithm, LineEnding, rand_core::OsRng};
 
-use super::deploy::{agent_binary_dir, query_available_agent_version};
+use super::deploy::{agent_binary_dir_async, query_available_agent_version};
 use crate::{AppState, api::auth::RequireAdmin, db, error::ApiError};
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -311,7 +311,7 @@ pub struct VersionResponse {
     )
 )]
 pub async fn get_version(_admin: RequireAdmin) -> Result<Json<VersionResponse>, ApiError> {
-    let binary_dir = agent_binary_dir();
+    let binary_dir = agent_binary_dir_async().await?;
     let agent_version = query_available_agent_version(&binary_dir).await;
 
     let git_sha = option_env!("GIT_SHA").unwrap_or_default();

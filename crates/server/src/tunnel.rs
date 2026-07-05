@@ -247,7 +247,7 @@ impl TunnelManager {
                     }
                 };
 
-                let key = match crate::ssh::load_server_private_key() {
+                let key = match crate::ssh::load_server_private_key_async().await {
                     Ok(k) => k,
                     Err(e) => {
                         manager

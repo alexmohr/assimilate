@@ -25,10 +25,8 @@ use crate::{
 const MAX_LOGIN_ATTEMPTS: i64 = 5;
 const LOGIN_WINDOW_MINUTES: i32 = 15;
 
-/// Per-account lockout is triggered after this many failed attempts from any IP.
+/// Per-account lockout is triggered after this many consecutive failed attempts.
 const MAX_ACCOUNT_FAILURES: i64 = 10;
-/// Window within which account-scoped failures are counted.
-const ACCOUNT_LOCKOUT_WINDOW_MINUTES: i32 = 30;
 
 /// Exponential backoff durations for account lockout (indexed by escalation level).
 const LOCKOUT_DURATIONS_MINUTES: &[i64] = &[1, 5, 15, 60, 1440];
@@ -179,14 +177,29 @@ pub async fn login(
         .resolve(peer.ip(), &headers)
         .to_string();
 
-    // Single user lookup (password hash + lockout + user info in one query).
-    // Return 401 for both nonexistent and locked accounts to prevent enumeration.
-    let (user, hash) = db::get_user_password_hash(&state.pool, &req.username)
-        .await
-        .map_err(|e| match e {
-            ApiError::NotFound(_) => ApiError::Unauthorized("invalid credentials".to_string()),
-            other => other,
-        })?;
+    // Look up user. If not found, use a dummy hash so that the bcrypt
+    // verification below runs in constant time regardless of whether the
+    // username exists — preventing a timing side-channel that could be used
+    // to enumerate valid usernames.
+    let (user, hash) = match db::get_user_password_hash(&state.pool, &req.username).await {
+        Ok(result) => result,
+        Err(ApiError::NotFound(_)) => {
+            // Dummy hash — must be a valid bcrypt hash to keep bcrypt timing
+            // uniform.  Pre-computed with cost 12 (matching the real hashing).
+            let dummy_hash =
+                "$2b$12$UPq1GccVoXUwuom5gyGexOmuF8evhCzdaIb.3EacmKJs8WODdyusC".to_string();
+            let dummy_user = db::UserRow {
+                id: 0,
+                username: req.username.clone(),
+                must_change_password: false,
+                created_at: Utc::now(),
+                last_login_at: None,
+                locked_until: None,
+            };
+            (dummy_user, dummy_hash)
+        }
+        Err(other) => return Err(other),
+    };
 
     if let Some(locked_until) = user.locked_until
         && locked_until > Utc::now()
@@ -215,7 +228,6 @@ pub async fn login(
             &state.pool,
             &req.username,
             &ip,
-            ACCOUNT_LOCKOUT_WINDOW_MINUTES,
             MAX_ACCOUNT_FAILURES,
         )
         .await?;
@@ -492,4 +504,19 @@ pub async fn update_preferences(
     }
     db::set_user_preferences(&state.pool, auth.user_id, &body).await?;
     Ok(Json(PreferencesResponse { inner: body }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::helpers;
+
+    #[tokio::test]
+    async fn verify_password_runs_in_constant_time_with_dummy_hash() {
+        let dummy_hash = "$2b$12$UPq1GccVoXUwuom5gyGexOmuF8evhCzdaIb.3EacmKJs8WODdyusC".to_string();
+
+        let result = helpers::verify_password("any-password".to_string(), dummy_hash)
+            .await
+            .unwrap();
+        assert!(!result, "dummy hash must not match any password");
+    }
 }

@@ -263,8 +263,14 @@ pub async fn update_settings(
 
     for (key, val) in [
         ("report_retention_days", body.report_retention_days),
-        ("failed_report_retention_days", body.failed_report_retention_days),
-        ("system_event_retention_days", body.system_event_retention_days),
+        (
+            "failed_report_retention_days",
+            body.failed_report_retention_days,
+        ),
+        (
+            "system_event_retention_days",
+            body.system_event_retention_days,
+        ),
     ] {
         if let Some(v) = val
             && v < 0
@@ -323,10 +329,7 @@ pub async fn update_settings(
 
     let failed_report_retention_days = body.failed_report_retention_days.or(legacy).unwrap_or(365);
 
-    let system_event_retention_days = body
-        .system_event_retention_days
-        .or(legacy)
-        .unwrap_or(90);
+    let system_event_retention_days = body.system_event_retention_days.or(legacy).unwrap_or(90);
 
     Ok(Json(SettingsResponse {
         retention_days: body.retention_days,

@@ -361,7 +361,8 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
 
     if report_days > 0 {
         let cutoff = Utc::now() - chrono::Duration::days(report_days);
-        archive_reports_deleted = db::delete_backup_reports_with_archive_before(pool, cutoff).await?;
+        archive_reports_deleted =
+            db::delete_backup_reports_with_archive_before(pool, cutoff).await?;
     }
 
     if failed_days > 0 {

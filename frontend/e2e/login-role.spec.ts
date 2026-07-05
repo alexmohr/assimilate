@@ -4,7 +4,6 @@
 import { expect, loginAsAdmin, test } from './fixtures'
 
 test('login response includes role field in user object', async ({ page }) => {
-  // Capture the login API response without intercepting the request
   const responsePromise = page.waitForResponse(
     (resp) => resp.url().includes('/api/auth/login') && resp.status() === 200,
   )
@@ -23,12 +22,8 @@ test('isAdmin is true immediately after login (admin nav items visible)', async 
   await loginAsAdmin(page)
   await page.goto('/')
 
-  // Give the SPA time to settle after route transition
   await page.waitForTimeout(1_500)
 
-  // Admin-only nav items (System, Users, Roles, etc.) are nested inside a
-  // collapsible "Settings" group that defaults to collapsed.  Click the toggle
-  // to expand it, then verify a System link is visible.
   const settingsToggle = page.locator('.nav-group-toggle')
   await expect(settingsToggle.first()).toBeVisible({ timeout: 10_000 })
   await settingsToggle.first().click()
@@ -38,11 +33,6 @@ test('isAdmin is true immediately after login (admin nav items visible)', async 
 })
 
 test('login API response contract matches AuthUser interface', async ({ page }) => {
-  // Verify the login endpoint's JSON shape aligns with the frontend AuthUser
-  // interface by calling the API directly.  This covers the same code path
-  // that non-admin users traverse, asserting that all required fields
-  // (id, username, role, must_change_password, created_at, last_login_at)
-  // are present and correctly typed.
   const loginResp = await page.request.post('/api/auth/login', {
     data: { username: 'admin', password: 'admin', remember_me: false },
   })
@@ -54,7 +44,6 @@ test('login API response contract matches AuthUser interface', async ({ page }) 
   expect(body).toHaveProperty('remember_me')
 
   const user = body.user as Record<string, unknown> | undefined
-  // All AuthUser fields must be present
   expect(user).toHaveProperty('id')
   expect(typeof user!.id).toBe('number')
   expect(user).toHaveProperty('username')
@@ -66,6 +55,71 @@ test('login API response contract matches AuthUser interface', async ({ page }) 
   expect(user).toHaveProperty('created_at')
   expect(typeof user!.created_at).toBe('string')
   expect(user).toHaveProperty('last_login_at')
-  // last_login_at is nullable - accept either string or null
   expect(user!.last_login_at === null || typeof user!.last_login_at === 'string').toBe(true)
+})
+
+test('viewer user login returns viewer role and cannot access admin pages', async ({ page }) => {
+  // Log in as admin to set up a viewer test user
+  await loginAsAdmin(page)
+
+  const USERNAME = 'e2e-viewer-test'
+  const PASSWORD = 'viewer-test-pw'
+
+  // Create a test user via the admin API
+  const createResp = await page.request.post('/api/users', {
+    data: { username: USERNAME, password: PASSWORD },
+  })
+  expect(createResp.status()).toBe(201)
+  const createdUser = (await createResp.json()) as { id: number; username: string }
+  const userId = createdUser.id
+
+  // Look up the viewer role ID
+  const rolesResp = await page.request.get('/api/roles')
+  expect(rolesResp.status()).toBe(200)
+  const roles = (await rolesResp.json()) as Array<{ id: number; name: string }>
+  const viewerRole = roles.find((r: { name: string }) => r.name === 'viewer')
+  expect(viewerRole).toBeDefined()
+
+  // Assign the viewer role to the test user
+  const assignResp = await page.request.put(`/api/users/${userId}/roles`, {
+    data: { role_ids: [viewerRole!.id] },
+  })
+  expect(assignResp.status()).toBe(204)
+
+  // Log out admin
+  await page.request.post('/api/auth/logout')
+
+  // Log in as the viewer user and verify the role in the response
+  const loginResp = await page.request.post('/api/auth/login', {
+    data: { username: USERNAME, password: PASSWORD, remember_me: false },
+  })
+  expect(loginResp.status()).toBe(200)
+
+  const body = (await loginResp.json()) as Record<string, unknown>
+  expect(body).toHaveProperty('user')
+  const user = body.user as Record<string, unknown> | undefined
+  expect(user).toHaveProperty('role')
+  expect(user!.role).toBe('viewer')
+
+  // Navigate to non-admin page to verify authentication works
+  await page.goto('/activity')
+  await page.waitForTimeout(2_000)
+  await expect(page).not.toHaveURL(/\/error/)
+  await expect(page).toHaveURL(/\/activity/)
+
+  // Verify viewer cannot access admin pages (redirected to dashboard)
+  const adminRoutes = ['/system', '/admin/roles', '/admin/groups', '/audit-log', '/notifications']
+  for (const route of adminRoutes) {
+    await page.goto(route)
+    await page.waitForTimeout(2_000)
+    await expect(page).not.toHaveURL(/\/error/)
+    await expect(page).not.toHaveURL(new RegExp(route.replace(/[/\\]/g, '\\/')))
+    await expect(page).toHaveURL(/\/$/)
+  }
+
+  // Clean up: re-login as admin and delete the test user
+  await page.request.post('/api/auth/logout')
+  await loginAsAdmin(page)
+  const deleteResp = await page.request.delete(`/api/users/${userId}`)
+  expect(deleteResp.status()).toBe(204)
 })

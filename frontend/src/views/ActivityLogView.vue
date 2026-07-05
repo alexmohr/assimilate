@@ -931,11 +931,20 @@ function filterByRun(runId: string): void {
                         <pre class="command-pre">{{ expandedDetail.borg_command }}</pre>
                       </div>
                       <div
+                        v-if="expandedDetail.warnings.length > 0"
+                        class="detail-section detail-warning-section"
+                      >
+                        <h3 class="detail-heading status-heading warning-heading">Warnings</h3>
+                        <pre class="status-pre warning-pre">{{
+                          expandedDetail.warnings.join('\n')
+                        }}</pre>
+                      </div>
+                      <div
                         v-if="expandedDetail.error_message"
                         class="detail-section detail-error-section"
                       >
-                        <h3 class="detail-heading error-heading">Error</h3>
-                        <pre class="error-pre">{{ expandedDetail.error_message }}</pre>
+                        <h3 class="detail-heading status-heading error-heading">Error</h3>
+                        <pre class="status-pre error-pre">{{ expandedDetail.error_message }}</pre>
                       </div>
                     </div>
                     <div
@@ -978,7 +987,7 @@ function filterByRun(runId: string): void {
               >
                 <td colspan="5">
                   <div class="detail-panel">
-                    <pre class="error-pre">{{ row.event.message }}</pre>
+                    <pre class="status-pre error-pre">{{ row.event.message }}</pre>
                   </div>
                 </td>
               </tr>
@@ -1301,8 +1310,12 @@ function filterByRun(runId: string): void {
   color: var(--text-muted);
 }
 
-.error-heading {
+.status-heading.error-heading {
   color: var(--danger);
+}
+
+.status-heading.warning-heading {
+  color: var(--warning);
 }
 
 .detail-dl {
@@ -1324,16 +1337,31 @@ function filterByRun(runId: string): void {
   font-size: 0.8rem;
 }
 
-.error-pre {
+.status-pre {
   margin: 0;
   padding: 0.75rem 1rem;
-  background: var(--danger-subtle);
-  border: 1px solid var(--danger);
   border-radius: var(--radius-sm);
-  color: var(--danger);
   font-size: 0.8rem;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.status-pre.error-pre {
+  background: var(--danger-subtle);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+}
+
+.status-pre.warning-pre {
+  background: var(--warning-subtle);
+  border: 1px solid var(--warning);
+  color: var(--warning);
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.detail-warning-section {
+  flex: 1 1 100%;
 }
 
 .detail-command-section {

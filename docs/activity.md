@@ -32,6 +32,7 @@ Click any row to expand it and see detailed statistics:
 - **Timing** — start, finish, and duration
 - **Sizes** — original, compressed, and deduplicated
 - **Stats** — files processed, borg version
+- **Warnings** — a list of warning messages (if the run completed with warnings)
 - **Error** — error message (if the run failed)
 
 ## Filters

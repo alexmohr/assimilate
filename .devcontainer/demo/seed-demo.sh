@@ -437,22 +437,41 @@ echo "==> Adding SSH tunnel entry for loopback agent communication..."
 api POST "/api/tunnels" "{\"agent_id\":$MEDIA_ID,\"ssh_host\":\"127.0.0.1\",\"ssh_user\":\"borg\",\"ssh_port\":22,\"tunnel_port\":18080,\"enabled\":true}" > /dev/null
 
 echo "==> Adding archive tags..."
-# Tag real imported archives (by actual name from backup_reports) rather than
+# Tag real imported archives (by joining backup_reports -> archives) rather than
 # guessing names -- the most recent and 3rd-most-recent web-server-01 archives.
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
-INSERT INTO archive_tags (repo_id, archive_name, tag, created_by)
-SELECT $REPO_DAILY_ID, archive_name, 'pre-upgrade', 1
-FROM backup_reports
-WHERE repo_id = $REPO_DAILY_ID AND archive_name LIKE 'web-server-01-backup-%'
-ORDER BY started_at DESC LIMIT 1
+INSERT INTO archive_tags (archive_id, tag, created_by)
+SELECT a.id, 'pre-upgrade', 1
+FROM archives a
+JOIN backup_reports br ON a.repo_id = br.repo_id AND a.name = br.archive_name
+WHERE br.repo_id = $REPO_DAILY_ID AND br.archive_name LIKE 'web-server-01-backup-%'
+ORDER BY br.started_at DESC LIMIT 1
 ON CONFLICT DO NOTHING;
 
-INSERT INTO archive_tags (repo_id, archive_name, tag, created_by)
-SELECT $REPO_DAILY_ID, archive_name, 'weekly-baseline', 1
-FROM backup_reports
-WHERE repo_id = $REPO_DAILY_ID AND archive_name LIKE 'web-server-01-backup-%'
-ORDER BY started_at DESC OFFSET 2 LIMIT 1
+INSERT INTO archive_tags (archive_id, tag, created_by)
+SELECT a.id, 'weekly-baseline', 1
+FROM archives a
+JOIN backup_reports br ON a.repo_id = br.repo_id AND a.name = br.archive_name
+WHERE br.repo_id = $REPO_DAILY_ID AND br.archive_name LIKE 'web-server-01-backup-%'
+ORDER BY br.started_at DESC OFFSET 2 LIMIT 1
 ON CONFLICT DO NOTHING;
+SQL
+
+echo "==> Adding warnings to the most recent web-server-01 backup report..."
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<'SQL' > /dev/null
+UPDATE backup_reports
+SET warnings = ARRAY[
+        'file changed while we backed it up: /var/www/config.php',
+        'slow read on /var/log/nginx/access.log'
+    ],
+    status = 'warning'
+WHERE id = (
+    SELECT id FROM backup_reports
+    WHERE agent_id = (SELECT id FROM agents WHERE hostname = 'web-server-01')
+      AND archive_name LIKE 'web-server-01-backup-%'
+    ORDER BY started_at DESC
+    LIMIT 1
+);
 SQL
 
 echo "==> Updating database storage statistics..."

@@ -23,6 +23,7 @@ vi.mock('../composables/useWebSocket', () => ({
 }))
 
 import { apiClient } from '../api/client'
+import type { ReportRow } from '../types/report'
 import ActivityLogView from './ActivityLogView.vue'
 
 const mockGet = vi.mocked(apiClient.get)
@@ -85,6 +86,31 @@ const ACTIVITY_ROWS: ActivityRow[] = [
   },
 ]
 
+const WARNING_MOCK_REPORTS: ReportRow[] = [
+  {
+    id: 1,
+    agent_id: 1,
+    repo_id: 1,
+    schedule_id: null,
+    started_at: '2026-01-01T08:00:00Z',
+    finished_at: '2026-01-01T08:04:00Z',
+    status: 'warning',
+    original_size: 1024,
+    compressed_size: 512,
+    deduplicated_size: 256,
+    files_processed: 100,
+    duration_secs: 240,
+    error_message: null,
+    warnings: ['some file changed during backup', 'slow read on /var/www/logs'],
+    borg_version: '1.2.0',
+    archive_name: null,
+    borg_command: null,
+    hostname: 'web-server-01',
+    repo_name: null,
+    schedule_name: null,
+  },
+]
+
 const SYSTEM_EVENTS: SystemEvent[] = [
   {
     id: 1,
@@ -134,6 +160,8 @@ function setupDefaultMocks(): void {
     if (url === '/agents') return Promise.resolve({ data: AGENTS })
     if (url === '/stats/activity') return Promise.resolve({ data: ACTIVITY_ROWS })
     if (url === '/stats/system-events') return Promise.resolve({ data: SYSTEM_EVENTS })
+    if (url.startsWith('/agents/') && url.endsWith('/reports'))
+      return Promise.resolve({ data: WARNING_MOCK_REPORTS })
     return Promise.resolve({ data: [] })
   })
 }
@@ -297,6 +325,30 @@ describe('ActivityLogView', () => {
 
       const warningBadges = wrapper.findAll('.badge-warning')
       expect(warningBadges.length).toBeGreaterThan(0)
+    })
+
+    it('expands a warning row and shows warnings in the detail panel', async () => {
+      setupDefaultMocks()
+      const wrapper = mountView()
+      await flushPromises()
+
+      const warningRows = wrapper
+        .findAll('tr.log-row')
+        .filter(
+          (r) =>
+            r.find('.badge-warning').exists() &&
+            r.find('.cell-host').text() === 'web-server-01' &&
+            r.find('.cell-target').text().startsWith('/var/www'),
+        )
+      expect(warningRows.length).toBeGreaterThan(0)
+
+      await warningRows[0].trigger('click')
+      await flushPromises()
+
+      const warningPre = wrapper.find('pre.warning-pre')
+      expect(warningPre.exists()).toBe(true)
+      expect(warningPre.text()).toContain('some file changed during backup')
+      expect(warningPre.text()).toContain('slow read on /var/www/logs')
     })
   })
 

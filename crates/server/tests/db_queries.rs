@@ -6162,16 +6162,17 @@ async fn delete_backup_reports_before_one_sec_before(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn delete_system_events_before_keeps_recent(pool: PgPool) {
+    let before_insert = Utc::now();
     db::insert_system_event(&pool, "test_event", None, "recent event")
         .await
         .unwrap();
 
-    let cutoff = Utc::now();
-    // Event was created a few ms ago, cutoff is ~now, event is NOT before cutoff
+    // Use a cutoff just before the insert — guaranteed to be before created_at
+    let cutoff = before_insert - Duration::seconds(1);
     let deleted = db::delete_system_events_before(&pool, cutoff)
         .await
         .unwrap();
-    assert_eq!(deleted, 0, "recent system event must not be deleted");
+    assert_eq!(deleted, 0, "system event created after cutoff must not be deleted");
 
     let events = db::get_system_events(&pool, 10).await.unwrap();
     assert_eq!(events.len(), 1);
@@ -6187,7 +6188,7 @@ async fn delete_system_events_before_deletes_old(pool: PgPool) {
     let deleted = db::delete_system_events_before(&pool, cutoff)
         .await
         .unwrap();
-    assert_eq!(deleted, 1, "old system event must be deleted");
+    assert_eq!(deleted, 1, "system event must be deleted with future cutoff");
 
     let events = db::get_system_events(&pool, 10).await.unwrap();
     assert!(events.is_empty());

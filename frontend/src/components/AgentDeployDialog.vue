@@ -8,7 +8,6 @@ import { ref, reactive, onMounted } from 'vue'
 import { apiClient } from '../api/client'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { extractError } from '../utils/error'
-import ToggleSwitch from './ToggleSwitch.vue'
 
 const props = defineProps<{
   hostname: string
@@ -45,8 +44,6 @@ const deployForm = reactive({
   ssh_password: '',
   server_url: '',
   install_path: '/usr/local/bin/assimilate-agent',
-  use_sudo: false,
-  sudo_password: '',
   systemd_service_content: '',
 })
 
@@ -87,9 +84,6 @@ async function loadExistingServiceUnit(): Promise<void> {
         ssh_user: deployForm.ssh_user.trim(),
         ssh_port: deployForm.ssh_port,
         ssh_password: deployForm.ssh_password || undefined,
-        use_sudo: deployForm.use_sudo,
-        sudo_password:
-          deployForm.use_sudo && deployForm.sudo_password ? deployForm.sudo_password : undefined,
       },
     )
     if (res.data.content) {
@@ -131,9 +125,6 @@ async function submitDeploy(): Promise<void> {
       ssh_password: deployForm.ssh_password || undefined,
       server_url: deployForm.server_url.trim(),
       install_path: deployForm.install_path.trim() || undefined,
-      use_sudo: deployForm.use_sudo,
-      sudo_password:
-        deployForm.use_sudo && deployForm.sudo_password ? deployForm.sudo_password : undefined,
       systemd_service_content: deployForm.systemd_service_content.trim() || undefined,
     })
     deployResult.value = res.data
@@ -171,8 +162,8 @@ async function submitDeploy(): Promise<void> {
         <template v-if="!deployResult?.success">
           <div class="dialog-body">
             <p class="deploy-info">
-              Upload and install the agent binary on the target machine via SSH. Connect as root or
-              enable sudo below for non-root users.
+              Upload and install the agent binary on the target machine via SSH. Sudo is used
+              automatically if available; if you provide an SSH password it is also used for sudo.
             </p>
             <p class="deploy-note">
               This will also install and enable the <code>assimilate-agent</code> systemd service on
@@ -215,7 +206,7 @@ async function submitDeploy(): Promise<void> {
                 placeholder="Leave empty to use SSH key"
               />
               <span class="field-hint"
-                >Optional — authenticate with password instead of the server's SSH key</span
+                >Optional --- authenticate with password instead of the server's SSH key</span
               >
             </div>
             <div class="field">
@@ -238,27 +229,7 @@ async function submitDeploy(): Promise<void> {
                 placeholder="/usr/local/bin/assimilate-agent"
               />
             </div>
-            <div class="field toggle-row">
-              <span class="toggle-row-label">Use sudo for privileged operations</span>
-              <ToggleSwitch v-model="deployForm.use_sudo" />
-            </div>
-            <span
-              v-if="deployForm.use_sudo"
-              class="field-hint"
-              >Enable when connecting as a non-root user that has sudo access</span
-            >
-            <div
-              v-if="deployForm.use_sudo"
-              class="field"
-            >
-              <label class="field-label">Sudo Password</label>
-              <input
-                v-model="deployForm.sudo_password"
-                class="input mono"
-                type="password"
-                placeholder="Leave empty if passwordless sudo is configured"
-              />
-            </div>
+
             <div class="field">
               <div class="field-label-row">
                 <label class="field-label">Systemd Service Unit</label>
@@ -268,7 +239,7 @@ async function submitDeploy(): Promise<void> {
                   :disabled="fetchServiceLoading || !deployForm.ssh_host"
                   @click="loadExistingServiceUnit"
                 >
-                  {{ fetchServiceLoading ? 'Loading…' : 'Load from remote' }}
+                  {{ fetchServiceLoading ? 'Loading...' : 'Load from remote' }}
                 </button>
               </div>
               <textarea
@@ -392,19 +363,6 @@ async function submitDeploy(): Promise<void> {
 .field-narrow {
   max-width: 120px;
   flex: 0 0 120px;
-}
-
-.toggle-row {
-  display: flex;
-  flex-direction: row;
-  gap: 1.5rem;
-  align-items: center;
-  margin-top: 0.5rem;
-}
-
-.toggle-row-label {
-  font-size: 0.875rem;
-  color: var(--text-secondary);
 }
 
 .field-label-row {

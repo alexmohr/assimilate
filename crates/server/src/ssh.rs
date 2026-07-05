@@ -631,8 +631,6 @@ pub struct DeployAgentParams<'a> {
     pub remote_path: &'a str,
     pub server_url: &'a str,
     pub token: &'a str,
-    pub use_sudo: bool,
-    pub sudo_password: Option<&'a str>,
     pub password: Option<&'a str>,
     pub systemd_service_content: Option<&'a str>,
 }
@@ -673,6 +671,29 @@ async fn exec_sudo_command(
         None => format!("sudo sh -c {}", shell_escape(command)),
     };
     exec_command(session, &sudo_cmd).await
+}
+
+/// Execute a command with sudo, falling back to without sudo if sudo itself is not installed.
+///
+/// Exit code 127 from the outer shell means a command was not found. We treat this as
+/// "sudo is not installed" and retry without sudo. In the unlikely case that sudo IS
+/// installed but the inner command (e.g. `mv`, `cat`, `systemctl`) happens to exit with
+/// 127, the fallback will re-run that command without sudo and propagate its actual exit
+/// code --- still correct, just one extra SSH round trip.
+async fn exec_with_sudo_fallback(
+    session: &client::Handle<SshClientHandler>,
+    command: &str,
+    password: Option<&str>,
+) -> Result<(u32, String, String), SshError> {
+    // Always try with sudo first
+    let (exit_code, stdout, stderr) = exec_sudo_command(session, command, password).await?;
+
+    // If sudo is not installed (exit code 127 from shell), retry without sudo
+    if exit_code == 127 {
+        exec_command(session, command).await
+    } else {
+        Ok((exit_code, stdout, stderr))
+    }
 }
 
 fn build_write_unit_cmd(content: &str, path: &str) -> String {
@@ -831,21 +852,12 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
         shell_escape(&upload_path),
     );
 
-    if params.use_sudo {
-        let (exit_code, _, stderr) =
-            exec_sudo_command(&session, &move_cmd, params.sudo_password).await?;
-        if exit_code != 0 {
-            return Err(SshError::Exec(format!(
-                "sudo mv/chmod failed (exit {exit_code}): {stderr}"
-            )));
-        }
-    } else {
-        let (exit_code, _, stderr) = exec_command(&session, &move_cmd).await?;
-        if exit_code != 0 {
-            return Err(SshError::Exec(format!(
-                "mv/chmod failed (exit {exit_code}): {stderr}"
-            )));
-        }
+    let (exit_code, _, stderr) =
+        exec_with_sudo_fallback(&session, &move_cmd, params.password).await?;
+    if exit_code != 0 {
+        return Err(SshError::Exec(format!(
+            "mv/chmod failed (exit {exit_code}): {stderr}"
+        )));
     }
 
     let unit_content = params.systemd_service_content.map_or_else(
@@ -856,40 +868,22 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
     let unit_path = "/etc/systemd/system/assimilate-agent.service";
     let write_cmd = build_write_unit_cmd(&unit_content, unit_path);
 
-    if params.use_sudo {
-        let (exit_code, _, stderr) =
-            exec_sudo_command(&session, &write_cmd, params.sudo_password).await?;
-        if exit_code != 0 {
-            return Err(SshError::Exec(format!(
-                "failed to write systemd unit via sudo (exit {exit_code}): {stderr}"
-            )));
-        }
+    let (exit_code, _, stderr) =
+        exec_with_sudo_fallback(&session, &write_cmd, params.password).await?;
+    if exit_code != 0 {
+        return Err(SshError::Exec(format!(
+            "failed to write systemd unit (exit {exit_code}): {stderr}"
+        )));
+    }
 
-        let enable_cmd = "systemctl daemon-reload && systemctl enable assimilate-agent && \
-                          systemctl restart assimilate-agent";
-        let (exit_code, _, stderr) =
-            exec_sudo_command(&session, enable_cmd, params.sudo_password).await?;
-        if exit_code != 0 {
-            return Err(SshError::Exec(format!(
-                "systemctl enable/restart via sudo failed (exit {exit_code}): {stderr}"
-            )));
-        }
-    } else {
-        let (exit_code, _, stderr) = exec_command(&session, &write_cmd).await?;
-        if exit_code != 0 {
-            return Err(SshError::Exec(format!(
-                "failed to write systemd unit (exit {exit_code}): {stderr}"
-            )));
-        }
-
-        let enable_cmd = "systemctl daemon-reload && systemctl enable assimilate-agent && \
-                          systemctl restart assimilate-agent";
-        let (exit_code, _, stderr) = exec_command(&session, enable_cmd).await?;
-        if exit_code != 0 {
-            return Err(SshError::Exec(format!(
-                "systemctl enable/restart failed (exit {exit_code}): {stderr}"
-            )));
-        }
+    let enable_cmd = "systemctl daemon-reload && systemctl enable assimilate-agent && systemctl \
+                      restart assimilate-agent";
+    let (exit_code, _, stderr) =
+        exec_with_sudo_fallback(&session, enable_cmd, params.password).await?;
+    if exit_code != 0 {
+        return Err(SshError::Exec(format!(
+            "systemctl enable/restart failed (exit {exit_code}): {stderr}"
+        )));
     }
 
     info!(host = %params.host, "agent deployed and service restarted");
@@ -901,8 +895,6 @@ pub struct ReadFileParams<'a> {
     pub user: &'a str,
     pub port: u16,
     pub password: Option<&'a str>,
-    pub use_sudo: bool,
-    pub sudo_password: Option<&'a str>,
     pub path: &'a str,
 }
 
@@ -913,11 +905,8 @@ pub async fn read_remote_file(params: &ReadFileParams<'_>) -> Result<Option<Stri
     };
 
     let cat_cmd = format!("cat {}", shell_escape(params.path));
-    let (exit_code, stdout, _stderr) = if params.use_sudo {
-        exec_sudo_command(&session, &cat_cmd, params.sudo_password).await?
-    } else {
-        exec_command(&session, &cat_cmd).await?
-    };
+    let (exit_code, stdout, _stderr) =
+        exec_with_sudo_fallback(&session, &cat_cmd, params.password).await?;
 
     if exit_code != 0 {
         return Ok(None);

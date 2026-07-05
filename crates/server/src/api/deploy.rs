@@ -25,9 +25,6 @@ pub struct DeployAgentRequest {
     pub ssh_port: Option<u16>,
     pub server_url: String,
     pub install_path: Option<String>,
-    #[serde(default)]
-    pub use_sudo: bool,
-    pub sudo_password: Option<String>,
     pub ssh_password: Option<String>,
     pub systemd_service_content: Option<String>,
 }
@@ -190,8 +187,6 @@ pub async fn deploy_agent(
         remote_path: install_path,
         server_url: &server_url,
         token: &token_hex,
-        use_sudo: req.use_sudo,
-        sudo_password: req.sudo_password.as_deref(),
         password: req.ssh_password.as_deref(),
         systemd_service_content: req.systemd_service_content.as_deref(),
     })
@@ -235,9 +230,6 @@ pub struct FetchServiceUnitRequest {
     pub ssh_user: String,
     pub ssh_port: Option<u16>,
     pub ssh_password: Option<String>,
-    #[serde(default)]
-    pub use_sudo: bool,
-    pub sudo_password: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -276,8 +268,6 @@ pub async fn fetch_service_unit(
         user: &req.ssh_user,
         port,
         password: req.ssh_password.as_deref(),
-        use_sudo: req.use_sudo,
-        sudo_password: req.sudo_password.as_deref(),
         path: "/etc/systemd/system/assimilate-agent.service",
     })
     .await

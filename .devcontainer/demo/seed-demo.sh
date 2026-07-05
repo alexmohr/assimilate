@@ -61,7 +61,7 @@ DELETE FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly'
 DELETE FROM system_events;
 DELETE FROM audit_log;
 DELETE FROM login_attempts;
-DELETE FROM users WHERE username IN ('operator1','viewer1');
+DELETE FROM users WHERE username IN ('operator1','viewer1','locked-out-user');
 -- Reset admin password to 'admin' (bcrypt cost 10, pre-computed)
 UPDATE users SET password_hash = '$2b$10$HvauZloS2N8QIfViDXmtp.rpWOawMeLdgWdBQQDHl3jD7Mhw7C3/e', must_change_password = false WHERE username = 'admin';
 INSERT INTO users (username, password_hash, must_change_password)
@@ -355,6 +355,13 @@ ON CONFLICT DO NOTHING;
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id FROM users u, roles r WHERE u.username = 'viewer1' AND r.name = 'viewer'
 ON CONFLICT DO NOTHING;
+-- Locked-out user: simulates an account that exceeded MAX_ACCOUNT_FAILURES
+INSERT INTO users (username, password_hash, locked_until)
+VALUES ('locked-out-user', '$2b$12$LJ3m4sFQH/0.s3VDlIBNOeRbEEziXlg5V5X1A0x0aM0ABs3LHfMwq', NOW() + INTERVAL '1 hour')
+ON CONFLICT (username) DO NOTHING;
+INSERT INTO login_attempts (username, ip_address, success, attempted_at)
+SELECT 'locked-out-user', '192.168.1.100', false, NOW() - (n || ' minutes')::INTERVAL
+FROM generate_series(1, 12) AS n;
 SQL
 
 echo "==> Creating groups..."

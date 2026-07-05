@@ -65,6 +65,10 @@ pub struct UserListResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "API response carries many boolean feature flags"
+)]
 pub struct AgentResponse {
     #[ts(type = "number")]
     pub id: i64,
@@ -259,6 +263,10 @@ pub struct MigrateEncryptionResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "API response carries many boolean schedule flags"
+)]
 pub struct ScheduleResponse {
     #[ts(type = "number")]
     pub id: i64,
@@ -576,6 +584,10 @@ pub struct GroupMembersResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "API response carries many boolean permission flags"
+)]
 pub struct RoleResponse {
     #[ts(type = "number")]
     pub id: i64,
@@ -603,6 +615,10 @@ pub struct RoleListResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "API response carries many boolean permission flags"
+)]
 pub struct RepoPermissionResponse {
     #[ts(type = "number")]
     pub user_id: i64,
@@ -1195,6 +1211,10 @@ pub struct HostExportResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "API export response carries many boolean schedule flags"
+)]
 pub struct ScheduleExportResponse {
     pub name: String,
     #[ts(type = "string")]

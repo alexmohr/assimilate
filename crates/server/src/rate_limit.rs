@@ -3,7 +3,7 @@
 
 use std::{
     collections::HashMap,
-    net::{IpAddr, Ipv4Addr},
+    net::IpAddr,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -23,7 +23,6 @@ pub struct IpRateLimiter {
     state: Arc<Mutex<IpRateLimiterState>>,
     max_requests: u32,
     window: Duration,
-    resolver: ClientIpResolver,
 }
 
 struct IpRateLimiterState {
@@ -32,7 +31,7 @@ struct IpRateLimiterState {
 }
 
 impl IpRateLimiter {
-    pub fn new(max_requests: u32, window: Duration, resolver: ClientIpResolver) -> Self {
+    pub fn new(max_requests: u32, window: Duration) -> Self {
         Self {
             state: Arc::new(Mutex::new(IpRateLimiterState {
                 requests: HashMap::new(),
@@ -40,7 +39,6 @@ impl IpRateLimiter {
             })),
             max_requests,
             window,
-            resolver,
         }
     }
 
@@ -182,115 +180,7 @@ pub async fn auth_tracking_middleware(
 mod tests {
     use std::net::Ipv4Addr;
 
-    use axum::{
-        body::Body,
-        http::{HeaderMap, Request},
-    };
-    use ipnetwork::IpNetwork;
-
     use super::*;
-
-    fn empty_headers() -> HeaderMap {
-        HeaderMap::new()
-    }
-
-    fn xff_headers(hops: &[&str]) -> HeaderMap {
-        let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", hops.join(", ").parse().unwrap());
-        headers
-    }
-
-    fn client_ip(trusted: Vec<&str>) -> ClientIp {
-        ClientIp {
-            trusted_proxies: trusted
-                .into_iter()
-                .filter_map(|s| IpNetwork::from_str(s).ok())
-                .collect(),
-        }
-    }
-
-    #[test]
-    fn resolve_returns_peer_when_no_trusted_proxies() {
-        let ci = client_ip(vec![]);
-        let peer = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
-        let headers = xff_headers(&["1.2.3.4"]);
-        // When trusted_proxies is empty, X-Forwarded-For is ignored entirely.
-        let result = ci.resolve_from_peer(peer, &headers);
-        assert_eq!(result, peer);
-    }
-
-    #[test]
-    fn resolve_returns_peer_when_peer_not_trusted() {
-        let ci = client_ip(vec!["192.168.0.0/16"]);
-        let peer = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
-        let headers = xff_headers(&["1.2.3.4"]);
-        let result = ci.resolve_from_peer(peer, &headers);
-        assert_eq!(result, peer);
-    }
-
-    #[test]
-    fn resolve_from_trusted_proxy_uses_xff() {
-        let ci = client_ip(vec!["192.168.0.0/16", "10.0.0.0/8"]);
-        let peer = IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1));
-        let headers = xff_headers(&["1.2.3.4", "10.0.0.1"]);
-        // Right-most untrusted hop is 1.2.3.4 (10.0.0.1 is trusted)
-        let result = ci.resolve_from_peer(peer, &headers);
-        assert_eq!(result, IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)));
-    }
-
-    #[test]
-    fn resolve_from_trusted_proxy_all_hops_trusted() {
-        let ci = client_ip(vec!["10.0.0.0/8", "192.168.0.0/16"]);
-        let peer = IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1));
-        let headers = xff_headers(&["10.0.0.2", "10.0.0.3"]);
-        // All hops are trusted, falls back to first hop
-        let result = ci.resolve_from_peer(peer, &headers);
-        assert_eq!(result, IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)));
-    }
-
-    #[test]
-    fn resolve_from_trusted_proxy_empty_xff() {
-        let ci = client_ip(vec!["192.168.0.0/16"]);
-        let peer = IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1));
-        let headers = empty_headers();
-        let result = ci.resolve_from_peer(peer, &headers);
-        assert_eq!(result, peer);
-    }
-
-    #[test]
-    fn resolve_from_trusted_proxy_malformed_xff() {
-        let ci = client_ip(vec!["192.168.0.0/16"]);
-        let peer = IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1));
-        let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", "not-an-ip, also-bad".parse().unwrap());
-        let result = ci.resolve_from_peer(peer, &headers);
-        assert_eq!(result, peer);
-    }
-
-    #[test]
-    fn resolve_returns_unspecified_when_no_peer() {
-        let ci = client_ip(vec![]);
-        let req = Request::builder().body(Body::empty()).unwrap();
-        let result = ci.resolve(&req);
-        assert_eq!(result, IpAddr::V4(Ipv4Addr::UNSPECIFIED));
-    }
-
-    #[test]
-    fn resolve_to_string_produces_valid_ip_string() {
-        let ci = client_ip(vec![]);
-        let result = ci.resolve_to_string(&Request::builder().body(Body::empty()).unwrap());
-        // Should not panic; returned string should be parseable as IP
-        let parsed: std::net::IpAddr = result.parse().unwrap();
-        assert_eq!(parsed, IpAddr::V4(Ipv4Addr::UNSPECIFIED));
-    }
-
-    #[test]
-    fn resolve_from_peer_to_string_valid() {
-        let ci = client_ip(vec![]);
-        let peer = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5));
-        let result = ci.resolve_from_peer_to_string(peer, &empty_headers());
-        assert_eq!(result, "10.0.0.5");
-    }
 
     #[tokio::test]
     async fn ip_rate_limiter_accepts_first_request() {
@@ -340,12 +230,5 @@ mod tests {
         assert!(limiter.check(10).await);
         assert!(limiter.check(20).await);
         assert!(!limiter.check(10).await);
-    }
-
-    #[test]
-    fn from_env_empty_when_unset() {
-        // When ASSIMILATE_TRUSTED_PROXIES is not set, trusted_proxies should be empty
-        let ci = ClientIp::from_env();
-        assert!(ci.trusted_proxies.is_empty());
     }
 }

@@ -16,6 +16,7 @@ fn default_keep_hourly() -> u32 {
 /// Name of the environment variable borg reads the repository URL from.
 pub const BORG_REPO_ENV_KEY: &str = "BORG_REPO";
 
+#[must_use]
 pub fn build_repo_url(ssh_user: &str, ssh_host: &str, ssh_port: u16, repo_path: &str) -> String {
     format!(
         "ssh://{ssh_user}@{ssh_host}:{ssh_port}/{}",
@@ -136,7 +137,7 @@ impl<'de> Deserialize<'de> for Compression {
                 let level = map
                     .get("value")
                     .and_then(|v| v.get("level"))
-                    .and_then(|v| v.as_i64())
+                    .and_then(serde_json::Value::as_i64)
                     .and_then(|v| i32::try_from(v).ok());
                 match type_ {
                     "None" => Ok(Compression::None),
@@ -544,6 +545,10 @@ pub struct FileChangePattern {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "Config struct with many boolean feature flags"
+)]
 pub struct ScheduleConfig {
     #[serde(default)]
     pub id: i64,

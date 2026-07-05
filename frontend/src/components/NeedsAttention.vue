@@ -198,6 +198,8 @@ p {
 
 .finding-reason {
   flex-basis: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .finding-actions {

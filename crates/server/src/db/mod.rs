@@ -4422,7 +4422,7 @@ pub async fn count_failed_attempts_since_last_success(
 /// The system event for lockout is recorded outside the transaction (harmless
 /// if it fails).
 ///
-/// Uses a sliding/consecutive-failure window — counts all failed attempts since
+/// Uses a sliding/consecutive-failure window -- counts all failed attempts since
 /// the last successful login, so lockout escalation is independent of any fixed
 /// calendar window and can correctly reach the 60-minute and 24-hour tiers.
 pub async fn record_failed_login_and_check_lockout(

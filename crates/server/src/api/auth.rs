@@ -179,12 +179,12 @@ pub async fn login(
 
     // Look up user. If not found, use a dummy hash so that the bcrypt
     // verification below runs in constant time regardless of whether the
-    // username exists — preventing a timing side-channel that could be used
+    // username exists -- preventing a timing side-channel that could be used
     // to enumerate valid usernames.
     let (user, hash) = match db::get_user_password_hash(&state.pool, &req.username).await {
         Ok(result) => result,
         Err(ApiError::NotFound(_)) => {
-            // Dummy hash — must be a valid bcrypt hash to keep bcrypt timing
+            // Dummy hash -- must be a valid bcrypt hash to keep bcrypt timing
             // uniform.  Pre-computed with cost 12 (matching the real hashing).
             let dummy_hash =
                 "$2b$12$UPq1GccVoXUwuom5gyGexOmuF8evhCzdaIb.3EacmKJs8WODdyusC".to_string();

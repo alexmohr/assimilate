@@ -657,20 +657,24 @@ WantedBy=multi-user.target
     )
 }
 
-async fn exec_sudo_command(
-    session: &client::Handle<SshClientHandler>,
-    command: &str,
-    password: Option<&str>,
-) -> Result<(u32, String, String), SshError> {
-    let sudo_cmd = match password {
+/// Build a sudo command string from a base command and optional password.
+fn build_sudo_cmd(command: &str, password: Option<&str>) -> String {
+    match password {
         Some(pw) => format!(
             "echo {} | sudo -S sh -c {}",
             shell_escape(pw),
             shell_escape(command)
         ),
         None => format!("sudo sh -c {}", shell_escape(command)),
-    };
-    exec_command(session, &sudo_cmd).await
+    }
+}
+
+async fn exec_sudo_command(
+    session: &client::Handle<SshClientHandler>,
+    command: &str,
+    password: Option<&str>,
+) -> Result<(u32, String, String), SshError> {
+    exec_command(session, &build_sudo_cmd(command, password)).await
 }
 
 /// Execute a command with sudo, falling back to without sudo if sudo itself is not installed.
@@ -685,12 +689,23 @@ async fn exec_with_sudo_fallback(
     command: &str,
     password: Option<&str>,
 ) -> Result<(u32, String, String), SshError> {
-    // Always try with sudo first
     let (exit_code, stdout, stderr) = exec_sudo_command(session, command, password).await?;
+    resolve_fallback(exit_code, stdout, stderr, || exec_command(session, command)).await
+}
 
-    // If sudo is not installed (exit code 127 from shell), retry without sudo
+/// If a sudo command exits with 127 (command not found), retry without sudo.
+async fn resolve_fallback<F, Fut>(
+    exit_code: u32,
+    stdout: String,
+    stderr: String,
+    fallback: F,
+) -> Result<(u32, String, String), SshError>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<(u32, String, String), SshError>>,
+{
     if exit_code == 127 {
-        exec_command(session, command).await
+        fallback().await
     } else {
         Ok((exit_code, stdout, stderr))
     }
@@ -1015,6 +1030,78 @@ mod tests {
         assert!(result.contains("Environment=BORG_AGENT_TOKEN=mytoken"));
         assert!(!result.contains("https://other.com"));
         assert!(!result.contains("othertoken"));
+    }
+
+    #[test]
+    fn build_sudo_cmd_no_password() {
+        let cmd = build_sudo_cmd("echo hello", None);
+        assert_eq!(cmd, "sudo sh -c 'echo hello'");
+    }
+
+    #[test]
+    fn build_sudo_cmd_with_password() {
+        let cmd = build_sudo_cmd("echo hello", Some("mypass"));
+        assert_eq!(cmd, "echo 'mypass' | sudo -S sh -c 'echo hello'");
+    }
+
+    #[test]
+    fn build_sudo_cmd_with_special_chars_in_password() {
+        let cmd = build_sudo_cmd("echo test", Some("pa$$word ' quote"));
+        assert!(cmd.starts_with("echo 'pa$$word '\\'' quote'"));
+        assert!(cmd.contains("sudo -S sh -c 'echo test'"));
+    }
+
+    #[test]
+    fn build_sudo_cmd_with_special_chars_in_command() {
+        let cmd = build_sudo_cmd("cat /etc/sys d/it's.service", None);
+        assert_eq!(cmd, "sudo sh -c 'cat /etc/sys d/it'\\''s.service'");
+    }
+
+    #[tokio::test]
+    async fn resolve_fallback_calls_fallback_on_exit_127() {
+        let result = resolve_fallback(127, String::new(), String::new(), || async {
+            Ok((0, "fallback-executed".to_string(), String::new()))
+        })
+        .await;
+        let (code, stdout, _) = result.unwrap();
+        assert_eq!(code, 0);
+        assert_eq!(stdout, "fallback-executed");
+    }
+
+    #[tokio::test]
+    async fn resolve_fallback_returns_original_when_not_127() {
+        let result = resolve_fallback(0, "sudo-ok".to_string(), String::new(), || async {
+            panic!("fallback must not be called for non-127 exit code")
+        })
+        .await;
+        let (code, stdout, _) = result.unwrap();
+        assert_eq!(code, 0);
+        assert_eq!(stdout, "sudo-ok");
+    }
+
+    #[tokio::test]
+    async fn resolve_fallback_preserves_stderr_and_stdout_when_not_127() {
+        let result = resolve_fallback(1, "output".to_string(), "error-msg".to_string(), || async {
+            panic!("fallback must not be called for non-127 exit code")
+        })
+        .await;
+        let (code, stdout, stderr) = result.unwrap();
+        assert_eq!(code, 1);
+        assert_eq!(stdout, "output");
+        assert_eq!(stderr, "error-msg");
+    }
+
+    #[tokio::test]
+    async fn resolve_fallback_propagates_fallback_error() {
+        let err = resolve_fallback(127, String::new(), String::new(), || async {
+            Err(SshError::Exec("fallback failed".to_string()))
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("fallback failed"),
+            "error should propagate from fallback"
+        );
     }
 
     #[test]

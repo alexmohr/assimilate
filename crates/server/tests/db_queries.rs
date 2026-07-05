@@ -5934,6 +5934,236 @@ async fn delete_backup_reports_with_archive_before_keeps_null_archive(pool: PgPo
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn delete_backup_reports_with_archive_before_boundary_exact(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "arch-exact-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            schedule_id: None,
+            started_at: now - Duration::days(30),
+            finished_at: now - Duration::days(30),
+            status: "success".to_string(),
+            original_size: 100,
+            compressed_size: 50,
+            deduplicated_size: 25,
+            repo_unique_csize: 0,
+            files_processed: 10,
+            duration_secs: 60,
+            error_message: None,
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: Some("exact-boundary-archive".to_string()),
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let cutoff = now - Duration::days(30);
+    let deleted = db::delete_backup_reports_with_archive_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 0, "report exactly at cutoff must not be deleted");
+
+    let names = db::list_archive_names_for_repo(&pool, repo.id)
+        .await
+        .unwrap();
+    assert!(names.contains("exact-boundary-archive"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_backup_reports_with_archive_before_one_sec_before(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "arch-1s-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            schedule_id: None,
+            started_at: now - Duration::days(30) - Duration::seconds(1),
+            finished_at: now - Duration::days(30) - Duration::seconds(1),
+            status: "success".to_string(),
+            original_size: 100,
+            compressed_size: 50,
+            deduplicated_size: 25,
+            repo_unique_csize: 0,
+            files_processed: 10,
+            duration_secs: 60,
+            error_message: None,
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: Some("one-sec-before-archive".to_string()),
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let cutoff = now - Duration::days(30);
+    let deleted = db::delete_backup_reports_with_archive_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(
+        deleted, 1,
+        "report one second before cutoff must be deleted"
+    );
+
+    let names = db::list_archive_names_for_repo(&pool, repo.id)
+        .await
+        .unwrap();
+    assert!(!names.contains("one-sec-before-archive"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_backup_reports_before_boundary_exact(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "fail-exact-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            schedule_id: None,
+            started_at: now - Duration::days(7),
+            finished_at: now - Duration::days(7),
+            status: "failed".to_string(),
+            original_size: 0,
+            compressed_size: 0,
+            deduplicated_size: 0,
+            repo_unique_csize: 0,
+            files_processed: 0,
+            duration_secs: 0,
+            error_message: Some("timeout".to_string()),
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: None,
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let cutoff = now - Duration::days(7);
+    let deleted = db::delete_backup_reports_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(
+        deleted, 0,
+        "failed report exactly at cutoff must not be deleted"
+    );
+
+    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(reports.len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_backup_reports_before_one_sec_before(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "fail-1s-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            schedule_id: None,
+            started_at: now - Duration::days(7) - Duration::seconds(1),
+            finished_at: now - Duration::days(7) - Duration::seconds(1),
+            status: "failed".to_string(),
+            original_size: 0,
+            compressed_size: 0,
+            deduplicated_size: 0,
+            repo_unique_csize: 0,
+            files_processed: 0,
+            duration_secs: 0,
+            error_message: Some("timeout".to_string()),
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: None,
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let cutoff = now - Duration::days(7);
+    let deleted = db::delete_backup_reports_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(
+        deleted, 1,
+        "failed report one second before cutoff must be deleted"
+    );
+
+    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
+        .await
+        .unwrap();
+    assert!(reports.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_system_events_before_keeps_recent(pool: PgPool) {
+    db::insert_system_event(&pool, "test_event", None, "recent event")
+        .await
+        .unwrap();
+
+    let cutoff = Utc::now();
+    // Event was created a few ms ago, cutoff is ~now, event is NOT before cutoff
+    let deleted = db::delete_system_events_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 0, "recent system event must not be deleted");
+
+    let events = db::get_system_events(&pool, 10).await.unwrap();
+    assert_eq!(events.len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_system_events_before_deletes_old(pool: PgPool) {
+    db::insert_system_event(&pool, "old_event", None, "old event to prune")
+        .await
+        .unwrap();
+
+    let cutoff = Utc::now() + Duration::hours(1);
+    let deleted = db::delete_system_events_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 1, "old system event must be deleted");
+
+    let events = db::get_system_events(&pool, 10).await.unwrap();
+    assert!(events.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn audit_filter_by_target_type(pool: PgPool) {
     db::audit::insert_audit_entry(
         &pool,

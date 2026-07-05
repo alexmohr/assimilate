@@ -26,14 +26,14 @@ export async function verifyRedirectFromAdminRoutes(
   }
 }
 
-export async function loginAsAdmin(page: Page): Promise<void> {
+async function login(page: Page, username: string, password: string): Promise<void> {
   // Retry the full login flow up to 3 times to handle transient CI slowness.
   let lastErr: unknown
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       await page.goto('/login')
-      await page.locator('input[type="text"], input[name="username"]').fill('admin')
-      await page.locator('input[type="password"]').fill('admin')
+      await page.locator('input[type="text"], input[name="username"]').fill(username)
+      await page.locator('input[type="password"]').fill(password)
       // Wait for the login API response before checking the URL, so a slow
       // server round-trip does not cause waitForURL to race.
       await Promise.all([
@@ -60,6 +60,18 @@ export async function loginAsAdmin(page: Page): Promise<void> {
     }
   }
   throw lastErr
+}
+
+export async function loginAsAdmin(page: Page): Promise<void> {
+  await login(page, 'admin', 'admin')
+}
+
+export async function loginAsOperator(page: Page): Promise<void> {
+  await login(page, 'operator1', 'operator1')
+}
+
+export async function loginAsViewer(page: Page): Promise<void> {
+  await login(page, 'viewer1', 'viewer1')
 }
 
 // Wraps the built-in `page` fixture to collect Istanbul coverage after each

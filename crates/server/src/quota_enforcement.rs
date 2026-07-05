@@ -213,6 +213,7 @@ mod tests {
             .enabled
     }
 
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn repo_notify_only_leaves_schedules_enabled(pool: PgPool) {
         let state = build_test_state(pool.clone());
@@ -228,6 +229,7 @@ mod tests {
         assert!(schedule_enabled(&pool, schedule_id).await);
     }
 
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn repo_block_backups_disables_every_schedule_for_repo(pool: PgPool) {
         let state = build_test_state(pool.clone());
@@ -245,6 +247,7 @@ mod tests {
         assert!(!schedule_enabled(&pool, schedule_b).await);
     }
 
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn repo_disable_schedule_only_disables_triggering_schedule(pool: PgPool) {
         let state = build_test_state(pool.clone());
@@ -267,6 +270,7 @@ mod tests {
         assert!(schedule_enabled(&pool, schedule_b).await);
     }
 
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn repo_disable_schedule_without_trigger_falls_back_to_every_schedule(pool: PgPool) {
         let state = build_test_state(pool.clone());
@@ -285,6 +289,7 @@ mod tests {
         assert!(!schedule_enabled(&pool, schedule_b).await);
     }
 
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn server_block_backups_disables_schedules_across_every_repo_on_host(pool: PgPool) {
         let state = build_test_state(pool.clone());
@@ -311,6 +316,7 @@ mod tests {
         assert!(schedule_enabled(&pool, other_schedule).await);
     }
 
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn server_disable_schedule_without_trigger_falls_back_to_every_schedule_on_host(
         pool: PgPool,

@@ -3336,6 +3336,50 @@ async fn server_quota_aggregates_usage_across_repos_sharing_host(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn server_quota_total_deduplicated_size_excludes_given_repo(pool: PgPool) {
+    let repo_a = create_test_repo_with_host(&pool, "repo-a", "shared.example.com").await;
+    let repo_b = create_test_repo_with_host(&pool, "repo-b", "shared.example.com").await;
+    db::update_repo_info_stats(
+        &pool,
+        repo_a.id,
+        &db::RepoInfoStats {
+            deduplicated_size: 300_000,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    db::update_repo_info_stats(
+        &pool,
+        repo_b.id,
+        &db::RepoInfoStats {
+            deduplicated_size: 70_000,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let total_excluding_a = db::server_quota::total_deduplicated_size_for_ssh_host_excluding(
+        &pool,
+        "shared.example.com",
+        repo_a.id,
+    )
+    .await
+    .unwrap();
+    assert_eq!(total_excluding_a, 70_000);
+
+    let total_excluding_b = db::server_quota::total_deduplicated_size_for_ssh_host_excluding(
+        &pool,
+        "shared.example.com",
+        repo_b.id,
+    )
+    .await
+    .unwrap();
+    assert_eq!(total_excluding_b, 300_000);
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn list_schedule_ids_for_ssh_host_and_set_schedule_enabled(pool: PgPool) {
     let (_, repo, schedule) = create_test_schedule(&pool).await;
 

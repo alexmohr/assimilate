@@ -160,7 +160,20 @@ pub async fn auth_tracking_middleware(
         .ok();
     let req = Request::from_parts(parts, body);
 
-    if let Some(user) = auth_user {
+    // Only rate-limit mutating requests (POST, PUT, PATCH, DELETE).
+    // Reads (GET, HEAD, OPTIONS) are not throttled so E2E test suites
+    // and UI polling are not blocked.
+    let is_mutating = matches!(
+        req.method(),
+        &axum::http::Method::POST
+            | &axum::http::Method::PUT
+            | &axum::http::Method::PATCH
+            | &axum::http::Method::DELETE
+    );
+
+    if let Some(user) = auth_user
+        && is_mutating
+    {
         let user_id = user.user_id;
         if state.user_rate_limiter.check(user_id).await {
             next.run(req).await

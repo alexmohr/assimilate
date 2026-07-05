@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 # Storage Quotas
 
-Storage quotas let you set a maximum deduplicated storage limit per repository. When a repository exceeds its quota, Assimilate can block new backups, send a notification, or both.
+Storage quotas let you set warning and critical deduplicated storage thresholds per repository. Each threshold has its own configurable **action**: send a notification only, block all backups for the repository, or disable just the schedule that pushed the repository over the limit.
 
 Storage quota configuration is available on the repository detail page under the **Storage Quota** section.
 
@@ -14,58 +14,76 @@ Storage quota configuration is available on the repository detail page under the
 ## Configuring a Quota
 
 1. Navigate to **Repos** and select the repository.
-2. Open the **Settings** tab.
-3. Enable **Storage Quota** and enter the limit in GiB.
-4. Set the **Action** to take when the limit is reached.
-5. Click **Save**.
+2. In the **Storage Quota** panel, click **Configure Quota** (or **Edit** if one already exists).
+3. Enter the **Warning** and **Critical** thresholds in GB.
+4. Choose the **action** for each threshold (see [Actions](#actions)).
+5. Toggle **Enabled** and click **Save**.
 
 ## Quota Options
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| **Enabled** | `false` | Toggle quota enforcement on or off |
-| **Limit** | — | Maximum deduplicated storage in GiB |
-| **Action** | `notify` | What to do when the limit is exceeded (see [Actions](#actions)) |
-| **Warning threshold** | `90` | Percentage of the limit at which a warning notification is sent |
+| **Enabled** | `true` | Toggle quota enforcement on or off |
+| **Warning threshold** | — | Deduplicated size at which the warning action fires |
+| **Warning action** | `notify_only` | Action taken when the warning threshold is reached |
+| **Critical threshold** | — | Deduplicated size at which the critical action fires |
+| **Critical action** | `notify_only` | Action taken when the critical threshold is reached |
 
 ## Actions
 
 | Action | Behaviour |
 |--------|-----------|
-| `notify` | Send a notification when the limit is exceeded; backup proceeds normally |
-| `block` | Refuse to start new backups while the repository is over quota |
-| `notify_and_block` | Send a notification and block new backups |
+| `notify_only` | Send a notification; all schedules keep running normally |
+| `block_backups` | Disable every schedule for this repository, in addition to notifying |
+| `disable_schedule` | Disable only the schedule whose backup triggered the breach, in addition to notifying |
+
+Disabling a schedule pushes an updated configuration to every agent assigned to it, so the agent stops running that schedule immediately rather than waiting for its next check-in. A disabled schedule can be re-enabled at any time from the [Scheduling](scheduling.md) page.
 
 !!! tip
-    Set the warning threshold to 80–90% to give yourself time to prune archives or increase the quota before backups are blocked.
+    Use `disable_schedule` for a targeted response when several schedules feed the same repository, and reserve `block_backups` for repositories where any further growth is unacceptable.
 
 ## Quota Enforcement Flow
 
+Quota status is evaluated after each backup completes, using the repository's current deduplicated size:
+
 ```mermaid
 flowchart TD
-    Trigger["Backup triggered"] --> Check["Check repo size vs quota"]
-    Check --> Under["Under limit"] --> Proceed["Run backup normally"]
-    Check --> Over["Over limit"]
-    Over --> Notify["Send notification"]
-    Over --> BlockCheck{"Action = block?"}
-    BlockCheck --> Yes["Block backup\n(report error)"]
-    BlockCheck --> No["Allow backup to proceed"]
+    Complete["Backup completes"] --> Check["Evaluate repo size vs quota"]
+    Check --> Ok["Under warning threshold"] --> Done["No action"]
+    Check --> Warn["At/above warning threshold"]
+    Check --> Crit["At/above critical threshold"]
+    Warn --> WarnNotify["Send warning notification"]
+    Crit --> CritNotify["Send critical notification"]
+    WarnNotify --> WarnAction{"Warning action"}
+    CritNotify --> CritAction{"Critical action"}
+    WarnAction --> WNotifyOnly["notify_only: no further action"]
+    WarnAction --> WBlock["block_backups: disable all schedules for repo"]
+    WarnAction --> WDisable["disable_schedule: disable triggering schedule"]
+    CritAction --> CNotifyOnly["notify_only: no further action"]
+    CritAction --> CBlock["block_backups: disable all schedules for repo"]
+    CritAction --> CDisable["disable_schedule: disable triggering schedule"]
 ```
 
-The quota check runs before `borg create` is invoked. If the action is `block` or `notify_and_block` and the repository is over quota, the backup is recorded as failed with the reason `quota_exceeded`.
+Because enforcement runs after the triggering backup has already completed, the backup that crosses the threshold is never itself blocked — only *subsequent* runs of the affected schedule(s) are stopped.
+
+## Server Quotas
+
+When several repositories share the same SSH host — for example, multiple repos backed by one disk on the same storage server — a per-repository quota can't see the combined usage. [Server Quotas](server-quotas.md) solve this by applying a single warning/critical threshold (with the same three actions) across every repository on a shared host.
 
 ## Viewing Current Usage
 
-The repository detail page shows current deduplicated size alongside the configured quota limit and a progress bar indicating percentage used.
+The repository detail page shows current deduplicated size alongside the configured quota thresholds and a progress bar indicating percentage used.
 
 The [Dashboard](dashboard.md) **Storage Breakdown** chart also reflects per-repository size, making it easy to identify repositories approaching their quota.
 
 ## Removing a Quota
 
-Set **Enabled** to off and click **Save**. No quota limit is applied to future backups.
+Set **Enabled** to off and click **Save** to stop enforcement while keeping the configured thresholds.
 
 ## Related Pages
 
 - [Repository Management](repositories.md) — configure repositories
+- [Server Quotas](server-quotas.md) — shared storage limits across repositories on the same host
+- [Scheduling & Retention](scheduling.md) — re-enable a schedule disabled by a quota action
 - [Dashboard](dashboard.md) — storage overview across all repositories
 - [Notifications](notifications.md) — configure quota alert notifications

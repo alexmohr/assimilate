@@ -1,12 +1,12 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT repo_id, warn_bytes, critical_bytes, enabled, updated_at FROM repo_quotas WHERE repo_id = $1",
+  "query": "SELECT ssh_host, warn_bytes, critical_bytes, warn_action, critical_action, enabled, updated_at FROM server_quotas WHERE ssh_host = $1",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "repo_id",
-        "type_info": "Int8"
+        "name": "ssh_host",
+        "type_info": "Text"
       },
       {
         "ordinal": 1,
@@ -20,18 +20,28 @@
       },
       {
         "ordinal": 3,
+        "name": "warn_action",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "critical_action",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
         "name": "enabled",
         "type_info": "Bool"
       },
       {
-        "ordinal": 4,
+        "ordinal": 6,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
       "Left": [
-        "Int8"
+        "Text"
       ]
     },
     "nullable": [
@@ -39,8 +49,10 @@
       true,
       true,
       false,
+      false,
+      false,
       false
     ]
   },
-  "hash": "b4ea5d4374e34c9e85f8207e728f5fc5c9fe5c74e67d5dd384a6f8ddac5c5c15"
+  "hash": "145ecaee63a082d0af3c08d7005340daa3b6bf6936db8dd75277760b5d760655"
 }

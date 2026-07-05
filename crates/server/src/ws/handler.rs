@@ -23,6 +23,7 @@ use crate::{
     api::repos::sync_new_archives,
     archive_index, config_assembler, db,
     notifications::{self, EventType, NotificationEvent},
+    quota_enforcement,
     ws::{completion_bus::OperationOutcome, ui_broadcast::ActiveBackupSnapshot},
 };
 
@@ -397,6 +398,56 @@ pub(crate) async fn validate_agent_repo(
     false
 }
 
+fn quota_status_label(status: db::quota::QuotaStatus) -> &'static str {
+    match status {
+        db::quota::QuotaStatus::Ok => "ok",
+        db::quota::QuotaStatus::Warning => "warning",
+        db::quota::QuotaStatus::Critical => "critical",
+    }
+}
+
+fn quota_event_type(status: db::quota::QuotaStatus) -> EventType {
+    match status {
+        db::quota::QuotaStatus::Ok => EventType::BackupSuccess,
+        db::quota::QuotaStatus::Warning => EventType::BackupWarning,
+        db::quota::QuotaStatus::Critical => EventType::BackupFailed,
+    }
+}
+
+/// Dispatches the notification for a repo- or server-quota breach. Shared by both the
+/// per-repo and per-host (shared SSH host) quota checks in [`handle_agent_message`], which
+/// otherwise duplicate this status-to-label, status-to-`EventType`, and dispatch logic almost
+/// verbatim.
+async fn dispatch_quota_breach_notification(
+    state: &AppState,
+    hostname: &str,
+    agent_id: i64,
+    repo_name: &str,
+    repo_id: i64,
+    quota_status: db::quota::QuotaStatus,
+    message: String,
+) {
+    let quota_event = NotificationEvent {
+        event_type: quota_event_type(quota_status),
+        hostname: hostname.to_owned(),
+        repo_name: repo_name.to_owned(),
+        status: quota_status_label(quota_status).to_owned(),
+        error_message: Some(message),
+        timestamp: chrono::Utc::now(),
+        repo_id: Some(repo_id),
+        agent_id: Some(agent_id),
+        schedule_id: None,
+        schedule_name: None,
+        archive_name: None,
+    };
+    let service = state.notification_service.clone();
+    tokio::spawn(async move {
+        if let Err(e) = notifications::dispatch(&service, quota_event).await {
+            tracing::error!(error = %e, "notification dispatch failed");
+        }
+    });
+}
+
 async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: &AppState) {
     let msg = match serde_json::from_str::<AgentToServer>(text) {
         Ok(m) => m,
@@ -627,48 +678,96 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
             if let Ok(Some(quota)) = db::quota::get_quota(&state.pool, report.repo_id.0).await {
                 let quota_status = db::quota::evaluate_quota(&quota, report.deduplicated_size);
                 if !matches!(quota_status, db::quota::QuotaStatus::Ok) {
-                    let quota_label = match quota_status {
-                        db::quota::QuotaStatus::Ok => "ok",
-                        db::quota::QuotaStatus::Warning => "warning",
-                        db::quota::QuotaStatus::Critical => "critical",
-                    };
                     tracing::warn!(
                         hostname = %hostname,
                         repo_id = ?report.repo_id,
                         deduplicated_size = report.deduplicated_size,
-                        quota_status = quota_label,
+                        quota_status = quota_status_label(quota_status),
                         "repository quota exceeded"
                     );
 
-                    let event_type = match quota_status {
-                        db::quota::QuotaStatus::Ok => EventType::BackupSuccess,
-                        db::quota::QuotaStatus::Warning => EventType::BackupWarning,
-                        db::quota::QuotaStatus::Critical => EventType::BackupFailed,
-                    };
                     let message = format!(
-                        "Repository quota {quota_label} for repo {}: deduplicated size {} bytes \
-                         exceeds configured limits",
-                        repo_name, report.deduplicated_size,
+                        "Repository quota {} for repo {}: deduplicated size {} bytes exceeds \
+                         configured limits",
+                        quota_status_label(quota_status),
+                        repo_name,
+                        report.deduplicated_size,
                     );
-                    let quota_event = NotificationEvent {
-                        event_type,
-                        hostname: hostname.to_owned(),
-                        repo_name: repo_name.clone(),
-                        status: quota_label.to_owned(),
-                        error_message: Some(message),
-                        timestamp: chrono::Utc::now(),
-                        repo_id: Some(report.repo_id.0),
-                        agent_id: Some(agent_id),
-                        schedule_id: None,
-                        schedule_name: None,
-                        archive_name: None,
-                    };
-                    let service = state.notification_service.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = notifications::dispatch(&service, quota_event).await {
-                            tracing::error!(error = %e, "notification dispatch failed");
-                        }
-                    });
+                    dispatch_quota_breach_notification(
+                        state,
+                        hostname,
+                        agent_id,
+                        &repo_name,
+                        report.repo_id.0,
+                        quota_status,
+                        message,
+                    )
+                    .await;
+
+                    if let Some(action) = quota.action_for(quota_status) {
+                        quota_enforcement::enforce_repo_quota_action(
+                            state,
+                            report.repo_id.0,
+                            report.schedule_id,
+                            action,
+                        )
+                        .await;
+                    }
+                }
+            }
+
+            if let Ok(ssh_host) = db::get_repo_ssh_host(&state.pool, report.repo_id.0).await
+                && let Ok(Some(server_quota)) =
+                    db::server_quota::get_server_quota(&state.pool, &ssh_host).await
+                && let Ok(siblings_deduplicated_size) =
+                    db::server_quota::total_deduplicated_size_for_ssh_host_excluding(
+                        &state.pool,
+                        &ssh_host,
+                        report.repo_id.0,
+                    )
+                    .await
+            {
+                // Combine the just-completed backup's fresh `report.deduplicated_size` with the
+                // (possibly stale, since `repo_stats` is only refreshed by a sync/rescan) snapshot
+                // for sibling repos on the host, so a breach on an otherwise idle host is caught
+                // immediately rather than only after an unrelated rescan.
+                let total_deduplicated_size = siblings_deduplicated_size + report.deduplicated_size;
+                let quota_status = server_quota.status(total_deduplicated_size);
+                if !matches!(quota_status, db::quota::QuotaStatus::Ok) {
+                    tracing::warn!(
+                        hostname = %hostname,
+                        ssh_host = %ssh_host,
+                        total_deduplicated_size,
+                        quota_status = quota_status_label(quota_status),
+                        "server quota exceeded"
+                    );
+
+                    let message = format!(
+                        "Server quota {} for host {ssh_host}: combined deduplicated size {} bytes \
+                         exceeds configured limits",
+                        quota_status_label(quota_status),
+                        total_deduplicated_size,
+                    );
+                    dispatch_quota_breach_notification(
+                        state,
+                        hostname,
+                        agent_id,
+                        &repo_name,
+                        report.repo_id.0,
+                        quota_status,
+                        message,
+                    )
+                    .await;
+
+                    if let Some(action) = server_quota.action_for(quota_status) {
+                        quota_enforcement::enforce_server_quota_action(
+                            state,
+                            &ssh_host,
+                            report.schedule_id,
+                            action,
+                        )
+                        .await;
+                    }
                 }
             }
 
@@ -1247,12 +1346,41 @@ mod tests {
     use shared::{
         crypto::{derive_key, encrypt_passphrase},
         protocol::AgentToServer,
-        types::{AgentId, BackupReport, BackupStatus, RepoId, ReportId},
+        types::{AgentId, BackupReport, BackupStatus, QuotaAction, RepoId, ReportId},
     };
     use sqlx::PgPool;
     use tokio::time::timeout;
 
     use super::*;
+
+    #[test]
+    fn quota_status_label_covers_every_status() {
+        assert_eq!(quota_status_label(db::quota::QuotaStatus::Ok), "ok");
+        assert_eq!(
+            quota_status_label(db::quota::QuotaStatus::Warning),
+            "warning"
+        );
+        assert_eq!(
+            quota_status_label(db::quota::QuotaStatus::Critical),
+            "critical"
+        );
+    }
+
+    #[test]
+    fn quota_event_type_covers_every_status() {
+        assert!(matches!(
+            quota_event_type(db::quota::QuotaStatus::Ok),
+            EventType::BackupSuccess
+        ));
+        assert!(matches!(
+            quota_event_type(db::quota::QuotaStatus::Warning),
+            EventType::BackupWarning
+        ));
+        assert!(matches!(
+            quota_event_type(db::quota::QuotaStatus::Critical),
+            EventType::BackupFailed
+        ));
+    }
 
     static TEST_BORG_BINARY_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -1736,5 +1864,239 @@ exit 0
             .filter(|e| e.event_type == "security_violation")
             .collect();
         assert_eq!(security_events.len(), 1);
+    }
+
+    fn backup_completed_message(agent_id: i64, repo_id: i64, deduplicated_size: i64) -> String {
+        let started_at = Utc
+            .with_ymd_and_hms(2026, 6, 5, 12, 0, 0)
+            .single()
+            .expect("valid timestamp");
+        let report = BackupReport {
+            id: ReportId(1),
+            agent_id: AgentId(agent_id),
+            repo_id: RepoId(repo_id),
+            schedule_id: None,
+            started_at,
+            finished_at: started_at + chrono::Duration::minutes(5),
+            status: BackupStatus::Success,
+            original_size: deduplicated_size,
+            compressed_size: deduplicated_size,
+            deduplicated_size,
+            repo_unique_csize: deduplicated_size,
+            files_processed: 3,
+            duration_secs: 300,
+            error_message: None,
+            warnings: vec![],
+            borg_version: Some("1.0.0".to_string()),
+            archive_name: None,
+            borg_command: None,
+            run_id: None,
+        };
+        serde_json::to_string(&AgentToServer::BackupCompleted { report })
+            .expect("serialize message")
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn backup_completed_disables_schedule_on_repo_quota_breach(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "agent-1", None, "token-hash", None)
+            .await
+            .expect("insert agent");
+        let passphrase_encrypted = encrypt_passphrase(
+            "test-passphrase",
+            &derive_key(b"handler-test-secret-key").unwrap(),
+        )
+        .expect("encrypt passphrase");
+        let repo = crate::db::insert_repo(
+            &pool,
+            &crate::db::InsertRepoParams {
+                name: "quota-repo",
+                repo_path: "/backups/quota",
+                ssh_user: "backup",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+            },
+        )
+        .await
+        .expect("insert repo");
+        let schedule = crate::db::insert_schedule(
+            &pool,
+            repo.id,
+            &crate::db::ScheduleParams {
+                name: "quota-schedule",
+                schedule_type: "backup",
+                cron_expression: "0 3 * * *",
+                enabled: true,
+                canary_enabled: false,
+                exclude_patterns_raw: "",
+                file_change_patterns_raw: "",
+                ignore_global_excludes: false,
+                keep_hourly: 24,
+                keep_daily: 7,
+                keep_weekly: 4,
+                keep_monthly: 6,
+                keep_yearly: 1,
+                compact_enabled: true,
+                rate_limit_kbps: None,
+                pre_backup_commands: "",
+                post_backup_commands: "",
+                on_failure: "stop",
+            },
+            None,
+        )
+        .await
+        .expect("insert schedule");
+        crate::db::insert_schedule_targets(&pool, schedule.id, &[(agent.id, 0)])
+            .await
+            .expect("insert schedule targets");
+        db::quota::upsert_quota(
+            &pool,
+            repo.id,
+            Some(50),
+            Some(100),
+            QuotaAction::NotifyOnly,
+            QuotaAction::BlockBackups,
+            true,
+        )
+        .await
+        .expect("upsert quota");
+
+        let state = build_test_state(pool.clone());
+        let msg = backup_completed_message(agent.id, repo.id, 200);
+        handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
+
+        let updated = crate::db::get_schedule_by_id(&pool, schedule.id)
+            .await
+            .expect("get schedule");
+        assert!(!updated.enabled);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn backup_completed_disables_schedule_on_server_quota_breach(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "agent-1", None, "token-hash", None)
+            .await
+            .expect("insert agent");
+        let passphrase_encrypted = encrypt_passphrase(
+            "test-passphrase",
+            &derive_key(b"handler-test-secret-key").unwrap(),
+        )
+        .expect("encrypt passphrase");
+        let repo_a = crate::db::insert_repo(
+            &pool,
+            &crate::db::InsertRepoParams {
+                name: "shared-repo-a",
+                repo_path: "/backups/shared-a",
+                ssh_user: "backup",
+                ssh_host: "shared.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+            },
+        )
+        .await
+        .expect("insert repo a");
+        let repo_b = crate::db::insert_repo(
+            &pool,
+            &crate::db::InsertRepoParams {
+                name: "shared-repo-b",
+                repo_path: "/backups/shared-b",
+                ssh_user: "backup",
+                ssh_host: "shared.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+            },
+        )
+        .await
+        .expect("insert repo b");
+        let schedule_a = crate::db::insert_schedule(
+            &pool,
+            repo_a.id,
+            &crate::db::ScheduleParams {
+                name: "shared-schedule-a",
+                schedule_type: "backup",
+                cron_expression: "0 3 * * *",
+                enabled: true,
+                canary_enabled: false,
+                exclude_patterns_raw: "",
+                file_change_patterns_raw: "",
+                ignore_global_excludes: false,
+                keep_hourly: 24,
+                keep_daily: 7,
+                keep_weekly: 4,
+                keep_monthly: 6,
+                keep_yearly: 1,
+                compact_enabled: true,
+                rate_limit_kbps: None,
+                pre_backup_commands: "",
+                post_backup_commands: "",
+                on_failure: "stop",
+            },
+            None,
+        )
+        .await
+        .expect("insert schedule a");
+        crate::db::insert_schedule_targets(&pool, schedule_a.id, &[(agent.id, 0)])
+            .await
+            .expect("insert schedule targets");
+        let schedule_b = crate::db::insert_schedule(
+            &pool,
+            repo_b.id,
+            &crate::db::ScheduleParams {
+                name: "shared-schedule-b",
+                schedule_type: "backup",
+                cron_expression: "0 3 * * *",
+                enabled: true,
+                canary_enabled: false,
+                exclude_patterns_raw: "",
+                file_change_patterns_raw: "",
+                ignore_global_excludes: false,
+                keep_hourly: 24,
+                keep_daily: 7,
+                keep_weekly: 4,
+                keep_monthly: 6,
+                keep_yearly: 1,
+                compact_enabled: true,
+                rate_limit_kbps: None,
+                pre_backup_commands: "",
+                post_backup_commands: "",
+                on_failure: "stop",
+            },
+            None,
+        )
+        .await
+        .expect("insert schedule b");
+        crate::db::insert_schedule_targets(&pool, schedule_b.id, &[(agent.id, 0)])
+            .await
+            .expect("insert schedule targets");
+        db::server_quota::upsert_server_quota(
+            &pool,
+            "shared.local",
+            Some(50),
+            Some(100),
+            QuotaAction::NotifyOnly,
+            QuotaAction::BlockBackups,
+            true,
+        )
+        .await
+        .expect("upsert server quota");
+
+        let state = build_test_state(pool.clone());
+        let msg = backup_completed_message(agent.id, repo_a.id, 200);
+        handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
+
+        let updated = crate::db::get_schedule_by_id(&pool, schedule_b.id)
+            .await
+            .expect("get schedule");
+        assert!(!updated.enabled);
     }
 }

@@ -8,11 +8,15 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { apiClient } from '../api/client'
 import { formatBytes } from '../utils/format'
 import { extractError } from '../utils/error'
+import { actionLabel, bytesToGb, gbToBytes } from '../utils/quota'
+import type { QuotaAction } from '../types/generated'
 import ToggleSwitch from './ToggleSwitch.vue'
 
 interface QuotaData {
   warn_bytes: number
   critical_bytes: number
+  warn_action: QuotaAction
+  critical_action: QuotaAction
   enabled: boolean
 }
 
@@ -30,6 +34,8 @@ const editError = ref<string | null>(null)
 const editForm = reactive({
   warn_gb: 0,
   critical_gb: 0,
+  warn_action: 'notify_only' as QuotaAction,
+  critical_action: 'notify_only' as QuotaAction,
   enabled: true,
 })
 
@@ -69,14 +75,6 @@ const progressBarClass = computed((): string => {
   return 'bar-ok'
 })
 
-function bytesToGb(bytes: number): number {
-  return Math.round((bytes / 1073741824) * 100) / 100
-}
-
-function gbToBytes(gb: number): number {
-  return Math.round(gb * 1073741824)
-}
-
 async function loadQuota(): Promise<void> {
   loading.value = true
   error.value = null
@@ -99,6 +97,8 @@ function startEdit(): void {
   if (!quota.value) return
   editForm.warn_gb = bytesToGb(quota.value.warn_bytes)
   editForm.critical_gb = bytesToGb(quota.value.critical_bytes)
+  editForm.warn_action = quota.value.warn_action
+  editForm.critical_action = quota.value.critical_action
   editForm.enabled = quota.value.enabled
   editError.value = null
   isEditing.value = true
@@ -107,6 +107,8 @@ function startEdit(): void {
 function startNewQuota(): void {
   editForm.warn_gb = 0
   editForm.critical_gb = 0
+  editForm.warn_action = 'notify_only'
+  editForm.critical_action = 'notify_only'
   editForm.enabled = true
   editError.value = null
   isEditing.value = true
@@ -124,6 +126,8 @@ async function saveQuota(): Promise<void> {
     await apiClient.put(`/repos/${props.repoId}/quota`, {
       warn_bytes: gbToBytes(editForm.warn_gb),
       critical_bytes: gbToBytes(editForm.critical_gb),
+      warn_action: editForm.warn_action,
+      critical_action: editForm.critical_action,
       enabled: editForm.enabled,
     })
     isEditing.value = false
@@ -212,8 +216,12 @@ onMounted(loadQuota)
         <dl class="quota-details">
           <dt>Warning threshold</dt>
           <dd>{{ formatBytes(quota.warn_bytes) }}</dd>
+          <dt>Warning action</dt>
+          <dd>{{ actionLabel(quota.warn_action) }}</dd>
           <dt>Critical threshold</dt>
           <dd>{{ formatBytes(quota.critical_bytes) }}</dd>
+          <dt>Critical action</dt>
+          <dd>{{ actionLabel(quota.critical_action) }}</dd>
         </dl>
       </template>
     </template>
@@ -232,6 +240,17 @@ onMounted(loadQuota)
             />
           </div>
           <div class="field">
+            <label class="field-label">Warning action</label>
+            <select
+              v-model="editForm.warn_action"
+              class="input"
+            >
+              <option value="notify_only">Notify only</option>
+              <option value="block_backups">Block backups</option>
+              <option value="disable_schedule">Disable schedule</option>
+            </select>
+          </div>
+          <div class="field">
             <label class="field-label">Critical (GB)</label>
             <input
               v-model.number="editForm.critical_gb"
@@ -240,6 +259,17 @@ onMounted(loadQuota)
               min="0"
               step="0.1"
             />
+          </div>
+          <div class="field">
+            <label class="field-label">Critical action</label>
+            <select
+              v-model="editForm.critical_action"
+              class="input"
+            >
+              <option value="notify_only">Notify only</option>
+              <option value="block_backups">Block backups</option>
+              <option value="disable_schedule">Disable schedule</option>
+            </select>
           </div>
           <div class="field field-full toggle-row">
             <span class="toggle-row-label">Enabled</span>

@@ -24,6 +24,7 @@ pub mod repos;
 pub mod restore;
 pub mod schedules;
 pub mod search;
+pub mod server_quotas;
 pub mod ssh;
 pub mod stats;
 pub mod system;

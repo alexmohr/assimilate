@@ -10,8 +10,9 @@ use shared::responses::{
     DashboardSummaryCountersResponse, DashboardSummaryResponse, DashboardUpcomingScheduleResponse,
     DeleteApiTokenResponse, HealthCheckResponse, HealthResponse, InitRepoResponse,
     ListApiTokensResponse, LogEntryResponse, MeResponse, PassphraseResponse, PreferencesResponse,
-    RefreshSessionResponse, RepoTagEntryResponse, RescanResponse, StorageRepoEntryResponse,
-    StorageTrendByRepoEntryResponse, StorageTrendEntryResponse, TagResponse, TrendEntryResponse,
+    RefreshSessionResponse, RepoTagEntryResponse, RescanResponse, ServerQuotaResponse,
+    StorageRepoEntryResponse, StorageTrendByRepoEntryResponse, StorageTrendEntryResponse,
+    TagResponse, TrendEntryResponse,
 };
 use utoipa::OpenApi;
 
@@ -28,6 +29,7 @@ use crate::{
         repos::{CreateRepoRequest, InitRepoRequest, UpdateRepoRequest},
         schedules::{CreateScheduleRequest, UpdateScheduleRequest},
         search::{SearchEntry, SearchResponse},
+        server_quotas::UpsertServerQuotaRequest,
         system::{
             DatabaseStorageResponse, SettingsResponse, SshPublicKeyResponse, SystemResetResponse,
             UpdateSettingsRequest, VersionResponse,
@@ -150,6 +152,9 @@ use crate::{
         crate::api::keys::change_passphrase,
         crate::api::restore::download_files,
         crate::api::restore::restore_files,
+        crate::api::server_quotas::list_server_quotas,
+        crate::api::server_quotas::upsert_server_quota,
+        crate::api::server_quotas::delete_server_quota,
     ),
     components(schemas(
         LoginRequest,
@@ -251,6 +256,8 @@ use crate::{
         DeleteApiTokenResponse,
         RefreshSessionResponse,
         PreferencesResponse,
+        ServerQuotaResponse,
+        UpsertServerQuotaRequest,
     ))
 )]
 pub struct ApiDoc;

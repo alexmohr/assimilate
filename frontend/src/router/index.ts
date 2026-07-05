@@ -60,6 +60,12 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAdmin: true },
   },
   {
+    path: '/server-quotas',
+    component: () => import('../views/ServerQuotasView.vue'),
+    name: 'server-quotas',
+    meta: { requiresAdmin: true },
+  },
+  {
     path: '/admin/groups',
     component: () => import('../views/GroupsView.vue'),
     name: 'admin-groups',

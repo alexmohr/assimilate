@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM server_quotas WHERE ssh_host = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "849456c8383b9e991bed930c1c61802bd106ec99c0e97023a9fef94c7629b5c2"
+}

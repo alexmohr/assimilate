@@ -326,6 +326,39 @@ impl FromStr for OnFailure {
     }
 }
 
+/// Action taken when a repo or server quota threshold (warn/critical) is breached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QuotaAction {
+    #[default]
+    NotifyOnly,
+    BlockBackups,
+    DisableSchedule,
+}
+
+impl fmt::Display for QuotaAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotifyOnly => write!(f, "notify_only"),
+            Self::BlockBackups => write!(f, "block_backups"),
+            Self::DisableSchedule => write!(f, "disable_schedule"),
+        }
+    }
+}
+
+impl FromStr for QuotaAction {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "notify_only" => Ok(Self::NotifyOnly),
+            "block_backups" => Ok(Self::BlockBackups),
+            "disable_schedule" => Ok(Self::DisableSchedule),
+            other => Err(format!("unknown quota action: {other}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum BackupStatus {

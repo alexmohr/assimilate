@@ -6,7 +6,7 @@ use axum::{
     extract::{Path, State},
 };
 use serde::Deserialize;
-use shared::responses::RepoQuotaResponse;
+use shared::{responses::RepoQuotaResponse, types::QuotaAction};
 
 use super::auth::AuthUser;
 use crate::{
@@ -20,6 +20,8 @@ impl From<db::quota::RepoQuota> for RepoQuotaResponse {
             repo_id: q.repo_id,
             warn_bytes: q.warn_bytes,
             critical_bytes: q.critical_bytes,
+            warn_action: q.warn_action.parse().unwrap_or_default(),
+            critical_action: q.critical_action.parse().unwrap_or_default(),
             enabled: q.enabled,
             updated_at: q.updated_at,
         }
@@ -30,6 +32,10 @@ impl From<db::quota::RepoQuota> for RepoQuotaResponse {
 pub struct UpsertQuotaRequest {
     pub warn_bytes: Option<i64>,
     pub critical_bytes: Option<i64>,
+    #[serde(default)]
+    pub warn_action: QuotaAction,
+    #[serde(default)]
+    pub critical_action: QuotaAction,
     pub enabled: bool,
 }
 
@@ -98,6 +104,8 @@ pub async fn upsert_quota(
         repo_id,
         req.warn_bytes,
         req.critical_bytes,
+        req.warn_action,
+        req.critical_action,
         req.enabled,
     )
     .await?

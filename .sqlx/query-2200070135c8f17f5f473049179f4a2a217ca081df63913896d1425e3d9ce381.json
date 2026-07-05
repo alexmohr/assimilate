@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT COALESCE(SUM(rs.deduplicated_size)::bigint, 0) AS \"total!\"\n        FROM repos r\n        LEFT JOIN repo_stats rs ON rs.repo_id = r.id\n        WHERE r.ssh_host = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "total!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "2200070135c8f17f5f473049179f4a2a217ca081df63913896d1425e3d9ce381"
+}

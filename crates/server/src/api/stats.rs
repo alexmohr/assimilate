@@ -991,6 +991,74 @@ impl TryFrom<&str> for CalendarEventStatus {
     }
 }
 
+/// Projects each schedule's upcoming cron occurrences within `[month_start, month_end)`
+/// into `day_map` as `Scheduled` calendar events, skipping schedules filtered out by
+/// `filter_repo_id` and stopping each schedule's projection after 62 occurrences (a
+/// generous bound for one calendar month across any supported cron cadence).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "grouping these into a struct would obscure the call site more than it would clarify it; all params are single-use scalars from the caller's own locals"
+)]
+async fn project_upcoming_schedule_events(
+    pool: &sqlx::PgPool,
+    schedules: &[db::ScheduleRow],
+    repos: &[db::RepoRow],
+    filter_repo_id: Option<i64>,
+    tz: chrono_tz::Tz,
+    now: chrono::DateTime<Utc>,
+    month_start: chrono::NaiveDate,
+    month_end: chrono::NaiveDate,
+    day_map: &mut std::collections::BTreeMap<String, Vec<CalendarEventResponse>>,
+) {
+    for schedule in schedules {
+        if filter_repo_id.is_some_and(|rid| schedule.repo_id != Some(rid)) {
+            continue;
+        }
+        let repo_name = schedule
+            .repo_id
+            .and_then(|rid| repos.iter().find(|r| r.id == rid))
+            .map(|r| r.name.clone())
+            .unwrap_or_default();
+        let hostname = db::get_schedule_target_hostnames(pool, schedule.id)
+            .await
+            .ok()
+            .and_then(|h| h.into_iter().next())
+            .unwrap_or_default();
+
+        let mut cursor = now;
+        for _ in 0..62 {
+            let Ok(next) =
+                shared::schedule::calculate_next_run(&schedule.cron_expression, cursor, tz)
+            else {
+                break;
+            };
+            let next_date = next.date_naive();
+            if next_date >= month_end {
+                break;
+            }
+            if next_date >= month_start && next > now {
+                let time_str = next.format("%H:%M").to_string();
+                day_map
+                    .entry(next_date.to_string())
+                    .or_default()
+                    .push(CalendarEventResponse {
+                        event_type: CalendarEventType::Backup.as_str().to_owned(),
+                        status: CalendarEventStatus::Scheduled.as_str().to_owned(),
+                        repo_name: repo_name.clone(),
+                        hostname: hostname.clone(),
+                        time: time_str,
+                        report_id: None,
+                        repo_id: schedule.repo_id,
+                        schedule_id: Some(schedule.id),
+                        archive_name: None,
+                        error_message: None,
+                    });
+            }
+            cursor = next;
+        }
+    }
+}
+
 #[utoipa::path(
     get,
     path = "/api/stats/calendar",
@@ -1074,56 +1142,18 @@ pub async fn calendar(
 
     let repos = db::list_all_repos(&state.pool).await?;
 
-    for schedule in &schedules {
-        if query
-            .repo_id
-            .is_some_and(|rid| schedule.repo_id != Some(rid))
-        {
-            continue;
-        }
-        let repo_name = schedule
-            .repo_id
-            .and_then(|rid| repos.iter().find(|r| r.id == rid))
-            .map(|r| r.name.clone())
-            .unwrap_or_default();
-        let hostname = db::get_schedule_target_hostnames(&state.pool, schedule.id)
-            .await
-            .ok()
-            .and_then(|h| h.into_iter().next())
-            .unwrap_or_default();
-
-        let mut cursor = now;
-        for _ in 0..62 {
-            let Ok(next) =
-                shared::schedule::calculate_next_run(&schedule.cron_expression, cursor, tz)
-            else {
-                break;
-            };
-            let next_date = next.date_naive();
-            if next_date >= month_end {
-                break;
-            }
-            if next_date >= month_start && next > now {
-                let time_str = next.format("%H:%M").to_string();
-                day_map
-                    .entry(next_date.to_string())
-                    .or_default()
-                    .push(CalendarEventResponse {
-                        event_type: CalendarEventType::Backup.as_str().to_owned(),
-                        status: CalendarEventStatus::Scheduled.as_str().to_owned(),
-                        repo_name: repo_name.clone(),
-                        hostname: hostname.clone(),
-                        time: time_str,
-                        report_id: None,
-                        repo_id: schedule.repo_id,
-                        schedule_id: Some(schedule.id),
-                        archive_name: None,
-                        error_message: None,
-                    });
-            }
-            cursor = next;
-        }
-    }
+    project_upcoming_schedule_events(
+        &state.pool,
+        &schedules,
+        &repos,
+        query.repo_id,
+        tz,
+        now,
+        month_start,
+        month_end,
+        &mut day_map,
+    )
+    .await;
 
     let result = day_map
         .into_iter()

@@ -81,6 +81,42 @@ fn generate_error_id() -> String {
     })
 }
 
+fn database_error_response(e: &sqlx::Error) -> (StatusCode, String, Option<String>) {
+    if let sqlx::Error::RowNotFound = e {
+        tracing::debug!("database row not found");
+        (
+            StatusCode::NOT_FOUND,
+            "resource not found".to_string(),
+            None,
+        )
+    } else if let Some(db_err) = e.as_database_error() {
+        if db_err.is_unique_violation() {
+            tracing::debug!(error = %db_err, "unique constraint violation");
+            (
+                StatusCode::CONFLICT,
+                "resource already exists".to_string(),
+                None,
+            )
+        } else {
+            let id = generate_error_id();
+            tracing::error!(error_id = %id, "database error: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "database error".to_string(),
+                Some(id),
+            )
+        }
+    } else {
+        let id = generate_error_id();
+        tracing::error!(error_id = %id, "database error: {e}");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "database error".to_string(),
+            Some(id),
+        )
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, message, error_id) = match &self {
@@ -108,41 +144,7 @@ impl IntoResponse for ApiError {
                 tracing::warn!(error = %msg, "too many requests");
                 (StatusCode::TOO_MANY_REQUESTS, msg.clone(), None)
             }
-            Self::Database(e) => {
-                if let sqlx::Error::RowNotFound = e {
-                    tracing::debug!("database row not found");
-                    (
-                        StatusCode::NOT_FOUND,
-                        "resource not found".to_string(),
-                        None,
-                    )
-                } else if let Some(db_err) = e.as_database_error() {
-                    if db_err.is_unique_violation() {
-                        tracing::debug!(error = %db_err, "unique constraint violation");
-                        (
-                            StatusCode::CONFLICT,
-                            "resource already exists".to_string(),
-                            None,
-                        )
-                    } else {
-                        let id = generate_error_id();
-                        tracing::error!(error_id = %id, "database error: {e}");
-                        (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            "database error".to_string(),
-                            Some(id),
-                        )
-                    }
-                } else {
-                    let id = generate_error_id();
-                    tracing::error!(error_id = %id, "database error: {e}");
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "database error".to_string(),
-                        Some(id),
-                    )
-                }
-            }
+            Self::Database(e) => database_error_response(e),
             Self::Crypto(e) => {
                 let id = generate_error_id();
                 tracing::error!(error_id = %id, "crypto error: {e}");

@@ -764,7 +764,10 @@ fn replace_or_insert_environment(content: &str, key: &str, value: &str) -> Strin
     if !replaced
         && let Some(service_index) = lines.iter().position(|line| line.trim() == "[Service]")
     {
-        lines.insert(service_index + 1, format!("Environment={key}={value}"));
+        lines.insert(
+            service_index.saturating_add(1),
+            format!("Environment={key}={value}"),
+        );
     }
 
     let mut result = lines.join("\n");

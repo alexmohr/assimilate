@@ -4645,9 +4645,12 @@ pub async fn get_calendar_events(
     let start = chrono::NaiveDate::from_ymd_opt(year, month, 1)
         .ok_or_else(|| ApiError::BadRequest("invalid month".to_string()))?;
     let end = if month == 12 {
-        chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
+        year.checked_add(1)
+            .and_then(|y| chrono::NaiveDate::from_ymd_opt(y, 1, 1))
     } else {
-        chrono::NaiveDate::from_ymd_opt(year, month + 1, 1)
+        month
+            .checked_add(1)
+            .and_then(|m| chrono::NaiveDate::from_ymd_opt(year, m, 1))
     }
     .ok_or_else(|| ApiError::BadRequest("invalid month".to_string()))?;
 

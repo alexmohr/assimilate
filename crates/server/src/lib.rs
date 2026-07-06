@@ -94,7 +94,7 @@ pub struct ImportTaskRegistry {
 
 impl ImportTaskRegistry {
     pub async fn start(&self, repo_id: i64) -> (u64, CancellationToken) {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed).saturating_add(1);
         let cancel = CancellationToken::new();
         self.tasks.lock().await.insert(
             repo_id,

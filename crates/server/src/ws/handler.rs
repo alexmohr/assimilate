@@ -731,7 +731,8 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                 // (possibly stale, since `repo_stats` is only refreshed by a sync/rescan) snapshot
                 // for sibling repos on the host, so a breach on an otherwise idle host is caught
                 // immediately rather than only after an unrelated rescan.
-                let total_deduplicated_size = siblings_deduplicated_size + report.deduplicated_size;
+                let total_deduplicated_size =
+                    siblings_deduplicated_size.saturating_add(report.deduplicated_size);
                 let quota_status = server_quota.status(total_deduplicated_size);
                 if !matches!(quota_status, db::quota::QuotaStatus::Ok) {
                     tracing::warn!(

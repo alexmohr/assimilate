@@ -179,11 +179,16 @@ pub async fn diff_archives(
                     tracing::trace!(error = %e, "skipping unparseable borg diff line");
                 })
                 .ok()?;
-            let path = v["path"].as_str()?.to_string();
-            let category = v["changes"]
-                .as_array()
+            let path = v
+                .get("path")
+                .and_then(serde_json::Value::as_str)?
+                .to_string();
+            let category = v
+                .get("changes")
+                .and_then(serde_json::Value::as_array)
                 .and_then(|changes| changes.first())
-                .and_then(|c| c["type"].as_str())
+                .and_then(|c| c.get("type"))
+                .and_then(serde_json::Value::as_str)
                 .map_or(ChangeCategory::Modified, |change_type| {
                     classify_change(BorgDiffChangeType::from(change_type))
                 });
@@ -271,11 +276,16 @@ mod tests {
             .iter()
             .filter_map(|line| {
                 let v: serde_json::Value = serde_json::from_str(line).ok()?;
-                let path = v["path"].as_str()?.to_string();
-                let category = v["changes"]
-                    .as_array()
+                let path = v
+                    .get("path")
+                    .and_then(serde_json::Value::as_str)?
+                    .to_string();
+                let category = v
+                    .get("changes")
+                    .and_then(serde_json::Value::as_array)
                     .and_then(|c| c.first())
-                    .and_then(|c| c["type"].as_str())
+                    .and_then(|c| c.get("type"))
+                    .and_then(serde_json::Value::as_str)
                     .map_or(ChangeCategory::Modified, |change_type| {
                         classify_change(BorgDiffChangeType::from(change_type))
                     });

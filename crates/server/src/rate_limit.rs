@@ -48,7 +48,7 @@ impl RateLimiter {
         let now = Instant::now();
         let mut state = self.state.lock().await;
 
-        if now.duration_since(state.last_cleanup) > self.window * 2 {
+        if now.duration_since(state.last_cleanup) > self.window.saturating_mul(2) {
             state.requests.retain(|_, timestamps| {
                 timestamps
                     .iter()

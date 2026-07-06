@@ -240,7 +240,12 @@ pub async fn create_schedule(
         .is_some_and(|v| !v.is_empty());
 
     if !has_backup_sources && !has_per_agent_sources && schedule_type_enum == ScheduleType::Backup {
-        let agent = db::get_agent_by_id(&state.pool, req.agent_ids[0]).await?;
+        let Some(&first_agent_id) = req.agent_ids.first() else {
+            return Err(ApiError::BadRequest(
+                "agent_ids must contain at least one entry".into(),
+            ));
+        };
+        let agent = db::get_agent_by_id(&state.pool, first_agent_id).await?;
         if agent.default_backup_paths.is_empty() {
             return Err(ApiError::BadRequest(
                 "no backup sources provided and agent has no default backup paths configured"

@@ -64,7 +64,10 @@ pub async fn list_audit_entries(
     pool: &PgPool,
     filters: &AuditEntryFilters<'_>,
 ) -> Result<(Vec<AuditEntry>, i64), sqlx::Error> {
-    let offset = (filters.page - 1) * filters.per_page;
+    let offset = filters
+        .page
+        .saturating_sub(1)
+        .saturating_mul(filters.per_page);
     let rows = sqlx::query_as!(
         AuditEntry,
         "SELECT id, user_id, username, action, target_type, target_id, details, ip_address, \

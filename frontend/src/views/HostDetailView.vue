@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
@@ -22,6 +22,7 @@ import MergeAgentDialog from '../components/MergeAgentDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import SshKeyDeployPanel from '../components/SshKeyDeployPanel.vue'
 import FileChangePatternsEditor from '../components/FileChangePatternsEditor.vue'
+import BackupProgressCard from '../components/BackupProgressCard.vue'
 import { parseFileChangePatterns } from '../utils/fileChangePatterns'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
@@ -563,6 +564,26 @@ async function loadTabData(): Promise<void> {
     repos.value = repoRes.data
     schedules.value = schedRes.data
     reports.value = reportRes.data
+    const runningReports = reportRes.data.filter((r) => {
+      const status = normalizeBackupStatus(r.status)
+      return status === 'pending' || status === 'started'
+    })
+    runningReports.forEach((r) => {
+      if (!r.repo_name || activeBackups.value.some((b) => b.targetName === r.repo_name)) return
+      const startedAt = new Date(r.started_at).getTime()
+      activeBackups.value = [
+        ...activeBackups.value,
+        {
+          targetName: r.repo_name,
+          archiveName: r.archive_name,
+          startedAt,
+          elapsedSecs: Math.floor((Date.now() - startedAt) / 1000),
+          progress: null,
+          logLines: [],
+        },
+      ]
+    })
+    if (runningReports.length > 0) ensureElapsedTimer()
   } catch (e: unknown) {
     logger.error('loadTabData failed', e)
   }
@@ -729,19 +750,103 @@ onMessage('DataChanged', () => loadAgent().catch(logger.error))
 onMessage('AgentConnected', () => loadAgent().catch(logger.error))
 onMessage('AgentDisconnected', () => loadAgent().catch(logger.error))
 
-const activeBackups = ref<string[]>([])
+interface ArchiveProgressData {
+  nfiles: number
+  originalSize: number
+  currentPath: string
+}
+
+interface ActiveBackup {
+  targetName: string
+  archiveName: string | null
+  startedAt: number
+  elapsedSecs: number
+  progress: ArchiveProgressData | null
+  logLines: string[]
+}
+
+const MAX_LIVE_LOG_LINES = 200
+const activeBackups = ref<ActiveBackup[]>([])
+let elapsedTimer: ReturnType<typeof setInterval> | null = null
+
+function ensureElapsedTimer(): void {
+  if (elapsedTimer !== null) return
+  elapsedTimer = setInterval(() => {
+    activeBackups.value.forEach((b) => {
+      b.elapsedSecs = Math.floor((Date.now() - b.startedAt) / 1000)
+    })
+  }, 1000)
+}
+
+function stopElapsedTimerIfIdle(): void {
+  if (activeBackups.value.length === 0 && elapsedTimer !== null) {
+    clearInterval(elapsedTimer)
+    elapsedTimer = null
+  }
+}
+
+interface BorgArchiveProgress {
+  type: 'archive_progress'
+  nfiles: number
+  original_size: number
+  path: string
+}
+
+function parseArchiveProgress(raw: string): BorgArchiveProgress | null {
+  try {
+    const obj = JSON.parse(raw) as Record<string, unknown>
+    if (obj['type'] === 'archive_progress') return obj as unknown as BorgArchiveProgress
+    return null
+  } catch {
+    return null
+  }
+}
 
 onMessage('BackupStarted', (payload) => {
-  if (payload.hostname === props.hostname && !activeBackups.value.includes(payload.target_name)) {
-    activeBackups.value = [...activeBackups.value, payload.target_name]
-  }
+  if (payload.hostname !== props.hostname) return
+  if (activeBackups.value.some((b) => b.targetName === payload.target_name)) return
+  activeBackups.value = [
+    ...activeBackups.value,
+    {
+      targetName: payload.target_name,
+      archiveName: payload.archive_name ?? null,
+      startedAt: Date.now(),
+      elapsedSecs: 0,
+      progress: null,
+      logLines: [],
+    },
+  ]
+  ensureElapsedTimer()
 })
 
 onMessage('BackupCompleted', (payload) => {
   if (payload.hostname === props.hostname) {
-    activeBackups.value = activeBackups.value.filter((t) => t !== payload.target_name)
+    activeBackups.value = activeBackups.value.filter((b) => b.targetName !== payload.target_name)
+    stopElapsedTimerIfIdle()
   }
   loadAgent().catch(logger.error)
+})
+
+onMessage('BackupLog', (payload) => {
+  if (payload.hostname !== props.hostname) return
+  const targetName = repos.value.find((r) => r.id === payload.repo_id)?.target_name
+  if (!targetName) return
+  const backup = activeBackups.value.find((b) => b.targetName === targetName)
+  if (!backup) return
+  const progress = parseArchiveProgress(payload.line)
+  if (progress !== null) {
+    backup.progress = {
+      nfiles: progress.nfiles,
+      originalSize: progress.original_size,
+      currentPath: progress.path ?? '',
+    }
+  } else {
+    backup.logLines = [...backup.logLines.slice(-(MAX_LIVE_LOG_LINES - 1)), payload.line]
+  }
+})
+
+onBeforeUnmount(() => {
+  if (elapsedTimer !== null) clearInterval(elapsedTimer)
 })
 
 watch(wsStatus, (newStatus, oldStatus) => {
@@ -832,14 +937,16 @@ watch(wsStatus, (newStatus, oldStatus) => {
             <dt>Repositories</dt>
             <dd>{{ repos.length }}</dd>
           </dl>
-          <div
-            v-if="activeBackups.length > 0"
-            class="active-backup-banner"
-          >
-            <span class="active-pulse" />
-            <span class="active-backup-label">Backup in progress:</span>
-            <span class="active-backup-targets">{{ activeBackups.join(', ') }}</span>
-          </div>
+          <BackupProgressCard
+            v-for="b in activeBackups"
+            :key="b.targetName"
+            :badge="b.targetName"
+            :archive-name="b.archiveName"
+            :elapsed-secs="b.elapsedSecs"
+            :estimated-remaining-secs="null"
+            :progress="b.progress"
+            :log-lines="b.logLines"
+          />
           <div class="info-actions">
             <button
               v-if="isImported"
@@ -1885,47 +1992,6 @@ watch(wsStatus, (newStatus, oldStatus) => {
 <style scoped>
 .host-detail {
   max-width: 1100px;
-}
-
-.active-backup-banner {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-top: 1rem;
-  padding: 0.6rem 0.75rem;
-  background: var(--accent-subtle, oklch(0.95 0.03 250));
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-sm);
-  font-size: 0.8rem;
-}
-
-.active-pulse {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: pulse 1.5s ease-in-out infinite;
-  flex-shrink: 0;
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
-}
-
-.active-backup-label {
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.active-backup-targets {
-  font-family: var(--mono);
-  color: var(--accent);
 }
 
 .breadcrumb {

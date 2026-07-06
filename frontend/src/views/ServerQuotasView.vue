@@ -10,9 +10,12 @@ import { formatBytes } from '../utils/format'
 import { extractError } from '../utils/error'
 import { actionLabel, bytesToGb, gbToBytes } from '../utils/quota'
 import { useAsyncAction } from '../composables/useAsyncAction'
+import { useMobile } from '../composables/useMobile'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import type { QuotaAction, ServerQuotaResponse } from '../types/generated'
+
+const { isMobile } = useMobile()
 
 function statusFor(quota: ServerQuotaResponse): 'ok' | 'warning' | 'critical' {
   if (!quota.configured || !quota.enabled) return 'ok'
@@ -20,6 +23,17 @@ function statusFor(quota: ServerQuotaResponse): 'ok' | 'warning' | 'critical' {
   if (quota.critical_bytes !== null && usage >= quota.critical_bytes) return 'critical'
   if (quota.warn_bytes !== null && usage >= quota.warn_bytes) return 'warning'
   return 'ok'
+}
+
+function statusLabel(quota: ServerQuotaResponse): string {
+  switch (statusFor(quota)) {
+    case 'ok':
+      return 'OK'
+    case 'warning':
+      return 'Warning'
+    case 'critical':
+      return 'Critical'
+  }
 }
 
 /** `quota.warn_bytes`/`critical_bytes` are `null` only when no quota is configured yet. */
@@ -129,83 +143,155 @@ onMounted(loadQuotas)
       No repositories are configured yet.
     </div>
 
-    <table
-      v-else
-      class="data-table"
+    <div
+      v-else-if="isMobile"
+      class="quota-card-list"
     >
-      <thead>
-        <tr>
-          <th>SSH Host</th>
-          <th>Repos</th>
-          <th>Usage</th>
-          <th>Warning</th>
-          <th>Critical</th>
-          <th>Status</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr
-          v-for="quota in quotas"
-          :key="quota.ssh_host"
-        >
-          <td class="name-cell">{{ quota.ssh_host }}</td>
-          <td>{{ quota.repo_count }}</td>
-          <td>{{ formatBytes(quota.total_deduplicated_size) }}</td>
-          <td>
-            <template v-if="quota.configured && quota.warn_bytes !== null">
-              {{ formatBytes(quota.warn_bytes) }} &middot; {{ actionLabel(quota.warn_action) }}
-            </template>
-            <span
-              v-else
-              class="muted"
-              >Not set</span
-            >
-          </td>
-          <td>
-            <template v-if="quota.configured && quota.critical_bytes !== null">
-              {{ formatBytes(quota.critical_bytes) }} &middot;
-              {{ actionLabel(quota.critical_action) }}
-            </template>
-            <span
-              v-else
-              class="muted"
-              >Not set</span
-            >
-          </td>
-          <td>
-            <span
-              class="status-badge"
-              :class="`badge-${statusFor(quota)}`"
-            >
-              {{
-                statusFor(quota) === 'ok'
-                  ? 'OK'
-                  : statusFor(quota) === 'warning'
-                    ? 'Warning'
-                    : 'Critical'
-              }}
-            </span>
-          </td>
-          <td class="actions-cell">
-            <button
-              class="btn btn-sm btn-ghost"
-              @click="startEdit(quota)"
-            >
-              {{ quota.configured ? 'Edit' : 'Configure' }}
-            </button>
-            <button
-              v-if="quota.configured"
-              class="btn btn-sm btn-ghost btn-danger-text"
-              :disabled="deleteLoading === quota.ssh_host"
-              @click="removeQuota(quota)"
-            >
-              Remove
-            </button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+      <div
+        v-for="quota in quotas"
+        :key="quota.ssh_host"
+        class="quota-card"
+      >
+        <div class="quota-card-top">
+          <span class="quota-host">{{ quota.ssh_host }}</span>
+          <span
+            class="status-badge"
+            :class="`badge-${statusFor(quota)}`"
+          >
+            {{ statusLabel(quota) }}
+          </span>
+        </div>
+        <div class="quota-card-stats">
+          <div class="stat">
+            <span class="stat-value">{{ quota.repo_count }}</span>
+            <span class="stat-label">Repos</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value">{{ formatBytes(quota.total_deduplicated_size) }}</span>
+            <span class="stat-label">Usage</span>
+          </div>
+        </div>
+        <dl class="quota-card-thresholds">
+          <div class="threshold-row">
+            <dt>Warning</dt>
+            <dd>
+              <template v-if="quota.configured && quota.warn_bytes !== null">
+                {{ formatBytes(quota.warn_bytes) }} &middot; {{ actionLabel(quota.warn_action) }}
+              </template>
+              <span
+                v-else
+                class="muted"
+                >Not set</span
+              >
+            </dd>
+          </div>
+          <div class="threshold-row">
+            <dt>Critical</dt>
+            <dd>
+              <template v-if="quota.configured && quota.critical_bytes !== null">
+                {{ formatBytes(quota.critical_bytes) }} &middot;
+                {{ actionLabel(quota.critical_action) }}
+              </template>
+              <span
+                v-else
+                class="muted"
+                >Not set</span
+              >
+            </dd>
+          </div>
+        </dl>
+        <div class="quota-card-actions">
+          <button
+            class="btn btn-sm btn-ghost"
+            @click="startEdit(quota)"
+          >
+            {{ quota.configured ? 'Edit' : 'Configure' }}
+          </button>
+          <button
+            v-if="quota.configured"
+            class="btn btn-sm btn-ghost btn-danger-text"
+            :disabled="deleteLoading === quota.ssh_host"
+            @click="removeQuota(quota)"
+          >
+            Remove
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-else
+      class="table-wrap"
+    >
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>SSH Host</th>
+            <th>Repos</th>
+            <th>Usage</th>
+            <th>Warning</th>
+            <th>Critical</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="quota in quotas"
+            :key="quota.ssh_host"
+          >
+            <td class="name-cell">{{ quota.ssh_host }}</td>
+            <td>{{ quota.repo_count }}</td>
+            <td>{{ formatBytes(quota.total_deduplicated_size) }}</td>
+            <td>
+              <template v-if="quota.configured && quota.warn_bytes !== null">
+                {{ formatBytes(quota.warn_bytes) }} &middot; {{ actionLabel(quota.warn_action) }}
+              </template>
+              <span
+                v-else
+                class="muted"
+                >Not set</span
+              >
+            </td>
+            <td>
+              <template v-if="quota.configured && quota.critical_bytes !== null">
+                {{ formatBytes(quota.critical_bytes) }} &middot;
+                {{ actionLabel(quota.critical_action) }}
+              </template>
+              <span
+                v-else
+                class="muted"
+                >Not set</span
+              >
+            </td>
+            <td>
+              <span
+                class="status-badge"
+                :class="`badge-${statusFor(quota)}`"
+              >
+                {{ statusLabel(quota) }}
+              </span>
+            </td>
+            <td class="actions-cell">
+              <button
+                class="btn btn-sm btn-ghost"
+                @click="startEdit(quota)"
+              >
+                {{ quota.configured ? 'Edit' : 'Configure' }}
+              </button>
+              <button
+                v-if="quota.configured"
+                class="btn btn-sm btn-ghost btn-danger-text"
+                :disabled="deleteLoading === quota.ssh_host"
+                @click="removeQuota(quota)"
+              >
+                Remove
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
     <div
       v-if="editingHost"
@@ -314,8 +400,99 @@ onMounted(loadQuotas)
   color: var(--danger);
 }
 
+.table-wrap {
+  overflow-x: auto;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.quota-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.quota-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.quota-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.quota-host {
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.quota-card-stats {
+  display: flex;
+  gap: 1.5rem;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.stat-value {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.stat-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.quota-card-thresholds {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0;
+}
+
+.threshold-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  font-size: 0.8125rem;
+}
+
+.threshold-row dt {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.threshold-row dd {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.quota-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.375rem;
+}
+
 .data-table {
   width: 100%;
+  min-width: 640px;
   border-collapse: collapse;
   font-size: 0.875rem;
 }

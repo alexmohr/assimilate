@@ -10,7 +10,10 @@ use axum::{
     },
     response::IntoResponse,
 };
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{
+    SinkExt, StreamExt,
+    stream::{SplitSink, SplitStream},
+};
 use shared::{
     protocol::{AgentToServer, ServerToAgent, ServerToUi},
     types::ScheduleType,
@@ -49,10 +52,19 @@ struct PendingBackupRow {
     run_id: Option<String>,
 }
 
-async fn handle_socket(socket: WebSocket, state: AppState) {
-    let (mut ws_sink, mut ws_stream) = socket.split();
+struct HelloFields {
+    hostname: String,
+    token: String,
+    agent_version: String,
+    agent_git_sha: Option<String>,
+    agent_build_time: Option<String>,
+    agent_commit_count: Option<u32>,
+    supports_restart: bool,
+    restart_unavailable_reason: Option<String>,
+}
 
-    let hello = match ws_stream.next().await {
+async fn read_hello_message(ws_stream: &mut SplitStream<WebSocket>) -> Option<HelloFields> {
+    match ws_stream.next().await {
         Some(Ok(Message::Text(text))) => match serde_json::from_str::<AgentToServer>(text.as_str())
         {
             Ok(AgentToServer::Hello {
@@ -64,7 +76,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 agent_commit_count,
                 supports_restart,
                 restart_unavailable_reason,
-            }) => Some((
+            }) => Some(HelloFields {
                 hostname,
                 token,
                 agent_version,
@@ -73,7 +85,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 agent_commit_count,
                 supports_restart,
                 restart_unavailable_reason,
-            )),
+            }),
             Ok(_) | Err(_) => None,
         },
         Some(
@@ -81,9 +93,93 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             | Err(_),
         )
         | None => None,
+    }
+}
+
+async fn send_close(ws_sink: &mut SplitSink<WebSocket, Message>, reason: &'static str) {
+    let close = Message::Close(Some(CloseFrame {
+        code: 4001,
+        reason: reason.into(),
+    }));
+    if let Err(e) = ws_sink.send(close).await {
+        tracing::debug!(error = %e, "ws send failed");
+    }
+}
+
+/// Looks up the agent's token hash and verifies the presented token.
+/// Sends a close frame and logs a system event on any failure. Returns the
+/// agent ID on success.
+async fn authenticate_agent(
+    pool: &PgPool,
+    ws_sink: &mut SplitSink<WebSocket, Message>,
+    hostname: &str,
+    token: String,
+) -> Option<i64> {
+    let (agent_id, token_hash) = match db::get_agent_token_hash(pool, hostname).await {
+        Ok(row) => row,
+        Err(e) => {
+            tracing::warn!(hostname = %hostname, error = %e, "unknown agent attempted connection");
+            if let Err(e) = db::insert_system_event(
+                pool,
+                "auth_failed",
+                Some(hostname),
+                &format!("Unknown agent '{hostname}' attempted connection"),
+            )
+            .await
+            {
+                tracing::error!(error = %e, "failed to insert system event");
+            }
+            send_close(ws_sink, "authentication failed").await;
+            return None;
+        }
     };
 
-    let Some((
+    let hostname_owned = hostname.to_owned();
+    let verify_result = tokio::task::spawn_blocking(move || bcrypt::verify(&token, &token_hash))
+        .await
+        .map_err(|e| {
+            tracing::error!(hostname = %hostname_owned, error = %e, "bcrypt task panicked");
+        });
+    let token_valid = match verify_result {
+        Ok(Ok(valid)) => valid,
+        Ok(Err(e)) => {
+            tracing::error!(hostname = %hostname, error = %e, "bcrypt verification failed");
+            send_close(ws_sink, "authentication failed").await;
+            return None;
+        }
+        Err(()) => {
+            send_close(ws_sink, "authentication failed").await;
+            return None;
+        }
+    };
+
+    if !token_valid {
+        tracing::warn!(hostname = %hostname, "invalid agent token");
+        if let Err(e) = db::insert_system_event(
+            pool,
+            "auth_failed",
+            Some(hostname),
+            &format!("Invalid token for agent '{hostname}'"),
+        )
+        .await
+        {
+            tracing::error!(error = %e, "failed to insert system event");
+        }
+        send_close(ws_sink, "authentication failed").await;
+        return None;
+    }
+
+    Some(agent_id)
+}
+
+async fn handle_socket(socket: WebSocket, state: AppState) {
+    let (mut ws_sink, mut ws_stream) = socket.split();
+
+    let Some(hello) = read_hello_message(&mut ws_stream).await else {
+        send_close(&mut ws_sink, "expected Hello message").await;
+        return;
+    };
+    let HelloFields {
         hostname,
         token,
         agent_version,
@@ -92,17 +188,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         agent_commit_count,
         supports_restart,
         restart_unavailable_reason,
-    )) = hello
-    else {
-        let close = Message::Close(Some(CloseFrame {
-            code: 4001,
-            reason: "expected Hello message".into(),
-        }));
-        if let Err(e) = ws_sink.send(close).await {
-            tracing::debug!(error = %e, "ws send failed");
-        }
-        return;
-    };
+    } = hello;
 
     tracing::info!(
         hostname = %hostname,
@@ -110,82 +196,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         "agent attempting connection"
     );
 
-    let (agent_id, token_hash) = match db::get_agent_token_hash(&state.pool, &hostname).await {
-        Ok(row) => row,
-        Err(e) => {
-            tracing::warn!(hostname = %hostname, error = %e, "unknown agent attempted connection");
-            if let Err(e) = db::insert_system_event(
-                &state.pool,
-                "auth_failed",
-                Some(&hostname),
-                &format!("Unknown agent '{hostname}' attempted connection"),
-            )
-            .await
-            {
-                tracing::error!(error = %e, "failed to insert system event");
-            }
-            let close = Message::Close(Some(CloseFrame {
-                code: 4001,
-                reason: "authentication failed".into(),
-            }));
-            if let Err(e) = ws_sink.send(close).await {
-                tracing::debug!(error = %e, "ws send failed");
-            }
-            return;
-        }
-    };
-
-    let verify_result = tokio::task::spawn_blocking(move || bcrypt::verify(&token, &token_hash))
-        .await
-        .map_err(|e| {
-            tracing::error!(hostname = %hostname, error = %e, "bcrypt task panicked");
-        });
-    let token_valid = match verify_result {
-        Ok(Ok(valid)) => valid,
-        Ok(Err(e)) => {
-            tracing::error!(hostname = %hostname, error = %e, "bcrypt verification failed");
-            let close = Message::Close(Some(CloseFrame {
-                code: 4001,
-                reason: "authentication failed".into(),
-            }));
-            if let Err(e) = ws_sink.send(close).await {
-                tracing::debug!(error = %e, "ws send failed");
-            }
-            return;
-        }
-        Err(()) => {
-            let close = Message::Close(Some(CloseFrame {
-                code: 4001,
-                reason: "authentication failed".into(),
-            }));
-            if let Err(e) = ws_sink.send(close).await {
-                tracing::debug!(error = %e, "ws send failed");
-            }
-            return;
-        }
-    };
-
-    if !token_valid {
-        tracing::warn!(hostname = %hostname, "invalid agent token");
-        if let Err(e) = db::insert_system_event(
-            &state.pool,
-            "auth_failed",
-            Some(&hostname),
-            &format!("Invalid token for agent '{hostname}'"),
-        )
-        .await
-        {
-            tracing::error!(error = %e, "failed to insert system event");
-        }
-        let close = Message::Close(Some(CloseFrame {
-            code: 4001,
-            reason: "authentication failed".into(),
-        }));
-        if let Err(e) = ws_sink.send(close).await {
-            tracing::debug!(error = %e, "ws send failed");
-        }
+    let Some(agent_id) = authenticate_agent(&state.pool, &mut ws_sink, &hostname, token).await
+    else {
         return;
-    }
+    };
 
     if let Err(e) = db::update_last_seen_and_version(
         &state.pool,
@@ -218,94 +232,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         hostname: hostname.clone(),
     });
 
-    match config_assembler::assemble_config(&state.pool, &state.encryption_key, &hostname).await {
-        Ok(config) => {
-            let config_msg = ServerToAgent::ConfigUpdate(config);
-            if let Ok(json) = serde_json::to_string(&config_msg)
-                && let Err(e) = ws_sink.send(Message::Text(json.into())).await
-            {
-                tracing::debug!(error = %e, "ws send failed");
-            }
-        }
-        Err(e) => {
-            tracing::error!(
-                hostname = %hostname,
-                error = %e,
-                "failed to assemble config on connect"
-            );
-        }
-    }
-
-    // If the user cancelled a backup while this agent was offline, notify the
-    // agent now so it can kill the corresponding borg process.
-    if let Ok(rows) = sqlx::query_scalar!(
-        "SELECT DISTINCT repo_id FROM backup_reports WHERE agent_id = $1 AND status = 'cancelled' \
-         AND NOT cancellation_acknowledged",
-        agent_id,
-    )
-    .fetch_all(&state.pool)
-    .await
-    {
-        for repo_id in rows {
-            let msg = ServerToAgent::CancelBackup {
-                repo_id: shared::types::RepoId(repo_id),
-            };
-            if let Ok(json) = serde_json::to_string(&msg)
-                && let Err(e) = ws_sink.send(Message::Text(json.into())).await
-            {
-                tracing::warn!(
-                    hostname = %hostname,
-                    repo_id,
-                    error = %e,
-                    "failed to notify agent of cancelled backup on reconnect"
-                );
-            }
-        }
-    }
-
-    // Execute any pending backup runs that were triggered (e.g. "Run Now") while
-    // this agent was offline. The backup_report is already in the DB as 'pending'
-    // and will be updated to 'started' when the agent reports BackupStarted.
-    if let Ok(rows) = sqlx::query_as!(
-        PendingBackupRow,
-        "SELECT repo_id, schedule_id, run_id FROM backup_reports WHERE agent_id = $1 AND status = \
-         'pending' ORDER BY started_at ASC",
-        agent_id,
-    )
-    .fetch_all(&state.pool)
-    .await
-    {
-        for row in rows {
-            let PendingBackupRow {
-                repo_id,
-                schedule_id,
-                run_id,
-            } = row;
-            let msg = ServerToAgent::RunBackupNow {
-                repo_id: shared::types::RepoId(repo_id),
-                schedule_id,
-                request_id: None,
-                run_id,
-            };
-            if let Ok(json) = serde_json::to_string(&msg)
-                && let Err(e) = ws_sink.send(Message::Text(json.into())).await
-            {
-                tracing::warn!(
-                    hostname = %hostname,
-                    repo_id,
-                    error = %e,
-                    "failed to send pending RunBackupNow on reconnect"
-                );
-            } else {
-                tracing::info!(
-                    hostname = %hostname,
-                    repo_id,
-                    schedule_id,
-                    "sent pending RunBackupNow on reconnect"
-                );
-            }
-        }
-    }
+    send_reconnect_catchup(&state, &mut ws_sink, &hostname, agent_id).await;
 
     tokio::spawn(ping_loop(ping_tx));
 
@@ -346,6 +273,104 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         hostname: hostname.clone(),
     });
     tracing::info!(hostname = %hostname, "agent disconnected");
+}
+
+async fn send_ws_message(ws_sink: &mut SplitSink<WebSocket, Message>, msg: &ServerToAgent) -> bool {
+    let Ok(json) = serde_json::to_string(msg) else {
+        return false;
+    };
+    ws_sink.send(Message::Text(json.into())).await.is_ok()
+}
+
+/// Catches the agent up on state it may have missed while offline: pushes a
+/// fresh config, notifies it of any backups the user cancelled while it was
+/// disconnected, and re-triggers any backup runs that were queued (e.g. via
+/// "Run Now") but never dispatched.
+async fn send_reconnect_catchup(
+    state: &AppState,
+    ws_sink: &mut SplitSink<WebSocket, Message>,
+    hostname: &str,
+    agent_id: i64,
+) {
+    match config_assembler::assemble_config(&state.pool, &state.encryption_key, hostname).await {
+        Ok(config) => {
+            if !send_ws_message(ws_sink, &ServerToAgent::ConfigUpdate(config)).await {
+                tracing::debug!(hostname = %hostname, "ws send failed");
+            }
+        }
+        Err(e) => {
+            tracing::error!(
+                hostname = %hostname,
+                error = %e,
+                "failed to assemble config on connect"
+            );
+        }
+    }
+
+    // If the user cancelled a backup while this agent was offline, notify the
+    // agent now so it can kill the corresponding borg process.
+    if let Ok(rows) = sqlx::query_scalar!(
+        "SELECT DISTINCT repo_id FROM backup_reports WHERE agent_id = $1 AND status = 'cancelled' \
+         AND NOT cancellation_acknowledged",
+        agent_id,
+    )
+    .fetch_all(&state.pool)
+    .await
+    {
+        for repo_id in rows {
+            let msg = ServerToAgent::CancelBackup {
+                repo_id: shared::types::RepoId(repo_id),
+            };
+            if !send_ws_message(ws_sink, &msg).await {
+                tracing::warn!(
+                    hostname = %hostname,
+                    repo_id,
+                    "failed to notify agent of cancelled backup on reconnect"
+                );
+            }
+        }
+    }
+
+    // Execute any pending backup runs that were triggered (e.g. "Run Now") while
+    // this agent was offline. The backup_report is already in the DB as 'pending'
+    // and will be updated to 'started' when the agent reports BackupStarted.
+    if let Ok(rows) = sqlx::query_as!(
+        PendingBackupRow,
+        "SELECT repo_id, schedule_id, run_id FROM backup_reports WHERE agent_id = $1 AND status = \
+         'pending' ORDER BY started_at ASC",
+        agent_id,
+    )
+    .fetch_all(&state.pool)
+    .await
+    {
+        for row in rows {
+            let PendingBackupRow {
+                repo_id,
+                schedule_id,
+                run_id,
+            } = row;
+            let msg = ServerToAgent::RunBackupNow {
+                repo_id: shared::types::RepoId(repo_id),
+                schedule_id,
+                request_id: None,
+                run_id,
+            };
+            if send_ws_message(ws_sink, &msg).await {
+                tracing::info!(
+                    hostname = %hostname,
+                    repo_id,
+                    schedule_id,
+                    "sent pending RunBackupNow on reconnect"
+                );
+            } else {
+                tracing::warn!(
+                    hostname = %hostname,
+                    repo_id,
+                    "failed to send pending RunBackupNow on reconnect"
+                );
+            }
+        }
+    }
 }
 
 async fn ping_loop(sender: mpsc::Sender<ServerToAgent>) {

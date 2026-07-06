@@ -95,6 +95,7 @@ const routes: RouteRecordRaw[] = [
     name: 'audit-log',
     meta: { requiresAdmin: true },
   },
+  { path: '/archives', component: () => import('../views/ArchivesView.vue'), name: 'archives' },
   { path: '/tokens', component: () => import('../views/TokensView.vue'), name: 'tokens' },
   { path: '/profile', component: () => import('../views/ProfileView.vue'), name: 'profile' },
   {

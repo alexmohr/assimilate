@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { ref, type Ref } from 'vue'
-import { extractError } from '../utils/error'
+import { extractBlobError } from '../utils/error'
 
 interface UseAsyncActionReturn {
   loading: Ref<boolean>
@@ -27,7 +27,7 @@ export function useAsyncAction(context?: string): UseAsyncActionReturn {
     try {
       return await fn()
     } catch (e) {
-      error.value = extractError(e, context)
+      error.value = await extractBlobError(e, context)
       return undefined
     } finally {
       loading.value = false

@@ -17,6 +17,7 @@ vi.mock('../utils/format', () => ({
 
 vi.mock('../utils/error', () => ({
   extractError: (_e: unknown): string => 'API error',
+  extractBlobError: async (_e: unknown): Promise<string> => 'API error',
 }))
 
 vi.mock('../components/BaseSpinner.vue', () => ({

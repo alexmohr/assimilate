@@ -38,7 +38,7 @@ echo "==> [$AGENT_HOST] Creating archives..."
 
 case "$AGENT_HOST" in
     web-server-01)
-        for i in $(seq 1 30); do
+        for i in $(seq 1 14); do
             ARCHIVE_DATE=$(date -u -d "$i days ago" +%Y-%m-%dT02:00:00 2>/dev/null || date -u -v-"${i}"d +%Y-%m-%dT02:00:00)
             ARCHIVE_DIR=$(mktemp -d)
             mkdir -p "$ARCHIVE_DIR/var/www/html" "$ARCHIVE_DIR/etc/nginx/conf.d"
@@ -53,7 +53,7 @@ case "$AGENT_HOST" in
         done
         ;;
     db-server-01)
-        for i in $(seq 1 48); do
+        for i in $(seq 1 24); do
             ARCHIVE_DATE=$(date -u -d "$i hours ago" +%Y-%m-%dT%H:00:00 2>/dev/null || date -u -v-"${i}"H +%Y-%m-%dT%H:00:00)
             ARCHIVE_DIR=$(mktemp -d)
             mkdir -p "$ARCHIVE_DIR/tmp" "$ARCHIVE_DIR/var/lib/postgresql"
@@ -66,7 +66,7 @@ case "$AGENT_HOST" in
         done
         ;;
     media-store-01)
-        for i in $(seq 1 12); do
+        for i in $(seq 1 6); do
             ARCHIVE_DATE=$(date -u -d "$((i * 7)) days ago" +%Y-%m-%dT03:00:00 2>/dev/null || date -u -v-"$((i * 7))"d +%Y-%m-%dT03:00:00)
             ARCHIVE_DIR=$(mktemp -d)
             mkdir -p "$ARCHIVE_DIR/mnt/media/photos" "$ARCHIVE_DIR/mnt/media/videos"

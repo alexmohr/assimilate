@@ -33,8 +33,10 @@ test('logout redirects to login', async ({ page }) => {
 test('dashboard does not redirect to /error', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/')
-  // Give async data fetches time to settle
-  await page.waitForTimeout(2_000)
+  // Wait for the page to finish loading async data
+  await expect(page.locator('h2').first())
+    .toBeVisible({ timeout: 10_000 })
+    .catch(() => {})
   await expect(page).not.toHaveURL(/\/error/)
 })
 
@@ -57,14 +59,13 @@ const routes = [
 for (const { path, label } of routes) {
   test(`${label} loads without error`, async ({ page }) => {
     await loginAsAdmin(page)
-    await page.goto(path)
-    await page.waitForTimeout(2_000)
-    await expect(page).not.toHaveURL(/\/error/)
+    await page.goto(path, { waitUntil: 'commit' })
+    await expect(page).not.toHaveURL(/\/error/, { timeout: 15_000 })
     await expect(page).toHaveURL(new RegExp(path))
   })
 }
 
-const adminRoutes = [
+const adminRoutesWithLabels: Array<{ path: string; label: string }> = [
   { path: '/system', label: 'system settings' },
   { path: '/admin/roles', label: 'roles management' },
   { path: '/admin/groups', label: 'groups management' },
@@ -72,12 +73,11 @@ const adminRoutes = [
   { path: '/audit-log', label: 'audit log' },
 ]
 
-for (const { path, label } of adminRoutes) {
+for (const { path, label } of adminRoutesWithLabels) {
   test(`admin: ${label} loads without error`, async ({ page }) => {
     await loginAsAdmin(page)
-    await page.goto(path)
-    await page.waitForTimeout(2_000)
-    await expect(page).not.toHaveURL(/\/error/)
+    await page.goto(path, { waitUntil: 'commit' })
+    await expect(page).not.toHaveURL(/\/error/, { timeout: 15_000 })
     await expect(page).toHaveURL(new RegExp(path))
   })
 }

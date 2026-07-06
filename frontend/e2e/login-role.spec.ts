@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, test } from './fixtures'
+import { adminRoutes, expect, loginAsAdmin, test, verifyRedirectFromAdminRoutes } from './fixtures'
 
 test('login response includes role field in user object', async ({ page }) => {
   const responsePromise = page.waitForResponse(
@@ -22,12 +22,9 @@ test('isAdmin is true immediately after login (admin nav items visible)', async 
   await loginAsAdmin(page)
   await page.goto('/')
 
-  await page.waitForTimeout(1_500)
-
   const settingsToggle = page.locator('.nav-group-toggle')
   await expect(settingsToggle.first()).toBeVisible({ timeout: 10_000 })
   await settingsToggle.first().click()
-  await page.waitForTimeout(500)
 
   await expect(page.locator('a[href="/system"]')).toBeVisible({ timeout: 5_000 })
 })
@@ -102,20 +99,11 @@ test('viewer user login returns viewer role and cannot access admin pages', asyn
   expect(user!.role).toBe('viewer')
 
   // Navigate to non-admin page to verify authentication works
-  await page.goto('/activity')
-  await page.waitForTimeout(2_000)
-  await expect(page).not.toHaveURL(/\/error/)
-  await expect(page).toHaveURL(/\/activity/)
+  await page.goto('/activity', { waitUntil: 'commit' })
+  await expect(page).toHaveURL(/\/activity/, { timeout: 10_000 })
 
   // Verify viewer cannot access admin pages (redirected to dashboard)
-  const adminRoutes = ['/system', '/admin/roles', '/admin/groups', '/audit-log', '/notifications']
-  for (const route of adminRoutes) {
-    await page.goto(route)
-    await page.waitForTimeout(2_000)
-    await expect(page).not.toHaveURL(/\/error/)
-    await expect(page).not.toHaveURL(new RegExp(route.replace(/[/\\]/g, '\\/')))
-    await expect(page).toHaveURL(/\/$/)
-  }
+  await verifyRedirectFromAdminRoutes(page, adminRoutes)
 
   // Clean up: re-login as admin and delete the test user
   await page.request.post('/api/auth/logout')

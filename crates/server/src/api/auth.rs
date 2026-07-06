@@ -11,7 +11,7 @@ use axum::{
 };
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use shared::responses::{MeResponse, PreferencesResponse, RefreshSessionResponse, UserResponse};
+use shared::responses::{LoginResponse, MeResponse, PreferencesResponse, RefreshSessionResponse};
 use uuid::Uuid;
 
 use super::{helpers, users};
@@ -172,13 +172,6 @@ pub struct LoginRequest {
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct LoginResponse {
-    pub user: UserResponse,
-    pub session_expires_at: DateTime<Utc>,
-    pub remember_me: bool,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RefreshResponse {
     pub session_expires_at: DateTime<Utc>,
 }
@@ -332,12 +325,7 @@ pub async fn me(
     } else {
         (None, false)
     };
-    let role_names: Vec<String> = db::list_user_roles(&state.pool, auth.user_id)
-        .await?
-        .into_iter()
-        .map(|r| r.name)
-        .collect();
-    let role = role_names.join(",");
+    let role = users::get_user_role_string(&state.pool, auth.user_id).await?;
 
     Ok(Json(MeResponse {
         id: auth.user_id,

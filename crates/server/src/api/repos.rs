@@ -263,7 +263,7 @@ pub async fn create_repo(
         .map_err(|_| ApiError::BadRequest("ssh_port out of range".into()))?;
     helpers::validate_path_exists(&req.ssh_host, &req.ssh_user, ssh_port_u16, &req.repo_path)
         .await?;
-    let ssh_host_key = crate::ssh::scan_host_key(&req.ssh_host, ssh_port_u16)
+    let _ssh_host_key = crate::ssh::scan_host_key(&req.ssh_host, ssh_port_u16)
         .await
         .map_err(|e| ApiError::BadGateway(e.to_string()))?;
 

@@ -235,7 +235,9 @@ pub async fn login(
     } else {
         (24, 86400)
     };
-    let expires_at = Utc::now() + Duration::hours(ttl_hours);
+    let expires_at = Utc::now()
+        .checked_add_signed(Duration::hours(ttl_hours))
+        .unwrap_or_else(Utc::now);
 
     let hashed_id = hash_token(&session_id);
     db::insert_session(
@@ -368,11 +370,13 @@ pub async fn refresh_session(
         ));
     }
 
-    let new_expires_at = Utc::now() + Duration::days(7);
+    let new_expires_at = Utc::now()
+        .checked_add_signed(Duration::days(7))
+        .unwrap_or_else(Utc::now);
     db::extend_session(&state.pool, &hashed_id, new_expires_at).await?;
 
     let secure_flag = secure_cookie_flag();
-    let max_age_secs = 7 * 86400_i64;
+    let max_age_secs = 7 * 86400i64;
     let cookie = format!(
         "session={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age_secs}{secure_flag}"
     );

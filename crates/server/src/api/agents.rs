@@ -611,14 +611,14 @@ pub async fn delete_agent_archives(
 
         match tokio::time::timeout(Duration::from_secs(300), rx).await {
             Ok(Ok((true, count, _))) => {
-                total_deleted += count;
+                total_deleted = total_deleted.saturating_add(count);
             }
             Ok(Ok((false, count, Some(err)))) => {
-                total_deleted += count;
+                total_deleted = total_deleted.saturating_add(count);
                 errors.push(format!("repo {}: {err}", repo_id.0));
             }
             Ok(Ok((false, count, None))) => {
-                total_deleted += count;
+                total_deleted = total_deleted.saturating_add(count);
                 errors.push(format!("repo {}: unknown error", repo_id.0));
             }
             Ok(Err(_)) => {

@@ -332,7 +332,9 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
         return Ok(());
     }
 
-    let cutoff = Utc::now() - chrono::Duration::days(retention_days);
+    let cutoff = Utc::now()
+        .checked_sub_signed(chrono::Duration::days(retention_days))
+        .unwrap_or_else(Utc::now);
 
     let events_deleted = db::delete_system_events_before(pool, cutoff).await?;
     let reports_deleted = db::delete_backup_reports_before(pool, cutoff).await?;
@@ -400,7 +402,9 @@ async fn tick(deps: &TickDeps<'_>) -> Result<(), crate::error::ApiError> {
     }
 
     for (schedule_id, cron, targets) in schedule_groups {
-        let first = &targets[0];
+        let Some(first) = targets.first() else {
+            continue;
+        };
         let on_failure = first.on_failure.parse::<OnFailure>().unwrap_or_else(|_| {
             tracing::warn!(
                 schedule_id,
@@ -522,7 +526,7 @@ struct SequentialExecution {
     tz: chrono_tz::Tz,
     run_id: String,
     /// Signalled once the first target's messages have been sent (or skipped).
-    /// Allows tick() to wait briefly so callers using try_recv() see messages.
+    /// Allows `tick()` to wait briefly so callers using `try_recv()` see messages.
     triggered_tx: tokio::sync::oneshot::Sender<()>,
 }
 

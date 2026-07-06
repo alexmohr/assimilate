@@ -2163,6 +2163,147 @@ fn is_unknown_archive(
         .is_some_and(|n| !n.is_empty() && !known_names.contains(n))
 }
 
+struct ArchiveSyncDiff<'a> {
+    borg_names: std::collections::HashSet<String>,
+    removed: u64,
+    to_import: Vec<&'a serde_json::Value>,
+}
+
+/// Compares the archives reported by `borg list` against what's already
+/// known for this repository. In [`SyncMode::Existing`] mode, also prunes
+/// local records for archives that no longer exist upstream.
+async fn partition_archives_to_sync<'a>(
+    pool: &PgPool,
+    repo_id: i64,
+    archives: &'a [serde_json::Value],
+    mode: SyncMode<'_>,
+) -> Result<ArchiveSyncDiff<'a>, ApiError> {
+    let borg_names: std::collections::HashSet<String> = archives
+        .iter()
+        .filter_map(|a| a["name"].as_str())
+        .filter(|n| !n.is_empty())
+        .map(String::from)
+        .collect();
+
+    let known_names = db::list_archive_names_for_repo(pool, repo_id).await?;
+
+    let removed = match mode {
+        SyncMode::Existing => {
+            let stale: Vec<String> = known_names.difference(&borg_names).cloned().collect();
+            let removed = db::delete_archive_records_by_names(pool, repo_id, &stale).await?;
+            if removed > 0 {
+                info!(repo_id, removed, "removed stale archives during full sync");
+            }
+            removed
+        }
+        SyncMode::New { .. } => 0,
+    };
+
+    let to_import: Vec<&serde_json::Value> = match mode {
+        SyncMode::Existing => archives.iter().collect(),
+        SyncMode::New { .. } => archives
+            .iter()
+            .filter(|a| is_unknown_archive(a, &known_names))
+            .collect(),
+    };
+
+    Ok(ArchiveSyncDiff {
+        borg_names,
+        removed,
+        to_import,
+    })
+}
+
+struct ImportOutcome {
+    processed: u64,
+    archive_names: Vec<String>,
+}
+
+/// Hydrates metadata for the archives selected for import, builds and
+/// persists their backup report rows, and kicks off background stat
+/// enrichment. Returns how many reports were saved and the archive names
+/// that were imported.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "grouping these into a struct would obscure the call site more than it would clarify \
+              it; all params are single-use scalars/refs from the caller's own locals"
+)]
+async fn import_and_persist_archives(
+    pool: &PgPool,
+    ui_broadcast: &UiBroadcast,
+    repo_id: i64,
+    borg_repo: &str,
+    env: &std::collections::HashMap<String, String>,
+    timeout: Duration,
+    to_import: &[&serde_json::Value],
+    importing_msg: &str,
+) -> Result<ImportOutcome, ApiError> {
+    let total = to_import.len();
+    publish_import_progress(
+        pool,
+        ui_broadcast,
+        repo_id,
+        0,
+        i32::try_from(total).unwrap_or(i32::MAX),
+        Some(importing_msg),
+    )
+    .await;
+
+    publish_import_progress(
+        pool,
+        ui_broadcast,
+        repo_id,
+        0,
+        i32::try_from(total).unwrap_or(i32::MAX),
+        Some("Loading archive metadata..."),
+    )
+    .await;
+    let hydrated_archives = hydrate_archives_with_metadata(
+        pool,
+        ui_broadcast,
+        repo_id,
+        borg_repo,
+        env,
+        timeout,
+        to_import,
+    )
+    .await?;
+    let hydrated_refs: Vec<&serde_json::Value> = hydrated_archives.iter().collect();
+
+    let report_params = build_import_reports(pool, ui_broadcast, repo_id, &hydrated_refs).await?;
+
+    let processed = u64::try_from(report_params.len()).unwrap_or(u64::MAX);
+    let total_i32 = i32::try_from(total).unwrap_or(i32::MAX);
+    let save_msg = format!("Saving {processed} backup reports\u{2026}");
+    publish_import_progress(
+        pool,
+        ui_broadcast,
+        repo_id,
+        total_i32,
+        total_i32,
+        Some(&save_msg),
+    )
+    .await;
+
+    let archive_names: Vec<String> = report_params
+        .iter()
+        .filter_map(|params| params.archive_name.clone())
+        .collect();
+    db::bulk_insert_backup_reports(pool, &report_params).await?;
+    enrich_archive_stats_background(
+        pool.clone(),
+        borg_repo.to_owned(),
+        env.clone(),
+        repo_id,
+        archive_names.clone(),
+    );
+
+    Ok(ImportOutcome {
+        processed,
+        archive_names,
+    })
+}
+
 async fn sync_archives(
     pool: &PgPool,
     encryption_key: &[u8; 32],
@@ -2195,34 +2336,11 @@ async fn sync_archives(
     )
     .await?;
 
-    let borg_names: std::collections::HashSet<String> = archives
-        .iter()
-        .filter_map(|a| a["name"].as_str())
-        .filter(|n| !n.is_empty())
-        .map(String::from)
-        .collect();
-
-    let known_names = db::list_archive_names_for_repo(pool, repo_id).await?;
-
-    let removed = match mode {
-        SyncMode::Existing => {
-            let stale: Vec<String> = known_names.difference(&borg_names).cloned().collect();
-            let removed = db::delete_archive_records_by_names(pool, repo_id, &stale).await?;
-            if removed > 0 {
-                info!(repo_id, removed, "removed stale archives during full sync");
-            }
-            removed
-        }
-        SyncMode::New { .. } => 0,
-    };
-
-    let to_import: Vec<&serde_json::Value> = match mode {
-        SyncMode::Existing => archives.iter().collect(),
-        SyncMode::New { .. } => archives
-            .iter()
-            .filter(|a| is_unknown_archive(a, &known_names))
-            .collect(),
-    };
+    let ArchiveSyncDiff {
+        borg_names,
+        removed,
+        to_import,
+    } = partition_archives_to_sync(pool, repo_id, &archives, mode).await?;
 
     let repo_archive_count = i64::try_from(borg_names.len()).unwrap_or(i64::MAX);
 
@@ -2236,26 +2354,11 @@ async fn sync_archives(
         SyncMode::Existing => format!("Importing {total} archives\u{2026}"),
         SyncMode::New { .. } => format!("Importing {total} new archives\u{2026}"),
     };
-    publish_import_progress(
-        pool,
-        ui_broadcast,
-        repo_id,
-        0,
-        i32::try_from(total).unwrap_or(i32::MAX),
-        Some(&importing_msg),
-    )
-    .await;
 
-    publish_import_progress(
-        pool,
-        ui_broadcast,
-        repo_id,
-        0,
-        i32::try_from(total).unwrap_or(i32::MAX),
-        Some("Loading archive metadata..."),
-    )
-    .await;
-    let hydrated_archives = hydrate_archives_with_metadata(
+    let ImportOutcome {
+        processed,
+        archive_names,
+    } = import_and_persist_archives(
         pool,
         ui_broadcast,
         repo_id,
@@ -2263,37 +2366,11 @@ async fn sync_archives(
         &env,
         timeout,
         &to_import,
+        &importing_msg,
     )
     .await?;
-    let hydrated_refs: Vec<&serde_json::Value> = hydrated_archives.iter().collect();
 
-    let report_params = build_import_reports(pool, ui_broadcast, repo_id, &hydrated_refs).await?;
-
-    let processed = u64::try_from(report_params.len()).unwrap_or(u64::MAX);
     let total_i32 = i32::try_from(total).unwrap_or(i32::MAX);
-    let save_msg = format!("Saving {processed} backup reports\u{2026}");
-    publish_import_progress(
-        pool,
-        ui_broadcast,
-        repo_id,
-        total_i32,
-        total_i32,
-        Some(&save_msg),
-    )
-    .await;
-
-    let archive_names: Vec<String> = report_params
-        .iter()
-        .filter_map(|params| params.archive_name.clone())
-        .collect();
-    db::bulk_insert_backup_reports(pool, &report_params).await?;
-    enrich_archive_stats_background(
-        pool.clone(),
-        borg_repo.clone(),
-        env.clone(),
-        repo_id,
-        archive_names.clone(),
-    );
 
     if let SyncMode::New { repo_lock } = mode {
         queue_archive_indexing(

@@ -32,6 +32,7 @@ struct RateLimiterState {
 }
 
 impl RateLimiter {
+    #[must_use]
     pub fn new(max_requests: u32, window: Duration, resolver: ClientIpResolver) -> Self {
         Self {
             state: Arc::new(Mutex::new(RateLimiterState {

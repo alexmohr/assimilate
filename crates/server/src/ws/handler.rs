@@ -37,6 +37,13 @@ pub fn ws_handler(
     std::future::ready(ws.on_upgrade(|socket| handle_socket(socket, state)))
 }
 
+#[derive(sqlx::FromRow)]
+struct PendingBackupRow {
+    repo_id: i64,
+    schedule_id: Option<i64>,
+    run_id: Option<String>,
+}
+
 async fn handle_socket(socket: WebSocket, state: AppState) {
     let (mut ws_sink, mut ws_stream) = socket.split();
 
@@ -64,8 +71,11 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             )),
             Ok(_) | Err(_) => None,
         },
-        Some(Ok(Message::Close(_))) | Some(Err(_)) | None => None,
-        Some(Ok(Message::Binary(_) | Message::Ping(_) | Message::Pong(_))) => None,
+        Some(Ok(
+            Message::Close(_) | Message::Binary(_) | Message::Ping(_) | Message::Pong(_),
+        ))
+        | Some(Err(_))
+        | None => None,
     };
 
     let Some((
@@ -251,12 +261,6 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     // Execute any pending backup runs that were triggered (e.g. "Run Now") while
     // this agent was offline. The backup_report is already in the DB as 'pending'
     // and will be updated to 'started' when the agent reports BackupStarted.
-    #[derive(sqlx::FromRow)]
-    struct PendingBackupRow {
-        repo_id: i64,
-        schedule_id: Option<i64>,
-        run_id: Option<String>,
-    }
     if let Ok(rows) = sqlx::query_as!(
         PendingBackupRow,
         "SELECT repo_id, schedule_id, run_id FROM backup_reports WHERE agent_id = $1 AND status = \

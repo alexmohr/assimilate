@@ -46,6 +46,7 @@ impl LogBuffer {
         buf.push_back(entry);
     }
 
+    #[must_use]
     pub fn entries(
         &self,
         limit: usize,

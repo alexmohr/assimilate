@@ -78,11 +78,12 @@ pub async fn verify_password(password: String, hash: String) -> Result<bool, Api
 
 /// Generates a cryptographically random hex string of the specified byte length.
 pub fn generate_random_hex(len_bytes: usize) -> String {
+    use std::fmt::Write as _;
+
     use rand::rngs::OsRng;
 
     let mut bytes = vec![0u8; len_bytes];
     rand::RngCore::fill_bytes(&mut OsRng, &mut bytes);
-    use std::fmt::Write as _;
     bytes.iter().fold(String::new(), |mut acc, b| {
         let _ = write!(acc, "{b:02x}");
         acc

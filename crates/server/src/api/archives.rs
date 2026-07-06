@@ -119,6 +119,7 @@ pub async fn get_repo_env(
     Ok((borg_repo, env))
 }
 
+#[must_use]
 pub fn classify_borg_error(exit_code: i32, stderr: &str) -> ApiError {
     if exit_code == 1 && stderr.to_lowercase().contains("lock") {
         return ApiError::Conflict("repository is locked by another operation".to_string());
@@ -899,6 +900,13 @@ pub async fn list_contents(
     }))
 }
 
+#[derive(sqlx::FromRow)]
+struct ArchiveIndexStatusRow {
+    status: String,
+    file_count: Option<i64>,
+    error_message: Option<String>,
+}
+
 #[utoipa::path(
     get,
     path = "/api/repos/{repo_id}/archives/{archive_name}/index-status",
@@ -922,15 +930,8 @@ pub async fn get_archive_index_status(
 ) -> Result<Json<ArchiveIndexStatusResponse>, ApiError> {
     check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_view).await?;
 
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        status: String,
-        file_count: Option<i64>,
-        error_message: Option<String>,
-    }
-
     let row = sqlx::query_as!(
-        Row,
+        ArchiveIndexStatusRow,
         "SELECT j.status, j.file_count, j.error_message FROM archive_index_jobs j JOIN archives a \
          ON a.id = j.archive_id WHERE a.repo_id = $1 AND a.name = $2",
         repo_id,

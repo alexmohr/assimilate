@@ -19,6 +19,7 @@ pub struct AgentRegistry {
 }
 
 impl AgentRegistry {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),

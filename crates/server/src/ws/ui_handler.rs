@@ -111,7 +111,7 @@ async fn handle_ui_socket(socket: WebSocket, state: AppState) {
                         return;
                     }
                 }
-                _ = state.shutdown_token.cancelled() => {
+                () = state.shutdown_token.cancelled() => {
                     return;
                 }
             }

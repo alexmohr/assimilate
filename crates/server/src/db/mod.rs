@@ -651,6 +651,12 @@ pub async fn get_archives_for_agent(
         .collect())
 }
 
+#[derive(sqlx::FromRow)]
+struct AgentArchiveRow {
+    repo_id: i64,
+    archive_name: Option<String>,
+}
+
 pub async fn get_archives_for_agent_with_patterns(
     pool: &PgPool,
     agent_id: i64,
@@ -689,14 +695,8 @@ pub async fn get_archives_for_agent_with_patterns(
         }
     }
 
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        repo_id: i64,
-        archive_name: Option<String>,
-    }
-
     let rows = sqlx::query_as!(
-        Row,
+        AgentArchiveRow,
         "SELECT repo_id, archive_name FROM backup_reports WHERE agent_id = ANY($1::bigint[]) AND \
          archive_name IS NOT NULL",
         &agent_ids,
@@ -940,7 +940,7 @@ pub async fn clear_relocation_pending(pool: &PgPool, repo_id: i64) -> Result<(),
 /// Remove `hostname` from the pending-hosts set for this repo. Clears `relocation_pending`
 /// on the repo itself once every registered host has confirmed the new location.
 ///
-/// Only clears the flag when this host's entry was actually present (rows_affected > 0) AND
+/// Only clears the flag when this host's entry was actually present (`rows_affected` > 0) AND
 /// no other hosts remain pending. This prevents spurious clears when a host that was never
 /// registered in the pending table completes a backup.
 pub async fn clear_relocation_for_host(
@@ -1525,6 +1525,7 @@ pub async fn update_schedule_repo(pool: &PgPool, id: i64, repo_id: i64) -> Resul
     Ok(())
 }
 
+#[must_use]
 pub fn compression_to_str(c: &Compression) -> String {
     c.to_string()
 }

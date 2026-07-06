@@ -42,10 +42,11 @@ fn generate_token() -> String {
 
 #[must_use]
 pub fn hash_token(plaintext: &str) -> String {
+    use std::fmt::Write as _;
+
     let mut hasher = Sha256::new();
     hasher.update(plaintext.as_bytes());
     let result = hasher.finalize();
-    use std::fmt::Write as _;
     result.iter().fold(String::new(), |mut acc, b| {
         let _ = write!(acc, "{b:02x}");
         acc

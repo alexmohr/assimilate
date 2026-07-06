@@ -71,13 +71,13 @@ impl RepoLock {
 pub type PendingDryRuns =
     Arc<Mutex<HashMap<String, oneshot::Sender<(Vec<DryRunFile>, i64, Option<String>)>>>>;
 
-/// (success, files_restored, error_message)
+/// (`success`, `files_restored`, `error_message`)
 pub type PendingRestores =
     Arc<Mutex<HashMap<String, oneshot::Sender<(bool, u64, Option<String>)>>>>;
 
 pub type PendingMigrations = Arc<Mutex<HashMap<String, oneshot::Sender<(bool, Option<String>)>>>>;
 
-/// (success, deleted_count, error_message)
+/// (`success`, `deleted_count`, `error_message`)
 pub type PendingDeletes = Arc<Mutex<HashMap<String, oneshot::Sender<(bool, u32, Option<String>)>>>>;
 
 #[derive(Clone)]

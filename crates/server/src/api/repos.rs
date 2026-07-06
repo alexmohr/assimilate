@@ -2580,6 +2580,12 @@ async fn index_archives_with_progress(
     info!(repo_id, total, "content indexing: completed");
 }
 
+#[derive(sqlx::FromRow)]
+struct UnmatchedRow {
+    report_id: i64,
+    hostname: String,
+}
+
 #[utoipa::path(
     post,
     path = "/api/repos/{repo_id}/rescan",
@@ -2602,12 +2608,6 @@ pub async fn rescan_repo(
 ) -> Result<Json<RescanResponse>, ApiError> {
     db::get_repo_with_stats(&state.pool, repo_id).await?;
 
-    #[derive(sqlx::FromRow)]
-    struct UnmatchedRow {
-        report_id: i64,
-        hostname: String,
-    }
-
     let unmatched_rows = sqlx::query_as!(
         UnmatchedRow,
         "SELECT br.id AS report_id, c.hostname FROM backup_reports br JOIN agents c ON c.id = \
@@ -2623,8 +2623,7 @@ pub async fn rescan_repo(
     for row in &unmatched_rows {
         let result = db::resolve_agent_for_hostname(&state.pool, &row.hostname).await?;
         let new_agent_id = match result {
-            db::ResolveResult::ExactMatch(c) => Some(c.id),
-            db::ResolveResult::PatternMatch(c) => Some(c.id),
+            db::ResolveResult::ExactMatch(c) | db::ResolveResult::PatternMatch(c) => Some(c.id),
             db::ResolveResult::Unmatched => None,
         };
 
@@ -2760,11 +2759,8 @@ pub async fn sync_repo(
 
                 let duration_secs = elapsed.as_secs();
                 let msg = format!(
-                    "repo sync completed for '{}': imported {}, removed {} archives in {}s",
-                    repo_name,
-                    imported,
-                    removed,
-                    duration_secs,
+                    "repo sync completed for '{repo_name}': imported {imported}, removed \
+                     {removed} archives in {duration_secs}s"
                 );
 
                 if elapsed > SYNC_WARN_DURATION {
@@ -2967,11 +2963,8 @@ pub async fn reset_and_sync_repo(
 
                 let duration_secs = elapsed.as_secs();
                 let msg = format!(
-                    "reset-and-sync completed for '{}': imported {}, removed {} archives in {}s",
-                    repo_name,
-                    imported,
-                    removed,
-                    duration_secs,
+                    "reset-and-sync completed for '{repo_name}': imported {imported}, removed \
+                     {removed} archives in {duration_secs}s"
                 );
 
                 if elapsed > SYNC_WARN_DURATION {

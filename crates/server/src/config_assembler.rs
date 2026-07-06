@@ -48,161 +48,8 @@ pub async fn assemble_config(
             }
         }
 
-        let keep_hourly = u32::try_from(schedule.keep_hourly).map_err(|_| {
-            ApiError::Internal(format!(
-                "keep_hourly {} out of u32 range",
-                schedule.keep_hourly
-            ))
-        })?;
-        let keep_daily = u32::try_from(schedule.keep_daily).map_err(|_| {
-            ApiError::Internal(format!(
-                "keep_daily {} out of u32 range",
-                schedule.keep_daily
-            ))
-        })?;
-        let keep_weekly = u32::try_from(schedule.keep_weekly).map_err(|_| {
-            ApiError::Internal(format!(
-                "keep_weekly {} out of u32 range",
-                schedule.keep_weekly
-            ))
-        })?;
-        let keep_monthly = u32::try_from(schedule.keep_monthly).map_err(|_| {
-            ApiError::Internal(format!(
-                "keep_monthly {} out of u32 range",
-                schedule.keep_monthly
-            ))
-        })?;
-        let keep_yearly = u32::try_from(schedule.keep_yearly).map_err(|_| {
-            ApiError::Internal(format!(
-                "keep_yearly {} out of u32 range",
-                schedule.keep_yearly
-            ))
-        })?;
-        let rate_limit_kbps = match schedule.rate_limit_kbps {
-            Some(rate_limit_kbps) => Some(u32::try_from(rate_limit_kbps).map_err(|_| {
-                ApiError::Internal(format!(
-                    "rate_limit_kbps {rate_limit_kbps} out of u32 range"
-                ))
-            })?),
-            None => None,
-        };
-
-        let mut backup_sources =
-            db::list_backup_sources_for_schedule_agent(pool, schedule.id, agent.id).await?;
-
-        if backup_sources.is_empty() {
-            backup_sources = db::list_backup_sources_for_schedule(pool, schedule.id).await?;
-        }
-
-        if backup_sources.is_empty() {
-            backup_sources.extend(agent.default_backup_paths.iter().cloned());
-        }
-
-        let per_agent_excludes_raw =
-            db::get_per_agent_excludes_raw(pool, schedule.id, agent.id).await?;
-        let effective_excludes_raw = per_agent_excludes_raw
-            .as_deref()
-            .unwrap_or(&schedule.exclude_patterns_raw);
-
-        let mut exclude_patterns: Vec<String> = Vec::new();
-        if !schedule.ignore_global_excludes {
-            exclude_patterns.extend(global_excludes.iter().cloned());
-        }
-        exclude_patterns.extend(agent.default_exclude_patterns.iter().cloned());
-        exclude_patterns.extend(parse_raw_excludes(effective_excludes_raw));
-
-        let mut seen = std::collections::HashSet::new();
-        exclude_patterns.retain(|p| seen.insert(p.clone()));
-
-        let per_agent_cmds = db::get_per_agent_commands(pool, schedule.id, agent.id).await?;
-
-        let per_agent_file_change_patterns_raw =
-            db::get_per_agent_file_change_patterns_raw(pool, schedule.id, agent.id).await?;
-        let effective_file_change_patterns_raw = per_agent_file_change_patterns_raw
-            .as_deref()
-            .unwrap_or(&schedule.file_change_patterns_raw);
-        // Schedule-level (or per-agent-schedule override) patterns are checked
-        // first, since `filter_file_change_warnings` on the agent uses
-        // first-match-wins; the agent's own defaults are appended as a
-        // fallback so they only apply to warnings the schedule didn't cover.
-        let mut file_change_patterns =
-            parse_raw_file_change_patterns(effective_file_change_patterns_raw);
-        file_change_patterns.extend(parse_raw_file_change_patterns(
-            &agent.default_file_change_patterns_raw,
-        ));
-
-        let schedule_config = ScheduleConfig {
-            id: schedule.id,
-            schedule_type: schedule_type_from_str(&schedule.schedule_type)?,
-            cron_expression: schedule.cron_expression,
-            enabled: schedule.enabled,
-            backup_sources,
-            rate_limit_kbps,
-            canary_enabled: schedule.canary_enabled,
-            exclude_patterns,
-            ignore_global_excludes: schedule.ignore_global_excludes,
-            keep_hourly,
-            keep_daily,
-            keep_weekly,
-            keep_monthly,
-            keep_yearly,
-            compact_enabled: schedule.compact_enabled,
-            file_change_patterns,
-            pre_backup_commands: {
-                let agent_defaults: Vec<String> =
-                    serde_json::from_str(&agent.default_pre_backup_commands)
-                        .inspect_err(|e| {
-                            tracing::warn!(
-                                agent_id = agent.id,
-                                error = %e,
-                                "failed to parse agent default_pre_backup_commands"
-                            );
-                        })
-                        .unwrap_or_default();
-                let effective_pre = per_agent_cmds
-                    .as_ref()
-                    .map_or(schedule.pre_backup_commands.as_str(), |c| {
-                        c.pre_backup_commands.as_str()
-                    });
-                let schedule_cmds: Vec<String> = serde_json::from_str(effective_pre)
-                    .inspect_err(|e| {
-                        tracing::warn!(
-                            schedule_id = schedule.id,
-                            error = %e,
-                            "failed to parse pre_backup_commands, defaulting to empty"
-                        );
-                    })
-                    .unwrap_or_default();
-                agent_defaults.into_iter().chain(schedule_cmds).collect()
-            },
-            post_backup_commands: {
-                let effective_post = per_agent_cmds
-                    .as_ref()
-                    .map_or(schedule.post_backup_commands.as_str(), |c| {
-                        c.post_backup_commands.as_str()
-                    });
-                let schedule_cmds: Vec<String> = serde_json::from_str(effective_post)
-                    .inspect_err(|e| {
-                        tracing::warn!(
-                            schedule_id = schedule.id,
-                            error = %e,
-                            "failed to parse post_backup_commands, defaulting to empty"
-                        );
-                    })
-                    .unwrap_or_default();
-                let agent_defaults: Vec<String> =
-                    serde_json::from_str(&agent.default_post_backup_commands)
-                        .inspect_err(|e| {
-                            tracing::warn!(
-                                agent_id = agent.id,
-                                error = %e,
-                                "failed to parse agent default_post_backup_commands"
-                            );
-                        })
-                        .unwrap_or_default();
-                schedule_cmds.into_iter().chain(agent_defaults).collect()
-            },
-        };
+        let schedule_config =
+            build_schedule_config(pool, &agent, schedule, &global_excludes).await?;
 
         if let Some((_, schedules)) = repo_map.get_mut(&repo_id) {
             schedules.push(schedule_config);
@@ -211,51 +58,254 @@ pub async fn assemble_config(
 
     let mut repos = Vec::with_capacity(repo_map.len());
     for (_, (repo, schedules)) in repo_map {
-        let passphrase =
-            shared::crypto::decrypt_passphrase(&repo.passphrase_encrypted, encryption_key)
-                .map_err(|e| ApiError::Internal(format!("failed to decrypt passphrase: {e}")))?;
-
-        let compression = compression_from_str(&repo.compression)?;
-
-        let ssh_port = u16::try_from(repo.ssh_port).map_err(|_| {
-            ApiError::Internal(format!("ssh_port {} out of u16 range", repo.ssh_port))
-        })?;
-
-        let ssh_host_key = if let Some(ssh_host_key) = repo.ssh_host_key {
-            ssh_host_key
-        } else {
-            let ssh_host_key = crate::ssh::scan_host_key(&repo.ssh_host, ssh_port)
-                .await
-                .map_err(|e| {
-                    ApiError::BadGateway(format!(
-                        "failed to obtain SSH host key for {}:{}: {e}",
-                        repo.ssh_host, ssh_port
-                    ))
-                })?;
-            db::update_repo_ssh_host_key(pool, repo.id, &ssh_host_key).await?;
-            ssh_host_key
-        };
-
-        repos.push(RepoConfig {
-            repo_id: RepoId(repo.id),
-            name: repo.name,
-            repo_path: repo.repo_path,
-            ssh_user: repo.ssh_user,
-            ssh_host: repo.ssh_host,
-            ssh_port,
-            ssh_host_key,
-            passphrase,
-            compression,
-            enabled: repo.enabled,
-            accept_relocation: repo.relocation_pending,
-            schedules,
-        });
+        repos.push(build_repo_config(pool, encryption_key, repo, schedules).await?);
     }
 
     Ok(AgentConfig {
         agent_hostname: hostname.to_string(),
         skip_targets: Vec::new(),
         repos,
+    })
+}
+
+struct RetentionCounts {
+    keep_hourly: u32,
+    keep_daily: u32,
+    keep_weekly: u32,
+    keep_monthly: u32,
+    keep_yearly: u32,
+    rate_limit_kbps: Option<u32>,
+}
+
+fn convert_retention_counts(schedule: &db::ScheduleRow) -> Result<RetentionCounts, ApiError> {
+    let keep_hourly = u32::try_from(schedule.keep_hourly).map_err(|_| {
+        ApiError::Internal(format!(
+            "keep_hourly {} out of u32 range",
+            schedule.keep_hourly
+        ))
+    })?;
+    let keep_daily = u32::try_from(schedule.keep_daily).map_err(|_| {
+        ApiError::Internal(format!(
+            "keep_daily {} out of u32 range",
+            schedule.keep_daily
+        ))
+    })?;
+    let keep_weekly = u32::try_from(schedule.keep_weekly).map_err(|_| {
+        ApiError::Internal(format!(
+            "keep_weekly {} out of u32 range",
+            schedule.keep_weekly
+        ))
+    })?;
+    let keep_monthly = u32::try_from(schedule.keep_monthly).map_err(|_| {
+        ApiError::Internal(format!(
+            "keep_monthly {} out of u32 range",
+            schedule.keep_monthly
+        ))
+    })?;
+    let keep_yearly = u32::try_from(schedule.keep_yearly).map_err(|_| {
+        ApiError::Internal(format!(
+            "keep_yearly {} out of u32 range",
+            schedule.keep_yearly
+        ))
+    })?;
+    let rate_limit_kbps = match schedule.rate_limit_kbps {
+        Some(rate_limit_kbps) => Some(u32::try_from(rate_limit_kbps).map_err(|_| {
+            ApiError::Internal(format!(
+                "rate_limit_kbps {rate_limit_kbps} out of u32 range"
+            ))
+        })?),
+        None => None,
+    };
+
+    Ok(RetentionCounts {
+        keep_hourly,
+        keep_daily,
+        keep_weekly,
+        keep_monthly,
+        keep_yearly,
+        rate_limit_kbps,
+    })
+}
+
+fn effective_pre_backup_commands(
+    agent: &db::AgentRow,
+    schedule: &db::ScheduleRow,
+    per_agent_cmds: Option<&db::PerAgentCommands>,
+) -> Vec<String> {
+    let agent_defaults: Vec<String> = serde_json::from_str(&agent.default_pre_backup_commands)
+        .inspect_err(|e| {
+            tracing::warn!(
+                agent_id = agent.id,
+                error = %e,
+                "failed to parse agent default_pre_backup_commands"
+            );
+        })
+        .unwrap_or_default();
+    let effective_pre = per_agent_cmds.map_or(schedule.pre_backup_commands.as_str(), |c| {
+        c.pre_backup_commands.as_str()
+    });
+    let schedule_cmds: Vec<String> = serde_json::from_str(effective_pre)
+        .inspect_err(|e| {
+            tracing::warn!(
+                schedule_id = schedule.id,
+                error = %e,
+                "failed to parse pre_backup_commands, defaulting to empty"
+            );
+        })
+        .unwrap_or_default();
+    agent_defaults.into_iter().chain(schedule_cmds).collect()
+}
+
+fn effective_post_backup_commands(
+    agent: &db::AgentRow,
+    schedule: &db::ScheduleRow,
+    per_agent_cmds: Option<&db::PerAgentCommands>,
+) -> Vec<String> {
+    let effective_post = per_agent_cmds.map_or(schedule.post_backup_commands.as_str(), |c| {
+        c.post_backup_commands.as_str()
+    });
+    let schedule_cmds: Vec<String> = serde_json::from_str(effective_post)
+        .inspect_err(|e| {
+            tracing::warn!(
+                schedule_id = schedule.id,
+                error = %e,
+                "failed to parse post_backup_commands, defaulting to empty"
+            );
+        })
+        .unwrap_or_default();
+    let agent_defaults: Vec<String> = serde_json::from_str(&agent.default_post_backup_commands)
+        .inspect_err(|e| {
+            tracing::warn!(
+                agent_id = agent.id,
+                error = %e,
+                "failed to parse agent default_post_backup_commands"
+            );
+        })
+        .unwrap_or_default();
+    schedule_cmds.into_iter().chain(agent_defaults).collect()
+}
+
+async fn build_schedule_config(
+    pool: &PgPool,
+    agent: &db::AgentRow,
+    schedule: db::ScheduleRow,
+    global_excludes: &[String],
+) -> Result<ScheduleConfig, ApiError> {
+    let retention = convert_retention_counts(&schedule)?;
+
+    let mut backup_sources =
+        db::list_backup_sources_for_schedule_agent(pool, schedule.id, agent.id).await?;
+
+    if backup_sources.is_empty() {
+        backup_sources = db::list_backup_sources_for_schedule(pool, schedule.id).await?;
+    }
+
+    if backup_sources.is_empty() {
+        backup_sources.extend(agent.default_backup_paths.iter().cloned());
+    }
+
+    let per_agent_excludes_raw =
+        db::get_per_agent_excludes_raw(pool, schedule.id, agent.id).await?;
+    let effective_excludes_raw = per_agent_excludes_raw
+        .as_deref()
+        .unwrap_or(&schedule.exclude_patterns_raw);
+
+    let mut exclude_patterns: Vec<String> = Vec::new();
+    if !schedule.ignore_global_excludes {
+        exclude_patterns.extend(global_excludes.iter().cloned());
+    }
+    exclude_patterns.extend(agent.default_exclude_patterns.iter().cloned());
+    exclude_patterns.extend(parse_raw_excludes(effective_excludes_raw));
+
+    let mut seen = std::collections::HashSet::new();
+    exclude_patterns.retain(|p| seen.insert(p.clone()));
+
+    let per_agent_cmds = db::get_per_agent_commands(pool, schedule.id, agent.id).await?;
+
+    let per_agent_file_change_patterns_raw =
+        db::get_per_agent_file_change_patterns_raw(pool, schedule.id, agent.id).await?;
+    let effective_file_change_patterns_raw = per_agent_file_change_patterns_raw
+        .as_deref()
+        .unwrap_or(&schedule.file_change_patterns_raw);
+    // Schedule-level (or per-agent-schedule override) patterns are checked
+    // first, since `filter_file_change_warnings` on the agent uses
+    // first-match-wins; the agent's own defaults are appended as a
+    // fallback so they only apply to warnings the schedule didn't cover.
+    let mut file_change_patterns =
+        parse_raw_file_change_patterns(effective_file_change_patterns_raw);
+    file_change_patterns.extend(parse_raw_file_change_patterns(
+        &agent.default_file_change_patterns_raw,
+    ));
+
+    let pre_backup_commands =
+        effective_pre_backup_commands(agent, &schedule, per_agent_cmds.as_ref());
+    let post_backup_commands =
+        effective_post_backup_commands(agent, &schedule, per_agent_cmds.as_ref());
+
+    Ok(ScheduleConfig {
+        id: schedule.id,
+        schedule_type: schedule_type_from_str(&schedule.schedule_type)?,
+        cron_expression: schedule.cron_expression,
+        enabled: schedule.enabled,
+        backup_sources,
+        rate_limit_kbps: retention.rate_limit_kbps,
+        canary_enabled: schedule.canary_enabled,
+        exclude_patterns,
+        ignore_global_excludes: schedule.ignore_global_excludes,
+        keep_hourly: retention.keep_hourly,
+        keep_daily: retention.keep_daily,
+        keep_weekly: retention.keep_weekly,
+        keep_monthly: retention.keep_monthly,
+        keep_yearly: retention.keep_yearly,
+        compact_enabled: schedule.compact_enabled,
+        file_change_patterns,
+        pre_backup_commands,
+        post_backup_commands,
+    })
+}
+
+async fn build_repo_config(
+    pool: &PgPool,
+    encryption_key: &[u8; 32],
+    repo: db::RepoWithPassphraseRow,
+    schedules: Vec<ScheduleConfig>,
+) -> Result<RepoConfig, ApiError> {
+    let passphrase = shared::crypto::decrypt_passphrase(&repo.passphrase_encrypted, encryption_key)
+        .map_err(|e| ApiError::Internal(format!("failed to decrypt passphrase: {e}")))?;
+
+    let compression = compression_from_str(&repo.compression)?;
+
+    let ssh_port = u16::try_from(repo.ssh_port)
+        .map_err(|_| ApiError::Internal(format!("ssh_port {} out of u16 range", repo.ssh_port)))?;
+
+    let ssh_host_key = if let Some(ssh_host_key) = repo.ssh_host_key {
+        ssh_host_key
+    } else {
+        let ssh_host_key = crate::ssh::scan_host_key(&repo.ssh_host, ssh_port)
+            .await
+            .map_err(|e| {
+                ApiError::BadGateway(format!(
+                    "failed to obtain SSH host key for {}:{}: {e}",
+                    repo.ssh_host, ssh_port
+                ))
+            })?;
+        db::update_repo_ssh_host_key(pool, repo.id, &ssh_host_key).await?;
+        ssh_host_key
+    };
+
+    Ok(RepoConfig {
+        repo_id: RepoId(repo.id),
+        name: repo.name,
+        repo_path: repo.repo_path,
+        ssh_user: repo.ssh_user,
+        ssh_host: repo.ssh_host,
+        ssh_port,
+        ssh_host_key,
+        passphrase,
+        compression,
+        enabled: repo.enabled,
+        accept_relocation: repo.relocation_pending,
+        schedules,
     })
 }
 

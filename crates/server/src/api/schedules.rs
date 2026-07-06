@@ -400,6 +400,7 @@ pub async fn update_schedule(
         .map_err(|e| ApiError::BadRequest(format!("invalid cron expression: {e}")))?;
     let exclude_patterns_raw = req
         .exclude_patterns_raw
+        .clone()
         .unwrap_or_else(|| existing.exclude_patterns_raw.clone());
     let enabled = req.enabled.unwrap_or(true);
     if enabled {
@@ -411,11 +412,11 @@ pub async fn update_schedule(
         check_ssh_reachability(&state.pool, eff_rid).await?;
     }
 
-    let pre_cmds_json = req.pre_backup_commands.map_or_else(
+    let pre_cmds_json = req.pre_backup_commands.clone().map_or_else(
         || existing.pre_backup_commands.clone(),
         |cmds| serde_json::to_string(&cmds).unwrap_or_else(|_| "[]".to_owned()),
     );
-    let post_cmds_json = req.post_backup_commands.map_or_else(
+    let post_cmds_json = req.post_backup_commands.clone().map_or_else(
         || existing.post_backup_commands.clone(),
         |cmds| serde_json::to_string(&cmds).unwrap_or_else(|_| "[]".to_owned()),
     );
@@ -424,7 +425,7 @@ pub async fn update_schedule(
         .on_failure
         .map_or_else(|| existing.on_failure.clone(), |f| f.to_string());
 
-    let name = req.name.unwrap_or_else(|| existing.name.clone());
+    let name = req.name.clone().unwrap_or_else(|| existing.name.clone());
 
     let params = ScheduleParams {
         name: &name,
@@ -457,48 +458,7 @@ pub async fn update_schedule(
     }
     let schedule = db::update_schedule(&state.pool, id, &params).await?;
 
-    if let Some(agent_ids) = &req.agent_ids {
-        if agent_ids.is_empty() {
-            return Err(ApiError::BadRequest(
-                "agent_ids must contain at least one entry".into(),
-            ));
-        }
-        db::delete_schedule_targets(&state.pool, schedule.id).await?;
-        let targets: Vec<(i64, i32)> = agent_ids
-            .iter()
-            .enumerate()
-            .map(|(i, &cid)| {
-                let order = i32::try_from(i).unwrap_or(0);
-                (cid, order)
-            })
-            .collect();
-        db::insert_schedule_targets(&state.pool, schedule.id, &targets).await?;
-    }
-
-    if let Some(sources) = &req.backup_sources {
-        db::delete_backup_sources_for_schedule(&state.pool, schedule.id).await?;
-        insert_schedule_sources(&state.pool, schedule.id, sources).await?;
-    }
-
-    if let Some(per_agent) = &req.backup_sources_per_agent {
-        db::delete_per_agent_backup_sources_for_schedule(&state.pool, schedule.id).await?;
-        insert_per_agent_sources(&state.pool, schedule.id, per_agent).await?;
-    }
-
-    if let Some(per_agent) = &req.exclude_patterns_per_agent {
-        db::delete_per_agent_excludes_for_schedule(&state.pool, schedule.id).await?;
-        insert_per_agent_excludes(&state.pool, schedule.id, per_agent).await?;
-    }
-
-    if let Some(per_agent) = &req.commands_per_agent {
-        db::delete_per_agent_commands_for_schedule(&state.pool, schedule.id).await?;
-        insert_per_agent_commands(&state.pool, schedule.id, per_agent).await?;
-    }
-
-    if let Some(per_agent) = &req.file_change_patterns_per_agent {
-        db::delete_per_agent_file_change_patterns_for_schedule(&state.pool, schedule.id).await?;
-        insert_per_agent_file_change_patterns(&state.pool, schedule.id, per_agent).await?;
-    }
+    apply_schedule_target_overrides(&state.pool, schedule.id, &req).await?;
 
     if enabled {
         refresh_next_run(&state.pool, schedule.id, &req.cron_expression).await?;
@@ -509,6 +469,57 @@ pub async fn update_schedule(
     config_assembler::push_config_to_all_schedule_targets(&state, schedule.id).await;
 
     Ok(Json(schedule))
+}
+
+async fn apply_schedule_target_overrides(
+    pool: &sqlx::PgPool,
+    schedule_id: i64,
+    req: &UpdateScheduleRequest,
+) -> Result<(), ApiError> {
+    if let Some(agent_ids) = &req.agent_ids {
+        if agent_ids.is_empty() {
+            return Err(ApiError::BadRequest(
+                "agent_ids must contain at least one entry".into(),
+            ));
+        }
+        db::delete_schedule_targets(pool, schedule_id).await?;
+        let targets: Vec<(i64, i32)> = agent_ids
+            .iter()
+            .enumerate()
+            .map(|(i, &cid)| {
+                let order = i32::try_from(i).unwrap_or(0);
+                (cid, order)
+            })
+            .collect();
+        db::insert_schedule_targets(pool, schedule_id, &targets).await?;
+    }
+
+    if let Some(sources) = &req.backup_sources {
+        db::delete_backup_sources_for_schedule(pool, schedule_id).await?;
+        insert_schedule_sources(pool, schedule_id, sources).await?;
+    }
+
+    if let Some(per_agent) = &req.backup_sources_per_agent {
+        db::delete_per_agent_backup_sources_for_schedule(pool, schedule_id).await?;
+        insert_per_agent_sources(pool, schedule_id, per_agent).await?;
+    }
+
+    if let Some(per_agent) = &req.exclude_patterns_per_agent {
+        db::delete_per_agent_excludes_for_schedule(pool, schedule_id).await?;
+        insert_per_agent_excludes(pool, schedule_id, per_agent).await?;
+    }
+
+    if let Some(per_agent) = &req.commands_per_agent {
+        db::delete_per_agent_commands_for_schedule(pool, schedule_id).await?;
+        insert_per_agent_commands(pool, schedule_id, per_agent).await?;
+    }
+
+    if let Some(per_agent) = &req.file_change_patterns_per_agent {
+        db::delete_per_agent_file_change_patterns_for_schedule(pool, schedule_id).await?;
+        insert_per_agent_file_change_patterns(pool, schedule_id, per_agent).await?;
+    }
+
+    Ok(())
 }
 
 #[utoipa::path(
@@ -972,142 +983,178 @@ async fn run_manual_sequential(
     run_id: String,
 ) {
     for target in &targets {
-        let rx = state.completion_bus.subscribe();
+        run_manual_target(&state, target, repo_id, schedule_type, schedule_id, &run_id).await;
+    }
+}
 
-        let _repo_guard = state.repo_lock.acquire(repo_id.0).await;
+async fn run_manual_target(
+    state: &AppState,
+    target: &db::ScheduleRunTarget,
+    repo_id: RepoId,
+    schedule_type: ScheduleType,
+    schedule_id: i64,
+    run_id: &str,
+) {
+    let rx = state.completion_bus.subscribe();
 
-        let agent_reachable = match config_assembler::assemble_config(
-            &state.pool,
-            &state.encryption_key,
-            &target.hostname,
-        )
-        .await
-        {
-            Ok(config) => {
-                if state
-                    .registry
-                    .send_to(&target.hostname, ServerToAgent::ConfigUpdate(config))
-                    .await
-                    .is_ok()
-                {
-                    true
-                } else {
-                    tracing::warn!(
-                        hostname = %target.hostname,
-                        "manual run: agent not connected for config push"
-                    );
-                    false
-                }
-            }
-            Err(e) => {
+    let _repo_guard = state.repo_lock.acquire(repo_id.0).await;
+
+    let command_sent =
+        push_config_and_trigger_target(state, target, repo_id, schedule_type, schedule_id, run_id)
+            .await;
+
+    // For backup schedules, broadcast BackupStarted even when the agent is
+    // offline so the UI can immediately show the "Cancel Backup" button. The
+    // backup_report is already in the DB as 'pending' from run_schedule_now.
+    let is_backup = matches!(schedule_type, ScheduleType::Backup);
+
+    if command_sent || is_backup {
+        state
+            .repo_op_tracker
+            .set(
+                repo_id.0,
+                crate::scheduler::repo_op_kind_for(schedule_type),
+                target.hostname.clone(),
+            )
+            .await;
+        state.ui_broadcast.send(ServerToUi::RepoOpChanged {
+            repo_id: repo_id.0,
+            op: state.repo_op_tracker.get(repo_id.0).await,
+        });
+    }
+
+    if is_backup {
+        broadcast_manual_backup_started(state, target, repo_id, schedule_id).await;
+    }
+
+    if command_sent {
+        let hostname = target.hostname.clone();
+        let repo_id_val = repo_id.0;
+        let outcome =
+            completion_bus::wait_for_completion(&state.registry, rx, &hostname, repo_id_val).await;
+
+        state.repo_op_tracker.clear(repo_id_val).await;
+        state.ui_broadcast.send(ServerToUi::RepoOpChanged {
+            repo_id: repo_id_val,
+            op: None,
+        });
+
+        if outcome == completion_bus::CompletionOutcome::AgentDisconnected {
+            tracing::warn!(
+                hostname = %hostname,
+                schedule_id,
+                "manual run: agent disconnected before reporting completion"
+            );
+        }
+    }
+}
+
+/// Pushes a fresh config to the target agent, then sends the run-now
+/// command for the schedule type. Returns whether the command was actually
+/// sent (i.e. the agent was reachable for both steps).
+async fn push_config_and_trigger_target(
+    state: &AppState,
+    target: &db::ScheduleRunTarget,
+    repo_id: RepoId,
+    schedule_type: ScheduleType,
+    schedule_id: i64,
+    run_id: &str,
+) -> bool {
+    let agent_reachable = match config_assembler::assemble_config(
+        &state.pool,
+        &state.encryption_key,
+        &target.hostname,
+    )
+    .await
+    {
+        Ok(config) => {
+            if state
+                .registry
+                .send_to(&target.hostname, ServerToAgent::ConfigUpdate(config))
+                .await
+                .is_ok()
+            {
+                true
+            } else {
                 tracing::warn!(
                     hostname = %target.hostname,
-                    error = %e,
-                    "manual run: failed to assemble config"
+                    "manual run: agent not connected for config push"
                 );
                 false
             }
-        };
-
-        let mut command_sent = false;
-
-        if agent_reachable {
-            let msg = match schedule_type {
-                ScheduleType::Check => ServerToAgent::RunCheckNow {
-                    repo_id,
-                    request_id: None,
-                },
-                ScheduleType::Verify => ServerToAgent::RunVerifyNow {
-                    repo_id,
-                    request_id: None,
-                },
-                ScheduleType::Backup => ServerToAgent::RunBackupNow {
-                    repo_id,
-                    schedule_id: Some(schedule_id),
-                    request_id: None,
-                    run_id: Some(run_id.clone()),
-                },
-            };
-
-            match state.registry.send_to(&target.hostname, msg).await {
-                Ok(()) => {
-                    tracing::info!(
-                        hostname = %target.hostname,
-                        schedule_id,
-                        "manual run: triggered"
-                    );
-                    command_sent = true;
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        hostname = %target.hostname,
-                        error = %e,
-                        "manual run: agent not connected"
-                    );
-                }
-            }
         }
-
-        // For backup schedules, broadcast BackupStarted even when the agent is
-        // offline so the UI can immediately show the "Cancel Backup" button. The
-        // backup_report is already in the DB as 'pending' from run_schedule_now.
-        let is_backup = matches!(schedule_type, ScheduleType::Backup);
-
-        if command_sent || is_backup {
-            state
-                .repo_op_tracker
-                .set(
-                    repo_id.0,
-                    crate::scheduler::repo_op_kind_for(schedule_type),
-                    target.hostname.clone(),
-                )
-                .await;
-            state.ui_broadcast.send(ServerToUi::RepoOpChanged {
-                repo_id: repo_id.0,
-                op: state.repo_op_tracker.get(repo_id.0).await,
-            });
+        Err(e) => {
+            tracing::warn!(
+                hostname = %target.hostname,
+                error = %e,
+                "manual run: failed to assemble config"
+            );
+            false
         }
+    };
 
-        if is_backup {
-            if let Ok(target_name) = db::get_repo_name(&state.pool, repo_id.0).await {
-                state.ui_broadcast.set_active_backup(ActiveBackupSnapshot {
-                    hostname: target.hostname.clone(),
-                    target_name: target_name.clone(),
-                    archive_name: None,
-                    schedule_id: Some(schedule_id),
-                    repo_id: repo_id.0,
-                    progress_line: None,
-                });
-                state.ui_broadcast.send(ServerToUi::BackupStarted {
-                    hostname: target.hostname.clone(),
-                    target_name,
-                    archive_name: None,
-                    schedule_id: Some(schedule_id),
-                });
-            }
-            state.ui_broadcast.send(ServerToUi::DataChanged);
+    if !agent_reachable {
+        return false;
+    }
+
+    let msg = match schedule_type {
+        ScheduleType::Check => ServerToAgent::RunCheckNow {
+            repo_id,
+            request_id: None,
+        },
+        ScheduleType::Verify => ServerToAgent::RunVerifyNow {
+            repo_id,
+            request_id: None,
+        },
+        ScheduleType::Backup => ServerToAgent::RunBackupNow {
+            repo_id,
+            schedule_id: Some(schedule_id),
+            request_id: None,
+            run_id: Some(run_id.to_owned()),
+        },
+    };
+
+    match state.registry.send_to(&target.hostname, msg).await {
+        Ok(()) => {
+            tracing::info!(
+                hostname = %target.hostname,
+                schedule_id,
+                "manual run: triggered"
+            );
+            true
         }
-
-        if command_sent {
-            let hostname = target.hostname.clone();
-            let repo_id_val = repo_id.0;
-            let outcome =
-                completion_bus::wait_for_completion(&state.registry, rx, &hostname, repo_id_val)
-                    .await;
-
-            state.repo_op_tracker.clear(repo_id_val).await;
-            state.ui_broadcast.send(ServerToUi::RepoOpChanged {
-                repo_id: repo_id_val,
-                op: None,
-            });
-
-            if outcome == completion_bus::CompletionOutcome::AgentDisconnected {
-                tracing::warn!(
-                    hostname = %hostname,
-                    schedule_id,
-                    "manual run: agent disconnected before reporting completion"
-                );
-            }
+        Err(e) => {
+            tracing::warn!(
+                hostname = %target.hostname,
+                error = %e,
+                "manual run: agent not connected"
+            );
+            false
         }
     }
+}
+
+async fn broadcast_manual_backup_started(
+    state: &AppState,
+    target: &db::ScheduleRunTarget,
+    repo_id: RepoId,
+    schedule_id: i64,
+) {
+    if let Ok(target_name) = db::get_repo_name(&state.pool, repo_id.0).await {
+        state.ui_broadcast.set_active_backup(ActiveBackupSnapshot {
+            hostname: target.hostname.clone(),
+            target_name: target_name.clone(),
+            archive_name: None,
+            schedule_id: Some(schedule_id),
+            repo_id: repo_id.0,
+            progress_line: None,
+        });
+        state.ui_broadcast.send(ServerToUi::BackupStarted {
+            hostname: target.hostname.clone(),
+            target_name,
+            archive_name: None,
+            schedule_id: Some(schedule_id),
+        });
+    }
+    state.ui_broadcast.send(ServerToUi::DataChanged);
 }

@@ -2568,77 +2568,19 @@ async fn index_archives_with_progress(
     );
 
     for (index, archive_name) in pending.iter().enumerate() {
-        // The progress bar tracks *completed* archives, so it never reaches 100%
-        // while an archive (including the last one) is still being scanned.
-        let completed = i32::try_from(index).unwrap_or(i32::MAX);
-        let human_position = index.saturating_add(1);
-        let archive_msg = format!(
-            "Indexing contents of \u{2018}{archive_name}\u{2019} ({human_position}/{total})"
-        );
-        publish_import_progress(
-            &pool,
-            &ui_broadcast,
+        index_one_archive(IndexOneArchiveArgs {
+            pool: &pool,
+            encryption_key: &encryption_key,
             repo_id,
-            completed,
+            ui_broadcast: &ui_broadcast,
+            repo_lock: &repo_lock,
+            repo_lock_held,
+            archive_name,
+            index,
+            total,
             total_i32,
-            Some(&archive_msg),
-        )
+        })
         .await;
-
-        if let Err(e) = archive_index::ensure_index_job(&pool, repo_id, archive_name).await {
-            warn!(repo_id, archive = %archive_name, error = %e, "content index job failed");
-            continue;
-        }
-
-        // The live file count and current path keep the badge visibly moving even
-        // while a single large archive is being scanned.
-        let mut on_progress = |file_count: u64, current: Option<&str>| {
-            let message = current.map_or_else(
-                || {
-                    format!(
-                        "Indexing \u{2018}{archive_name}\u{2019} ({human_position}/{total}) \
-                         \u{2014} {file_count} files"
-                    )
-                },
-                |path| {
-                    format!(
-                        "Indexing \u{2018}{archive_name}\u{2019} ({human_position}/{total}) \
-                         \u{2014} {file_count} files \u{00b7} {path}"
-                    )
-                },
-            );
-            ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
-                repo_id,
-                progress: completed,
-                total: total_i32,
-                message: Some(message),
-            });
-        };
-
-        let result = if repo_lock_held {
-            archive_index::run_indexing_with_lock_held(
-                &pool,
-                &encryption_key,
-                repo_id,
-                archive_name,
-                &mut on_progress,
-            )
-            .await
-        } else {
-            archive_index::run_indexing(
-                &pool,
-                &encryption_key,
-                repo_id,
-                archive_name,
-                &repo_lock,
-                &mut on_progress,
-            )
-            .await
-        };
-
-        if let Err(e) = result {
-            warn!(repo_id, archive = %archive_name, error = %e, "content indexing: archive failed");
-        }
     }
 
     publish_import_progress(
@@ -2651,6 +2593,107 @@ async fn index_archives_with_progress(
     )
     .await;
     info!(repo_id, total, "content indexing: completed");
+}
+
+struct IndexOneArchiveArgs<'a> {
+    pool: &'a PgPool,
+    encryption_key: &'a [u8; 32],
+    repo_id: i64,
+    ui_broadcast: &'a UiBroadcast,
+    repo_lock: &'a RepoLock,
+    repo_lock_held: bool,
+    archive_name: &'a str,
+    index: usize,
+    total: usize,
+    total_i32: i32,
+}
+
+/// Indexes a single archive's contents, broadcasting progress as it goes.
+///
+/// The progress bar tracks *completed* archives, so it never reaches 100%
+/// while an archive (including the last one) is still being scanned. The
+/// live file count and current path keep the badge visibly moving even
+/// while a single large archive is being scanned.
+async fn index_one_archive(args: IndexOneArchiveArgs<'_>) {
+    let IndexOneArchiveArgs {
+        pool,
+        encryption_key,
+        repo_id,
+        ui_broadcast,
+        repo_lock,
+        repo_lock_held,
+        archive_name,
+        index,
+        total,
+        total_i32,
+    } = args;
+
+    let completed = i32::try_from(index).unwrap_or(i32::MAX);
+    let human_position = index.saturating_add(1);
+    let archive_msg =
+        format!("Indexing contents of \u{2018}{archive_name}\u{2019} ({human_position}/{total})");
+    publish_import_progress(
+        pool,
+        ui_broadcast,
+        repo_id,
+        completed,
+        total_i32,
+        Some(&archive_msg),
+    )
+    .await;
+
+    if let Err(e) = archive_index::ensure_index_job(pool, repo_id, archive_name).await {
+        warn!(repo_id, archive = %archive_name, error = %e, "content index job failed");
+        return;
+    }
+
+    let mut on_progress = |file_count: u64, current: Option<&str>| {
+        let message = current.map_or_else(
+            || {
+                format!(
+                    "Indexing \u{2018}{archive_name}\u{2019} ({human_position}/{total}) \u{2014} \
+                     {file_count} files"
+                )
+            },
+            |path| {
+                format!(
+                    "Indexing \u{2018}{archive_name}\u{2019} ({human_position}/{total}) \u{2014} \
+                     {file_count} files \u{00b7} {path}"
+                )
+            },
+        );
+        ui_broadcast.send(shared::protocol::ServerToUi::ImportProgress {
+            repo_id,
+            progress: completed,
+            total: total_i32,
+            message: Some(message),
+        });
+    };
+
+    let result = if repo_lock_held {
+        archive_index::run_indexing_with_lock_held(
+            pool,
+            encryption_key,
+            repo_id,
+            archive_name,
+            &mut on_progress,
+        )
+        .await
+    } else {
+        archive_index::run_indexing(
+            pool,
+            encryption_key,
+            repo_id,
+            archive_name,
+            repo_lock,
+            &mut on_progress,
+        )
+        .await
+    };
+
+    if let Err(e) = result {
+        warn!(repo_id, archive = %archive_name, error = %e, "content indexing: archive failed");
+    }
 }
 
 #[derive(sqlx::FromRow)]

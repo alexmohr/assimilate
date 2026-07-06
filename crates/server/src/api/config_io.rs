@@ -134,87 +134,10 @@ pub async fn export_config(
 
     let mut schedules = Vec::new();
     for sched in &schedule_rows {
-        let repo_name = sched
-            .repo_id
-            .and_then(|rid| repo_id_to_name.get(&rid).copied())
-            .map(str::to_owned);
-
-        let target_rows = db::list_schedule_targets(&state.pool, sched.id).await?;
-        let backup_sources = db::list_backup_sources_for_schedule(&state.pool, sched.id).await?;
-        let per_agent_sources =
-            db::list_all_per_agent_backup_sources_for_schedule(&state.pool, sched.id).await?;
-        let per_agent_excludes =
-            db::list_all_per_agent_excludes_for_schedule(&state.pool, sched.id).await?;
-
-        let per_agent_sources_map: HashMap<i64, &Vec<String>> = per_agent_sources
-            .iter()
-            .map(|s| (s.agent_id, &s.paths))
-            .collect();
-        let per_agent_excludes_map: HashMap<i64, &str> = per_agent_excludes
-            .iter()
-            .map(|e| (e.agent_id, e.raw_text.as_str()))
-            .collect();
-        let per_agent_file_change_patterns =
-            db::list_all_per_agent_file_change_patterns_for_schedule(&state.pool, sched.id).await?;
-        let per_agent_file_change_patterns_map: HashMap<i64, &str> = per_agent_file_change_patterns
-            .iter()
-            .map(|f| (f.agent_id, f.raw_text.as_str()))
-            .collect();
-
-        let targets = target_rows
-            .iter()
-            .filter_map(|t| {
-                let hostname = agent_id_to_hostname.get(&t.agent_id).copied()?.to_owned();
-                Some(ScheduleTargetExport {
-                    hostname,
-                    execution_order: t.execution_order,
-                    backup_sources: per_agent_sources_map
-                        .get(&t.agent_id)
-                        .map(|v| (*v).clone())
-                        .unwrap_or_default(),
-                    exclude_patterns: per_agent_excludes_map
-                        .get(&t.agent_id)
-                        .copied()
-                        .unwrap_or("")
-                        .to_owned(),
-                    file_change_patterns: per_agent_file_change_patterns_map
-                        .get(&t.agent_id)
-                        .copied()
-                        .unwrap_or("")
-                        .to_owned(),
-                })
-            })
-            .collect();
-
-        let pre_backup_commands =
-            serde_json::from_str(&sched.pre_backup_commands).unwrap_or_default();
-        let post_backup_commands =
-            serde_json::from_str(&sched.post_backup_commands).unwrap_or_default();
-
-        schedules.push(ScheduleExport {
-            name: sched.name.clone(),
-            schedule_type: sched.schedule_type.clone(),
-            cron_expression: sched.cron_expression.clone(),
-            enabled: sched.enabled,
-            canary_enabled: sched.canary_enabled,
-            execution_mode: sched.execution_mode.clone(),
-            on_failure: sched.on_failure.clone(),
-            exclude_patterns_raw: sched.exclude_patterns_raw.clone(),
-            file_change_patterns_raw: sched.file_change_patterns_raw.clone(),
-            ignore_global_excludes: sched.ignore_global_excludes,
-            keep_hourly: sched.keep_hourly,
-            keep_daily: sched.keep_daily,
-            keep_weekly: sched.keep_weekly,
-            keep_monthly: sched.keep_monthly,
-            keep_yearly: sched.keep_yearly,
-            compact_enabled: sched.compact_enabled,
-            rate_limit_kbps: sched.rate_limit_kbps,
-            pre_backup_commands,
-            post_backup_commands,
-            repo_name,
-            backup_sources,
-            targets,
-        });
+        schedules.push(
+            build_schedule_export(&state.pool, sched, &repo_id_to_name, &agent_id_to_hostname)
+                .await?,
+        );
     }
 
     Ok(Json(ConfigExport {
@@ -223,6 +146,93 @@ pub async fn export_config(
         hosts,
         schedules,
     }))
+}
+
+async fn build_schedule_export(
+    pool: &sqlx::PgPool,
+    sched: &db::ScheduleRow,
+    repo_id_to_name: &HashMap<i64, &str>,
+    agent_id_to_hostname: &HashMap<i64, &str>,
+) -> Result<ScheduleExport, ApiError> {
+    let repo_name = sched
+        .repo_id
+        .and_then(|rid| repo_id_to_name.get(&rid).copied())
+        .map(str::to_owned);
+
+    let target_rows = db::list_schedule_targets(pool, sched.id).await?;
+    let backup_sources = db::list_backup_sources_for_schedule(pool, sched.id).await?;
+    let per_agent_sources =
+        db::list_all_per_agent_backup_sources_for_schedule(pool, sched.id).await?;
+    let per_agent_excludes = db::list_all_per_agent_excludes_for_schedule(pool, sched.id).await?;
+
+    let per_agent_sources_map: HashMap<i64, &Vec<String>> = per_agent_sources
+        .iter()
+        .map(|s| (s.agent_id, &s.paths))
+        .collect();
+    let per_agent_excludes_map: HashMap<i64, &str> = per_agent_excludes
+        .iter()
+        .map(|e| (e.agent_id, e.raw_text.as_str()))
+        .collect();
+    let per_agent_file_change_patterns =
+        db::list_all_per_agent_file_change_patterns_for_schedule(pool, sched.id).await?;
+    let per_agent_file_change_patterns_map: HashMap<i64, &str> = per_agent_file_change_patterns
+        .iter()
+        .map(|f| (f.agent_id, f.raw_text.as_str()))
+        .collect();
+
+    let targets = target_rows
+        .iter()
+        .filter_map(|t| {
+            let hostname = agent_id_to_hostname.get(&t.agent_id).copied()?.to_owned();
+            Some(ScheduleTargetExport {
+                hostname,
+                execution_order: t.execution_order,
+                backup_sources: per_agent_sources_map
+                    .get(&t.agent_id)
+                    .map(|v| (*v).clone())
+                    .unwrap_or_default(),
+                exclude_patterns: per_agent_excludes_map
+                    .get(&t.agent_id)
+                    .copied()
+                    .unwrap_or("")
+                    .to_owned(),
+                file_change_patterns: per_agent_file_change_patterns_map
+                    .get(&t.agent_id)
+                    .copied()
+                    .unwrap_or("")
+                    .to_owned(),
+            })
+        })
+        .collect();
+
+    let pre_backup_commands = serde_json::from_str(&sched.pre_backup_commands).unwrap_or_default();
+    let post_backup_commands =
+        serde_json::from_str(&sched.post_backup_commands).unwrap_or_default();
+
+    Ok(ScheduleExport {
+        name: sched.name.clone(),
+        schedule_type: sched.schedule_type.clone(),
+        cron_expression: sched.cron_expression.clone(),
+        enabled: sched.enabled,
+        canary_enabled: sched.canary_enabled,
+        execution_mode: sched.execution_mode.clone(),
+        on_failure: sched.on_failure.clone(),
+        exclude_patterns_raw: sched.exclude_patterns_raw.clone(),
+        file_change_patterns_raw: sched.file_change_patterns_raw.clone(),
+        ignore_global_excludes: sched.ignore_global_excludes,
+        keep_hourly: sched.keep_hourly,
+        keep_daily: sched.keep_daily,
+        keep_weekly: sched.keep_weekly,
+        keep_monthly: sched.keep_monthly,
+        keep_yearly: sched.keep_yearly,
+        compact_enabled: sched.compact_enabled,
+        rate_limit_kbps: sched.rate_limit_kbps,
+        pre_backup_commands,
+        post_backup_commands,
+        repo_name,
+        backup_sources,
+        targets,
+    })
 }
 
 #[utoipa::path(
@@ -268,56 +278,7 @@ pub async fn import_config(
         .collect();
 
     for host in &payload.hosts {
-        if let Some(&existing_id) = hostname_to_id.get(&host.hostname) {
-            db::update_agent(
-                &state.pool,
-                &host.hostname,
-                &host.hostname,
-                db::AgentDefaults {
-                    display_name: host.display_name.as_deref(),
-                    default_backup_paths: &host.default_backup_paths,
-                    default_exclude_patterns: &host.default_exclude_patterns,
-                    default_pre_backup_commands: &host.default_pre_backup_commands,
-                    default_post_backup_commands: &host.default_post_backup_commands,
-                    default_file_change_patterns_raw: &host.default_file_change_patterns_raw,
-                },
-            )
-            .await?;
-
-            let existing_patterns =
-                db::patterns::list_patterns_for_agent(&state.pool, existing_id).await?;
-            let existing_set: HashSet<&str> = existing_patterns
-                .iter()
-                .map(|p| p.pattern.as_str())
-                .collect();
-            for pattern in &host.hostname_patterns {
-                if !existing_set.contains(pattern.as_str()) {
-                    db::patterns::add_hostname_pattern(&state.pool, existing_id, pattern).await?;
-                }
-            }
-
-            result.hosts_updated = result.hosts_updated.saturating_add(1);
-        } else {
-            let agent = db::insert_agent_with_paths(
-                &state.pool,
-                &host.hostname,
-                IMPORTED_TOKEN_HASH,
-                db::AgentDefaults {
-                    display_name: host.display_name.as_deref(),
-                    default_backup_paths: &host.default_backup_paths,
-                    default_exclude_patterns: &host.default_exclude_patterns,
-                    default_pre_backup_commands: &host.default_pre_backup_commands,
-                    default_post_backup_commands: &host.default_post_backup_commands,
-                    default_file_change_patterns_raw: &host.default_file_change_patterns_raw,
-                },
-            )
-            .await?;
-            for pattern in &host.hostname_patterns {
-                db::patterns::add_hostname_pattern(&state.pool, agent.id, pattern).await?;
-            }
-            hostname_to_id.insert(host.hostname.clone(), agent.id);
-            result.hosts_created = result.hosts_created.saturating_add(1);
-        }
+        import_host(&state.pool, host, &mut hostname_to_id, &mut result).await?;
     }
 
     let repos = db::list_all_repos(&state.pool).await?;
@@ -325,124 +286,193 @@ pub async fn import_config(
         repos.iter().map(|r| (r.name.as_str(), r.id)).collect();
 
     for sched in &payload.schedules {
-        let Some(repo_name) = &sched.repo_name else {
-            result.warnings.push(format!(
-                "skipped schedule {:?}: no repository assigned",
-                sched.name
-            ));
-            continue;
-        };
-
-        let Some(&repo_id) = repo_name_to_id.get(repo_name.as_str()) else {
-            result.warnings.push(format!(
-                "skipped schedule {:?}: repository {:?} not found",
-                sched.name, repo_name
-            ));
-            continue;
-        };
-
-        if sched.targets.is_empty() {
-            result
-                .warnings
-                .push(format!("skipped schedule {:?}: no targets", sched.name));
-            continue;
-        }
-
-        let mut target_ids: Vec<(i64, i32)> = Vec::new();
-        for target in &sched.targets {
-            let agent_id = if let Some(&cid) = hostname_to_id.get(&target.hostname) {
-                cid
-            } else {
-                let agent = db::insert_agent(
-                    &state.pool,
-                    &target.hostname,
-                    None,
-                    IMPORTED_TOKEN_HASH,
-                    None,
-                )
-                .await?;
-                result.warnings.push(format!(
-                    "created placeholder agent {:?} referenced by schedule {:?}",
-                    target.hostname, sched.name
-                ));
-                hostname_to_id.insert(target.hostname.clone(), agent.id);
-                agent.id
-            };
-            target_ids.push((agent_id, target.execution_order));
-        }
-
-        let pre_cmds_json =
-            serde_json::to_string(&sched.pre_backup_commands).unwrap_or_else(|_| "[]".to_owned());
-        let post_cmds_json =
-            serde_json::to_string(&sched.post_backup_commands).unwrap_or_else(|_| "[]".to_owned());
-
-        let params = ScheduleParams {
-            name: &sched.name,
-            schedule_type: &sched.schedule_type,
-            cron_expression: &sched.cron_expression,
-            enabled: sched.enabled,
-            canary_enabled: sched.canary_enabled,
-            exclude_patterns_raw: &sched.exclude_patterns_raw,
-            file_change_patterns_raw: &sched.file_change_patterns_raw,
-            ignore_global_excludes: sched.ignore_global_excludes,
-            keep_hourly: sched.keep_hourly,
-            keep_daily: sched.keep_daily,
-            keep_weekly: sched.keep_weekly,
-            keep_monthly: sched.keep_monthly,
-            keep_yearly: sched.keep_yearly,
-            compact_enabled: sched.compact_enabled,
-            rate_limit_kbps: sched.rate_limit_kbps,
-            pre_backup_commands: &pre_cmds_json,
-            post_backup_commands: &post_cmds_json,
-            on_failure: &sched.on_failure,
-        };
-
-        let new_sched = db::insert_schedule(&state.pool, repo_id, &params, None).await?;
-        db::insert_schedule_targets(&state.pool, new_sched.id, &target_ids).await?;
-
-        for (i, path) in sched.backup_sources.iter().enumerate() {
-            let sort_order = i32::try_from(i).unwrap_or(0);
-            db::insert_backup_source_for_schedule(&state.pool, new_sched.id, path, sort_order)
-                .await?;
-        }
-
-        for target in &sched.targets {
-            let Some(&agent_id) = hostname_to_id.get(&target.hostname) else {
-                continue;
-            };
-            for (i, path) in target.backup_sources.iter().enumerate() {
-                let sort_order = i32::try_from(i).unwrap_or(0);
-                db::insert_backup_source_for_schedule_agent(
-                    &state.pool,
-                    new_sched.id,
-                    agent_id,
-                    path,
-                    sort_order,
-                )
-                .await?;
-            }
-            if !target.exclude_patterns.is_empty() {
-                db::upsert_per_agent_excludes_raw(
-                    &state.pool,
-                    new_sched.id,
-                    agent_id,
-                    &target.exclude_patterns,
-                )
-                .await?;
-            }
-            if !target.file_change_patterns.is_empty() {
-                db::upsert_per_agent_file_change_patterns_raw(
-                    &state.pool,
-                    new_sched.id,
-                    agent_id,
-                    &target.file_change_patterns,
-                )
-                .await?;
-            }
-        }
-
-        result.schedules_created = result.schedules_created.saturating_add(1);
+        import_schedule(
+            &state.pool,
+            sched,
+            &mut hostname_to_id,
+            &repo_name_to_id,
+            &mut result,
+        )
+        .await?;
     }
 
     Ok(Json(result))
+}
+
+async fn import_host(
+    pool: &sqlx::PgPool,
+    host: &HostExport,
+    hostname_to_id: &mut HashMap<String, i64>,
+    result: &mut ImportResult,
+) -> Result<(), ApiError> {
+    if let Some(&existing_id) = hostname_to_id.get(&host.hostname) {
+        db::update_agent(
+            pool,
+            &host.hostname,
+            &host.hostname,
+            db::AgentDefaults {
+                display_name: host.display_name.as_deref(),
+                default_backup_paths: &host.default_backup_paths,
+                default_exclude_patterns: &host.default_exclude_patterns,
+                default_pre_backup_commands: &host.default_pre_backup_commands,
+                default_post_backup_commands: &host.default_post_backup_commands,
+                default_file_change_patterns_raw: &host.default_file_change_patterns_raw,
+            },
+        )
+        .await?;
+
+        let existing_patterns = db::patterns::list_patterns_for_agent(pool, existing_id).await?;
+        let existing_set: HashSet<&str> = existing_patterns
+            .iter()
+            .map(|p| p.pattern.as_str())
+            .collect();
+        for pattern in &host.hostname_patterns {
+            if !existing_set.contains(pattern.as_str()) {
+                db::patterns::add_hostname_pattern(pool, existing_id, pattern).await?;
+            }
+        }
+
+        result.hosts_updated = result.hosts_updated.saturating_add(1);
+    } else {
+        let agent = db::insert_agent_with_paths(
+            pool,
+            &host.hostname,
+            IMPORTED_TOKEN_HASH,
+            db::AgentDefaults {
+                display_name: host.display_name.as_deref(),
+                default_backup_paths: &host.default_backup_paths,
+                default_exclude_patterns: &host.default_exclude_patterns,
+                default_pre_backup_commands: &host.default_pre_backup_commands,
+                default_post_backup_commands: &host.default_post_backup_commands,
+                default_file_change_patterns_raw: &host.default_file_change_patterns_raw,
+            },
+        )
+        .await?;
+        for pattern in &host.hostname_patterns {
+            db::patterns::add_hostname_pattern(pool, agent.id, pattern).await?;
+        }
+        hostname_to_id.insert(host.hostname.clone(), agent.id);
+        result.hosts_created = result.hosts_created.saturating_add(1);
+    }
+    Ok(())
+}
+
+async fn import_schedule(
+    pool: &sqlx::PgPool,
+    sched: &ScheduleExport,
+    hostname_to_id: &mut HashMap<String, i64>,
+    repo_name_to_id: &HashMap<&str, i64>,
+    result: &mut ImportResult,
+) -> Result<(), ApiError> {
+    let Some(repo_name) = &sched.repo_name else {
+        result.warnings.push(format!(
+            "skipped schedule {:?}: no repository assigned",
+            sched.name
+        ));
+        return Ok(());
+    };
+
+    let Some(&repo_id) = repo_name_to_id.get(repo_name.as_str()) else {
+        result.warnings.push(format!(
+            "skipped schedule {:?}: repository {:?} not found",
+            sched.name, repo_name
+        ));
+        return Ok(());
+    };
+
+    if sched.targets.is_empty() {
+        result
+            .warnings
+            .push(format!("skipped schedule {:?}: no targets", sched.name));
+        return Ok(());
+    }
+
+    let mut target_ids: Vec<(i64, i32)> = Vec::new();
+    for target in &sched.targets {
+        let agent_id = if let Some(&cid) = hostname_to_id.get(&target.hostname) {
+            cid
+        } else {
+            let agent =
+                db::insert_agent(pool, &target.hostname, None, IMPORTED_TOKEN_HASH, None).await?;
+            result.warnings.push(format!(
+                "created placeholder agent {:?} referenced by schedule {:?}",
+                target.hostname, sched.name
+            ));
+            hostname_to_id.insert(target.hostname.clone(), agent.id);
+            agent.id
+        };
+        target_ids.push((agent_id, target.execution_order));
+    }
+
+    let pre_cmds_json =
+        serde_json::to_string(&sched.pre_backup_commands).unwrap_or_else(|_| "[]".to_owned());
+    let post_cmds_json =
+        serde_json::to_string(&sched.post_backup_commands).unwrap_or_else(|_| "[]".to_owned());
+
+    let params = ScheduleParams {
+        name: &sched.name,
+        schedule_type: &sched.schedule_type,
+        cron_expression: &sched.cron_expression,
+        enabled: sched.enabled,
+        canary_enabled: sched.canary_enabled,
+        exclude_patterns_raw: &sched.exclude_patterns_raw,
+        file_change_patterns_raw: &sched.file_change_patterns_raw,
+        ignore_global_excludes: sched.ignore_global_excludes,
+        keep_hourly: sched.keep_hourly,
+        keep_daily: sched.keep_daily,
+        keep_weekly: sched.keep_weekly,
+        keep_monthly: sched.keep_monthly,
+        keep_yearly: sched.keep_yearly,
+        compact_enabled: sched.compact_enabled,
+        rate_limit_kbps: sched.rate_limit_kbps,
+        pre_backup_commands: &pre_cmds_json,
+        post_backup_commands: &post_cmds_json,
+        on_failure: &sched.on_failure,
+    };
+
+    let new_sched = db::insert_schedule(pool, repo_id, &params, None).await?;
+    db::insert_schedule_targets(pool, new_sched.id, &target_ids).await?;
+
+    for (i, path) in sched.backup_sources.iter().enumerate() {
+        let sort_order = i32::try_from(i).unwrap_or(0);
+        db::insert_backup_source_for_schedule(pool, new_sched.id, path, sort_order).await?;
+    }
+
+    for target in &sched.targets {
+        let Some(&agent_id) = hostname_to_id.get(&target.hostname) else {
+            continue;
+        };
+        for (i, path) in target.backup_sources.iter().enumerate() {
+            let sort_order = i32::try_from(i).unwrap_or(0);
+            db::insert_backup_source_for_schedule_agent(
+                pool,
+                new_sched.id,
+                agent_id,
+                path,
+                sort_order,
+            )
+            .await?;
+        }
+        if !target.exclude_patterns.is_empty() {
+            db::upsert_per_agent_excludes_raw(
+                pool,
+                new_sched.id,
+                agent_id,
+                &target.exclude_patterns,
+            )
+            .await?;
+        }
+        if !target.file_change_patterns.is_empty() {
+            db::upsert_per_agent_file_change_patterns_raw(
+                pool,
+                new_sched.id,
+                agent_id,
+                &target.file_change_patterns,
+            )
+            .await?;
+        }
+    }
+
+    result.schedules_created = result.schedules_created.saturating_add(1);
+    Ok(())
 }

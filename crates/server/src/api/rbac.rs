@@ -66,6 +66,10 @@ pub struct SetGroupMembersRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
+)]
 pub struct CreateRoleRequest {
     pub name: String,
     pub can_create_agent: bool,
@@ -83,6 +87,10 @@ pub struct CreateRoleRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
+)]
 pub struct UpdateRoleRequest {
     pub name: String,
     pub can_create_agent: bool,

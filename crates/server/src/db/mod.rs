@@ -222,6 +222,10 @@ pub struct GlobalExcludesConfig {
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
+)]
 pub struct ScheduleRow {
     pub id: i64,
     pub repo_id: Option<i64>,
@@ -1398,6 +1402,10 @@ pub async fn list_schedules(pool: &PgPool) -> Result<Vec<ScheduleRow>, ApiError>
     Ok(rows)
 }
 
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
+)]
 pub struct ScheduleParams<'a> {
     pub name: &'a str,
     pub schedule_type: &'a str,
@@ -3515,6 +3523,10 @@ pub async fn update_api_token_last_used(pool: &PgPool, token_hash: &str) -> Resu
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
+)]
 pub struct RepoPermissionRow {
     pub user_id: i64,
     pub repo_id: i64,
@@ -3525,6 +3537,10 @@ pub struct RepoPermissionRow {
     pub can_delete: bool,
 }
 
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
+)]
 pub struct UpsertRepoPermissionParams {
     pub user_id: i64,
     pub repo_id: i64,
@@ -4179,6 +4195,10 @@ pub struct GroupRow {
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
+)]
 pub struct RoleRow {
     pub id: i64,
     pub name: String,
@@ -4385,6 +4405,10 @@ pub async fn get_role(pool: &PgPool, id: i64) -> Result<Option<RoleRow>, ApiErro
     .map_err(ApiError::Database)
 }
 
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
+)]
 pub struct InsertRoleParams<'a> {
     pub name: &'a str,
     pub can_create_agent: bool,
@@ -4520,6 +4544,10 @@ pub async fn set_user_roles(pool: &PgPool, user_id: i64, role_ids: &[i64]) -> Re
 
 pub async fn get_effective_permissions(pool: &PgPool, user_id: i64) -> Result<RoleRow, ApiError> {
     #[derive(sqlx::FromRow)]
+    #[allow(
+        clippy::struct_field_names,
+        reason = "matches the can_* RBAC column/field naming used consistently across the codebase"
+    )]
     struct AggRow {
         can_create_agent: Option<bool>,
         can_delete_agent: Option<bool>,

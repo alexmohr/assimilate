@@ -544,6 +544,11 @@ pub struct FileChangePattern {
     pub action: FileChangeAction,
 }
 
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent per-schedule toggles mirroring the API/DB contract, not \
+              mutually-exclusive states"
+)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleConfig {
     #[serde(default)]

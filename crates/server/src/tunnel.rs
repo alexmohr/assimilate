@@ -234,10 +234,7 @@ impl TunnelManager {
                             tunnel_id,
                             &hostname,
                             TunnelStatus::Error {
-                                message: format!(
-                                    "invalid tunnel_port: {}",
-                                    current.tunnel_port
-                                ),
+                                message: format!("invalid tunnel_port: {}", current.tunnel_port),
                             },
                         )
                         .await;

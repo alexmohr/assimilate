@@ -29,6 +29,10 @@ impl From<db::RepoPermissionRow> for RepoPermissionResponse {
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
+)]
 pub struct UpsertPermissionRequest {
     pub can_view: bool,
     pub can_backup: bool,

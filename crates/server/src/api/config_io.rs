@@ -40,6 +40,10 @@ pub struct ScheduleTargetExport {
 }
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
+)]
 pub struct ScheduleExport {
     pub name: String,
     pub schedule_type: String,

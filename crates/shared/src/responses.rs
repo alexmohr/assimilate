@@ -70,6 +70,12 @@ pub struct UserListResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states; \
+              splitting into enums or sub-structs would break the frontend TS bindings and RBAC \
+              field names for no correctness benefit"
+)]
 pub struct AgentResponse {
     #[ts(type = "number")]
     pub id: i64,
@@ -264,6 +270,12 @@ pub struct MigrateEncryptionResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states; \
+              splitting into enums or sub-structs would break the frontend TS bindings and RBAC \
+              field names for no correctness benefit"
+)]
 pub struct ScheduleResponse {
     #[ts(type = "number")]
     pub id: i64,
@@ -581,6 +593,12 @@ pub struct GroupMembersResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states; \
+              splitting into enums or sub-structs would break the frontend TS bindings and RBAC \
+              field names for no correctness benefit"
+)]
 pub struct RoleResponse {
     #[ts(type = "number")]
     pub id: i64,
@@ -608,6 +626,12 @@ pub struct RoleListResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states; \
+              splitting into enums or sub-structs would break the frontend TS bindings and RBAC \
+              field names for no correctness benefit"
+)]
 pub struct RepoPermissionResponse {
     #[ts(type = "number")]
     pub user_id: i64,
@@ -1194,6 +1218,12 @@ pub struct HostExportResponse {
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states; \
+              splitting into enums or sub-structs would break the frontend TS bindings and RBAC \
+              field names for no correctness benefit"
+)]
 pub struct ScheduleExportResponse {
     pub name: String,
     #[ts(type = "string")]

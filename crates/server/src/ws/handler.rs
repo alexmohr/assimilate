@@ -38,6 +38,11 @@ pub fn ws_handler(
 }
 
 #[derive(sqlx::FromRow)]
+#[allow(
+    clippy::struct_field_names,
+    reason = "these are distinct foreign-key/identifier columns from the backup_reports table, \
+              not a repeated affix to strip"
+)]
 struct PendingBackupRow {
     repo_id: i64,
     schedule_id: Option<i64>,
@@ -71,10 +76,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             )),
             Ok(_) | Err(_) => None,
         },
-        Some(Ok(
-            Message::Close(_) | Message::Binary(_) | Message::Ping(_) | Message::Pong(_),
-        ))
-        | Some(Err(_))
+        Some(
+            Ok(Message::Close(_) | Message::Binary(_) | Message::Ping(_) | Message::Pong(_))
+            | Err(_),
+        )
         | None => None,
     };
 

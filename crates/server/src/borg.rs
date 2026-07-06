@@ -224,9 +224,10 @@ impl Borg {
         args: &[A],
         env: &HashMap<String, String>,
     ) -> std::io::Result<std::process::Output> {
-        let subcommand = args
-            .first()
-            .map_or_else(|| "<none>".to_owned(), |a| a.as_ref().to_string_lossy().into_owned());
+        let subcommand = args.first().map_or_else(
+            || "<none>".to_owned(),
+            |a| a.as_ref().to_string_lossy().into_owned(),
+        );
         tracing::info!(subcommand, "borg: starting");
         let start = Instant::now();
 
@@ -282,9 +283,10 @@ impl Borg {
         args: &[A],
         env: &HashMap<String, String>,
     ) -> std::io::Result<ServerChild> {
-        let subcommand = args
-            .first()
-            .map_or_else(|| "<none>".to_owned(), |a| a.as_ref().to_string_lossy().into_owned());
+        let subcommand = args.first().map_or_else(
+            || "<none>".to_owned(),
+            |a| a.as_ref().to_string_lossy().into_owned(),
+        );
         tracing::info!(subcommand, "borg: spawning");
 
         let mut cmd = Command::new(&self.binary);
@@ -306,9 +308,10 @@ impl Borg {
         args: &[A],
         env: &HashMap<String, String>,
     ) -> std::io::Result<ServerChild> {
-        let subcommand = args
-            .first()
-            .map_or_else(|| "<none>".to_owned(), |a| a.as_ref().to_string_lossy().into_owned());
+        let subcommand = args.first().map_or_else(
+            || "<none>".to_owned(),
+            |a| a.as_ref().to_string_lossy().into_owned(),
+        );
         tracing::info!(subcommand, "borg: spawning");
 
         let mut cmd = Command::new(&self.binary);

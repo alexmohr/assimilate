@@ -75,7 +75,9 @@ pub async fn assemble_config(
         })?;
         let rate_limit_kbps = match schedule.rate_limit_kbps {
             Some(rate_limit_kbps) => Some(u32::try_from(rate_limit_kbps).map_err(|_| {
-                ApiError::Internal(format!("rate_limit_kbps {rate_limit_kbps} out of u32 range"))
+                ApiError::Internal(format!(
+                    "rate_limit_kbps {rate_limit_kbps} out of u32 range"
+                ))
             })?),
             None => None,
         };
@@ -152,10 +154,11 @@ pub async fn assemble_config(
                             );
                         })
                         .unwrap_or_default();
-                let effective_pre = per_agent_cmds.as_ref().map_or(
-                    schedule.pre_backup_commands.as_str(),
-                    |c| c.pre_backup_commands.as_str(),
-                );
+                let effective_pre = per_agent_cmds
+                    .as_ref()
+                    .map_or(schedule.pre_backup_commands.as_str(), |c| {
+                        c.pre_backup_commands.as_str()
+                    });
                 let schedule_cmds: Vec<String> = serde_json::from_str(effective_pre)
                     .inspect_err(|e| {
                         tracing::warn!(
@@ -168,10 +171,11 @@ pub async fn assemble_config(
                 agent_defaults.into_iter().chain(schedule_cmds).collect()
             },
             post_backup_commands: {
-                let effective_post = per_agent_cmds.as_ref().map_or(
-                    schedule.post_backup_commands.as_str(),
-                    |c| c.post_backup_commands.as_str(),
-                );
+                let effective_post = per_agent_cmds
+                    .as_ref()
+                    .map_or(schedule.post_backup_commands.as_str(), |c| {
+                        c.post_backup_commands.as_str()
+                    });
                 let schedule_cmds: Vec<String> = serde_json::from_str(effective_post)
                     .inspect_err(|e| {
                         tracing::warn!(

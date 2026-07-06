@@ -768,9 +768,7 @@ pub async fn list_contents(
 
     match status {
         Some(IndexStatus::Done) => {
-            let parent_path = path
-                .map_or("", |p| p.trim_end_matches('/'))
-                .to_string();
+            let parent_path = path.map_or("", |p| p.trim_end_matches('/')).to_string();
             let entries = archive_index::query_dir(
                 &state.pool,
                 repo_id,

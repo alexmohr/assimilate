@@ -1801,6 +1801,12 @@ async fn hydrate_archives_with_metadata(
 
     let mut hydrated = Vec::with_capacity(total);
     let mut completed = 0usize;
+    #[allow(
+        clippy::unnecessary_to_owned,
+        reason = "false positive: dropping .copied() makes `archive` a &&Value, and the .clone() \
+                  later in this loop then clones the outer reference instead of producing an \
+                  owned Value, which fails to type-check"
+    )]
     for archive in archives.iter().copied() {
         let archive_name = archive
             .get("name")
@@ -1845,9 +1851,9 @@ async fn hydrate_archives_with_metadata(
 
                 let mut merged = archive;
                 for field in ["hostname", "end"] {
-                    let needs_update = merged.get(field).is_none_or(|v| {
-                        v.is_null() || v.as_str().is_some_and(str::is_empty)
-                    });
+                    let needs_update = merged
+                        .get(field)
+                        .is_none_or(|v| v.is_null() || v.as_str().is_some_and(str::is_empty));
                     if needs_update
                         && let Some(new_value) = metadata.get(field)
                         && let Some(obj) = merged.as_object_mut()

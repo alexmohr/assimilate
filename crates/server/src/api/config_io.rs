@@ -181,6 +181,8 @@ pub async fn export_config(
             ssh_host_key: None, // queried separately below
             quota_warn_bytes: quota.as_ref().and_then(|q| q.warn_bytes),
             quota_critical_bytes: quota.as_ref().and_then(|q| q.critical_bytes),
+            quota_warn_action: quota.as_ref().map_or(String::new(), |q| q.warn_action.clone()),
+            quota_critical_action: quota.as_ref().map_or(String::new(), |q| q.critical_action.clone()),
             tags,
         });
     }
@@ -247,7 +249,7 @@ pub async fn import_config(
             shared::crypto::encrypt_passphrase(&repo_export.passphrase, &state.encryption_key)?;
 
         if let Some(&existing_id) = repo_name_to_id.get(repo_export.name.as_str()) {
-            // Update existing repo — skip passphrase change
+            // Update existing repo -- skip passphrase change
             db::update_repo(
                 &state.pool,
                 &db::UpdateRepoParams {
@@ -276,6 +278,8 @@ pub async fn import_config(
                 existing_id,
                 repo_export.quota_warn_bytes,
                 repo_export.quota_critical_bytes,
+                repo_export.quota_warn_action.parse().unwrap_or_default(),
+                repo_export.quota_critical_action.parse().unwrap_or_default(),
                 true,
             )
             .await
@@ -315,6 +319,8 @@ pub async fn import_config(
                 new_repo.id,
                 repo_export.quota_warn_bytes,
                 repo_export.quota_critical_bytes,
+                repo_export.quota_warn_action.parse().unwrap_or_default(),
+                repo_export.quota_critical_action.parse().unwrap_or_default(),
                 true,
             )
             .await
@@ -636,6 +642,8 @@ mod tests {
                 ssh_host_key: None,
                 quota_warn_bytes: None,
                 quota_critical_bytes: None,
+                quota_warn_action: "notify_only".to_string(),
+                quota_critical_action: "block_backups".to_string(),
                 tags: vec![],
             }],
         };

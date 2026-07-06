@@ -1185,6 +1185,10 @@ pub struct RepoExportResponse {
     #[serde(default)]
     pub quota_critical_bytes: Option<i64>,
     #[serde(default)]
+    pub quota_warn_action: String,
+    #[serde(default)]
+    pub quota_critical_action: String,
+    #[serde(default)]
     pub tags: Vec<String>,
 }
 

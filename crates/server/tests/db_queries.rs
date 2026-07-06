@@ -3237,6 +3237,7 @@ async fn create_test_repo_with_host(pool: &PgPool, name: &str, ssh_host: &str) -
             compression: "lz4",
             encryption: "repokey",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await

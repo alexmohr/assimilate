@@ -108,15 +108,20 @@ test('config export JSON can be round-tripped through import', async ({ page }) 
     hosts_created: number
     hosts_updated: number
     schedules_created: number
+    repos_created: number
+    repos_updated: number
     warnings: string[]
   }
 
   // Round-trip must not produce errors or warnings; updating existing
-  // hosts/schedules must succeed without creating duplicates.
+  // hosts/schedules/repos must succeed without creating duplicates.
   expect(importResult.warnings).toHaveLength(0)
   expect(importResult.hosts_created).toBe(0)
   expect(importResult.hosts_updated).toBeGreaterThan(0)
   expect(importResult.schedules_created).toBeGreaterThan(0)
+  // Repos exist on the test server, so they should be updated, not created
+  expect(importResult.repos_created).toBe(0)
+  expect(importResult.repos_updated).toBeGreaterThan(0)
 })
 
 test('import with stale shared types format (target_hostnames) would fail', async ({ page }) => {

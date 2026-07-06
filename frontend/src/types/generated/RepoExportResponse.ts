@@ -14,5 +14,7 @@ export type RepoExportResponse = {
   ssh_host_key: string | null;
   quota_warn_bytes: bigint | null;
   quota_critical_bytes: bigint | null;
+  quota_warn_action: string;
+  quota_critical_action: string;
   tags: Array<string>;
 };

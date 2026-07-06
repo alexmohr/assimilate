@@ -249,6 +249,16 @@ pub struct DeleteArchiveResponse {
     pub archive_name: String,
 }
 
+#[derive(sqlx::FromRow)]
+struct ListArchivesRow {
+    archive_name: Option<String>,
+    started_at: DateTime<Utc>,
+    original_size: i64,
+    deduplicated_size: i64,
+    matched: bool,
+    agent_hostname: String,
+}
+
 #[utoipa::path(
     get,
     path = "/api/repos/{repo_id}/archives",
@@ -273,18 +283,8 @@ pub async fn list_archives(
 ) -> Result<Json<Vec<ArchiveEntryResponse>>, ApiError> {
     check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_view).await?;
 
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        archive_name: Option<String>,
-        started_at: DateTime<Utc>,
-        original_size: i64,
-        deduplicated_size: i64,
-        matched: bool,
-        agent_hostname: String,
-    }
-
     let rows = sqlx::query_as!(
-        Row,
+        ListArchivesRow,
         "WITH latest_archives AS (SELECT DISTINCT ON (br.archive_name) br.archive_name, \
          br.started_at, br.original_size, br.deduplicated_size, br.matched, c.hostname AS \
          agent_hostname FROM backup_reports br JOIN agents c ON c.id = br.agent_id WHERE \
@@ -370,22 +370,47 @@ pub async fn archive_info(
     let json_output: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|e| ApiError::Internal(format!("failed to parse borg output: {e}")))?;
 
-    let archives = &json_output["archives"];
-    let archive = archives
-        .as_array()
+    let archive = json_output
+        .get("archives")
+        .and_then(serde_json::Value::as_array)
         .and_then(|a| a.first())
         .ok_or_else(|| ApiError::NotFound(format!("archive '{archive_name}' not found")))?;
 
-    let stats = &archive["stats"];
+    let stats = archive.get("stats");
 
     let info = ArchiveInfoResponse {
-        original_size: stats["original_size"].as_i64().unwrap_or(0),
-        compressed_size: stats["compressed_size"].as_i64().unwrap_or(0),
-        deduplicated_size: stats["deduplicated_size"].as_i64().unwrap_or(0),
-        nfiles: stats["nfiles"].as_i64().unwrap_or(0),
-        duration: archive["duration"].as_f64().unwrap_or(0.0),
-        start: ensure_utc_suffix(archive["start"].as_str().unwrap_or("")),
-        end: ensure_utc_suffix(archive["end"].as_str().unwrap_or("")),
+        original_size: stats
+            .and_then(|s| s.get("original_size"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
+        compressed_size: stats
+            .and_then(|s| s.get("compressed_size"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
+        deduplicated_size: stats
+            .and_then(|s| s.get("deduplicated_size"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
+        nfiles: stats
+            .and_then(|s| s.get("nfiles"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
+        duration: archive
+            .get("duration")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0),
+        start: ensure_utc_suffix(
+            archive
+                .get("start")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(""),
+        ),
+        end: ensure_utc_suffix(
+            archive
+                .get("end")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(""),
+        ),
     };
 
     Ok(Json(info))
@@ -728,6 +753,8 @@ pub async fn list_contents(
 ) -> Result<Json<ContentsResponse>, ApiError> {
     use crate::archive_index::{self, IndexStatus};
 
+    const LINE_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
     check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_view).await?;
     let path = query.path.as_deref();
     let limit = query.limit.unwrap_or(100);
@@ -741,8 +768,7 @@ pub async fn list_contents(
     match status {
         Some(IndexStatus::Done) => {
             let parent_path = path
-                .map(|p| p.trim_end_matches('/'))
-                .unwrap_or("")
+                .map_or("", |p| p.trim_end_matches('/'))
                 .to_string();
             let entries = archive_index::query_dir(
                 &state.pool,
@@ -760,9 +786,9 @@ pub async fn list_contents(
         Some(IndexStatus::Failed) => {
             // Fall through to the borg-based path below so browsing still works.
         }
-        Some(IndexStatus::Pending | IndexStatus::Indexing) => {
+        Some(ref pending @ (IndexStatus::Pending | IndexStatus::Indexing)) => {
             return Ok(Json(ContentsResponse {
-                index_status: index_status_to_string(status.as_ref().unwrap()),
+                index_status: index_status_to_string(pending),
                 entries: vec![],
             }));
         }
@@ -804,7 +830,6 @@ pub async fn list_contents(
 
     let mut lines = BufReader::new(stdout).lines();
     let mut raw_entries: Vec<ContentEntry> = Vec::new();
-    const LINE_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
     loop {
         let line = tokio::time::timeout(LINE_READ_TIMEOUT, lines.next_line())
@@ -823,11 +848,29 @@ pub async fn list_contents(
             continue;
         };
         raw_entries.push(ContentEntry {
-            entry_type: v["type"].as_str().unwrap_or("").to_string(),
-            path: v["path"].as_str().map_or_else(String::new, normalize_path),
-            size: v["size"].as_i64().unwrap_or(0),
-            mtime: v["mtime"].as_str().unwrap_or("").to_string(),
-            mode: v["mode"].as_str().unwrap_or("").to_string(),
+            entry_type: v
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            path: v
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .map_or_else(String::new, normalize_path),
+            size: v
+                .get("size")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0),
+            mtime: v
+                .get("mtime")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            mode: v
+                .get("mode")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string(),
         });
     }
 

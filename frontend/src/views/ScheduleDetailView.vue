@@ -118,9 +118,8 @@ const estimatedRemainingSecs = computed<number | null>(() => {
 type TabId = 'settings' | 'advanced' | 'logs'
 const activeTab = computed<TabId>({
   get() {
-    const t = route.query.tab as string | undefined
-    if (t === 'advanced') return t
-    if (t === 'logs') return t
+    const t = route.query.tab
+    if (t === 'advanced' || t === 'logs') return t
     return 'settings'
   },
   set(val: TabId) {
@@ -240,7 +239,7 @@ function populateForm(s: ScheduleRow): void {
     backup_sources: '',
   }
   selectedRepoId.value = s.repo_id ?? null
-  onFailure.value = (s.on_failure as 'stop' | 'continue') ?? 'stop'
+  onFailure.value = s.on_failure
 }
 
 function scheduleTypeLabel(t: ScheduleType): string {
@@ -446,7 +445,12 @@ async function save(): Promise<void> {
       })
       router.push(`/schedules/${res.data.id}`)
     } else {
-      const res = await apiClient.put<ScheduleRow>(`/schedules/${schedule.value!.id}`, {
+      const scheduleId = schedule.value?.id
+      if (scheduleId == null) {
+        saveError.value = 'Schedule not found'
+        return
+      }
+      const res = await apiClient.put<ScheduleRow>(`/schedules/${scheduleId}`, {
         ...payload,
         agent_ids: selectedAgentIds.value,
         repo_id: selectedRepoId.value,

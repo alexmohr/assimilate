@@ -260,6 +260,24 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(wrapper.text()).toContain('Saved')
   })
 
+  it('shows save error when schedule is null (edit mode)', async () => {
+    mockApiClient.get.mockRejectedValue(new Error('Load failed'))
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '999' } })
+    await flushPromises()
+
+    // The save() null-guard is defensive - the save bar is hidden when schedule
+    // is null (v-if="schedule || isCreate" wraps the form). Test the ref directly.
+    const vm = wrapper.vm as { save: () => Promise<void>; saveError: string | null }
+    expect(vm.saveError).toBeNull()
+
+    await vm.save()
+    await flushPromises()
+
+    // Previously schedule.value!.id would throw. The guard now produces a
+    // friendly error message instead.
+    expect(vm.saveError).toBe('Schedule not found')
+  })
+
   it('shows save error on PUT failure', async () => {
     setupEditMode()
     mockApiClient.put.mockRejectedValue(new Error('Server error'))

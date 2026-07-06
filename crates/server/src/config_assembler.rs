@@ -75,10 +75,7 @@ pub async fn assemble_config(
         })?;
         let rate_limit_kbps = match schedule.rate_limit_kbps {
             Some(rate_limit_kbps) => Some(u32::try_from(rate_limit_kbps).map_err(|_| {
-                ApiError::Internal(format!(
-                    "rate_limit_kbps {} out of u32 range",
-                    rate_limit_kbps
-                ))
+                ApiError::Internal(format!("rate_limit_kbps {rate_limit_kbps} out of u32 range"))
             })?),
             None => None,
         };
@@ -155,10 +152,10 @@ pub async fn assemble_config(
                             );
                         })
                         .unwrap_or_default();
-                let effective_pre = per_agent_cmds
-                    .as_ref()
-                    .map(|c| c.pre_backup_commands.as_str())
-                    .unwrap_or(&schedule.pre_backup_commands);
+                let effective_pre = per_agent_cmds.as_ref().map_or(
+                    schedule.pre_backup_commands.as_str(),
+                    |c| c.pre_backup_commands.as_str(),
+                );
                 let schedule_cmds: Vec<String> = serde_json::from_str(effective_pre)
                     .inspect_err(|e| {
                         tracing::warn!(
@@ -171,10 +168,10 @@ pub async fn assemble_config(
                 agent_defaults.into_iter().chain(schedule_cmds).collect()
             },
             post_backup_commands: {
-                let effective_post = per_agent_cmds
-                    .as_ref()
-                    .map(|c| c.post_backup_commands.as_str())
-                    .unwrap_or(&schedule.post_backup_commands);
+                let effective_post = per_agent_cmds.as_ref().map_or(
+                    schedule.post_backup_commands.as_str(),
+                    |c| c.post_backup_commands.as_str(),
+                );
                 let schedule_cmds: Vec<String> = serde_json::from_str(effective_post)
                     .inspect_err(|e| {
                         tracing::warn!(
@@ -215,20 +212,19 @@ pub async fn assemble_config(
             ApiError::Internal(format!("ssh_port {} out of u16 range", repo.ssh_port))
         })?;
 
-        let ssh_host_key = match repo.ssh_host_key {
-            Some(ssh_host_key) => ssh_host_key,
-            None => {
-                let ssh_host_key = crate::ssh::scan_host_key(&repo.ssh_host, ssh_port)
-                    .await
-                    .map_err(|e| {
-                        ApiError::BadGateway(format!(
-                            "failed to obtain SSH host key for {}:{}: {e}",
-                            repo.ssh_host, ssh_port
-                        ))
-                    })?;
-                db::update_repo_ssh_host_key(pool, repo.id, &ssh_host_key).await?;
-                ssh_host_key
-            }
+        let ssh_host_key = if let Some(ssh_host_key) = repo.ssh_host_key {
+            ssh_host_key
+        } else {
+            let ssh_host_key = crate::ssh::scan_host_key(&repo.ssh_host, ssh_port)
+                .await
+                .map_err(|e| {
+                    ApiError::BadGateway(format!(
+                        "failed to obtain SSH host key for {}:{}: {e}",
+                        repo.ssh_host, ssh_port
+                    ))
+                })?;
+            db::update_repo_ssh_host_key(pool, repo.id, &ssh_host_key).await?;
+            ssh_host_key
         };
 
         repos.push(RepoConfig {
@@ -315,12 +311,12 @@ fn parse_raw_file_change_patterns(raw: &str) -> Vec<shared::types::FileChangePat
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .map(|line| {
             let parts: Vec<&str> = line.rsplitn(2, ' ').collect();
-            let (path, action_str) =
-                if parts.len() == 2 && matches!(parts[0], "ignore" | "warn" | "fatal") {
-                    (parts[1].trim(), parts[0])
-                } else {
-                    (line, "warn")
-                };
+            let (path, action_str) = match parts.as_slice() {
+                [action, path] if matches!(*action, "ignore" | "warn" | "fatal") => {
+                    (path.trim(), *action)
+                }
+                _ => (line, "warn"),
+            };
             let action = action_str.parse().unwrap_or_default();
             shared::types::FileChangePattern {
                 path: path.to_string(),

@@ -286,7 +286,7 @@ pub async fn import_config(
                 }
             }
 
-            result.hosts_updated += 1;
+            result.hosts_updated = result.hosts_updated.saturating_add(1);
         } else {
             let agent = db::insert_agent_with_paths(
                 &state.pool,
@@ -306,7 +306,7 @@ pub async fn import_config(
                 db::patterns::add_hostname_pattern(&state.pool, agent.id, pattern).await?;
             }
             hostname_to_id.insert(host.hostname.clone(), agent.id);
-            result.hosts_created += 1;
+            result.hosts_created = result.hosts_created.saturating_add(1);
         }
     }
 
@@ -431,7 +431,7 @@ pub async fn import_config(
             }
         }
 
-        result.schedules_created += 1;
+        result.schedules_created = result.schedules_created.saturating_add(1);
     }
 
     Ok(Json(result))

@@ -181,8 +181,12 @@ pub async fn export_config(
             ssh_host_key: None, // queried separately below
             quota_warn_bytes: quota.as_ref().and_then(|q| q.warn_bytes),
             quota_critical_bytes: quota.as_ref().and_then(|q| q.critical_bytes),
-            quota_warn_action: quota.as_ref().map_or(String::new(), |q| q.warn_action.clone()),
-            quota_critical_action: quota.as_ref().map_or(String::new(), |q| q.critical_action.clone()),
+            quota_warn_action: quota
+                .as_ref()
+                .map_or(String::new(), |q| q.warn_action.clone()),
+            quota_critical_action: quota
+                .as_ref()
+                .map_or(String::new(), |q| q.critical_action.clone()),
             tags,
         });
     }
@@ -241,8 +245,10 @@ pub async fn import_config(
 
     // Phase 1: Import repositories (before schedules, which reference them by name)
     let existing_repos = db::list_all_repos(&state.pool).await?;
-    let mut repo_name_to_id: HashMap<&str, i64> =
-        existing_repos.iter().map(|r| (r.name.as_str(), r.id)).collect();
+    let mut repo_name_to_id: HashMap<&str, i64> = existing_repos
+        .iter()
+        .map(|r| (r.name.as_str(), r.id))
+        .collect();
 
     for repo_export in &payload.repos {
         let passphrase_encrypted =
@@ -279,7 +285,10 @@ pub async fn import_config(
                 repo_export.quota_warn_bytes,
                 repo_export.quota_critical_bytes,
                 repo_export.quota_warn_action.parse().unwrap_or_default(),
-                repo_export.quota_critical_action.parse().unwrap_or_default(),
+                repo_export
+                    .quota_critical_action
+                    .parse()
+                    .unwrap_or_default(),
                 true,
             )
             .await
@@ -320,7 +329,10 @@ pub async fn import_config(
                 repo_export.quota_warn_bytes,
                 repo_export.quota_critical_bytes,
                 repo_export.quota_warn_action.parse().unwrap_or_default(),
-                repo_export.quota_critical_action.parse().unwrap_or_default(),
+                repo_export
+                    .quota_critical_action
+                    .parse()
+                    .unwrap_or_default(),
                 true,
             )
             .await
@@ -550,10 +562,12 @@ async fn get_or_create_tag(
 
 fn tag_color_from_name(name: &str) -> String {
     // Simple hash-based color assignment for imported tags
-    let hash: u64 = name.bytes().fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(u64::from(b)));
+    let hash: u64 = name.bytes().fold(0u64, |acc, b| {
+        acc.wrapping_mul(31).wrapping_add(u64::from(b))
+    });
     let palette = [
-        "#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899",
-        "#06B6D4", "#84CC16", "#F97316", "#6366F1", "#14B8A6", "#E11D48",
+        "#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899", "#06B6D4", "#84CC16",
+        "#F97316", "#6366F1", "#14B8A6", "#E11D48",
     ];
     let idx = (hash as usize) % palette.len();
     palette[idx].to_string()

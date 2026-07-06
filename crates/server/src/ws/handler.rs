@@ -2316,7 +2316,7 @@ exit 0
                 compression: "lz4",
                 encryption: "repokey",
                 owner_id: None,
-                            sync_schedule: None,
+                sync_schedule: None,
             },
         )
         .await

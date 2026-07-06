@@ -521,6 +521,41 @@ async fn run_archive_deletion(
             op: state.repo_op_tracker.get(repo_id).await,
         });
 
+    let deleted = execute_borg_delete(&state, repo_id, &borg_repo, &archive_name, &env).await;
+
+    state.repo_op_tracker.clear(repo_id).await;
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::RepoOpChanged {
+            repo_id,
+            op: state.repo_op_tracker.get(repo_id).await,
+        });
+
+    if !deleted {
+        state
+            .ui_broadcast
+            .send(shared::protocol::ServerToUi::DataChanged);
+        return;
+    }
+
+    finalize_archive_deletion(&state, repo_id, &archive_name, user_id, &username).await;
+
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::DataChanged);
+}
+
+/// Runs `borg delete` for the given archive, logging and recording a system
+/// event on failure. Returns `true` if the archive was actually deleted (or
+/// borg reported it as already gone, exit code 1) and the caller should
+/// proceed with local bookkeeping.
+async fn execute_borg_delete(
+    state: &AppState,
+    repo_id: i64,
+    borg_repo: &str,
+    archive_name: &str,
+    env: &HashMap<String, String>,
+) -> bool {
     let repo_archive = format!("{borg_repo}::{archive_name}");
     let result = Borg::new()
         .run(
@@ -531,17 +566,9 @@ async fn run_archive_deletion(
                 "--",
                 repo_archive.as_str(),
             ],
-            &env,
+            env,
         )
         .await;
-
-    state.repo_op_tracker.clear(repo_id).await;
-    state
-        .ui_broadcast
-        .send(shared::protocol::ServerToUi::RepoOpChanged {
-            repo_id,
-            op: state.repo_op_tracker.get(repo_id).await,
-        });
 
     match result {
         Ok(output) => {
@@ -557,11 +584,9 @@ async fn run_archive_deletion(
                 {
                     tracing::warn!(error = %e, "failed to log archive delete failure");
                 }
-                state
-                    .ui_broadcast
-                    .send(shared::protocol::ServerToUi::DataChanged);
-                return;
+                return false;
             }
+            true
         }
         Err(e) => {
             tracing::error!(repo_id, archive = %archive_name, error = %e, "failed to execute borg delete");
@@ -571,28 +596,33 @@ async fn run_archive_deletion(
             {
                 tracing::warn!(error = %log_err, "failed to log archive delete failure");
             }
-            state
-                .ui_broadcast
-                .send(shared::protocol::ServerToUi::DataChanged);
-            return;
+            false
         }
     }
+}
 
-    if let Err(e) = db::delete_archive_records_by_names(
-        &state.pool,
-        repo_id,
-        std::slice::from_ref(&archive_name),
-    )
-    .await
+/// Deletes the local archive records, writes an audit log entry, and (once
+/// the deletion queue for this repo has drained) reconciles the archive list
+/// and repo stats by reusing the metadata import path. Content indexing is
+/// deliberately not run here.
+async fn finalize_archive_deletion(
+    state: &AppState,
+    repo_id: i64,
+    archive_name: &str,
+    user_id: i64,
+    username: &str,
+) {
+    if let Err(e) =
+        db::delete_archive_records_by_names(&state.pool, repo_id, &[archive_name.to_owned()]).await
     {
-        tracing::error!(repo_id, archive = %archive_name, error = %e, "failed to delete archive records");
+        tracing::error!(repo_id, archive = %archive_name, error = %e, "failed to delete archive record");
     }
 
     if let Err(e) = db::audit::insert_audit_entry(
         &state.pool,
         &db::audit::NewAuditEntry {
             user_id: Some(user_id),
-            username: &username,
+            username,
             action: "delete_archive",
             target_type: Some("archive"),
             target_id: Some(repo_id),
@@ -605,9 +635,6 @@ async fn run_archive_deletion(
         tracing::warn!("failed to write audit log: {e}");
     }
 
-    // Once the queue has drained, reconcile the archive list and repo stats
-    // (notably the total archive count, which is sourced from borg) by reusing
-    // the metadata import path. Content indexing is deliberately not run here.
     if state.repo_op_tracker.queued_count(repo_id).await == 0 {
         if let Err(e) = crate::api::repos::sync_existing_archives(
             &state.pool,
@@ -622,10 +649,6 @@ async fn run_archive_deletion(
         crate::api::repos::clear_import_progress_state(&state.pool, &state.ui_broadcast, repo_id)
             .await;
     }
-
-    state
-        .ui_broadcast
-        .send(shared::protocol::ServerToUi::DataChanged);
 }
 
 // Strip the leading "./" or bare "." that borg emits when archives are
@@ -774,8 +797,6 @@ pub async fn list_contents(
 ) -> Result<Json<ContentsResponse>, ApiError> {
     use crate::archive_index::{self, IndexStatus};
 
-    const LINE_READ_TIMEOUT: Duration = Duration::from_secs(30);
-
     check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_view).await?;
     let path = query.path.as_deref();
     let limit = query.limit.unwrap_or(100);
@@ -830,6 +851,32 @@ pub async fn list_contents(
 
     // Fallback: borg-based listing (used when index is in 'failed' state).
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
+    let raw_entries = borg_list_raw_entries(&env, &borg_repo, &archive_name, path).await?;
+
+    let prefix = path
+        .map(|p| p.trim_end_matches('/').to_string())
+        .unwrap_or_default();
+    let children = fold_immediate_children(&prefix, raw_entries);
+    let limited: Vec<ContentEntry> = children.into_iter().take(limit).collect();
+
+    Ok(Json(ContentsResponse {
+        index_status: index_status_to_string(&IndexStatus::Failed),
+        entries: limited,
+    }))
+}
+
+/// Runs `borg list --json-lines` for the archive and parses each line into a
+/// [`ContentEntry`], tolerating and skipping unparseable lines. Used as the
+/// listing fallback when an archive's content index is in the `failed`
+/// state, since browsing should still work even if indexing didn't.
+async fn borg_list_raw_entries(
+    env: &HashMap<String, String>,
+    borg_repo: &str,
+    archive_name: &str,
+    path: Option<&str>,
+) -> Result<Vec<ContentEntry>, ApiError> {
+    const LINE_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
     let repo_archive = format!("{borg_repo}::{archive_name}");
     let patterns = list_patterns(path);
 
@@ -840,7 +887,7 @@ pub async fn list_contents(
     args.push(repo_archive.as_str());
 
     let mut child = Borg::new()
-        .spawn(&args, &env)
+        .spawn(&args, env)
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
 
     let Some(stdout) = child.take_stdout() else {
@@ -906,16 +953,7 @@ pub async fn list_contents(
         return Err(classify_borg_error(code, &stderr_str));
     }
 
-    let prefix = path
-        .map(|p| p.trim_end_matches('/').to_string())
-        .unwrap_or_default();
-    let children = fold_immediate_children(&prefix, raw_entries);
-    let limited: Vec<ContentEntry> = children.into_iter().take(limit).collect();
-
-    Ok(Json(ContentsResponse {
-        index_status: index_status_to_string(&IndexStatus::Failed),
-        entries: limited,
-    }))
+    Ok(raw_entries)
 }
 
 #[derive(sqlx::FromRow)]

@@ -387,22 +387,7 @@ async fn import_schedule(
         return Ok(());
     }
 
-    let mut target_ids: Vec<(i64, i32)> = Vec::new();
-    for target in &sched.targets {
-        let agent_id = if let Some(&cid) = hostname_to_id.get(&target.hostname) {
-            cid
-        } else {
-            let agent =
-                db::insert_agent(pool, &target.hostname, None, IMPORTED_TOKEN_HASH, None).await?;
-            result.warnings.push(format!(
-                "created placeholder agent {:?} referenced by schedule {:?}",
-                target.hostname, sched.name
-            ));
-            hostname_to_id.insert(target.hostname.clone(), agent.id);
-            agent.id
-        };
-        target_ids.push((agent_id, target.execution_order));
-    }
+    let target_ids = resolve_schedule_target_agent_ids(pool, sched, hostname_to_id, result).await?;
 
     let pre_cmds_json =
         serde_json::to_string(&sched.pre_backup_commands).unwrap_or_else(|_| "[]".to_owned());
@@ -438,6 +423,50 @@ async fn import_schedule(
         db::insert_backup_source_for_schedule(pool, new_sched.id, path, sort_order).await?;
     }
 
+    insert_schedule_target_overrides(pool, new_sched.id, sched, hostname_to_id).await?;
+
+    result.schedules_created = result.schedules_created.saturating_add(1);
+    Ok(())
+}
+
+/// Resolves each target's hostname to an agent ID, creating a placeholder
+/// agent (and recording a warning) for any hostname not already known.
+async fn resolve_schedule_target_agent_ids(
+    pool: &sqlx::PgPool,
+    sched: &ScheduleExport,
+    hostname_to_id: &mut HashMap<String, i64>,
+    result: &mut ImportResult,
+) -> Result<Vec<(i64, i32)>, ApiError> {
+    let mut target_ids: Vec<(i64, i32)> = Vec::new();
+    for target in &sched.targets {
+        let agent_id = if let Some(&cid) = hostname_to_id.get(&target.hostname) {
+            cid
+        } else {
+            let agent =
+                db::insert_agent(pool, &target.hostname, None, IMPORTED_TOKEN_HASH, None).await?;
+            result.warnings.push(format!(
+                "created placeholder agent {:?} referenced by schedule {:?}",
+                target.hostname, sched.name
+            ));
+            hostname_to_id.insert(target.hostname.clone(), agent.id);
+            agent.id
+        };
+        target_ids.push((agent_id, target.execution_order));
+    }
+    Ok(target_ids)
+}
+
+/// Inserts per-target backup source, exclude pattern, and file-change
+/// pattern overrides for a newly imported schedule. Targets whose hostname
+/// isn't in `hostname_to_id` are skipped (this only happens if agent
+/// resolution above failed to insert a placeholder, which itself returns an
+/// error, so in practice every target is present here).
+async fn insert_schedule_target_overrides(
+    pool: &sqlx::PgPool,
+    new_schedule_id: i64,
+    sched: &ScheduleExport,
+    hostname_to_id: &HashMap<String, i64>,
+) -> Result<(), ApiError> {
     for target in &sched.targets {
         let Some(&agent_id) = hostname_to_id.get(&target.hostname) else {
             continue;
@@ -446,7 +475,7 @@ async fn import_schedule(
             let sort_order = i32::try_from(i).unwrap_or(0);
             db::insert_backup_source_for_schedule_agent(
                 pool,
-                new_sched.id,
+                new_schedule_id,
                 agent_id,
                 path,
                 sort_order,
@@ -456,7 +485,7 @@ async fn import_schedule(
         if !target.exclude_patterns.is_empty() {
             db::upsert_per_agent_excludes_raw(
                 pool,
-                new_sched.id,
+                new_schedule_id,
                 agent_id,
                 &target.exclude_patterns,
             )
@@ -465,14 +494,12 @@ async fn import_schedule(
         if !target.file_change_patterns.is_empty() {
             db::upsert_per_agent_file_change_patterns_raw(
                 pool,
-                new_sched.id,
+                new_schedule_id,
                 agent_id,
                 &target.file_change_patterns,
             )
             .await?;
         }
     }
-
-    result.schedules_created = result.schedules_created.saturating_add(1);
     Ok(())
 }

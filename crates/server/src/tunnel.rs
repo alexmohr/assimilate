@@ -196,216 +196,12 @@ impl TunnelManager {
             let _completion = TunnelTaskCompletion(completion);
             let mut backoff = Duration::from_secs(1);
             loop {
-                let current = tokio::select! {
-                    () = cancel.cancelled() => return,
-                    result = db::get_tunnel_by_id(&manager.pool, tunnel_id) => result,
-                };
-                let current = match current {
-                    Ok(t) => t,
-                    Err(e) => {
-                        error!(tunnel_id, "tunnel DB lookup failed: {e}");
-                        return;
-                    }
-                };
-
-                if !current.enabled {
-                    manager
-                        .set_status(tunnel_id, &hostname, TunnelStatus::Disconnected)
-                        .await;
-                    return;
+                match run_tunnel_connection_attempt(&manager, tunnel_id, &hostname, &cancel, backoff)
+                    .await
+                {
+                    ConnectionOutcome::Stop => return,
+                    ConnectionOutcome::Retry(next_backoff) => backoff = next_backoff,
                 }
-
-                let Ok(ssh_port) = u16::try_from(current.ssh_port) else {
-                    manager
-                        .set_status(
-                            tunnel_id,
-                            &hostname,
-                            TunnelStatus::Error {
-                                message: format!("invalid ssh_port: {}", current.ssh_port),
-                            },
-                        )
-                        .await;
-                    return;
-                };
-
-                let Ok(tunnel_port) = u32::try_from(current.tunnel_port) else {
-                    manager
-                        .set_status(
-                            tunnel_id,
-                            &hostname,
-                            TunnelStatus::Error {
-                                message: format!("invalid tunnel_port: {}", current.tunnel_port),
-                            },
-                        )
-                        .await;
-                    return;
-                };
-
-                let key = match crate::ssh::load_server_private_key().await {
-                    Ok(k) => k,
-                    Err(e) => {
-                        manager
-                            .set_status(
-                                tunnel_id,
-                                &hostname,
-                                TunnelStatus::Error {
-                                    message: e.to_string(),
-                                },
-                            )
-                            .await;
-                        return;
-                    }
-                };
-
-                let scanned_key = match &current.ssh_host_key {
-                    Some(key) if !key.is_empty() => None,
-                    _ => match crate::ssh::scan_host_key(&current.ssh_host, ssh_port).await {
-                        Ok(k) => Some(k),
-                        Err(e) => {
-                            warn!(tunnel_id, "failed to scan SSH host key: {e}");
-                            None
-                        }
-                    },
-                };
-                let expected_host_key = resolve_and_persist_host_key(
-                    &manager.pool,
-                    current.id,
-                    current.ssh_host_key.clone(),
-                    scanned_key.as_deref(),
-                )
-                .await;
-
-                let handler = TunnelSshHandler {
-                    server_addr: manager.server_addr,
-                    ui_broadcast: manager.ui_broadcast.clone(),
-                    agent_id: current.agent_id,
-                    expected_host_key,
-                };
-
-                let session = tokio::select! {
-                    () = cancel.cancelled() => return,
-                    result = client::connect(
-                        tunnel_ssh_config(),
-                        (current.ssh_host.as_str(), ssh_port),
-                        handler,
-                    ) => result,
-                };
-                let mut session = match session {
-                    Ok(s) => s,
-                    Err(e) => {
-                        warn!(tunnel_id, "tunnel connect failed: {e}");
-                        manager
-                            .set_status(tunnel_id, &hostname, TunnelStatus::Reconnecting)
-                            .await;
-                        tokio::select! {
-                            () = cancel.cancelled() => return,
-                            () = tokio::time::sleep(backoff) => {}
-                        }
-                        backoff = backoff.saturating_mul(2).min(Duration::from_secs(120));
-                        continue;
-                    }
-                };
-
-                let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), None);
-                let auth = tokio::select! {
-                    () = cancel.cancelled() => return,
-                    result = session.authenticate_publickey(&current.ssh_user, key_with_alg) => {
-                        result
-                    }
-                };
-                let auth = match auth {
-                    Ok(a) => a,
-                    Err(e) => {
-                        warn!(tunnel_id, "tunnel auth error: {e}");
-                        manager
-                            .set_status(
-                                tunnel_id,
-                                &hostname,
-                                TunnelStatus::Error {
-                                    message: format!("auth error: {e}"),
-                                },
-                            )
-                            .await;
-                        return;
-                    }
-                };
-
-                if !auth.success() {
-                    manager
-                        .set_status(
-                            tunnel_id,
-                            &hostname,
-                            TunnelStatus::Error {
-                                message: "public key authentication rejected".to_string(),
-                            },
-                        )
-                        .await;
-                    return;
-                }
-
-                let forward = tokio::select! {
-                    () = cancel.cancelled() => return,
-                    result = session.tcpip_forward("127.0.0.1", tunnel_port) => result,
-                };
-                match forward {
-                    Ok(_bound_port) => {
-                        manager
-                            .set_status(tunnel_id, &hostname, TunnelStatus::Connected)
-                            .await;
-                        backoff = Duration::from_secs(1);
-                    }
-                    Err(e) => {
-                        warn!(tunnel_id, "tcpip_forward failed: {e}");
-                        manager
-                            .set_status(tunnel_id, &hostname, TunnelStatus::Reconnecting)
-                            .await;
-                        tokio::select! {
-                            () = cancel.cancelled() => return,
-                            () = tokio::time::sleep(backoff) => {}
-                        }
-                        backoff = backoff.saturating_mul(2).min(Duration::from_secs(120));
-                        continue;
-                    }
-                }
-
-                loop {
-                    tokio::select! {
-                        () = cancel.cancelled() => {
-                            if let Ok(Err(e)) = tokio::time::timeout(
-                                Duration::from_secs(2),
-                                session.disconnect(russh::Disconnect::ByApplication, "", "en"),
-                            )
-                            .await
-                            {
-                                tracing::debug!(error = %e, "tunnel disconnect failed");
-                            }
-                            manager
-                                .set_status(tunnel_id, &hostname, TunnelStatus::Disconnected)
-                                .await;
-                            return;
-                        }
-                        () = tokio::time::sleep(Duration::from_secs(5)) => {
-                            if session.is_closed() {
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                manager
-                    .set_status(tunnel_id, &hostname, TunnelStatus::Reconnecting)
-                    .await;
-
-                tokio::select! {
-                    () = cancel.cancelled() => {
-                        manager
-                            .set_status(tunnel_id, &hostname, TunnelStatus::Disconnected)
-                            .await;
-                        return;
-                    }
-                    () = tokio::time::sleep(backoff) => {}
-                }
-                backoff = backoff.saturating_mul(2).min(Duration::from_secs(120));
             }
         });
     }
@@ -494,6 +290,292 @@ impl TunnelManager {
                 hostname: hostname.to_string(),
                 status,
             });
+        }
+    }
+}
+
+enum ConnectionOutcome {
+    Stop,
+    Retry(Duration),
+}
+
+struct TunnelConnectionParams {
+    tunnel: db::SshTunnel,
+    ssh_port: u16,
+    tunnel_port: u32,
+    key: russh::keys::PrivateKey,
+    handler: TunnelSshHandler,
+}
+
+/// Loads the current tunnel row and validates/prepares everything needed to
+/// attempt a connection (ports, server private key, expected host key).
+/// Returns `Err` (after setting the tunnel's status, if applicable) when the
+/// tunnel task should stop retrying entirely.
+async fn resolve_tunnel_connection_params(
+    manager: &TunnelManager,
+    tunnel_id: i64,
+    hostname: &str,
+    cancel: &CancellationToken,
+) -> Result<TunnelConnectionParams, ConnectionOutcome> {
+    let current = tokio::select! {
+        () = cancel.cancelled() => return Err(ConnectionOutcome::Stop),
+        result = db::get_tunnel_by_id(&manager.pool, tunnel_id) => result,
+    };
+    let current = match current {
+        Ok(t) => t,
+        Err(e) => {
+            error!(tunnel_id, "tunnel DB lookup failed: {e}");
+            return Err(ConnectionOutcome::Stop);
+        }
+    };
+
+    if !current.enabled {
+        manager
+            .set_status(tunnel_id, hostname, TunnelStatus::Disconnected)
+            .await;
+        return Err(ConnectionOutcome::Stop);
+    }
+
+    let Ok(ssh_port) = u16::try_from(current.ssh_port) else {
+        manager
+            .set_status(
+                tunnel_id,
+                hostname,
+                TunnelStatus::Error {
+                    message: format!("invalid ssh_port: {}", current.ssh_port),
+                },
+            )
+            .await;
+        return Err(ConnectionOutcome::Stop);
+    };
+
+    let Ok(tunnel_port) = u32::try_from(current.tunnel_port) else {
+        manager
+            .set_status(
+                tunnel_id,
+                hostname,
+                TunnelStatus::Error {
+                    message: format!("invalid tunnel_port: {}", current.tunnel_port),
+                },
+            )
+            .await;
+        return Err(ConnectionOutcome::Stop);
+    };
+
+    let key = match crate::ssh::load_server_private_key().await {
+        Ok(k) => k,
+        Err(e) => {
+            manager
+                .set_status(
+                    tunnel_id,
+                    hostname,
+                    TunnelStatus::Error {
+                        message: e.to_string(),
+                    },
+                )
+                .await;
+            return Err(ConnectionOutcome::Stop);
+        }
+    };
+
+    let scanned_key = match &current.ssh_host_key {
+        Some(key) if !key.is_empty() => None,
+        _ => match crate::ssh::scan_host_key(&current.ssh_host, ssh_port).await {
+            Ok(k) => Some(k),
+            Err(e) => {
+                warn!(tunnel_id, "failed to scan SSH host key: {e}");
+                None
+            }
+        },
+    };
+    let expected_host_key = resolve_and_persist_host_key(
+        &manager.pool,
+        current.id,
+        current.ssh_host_key.clone(),
+        scanned_key.as_deref(),
+    )
+    .await;
+
+    let handler = TunnelSshHandler {
+        server_addr: manager.server_addr,
+        ui_broadcast: manager.ui_broadcast.clone(),
+        agent_id: current.agent_id,
+        expected_host_key,
+    };
+
+    Ok(TunnelConnectionParams {
+        tunnel: current,
+        ssh_port,
+        tunnel_port,
+        key,
+        handler,
+    })
+}
+
+/// Connects, authenticates, and requests the remote port forward. Returns
+/// the established session on success, or the [`ConnectionOutcome`] the
+/// caller should propagate (already having slept for backoff, on the retry
+/// path) otherwise.
+async fn connect_and_forward(
+    manager: &TunnelManager,
+    tunnel_id: i64,
+    hostname: &str,
+    cancel: &CancellationToken,
+    params: TunnelConnectionParams,
+    backoff: Duration,
+) -> Result<client::Handle<TunnelSshHandler>, ConnectionOutcome> {
+    let TunnelConnectionParams {
+        tunnel: current,
+        ssh_port,
+        tunnel_port,
+        key,
+        handler,
+    } = params;
+
+    let next_backoff = backoff.saturating_mul(2).min(Duration::from_secs(120));
+
+    let session = tokio::select! {
+        () = cancel.cancelled() => return Err(ConnectionOutcome::Stop),
+        result = client::connect(
+            tunnel_ssh_config(),
+            (current.ssh_host.as_str(), ssh_port),
+            handler,
+        ) => result,
+    };
+    let mut session = match session {
+        Ok(s) => s,
+        Err(e) => {
+            warn!(tunnel_id, "tunnel connect failed: {e}");
+            manager
+                .set_status(tunnel_id, hostname, TunnelStatus::Reconnecting)
+                .await;
+            tokio::select! {
+                () = cancel.cancelled() => return Err(ConnectionOutcome::Stop),
+                () = tokio::time::sleep(backoff) => {}
+            }
+            return Err(ConnectionOutcome::Retry(next_backoff));
+        }
+    };
+
+    let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), None);
+    let auth = tokio::select! {
+        () = cancel.cancelled() => return Err(ConnectionOutcome::Stop),
+        result = session.authenticate_publickey(&current.ssh_user, key_with_alg) => result,
+    };
+    let auth = match auth {
+        Ok(a) => a,
+        Err(e) => {
+            warn!(tunnel_id, "tunnel auth error: {e}");
+            manager
+                .set_status(
+                    tunnel_id,
+                    hostname,
+                    TunnelStatus::Error {
+                        message: format!("auth error: {e}"),
+                    },
+                )
+                .await;
+            return Err(ConnectionOutcome::Stop);
+        }
+    };
+
+    if !auth.success() {
+        manager
+            .set_status(
+                tunnel_id,
+                hostname,
+                TunnelStatus::Error {
+                    message: "public key authentication rejected".to_string(),
+                },
+            )
+            .await;
+        return Err(ConnectionOutcome::Stop);
+    }
+
+    let forward = tokio::select! {
+        () = cancel.cancelled() => return Err(ConnectionOutcome::Stop),
+        result = session.tcpip_forward("127.0.0.1", tunnel_port) => result,
+    };
+    match forward {
+        Ok(_bound_port) => {
+            manager
+                .set_status(tunnel_id, hostname, TunnelStatus::Connected)
+                .await;
+            Ok(session)
+        }
+        Err(e) => {
+            warn!(tunnel_id, "tcpip_forward failed: {e}");
+            manager
+                .set_status(tunnel_id, hostname, TunnelStatus::Reconnecting)
+                .await;
+            tokio::select! {
+                () = cancel.cancelled() => return Err(ConnectionOutcome::Stop),
+                () = tokio::time::sleep(backoff) => {}
+            }
+            Err(ConnectionOutcome::Retry(next_backoff))
+        }
+    }
+}
+
+/// Runs one connect-authenticate-forward-and-wait cycle for a tunnel.
+/// Returns whether the caller's retry loop should stop entirely or retry
+/// after the returned backoff.
+async fn run_tunnel_connection_attempt(
+    manager: &TunnelManager,
+    tunnel_id: i64,
+    hostname: &str,
+    cancel: &CancellationToken,
+    backoff: Duration,
+) -> ConnectionOutcome {
+    let params = match resolve_tunnel_connection_params(manager, tunnel_id, hostname, cancel).await
+    {
+        Ok(p) => p,
+        Err(outcome) => return outcome,
+    };
+
+    let session =
+        match connect_and_forward(manager, tunnel_id, hostname, cancel, params, backoff).await {
+            Ok(s) => s,
+            Err(outcome) => return outcome,
+        };
+
+    loop {
+        tokio::select! {
+            () = cancel.cancelled() => {
+                if let Ok(Err(e)) = tokio::time::timeout(
+                    Duration::from_secs(2),
+                    session.disconnect(russh::Disconnect::ByApplication, "", "en"),
+                )
+                .await
+                {
+                    tracing::debug!(error = %e, "tunnel disconnect failed");
+                }
+                manager
+                    .set_status(tunnel_id, hostname, TunnelStatus::Disconnected)
+                    .await;
+                return ConnectionOutcome::Stop;
+            }
+            () = tokio::time::sleep(Duration::from_secs(5)) => {
+                if session.is_closed() {
+                    break;
+                }
+            }
+        }
+    }
+
+    manager
+        .set_status(tunnel_id, hostname, TunnelStatus::Reconnecting)
+        .await;
+
+    tokio::select! {
+        () = cancel.cancelled() => {
+            manager
+                .set_status(tunnel_id, hostname, TunnelStatus::Disconnected)
+                .await;
+            ConnectionOutcome::Stop
+        }
+        () = tokio::time::sleep(backoff) => {
+            ConnectionOutcome::Retry(backoff.saturating_mul(2).min(Duration::from_secs(120)))
         }
     }
 }

@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn empty_env_is_no_proxies() {
-        let resolver = ClientIpResolver::from_env(Some("".to_string()));
+        let resolver = ClientIpResolver::from_env(Some(String::new()));
         let headers = headers_with_xff("1.2.3.4");
         assert_eq!(
             resolver.resolve(peer_v4([10, 0, 0, 1]), &headers),

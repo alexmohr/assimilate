@@ -501,8 +501,8 @@ mod tests {
             entry_type: "r".to_string(),
         };
         let json = serde_json::to_value(&entry).unwrap();
-        assert_eq!(json["path"], "etc/hosts");
-        assert_eq!(json["size"], 220);
-        assert_eq!(json["type"], "r");
+        assert_eq!(json.get("path").unwrap(), "etc/hosts");
+        assert_eq!(json.get("size").unwrap(), 220);
+        assert_eq!(json.get("type").unwrap(), "r");
     }
 }

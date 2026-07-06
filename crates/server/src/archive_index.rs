@@ -752,7 +752,7 @@ mod tests {
         let segments: Vec<&str> = path.split('/').collect();
         let mut dirs: Vec<String> = Vec::new();
         for depth in 1..segments.len() {
-            dirs.push(segments[..depth].join("/"));
+            dirs.push(segments.get(..depth).unwrap_or(&[]).join("/"));
         }
         assert_eq!(dirs, vec!["a", "a/b", "a/b/c"]);
     }

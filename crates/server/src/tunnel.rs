@@ -701,12 +701,12 @@ mod tests {
                 agent_id: 2,
                 status: shared::protocol::TunnelStatus::Connected,
                 cancel: cancel.clone(),
-                completion: completion.clone(),
+                completion: Arc::clone(&completion),
             },
         );
 
         tokio::spawn({
-            let task_finished = task_finished.clone();
+            let task_finished = Arc::clone(&task_finished);
             async move {
                 let _completion = TunnelTaskCompletion(completion);
                 cancel.cancelled().await;
@@ -785,9 +785,9 @@ mod tests {
         assert!(result.unwrap());
     }
 
-    /// Regression: stop_tunnel must release the write lock before awaiting
+    /// Regression: `stop_tunnel` must release the write lock before awaiting
     /// task completion so that the task's cancellation path (which calls
-    /// set_status and needs the write lock) can proceed without deadlocking.
+    /// `set_status` and needs the write lock) can proceed without deadlocking.
     #[tokio::test]
     async fn stop_tunnel_does_not_deadlock_when_task_acquires_write_lock_on_cancel() {
         let mgr = dummy_manager();
@@ -800,7 +800,7 @@ mod tests {
                 agent_id: 7,
                 status: shared::protocol::TunnelStatus::Connected,
                 cancel: cancel.clone(),
-                completion: completion.clone(),
+                completion: Arc::clone(&completion),
             },
         );
 

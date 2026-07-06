@@ -300,18 +300,17 @@ mod tests {
 
         entries.sort_by(|a, b| a.0.cmp(&b.0));
 
-        assert_eq!(entries.len(), 3);
+        let [hosts, new_file, old_file] = entries.as_slice() else {
+            panic!("expected exactly 3 entries, got {entries:?}");
+        };
+        assert_eq!(hosts, &("etc/hosts".to_string(), ChangeCategory::Modified));
         assert_eq!(
-            entries[0],
-            ("etc/hosts".to_string(), ChangeCategory::Modified)
+            new_file,
+            &("etc/new-file".to_string(), ChangeCategory::Added)
         );
         assert_eq!(
-            entries[1],
-            ("etc/new-file".to_string(), ChangeCategory::Added)
-        );
-        assert_eq!(
-            entries[2],
-            ("etc/old-file".to_string(), ChangeCategory::Removed)
+            old_file,
+            &("etc/old-file".to_string(), ChangeCategory::Removed)
         );
     }
 }

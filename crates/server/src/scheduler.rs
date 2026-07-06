@@ -988,8 +988,12 @@ esac
         .await
         .unwrap();
 
-        let stale_started_at = Utc::now() - chrono::Duration::days(1);
-        let stale_finished_at = stale_started_at + chrono::Duration::minutes(5);
+        let stale_started_at = Utc::now()
+            .checked_sub_signed(chrono::Duration::days(1))
+            .unwrap();
+        let stale_finished_at = stale_started_at
+            .checked_add_signed(chrono::Duration::minutes(5))
+            .unwrap();
         sqlx::query!(
             "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
              status, original_size, compressed_size, deduplicated_size, repo_unique_csize, \
@@ -1103,7 +1107,9 @@ esac
         db::insert_schedule_targets(pool, schedule.id, &[(agent.id, 0)])
             .await
             .unwrap();
-        let past = Utc::now() - chrono::Duration::hours(1);
+        let past = Utc::now()
+            .checked_sub_signed(chrono::Duration::hours(1))
+            .unwrap();
         db::set_next_run_at(pool, schedule.id, past).await.unwrap();
         (repo.id, schedule.id)
     }
@@ -1118,7 +1124,7 @@ esac
         rx
     }
 
-    /// tick() must send ConfigUpdate *before* the run trigger so the agent
+    /// `tick()` must send `ConfigUpdate` *before* the run trigger so the agent
     /// always executes with the current config.
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
@@ -1163,7 +1169,7 @@ esac
         }
     }
 
-    /// ConfigUpdate sent before each trigger must reflect the *current* global
+    /// `ConfigUpdate` sent before each trigger must reflect the *current* global
     /// excludes, not those that were in place when the schedule was created.
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
@@ -1214,7 +1220,7 @@ esac
         }
     }
 
-    /// When the target agent is not connected, tick() must not error and must
+    /// When the target agent is not connected, `tick()` must not error and must
     /// leave the schedule in due state (not mark it as triggered).
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]

@@ -1224,8 +1224,8 @@ mod tests {
         let entries = vec![make_entry("-", "etc/passwd")];
         let result = fold_immediate_children("", entries);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].entry_type, "d");
-        assert_eq!(result[0].path, "etc");
+        assert_eq!(result.first().unwrap().entry_type, "d");
+        assert_eq!(result.first().unwrap().path, "etc");
     }
 
     #[test]
@@ -1233,8 +1233,8 @@ mod tests {
         let entries = vec![make_entry("-", "file.txt")];
         let result = fold_immediate_children("", entries);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].entry_type, "-");
-        assert_eq!(result[0].path, "file.txt");
+        assert_eq!(result.first().unwrap().entry_type, "-");
+        assert_eq!(result.first().unwrap().path, "file.txt");
     }
 
     #[test]
@@ -1245,8 +1245,8 @@ mod tests {
         ];
         let result = fold_immediate_children("", entries);
         assert_eq!(result.len(), 1, "etc should appear only once");
-        assert_eq!(result[0].entry_type, "d");
-        assert_eq!(result[0].path, "etc");
+        assert_eq!(result.first().unwrap().entry_type, "d");
+        assert_eq!(result.first().unwrap().path, "etc");
     }
 
     #[test]
@@ -1258,8 +1258,8 @@ mod tests {
         ];
         let result = fold_immediate_children("", entries);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].path, "home");
-        assert_eq!(result[0].entry_type, "d");
+        assert_eq!(result.first().unwrap().path, "home");
+        assert_eq!(result.first().unwrap().entry_type, "d");
     }
 
     #[test]
@@ -1281,8 +1281,8 @@ mod tests {
         let entries = vec![make_entry("-", "usr/local/bin/tool")];
         let result = fold_immediate_children("usr", entries);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].entry_type, "d");
-        assert_eq!(result[0].path, "usr/local");
+        assert_eq!(result.first().unwrap().entry_type, "d");
+        assert_eq!(result.first().unwrap().path, "usr/local");
     }
 
     #[test]
@@ -1291,7 +1291,7 @@ mod tests {
         let entries = vec![make_entry("-", "etc/passwd")];
         let result = fold_immediate_children("", entries);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].path, "etc");
+        assert_eq!(result.first().unwrap().path, "etc");
     }
 
     #[test]
@@ -1350,8 +1350,8 @@ mod tests {
             ("binary", "application/octet-stream"),
         ];
 
-        cases.iter().for_each(|(filename, expected)| {
+        for (filename, expected) in &cases {
             assert_eq!(content_type_for_extension(filename), *expected);
-        });
+        }
     }
 }

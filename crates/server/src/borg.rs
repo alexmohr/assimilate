@@ -586,6 +586,8 @@ mod tests {
 
     #[tokio::test]
     async fn server_child_wait_with_output_with_stdin_allows_writing() {
+        use tokio::io::AsyncWriteExt;
+
         let mut child = ServerChild::new(
             tokio::process::Command::new("sh")
                 .arg("-c")
@@ -601,7 +603,6 @@ mod tests {
             Vec::new(),
         );
         let mut stdin = child.take_stdin().unwrap();
-        use tokio::io::AsyncWriteExt;
         stdin.write_all(b"hello from stdin\n").await.unwrap();
         drop(stdin);
         let output = child.wait_with_output().await.unwrap();

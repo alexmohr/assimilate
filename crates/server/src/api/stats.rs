@@ -1367,16 +1367,16 @@ mod tests {
 
     #[test]
     fn percentage_of_zero_part_yields_zero() {
-        assert_eq!(super::percentage_of(0, 100), 0.0);
+        assert!((super::percentage_of(0, 100) - 0.0).abs() < f64::EPSILON);
     }
 
     #[test]
     fn percentage_of_equal_values_yields_100() {
-        assert_eq!(super::percentage_of(100, 100), 100.0);
+        assert!((super::percentage_of(100, 100) - 100.0).abs() < f64::EPSILON);
     }
 
     #[test]
     fn percentage_of_half_yields_50() {
-        assert_eq!(super::percentage_of(50, 100), 50.0);
+        assert!((super::percentage_of(50, 100) - 50.0).abs() < f64::EPSILON);
     }
 }

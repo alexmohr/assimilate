@@ -140,7 +140,7 @@ mod tests {
             loop {
                 tokio::select! {
                     _ = rx.recv() => {}
-                    _ = token_clone.cancelled() => {
+                    () = token_clone.cancelled() => {
                         return;
                     }
                 }

@@ -204,10 +204,12 @@ mod tests {
             });
         }
         let entries = buf.entries(10, None, None);
-        assert_eq!(entries.len(), 3);
-        assert_eq!(entries[0].message, "msg 4");
-        assert_eq!(entries[1].message, "msg 3");
-        assert_eq!(entries[2].message, "msg 2");
+        let [newest, middle, oldest] = entries.as_slice() else {
+            panic!("expected exactly 3 entries, got {entries:?}");
+        };
+        assert_eq!(newest.message, "msg 4");
+        assert_eq!(middle.message, "msg 3");
+        assert_eq!(oldest.message, "msg 2");
     }
 
     #[test]
@@ -234,7 +236,7 @@ mod tests {
 
         let errors = buf.entries(10, Some("error"), None);
         assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].message, "error msg");
+        assert_eq!(errors.first().unwrap().message, "error msg");
 
         let warn_and_above = buf.entries(10, Some("warn"), None);
         assert_eq!(warn_and_above.len(), 1);
@@ -261,10 +263,10 @@ mod tests {
 
         let results = buf.entries(10, None, Some("connection"));
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].message, "connection failed");
+        assert_eq!(results.first().unwrap().message, "connection failed");
 
         let results = buf.entries(10, None, Some("api"));
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].target, "server::api");
+        assert_eq!(results.first().unwrap().target, "server::api");
     }
 }

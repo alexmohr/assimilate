@@ -697,7 +697,7 @@ mod tests {
             #[serde(default)]
             archive_name: Option<String>,
         }
-        let json = r#"{}"#;
+        let json = r"{}";
         let p: Partial = serde_json::from_str(json).unwrap();
         assert_eq!(p.archive_name, None);
 
@@ -713,7 +713,7 @@ mod tests {
             #[serde(default)]
             accept_relocation: bool,
         }
-        let json = r#"{}"#;
+        let json = r"{}";
         let p: Partial = serde_json::from_str(json).unwrap();
         assert!(!p.accept_relocation);
     }

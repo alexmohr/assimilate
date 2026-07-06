@@ -1911,7 +1911,7 @@ exit 0
         binary
     }
 
-    #[ignore]
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn backup_completed_queues_archive_indexing(pool: PgPool) {
         let agent = crate::db::insert_agent(&pool, "agent-1", None, "token-hash", None)
@@ -1985,7 +1985,9 @@ exit 0
             repo_id: RepoId(repo.id),
             schedule_id: None,
             started_at,
-            finished_at: started_at + chrono::Duration::minutes(5),
+            finished_at: started_at
+                .checked_add_signed(chrono::Duration::minutes(5))
+                .unwrap(),
             status: BackupStatus::Success,
             original_size: 1_000,
             compressed_size: 500,
@@ -2020,7 +2022,7 @@ exit 0
         .expect("timed out waiting for archive indexing");
     }
 
-    /// Create a test agent+repo+schedule triple linked via schedule_targets.
+    /// Create a test agent+repo+schedule triple linked via `schedule_targets`.
     /// Returns (agent, repo, schedule).
     async fn create_agent_repo_schedule(
         pool: &PgPool,
@@ -2086,7 +2088,7 @@ exit 0
         (agent, repo, schedule)
     }
 
-    #[ignore]
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn validate_agent_repo_rejects_rogue_agent(pool: PgPool) {
         let (assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;
@@ -2127,10 +2129,16 @@ exit 0
             .filter(|e| e.event_type == "security_violation")
             .collect();
         assert_eq!(security_events.len(), 1);
-        assert!(security_events[0].message.contains("rogue-agent"));
+        assert!(
+            security_events
+                .first()
+                .unwrap()
+                .message
+                .contains("rogue-agent")
+        );
     }
 
-    #[ignore]
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn handle_agent_message_backup_started_rejects_rogue_agent(pool: PgPool) {
         let (_assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;
@@ -2162,7 +2170,7 @@ exit 0
         assert_eq!(reports.unwrap_or(0), 0);
     }
 
-    #[ignore]
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn handle_agent_message_backup_log_rejects_rogue_agent(pool: PgPool) {
         let (_assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;
@@ -2192,7 +2200,7 @@ exit 0
         assert_eq!(security_events.len(), 1);
     }
 
-    #[ignore]
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn handle_agent_message_backup_cancelled_rejects_rogue_agent(pool: PgPool) {
         let (_assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;
@@ -2219,7 +2227,7 @@ exit 0
         assert_eq!(security_events.len(), 1);
     }
 
-    #[ignore]
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn handle_agent_message_backup_rejected_rejects_rogue_agent(pool: PgPool) {
         let (_assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;
@@ -2258,7 +2266,9 @@ exit 0
             repo_id: RepoId(repo_id),
             schedule_id: None,
             started_at,
-            finished_at: started_at + chrono::Duration::minutes(5),
+            finished_at: started_at
+                .checked_add_signed(chrono::Duration::minutes(5))
+                .unwrap(),
             status: BackupStatus::Success,
             original_size: deduplicated_size,
             compressed_size: deduplicated_size,

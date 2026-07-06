@@ -452,24 +452,28 @@ mod tests {
     fn parse_raw_file_change_patterns_defaults_to_warn() {
         let input = "/etc/passwd\n/var/log";
         let patterns = parse_raw_file_change_patterns(input);
-        assert_eq!(patterns.len(), 2);
-        assert_eq!(patterns[0].path, "/etc/passwd");
-        assert_eq!(patterns[0].action, shared::types::FileChangeAction::Warn);
-        assert_eq!(patterns[1].path, "/var/log");
-        assert_eq!(patterns[1].action, shared::types::FileChangeAction::Warn);
+        let [passwd, log] = patterns.as_slice() else {
+            panic!("expected exactly 2 patterns, got {patterns:?}");
+        };
+        assert_eq!(passwd.path, "/etc/passwd");
+        assert_eq!(passwd.action, shared::types::FileChangeAction::Warn);
+        assert_eq!(log.path, "/var/log");
+        assert_eq!(log.action, shared::types::FileChangeAction::Warn);
     }
 
     #[test]
     fn parse_raw_file_change_patterns_with_actions() {
         let input = "/tmp ignore\n/etc warn\n/var/log fatal";
         let patterns = parse_raw_file_change_patterns(input);
-        assert_eq!(patterns.len(), 3);
-        assert_eq!(patterns[0].path, "/tmp");
-        assert_eq!(patterns[0].action, shared::types::FileChangeAction::Ignore);
-        assert_eq!(patterns[1].path, "/etc");
-        assert_eq!(patterns[1].action, shared::types::FileChangeAction::Warn);
-        assert_eq!(patterns[2].path, "/var/log");
-        assert_eq!(patterns[2].action, shared::types::FileChangeAction::Fatal);
+        let [tmp, etc, log] = patterns.as_slice() else {
+            panic!("expected exactly 3 patterns, got {patterns:?}");
+        };
+        assert_eq!(tmp.path, "/tmp");
+        assert_eq!(tmp.action, shared::types::FileChangeAction::Ignore);
+        assert_eq!(etc.path, "/etc");
+        assert_eq!(etc.action, shared::types::FileChangeAction::Warn);
+        assert_eq!(log.path, "/var/log");
+        assert_eq!(log.action, shared::types::FileChangeAction::Fatal);
     }
 
     #[test]

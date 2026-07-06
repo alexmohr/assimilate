@@ -181,11 +181,12 @@ mod tests {
 
         let snapshots = broadcast.current_import_snapshots();
         assert_eq!(snapshots.len(), 1);
-        assert_eq!(snapshots[0].0, 7);
-        assert_eq!(snapshots[0].1.progress, 3);
-        assert_eq!(snapshots[0].1.total, 5);
+        let (repo_id, snapshot) = snapshots.first().unwrap();
+        assert_eq!(*repo_id, 7);
+        assert_eq!(snapshot.progress, 3);
+        assert_eq!(snapshot.total, 5);
         assert_eq!(
-            snapshots[0].1.message.as_deref(),
+            snapshot.message.as_deref(),
             Some("Finalizing import\u{2026}")
         );
     }
@@ -211,10 +212,11 @@ mod tests {
 
         let snapshots = broadcast.current_active_backups();
         assert_eq!(snapshots.len(), 1);
-        assert_eq!(snapshots[0].repo_id, 20);
-        assert_eq!(snapshots[0].schedule_id, Some(8));
+        let snapshot = snapshots.first().unwrap();
+        assert_eq!(snapshot.repo_id, 20);
+        assert_eq!(snapshot.schedule_id, Some(8));
         assert_eq!(
-            snapshots[0].progress_line.as_deref(),
+            snapshot.progress_line.as_deref(),
             Some(r#"{"type":"archive_progress","nfiles":42,"original_size":1024,"path":"/srv"}"#)
         );
 

@@ -24,7 +24,13 @@ jobs:
         id: range
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch origin "${{ github.base_ref }}" --depth=1
+            # No --depth here: the checkout step above already did a full
+            # (fetch-depth: 0) fetch. Re-fetching main with --depth=1 grafts
+            # its tip as a shallow boundary, which truncates the ancestry
+            # git needs to correctly resolve origin/main..HEAD and can pull
+            # in commits already merged into main (e.g. old dependabot
+            # commits) as if they were new to this PR.
+            git fetch origin "${{ github.base_ref }}"
             echo "range=origin/${{ github.base_ref }}..HEAD" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
             echo "range=-1" >> "$GITHUB_OUTPUT"

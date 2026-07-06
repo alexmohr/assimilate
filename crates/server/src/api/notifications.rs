@@ -233,27 +233,28 @@ pub async fn update_channel(
     }
 
     if req.channel_type.is_some() || req.config.is_some() {
-        let (effective_type, effective_config) = match (&req.channel_type, &req.config) {
-            (Some(ct), Some(cfg)) => (*ct, cfg.clone()),
-            _ => {
-                let existing: NotificationChannel = sqlx::query_as!(
-                    NotificationChannel,
-                    r#"
+        let (effective_type, effective_config) = if let (Some(ct), Some(cfg)) =
+            (&req.channel_type, &req.config)
+        {
+            (*ct, cfg.clone())
+        } else {
+            let existing: NotificationChannel = sqlx::query_as!(
+                NotificationChannel,
+                r#"
                     SELECT id, name, channel_type as "channel_type: ChannelType", config, enabled,
                            scope, created_at, updated_at
                     FROM notification_channels
                     WHERE id = $1
                     "#,
-                    id,
-                )
-                .fetch_optional(&state.pool)
-                .await?
-                .ok_or_else(|| ApiError::NotFound(format!("channel {id} not found")))?;
-                (
-                    req.channel_type.unwrap_or(existing.channel_type),
-                    req.config.clone().unwrap_or(existing.config),
-                )
-            }
+                id,
+            )
+            .fetch_optional(&state.pool)
+            .await?
+            .ok_or_else(|| ApiError::NotFound(format!("channel {id} not found")))?;
+            (
+                req.channel_type.unwrap_or(existing.channel_type),
+                req.config.clone().unwrap_or(existing.config),
+            )
         };
         validate_channel_config(effective_type, &effective_config)?;
     }

@@ -83,7 +83,7 @@ pub struct ArchiveTagRequest {
     pub tag: String,
 }
 
-fn normalize_tag(tag: String) -> Result<String, ApiError> {
+fn normalize_tag(tag: &str) -> Result<String, ApiError> {
     let tag = tag.trim().to_string();
     if tag.is_empty() {
         return Err(ApiError::BadRequest("tag must not be empty".to_string()));
@@ -390,7 +390,7 @@ pub async fn add_archive_tag(
     ApiJson(req): ApiJson<ArchiveTagRequest>,
 ) -> Result<(StatusCode, Json<ArchiveTagResponse>), ApiError> {
     ensure_manage_tags(&state, &auth).await?;
-    let tag = normalize_tag(req.tag)?;
+    let tag = normalize_tag(&req.tag)?;
 
     let created: ArchiveTagResponse = db::tags::add_tag(
         &state.pool,
@@ -435,7 +435,7 @@ pub async fn remove_archive_tag(
     Path((repo_id, archive_name, tag)): Path<(i64, String, String)>,
 ) -> Result<StatusCode, ApiError> {
     ensure_manage_tags(&state, &auth).await?;
-    let tag = normalize_tag(tag)?;
+    let tag = normalize_tag(&tag)?;
 
     let removed = db::tags::remove_tag(&state.pool, repo_id, &archive_name, &tag).await?;
     if !removed {

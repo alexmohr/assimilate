@@ -67,7 +67,7 @@ impl From<&str> for BorgDiffChangeType {
     }
 }
 
-fn classify_change(change_type: BorgDiffChangeType) -> ChangeCategory {
+fn classify_change(change_type: &BorgDiffChangeType) -> ChangeCategory {
     match change_type {
         BorgDiffChangeType::Added => ChangeCategory::Added,
         BorgDiffChangeType::Removed => ChangeCategory::Removed,
@@ -190,7 +190,7 @@ pub async fn diff_archives(
                 .and_then(|c| c.get("type"))
                 .and_then(serde_json::Value::as_str)
                 .map_or(ChangeCategory::Modified, |change_type| {
-                    classify_change(BorgDiffChangeType::from(change_type))
+                    classify_change(&BorgDiffChangeType::from(change_type))
                 });
             Some((path, category))
         })
@@ -231,35 +231,35 @@ mod tests {
     #[test]
     fn classify_known_types() {
         assert_eq!(
-            classify_change(BorgDiffChangeType::from("added")),
+            classify_change(&BorgDiffChangeType::from("added")),
             ChangeCategory::Added
         );
         assert_eq!(
-            classify_change(BorgDiffChangeType::from("removed")),
+            classify_change(&BorgDiffChangeType::from("removed")),
             ChangeCategory::Removed
         );
         assert_eq!(
-            classify_change(BorgDiffChangeType::from("modified")),
+            classify_change(&BorgDiffChangeType::from("modified")),
             ChangeCategory::Modified
         );
         assert_eq!(
-            classify_change(BorgDiffChangeType::from("mode changed")),
+            classify_change(&BorgDiffChangeType::from("mode changed")),
             ChangeCategory::Modified
         );
         assert_eq!(
-            classify_change(BorgDiffChangeType::from("owner changed")),
+            classify_change(&BorgDiffChangeType::from("owner changed")),
             ChangeCategory::Modified
         );
         assert_eq!(
-            classify_change(BorgDiffChangeType::from("link target changed")),
+            classify_change(&BorgDiffChangeType::from("link target changed")),
             ChangeCategory::Modified
         );
         assert_eq!(
-            classify_change(BorgDiffChangeType::from("time changed")),
+            classify_change(&BorgDiffChangeType::from("time changed")),
             ChangeCategory::Modified
         );
         assert_eq!(
-            classify_change(BorgDiffChangeType::from("unknown type")),
+            classify_change(&BorgDiffChangeType::from("unknown type")),
             ChangeCategory::Modified
         );
     }
@@ -287,7 +287,7 @@ mod tests {
                     .and_then(|c| c.get("type"))
                     .and_then(serde_json::Value::as_str)
                     .map_or(ChangeCategory::Modified, |change_type| {
-                        classify_change(BorgDiffChangeType::from(change_type))
+                        classify_change(&BorgDiffChangeType::from(change_type))
                     });
                 Some((path, category))
             })

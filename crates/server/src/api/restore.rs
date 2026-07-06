@@ -188,7 +188,7 @@ pub struct RestoreFilesResponse {
 )]
 pub async fn restore_files(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
     AxumPath((repo_id, archive_name)): AxumPath<(i64, String)>,
     Json(body): Json<RestoreFilesRequest>,
 ) -> Result<Json<RestoreFilesResponse>, ApiError> {
@@ -227,8 +227,8 @@ pub async fn restore_files(
     if let Err(e) = db::audit::insert_audit_entry(
         &state.pool,
         &db::audit::NewAuditEntry {
-            user_id: Some(_admin.user_id),
-            username: &_admin.username,
+            user_id: Some(admin.user_id),
+            username: &admin.username,
             action: "restore_files",
             target_type: Some("archive"),
             target_id: Some(repo_id),

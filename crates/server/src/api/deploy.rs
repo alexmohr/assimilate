@@ -96,7 +96,7 @@ pub async fn query_available_agent_version(binary_dir: &std::path::Path) -> Opti
     stdout
         .trim()
         .strip_prefix("agent ")
-        .map(|v| v.to_owned())
+        .map(str::to_owned)
         .or_else(|| Some(stdout.trim().to_owned()))
 }
 

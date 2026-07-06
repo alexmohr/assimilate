@@ -40,11 +40,16 @@ fn generate_token() -> String {
     helpers::generate_random_hex(32)
 }
 
+#[must_use]
 pub fn hash_token(plaintext: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(plaintext.as_bytes());
     let result = hasher.finalize();
-    result.iter().map(|b| format!("{b:02x}")).collect()
+    use std::fmt::Write as _;
+    result.iter().fold(String::new(), |mut acc, b| {
+        let _ = write!(acc, "{b:02x}");
+        acc
+    })
 }
 
 #[utoipa::path(

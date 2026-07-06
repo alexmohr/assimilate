@@ -85,7 +85,7 @@ fn row_to_report_response(row: db::ReportRow, hostname: String) -> ReportRespons
                 raw_status = %row.status,
                 "failed to parse backup status, defaulting to Success"
             );
-            Default::default()
+            shared::types::BackupStatus::default()
         }),
         original_size: row.original_size,
         compressed_size: row.compressed_size,

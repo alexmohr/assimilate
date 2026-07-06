@@ -61,7 +61,7 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for ChannelType {
     }
 }
 
-impl<'q> sqlx::Encode<'q, sqlx::Postgres> for ChannelType {
+impl sqlx::Encode<'_, sqlx::Postgres> for ChannelType {
     fn encode_by_ref(
         &self,
         buf: &mut sqlx::postgres::PgArgumentBuffer,
@@ -208,6 +208,9 @@ impl NotificationService {
     }
 
     pub async fn ensure_vapid_keys(&self) -> Result<(), NotificationError> {
+        use base64::Engine;
+        use p256::ecdsa::SigningKey;
+
         let existing = crate::db::get_setting(&self.pool, "vapid_private_key")
             .await
             .map_err(|e| NotificationError::Config(format!("DB error: {e}")))?;
@@ -221,9 +224,6 @@ impl NotificationService {
         }
 
         tracing::info!("generating VAPID key pair for web push notifications");
-
-        use base64::Engine;
-        use p256::ecdsa::SigningKey;
 
         let signing_key = SigningKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
         let verifying_key = signing_key.verifying_key();

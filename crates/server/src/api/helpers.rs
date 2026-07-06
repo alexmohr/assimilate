@@ -16,6 +16,7 @@ use crate::{error::ApiError, ssh};
 /// (`BORG_RELOCATED_REPO_ACCESS_IS_OK`) is intentionally *not* part of the base:
 /// it is added only by callers that have a confirmed pending relocation, so that
 /// unrelated operations never silently accept a moved repository.
+#[must_use]
 pub fn borg_base_env(passphrase: &str) -> HashMap<String, String> {
     let mut env = HashMap::from([
         ("BORG_PASSPHRASE".to_owned(), passphrase.to_owned()),
@@ -27,6 +28,7 @@ pub fn borg_base_env(passphrase: &str) -> HashMap<String, String> {
     env
 }
 
+#[must_use]
 pub fn default_ssh_user() -> String {
     "borg".to_string()
 }
@@ -80,7 +82,11 @@ pub fn generate_random_hex(len_bytes: usize) -> String {
 
     let mut bytes = vec![0u8; len_bytes];
     rand::RngCore::fill_bytes(&mut OsRng, &mut bytes);
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    use std::fmt::Write as _;
+    bytes.iter().fold(String::new(), |mut acc, b| {
+        let _ = write!(acc, "{b:02x}");
+        acc
+    })
 }
 
 pub async fn validate_path_exists(

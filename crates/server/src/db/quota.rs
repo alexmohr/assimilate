@@ -26,6 +26,7 @@ pub enum QuotaStatus {
 }
 
 /// Shared warn/critical threshold comparison used by both repo and server quotas.
+#[must_use]
 pub fn evaluate_thresholds(
     enabled: bool,
     warn_bytes: Option<i64>,
@@ -47,6 +48,7 @@ pub fn evaluate_thresholds(
     QuotaStatus::Ok
 }
 
+#[must_use]
 pub fn evaluate_quota(quota: &RepoQuota, deduplicated_size: i64) -> QuotaStatus {
     evaluate_thresholds(
         quota.enabled,

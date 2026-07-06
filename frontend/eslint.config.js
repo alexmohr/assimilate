@@ -95,6 +95,6 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ['dist/', 'node_modules/', 'src/types/generated/'],
+    ignores: ['dist/', 'node_modules/', 'coverage/', 'src/types/generated/'],
   },
 )

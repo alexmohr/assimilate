@@ -43,7 +43,7 @@ impl std::str::FromStr for IndexStatus {
     }
 }
 
-/// Returns the `archives.id` for the given (repo_id, archive_name), creating the row if absent.
+/// Returns the `archives.id` for the given `(repo_id, archive_name)`, creating the row if absent.
 async fn get_or_create_archive_id(
     pool: &PgPool,
     repo_id: i64,
@@ -82,6 +82,12 @@ pub async fn get_index_status(
 /// statement never grows big enough to trip slow-statement alerts or timeouts.
 const INSERT_CHUNK: usize = 5000;
 
+#[derive(sqlx::FromRow)]
+struct ArchivePathRow {
+    id: i64,
+    path: String,
+}
+
 async fn ensure_archive_paths(
     pool: &PgPool,
     repo_id: i64,
@@ -90,12 +96,6 @@ async fn ensure_archive_paths(
     let mut unique_paths = paths.to_vec();
     unique_paths.sort_unstable();
     unique_paths.dedup();
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        id: i64,
-        path: String,
-    }
 
     let mut map = HashMap::with_capacity(unique_paths.len());
     for chunk in unique_paths.chunks(INSERT_CHUNK) {
@@ -110,7 +110,7 @@ async fn ensure_archive_paths(
         .map_err(ApiError::Database)?;
 
         let rows = sqlx::query_as!(
-            Row,
+            ArchivePathRow,
             "SELECT id, path FROM archive_paths WHERE repo_id = $1 AND path = ANY($2::text[])",
             repo_id,
             chunk,
@@ -320,6 +320,8 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
     archive_name: &str,
     on_progress: &mut F,
 ) -> Result<i64, ApiError> {
+    const LINE_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
     let (borg_repo, env) = get_repo_env(pool, encryption_key, repo_id).await?;
     let repo_archive = format!("{borg_repo}::{archive_name}");
 
@@ -357,7 +359,6 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
     let mut raw: Vec<ContentEntry> = Vec::new();
     let mut lines = BufReader::new(stdout).lines();
     let mut last_emit = std::time::Instant::now();
-    const LINE_READ_TIMEOUT: Duration = Duration::from_secs(30);
     loop {
         let line = tokio::time::timeout(LINE_READ_TIMEOUT, lines.next_line())
             .await
@@ -374,11 +375,29 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
             continue;
         };
         raw.push(ContentEntry {
-            entry_type: v["type"].as_str().unwrap_or("").to_string(),
-            path: v["path"].as_str().map_or_else(String::new, normalize_path),
-            size: v["size"].as_i64().unwrap_or(0),
-            mtime: v["mtime"].as_str().unwrap_or("").to_string(),
-            mode: v["mode"].as_str().unwrap_or("").to_string(),
+            entry_type: v
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            path: v
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .map_or_else(String::new, normalize_path),
+            size: v
+                .get("size")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0),
+            mtime: v
+                .get("mtime")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            mode: v
+                .get("mode")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string(),
         });
         if last_emit.elapsed() >= std::time::Duration::from_millis(300) {
             let current = raw.last().map(|entry| entry.path.as_str());
@@ -434,11 +453,14 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
         // Ensure all ancestor directories are present.
         let segments: Vec<&str> = entry.path.split('/').collect();
         for depth in 1..segments.len() {
-            let dir_path = segments[..depth].join("/");
+            let dir_path = segments.get(..depth).unwrap_or(&[]).join("/");
             let dir_parent = if depth == 1 {
                 String::new()
             } else {
-                segments[..depth - 1].join("/")
+                segments
+                    .get(..depth.saturating_sub(1))
+                    .unwrap_or(&[])
+                    .join("/")
             };
             add(
                 dir_path,
@@ -488,19 +510,19 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
     // statement alerts and statement timeouts.
     let mut offset = 0;
     while offset < path_ids.len() {
-        let end = (offset + INSERT_CHUNK).min(path_ids.len());
+        let end = offset.saturating_add(INSERT_CHUNK).min(path_ids.len());
         sqlx::query!(
             "INSERT INTO archive_files (archive_id, path_id, parent_path_id, entry_type, size, \
              mtime, mode) SELECT $1, unnest($2::bigint[]), unnest($3::bigint[]), \
              unnest($4::text[]), unnest($5::bigint[]), unnest($6::text[]), unnest($7::text[]) ON \
              CONFLICT DO NOTHING",
             archive_id,
-            &path_ids[offset..end] as &[i64],
-            &parent_path_ids[offset..end] as &[i64],
-            &entry_types[offset..end] as &[String],
-            &sizes[offset..end] as &[i64],
-            &mtimes[offset..end] as &[String],
-            &modes[offset..end] as &[String],
+            path_ids.get(offset..end).unwrap_or(&[]) as &[i64],
+            parent_path_ids.get(offset..end).unwrap_or(&[]) as &[i64],
+            entry_types.get(offset..end).unwrap_or(&[]) as &[String],
+            sizes.get(offset..end).unwrap_or(&[]) as &[i64],
+            mtimes.get(offset..end).unwrap_or(&[]) as &[String],
+            modes.get(offset..end).unwrap_or(&[]) as &[String],
         )
         .execute(pool)
         .await

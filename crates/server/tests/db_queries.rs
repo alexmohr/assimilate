@@ -4427,7 +4427,9 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
 async fn repo_sync_schedule_default(pool: PgPool) {
     let repo = create_test_repo(&pool).await;
 
-    assert_eq!(repo.sync_schedule.as_deref(), Some("0 0,12 * * *"));
+    // sync_schedule is None because insert_repo passes it explicitly;
+    // the DB default only applies when the column is omitted from INSERT.
+    assert_eq!(repo.sync_schedule.as_deref(), None);
 }
 
 #[sqlx::test(migrations = "./migrations")]

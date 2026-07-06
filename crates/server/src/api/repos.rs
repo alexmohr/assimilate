@@ -301,6 +301,7 @@ pub async fn create_repo(
         },
     )
     .await?;
+    db::update_repo_ssh_host_key(&state.pool, repo.id, &_ssh_host_key).await?;
     let repo_id = repo.id;
     let pool = state.pool.clone();
     let encryption_key = state.encryption_key;

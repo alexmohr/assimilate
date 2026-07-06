@@ -108,7 +108,7 @@ async fn main() -> Result<(), StartupError> {
 
     let shutdown_token = tokio_util::sync::CancellationToken::new();
 
-    let user_rate_limiter = UserRateLimiter::new(120, Duration::from_secs(60));
+    let user_rate_limiter = UserRateLimiter::new(60, Duration::from_secs(60));
 
     let state = AppState {
         pool,

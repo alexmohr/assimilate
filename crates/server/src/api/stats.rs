@@ -100,10 +100,57 @@ pub async fn dashboard_overview(
         .checked_add_signed(chrono::Duration::hours(2))
         .unwrap_or(now);
 
+    let findings = dashboard_findings(
+        &targets,
+        &hosts,
+        &repositories,
+        &connected,
+        now,
+        due_soon,
+        timezone,
+        &dismissed,
+    );
+    let running_operations = dashboard_running_operations(&targets);
+    let protection = dashboard_protection_coverage(&targets, &hosts);
+    let upcoming_schedules = dashboard_upcoming_schedules(upcoming, &targets, &connected);
+
+    let total_storage_bytes = repositories.iter().map(|repo| repo.deduplicated_size).sum();
+    let repository_capacity = repositories.iter().map(repository_capacity).collect();
+
+    Ok(Json(DashboardOverviewResponse {
+        summary: DashboardSummaryCountersResponse {
+            protected_hosts: protection.protected_hosts,
+            eligible_hosts: protection.eligible_hosts,
+            needs_attention: findings.len(),
+            running_operations: running_operations.len(),
+            total_storage_bytes,
+        },
+        findings,
+        protection,
+        running_operations,
+        upcoming_schedules,
+        repository_capacity,
+    }))
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "grouping these into a struct would obscure the call site more than it would clarify it; all params are single-use scalars/refs from the caller's own locals"
+)]
+fn dashboard_findings(
+    targets: &[db::dashboard::TargetRow],
+    hosts: &[db::dashboard::EligibleAgentRow],
+    repositories: &[db::dashboard::RepositoryRow],
+    connected: &HashSet<String>,
+    now: chrono::DateTime<Utc>,
+    due_soon: chrono::DateTime<Utc>,
+    timezone: chrono_tz::Tz,
+    dismissed: &HashSet<String>,
+) -> Vec<DashboardFindingResponse> {
     let mut findings = targets
         .iter()
         .filter(|target| target.schedule_enabled)
-        .filter_map(|target| target_finding(target, &connected, now, due_soon, timezone))
+        .filter_map(|target| target_finding(target, connected, now, due_soon, timezone))
         .collect::<Vec<_>>();
 
     findings.extend(
@@ -129,7 +176,7 @@ pub async fn dashboard_overview(
             }),
     );
 
-    for repo in &repositories {
+    for repo in repositories {
         if repo.enabled_schedule_count.unwrap_or(0) == 0 {
             findings.push(repository_finding(
                 repo,
@@ -170,8 +217,13 @@ pub async fn dashboard_overview(
     }
     findings.sort_by_key(|finding| severity_rank(&finding.severity));
     findings.retain(|finding| !dismissed.contains(&finding.id));
+    findings
+}
 
-    let running_operations = targets
+fn dashboard_running_operations(
+    targets: &[db::dashboard::TargetRow],
+) -> Vec<DashboardOperationResponse> {
+    targets
         .iter()
         .filter_map(|target| {
             let (Some(report_id), Some(started_at), Some(true)) = (
@@ -193,8 +245,13 @@ pub async fn dashboard_overview(
                 destination: DashboardDestinationResponse::Activity { report_id },
             })
         })
-        .collect::<Vec<_>>();
+        .collect::<Vec<_>>()
+}
 
+fn dashboard_protection_coverage(
+    targets: &[db::dashboard::TargetRow],
+    hosts: &[db::dashboard::EligibleAgentRow],
+) -> DashboardProtectionCoverageResponse {
     let protected_hosts = hosts
         .iter()
         .filter(|host| host.successful_enabled_assignment_count.unwrap_or(0) > 0)
@@ -235,7 +292,23 @@ pub async fn dashboard_overview(
         .map(agent_link)
         .collect();
 
-    let upcoming_schedules = upcoming
+    DashboardProtectionCoverageResponse {
+        protected_hosts,
+        eligible_hosts,
+        protected_agent_links,
+        unassigned_agents,
+        never_succeeded_targets,
+        never_succeeded_agents,
+        disabled_only_agents,
+    }
+}
+
+fn dashboard_upcoming_schedules(
+    upcoming: Vec<db::dashboard::UpcomingScheduleRow>,
+    targets: &[db::dashboard::TargetRow],
+    connected: &HashSet<String>,
+) -> Vec<DashboardUpcomingScheduleResponse> {
+    upcoming
         .into_iter()
         .map(|schedule| {
             let offline_target_count = targets
@@ -253,33 +326,7 @@ pub async fn dashboard_overview(
                 offline_target_count,
             }
         })
-        .collect();
-
-    let total_storage_bytes = repositories.iter().map(|repo| repo.deduplicated_size).sum();
-    let repository_capacity = repositories.iter().map(repository_capacity).collect();
-
-    Ok(Json(DashboardOverviewResponse {
-        summary: DashboardSummaryCountersResponse {
-            protected_hosts,
-            eligible_hosts,
-            needs_attention: findings.len(),
-            running_operations: running_operations.len(),
-            total_storage_bytes,
-        },
-        findings,
-        protection: DashboardProtectionCoverageResponse {
-            protected_hosts,
-            eligible_hosts,
-            protected_agent_links,
-            unassigned_agents,
-            never_succeeded_targets,
-            never_succeeded_agents,
-            disabled_only_agents,
-        },
-        running_operations,
-        upcoming_schedules,
-        repository_capacity,
-    }))
+        .collect()
 }
 
 fn target_finding(

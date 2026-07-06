@@ -232,7 +232,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
     } = args;
     let task_registry = shared::task_registry::TaskRegistry::default();
 
-    let user_rate_limiter = UserRateLimiter::new(120, Duration::from_secs(60));
+    let user_rate_limiter = UserRateLimiter::new(60, Duration::from_secs(60));
 
     AppState {
         pool,

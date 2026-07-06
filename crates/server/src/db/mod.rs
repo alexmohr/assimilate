@@ -4465,13 +4465,10 @@ pub async fn record_failed_login_and_check_lockout(
 
     if count >= max_account_failures {
         let escalation_level = (count - 1) / max_account_failures;
-        let locked_until = Utc::now()
-            + chrono::Duration::minutes(
-                LOCKOUT_DURATIONS
-                    .get(usize::try_from(escalation_level).unwrap_or(0))
-                    .copied()
-                    .unwrap_or(1),
-            );
+        let tier_index = usize::try_from(escalation_level)
+            .unwrap_or(LOCKOUT_DURATIONS.len() - 1)
+            .min(LOCKOUT_DURATIONS.len() - 1);
+        let locked_until = Utc::now() + chrono::Duration::minutes(LOCKOUT_DURATIONS[tier_index]);
 
         sqlx::query!(
             "UPDATE users SET locked_until = $1 WHERE username = $2",

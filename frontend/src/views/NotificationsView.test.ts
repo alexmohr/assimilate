@@ -197,4 +197,36 @@ describe('NotificationsView', () => {
     await flushPromises()
     expect(document.body.textContent).toContain('New Channel')
   })
+
+  it('switches to webhook config in add wizard', async () => {
+    setupDefaultMocks()
+    const wrapper = renderWithPlugins(NotificationsView)
+    await flushPromises()
+    const newBtn = wrapper.findAll('button').find((b) => b.text().includes('New'))
+    await newBtn!.trigger('click')
+    await flushPromises()
+
+    // Switch channel type to webhook - exercises resetAddChannelConfig and createWebhookConfig
+    const typeSelect = document.body.querySelector('select')
+    typeSelect!.value = 'webhook'
+    typeSelect!.dispatchEvent(new Event('change', { bubbles: true }))
+    await flushPromises()
+
+    // Webhook URL input should render - exercises addChannelWebhookCfg and isWebhookConfig
+    expect(document.body.textContent).toContain('URL')
+  })
+
+  it('opens edit dialog for webhook channel', async () => {
+    setupDefaultMocks()
+    const wrapper = renderWithPlugins(NotificationsView)
+    await flushPromises()
+
+    // Find the Edit button for the webhook channel (first in list)
+    const editBtns = wrapper.findAll('button').filter((b) => b.text() === 'Edit')
+    await editBtns[0].trigger('click')
+    await flushPromises()
+
+    // Edit dialog should show webhook URL field - exercises editChannelWebhookCfg and isWebhookConfig
+    expect(document.body.textContent).toContain('URL')
+  })
 })

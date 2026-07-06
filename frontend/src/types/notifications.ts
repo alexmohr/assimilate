@@ -24,8 +24,9 @@ export type NotificationRule = Omit<
   agent_id: number | null
   event_type: NotificationEventType
 }
-export type NotificationDelivery = Omit<NotificationDeliveryResponse, 'status'> & {
+export type NotificationDelivery = Omit<NotificationDeliveryResponse, 'status' | 'event_type'> & {
   status: 'pending' | 'sent' | 'failed'
+  event_type: NotificationEventType
 }
 export type PushSubscriptionInfo = PushSubscriptionResponse
 

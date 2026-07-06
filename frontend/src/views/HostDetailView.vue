@@ -89,7 +89,6 @@ const filteredSortedReports = computed(() => {
 // Tags
 const allAgentTags = ref<TagRow[]>([])
 const agentTagIds = ref<number[]>([])
-const tagsLoading = ref(false)
 const newTagName = ref('')
 const newTagColor = ref('#6b7280')
 const createTagLoading = ref(false)
@@ -649,7 +648,6 @@ async function restartAgent(): Promise<void> {
 }
 
 async function loadTags(): Promise<void> {
-  tagsLoading.value = true
   try {
     const [tagsRes, agentTagsRes] = await Promise.all([
       apiClient.get<TagRow[]>('/tags', { params: { scope: 'host' } }),
@@ -662,8 +660,6 @@ async function loadTags(): Promise<void> {
     agentTagIds.value = agentTagsRes.data.map((t) => t.id)
   } catch (e: unknown) {
     logger.error('loadTags failed', e)
-  } finally {
-    tagsLoading.value = false
   }
 }
 

@@ -36,6 +36,7 @@ import type {
   NotificationRule,
   NotificationEventType,
   ChannelType,
+  ChannelConfig,
   EmailConfig,
   WebhookConfig,
   NotificationDelivery,
@@ -65,15 +66,7 @@ const wizardStep = ref(1)
 const addChannelForm = ref<CreateChannelRequest>({
   name: '',
   channel_type: 'email',
-  config: {
-    smtp_host: '',
-    smtp_port: 587,
-    smtp_user: '',
-    smtp_password: '',
-    from_address: '',
-    to_addresses: [],
-    security: 'starttls',
-  } as EmailConfig,
+  config: createEmailConfig(),
   enabled: true,
 })
 const wizardEvents = ref<NotificationEventType[]>([])
@@ -87,12 +80,14 @@ const addChannelFormValid = computed((): boolean => {
   if (!form.name.trim()) return false
   if (form.channel_type === 'web_push' && !vapidConfigured.value) return false
   if (form.channel_type === 'email') {
-    const cfg = form.config as EmailConfig
-    if (!cfg.smtp_host.trim() || !cfg.from_address.trim() || !toAddressesInput.value.trim())
+    if (
+      !addChannelEmailCfg.value.smtp_host.trim() ||
+      !addChannelEmailCfg.value.from_address.trim() ||
+      !toAddressesInput.value.trim()
+    )
       return false
   } else if (form.channel_type === 'webhook') {
-    const cfg = form.config as WebhookConfig
-    if (!cfg.url.trim()) return false
+    if (!addChannelWebhookCfg.value.url.trim()) return false
   }
   return true
 })
@@ -143,6 +138,58 @@ const EVENT_TYPES: NotificationEventType[] = [
 ]
 
 const CHANNEL_TYPES: ChannelType[] = ['email', 'webhook', 'web_push']
+
+function createEmailConfig(): EmailConfig {
+  return {
+    smtp_host: '',
+    smtp_port: 587,
+    smtp_user: '',
+    smtp_password: '',
+    from_address: '',
+    to_addresses: [],
+    security: 'starttls',
+  }
+}
+
+function createWebhookConfig(): WebhookConfig {
+  return { url: '', headers: {} }
+}
+
+function isEmailConfig(config: ChannelConfig): config is EmailConfig {
+  return 'smtp_host' in config && 'smtp_port' in config
+}
+function isWebhookConfig(config: ChannelConfig): config is WebhookConfig {
+  return 'url' in config
+}
+
+const addChannelEmailCfg = computed((): EmailConfig => {
+  if (isEmailConfig(addChannelForm.value.config)) return addChannelForm.value.config
+  return createEmailConfig()
+})
+const addChannelWebhookCfg = computed((): WebhookConfig => {
+  if (isWebhookConfig(addChannelForm.value.config)) return addChannelForm.value.config
+  return createWebhookConfig()
+})
+const editChannelEmailCfg = computed((): EmailConfig => {
+  const config = editChannelForm.value.config
+  if (config != null && isEmailConfig(config)) return config
+  return createEmailConfig()
+})
+const editChannelWebhookCfg = computed((): WebhookConfig => {
+  const config = editChannelForm.value.config
+  if (config != null && isWebhookConfig(config)) return config
+  return createWebhookConfig()
+})
+
+const activeEventsChannel = computed((): NotificationChannel | undefined => {
+  if (eventsModalChannelId.value == null) return undefined
+  return channels.value.find((c) => c.id === eventsModalChannelId.value)
+})
+
+const activeScopeChannel = computed((): NotificationChannel | undefined => {
+  if (scopeModalChannelId.value == null) return undefined
+  return channels.value.find((c) => c.id === scopeModalChannelId.value)
+})
 
 function eventTypeLabel(et: NotificationEventType): string {
   return et
@@ -287,18 +334,10 @@ async function loadScopeOptions(): Promise<void> {
 function resetAddChannelConfig(): void {
   const ct = addChannelForm.value.channel_type
   if (ct === 'email') {
-    addChannelForm.value.config = {
-      smtp_host: '',
-      smtp_port: 587,
-      smtp_user: '',
-      smtp_password: '',
-      from_address: '',
-      to_addresses: [],
-      security: 'starttls',
-    } as EmailConfig
+    addChannelForm.value.config = createEmailConfig()
     toAddressesInput.value = ''
   } else if (ct === 'webhook') {
-    addChannelForm.value.config = { url: '', headers: {} } as WebhookConfig
+    addChannelForm.value.config = createWebhookConfig()
   } else {
     addChannelForm.value.config = {}
   }
@@ -308,15 +347,7 @@ function openAddChannel(): void {
   addChannelForm.value = {
     name: '',
     channel_type: 'email',
-    config: {
-      smtp_host: '',
-      smtp_port: 587,
-      smtp_user: '',
-      smtp_password: '',
-      from_address: '',
-      to_addresses: [],
-      security: 'starttls',
-    } as EmailConfig,
+    config: createEmailConfig(),
     enabled: true,
   }
   toAddressesInput.value = ''
@@ -334,8 +365,7 @@ async function submitAddChannel(): Promise<void> {
     return
   }
   if (addChannelForm.value.channel_type === 'email') {
-    const cfg = addChannelForm.value.config as EmailConfig
-    cfg.to_addresses = toAddressesInput.value
+    addChannelEmailCfg.value.to_addresses = toAddressesInput.value
       .split(',')
       .map((s) => s.trim())
       .filter((s) => s.length > 0)
@@ -344,8 +374,7 @@ async function submitAddChannel(): Promise<void> {
   addChannelError.value = ''
   try {
     if (addChannelForm.value.channel_type === 'email') {
-      const cfg = addChannelForm.value.config as EmailConfig
-      const valid = await validateSmtpCredentials(cfg)
+      const valid = await validateSmtpCredentials(addChannelEmailCfg.value)
       if (!valid) {
         addChannelError.value = smtpValidationResult.value?.message ?? 'SMTP validation failed'
         return
@@ -409,8 +438,8 @@ function openEditChannel(channel: NotificationChannel): void {
     config: { ...channel.config },
     enabled: channel.enabled,
   }
-  if (channel.channel_type === 'email') {
-    editToAddressesInput.value = (channel.config as EmailConfig).to_addresses.join(', ')
+  if (channel.channel_type === 'email' && 'smtp_host' in channel.config) {
+    editToAddressesInput.value = channel.config.to_addresses.join(', ')
   }
   editChannelError.value = ''
   smtpValidationResult.value = null
@@ -419,14 +448,13 @@ function openEditChannel(channel: NotificationChannel): void {
 
 function editChannelType(): ChannelType {
   const ch = channels.value.find((c) => c.id === editChannelId.value)
-  return (ch?.channel_type ?? 'email') as ChannelType
+  return ch?.channel_type ?? 'email'
 }
 
 async function submitEditChannel(): Promise<void> {
   if (editChannelId.value === null) return
   if (editChannelType() === 'email' && editChannelForm.value.config) {
-    const cfg = editChannelForm.value.config as EmailConfig
-    cfg.to_addresses = editToAddressesInput.value
+    editChannelEmailCfg.value.to_addresses = editToAddressesInput.value
       .split(',')
       .map((s) => s.trim())
       .filter((s) => s.length > 0)
@@ -435,8 +463,7 @@ async function submitEditChannel(): Promise<void> {
   editChannelError.value = ''
   try {
     if (editChannelType() === 'email' && editChannelForm.value.config) {
-      const cfg = editChannelForm.value.config as EmailConfig
-      const valid = await validateSmtpCredentials(cfg)
+      const valid = await validateSmtpCredentials(editChannelEmailCfg.value)
       if (!valid) {
         editChannelError.value = smtpValidationResult.value?.message ?? 'SMTP validation failed'
         return
@@ -568,14 +595,6 @@ function openScopeModal(channelId: number): void {
   scopeModalChannelId.value = channelId
   scopeSearch.value = ''
   showScopeModal.value = true
-}
-
-function eventsModalChannel(): NotificationChannel | undefined {
-  return channels.value.find((c) => c.id === eventsModalChannelId.value)
-}
-
-function scopeModalChannel(): NotificationChannel | undefined {
-  return channels.value.find((c) => c.id === scopeModalChannelId.value)
 }
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
@@ -728,14 +747,12 @@ onMounted(() => {
           <div class="channel-header">
             <div class="channel-info">
               <component
-                :is="channelTypeIcon(channel.channel_type as ChannelType)"
+                :is="channelTypeIcon(channel.channel_type)"
                 :size="16"
                 class="channel-icon"
               />
               <span class="channel-name">{{ channel.name }}</span>
-              <span class="channel-type-badge">{{
-                channelTypeLabel(channel.channel_type as ChannelType)
-              }}</span>
+              <span class="channel-type-badge">{{ channelTypeLabel(channel.channel_type) }}</span>
             </div>
             <div class="channel-actions">
               <button
@@ -828,7 +845,7 @@ onMounted(() => {
               :key="d.id"
             >
               <td>{{ channelNameById(d.channel_id) }}</td>
-              <td>{{ eventTypeLabel(d.event_type as NotificationEventType) }}</td>
+              <td>{{ eventTypeLabel(d.event_type) }}</td>
               <td>
                 <span
                   class="delivery-status"
@@ -896,7 +913,7 @@ onMounted(() => {
                 <div class="field">
                   <label class="field-label">SMTP Host <span class="required">*</span></label>
                   <input
-                    v-model="(addChannelForm.config as EmailConfig).smtp_host"
+                    v-model="addChannelEmailCfg.smtp_host"
                     class="input mono"
                     placeholder="smtp.example.com"
                   />
@@ -905,14 +922,14 @@ onMounted(() => {
                   <div class="field">
                     <label class="field-label">SMTP User</label>
                     <input
-                      v-model="(addChannelForm.config as EmailConfig).smtp_user"
+                      v-model="addChannelEmailCfg.smtp_user"
                       class="input"
                     />
                   </div>
                   <div class="field field-narrow">
                     <label class="field-label">Port</label>
                     <input
-                      v-model.number="(addChannelForm.config as EmailConfig).smtp_port"
+                      v-model.number="addChannelEmailCfg.smtp_port"
                       class="input"
                       type="number"
                     />
@@ -921,7 +938,7 @@ onMounted(() => {
                 <div class="field">
                   <label class="field-label">SMTP Password</label>
                   <input
-                    v-model="(addChannelForm.config as EmailConfig).smtp_password"
+                    v-model="addChannelEmailCfg.smtp_password"
                     class="input"
                     type="password"
                   />
@@ -929,7 +946,7 @@ onMounted(() => {
                 <div class="field">
                   <label class="field-label">From Address <span class="required">*</span></label>
                   <input
-                    v-model="(addChannelForm.config as EmailConfig).from_address"
+                    v-model="addChannelEmailCfg.from_address"
                     class="input"
                     placeholder="noreply@example.com"
                   />
@@ -946,7 +963,7 @@ onMounted(() => {
                 <div class="field">
                   <label class="field-label">Security</label>
                   <select
-                    v-model="(addChannelForm.config as EmailConfig).security"
+                    v-model="addChannelEmailCfg.security"
                     class="input"
                   >
                     <option value="starttls">STARTTLS (port 587)</option>
@@ -958,7 +975,7 @@ onMounted(() => {
                   <button
                     class="btn btn-sm btn-ghost"
                     :disabled="smtpValidating"
-                    @click="validateSmtpCredentials(addChannelForm.config as EmailConfig)"
+                    @click="validateSmtpCredentials(addChannelEmailCfg)"
                   >
                     {{ smtpValidating ? 'Testing...' : 'Test Connection' }}
                   </button>
@@ -977,7 +994,7 @@ onMounted(() => {
                 <div class="field">
                   <label class="field-label">URL <span class="required">*</span></label>
                   <input
-                    v-model="(addChannelForm.config as WebhookConfig).url"
+                    v-model="addChannelWebhookCfg.url"
                     class="input mono"
                     placeholder="https://hooks.example.com/notify"
                   />
@@ -1163,7 +1180,7 @@ onMounted(() => {
               <div class="field">
                 <label class="field-label">SMTP Host</label>
                 <input
-                  v-model="(editChannelForm.config as EmailConfig).smtp_host"
+                  v-model="editChannelEmailCfg.smtp_host"
                   class="input mono"
                 />
               </div>
@@ -1171,14 +1188,14 @@ onMounted(() => {
                 <div class="field">
                   <label class="field-label">SMTP User</label>
                   <input
-                    v-model="(editChannelForm.config as EmailConfig).smtp_user"
+                    v-model="editChannelEmailCfg.smtp_user"
                     class="input"
                   />
                 </div>
                 <div class="field field-narrow">
                   <label class="field-label">Port</label>
                   <input
-                    v-model.number="(editChannelForm.config as EmailConfig).smtp_port"
+                    v-model.number="editChannelEmailCfg.smtp_port"
                     class="input"
                     type="number"
                   />
@@ -1187,7 +1204,7 @@ onMounted(() => {
               <div class="field">
                 <label class="field-label">SMTP Password</label>
                 <input
-                  v-model="(editChannelForm.config as EmailConfig).smtp_password"
+                  v-model="editChannelEmailCfg.smtp_password"
                   class="input"
                   type="password"
                 />
@@ -1195,7 +1212,7 @@ onMounted(() => {
               <div class="field">
                 <label class="field-label">From Address</label>
                 <input
-                  v-model="(editChannelForm.config as EmailConfig).from_address"
+                  v-model="editChannelEmailCfg.from_address"
                   class="input"
                 />
               </div>
@@ -1211,7 +1228,7 @@ onMounted(() => {
               <div class="field">
                 <label class="field-label">Security</label>
                 <select
-                  v-model="(editChannelForm.config as EmailConfig).security"
+                  v-model="editChannelEmailCfg.security"
                   class="input"
                 >
                   <option value="starttls">STARTTLS (port 587)</option>
@@ -1223,7 +1240,7 @@ onMounted(() => {
                 <button
                   class="btn btn-sm btn-ghost"
                   :disabled="smtpValidating"
-                  @click="validateSmtpCredentials(editChannelForm.config as EmailConfig)"
+                  @click="validateSmtpCredentials(editChannelEmailCfg)"
                 >
                   {{ smtpValidating ? 'Testing...' : 'Test Connection' }}
                 </button>
@@ -1242,7 +1259,7 @@ onMounted(() => {
               <div class="field">
                 <label class="field-label">URL</label>
                 <input
-                  v-model="(editChannelForm.config as WebhookConfig).url"
+                  v-model="editChannelWebhookCfg.url"
                   class="input mono"
                 />
               </div>
@@ -1333,13 +1350,13 @@ onMounted(() => {
     <!-- Events Edit Modal -->
     <Teleport to="body">
       <div
-        v-if="showEventsModal && eventsModalChannel()"
+        v-if="showEventsModal && activeEventsChannel"
         class="overlay"
         @click.self="showEventsModal = false"
       >
         <div class="dialog">
           <div class="dialog-header">
-            <h2 class="dialog-title">Events — {{ eventsModalChannel()!.name }}</h2>
+            <h2 class="dialog-title">Events — {{ activeEventsChannel.name }}</h2>
             <button
               class="close-btn"
               @click="showEventsModal = false"
@@ -1358,9 +1375,9 @@ onMounted(() => {
                 class="event-item"
               >
                 <ToggleSwitch
-                  :model-value="isEventEnabled(eventsModalChannelId!, et)"
-                  :disabled="isRuleToggling(eventsModalChannelId!, et)"
-                  @update:model-value="toggleRule(eventsModalChannelId!, et)"
+                  :model-value="isEventEnabled(activeEventsChannel.id, et)"
+                  :disabled="isRuleToggling(activeEventsChannel.id, et)"
+                  @update:model-value="toggleRule(activeEventsChannel.id, et)"
                 />
                 <span class="event-label">{{ eventTypeLabel(et) }}</span>
               </div>
@@ -1381,13 +1398,13 @@ onMounted(() => {
     <!-- Scope Edit Modal -->
     <Teleport to="body">
       <div
-        v-if="showScopeModal && scopeModalChannel()"
+        v-if="showScopeModal && activeScopeChannel"
         class="overlay"
         @click.self="showScopeModal = false"
       >
         <div class="dialog">
           <div class="dialog-header">
-            <h2 class="dialog-title">Scope — {{ scopeModalChannel()!.name }}</h2>
+            <h2 class="dialog-title">Scope — {{ activeScopeChannel.name }}</h2>
             <button
               class="close-btn"
               @click="showScopeModal = false"
@@ -1418,8 +1435,8 @@ onMounted(() => {
                 >
                   <input
                     type="checkbox"
-                    :checked="isScopeSelected(scopeModalChannel()!, 'repo_ids', opt.id)"
-                    @change="toggleScopeItem(scopeModalChannel()!, 'repo_ids', opt.id)"
+                    :checked="isScopeSelected(activeScopeChannel, 'repo_ids', opt.id)"
+                    @change="toggleScopeItem(activeScopeChannel, 'repo_ids', opt.id)"
                   />
                   <span>{{ opt.label }}</span>
                 </label>
@@ -1436,8 +1453,8 @@ onMounted(() => {
                 >
                   <input
                     type="checkbox"
-                    :checked="isScopeSelected(scopeModalChannel()!, 'agent_ids', opt.id)"
-                    @change="toggleScopeItem(scopeModalChannel()!, 'agent_ids', opt.id)"
+                    :checked="isScopeSelected(activeScopeChannel, 'agent_ids', opt.id)"
+                    @change="toggleScopeItem(activeScopeChannel, 'agent_ids', opt.id)"
                   />
                   <span>{{ opt.label }}</span>
                 </label>
@@ -1454,8 +1471,8 @@ onMounted(() => {
                 >
                   <input
                     type="checkbox"
-                    :checked="isScopeSelected(scopeModalChannel()!, 'schedule_ids', opt.id)"
-                    @change="toggleScopeItem(scopeModalChannel()!, 'schedule_ids', opt.id)"
+                    :checked="isScopeSelected(activeScopeChannel, 'schedule_ids', opt.id)"
+                    @change="toggleScopeItem(activeScopeChannel, 'schedule_ids', opt.id)"
                   />
                   <span>{{ opt.label }}</span>
                 </label>

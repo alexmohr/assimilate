@@ -1399,10 +1399,7 @@ mod tests {
             ui_broadcast,
             tunnel_manager,
             log_buffer: crate::log_buffer::LogBuffer::default(),
-            notification_service: crate::notifications::NotificationService::new(
-                pool,
-                reqwest::Client::new(),
-            ),
+            notification_service: crate::notifications::NotificationService::new(pool),
             completion_bus: crate::ws::completion_bus::CompletionBus::new(),
             repo_op_tracker: crate::repo_op_tracker::RepoOpTracker::default(),
             repo_lock: crate::RepoLock::default(),

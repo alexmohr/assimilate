@@ -95,7 +95,7 @@ async fn main() -> Result<(), StartupError> {
     let ui_broadcast = server::ws::ui_broadcast::UiBroadcast::new();
     let tunnel_manager = TunnelManager::new(pool.clone(), ui_broadcast.clone(), server_addr);
 
-    let notification_service = NotificationService::new(pool.clone(), reqwest::Client::new());
+    let notification_service = NotificationService::new(pool.clone());
     if let Err(e) = notification_service.ensure_vapid_keys().await {
         tracing::warn!("failed to ensure VAPID keys: {e}");
     }

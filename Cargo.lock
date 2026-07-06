@@ -4361,6 +4361,7 @@ dependencies = [
  "glob-match",
  "http-body-util",
  "ipnetwork",
+ "isahc",
  "lettre",
  "lz4_flex",
  "nix 0.29.0",

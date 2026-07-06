@@ -297,11 +297,10 @@ pub async fn create_repo(
             compression: &compression,
             encryption: &encryption,
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await?;
-    db::update_repo_ssh_host_key(&state.pool, repo.id, &ssh_host_key).await?;
-
     let repo_id = repo.id;
     let pool = state.pool.clone();
     let encryption_key = state.encryption_key;
@@ -878,6 +877,7 @@ pub async fn init_repo(
             compression: &compression,
             encryption: &encryption,
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await?;

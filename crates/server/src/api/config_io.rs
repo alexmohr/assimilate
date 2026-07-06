@@ -5,10 +5,14 @@ use std::collections::{HashMap, HashSet};
 
 use axum::{Json, extract::State};
 use chrono::Utc;
-use shared::responses::{
-    ConfigExportResponse as ConfigExport, HostExportResponse as HostExport,
-    ImportResultResponse as ImportResult, ScheduleExportResponse as ScheduleExport,
-    ScheduleTargetExportResponse as ScheduleTargetExport,
+use shared::{
+    crypto::decrypt_passphrase,
+    responses::{
+        ConfigExportResponse as ConfigExport, HostExportResponse as HostExport,
+        ImportResultResponse as ImportResult, RepoExportResponse as RepoExport,
+        ScheduleExportResponse as ScheduleExport,
+        ScheduleTargetExportResponse as ScheduleTargetExport,
+    },
 };
 
 use super::auth::RequireAdmin;
@@ -25,7 +29,7 @@ const EXPORT_VERSION: u32 = 1;
     path = "/api/config/export",
     tag = "Config",
     operation_id = "exportConfig",
-    summary = "Export all hosts and schedules as a portable JSON snapshot",
+    summary = "Export all hosts, schedules, and repositories as a portable JSON snapshot",
     responses(
         (status = 200, description = "Config export", body = ConfigExport),
         (status = 401, description = "Unauthorized"),
@@ -148,11 +152,53 @@ pub async fn export_config(
         });
     }
 
+    // Export repositories with passphrases, quotas, and tags
+    let mut repo_exports = Vec::new();
+    for repo in &repos {
+        let encrypted_passphrase = db::get_repo_passphrase(&state.pool, repo.id).await?;
+        let passphrase = decrypt_passphrase(&encrypted_passphrase, &state.encryption_key)?;
+
+        let quota = db::quota::get_quota(&state.pool, repo.id)
+            .await
+            .unwrap_or(None);
+        let tags = db::list_tags_for_repo(&state.pool, repo.id)
+            .await?
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+
+        repo_exports.push(RepoExport {
+            name: repo.name.clone(),
+            repo_path: repo.repo_path.clone(),
+            ssh_user: repo.ssh_user.clone(),
+            ssh_host: repo.ssh_host.clone(),
+            ssh_port: repo.ssh_port,
+            passphrase,
+            compression: repo.compression.clone(),
+            encryption: repo.encryption.clone(),
+            enabled: repo.enabled,
+            sync_schedule: repo.sync_schedule.clone(),
+            ssh_host_key: None, // queried separately below
+            quota_warn_bytes: quota.as_ref().and_then(|q| q.warn_bytes),
+            quota_critical_bytes: quota.as_ref().and_then(|q| q.critical_bytes),
+            tags,
+        });
+    }
+
+    // Query SSH host keys for all repos
+    for repo_export in &mut repo_exports {
+        if let Ok(Some(host_key)) = db::get_repo_ssh_host_key(&state.pool, &repo_export.name).await
+        {
+            repo_export.ssh_host_key = Some(host_key);
+        }
+    }
+
     Ok(Json(ConfigExport {
         version: EXPORT_VERSION,
         exported_at: Utc::now(),
         hosts,
         schedules,
+        repos: repo_exports,
     }))
 }
 
@@ -161,7 +207,7 @@ pub async fn export_config(
     path = "/api/config/import",
     tag = "Config",
     operation_id = "importConfig",
-    summary = "Import hosts and schedules from a JSON export",
+    summary = "Import hosts, schedules, and repositories from a JSON export",
     request_body = ConfigExport,
     responses(
         (status = 200, description = "Import results", body = ImportResult),
@@ -186,9 +232,103 @@ pub async fn import_config(
         hosts_created: 0,
         hosts_updated: 0,
         schedules_created: 0,
+        repos_created: 0,
+        repos_updated: 0,
         warnings: Vec::new(),
     };
 
+    // Phase 1: Import repositories (before schedules, which reference them by name)
+    let existing_repos = db::list_all_repos(&state.pool).await?;
+    let mut repo_name_to_id: HashMap<&str, i64> =
+        existing_repos.iter().map(|r| (r.name.as_str(), r.id)).collect();
+
+    for repo_export in &payload.repos {
+        let passphrase_encrypted =
+            shared::crypto::encrypt_passphrase(&repo_export.passphrase, &state.encryption_key)?;
+
+        if let Some(&existing_id) = repo_name_to_id.get(repo_export.name.as_str()) {
+            // Update existing repo — skip passphrase change
+            db::update_repo(
+                &state.pool,
+                &db::UpdateRepoParams {
+                    repo_id: existing_id,
+                    name: &repo_export.name,
+                    repo_path: &repo_export.repo_path,
+                    ssh_user: &repo_export.ssh_user,
+                    ssh_host: &repo_export.ssh_host,
+                    ssh_port: repo_export.ssh_port,
+                    compression: &repo_export.compression,
+                    encryption: &repo_export.encryption,
+                    enabled: repo_export.enabled,
+                    sync_schedule: repo_export.sync_schedule.as_deref(),
+                },
+            )
+            .await?;
+
+            // Update SSH host key if provided
+            if let Some(host_key) = &repo_export.ssh_host_key {
+                db::update_repo_ssh_host_key(&state.pool, existing_id, host_key).await?;
+            }
+
+            // Upsert quota
+            db::quota::upsert_quota(
+                &state.pool,
+                existing_id,
+                repo_export.quota_warn_bytes,
+                repo_export.quota_critical_bytes,
+                true,
+            )
+            .await
+            .map_err(ApiError::Database)?;
+
+            // Sync tags
+            sync_repo_tags(&state.pool, existing_id, &repo_export.tags).await?;
+
+            result.repos_updated += 1;
+        } else {
+            // Create new repo
+            let new_repo = db::insert_repo(
+                &state.pool,
+                &db::InsertRepoParams {
+                    name: &repo_export.name,
+                    repo_path: &repo_export.repo_path,
+                    ssh_user: &repo_export.ssh_user,
+                    ssh_host: &repo_export.ssh_host,
+                    ssh_port: repo_export.ssh_port,
+                    passphrase_encrypted: &passphrase_encrypted,
+                    compression: &repo_export.compression,
+                    encryption: &repo_export.encryption,
+                    owner_id: None,
+                    sync_schedule: repo_export.sync_schedule.as_deref(),
+                },
+            )
+            .await?;
+
+            // Set SSH host key if provided
+            if let Some(host_key) = &repo_export.ssh_host_key {
+                db::update_repo_ssh_host_key(&state.pool, new_repo.id, host_key).await?;
+            }
+
+            // Upsert quota
+            db::quota::upsert_quota(
+                &state.pool,
+                new_repo.id,
+                repo_export.quota_warn_bytes,
+                repo_export.quota_critical_bytes,
+                true,
+            )
+            .await
+            .map_err(ApiError::Database)?;
+
+            // Sync tags
+            sync_repo_tags(&state.pool, new_repo.id, &repo_export.tags).await?;
+
+            repo_name_to_id.insert(repo_export.name.as_str(), new_repo.id);
+            result.repos_created += 1;
+        }
+    }
+
+    // Phase 2: Import hosts
     let existing_agents = db::list_agents(&state.pool, true).await?;
     let mut hostname_to_id: HashMap<String, i64> = existing_agents
         .iter()
@@ -248,6 +388,7 @@ pub async fn import_config(
         }
     }
 
+    // Phase 3: Import schedules (repo_name_to_id now includes newly created repos)
     let repos = db::list_all_repos(&state.pool).await?;
     let repo_name_to_id: HashMap<&str, i64> =
         repos.iter().map(|r| (r.name.as_str(), r.id)).collect();
@@ -375,6 +516,61 @@ pub async fn import_config(
     Ok(Json(result))
 }
 
+/// Look up a tag by name in the given scope, creating it if it does not exist.
+async fn get_or_create_tag(
+    pool: &sqlx::PgPool,
+    name: &str,
+    scope: &str,
+) -> Result<db::TagRow, ApiError> {
+    // Try to find existing tag
+    let existing = sqlx::query_as!(
+        db::TagRow,
+        "SELECT id, name, color, scope FROM tags WHERE name = $1 AND scope = $2",
+        name,
+        scope,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    if let Some(tag) = existing {
+        return Ok(tag);
+    }
+
+    // Create new tag with a deterministic color based on the name hash
+    let color = tag_color_from_name(name);
+    db::insert_tag(pool, name, &color, scope).await
+}
+
+fn tag_color_from_name(name: &str) -> String {
+    // Simple hash-based color assignment for imported tags
+    let hash: u64 = name.bytes().fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(u64::from(b)));
+    let palette = [
+        "#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899",
+        "#06B6D4", "#84CC16", "#F97316", "#6366F1", "#14B8A6", "#E11D48",
+    ];
+    let idx = (hash as usize) % palette.len();
+    palette[idx].to_string()
+}
+
+/// Sync tags for a repo: set tags by name (creating tags as needed).
+async fn sync_repo_tags(
+    pool: &sqlx::PgPool,
+    repo_id: i64,
+    tag_names: &[String],
+) -> Result<(), ApiError> {
+    if tag_names.is_empty() {
+        return Ok(());
+    }
+
+    let mut tag_ids = Vec::new();
+    for name in tag_names {
+        let tag = get_or_create_tag(pool, name, "global").await?;
+        tag_ids.push(tag.id);
+    }
+    db::set_repo_tags(pool, repo_id, &tag_ids).await
+}
+
 #[cfg(test)]
 mod tests {
     use shared::types::{ExecutionMode, OnFailure, ScheduleType};
@@ -426,6 +622,22 @@ mod tests {
                     file_change_patterns: "".to_string(),
                 }],
             }],
+            repos: vec![RepoExport {
+                name: "test-repo".to_string(),
+                repo_path: "/backups/test".to_string(),
+                ssh_user: "root".to_string(),
+                ssh_host: "backup.local".to_string(),
+                ssh_port: 22,
+                passphrase: "test-passphrase".to_string(),
+                compression: "lz4".to_string(),
+                encryption: "repokey-blake2".to_string(),
+                enabled: true,
+                sync_schedule: Some("0 2 * * *".to_string()),
+                ssh_host_key: None,
+                quota_warn_bytes: None,
+                quota_critical_bytes: None,
+                tags: vec![],
+            }],
         };
 
         let json = serde_json::to_string_pretty(&export).expect("serialize");
@@ -445,5 +657,21 @@ mod tests {
             deserialized.schedules[0].targets[0].hostname,
             export.schedules[0].targets[0].hostname
         );
+        // Verify repos roundtrip
+        assert_eq!(deserialized.repos.len(), export.repos.len());
+        assert_eq!(deserialized.repos[0].name, export.repos[0].name);
+        assert_eq!(deserialized.repos[0].passphrase, export.repos[0].passphrase);
+        assert_eq!(
+            deserialized.repos[0].compression,
+            export.repos[0].compression
+        );
+    }
+
+    #[test]
+    fn test_tag_color_from_name_is_deterministic() {
+        let c1 = tag_color_from_name("production");
+        let c2 = tag_color_from_name("production");
+        assert_eq!(c1, c2);
+        assert!(c1.starts_with('#'));
     }
 }

@@ -958,6 +958,7 @@ pub struct InsertRepoParams<'a> {
     pub encryption: &'a str,
     /// Owning user ID, if any.
     pub owner_id: Option<i64>,
+    pub sync_schedule: Option<&'a str>,
 }
 
 /// Parameters for updating an existing repository.
@@ -1293,9 +1294,9 @@ pub async fn insert_repo(
     sqlx::query_as!(
         RepoRow,
         "INSERT INTO repos (name, repo_path, ssh_user, ssh_host, ssh_port, passphrase_encrypted, \
-         compression, encryption, owner_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING \
-         id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, enabled, \
-         owner_id, visibility, sync_schedule",
+         compression, encryption, owner_id, sync_schedule) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, \
+         $9, $10) RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, \
+         encryption, enabled, owner_id, visibility, sync_schedule",
         params.name,
         params.repo_path,
         params.ssh_user,
@@ -1305,6 +1306,7 @@ pub async fn insert_repo(
         params.compression,
         params.encryption,
         params.owner_id,
+        params.sync_schedule,
     )
     .fetch_one(pool)
     .await
@@ -1694,6 +1696,20 @@ pub async fn update_repo_ssh_host_key(
     .await
     .map_err(ApiError::Database)?;
     Ok(())
+}
+
+pub async fn get_repo_ssh_host_key(
+    pool: &PgPool,
+    name: &str,
+) -> Result<Option<String>, ApiError> {
+    let row = sqlx::query_scalar!(
+        "SELECT ssh_host_key FROM repos WHERE name = $1",
+        name,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(row.flatten())
 }
 
 /// # Errors

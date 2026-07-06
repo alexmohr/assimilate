@@ -985,6 +985,7 @@ esac
                 compression: "lz4",
                 encryption: "repokey",
                 owner_id: None,
+                sync_schedule: None,
             },
         )
         .await
@@ -1072,6 +1073,7 @@ esac
                 compression: "lz4",
                 encryption: "none",
                 owner_id: None,
+                sync_schedule: None,
             },
         )
         .await

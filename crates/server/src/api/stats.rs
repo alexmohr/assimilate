@@ -29,7 +29,7 @@ fn percentage_of(part: i64, total: i64) -> f64 {
     if total == 0 {
         return 0.0;
     }
-    let scaled = part.saturating_mul(10_000).saturating_div(total);
+    let scaled = part.saturating_mul(10_000).checked_div(total).unwrap_or(0);
     f64::from(i32::try_from(scaled).unwrap_or(10_000)) / 100.0
 }
 

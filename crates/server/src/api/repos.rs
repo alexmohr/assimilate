@@ -1646,13 +1646,28 @@ async fn refresh_repo_info_stats(
         }
     };
 
-    let stats = &json["cache"]["stats"];
+    let stats = json.get("cache").and_then(|v| v.get("stats"));
     let info_stats = db::RepoInfoStats {
-        original_size: stats["total_size"].as_i64().unwrap_or(0),
-        compressed_size: stats["total_csize"].as_i64().unwrap_or(0),
-        deduplicated_size: stats["unique_csize"].as_i64().unwrap_or(0),
-        total_chunks: stats["total_chunks"].as_i64().unwrap_or(0),
-        unique_chunks: stats["total_unique_chunks"].as_i64().unwrap_or(0),
+        original_size: stats
+            .and_then(|s| s.get("total_size"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
+        compressed_size: stats
+            .and_then(|s| s.get("total_csize"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
+        deduplicated_size: stats
+            .and_then(|s| s.get("unique_csize"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
+        total_chunks: stats
+            .and_then(|s| s.get("total_chunks"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
+        unique_chunks: stats
+            .and_then(|s| s.get("total_unique_chunks"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
         archive_count,
     };
 

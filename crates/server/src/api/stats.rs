@@ -26,7 +26,10 @@ use crate::{AppState, db, error::ApiError};
 /// Computes `(part / total) * 100.0` without using `as` casts.
 /// Uses integer division scaled by 10000 to maintain precision for display percentages.
 fn percentage_of(part: i64, total: i64) -> f64 {
-    let scaled = part.saturating_mul(10_000) / total;
+    if total == 0 {
+        return 0.0;
+    }
+    let scaled = part.saturating_mul(10_000).saturating_div(total);
     f64::from(i32::try_from(scaled).unwrap_or(10_000)) / 100.0
 }
 
@@ -90,7 +93,9 @@ pub async fn dashboard_overview(
         .collect();
     let timezone = db::get_schedule_timezone(&state.pool).await?;
     let now = Utc::now();
-    let due_soon = now + chrono::Duration::hours(2);
+    let due_soon = now
+        .checked_add_signed(chrono::Duration::hours(2))
+        .unwrap_or(now);
 
     let mut findings = targets
         .iter()
@@ -121,7 +126,7 @@ pub async fn dashboard_overview(
             }),
     );
 
-    repositories.iter().for_each(|repo| {
+    for repo in &repositories {
         if repo.enabled_schedule_count.unwrap_or(0) == 0 {
             findings.push(repository_finding(
                 repo,
@@ -159,7 +164,7 @@ pub async fn dashboard_overview(
                     .unwrap_or("Repository import failed"),
             ));
         }
-    });
+    }
     findings.sort_by_key(|finding| severity_rank(&finding.severity));
     findings.retain(|finding| !dismissed.contains(&finding.id));
 
@@ -288,7 +293,7 @@ fn target_finding(
     let overdue_at = target.last_success_at.and_then(|last_success| {
         shared::schedule::calculate_next_run(&target.cron_expression, last_success, timezone)
             .ok()
-            .map(|expected| expected + chrono::Duration::minutes(30))
+            .and_then(|expected| expected.checked_add_signed(chrono::Duration::minutes(30)))
     });
 
     let (kind, severity, status, reason, occurred_at, deadline, destination) =
@@ -757,7 +762,9 @@ fn is_overdue(
     let Ok(expected_next) = shared::schedule::calculate_next_run(cron_expr, last, tz) else {
         return false;
     };
-    Utc::now() > expected_next + grace
+    expected_next
+        .checked_add_signed(grace)
+        .is_some_and(|deadline| Utc::now() > deadline)
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -792,7 +799,11 @@ pub async fn trends(
         .into_iter()
         .map(|row| {
             let dedup_ratio = if row.original_size > 0 {
-                let scaled = row.deduplicated_size.saturating_mul(10_000) / row.original_size;
+                let scaled = row
+                    .deduplicated_size
+                    .saturating_mul(10_000)
+                    .checked_div(row.original_size)
+                    .unwrap_or(0);
                 f64::from(i32::try_from(scaled).unwrap_or(10_000)) / 100.0
             } else {
                 0.0
@@ -968,15 +979,15 @@ pub async fn calendar(
     Query(query): Query<CalendarQuery>,
 ) -> Result<Json<Vec<CalendarDayResponse>>, ApiError> {
     let parts: Vec<&str> = query.month.split('-').collect();
-    if parts.len() != 2 {
+    let [year_str, month_str] = parts.as_slice() else {
         return Err(ApiError::BadRequest(
             "month must be in YYYY-MM format".to_string(),
         ));
-    }
-    let year: i32 = parts[0]
+    };
+    let year: i32 = year_str
         .parse()
         .map_err(|_| ApiError::BadRequest("invalid year".to_string()))?;
-    let month: u32 = parts[1]
+    let month: u32 = month_str
         .parse()
         .map_err(|_| ApiError::BadRequest("invalid month".to_string()))?;
 
@@ -989,9 +1000,12 @@ pub async fn calendar(
     let month_start = chrono::NaiveDate::from_ymd_opt(year, month, 1)
         .ok_or_else(|| ApiError::BadRequest("invalid month".to_string()))?;
     let month_end = if month == 12 {
-        chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
+        year.checked_add(1)
+            .and_then(|y| chrono::NaiveDate::from_ymd_opt(y, 1, 1))
     } else {
-        chrono::NaiveDate::from_ymd_opt(year, month + 1, 1)
+        month
+            .checked_add(1)
+            .and_then(|m| chrono::NaiveDate::from_ymd_opt(year, m, 1))
     }
     .ok_or_else(|| ApiError::BadRequest("invalid month".to_string()))?;
 

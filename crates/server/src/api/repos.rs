@@ -3047,29 +3047,21 @@ async fn run_repo_sync_task(task: RepoSyncTask) {
             let start = std::time::Instant::now();
 
             if reset_first {
-                if let Err(e) = db::delete_all_repo_archive_data(&pool, repo_id).await {
-                    error!(repo_id, error = %e, "failed to delete archive data for reset-and-sync");
-                    if task_state.import_tasks.is_current(repo_id, task_id).await {
-                        let _ = db::set_repo_importing(&pool, repo_id, false).await;
-                        let _ =
-                            db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await;
-                        clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
-                        ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
-                    }
+                let reset_ok = reset_repo_archive_data_before_sync(
+                    &task_state,
+                    &pool,
+                    &ui_broadcast,
+                    repo_id,
+                    task_id,
+                )
+                .await;
+                if !reset_ok {
                     return;
-                }
-                if let Err(e) = db::delete_orphaned_placeholder_agents(&pool).await {
-                    warn!(repo_id, error = %e, "failed to clean up orphaned placeholder agents");
                 }
             }
 
-            let result = sync_existing_archives(
-                &pool,
-                &encryption_key,
-                repo_id,
-                &ui_broadcast,
-            )
-            .await;
+            let result =
+                sync_existing_archives(&pool, &encryption_key, repo_id, &ui_broadcast).await;
             let elapsed = start.elapsed();
 
             let (imported, removed) = match result {
@@ -3078,48 +3070,32 @@ async fn run_repo_sync_task(task: RepoSyncTask) {
                     counts
                 }
                 Err(e) => {
-                    let msg = format!(
-                        "{operation_label} failed for '{repo_name}' after {:.1}s: {e}",
-                        elapsed.as_secs_f64()
-                    );
-                    error!("{msg}");
-                    let _ =
-                        db::insert_system_event(&pool, "repo_sync_failed", None, &msg).await;
-                    if task_state.import_tasks.is_current(repo_id, task_id).await {
-                        let _ =
-                            db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}")))
-                                .await;
-                        let _ = db::set_repo_importing(&pool, repo_id, false).await;
-                        clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
-                        ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
-                    }
+                    handle_repo_sync_failure(
+                        &task_state,
+                        &pool,
+                        &ui_broadcast,
+                        repo_id,
+                        &repo_name,
+                        operation_label,
+                        task_id,
+                        elapsed,
+                        &e,
+                    )
+                    .await;
                     return;
                 }
             };
 
-            let duration_secs = elapsed.as_secs();
-            let msg = format!(
-                "{operation_label} completed for '{repo_name}': imported {imported}, removed \
-                 {removed} archives in {duration_secs}s"
-            );
-
-            if elapsed > SYNC_WARN_DURATION {
-                error!(
-                    repo_id,
-                    duration_secs,
-                    "{operation_label} exceeded {}s threshold",
-                    SYNC_WARN_DURATION.as_secs()
-                );
-                let warn_msg = format!(
-                    "{operation_label} for '{repo_name}' took {duration_secs}s (exceeds {}s \
-                     threshold)",
-                    SYNC_WARN_DURATION.as_secs()
-                );
-                let _ = db::insert_system_event(&pool, "repo_sync_slow", None, &warn_msg).await;
-            }
-
-            info!("{msg}");
-            let _ = db::insert_system_event(&pool, "repo_sync", None, &msg).await;
+            log_repo_sync_completion(
+                &pool,
+                repo_id,
+                &repo_name,
+                operation_label,
+                imported,
+                removed,
+                elapsed,
+            )
+            .await;
 
             if !task_state.import_tasks.is_current(repo_id, task_id).await {
                 return;
@@ -3146,6 +3122,95 @@ async fn run_repo_sync_task(task: RepoSyncTask) {
 
     task_state.import_tasks.finish(repo_id, task_id).await;
     clear_server_sync_op(&task_state, repo_id).await;
+}
+
+/// Wipes existing archive metadata for a `reset-and-sync` before the
+/// incremental sync runs. Returns `false` (after cleaning up importing
+/// state) if the deletion itself failed, signalling the caller to abort.
+async fn reset_repo_archive_data_before_sync(
+    task_state: &AppState,
+    pool: &PgPool,
+    ui_broadcast: &UiBroadcast,
+    repo_id: i64,
+    task_id: u64,
+) -> bool {
+    if let Err(e) = db::delete_all_repo_archive_data(pool, repo_id).await {
+        error!(repo_id, error = %e, "failed to delete archive data for reset-and-sync");
+        if task_state.import_tasks.is_current(repo_id, task_id).await {
+            let _ = db::set_repo_importing(pool, repo_id, false).await;
+            let _ = db::set_repo_import_error(pool, repo_id, Some(&format!("{e}"))).await;
+            clear_import_progress_state(pool, ui_broadcast, repo_id).await;
+            ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
+        }
+        return false;
+    }
+    if let Err(e) = db::delete_orphaned_placeholder_agents(pool).await {
+        warn!(repo_id, error = %e, "failed to clean up orphaned placeholder agents");
+    }
+    true
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "grouping these into a struct would obscure the call site more than it would clarify \
+              it; all params are single-use scalars/refs from the caller's own locals"
+)]
+async fn handle_repo_sync_failure(
+    task_state: &AppState,
+    pool: &PgPool,
+    ui_broadcast: &UiBroadcast,
+    repo_id: i64,
+    repo_name: &str,
+    operation_label: &str,
+    task_id: u64,
+    elapsed: Duration,
+    e: &ApiError,
+) {
+    let msg = format!(
+        "{operation_label} failed for '{repo_name}' after {:.1}s: {e}",
+        elapsed.as_secs_f64()
+    );
+    error!("{msg}");
+    let _ = db::insert_system_event(pool, "repo_sync_failed", None, &msg).await;
+    if task_state.import_tasks.is_current(repo_id, task_id).await {
+        let _ = db::set_repo_import_error(pool, repo_id, Some(&format!("{e}"))).await;
+        let _ = db::set_repo_importing(pool, repo_id, false).await;
+        clear_import_progress_state(pool, ui_broadcast, repo_id).await;
+        ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
+    }
+}
+
+async fn log_repo_sync_completion(
+    pool: &PgPool,
+    repo_id: i64,
+    repo_name: &str,
+    operation_label: &str,
+    imported: u64,
+    removed: u64,
+    elapsed: Duration,
+) {
+    let duration_secs = elapsed.as_secs();
+    let msg = format!(
+        "{operation_label} completed for '{repo_name}': imported {imported}, removed {removed} \
+         archives in {duration_secs}s"
+    );
+
+    if elapsed > SYNC_WARN_DURATION {
+        error!(
+            repo_id,
+            duration_secs,
+            "{operation_label} exceeded {}s threshold",
+            SYNC_WARN_DURATION.as_secs()
+        );
+        let warn_msg = format!(
+            "{operation_label} for '{repo_name}' took {duration_secs}s (exceeds {}s threshold)",
+            SYNC_WARN_DURATION.as_secs()
+        );
+        let _ = db::insert_system_event(pool, "repo_sync_slow", None, &warn_msg).await;
+    }
+
+    info!("{msg}");
+    let _ = db::insert_system_event(pool, "repo_sync", None, &msg).await;
 }
 
 #[utoipa::path(

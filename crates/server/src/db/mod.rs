@@ -3201,9 +3201,8 @@ async fn upsert_backup_report_with_archive_name(
          EXCLUDED.deduplicated_size, repo_unique_csize = EXCLUDED.repo_unique_csize, \
          files_processed = EXCLUDED.files_processed, duration_secs = EXCLUDED.duration_secs, \
          error_message = EXCLUDED.error_message, warnings = EXCLUDED.warnings, borg_version = \
-         EXCLUDED.borg_version, matched = EXCLUDED.matched, archive_name = \
-         EXCLUDED.archive_name, borg_command = COALESCE(EXCLUDED.borg_command, \
-         backup_reports.borg_command)",
+         EXCLUDED.borg_version, matched = EXCLUDED.matched, archive_name = EXCLUDED.archive_name, \
+         borg_command = COALESCE(EXCLUDED.borg_command, backup_reports.borg_command)",
         params.agent_id,
         params.repo_id,
         params.schedule_id,
@@ -3246,9 +3245,8 @@ async fn upsert_backup_report_without_archive_name(
          repo_unique_csize = EXCLUDED.repo_unique_csize, files_processed = \
          EXCLUDED.files_processed, duration_secs = EXCLUDED.duration_secs, error_message = \
          EXCLUDED.error_message, warnings = EXCLUDED.warnings, borg_version = \
-         EXCLUDED.borg_version, matched = EXCLUDED.matched, archive_name = \
-         EXCLUDED.archive_name, borg_command = COALESCE(EXCLUDED.borg_command, \
-         backup_reports.borg_command)",
+         EXCLUDED.borg_version, matched = EXCLUDED.matched, archive_name = EXCLUDED.archive_name, \
+         borg_command = COALESCE(EXCLUDED.borg_command, backup_reports.borg_command)",
         params.agent_id,
         params.repo_id,
         params.schedule_id,

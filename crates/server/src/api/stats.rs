@@ -135,7 +135,8 @@ pub async fn dashboard_overview(
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "grouping these into a struct would obscure the call site more than it would clarify it; all params are single-use scalars/refs from the caller's own locals"
+    reason = "grouping these into a struct would obscure the call site more than it would clarify \
+              it; all params are single-use scalars/refs from the caller's own locals"
 )]
 fn dashboard_findings(
     targets: &[db::dashboard::TargetRow],
@@ -1044,7 +1045,8 @@ impl TryFrom<&str> for CalendarEventStatus {
 /// generous bound for one calendar month across any supported cron cadence).
 #[allow(
     clippy::too_many_arguments,
-    reason = "grouping these into a struct would obscure the call site more than it would clarify it; all params are single-use scalars from the caller's own locals"
+    reason = "grouping these into a struct would obscure the call site more than it would clarify \
+              it; all params are single-use scalars from the caller's own locals"
 )]
 async fn project_upcoming_schedule_events(
     pool: &sqlx::PgPool,

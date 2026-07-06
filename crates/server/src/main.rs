@@ -53,6 +53,85 @@ async fn main() -> Result<(), StartupError> {
         .install_default()
         .map_err(|_| StartupError::RustlsProvider)?;
 
+    let log_buffer = init_logging();
+
+    let database_url = std::env::var("DATABASE_URL")?;
+    let secret_key = std::env::var("ASSIMILATE_SECRET_KEY")?;
+
+    let max_connections: u32 = std::env::var("ASSIMILATE_DB_MAX_CONN")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(20);
+    let pool = connect_with_retry(&database_url, max_connections).await?;
+    sqlx::migrate!("./migrations").run(&pool).await?;
+
+    bootstrap_admin(&pool).await?;
+
+    let encryption_key = shared::crypto::derive_key(secret_key.as_bytes())?;
+    let addr = resolve_bind_addr()?;
+    let server_addr = server::tunnel::tunnel_target_addr(addr);
+    let ui_broadcast = server::ws::ui_broadcast::UiBroadcast::new();
+    let tunnel_manager = TunnelManager::new(pool.clone(), ui_broadcast.clone(), server_addr);
+
+    let notification_service = NotificationService::new(pool.clone());
+    if let Err(e) = notification_service.ensure_vapid_keys().await {
+        tracing::warn!("failed to ensure VAPID keys: {e}");
+    }
+
+    let client_ip_resolver =
+        ClientIpResolver::from_env(std::env::var("ASSIMILATE_TRUSTED_PROXIES").ok());
+    let shutdown_token = tokio_util::sync::CancellationToken::new();
+
+    let state = build_app_state(BuildAppStateArgs {
+        pool,
+        encryption_key,
+        ui_broadcast,
+        tunnel_manager: tunnel_manager.clone(),
+        log_buffer,
+        notification_service,
+        client_ip_resolver: client_ip_resolver.clone(),
+        shutdown_token: shutdown_token.clone(),
+    });
+
+    spawn_background_tasks(&state, &tunnel_manager);
+
+    let login_router = build_login_router(&state, client_ip_resolver);
+    let registry = state.registry.clone();
+    let app = build_router(login_router)
+        .with_state(state)
+        .layer(axum_middleware::from_fn(csp_headers))
+        .layer(DefaultBodyLimit::max(10 * 1024 * 1024));
+    let app = configure_docs_and_static(app).await;
+
+    tracing::info!("listening on {addr}");
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+    let server = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        shutdown_signal(registry, shutdown_token.clone()).await;
+        let _ = shutdown_tx.send(());
+    });
+
+    tokio::select! {
+        result = server => { result?; }
+        () = async {
+            let _ = shutdown_rx.await;
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        } => {
+            tracing::warn!("graceful shutdown timed out after 10s, exiting");
+        }
+    }
+
+    tunnel_manager.shutdown().await;
+    Ok(())
+}
+
+fn init_logging() -> LogBuffer {
     let log_buffer = LogBuffer::default();
 
     let default_filter = "info,sqlx=info,russh=info";
@@ -68,49 +147,49 @@ async fn main() -> Result<(), StartupError> {
         .with(LogBufferLayer::new(log_buffer.clone()).with_filter(EnvFilter::new(default_filter)))
         .init();
 
-    let database_url = std::env::var("DATABASE_URL")?;
-    let secret_key = std::env::var("ASSIMILATE_SECRET_KEY")?;
+    log_buffer
+}
 
-    let max_connections: u32 = std::env::var("ASSIMILATE_DB_MAX_CONN")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(20);
-    let pool = connect_with_retry(&database_url, max_connections).await?;
-    sqlx::migrate!("./migrations").run(&pool).await?;
-
-    bootstrap_admin(&pool).await?;
-
-    let encryption_key = shared::crypto::derive_key(secret_key.as_bytes())?;
-
+fn resolve_bind_addr() -> Result<SocketAddr, StartupError> {
     let bind_addr =
         std::env::var("ASSIMILATE_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
-    let addr: SocketAddr = bind_addr.parse().map_err(|e| {
-        std::io::Error::new(
+    bind_addr.parse().map_err(|e| {
+        StartupError::Io(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             format!("invalid bind address: {e}"),
-        )
-    })?;
+        ))
+    })
+}
 
-    let server_addr = server::tunnel::tunnel_target_addr(addr);
-    let ui_broadcast = server::ws::ui_broadcast::UiBroadcast::new();
-    let tunnel_manager = TunnelManager::new(pool.clone(), ui_broadcast.clone(), server_addr);
+struct BuildAppStateArgs {
+    pool: PgPool,
+    encryption_key: [u8; 32],
+    ui_broadcast: server::ws::ui_broadcast::UiBroadcast,
+    tunnel_manager: TunnelManager,
+    log_buffer: LogBuffer,
+    notification_service: NotificationService,
+    client_ip_resolver: ClientIpResolver,
+    shutdown_token: tokio_util::sync::CancellationToken,
+}
 
-    let notification_service = NotificationService::new(pool.clone());
-    if let Err(e) = notification_service.ensure_vapid_keys().await {
-        tracing::warn!("failed to ensure VAPID keys: {e}");
-    }
+fn build_app_state(args: BuildAppStateArgs) -> AppState {
+    let BuildAppStateArgs {
+        pool,
+        encryption_key,
+        ui_broadcast,
+        tunnel_manager,
+        log_buffer,
+        notification_service,
+        client_ip_resolver,
+        shutdown_token,
+    } = args;
 
-    let client_ip_resolver =
-        ClientIpResolver::from_env(std::env::var("ASSIMILATE_TRUSTED_PROXIES").ok());
-
-    let shutdown_token = tokio_util::sync::CancellationToken::new();
-
-    let state = AppState {
+    AppState {
         pool,
         encryption_key,
         registry: server::ws::registry::AgentRegistry::new(),
         ui_broadcast,
-        tunnel_manager: tunnel_manager.clone(),
+        tunnel_manager,
         log_buffer,
         notification_service,
         completion_bus: server::ws::completion_bus::CompletionBus::new(),
@@ -129,91 +208,110 @@ async fn main() -> Result<(), StartupError> {
         pending_deletes: std::sync::Arc::new(tokio::sync::Mutex::new(
             std::collections::HashMap::new(),
         )),
-        shutdown_token: shutdown_token.clone(),
-        client_ip_resolver: client_ip_resolver.clone(),
-    };
+        shutdown_token,
+        client_ip_resolver,
+    }
+}
 
+/// Resumes a single repository import that was interrupted (e.g. by a
+/// server restart) while it was still marked as importing.
+async fn resume_single_import(
+    state: AppState,
+    pool: PgPool,
+    broadcast: server::ws::ui_broadcast::UiBroadcast,
+    key: [u8; 32],
+    repo_id: i64,
+) {
+    let (task_id, cancel) = state.import_tasks.start(repo_id).await;
+
+    server::api::repos::set_server_sync_op(&state, repo_id).await;
+    tokio::select! {
+        () = cancel.cancelled() => {
+            tracing::info!(repo_id, "resumed import cancelled");
+        }
+        () = async {
+            if let Err(e) = server::api::repos::sync_existing_archives(
+                &pool,
+                &key,
+                repo_id,
+                &broadcast,
+            )
+            .await
+            {
+                tracing::warn!(repo_id, error = %e, "failed to resume import");
+                if state.import_tasks.is_current(repo_id, task_id).await {
+                    let _ = db::set_repo_import_error(
+                        &pool,
+                        repo_id,
+                        Some(&format!("{e}")),
+                    )
+                    .await;
+                }
+            }
+            if state.import_tasks.is_current(repo_id, task_id).await {
+                let _ = db::set_repo_importing(&pool, repo_id, false).await;
+                server::api::repos::clear_import_progress_state(
+                    &pool, &broadcast, repo_id,
+                )
+                .await;
+                broadcast.send(shared::protocol::ServerToUi::DataChanged);
+            }
+        } => {}
+    }
+
+    state.import_tasks.finish(repo_id, task_id).await;
+    server::api::repos::clear_server_sync_op(&state, repo_id).await;
+}
+
+/// Finds repositories still marked as importing from before this server
+/// process started (e.g. after a crash or restart) and resumes their sync.
+async fn resume_interrupted_imports(state: AppState) {
+    let pool = state.pool.clone();
+    let key = state.encryption_key;
+    let broadcast = state.ui_broadcast.clone();
+
+    let repo_ids = match db::list_importing_repo_ids(&pool).await {
+        Ok(ids) => ids,
+        Err(e) => {
+            tracing::warn!("failed to query importing repos: {e}");
+            return;
+        }
+    };
+    for repo_id in repo_ids {
+        tracing::info!(repo_id, "resuming interrupted import");
+        tokio::spawn(resume_single_import(
+            state.clone(),
+            pool.clone(),
+            broadcast.clone(),
+            key,
+            repo_id,
+        ));
+    }
+}
+
+fn spawn_background_tasks(state: &AppState, tunnel_manager: &TunnelManager) {
     tokio::spawn(server::scheduler::run(state.clone()));
 
     let tm = tunnel_manager.clone();
     tokio::spawn(async move { tm.run().await });
 
-    {
-        let recovery_pool = state.pool.clone();
-        let recovery_key = state.encryption_key;
-        let recovery_broadcast = state.ui_broadcast.clone();
-        let recovery_state = state.clone();
-        tokio::spawn(async move {
-            let repo_ids = match db::list_importing_repo_ids(&recovery_pool).await {
-                Ok(ids) => ids,
-                Err(e) => {
-                    tracing::warn!("failed to query importing repos: {e}");
-                    return;
-                }
-            };
-            for repo_id in repo_ids {
-                tracing::info!(repo_id, "resuming interrupted import");
-                let state = recovery_state.clone();
-                let pool = recovery_pool.clone();
-                let broadcast = recovery_broadcast.clone();
-                tokio::spawn(async move {
-                    let key = recovery_key;
-                    let (task_id, cancel) = state.import_tasks.start(repo_id).await;
+    tokio::spawn(resume_interrupted_imports(state.clone()));
+}
 
-                    server::api::repos::set_server_sync_op(&state, repo_id).await;
-                    tokio::select! {
-                        () = cancel.cancelled() => {
-                            tracing::info!(repo_id, "resumed import cancelled");
-                        }
-                        () = async {
-                            if let Err(e) = server::api::repos::sync_existing_archives(
-                                &pool,
-                                &key,
-                                repo_id,
-                                &broadcast,
-                            )
-                            .await
-                            {
-                                tracing::warn!(repo_id, error = %e, "failed to resume import");
-                                if state.import_tasks.is_current(repo_id, task_id).await {
-                                    let _ = db::set_repo_import_error(
-                                        &pool,
-                                        repo_id,
-                                        Some(&format!("{e}")),
-                                    )
-                                    .await;
-                                }
-                            }
-                            if state.import_tasks.is_current(repo_id, task_id).await {
-                                let _ = db::set_repo_importing(&pool, repo_id, false).await;
-                                server::api::repos::clear_import_progress_state(
-                                    &pool, &broadcast, repo_id,
-                                )
-                                .await;
-                                broadcast.send(shared::protocol::ServerToUi::DataChanged);
-                            }
-                        } => {}
-                    }
-
-                    state.import_tasks.finish(repo_id, task_id).await;
-                    server::api::repos::clear_server_sync_op(&state, repo_id).await;
-                });
-            }
-        });
-    }
-
+fn build_login_router(state: &AppState, client_ip_resolver: ClientIpResolver) -> Router<AppState> {
     let login_rate_limiter = RateLimiter::new(10, Duration::from_secs(60), client_ip_resolver);
 
-    let login_router = Router::new()
+    Router::new()
         .route("/api/auth/login", post(api::auth::login))
         .layer(axum_middleware::from_fn_with_state(
             login_rate_limiter,
             rate_limit_middleware,
         ))
-        .with_state(state.clone());
+        .with_state(state.clone())
+}
 
-    let app = Router::new()
-        .merge(login_router)
+fn core_routes() -> Router<AppState> {
+    Router::new()
         .route("/api/health", get(api::health::health))
         .route("/api/auth/logout", post(api::auth::logout))
         .route("/api/auth/me", get(api::auth::me))
@@ -238,6 +336,10 @@ async fn main() -> Result<(), StartupError> {
             "/ws/ssh-agent/{hostname}",
             get(ws::ssh_relay::ssh_relay_handler),
         )
+}
+
+fn agent_routes() -> Router<AppState> {
+    Router::new()
         .route(
             "/api/agents",
             get(api::agents::list_agents).post(api::agents::create_agent),
@@ -293,6 +395,18 @@ async fn main() -> Result<(), StartupError> {
             "/api/agents/{hostname}/repos",
             get(api::repos::get_agent_repos),
         )
+        .route(
+            "/api/agents/{hostname}/reports",
+            get(api::reports::list_reports),
+        )
+        .route(
+            "/api/agents/{hostname}/tags",
+            get(api::tags::get_agent_tags).put(api::tags::set_agent_tags),
+        )
+}
+
+fn repo_routes() -> Router<AppState> {
+    Router::new()
         .route(
             "/api/repos",
             get(api::repos::list_repos).post(api::repos::create_repo),
@@ -361,6 +475,27 @@ async fn main() -> Result<(), StartupError> {
             "/api/repos/{repo_id}/tags",
             get(api::tags::get_repo_tags).put(api::tags::set_repo_tags),
         )
+        .merge(repo_permission_routes())
+}
+
+fn repo_permission_routes() -> Router<AppState> {
+    Router::new()
+        .route(
+            "/api/repos/{repo_id}/permissions",
+            get(api::permissions::list_for_repo),
+        )
+        .route(
+            "/api/repos/{repo_id}/permissions/{user_id}",
+            put(api::permissions::upsert),
+        )
+        .route(
+            "/api/repos/{id}/quota",
+            get(api::quota::get_quota).put(api::quota::upsert_quota),
+        )
+}
+
+fn schedule_and_config_routes() -> Router<AppState> {
+    Router::new()
         .route(
             "/api/excludes",
             get(api::excludes::get_excludes).put(api::excludes::set_excludes),
@@ -397,10 +532,10 @@ async fn main() -> Result<(), StartupError> {
         )
         .route("/api/config/export", get(api::config_io::export_config))
         .route("/api/config/import", post(api::config_io::import_config))
-        .route(
-            "/api/agents/{hostname}/reports",
-            get(api::reports::list_reports),
-        )
+}
+
+fn system_and_audit_routes() -> Router<AppState> {
+    Router::new()
         .route("/api/audit-log", get(api::audit::list_audit_log))
         .route(
             "/api/system/ssh-public-key",
@@ -424,6 +559,10 @@ async fn main() -> Result<(), StartupError> {
         .route("/api/ssh/deploy-key", post(api::ssh::deploy_key))
         .route("/api/ssh/list-dir", post(api::ssh::list_dir))
         .route("/api/ssh/mkdir", post(api::ssh::mkdir))
+}
+
+fn stats_routes() -> Router<AppState> {
+    Router::new()
         .route("/api/stats/summary", get(api::stats::summary))
         .route(
             "/api/stats/dashboard-overview",
@@ -453,6 +592,10 @@ async fn main() -> Result<(), StartupError> {
             axum::routing::post(api::stats::dismiss_finding).delete(api::stats::undismiss_finding),
         )
         .route("/api/logs", get(api::logs::get_logs))
+}
+
+fn archive_routes() -> Router<AppState> {
+    Router::new()
         .route(
             "/api/repos/{repo_id}/archives/diff",
             get(api::diff::diff_archives),
@@ -509,23 +652,15 @@ async fn main() -> Result<(), StartupError> {
             "/api/repos/{repo_id}/archives/{archive_name}/tags/{tag}",
             delete(api::tags::remove_archive_tag),
         )
+}
+
+fn access_control_routes() -> Router<AppState> {
+    Router::new()
         .route(
             "/api/tokens",
             get(api::tokens::list_tokens).post(api::tokens::create_token),
         )
         .route("/api/tokens/{id}", delete(api::tokens::delete_token))
-        .route(
-            "/api/repos/{repo_id}/permissions",
-            get(api::permissions::list_for_repo),
-        )
-        .route(
-            "/api/repos/{repo_id}/permissions/{user_id}",
-            put(api::permissions::upsert),
-        )
-        .route(
-            "/api/repos/{id}/quota",
-            get(api::quota::get_quota).put(api::quota::upsert_quota),
-        )
         .route(
             "/api/server-quotas",
             get(api::server_quotas::list_server_quotas),
@@ -545,14 +680,15 @@ async fn main() -> Result<(), StartupError> {
         )
         .route("/api/tags/{id}", delete(api::tags::delete_tag))
         .route(
-            "/api/agents/{hostname}/tags",
-            get(api::tags::get_agent_tags).put(api::tags::set_agent_tags),
-        )
-        .route(
             "/api/agent-tags",
             get(api::tags::list_agent_tag_associations),
         )
         .route("/api/repo-tags", get(api::tags::list_repo_tag_associations))
+        .merge(rbac_routes())
+}
+
+fn rbac_routes() -> Router<AppState> {
+    Router::new()
         .route(
             "/api/groups",
             get(api::rbac::list_groups).post(api::rbac::create_group),
@@ -582,6 +718,10 @@ async fn main() -> Result<(), StartupError> {
             "/api/users/{id}/effective-permissions",
             get(api::rbac::get_effective_permissions),
         )
+}
+
+fn tunnel_routes() -> Router<AppState> {
+    Router::new()
         .route(
             "/api/tunnels",
             get(api::tunnels::list_tunnels).post(api::tunnels::create_tunnel),
@@ -604,6 +744,10 @@ async fn main() -> Result<(), StartupError> {
             "/api/tunnels/{id}/disable",
             post(api::tunnels::disable_tunnel),
         )
+}
+
+fn notification_routes() -> Router<AppState> {
+    Router::new()
         .route(
             "/api/notifications/channels",
             get(api::notifications::list_channels).post(api::notifications::create_channel),
@@ -648,17 +792,34 @@ async fn main() -> Result<(), StartupError> {
             "/api/notifications/validate-smtp",
             post(api::notifications::validate_smtp),
         )
+}
+
+fn misc_routes() -> Router<AppState> {
+    Router::new()
         .route(
             "/api/openapi.json",
             get(|| async { Json(ApiDoc::openapi()) }),
         )
-        .merge(Scalar::with_url("/api/docs", ApiDoc::openapi()));
-    let registry = state.registry.clone();
-    let app = app
-        .with_state(state)
-        .layer(axum_middleware::from_fn(csp_headers))
-        .layer(DefaultBodyLimit::max(10 * 1024 * 1024));
+        .merge(Scalar::with_url("/api/docs", ApiDoc::openapi()))
+}
 
+fn build_router(login_router: Router<AppState>) -> Router<AppState> {
+    Router::new()
+        .merge(core_routes())
+        .merge(agent_routes())
+        .merge(repo_routes())
+        .merge(schedule_and_config_routes())
+        .merge(system_and_audit_routes())
+        .merge(stats_routes())
+        .merge(archive_routes())
+        .merge(access_control_routes())
+        .merge(tunnel_routes())
+        .merge(notification_routes())
+        .merge(misc_routes())
+        .merge(login_router)
+}
+
+async fn configure_docs_and_static(app: Router) -> Router {
     let docs_dir = std::env::var("ASSIMILATE_DOCS_DIR")
         .map_or_else(|_| PathBuf::from("./docs_html"), PathBuf::from);
     let app = if tokio::fs::try_exists(&docs_dir).await.unwrap_or(false) {
@@ -674,39 +835,12 @@ async fn main() -> Result<(), StartupError> {
 
     let static_dir = std::env::var("ASSIMILATE_STATIC_DIR")
         .map_or_else(|_| PathBuf::from("./static"), PathBuf::from);
-    let app = if tokio::fs::try_exists(&static_dir).await.unwrap_or(false) {
+    if tokio::fs::try_exists(&static_dir).await.unwrap_or(false) {
         let index = static_dir.join("index.html");
         app.fallback_service(ServeDir::new(&static_dir).fallback(ServeFile::new(index)))
     } else {
         app
-    };
-
-    tracing::info!("listening on {addr}");
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-
-    let server = axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(async move {
-        shutdown_signal(registry, shutdown_token.clone()).await;
-        let _ = shutdown_tx.send(());
-    });
-
-    tokio::select! {
-        result = server => { result?; }
-        () = async {
-            let _ = shutdown_rx.await;
-            tokio::time::sleep(Duration::from_secs(10)).await;
-        } => {
-            tracing::warn!("graceful shutdown timed out after 10s, exiting");
-        }
     }
-
-    tunnel_manager.shutdown().await;
-    Ok(())
 }
 
 async fn connect_with_retry(url: &str, max_connections: u32) -> Result<PgPool, StartupError> {

@@ -47,23 +47,23 @@ pub struct TunnelSshHandler {
 impl client::Handler for TunnelSshHandler {
     type Error = russh::Error;
 
-    async fn check_server_key(
+    fn check_server_key(
         &mut self,
         server_public_key: &PublicKey,
-    ) -> Result<bool, Self::Error> {
+    ) -> impl std::future::Future<Output = Result<bool, Self::Error>> {
         let Some(expected) = &self.expected_host_key else {
-            return Ok(true);
+            return std::future::ready(Ok(true));
         };
         let actual = server_public_key.to_openssh().unwrap_or_default();
         if actual.trim() == expected.trim() {
-            Ok(true)
+            std::future::ready(Ok(true))
         } else {
             tracing::error!("tunnel SSH host key mismatch: expected {expected}, got {actual}");
-            Ok(false)
+            std::future::ready(Ok(false))
         }
     }
 
-    async fn server_channel_open_forwarded_tcpip(
+    fn server_channel_open_forwarded_tcpip(
         &mut self,
         channel: Channel<client::Msg>,
         _connected_address: &str,
@@ -71,7 +71,7 @@ impl client::Handler for TunnelSshHandler {
         _originator_address: &str,
         _originator_port: u32,
         _session: &mut client::Session,
-    ) -> Result<(), Self::Error> {
+    ) -> impl std::future::Future<Output = Result<(), Self::Error>> {
         let server_addr = self.server_addr;
 
         tokio::spawn(async move {
@@ -92,10 +92,11 @@ impl client::Handler for TunnelSshHandler {
             }
         });
 
-        Ok(())
+        std::future::ready(Ok(()))
     }
 }
 
+#[must_use]
 pub fn tunnel_ssh_config() -> Arc<client::Config> {
     Arc::new(client::Config {
         inactivity_timeout: None,
@@ -130,6 +131,7 @@ impl Drop for TunnelTaskCompletion {
 }
 
 impl TunnelManager {
+    #[must_use]
     pub fn new(pool: PgPool, ui_broadcast: UiBroadcast, server_addr: SocketAddr) -> Self {
         Self {
             pool,
@@ -152,8 +154,9 @@ impl TunnelManager {
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0u32, |d| d.subsec_nanos())
-                    % 450
-                    + 50,
+                    .checked_rem(450)
+                    .unwrap_or(0)
+                    .saturating_add(50),
             );
             tokio::time::sleep(Duration::from_millis(delay_ms)).await;
             self.start_tunnel(tunnel.id).await;
@@ -183,7 +186,7 @@ impl TunnelManager {
                     agent_id: tunnel.agent_id,
                     status: TunnelStatus::Disconnected,
                     cancel: cancel.clone(),
-                    completion: completion.clone(),
+                    completion: Arc::clone(&completion),
                 },
             );
         }
@@ -212,39 +215,33 @@ impl TunnelManager {
                     return;
                 }
 
-                let ssh_port = match u16::try_from(current.ssh_port) {
-                    Ok(p) => p,
-                    Err(_) => {
-                        manager
-                            .set_status(
-                                tunnel_id,
-                                &hostname,
-                                TunnelStatus::Error {
-                                    message: format!("invalid ssh_port: {}", current.ssh_port),
-                                },
-                            )
-                            .await;
-                        return;
-                    }
+                let Ok(ssh_port) = u16::try_from(current.ssh_port) else {
+                    manager
+                        .set_status(
+                            tunnel_id,
+                            &hostname,
+                            TunnelStatus::Error {
+                                message: format!("invalid ssh_port: {}", current.ssh_port),
+                            },
+                        )
+                        .await;
+                    return;
                 };
 
-                let tunnel_port = match u32::try_from(current.tunnel_port) {
-                    Ok(p) => p,
-                    Err(_) => {
-                        manager
-                            .set_status(
-                                tunnel_id,
-                                &hostname,
-                                TunnelStatus::Error {
-                                    message: format!(
-                                        "invalid tunnel_port: {}",
-                                        current.tunnel_port
-                                    ),
-                                },
-                            )
-                            .await;
-                        return;
-                    }
+                let Ok(tunnel_port) = u32::try_from(current.tunnel_port) else {
+                    manager
+                        .set_status(
+                            tunnel_id,
+                            &hostname,
+                            TunnelStatus::Error {
+                                message: format!(
+                                    "invalid tunnel_port: {}",
+                                    current.tunnel_port
+                                ),
+                            },
+                        )
+                        .await;
+                    return;
                 };
 
                 let key = match crate::ssh::load_server_private_key().await {
@@ -307,7 +304,7 @@ impl TunnelManager {
                             () = cancel.cancelled() => return,
                             () = tokio::time::sleep(backoff) => {}
                         }
-                        backoff = (backoff * 2).min(Duration::from_secs(120));
+                        backoff = backoff.saturating_mul(2).min(Duration::from_secs(120));
                         continue;
                     }
                 };
@@ -369,7 +366,7 @@ impl TunnelManager {
                             () = cancel.cancelled() => return,
                             () = tokio::time::sleep(backoff) => {}
                         }
-                        backoff = (backoff * 2).min(Duration::from_secs(120));
+                        backoff = backoff.saturating_mul(2).min(Duration::from_secs(120));
                         continue;
                     }
                 }
@@ -411,7 +408,7 @@ impl TunnelManager {
                     }
                     () = tokio::time::sleep(backoff) => {}
                 }
-                backoff = (backoff * 2).min(Duration::from_secs(120));
+                backoff = backoff.saturating_mul(2).min(Duration::from_secs(120));
             }
         });
     }
@@ -456,9 +453,8 @@ impl TunnelManager {
     /// If it's not running or disconnected, restarts it. Returns `true` if the tunnel is
     /// connected or was just restarted (best-effort).
     pub async fn ensure_agent_tunnel_connected(&self, agent_id: i64) -> bool {
-        let tunnel = match db::get_tunnel_by_agent_id(&self.pool, agent_id).await {
-            Ok(t) => t,
-            Err(_) => return true,
+        let Ok(tunnel) = db::get_tunnel_by_agent_id(&self.pool, agent_id).await else {
+            return true;
         };
 
         if !tunnel.enabled {

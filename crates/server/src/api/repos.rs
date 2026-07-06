@@ -2489,131 +2489,154 @@ fn enrich_archive_stats_background(
                 let semaphore = std::sync::Arc::clone(&semaphore);
                 async move {
                     let _permit = semaphore.acquire_owned().await;
-                    let repo_archive = format!("{borg_repo}::{archive_name}");
-                    let output = match Borg::new()
-                        .run(
-                            &[
-                                "info",
-                                "--json",
-                                "--lock-wait",
-                                LOCK_WAIT_SECS,
-                                &repo_archive,
-                            ],
-                            &env,
-                        )
-                        .await
-                    {
-                        Ok(o) => o,
-                        Err(e) => {
-                            warn!(
-                                repo_id,
-                                archive = %archive_name,
-                                error = %e,
-                                "stat enrichment: failed to run borg info"
-                            );
-                            return;
-                        }
-                    };
-
-                    if !output.status.success() {
-                        warn!(
-                            repo_id,
-                            archive = %archive_name,
-                            stderr = %String::from_utf8_lossy(&output.stderr),
-                            "stat enrichment: borg info non-zero exit"
-                        );
-                        return;
-                    }
-
-                    let json: serde_json::Value = match serde_json::from_slice(&output.stdout) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            warn!(
-                                repo_id,
-                                archive = %archive_name,
-                                error = %e,
-                                "stat enrichment: failed to parse borg info output"
-                            );
-                            return;
-                        }
-                    };
-
-                    let Some(info) = json
-                        .get("archives")
-                        .and_then(serde_json::Value::as_array)
-                        .and_then(|a| a.first())
-                    else {
-                        warn!(
-                            repo_id,
-                            archive = %archive_name,
-                            "stat enrichment: borg info returned no archive entry"
-                        );
-                        return;
-                    };
-
-                    let raw_stats = info.get("stats");
-                    #[allow(
-                        clippy::cast_possible_truncation,
-                        reason = "borg durations are small positive second counts; removal \
-                                  tracked in #284"
-                    )]
-                    let archive_stats = db::ArchiveStats {
-                        original_size: raw_stats
-                            .and_then(|s| s.get("original_size"))
-                            .and_then(serde_json::Value::as_i64)
-                            .unwrap_or(0),
-                        compressed_size: raw_stats
-                            .and_then(|s| s.get("compressed_size"))
-                            .and_then(serde_json::Value::as_i64)
-                            .unwrap_or(0),
-                        deduplicated_size: raw_stats
-                            .and_then(|s| s.get("deduplicated_size"))
-                            .and_then(serde_json::Value::as_i64)
-                            .unwrap_or(0),
-                        files_processed: raw_stats
-                            .and_then(|s| s.get("nfiles"))
-                            .and_then(serde_json::Value::as_i64)
-                            .unwrap_or(0),
-                        duration_secs: info
-                            .get("duration")
-                            .and_then(serde_json::Value::as_f64)
-                            .unwrap_or(0.0) as i64,
-                        repo_unique_csize: json
-                            .get("cache")
-                            .and_then(|v| v.get("stats"))
-                            .and_then(|v| v.get("unique_csize"))
-                            .and_then(serde_json::Value::as_i64)
-                            .unwrap_or(0),
-                    };
-
-                    if let Err(e) = db::update_backup_report_stats(
-                        &pool,
-                        repo_id,
-                        &archive_name,
-                        &archive_stats,
-                    )
-                    .await
-                    {
-                        warn!(
-                            repo_id,
-                            archive = %archive_name,
-                            error = %e,
-                            "stat enrichment: failed to update stats"
-                        );
-                    } else {
-                        info!(
-                            repo_id,
-                            archive = %archive_name,
-                            original_size = archive_stats.original_size,
-                            "stat enrichment: updated archive stats"
-                        );
-                    }
+                    enrich_single_archive_stats(&pool, &borg_repo, &env, repo_id, &archive_name)
+                        .await;
                 }
             })
             .collect();
         join_all(futures).await;
         info!(repo_id, "stat enrichment: completed");
     });
+}
+
+/// Runs `borg info --json` for a single archive and returns the parsed
+/// top-level JSON document, logging and returning `None` on any failure
+/// (spawn error, non-zero exit, unparseable output).
+async fn run_borg_info_for_stats(
+    borg_repo: &str,
+    env: &std::collections::HashMap<String, String>,
+    repo_id: i64,
+    archive_name: &str,
+) -> Option<serde_json::Value> {
+    let repo_archive = format!("{borg_repo}::{archive_name}");
+    let output = match Borg::new()
+        .run(
+            &[
+                "info",
+                "--json",
+                "--lock-wait",
+                LOCK_WAIT_SECS,
+                &repo_archive,
+            ],
+            env,
+        )
+        .await
+    {
+        Ok(o) => o,
+        Err(e) => {
+            warn!(
+                repo_id,
+                archive = %archive_name,
+                error = %e,
+                "stat enrichment: failed to run borg info"
+            );
+            return None;
+        }
+    };
+
+    if !output.status.success() {
+        warn!(
+            repo_id,
+            archive = %archive_name,
+            stderr = %String::from_utf8_lossy(&output.stderr),
+            "stat enrichment: borg info non-zero exit"
+        );
+        return None;
+    }
+
+    match serde_json::from_slice(&output.stdout) {
+        Ok(v) => Some(v),
+        Err(e) => {
+            warn!(
+                repo_id,
+                archive = %archive_name,
+                error = %e,
+                "stat enrichment: failed to parse borg info output"
+            );
+            None
+        }
+    }
+}
+
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "borg durations are small positive second counts; removal tracked in #284"
+)]
+fn parse_archive_stats(json: &serde_json::Value, info: &serde_json::Value) -> db::ArchiveStats {
+    let raw_stats = info.get("stats");
+    db::ArchiveStats {
+        original_size: raw_stats
+            .and_then(|s| s.get("original_size"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
+        compressed_size: raw_stats
+            .and_then(|s| s.get("compressed_size"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
+        deduplicated_size: raw_stats
+            .and_then(|s| s.get("deduplicated_size"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
+        files_processed: raw_stats
+            .and_then(|s| s.get("nfiles"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
+        duration_secs: info
+            .get("duration")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0) as i64,
+        repo_unique_csize: json
+            .get("cache")
+            .and_then(|v| v.get("stats"))
+            .and_then(|v| v.get("unique_csize"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
+    }
+}
+
+async fn enrich_single_archive_stats(
+    pool: &PgPool,
+    borg_repo: &str,
+    env: &std::collections::HashMap<String, String>,
+    repo_id: i64,
+    archive_name: &str,
+) {
+    let Some(json) = run_borg_info_for_stats(borg_repo, env, repo_id, archive_name).await else {
+        return;
+    };
+
+    let Some(info) = json
+        .get("archives")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|a| a.first())
+    else {
+        warn!(
+            repo_id,
+            archive = %archive_name,
+            "stat enrichment: borg info returned no archive entry"
+        );
+        return;
+    };
+
+    let archive_stats = parse_archive_stats(&json, info);
+
+    if let Err(e) =
+        db::update_backup_report_stats(pool, repo_id, archive_name, &archive_stats).await
+    {
+        warn!(
+            repo_id,
+            archive = %archive_name,
+            error = %e,
+            "stat enrichment: failed to update stats"
+        );
+    } else {
+        info!(
+            repo_id,
+            archive = %archive_name,
+            original_size = archive_stats.original_size,
+            "stat enrichment: updated archive stats"
+        );
+    }
 }
 
 async fn queue_archive_indexing(

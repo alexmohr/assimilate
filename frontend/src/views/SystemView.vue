@@ -18,6 +18,8 @@ interface ImportResult {
   hosts_created: number
   hosts_updated: number
   schedules_created: number
+  repos_created: number
+  repos_updated: number
   warnings: string[]
 }
 
@@ -581,6 +583,8 @@ async function resetSystem(): Promise<void> {
             <span>Hosts created: {{ importResult.hosts_created }}</span>
             <span>Hosts updated: {{ importResult.hosts_updated }}</span>
             <span>Schedules created: {{ importResult.schedules_created }}</span>
+            <span>Repos created: {{ importResult.repos_created }}</span>
+            <span>Repos updated: {{ importResult.repos_updated }}</span>
           </div>
           <ul
             v-if="importResult.warnings.length"

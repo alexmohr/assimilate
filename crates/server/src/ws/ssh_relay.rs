@@ -14,12 +14,12 @@ use tokio_util::io::ReaderStream;
 
 use crate::{AppState, db};
 
-pub async fn ssh_relay_handler(
+pub fn ssh_relay_handler(
     ws: WebSocketUpgrade,
     Path(hostname): Path<String>,
     State(state): State<AppState>,
-) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_ssh_relay(socket, hostname, state))
+) -> impl std::future::Future<Output = impl IntoResponse> {
+    std::future::ready(ws.on_upgrade(|socket| handle_ssh_relay(socket, hostname, state)))
 }
 
 async fn handle_ssh_relay(mut socket: WebSocket, hostname: String, state: AppState) {

@@ -706,7 +706,7 @@ pub async fn run_schedule_now(
     let schedule_type = schedule
         .schedule_type
         .parse::<ScheduleType>()
-        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+        .map_err(ApiError::BadRequest)?;
     let run_id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now();
 

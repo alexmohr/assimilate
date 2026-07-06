@@ -26,6 +26,7 @@ pub struct CompletionBus {
 }
 
 impl CompletionBus {
+    #[must_use]
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(256);
         Self { tx }
@@ -35,6 +36,7 @@ impl CompletionBus {
         let _ = self.tx.send(outcome);
     }
 
+    #[must_use]
     pub fn subscribe(&self) -> broadcast::Receiver<OperationOutcome> {
         self.tx.subscribe()
     }
@@ -99,8 +101,7 @@ async fn wait_for_completion_with_poll_interval(
                             CompletionOutcome::Failed
                         };
                     }
-                    Ok(_) => {}
-                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
                     Err(broadcast::error::RecvError::Closed) => {
                         return CompletionOutcome::AgentDisconnected;
                     }

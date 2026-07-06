@@ -42,6 +42,7 @@ impl Default for UiBroadcast {
 }
 
 impl UiBroadcast {
+    #[must_use]
     pub fn new() -> Self {
         let (sender, _) = broadcast::channel(CHANNEL_CAPACITY);
         Self {
@@ -86,6 +87,7 @@ impl UiBroadcast {
         }
     }
 
+    #[must_use]
     pub fn subscribe(&self) -> broadcast::Receiver<ServerToUi> {
         self.sender.subscribe()
     }
@@ -102,6 +104,7 @@ impl UiBroadcast {
         }
     }
 
+    #[must_use]
     pub fn current_import_snapshots(&self) -> Vec<(i64, ImportProgressSnapshot)> {
         self.import_progress.read().map_or_else(
             |_| Vec::new(),
@@ -113,6 +116,7 @@ impl UiBroadcast {
         )
     }
 
+    #[must_use]
     pub fn current_active_backups(&self) -> Vec<ActiveBackupSnapshot> {
         self.active_backups
             .read()
@@ -138,9 +142,8 @@ impl UiBroadcast {
         schedule_id: Option<i64>,
         line: &str,
     ) {
-        let is_archive_progress = serde_json::from_str::<serde_json::Value>(line)
-            .ok()
-            .is_some_and(|value| {
+        let is_archive_progress =
+            serde_json::from_str::<serde_json::Value>(line).is_ok_and(|value| {
                 value.get("type").and_then(serde_json::Value::as_str) == Some("archive_progress")
             });
         if !is_archive_progress {
@@ -155,7 +158,7 @@ impl UiBroadcast {
                 repo_id,
                 progress_line: None,
             });
-            entry.hostname = hostname.to_owned();
+            hostname.clone_into(&mut entry.hostname);
             entry.schedule_id = schedule_id;
             entry.progress_line = Some(line.to_owned());
         }

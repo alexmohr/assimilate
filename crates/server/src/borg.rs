@@ -210,6 +210,7 @@ impl Borg {
         }
     }
 
+    #[must_use]
     pub fn binary(&self) -> &Path {
         &self.binary
     }
@@ -225,8 +226,7 @@ impl Borg {
     ) -> std::io::Result<std::process::Output> {
         let subcommand = args
             .first()
-            .map(|a| a.as_ref().to_string_lossy().into_owned())
-            .unwrap_or_else(|| "<none>".to_owned());
+            .map_or_else(|| "<none>".to_owned(), |a| a.as_ref().to_string_lossy().into_owned());
         tracing::info!(subcommand, "borg: starting");
         let start = Instant::now();
 
@@ -284,8 +284,7 @@ impl Borg {
     ) -> std::io::Result<ServerChild> {
         let subcommand = args
             .first()
-            .map(|a| a.as_ref().to_string_lossy().into_owned())
-            .unwrap_or_else(|| "<none>".to_owned());
+            .map_or_else(|| "<none>".to_owned(), |a| a.as_ref().to_string_lossy().into_owned());
         tracing::info!(subcommand, "borg: spawning");
 
         let mut cmd = Command::new(&self.binary);
@@ -309,8 +308,7 @@ impl Borg {
     ) -> std::io::Result<ServerChild> {
         let subcommand = args
             .first()
-            .map(|a| a.as_ref().to_string_lossy().into_owned())
-            .unwrap_or_else(|| "<none>".to_owned());
+            .map_or_else(|| "<none>".to_owned(), |a| a.as_ref().to_string_lossy().into_owned());
         tracing::info!(subcommand, "borg: spawning");
 
         let mut cmd = Command::new(&self.binary);

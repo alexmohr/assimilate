@@ -30,8 +30,11 @@ use crate::{
 const PING_INTERVAL: Duration = Duration::from_secs(30);
 const CHANNEL_BUFFER: usize = 32;
 
-pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_socket(socket, state))
+pub fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+) -> impl std::future::Future<Output = impl IntoResponse> {
+    std::future::ready(ws.on_upgrade(|socket| handle_socket(socket, state)))
 }
 
 async fn handle_socket(socket: WebSocket, state: AppState) {
@@ -418,7 +421,7 @@ fn quota_event_type(status: db::quota::QuotaStatus) -> EventType {
 /// per-repo and per-host (shared SSH host) quota checks in [`handle_agent_message`], which
 /// otherwise duplicate this status-to-label, status-to-`EventType`, and dispatch logic almost
 /// verbatim.
-async fn dispatch_quota_breach_notification(
+fn dispatch_quota_breach_notification(
     state: &AppState,
     hostname: &str,
     agent_id: i64,
@@ -701,8 +704,7 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                         report.repo_id.0,
                         quota_status,
                         message,
-                    )
-                    .await;
+                    );
 
                     if let Some(action) = quota.action_for(quota_status) {
                         quota_enforcement::enforce_repo_quota_action(
@@ -757,8 +759,7 @@ async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: 
                         report.repo_id.0,
                         quota_status,
                         message,
-                    )
-                    .await;
+                    );
 
                     if let Some(action) = server_quota.action_for(quota_status) {
                         quota_enforcement::enforce_server_quota_action(

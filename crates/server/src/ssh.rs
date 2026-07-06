@@ -82,19 +82,19 @@ pub(crate) struct SshClientHandler {
 impl client::Handler for SshClientHandler {
     type Error = russh::Error;
 
-    async fn check_server_key(
+    fn check_server_key(
         &mut self,
         server_public_key: &PublicKey,
-    ) -> Result<bool, Self::Error> {
+    ) -> impl std::future::Future<Output = Result<bool, Self::Error>> {
         let Some(expected) = &self.expected_host_key else {
-            return Ok(true);
+            return std::future::ready(Ok(true));
         };
         let actual = server_public_key.to_openssh().unwrap_or_default();
         if actual.trim() == expected.trim() {
-            Ok(true)
+            std::future::ready(Ok(true))
         } else {
             tracing::error!("SSH host key mismatch: expected {expected}, got {actual}");
-            Ok(false)
+            std::future::ready(Ok(false))
         }
     }
 }
@@ -106,14 +106,14 @@ struct HostKeyCaptureHandler {
 impl client::Handler for HostKeyCaptureHandler {
     type Error = russh::Error;
 
-    async fn check_server_key(
+    fn check_server_key(
         &mut self,
         server_public_key: &PublicKey,
-    ) -> Result<bool, Self::Error> {
+    ) -> impl std::future::Future<Output = Result<bool, Self::Error>> {
         if let Ok(mut host_key) = self.host_key.lock() {
             *host_key = server_public_key.to_openssh().ok();
         }
-        Ok(true)
+        std::future::ready(Ok(true))
     }
 }
 
@@ -588,7 +588,7 @@ pub async fn mkdir(req: &MkdirRequest) -> MkdirResponse {
         Err(e) => {
             return MkdirResponse {
                 success: false,
-                path: path.to_string(),
+                path: path.clone(),
                 error: Some(e.to_string()),
             };
         }
@@ -599,24 +599,24 @@ pub async fn mkdir(req: &MkdirRequest) -> MkdirResponse {
         Err(e) => {
             return MkdirResponse {
                 success: false,
-                path: path.to_string(),
+                path: path.clone(),
                 error: Some(e.to_string()),
             };
         }
     };
 
-    if let Err(e) = sftp.create_dir(path.to_string()).await {
+    if let Err(e) = sftp.create_dir(path.clone()).await {
         return MkdirResponse {
             success: false,
-            path: path.to_string(),
+            path: path.clone(),
             error: Some(format!("failed to create directory: {e}")),
         };
     }
 
     let canonical = sftp
-        .canonicalize(path.to_string())
+        .canonicalize(path.clone())
         .await
-        .unwrap_or_else(|_| path.to_string());
+        .unwrap_or_else(|_| path.clone());
 
     MkdirResponse {
         success: true,

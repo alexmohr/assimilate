@@ -49,11 +49,11 @@ pub struct LogQuery {
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
-pub async fn get_logs(
+pub fn get_logs(
     State(state): State<AppState>,
     _admin: RequireAdmin,
     Query(query): Query<LogQuery>,
-) -> Result<Json<Vec<LogEntryResponse>>, ApiError> {
+) -> impl std::future::Future<Output = Result<Json<Vec<LogEntryResponse>>, ApiError>> {
     let limit = query.limit.unwrap_or(200);
     let entries: Vec<LogEntryResponse> = state
         .log_buffer
@@ -61,5 +61,5 @@ pub async fn get_logs(
         .into_iter()
         .map(Into::into)
         .collect();
-    Ok(Json(entries))
+    std::future::ready(Ok(Json(entries)))
 }

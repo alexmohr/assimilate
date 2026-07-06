@@ -298,101 +298,147 @@ pub async fn create_repo(
     ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
     let (task_id, cancel) = state.import_tasks.start(repo_id).await;
 
-    tokio::spawn(async move {
-        set_server_sync_op(&task_state, repo_id).await;
-        tokio::select! {
-            () = cancel.cancelled() => {
-                info!(repo_id, "initial import cancelled");
-            }
-            () = async {
-                // Detect encryption before syncing rather than concurrently: both borg
-                // info and the sync's borg list contend for the same repository lock, so
-                // running them in parallel would force the list into the lock-retry path.
-                if need_borg_info {
-                    let timeout = get_borg_timeout(&pool).await;
-                    match run_borg_info_with_retry(&bg_repo_url, &bg_passphrase, timeout).await {
-                        Ok(info) => {
-                            if let Err(e) =
-                                db::update_repo_encryption(
-                                    &pool,
-                                    repo_id,
-                                    &info.encryption.to_string(),
-                                )
-                                .await
-                            {
-                                warn!(
-                                    repo_id,
-                                    error = %e,
-                                    "failed to update encryption after deferred borg info"
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            warn!(
-                                repo_id,
-                                error = %e,
-                                "deferred borg info failed, continuing to archive sync"
-                            );
-                        }
-                    }
-                }
-
-                let _import_lock = state_repo_lock.acquire(repo_id).await;
-                let sync_ok = match sync_existing_archives(
-                    &pool,
-                    &encryption_key,
-                    repo_id,
-                    &ui_broadcast,
-                )
-                .await {
-                    Ok(_) => {
-                        if let Err(e) = db::update_repo_last_synced(&pool, repo_id).await {
-                            warn!(
-                                repo_id,
-                                error = %e,
-                                "failed to set last_synced_at after initial import"
-                            );
-                        }
-                        true
-                    }
-                    Err(e) => {
-                        warn!(repo_id, error = %e, "failed to sync existing archives on import");
-                        if task_state.import_tasks.is_current(repo_id, task_id).await {
-                            let _ =
-                                db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}")))
-                                    .await;
-                        }
-                        false
-                    }
-                };
-
-                if sync_ok && task_state.import_tasks.is_current(repo_id, task_id).await {
-                    index_archives_with_progress(
-                        pool.clone(),
-                        encryption_key,
-                        repo_id,
-                        ui_broadcast.clone(),
-                        state_repo_lock,
-                        false,
-                    )
-                    .await;
-                }
-
-                if task_state.import_tasks.is_current(repo_id, task_id).await {
-                    if let Err(e) = db::set_repo_importing(&pool, repo_id, false).await {
-                        warn!(repo_id, error = %e, "failed to clear importing flag");
-                    }
-                    clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
-                    ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
-                }
-            } => {}
-        }
-
-        task_state.import_tasks.finish(repo_id, task_id).await;
-        clear_server_sync_op(&task_state, repo_id).await;
-    });
+    tokio::spawn(run_initial_import_task(InitialImportTask {
+        pool,
+        encryption_key,
+        ui_broadcast,
+        repo_lock: state_repo_lock,
+        task_state,
+        repo_id,
+        task_id,
+        cancel,
+        need_borg_info,
+        bg_repo_url,
+        bg_passphrase,
+    }));
 
     Ok((StatusCode::CREATED, Json(repo)))
+}
+
+struct InitialImportTask {
+    pool: PgPool,
+    encryption_key: [u8; 32],
+    ui_broadcast: UiBroadcast,
+    repo_lock: RepoLock,
+    task_state: AppState,
+    repo_id: i64,
+    task_id: u64,
+    cancel: CancellationToken,
+    need_borg_info: bool,
+    bg_repo_url: String,
+    bg_passphrase: String,
+}
+
+/// Runs the background work kicked off when a repository is first created:
+/// deferred encryption detection (if `borg info` couldn't be reached
+/// synchronously during creation), the initial archive sync, and content
+/// indexing.
+async fn run_initial_import_task(task: InitialImportTask) {
+    let InitialImportTask {
+        pool,
+        encryption_key,
+        ui_broadcast,
+        repo_lock: state_repo_lock,
+        task_state,
+        repo_id,
+        task_id,
+        cancel,
+        need_borg_info,
+        bg_repo_url,
+        bg_passphrase,
+    } = task;
+
+    set_server_sync_op(&task_state, repo_id).await;
+    tokio::select! {
+        () = cancel.cancelled() => {
+            info!(repo_id, "initial import cancelled");
+        }
+        () = async {
+            // Detect encryption before syncing rather than concurrently: both borg
+            // info and the sync's borg list contend for the same repository lock, so
+            // running them in parallel would force the list into the lock-retry path.
+            if need_borg_info {
+                let timeout = get_borg_timeout(&pool).await;
+                match run_borg_info_with_retry(&bg_repo_url, &bg_passphrase, timeout).await {
+                    Ok(info) => {
+                        if let Err(e) =
+                            db::update_repo_encryption(
+                                &pool,
+                                repo_id,
+                                &info.encryption.to_string(),
+                            )
+                            .await
+                        {
+                            warn!(
+                                repo_id,
+                                error = %e,
+                                "failed to update encryption after deferred borg info"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            repo_id,
+                            error = %e,
+                            "deferred borg info failed, continuing to archive sync"
+                        );
+                    }
+                }
+            }
+
+            let _import_lock = state_repo_lock.acquire(repo_id).await;
+            let sync_ok = match sync_existing_archives(
+                &pool,
+                &encryption_key,
+                repo_id,
+                &ui_broadcast,
+            )
+            .await {
+                Ok(_) => {
+                    if let Err(e) = db::update_repo_last_synced(&pool, repo_id).await {
+                        warn!(
+                            repo_id,
+                            error = %e,
+                            "failed to set last_synced_at after initial import"
+                        );
+                    }
+                    true
+                }
+                Err(e) => {
+                    warn!(repo_id, error = %e, "failed to sync existing archives on import");
+                    if task_state.import_tasks.is_current(repo_id, task_id).await {
+                        let _ =
+                            db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}")))
+                                .await;
+                    }
+                    false
+                }
+            };
+
+            if sync_ok && task_state.import_tasks.is_current(repo_id, task_id).await {
+                index_archives_with_progress(
+                    pool.clone(),
+                    encryption_key,
+                    repo_id,
+                    ui_broadcast.clone(),
+                    state_repo_lock,
+                    false,
+                )
+                .await;
+            }
+
+            if task_state.import_tasks.is_current(repo_id, task_id).await {
+                if let Err(e) = db::set_repo_importing(&pool, repo_id, false).await {
+                    warn!(repo_id, error = %e, "failed to clear importing flag");
+                }
+                clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
+                ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
+            }
+        } => {}
+    }
+
+    task_state.import_tasks.finish(repo_id, task_id).await;
+    clear_server_sync_op(&task_state, repo_id).await;
 }
 
 #[utoipa::path(

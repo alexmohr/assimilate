@@ -76,6 +76,33 @@ describe('extractError', () => {
     })
     expect(result).toContain('Request failed with status code 500')
   })
+
+  it('includes context prefix for axios errors', () => {
+    mockIsAxiosError.mockReturnValue(true)
+    const result = extractError(
+      {
+        isAxiosError: true,
+        response: { status: 400, data: 'bad request string' },
+        message: 'Request failed',
+        config: { url: '/test' },
+      },
+      'TestContext',
+    )
+    expect(result).toContain('TestContext')
+    expect(result).toContain('bad request string')
+  })
+
+  it('extracts message field when error field is missing from object response', () => {
+    mockIsAxiosError.mockReturnValue(true)
+    const result = extractError({
+      isAxiosError: true,
+      response: { status: 422, data: { message: 'validation failed', error_id: 'e999' } },
+      message: 'Request failed',
+      config: { url: '/test' },
+    })
+    expect(result).toContain('validation failed')
+    expect(result).toContain('ref: e999')
+  })
 })
 
 function createAxiosError(data: unknown, message = 'Request failed'): Record<string, unknown> {
@@ -192,5 +219,17 @@ describe('extractBlobError', () => {
     )
 
     expect(result).toContain('Request failed with status code 500')
+  })
+
+  it('includes context prefix for blob axios errors', async () => {
+    const blob = new Blob([JSON.stringify({ error: 'permission denied' })], {
+      type: 'application/json',
+    })
+    mockIsAxiosError.mockReturnValue(true)
+
+    const result = await extractBlobError(createAxiosError(blob), 'BlobContext')
+
+    expect(result).toContain('BlobContext')
+    expect(result).toContain('permission denied')
   })
 })

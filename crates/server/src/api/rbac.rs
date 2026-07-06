@@ -112,6 +112,9 @@ pub struct SetUserRolesRequest {
     pub role_ids: Vec<i64>,
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_groups(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -124,6 +127,9 @@ pub async fn list_groups(
     Ok(Json(groups))
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn create_group(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -141,6 +147,9 @@ pub async fn create_group(
     Ok((StatusCode::CREATED, Json(group)))
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn update_group(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -159,6 +168,9 @@ pub async fn update_group(
     Ok(Json(group))
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn delete_group(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -168,6 +180,9 @@ pub async fn delete_group(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] if the requested resource does not exist.
 pub async fn list_group_members(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -181,6 +196,9 @@ pub async fn list_group_members(
     Ok(Json(shared::responses::GroupMembersResponse { user_ids }))
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] if the requested resource does not exist.
 pub async fn set_group_members(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -195,6 +213,9 @@ pub async fn set_group_members(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_roles(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -207,6 +228,9 @@ pub async fn list_roles(
     Ok(Json(roles))
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn create_role(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -237,6 +261,9 @@ pub async fn create_role(
     Ok((StatusCode::CREATED, Json(role)))
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn update_role(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -270,6 +297,11 @@ pub async fn update_role(
 
 const PROTECTED_ROLE_NAMES: &[&str] = &["admin", "operator", "viewer"];
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::BadRequest`]: the request is invalid
 pub async fn delete_role(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -289,6 +321,9 @@ pub async fn delete_role(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_user_roles(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -302,6 +337,9 @@ pub async fn list_user_roles(
     Ok(Json(roles))
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn set_user_roles(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -312,6 +350,9 @@ pub async fn set_user_roles(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_user_groups(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -325,6 +366,9 @@ pub async fn list_user_groups(
     Ok(Json(groups))
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Forbidden`] if the caller lacks permission for this operation.
 pub async fn get_effective_permissions(
     State(state): State<AppState>,
     auth: AuthUser,

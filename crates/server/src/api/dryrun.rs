@@ -51,6 +51,12 @@ pub struct DryRunResponse {
         (status = 503, description = "Agent offline or timed out"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::ServiceUnavailable`]: a required dependency (e.g. the target agent) is unavailable
+/// - [`ApiError::Internal`]: an internal error occurs
 pub async fn dry_run(
     State(state): State<AppState>,
     auth: AuthUser,

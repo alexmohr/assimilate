@@ -95,6 +95,9 @@ async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentRespons
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn create_agent(
     State(state): State<AppState>,
     RequireAdmin(admin): RequireAdmin,
@@ -141,6 +144,9 @@ pub struct ListAgentsQuery {
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_agents(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -183,6 +189,9 @@ pub async fn list_agents(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn get_agent(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -208,6 +217,9 @@ pub async fn get_agent(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn update_agent(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -252,6 +264,9 @@ pub async fn update_agent(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn delete_agent(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -282,6 +297,9 @@ pub async fn delete_agent(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn regenerate_token(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -344,6 +362,11 @@ pub async fn regenerate_token(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::Internal`]: an internal error occurs
 pub async fn restart_agent(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -381,6 +404,9 @@ pub async fn restart_agent(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_hostname_patterns(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -413,6 +439,9 @@ pub struct AddPatternRequest {
         (status = 409, description = "Duplicate pattern"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn add_hostname_pattern(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -441,6 +470,9 @@ pub async fn add_hostname_pattern(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn delete_hostname_pattern(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -474,6 +506,9 @@ pub struct MergeAgentRequest {
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn merge_agent(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -507,6 +542,9 @@ pub async fn merge_agent(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn hide_agent(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -531,6 +569,9 @@ pub async fn hide_agent(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn unhide_agent(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -556,6 +597,9 @@ pub async fn unhide_agent(
         (status = 503, description = "Agent offline"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn delete_agent_archives(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,

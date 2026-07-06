@@ -119,6 +119,9 @@ pub async fn query_available_agent_version(binary_dir: &std::path::Path) -> Opti
         (status = 500, description = "Agent binary not found or internal error"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn deploy_agent(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -255,6 +258,9 @@ pub struct FetchServiceUnitResponse {
         (status = 403, description = "Forbidden"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::BadGateway`] if the upstream operation (e.g. SSH or borg) fails.
 pub async fn fetch_service_unit(
     _admin: RequireAdmin,
     Path(_hostname): Path<String>,

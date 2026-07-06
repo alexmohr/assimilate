@@ -124,6 +124,9 @@ fn ssh_config() -> Arc<client::Config> {
     })
 }
 
+/// # Errors
+///
+/// Returns [`SshError::Connection`] if the operation fails.
 pub async fn scan_host_key(host: &str, port: u16) -> Result<String, SshError> {
     let host_key = Arc::new(Mutex::new(None));
     let handler = HostKeyCaptureHandler {
@@ -141,6 +144,9 @@ pub async fn scan_host_key(host: &str, port: u16) -> Result<String, SshError> {
         .ok_or_else(|| SshError::Connection(format!("{host}:{port}: no SSH host key received")))
 }
 
+/// # Errors
+///
+/// Returns [`SshError::PublicKeyNotFound`] if the operation fails.
 pub async fn read_server_public_key() -> Result<String, SshError> {
     let ssh_key_dir = std::env::var("SSH_KEY_DIR").unwrap_or_else(|_| "/ssh-keys".to_string());
     let pub_key_path = PathBuf::from(&ssh_key_dir).join("id_ed25519.pub");
@@ -151,6 +157,11 @@ pub async fn read_server_public_key() -> Result<String, SshError> {
         .map_err(|_| SshError::PublicKeyNotFound(pub_key_path))
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`SshError::PublicKeyNotFound`]: the operation fails
+/// - [`SshError::Auth`]: SSH authentication fails
 pub async fn load_server_private_key() -> Result<PrivateKey, SshError> {
     let ssh_key_dir = std::env::var("SSH_KEY_DIR").unwrap_or_else(|_| "/ssh-keys".to_string());
     let key_path = PathBuf::from(&ssh_key_dir).join("id_ed25519");
@@ -837,6 +848,12 @@ pub(crate) async fn list_agent_binaries(dir: &std::path::Path) -> Vec<String> {
     available
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`SshError::Io`]: an I/O error occurs over the SSH connection
+/// - [`SshError::Sftp`]: the SFTP operation fails
+/// - [`SshError::Exec`]: the operation fails
 pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError> {
     let session = match params.password {
         Some(pw) => connect_with_password(params.host, params.user, params.port, pw).await?,
@@ -928,6 +945,9 @@ pub struct ReadFileParams<'a> {
     pub path: &'a str,
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn read_remote_file(params: &ReadFileParams<'_>) -> Result<Option<String>, SshError> {
     let session = match params.password {
         Some(pw) => connect_with_password(params.host, params.user, params.port, pw).await?,

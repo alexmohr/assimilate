@@ -46,6 +46,9 @@ impl EmailConfig {
     }
 }
 
+/// # Errors
+///
+/// Returns [`NotificationError::Config`] if the notification channel is misconfigured.
 pub async fn send(
     config: &EmailConfig,
     payload: &serde_json::Value,
@@ -86,6 +89,9 @@ pub async fn send(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`NotificationError::Config`] if the notification channel is misconfigured.
 pub async fn validate_credentials(
     host: &str,
     port: u16,

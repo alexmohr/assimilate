@@ -67,6 +67,9 @@ pub fn hash_token(plaintext: &str) -> String {
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn create_token(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -97,6 +100,9 @@ pub async fn create_token(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_tokens(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -129,6 +135,9 @@ pub async fn list_tokens(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Forbidden`] if the caller lacks permission for this operation.
 pub async fn delete_token(
     State(state): State<AppState>,
     auth: AuthUser,

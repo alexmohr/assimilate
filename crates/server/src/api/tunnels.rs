@@ -59,6 +59,9 @@ fn validate_non_empty(value: &str, field: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_tunnels(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -78,6 +81,9 @@ pub async fn list_tunnels(
     Ok(Json(responses))
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn get_tunnel(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -92,6 +98,9 @@ pub async fn get_tunnel(
     Ok(Json(TunnelResponse { tunnel, status }))
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn get_agent_tunnel(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -107,6 +116,9 @@ pub async fn get_agent_tunnel(
     Ok(Json(TunnelResponse { tunnel, status }))
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn create_tunnel(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -138,6 +150,9 @@ pub async fn create_tunnel(
     Ok((StatusCode::CREATED, Json(tunnel)))
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn update_tunnel(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -176,6 +191,9 @@ pub async fn update_tunnel(
     Ok(Json(tunnel))
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn delete_tunnel(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -186,6 +204,9 @@ pub async fn delete_tunnel(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn enable_tunnel(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -208,6 +229,9 @@ pub async fn enable_tunnel(
     Ok(Json(tunnel))
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn reconnect_tunnel(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -229,6 +253,9 @@ pub async fn reconnect_tunnel(
     Ok(Json(TunnelResponse { tunnel, status }))
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn disable_tunnel(
     State(state): State<AppState>,
     _admin: RequireAdmin,

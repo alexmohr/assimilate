@@ -74,6 +74,9 @@ impl DashboardQuotaStatus {
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn dashboard_overview(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -499,6 +502,9 @@ fn repository_capacity(repo: &db::dashboard::RepositoryRow) -> DashboardReposito
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn summary(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -568,6 +574,9 @@ pub async fn summary(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn storage(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -591,6 +600,9 @@ pub async fn storage(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn schedule_counts(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -610,6 +622,9 @@ pub async fn schedule_counts(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn storage_breakdown(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -656,6 +671,9 @@ pub async fn storage_breakdown(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn activity(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -698,6 +716,9 @@ pub async fn activity(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn system_events(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -720,6 +741,9 @@ pub async fn system_events(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn health(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -788,6 +812,9 @@ pub struct TrendsQuery {
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn trends(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -837,6 +864,9 @@ pub async fn trends(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn storage_trends(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -871,6 +901,9 @@ pub async fn storage_trends(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn storage_trends_by_repo(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -973,6 +1006,9 @@ impl TryFrom<&str> for CalendarEventStatus {
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn calendar(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -1097,6 +1133,9 @@ pub async fn calendar(
     Ok(Json(result))
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn dismiss_finding(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -1106,6 +1145,9 @@ pub async fn dismiss_finding(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn undismiss_finding(
     State(state): State<AppState>,
     auth: AuthUser,

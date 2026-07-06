@@ -51,6 +51,11 @@ pub struct ChangePassphraseRequest {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Internal`]: an internal error occurs
+/// - [`ApiError::Database`]: the database query fails
 pub async fn export_key(
     State(state): State<AppState>,
     RequireAdmin(auth): RequireAdmin,
@@ -112,6 +117,11 @@ pub async fn export_key(
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Internal`]: an internal error occurs
+/// - [`ApiError::Database`]: the database query fails
 pub async fn import_key(
     State(state): State<AppState>,
     RequireAdmin(auth): RequireAdmin,
@@ -182,6 +192,11 @@ pub async fn import_key(
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Internal`]: an internal error occurs
+/// - [`ApiError::Database`]: the database query fails
 pub async fn change_passphrase(
     State(state): State<AppState>,
     RequireAdmin(auth): RequireAdmin,

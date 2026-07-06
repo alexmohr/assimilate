@@ -82,6 +82,9 @@ fn validate_export_path(path: &str) -> Result<(), ApiError> {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Internal`] if an internal error occurs.
 pub async fn export_archive(
     State(state): State<AppState>,
     auth: AuthUser,

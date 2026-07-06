@@ -15,6 +15,9 @@ pub struct ArchiveTag {
     pub created_at: DateTime<Utc>,
 }
 
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn add_tag(
     pool: &PgPool,
     repo_id: i64,
@@ -49,6 +52,9 @@ pub async fn add_tag(
     .await
 }
 
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn remove_tag(
     pool: &PgPool,
     repo_id: i64,
@@ -68,6 +74,9 @@ pub async fn remove_tag(
     Ok(result.rows_affected() > 0)
 }
 
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn list_tags_for_archive(
     pool: &PgPool,
     repo_id: i64,
@@ -85,6 +94,9 @@ pub async fn list_tags_for_archive(
     .await
 }
 
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn list_archives_by_tag(
     pool: &PgPool,
     repo_id: i64,

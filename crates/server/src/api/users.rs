@@ -66,6 +66,9 @@ pub struct UpdatePasswordRequest {
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_users(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -93,6 +96,9 @@ pub async fn list_users(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn create_user(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -132,6 +138,9 @@ pub async fn create_user(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn update_password(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -168,6 +177,9 @@ pub async fn update_password(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn delete_user(
     State(state): State<AppState>,
     RequireAdmin(admin): RequireAdmin,

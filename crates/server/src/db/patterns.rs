@@ -15,6 +15,9 @@ pub struct HostnamePatternRow {
     pub created_at: DateTime<Utc>,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_patterns_for_agent(
     pool: &PgPool,
     agent_id: i64,
@@ -30,6 +33,9 @@ pub async fn list_patterns_for_agent(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn add_hostname_pattern(
     pool: &PgPool,
     agent_id: i64,
@@ -47,6 +53,9 @@ pub async fn add_hostname_pattern(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn delete_hostname_pattern(pool: &PgPool, pattern_id: i64) -> Result<(), ApiError> {
     sqlx::query!(
         "DELETE FROM agent_hostname_patterns WHERE id = $1",
@@ -81,6 +90,9 @@ struct PatternAgentJoinRow {
     pub is_hidden: bool,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn find_agent_by_pattern(
     pool: &PgPool,
     hostname: &str,

@@ -73,6 +73,13 @@ pub struct SearchResponse {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::BadGateway`]: the upstream operation (e.g. SSH or borg) fails
+/// - [`ApiError::Internal`]: an internal error occurs
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn search_archive(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -235,6 +242,9 @@ pub struct CrossSearchResponse {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn cross_archive_search(
     State(state): State<AppState>,
     auth: AuthUser,

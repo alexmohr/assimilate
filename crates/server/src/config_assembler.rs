@@ -13,6 +13,11 @@ use crate::{
     error::ApiError,
 };
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Internal`]: an internal error occurs
+/// - [`ApiError::BadGateway`]: the upstream operation (e.g. SSH or borg) fails
 pub async fn assemble_config(
     pool: &PgPool,
     encryption_key: &[u8; 32],

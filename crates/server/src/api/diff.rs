@@ -121,6 +121,11 @@ fn classify_borg_diff_error(exit_code: i32, stderr: &str) -> ApiError {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::Internal`]: an internal error occurs
 pub async fn diff_archives(
     State(state): State<AppState>,
     auth: AuthUser,

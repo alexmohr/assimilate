@@ -75,6 +75,9 @@ impl RepoQuota {
     }
 }
 
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn upsert_quota(
     pool: &PgPool,
     repo_id: i64,
@@ -111,6 +114,9 @@ pub async fn upsert_quota(
     .await
 }
 
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn get_quota(pool: &PgPool, repo_id: i64) -> Result<Option<RepoQuota>, sqlx::Error> {
     let quota = sqlx::query_as!(
         RepoQuota,

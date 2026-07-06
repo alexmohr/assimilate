@@ -26,6 +26,9 @@ pub enum ResolveResult {
     Unmatched,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn resolve_agent_for_hostname(
     pool: &PgPool,
     hostname: &str,
@@ -54,6 +57,12 @@ pub async fn resolve_agent_for_hostname(
     Ok(ResolveResult::Unmatched)
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Database`]: the database query fails
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::BadRequest`]: the request is invalid
 pub async fn merge_agent(pool: &PgPool, source_id: i64, target_id: i64) -> Result<(), ApiError> {
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
 
@@ -269,6 +278,9 @@ pub struct ScheduleCountByAgent {
     pub count: i64,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_schedule_counts_by_agent(
     pool: &PgPool,
 ) -> Result<Vec<ScheduleCountByAgent>, ApiError> {
@@ -282,6 +294,11 @@ pub async fn get_schedule_counts_by_agent(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn get_agent_by_hostname(pool: &PgPool, hostname: &str) -> Result<AgentRow, ApiError> {
     sqlx::query_as!(
         AgentRow,
@@ -300,6 +317,11 @@ pub async fn get_agent_by_hostname(pool: &PgPool, hostname: &str) -> Result<Agen
     })
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn get_agent_by_id(pool: &PgPool, agent_id: i64) -> Result<AgentRow, ApiError> {
     sqlx::query_as!(
         AgentRow,
@@ -318,6 +340,11 @@ pub async fn get_agent_by_id(pool: &PgPool, agent_id: i64) -> Result<AgentRow, A
     })
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn get_agent_token_hash(
     pool: &PgPool,
     hostname: &str,
@@ -343,6 +370,9 @@ pub async fn get_agent_token_hash(
     Ok((row.id, row.agent_token_hash))
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn update_last_seen(pool: &PgPool, agent_id: i64) -> Result<(), ApiError> {
     sqlx::query!(
         "UPDATE agents SET last_seen_at = NOW() WHERE id = $1",
@@ -354,6 +384,9 @@ pub async fn update_last_seen(pool: &PgPool, agent_id: i64) -> Result<(), ApiErr
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn update_last_seen_and_version(
     pool: &PgPool,
     agent_id: i64,
@@ -377,6 +410,9 @@ pub async fn update_last_seen_and_version(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn update_last_seen_by_hostname(pool: &PgPool, hostname: &str) -> Result<(), ApiError> {
     sqlx::query!(
         "UPDATE agents SET last_seen_at = NOW() WHERE hostname = $1",
@@ -388,6 +424,9 @@ pub async fn update_last_seen_by_hostname(pool: &PgPool, hostname: &str) -> Resu
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_agents(pool: &PgPool, include_hidden: bool) -> Result<Vec<AgentRow>, ApiError> {
     if include_hidden {
         sqlx::query_as!(
@@ -416,6 +455,11 @@ pub async fn list_agents(pool: &PgPool, include_hidden: bool) -> Result<Vec<Agen
     }
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Database`]: the database query fails
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn set_agent_hidden(
     pool: &PgPool,
     hostname: &str,
@@ -441,6 +485,10 @@ pub async fn set_agent_hidden(
 ///
 /// Placeholder agents have a dummy token hash and cannot authenticate. They serve
 /// only as a foreign key target for imported `backup_reports`.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_or_create_agent_by_hostname(
     pool: &PgPool,
     hostname: &str,
@@ -479,6 +527,9 @@ pub async fn get_or_create_agent_by_hostname(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_agent(
     pool: &PgPool,
     hostname: &str,
@@ -513,6 +564,9 @@ pub struct AgentDefaults<'a> {
     pub default_file_change_patterns_raw: &'a str,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_agent_with_paths(
     pool: &PgPool,
     hostname: &str,
@@ -543,6 +597,11 @@ pub async fn insert_agent_with_paths(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn update_agent(
     pool: &PgPool,
     hostname: &str,
@@ -576,6 +635,11 @@ pub async fn update_agent(
     })
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn regenerate_agent_token(
     pool: &PgPool,
     hostname: &str,
@@ -599,6 +663,9 @@ pub async fn regenerate_agent_token(
     })
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn mark_agent_reports_matched(pool: &PgPool, agent_id: i64) -> Result<(), ApiError> {
     sqlx::query!(
         "UPDATE backup_reports SET matched = true WHERE agent_id = $1 AND matched = false",
@@ -610,6 +677,11 @@ pub async fn mark_agent_reports_matched(pool: &PgPool, agent_id: i64) -> Result<
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Database`]: the database query fails
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn delete_agent(pool: &PgPool, hostname: &str) -> Result<(), ApiError> {
     let result = sqlx::query!("DELETE FROM agents WHERE hostname = $1", hostname)
         .execute(pool)
@@ -622,6 +694,9 @@ pub async fn delete_agent(pool: &PgPool, hostname: &str) -> Result<(), ApiError>
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_archives_for_agent(
     pool: &PgPool,
     agent_id: i64,
@@ -661,6 +736,9 @@ struct AgentArchiveRow {
     archive_name: Option<String>,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_archives_for_agent_with_patterns(
     pool: &PgPool,
     agent_id: i64,
@@ -722,6 +800,9 @@ pub async fn get_archives_for_agent_with_patterns(
         .collect())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_schedule_target_hostnames_for_repo(
     pool: &PgPool,
     repo_id: i64,
@@ -769,6 +850,9 @@ pub struct UpdateRepoParams<'a> {
     pub sync_schedule: Option<&'a str>,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_importing_repo_ids(pool: &PgPool) -> Result<Vec<i64>, ApiError> {
     let rows = sqlx::query_scalar!("SELECT repo_id FROM repo_import_state WHERE importing = true")
         .fetch_all(pool)
@@ -777,6 +861,9 @@ pub async fn list_importing_repo_ids(pool: &PgPool) -> Result<Vec<i64>, ApiError
     Ok(rows)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn set_repo_importing(
     pool: &PgPool,
     repo_id: i64,
@@ -794,6 +881,9 @@ pub async fn set_repo_importing(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn set_repo_import_error(
     pool: &PgPool,
     repo_id: i64,
@@ -811,6 +901,9 @@ pub async fn set_repo_import_error(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn set_import_status_message(
     pool: &PgPool,
     repo_id: i64,
@@ -828,6 +921,9 @@ pub async fn set_import_status_message(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn update_repo_import_progress(
     pool: &PgPool,
     repo_id: i64,
@@ -847,6 +943,9 @@ pub async fn update_repo_import_progress(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn update_repo_last_synced(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
     sqlx::query!(
         "INSERT INTO repo_stats (repo_id, last_synced_at) VALUES ($1, NOW()) ON CONFLICT \
@@ -862,6 +961,10 @@ pub async fn update_repo_last_synced(pool: &PgPool, repo_id: i64) -> Result<(), 
 /// Returns `true` if the agent is linked to the repo via at least one
 /// schedule target (i.e., the agent is assigned a schedule whose target
 /// repo matches `repo_id`).
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn check_agent_repo_access(
     pool: &PgPool,
     agent_id: i64,
@@ -894,6 +997,9 @@ pub struct RepoInfoStats {
     pub archive_count: i64,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn update_repo_info_stats(
     pool: &PgPool,
     repo_id: i64,
@@ -921,6 +1027,9 @@ pub async fn update_repo_info_stats(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn clear_relocation_pending(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
     sqlx::query!(
@@ -947,6 +1056,10 @@ pub async fn clear_relocation_pending(pool: &PgPool, repo_id: i64) -> Result<(),
 /// Only clears the flag when this host's entry was actually present (`rows_affected` > 0) AND
 /// no other hosts remain pending. This prevents spurious clears when a host that was never
 /// registered in the pending table completes a backup.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn clear_relocation_for_host(
     pool: &PgPool,
     repo_id: i64,
@@ -986,6 +1099,9 @@ pub async fn clear_relocation_for_host(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn set_relocation_pending(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
     sqlx::query!(
@@ -1008,6 +1124,9 @@ pub async fn set_relocation_pending(pool: &PgPool, repo_id: i64) -> Result<(), A
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn update_repo_encryption(
     pool: &PgPool,
     repo_id: i64,
@@ -1024,6 +1143,9 @@ pub async fn update_repo_encryption(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_repo(
     pool: &PgPool,
     params: &InsertRepoParams<'_>,
@@ -1049,6 +1171,11 @@ pub async fn insert_repo(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn get_repo_connection(
     pool: &PgPool,
     repo_id: i64,
@@ -1066,6 +1193,11 @@ pub async fn get_repo_connection(
     })
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn update_repo(
     pool: &PgPool,
     params: &UpdateRepoParams<'_>,
@@ -1101,6 +1233,12 @@ pub async fn update_repo(
 /// currently-scheduled agents as pending confirmation in the same transaction. Use this when
 /// the repository location (host, port, or path) has changed so the scheduler never observes
 /// the new path with the flag still `false`.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Database`]: the database query fails
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn update_repo_and_set_relocation_pending(
     pool: &PgPool,
     params: &UpdateRepoParams<'_>,
@@ -1147,6 +1285,11 @@ pub async fn update_repo_and_set_relocation_pending(
     Ok(repo)
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Database`]: the database query fails
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn delete_repo(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
     sqlx::query!(
         "UPDATE schedules SET enabled = false WHERE repo_id = $1",
@@ -1166,6 +1309,9 @@ pub async fn delete_repo(pool: &PgPool, repo_id: i64) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_enabled_tunnels(pool: &PgPool) -> Result<Vec<SshTunnel>, ApiError> {
     sqlx::query_as!(
         SshTunnel,
@@ -1177,6 +1323,9 @@ pub async fn list_enabled_tunnels(pool: &PgPool) -> Result<Vec<SshTunnel>, ApiEr
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_all_tunnels(pool: &PgPool) -> Result<Vec<SshTunnel>, ApiError> {
     sqlx::query_as!(
         SshTunnel,
@@ -1188,6 +1337,11 @@ pub async fn list_all_tunnels(pool: &PgPool) -> Result<Vec<SshTunnel>, ApiError>
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn get_tunnel_by_id(pool: &PgPool, id: i64) -> Result<SshTunnel, ApiError> {
     sqlx::query_as!(
         SshTunnel,
@@ -1203,6 +1357,11 @@ pub async fn get_tunnel_by_id(pool: &PgPool, id: i64) -> Result<SshTunnel, ApiEr
     })
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn get_tunnel_by_agent_id(pool: &PgPool, agent_id: i64) -> Result<SshTunnel, ApiError> {
     sqlx::query_as!(
         SshTunnel,
@@ -1220,6 +1379,9 @@ pub async fn get_tunnel_by_agent_id(pool: &PgPool, agent_id: i64) -> Result<SshT
     })
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_tunnel(pool: &PgPool, params: &NewSshTunnel) -> Result<SshTunnel, ApiError> {
     sqlx::query_as!(
         SshTunnel,
@@ -1240,6 +1402,11 @@ pub async fn insert_tunnel(pool: &PgPool, params: &NewSshTunnel) -> Result<SshTu
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn update_tunnel(
     pool: &PgPool,
     id: i64,
@@ -1268,6 +1435,9 @@ pub async fn update_tunnel(
     })
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn update_tunnel_ssh_host_key(
     pool: &PgPool,
     id: i64,
@@ -1284,6 +1454,11 @@ pub async fn update_tunnel_ssh_host_key(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Database`]: the database query fails
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn delete_tunnel(pool: &PgPool, id: i64) -> Result<(), ApiError> {
     let result = sqlx::query!("DELETE FROM ssh_tunnels WHERE id = $1", id)
         .execute(pool)
@@ -1296,6 +1471,11 @@ pub async fn delete_tunnel(pool: &PgPool, id: i64) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Database`]: the database query fails
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn update_repo_passphrase(
     pool: &PgPool,
     repo_id: i64,
@@ -1315,6 +1495,11 @@ pub async fn update_repo_passphrase(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn get_repo_passphrase(pool: &PgPool, repo_id: i64) -> Result<Vec<u8>, ApiError> {
     sqlx::query_scalar!(
         "SELECT passphrase_encrypted FROM repos WHERE id = $1",
@@ -1328,6 +1513,11 @@ pub async fn get_repo_passphrase(pool: &PgPool, repo_id: i64) -> Result<Vec<u8>,
     })
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn get_repo_with_passphrase(
     pool: &PgPool,
     repo_id: i64,
@@ -1347,6 +1537,9 @@ pub async fn get_repo_with_passphrase(
     })
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn update_repo_ssh_host_key(
     pool: &PgPool,
     repo_id: i64,
@@ -1363,6 +1556,9 @@ pub async fn update_repo_ssh_host_key(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_global_excludes_raw(pool: &PgPool) -> Result<String, ApiError> {
     let row: Option<String> =
         sqlx::query_scalar!("SELECT raw_text FROM excludes_global_config LIMIT 1")
@@ -1372,6 +1568,9 @@ pub async fn get_global_excludes_raw(pool: &PgPool) -> Result<String, ApiError> 
     Ok(row.unwrap_or_default())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn set_global_excludes_raw(pool: &PgPool, raw_text: &str) -> Result<(), ApiError> {
     sqlx::query!(
         "INSERT INTO excludes_global_config (raw_text) VALUES ($1) ON CONFLICT (id) DO UPDATE SET \
@@ -1384,6 +1583,9 @@ pub async fn set_global_excludes_raw(pool: &PgPool, raw_text: &str) -> Result<()
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_schedules(pool: &PgPool) -> Result<Vec<ScheduleRow>, ApiError> {
     let rows = sqlx::query_as!(
         ScheduleRow,
@@ -1427,6 +1629,9 @@ pub struct ScheduleParams<'a> {
     pub file_change_patterns_raw: &'a str,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_schedule(
     pool: &PgPool,
     repo_id: i64,
@@ -1472,6 +1677,11 @@ pub async fn insert_schedule(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn update_schedule(
     pool: &PgPool,
     id: i64,
@@ -1517,6 +1727,11 @@ pub async fn update_schedule(
     })
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Database`]: the database query fails
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn update_schedule_repo(pool: &PgPool, id: i64, repo_id: i64) -> Result<(), ApiError> {
     let rows_affected = sqlx::query!(
         "UPDATE schedules SET repo_id = $2 WHERE id = $1",
@@ -1538,6 +1753,9 @@ pub fn compression_to_str(c: &Compression) -> String {
     c.to_string()
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Internal`] if an internal error occurs.
 pub fn compression_from_str(s: &str) -> Result<Compression, ApiError> {
     s.parse::<Compression>()
         .map_err(|e| ApiError::Internal(format!("invalid compression: {e}")))
@@ -1560,6 +1778,9 @@ pub struct RepoWithPassphraseRow {
     pub sync_schedule: Option<String>,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_all_repos(pool: &PgPool) -> Result<Vec<RepoRow>, ApiError> {
     sqlx::query_as!(
         RepoRow,
@@ -1588,6 +1809,9 @@ pub struct RepoRowWithSync {
     pub last_synced_at: Option<DateTime<Utc>>,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_repos_with_sync_schedule(
     pool: &PgPool,
 ) -> Result<Vec<RepoRowWithSync>, ApiError> {
@@ -1602,6 +1826,9 @@ pub async fn list_repos_with_sync_schedule(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_repos_for_agent(
     pool: &PgPool,
     agent_id: i64,
@@ -1619,6 +1846,9 @@ pub async fn list_repos_for_agent(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_repos_for_agent_public(
     pool: &PgPool,
     agent_id: i64,
@@ -1636,6 +1866,9 @@ pub async fn list_repos_for_agent_public(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_backup_sources_for_repo(
     pool: &PgPool,
     repo_id: i64,
@@ -1657,6 +1890,9 @@ pub async fn list_backup_sources_for_repo(
     Ok(rows.into_iter().map(|r| r.path).collect())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_backup_sources_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
@@ -1679,6 +1915,9 @@ pub async fn list_backup_sources_for_schedule(
     Ok(rows.into_iter().map(|r| r.path).collect())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_backup_sources_for_schedule_agent(
     pool: &PgPool,
     schedule_id: i64,
@@ -1709,6 +1948,9 @@ pub struct PerAgentBackupSources {
     pub paths: Vec<String>,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_all_per_agent_backup_sources_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
@@ -1740,6 +1982,9 @@ pub async fn list_all_per_agent_backup_sources_for_schedule(
         .collect())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_backup_source_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
@@ -1758,6 +2003,9 @@ pub async fn insert_backup_source_for_schedule(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_backup_source_for_schedule_agent(
     pool: &PgPool,
     schedule_id: i64,
@@ -1779,6 +2027,9 @@ pub async fn insert_backup_source_for_schedule_agent(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn delete_backup_sources_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
@@ -1793,6 +2044,9 @@ pub async fn delete_backup_sources_for_schedule(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn delete_per_agent_backup_sources_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
@@ -1813,6 +2067,9 @@ pub struct PerAgentExcludePatterns {
     pub raw_text: String,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_all_per_agent_excludes_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
@@ -1842,6 +2099,9 @@ pub async fn list_all_per_agent_excludes_for_schedule(
         .collect())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn upsert_per_agent_excludes_raw(
     pool: &PgPool,
     schedule_id: i64,
@@ -1861,6 +2121,9 @@ pub async fn upsert_per_agent_excludes_raw(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn delete_per_agent_excludes_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
@@ -1875,6 +2138,9 @@ pub async fn delete_per_agent_excludes_for_schedule(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_per_agent_excludes_raw(
     pool: &PgPool,
     schedule_id: i64,
@@ -1897,6 +2163,9 @@ pub struct PerAgentCommands {
     pub post_backup_commands: String,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_all_per_agent_commands_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
@@ -1928,6 +2197,9 @@ pub async fn list_all_per_agent_commands_for_schedule(
         .collect())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_per_agent_commands(
     pool: &PgPool,
     schedule_id: i64,
@@ -1957,6 +2229,9 @@ pub async fn get_per_agent_commands(
     }))
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn upsert_per_agent_commands(
     pool: &PgPool,
     schedule_id: i64,
@@ -1980,6 +2255,9 @@ pub async fn upsert_per_agent_commands(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn delete_per_agent_commands_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
@@ -2000,6 +2278,9 @@ pub struct PerAgentFileChangePatterns {
     pub raw_text: String,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_all_per_agent_file_change_patterns_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
@@ -2029,6 +2310,9 @@ pub async fn list_all_per_agent_file_change_patterns_for_schedule(
         .collect())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn upsert_per_agent_file_change_patterns_raw(
     pool: &PgPool,
     schedule_id: i64,
@@ -2048,6 +2332,9 @@ pub async fn upsert_per_agent_file_change_patterns_raw(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn delete_per_agent_file_change_patterns_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
@@ -2062,6 +2349,9 @@ pub async fn delete_per_agent_file_change_patterns_for_schedule(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_per_agent_file_change_patterns_raw(
     pool: &PgPool,
     schedule_id: i64,
@@ -2078,6 +2368,9 @@ pub async fn get_per_agent_file_change_patterns_raw(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_schedule_for_repo(
     pool: &PgPool,
     repo_id: i64,
@@ -2102,6 +2395,10 @@ pub async fn get_schedule_for_repo(
 /// repo id, not a schedule id) back to the schedule that most likely triggered
 /// it. If multiple schedules of the same type target the same host/repo pair,
 /// an arbitrary one is returned.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_schedule_for_hostname_repo(
     pool: &PgPool,
     hostname: &str,
@@ -2127,6 +2424,9 @@ pub async fn get_schedule_for_hostname_repo(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_schedules_for_repo(
     pool: &PgPool,
     repo_id: i64,
@@ -2149,6 +2449,11 @@ pub async fn list_schedules_for_repo(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Database`]: the database query fails
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn delete_schedule(pool: &PgPool, id: i64) -> Result<(), ApiError> {
     let result = sqlx::query!("DELETE FROM schedules WHERE id = $1", id)
         .execute(pool)
@@ -2161,6 +2466,9 @@ pub async fn delete_schedule(pool: &PgPool, id: i64) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_schedules_for_agent(
     pool: &PgPool,
     agent_id: i64,
@@ -2193,6 +2501,9 @@ pub struct DueScheduleRow {
     pub execution_order: i32,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_due_schedules(
     pool: &PgPool,
     now: DateTime<Utc>,
@@ -2212,6 +2523,9 @@ pub async fn list_due_schedules(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn mark_schedule_triggered(
     pool: &PgPool,
     schedule_id: i64,
@@ -2230,6 +2544,9 @@ pub async fn mark_schedule_triggered(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn set_next_run_at(
     pool: &PgPool,
     schedule_id: i64,
@@ -2246,6 +2563,9 @@ pub async fn set_next_run_at(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn set_schedule_enabled(
     pool: &PgPool,
     schedule_id: i64,
@@ -2264,6 +2584,10 @@ pub async fn set_schedule_enabled(
 
 /// IDs of every schedule belonging to a repo whose `ssh_host` matches, used to enforce a
 /// `server_quotas` `block_backups` action across all repos sharing that host.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_schedule_ids_for_ssh_host(
     pool: &PgPool,
     ssh_host: &str,
@@ -2285,6 +2609,11 @@ pub async fn list_schedule_ids_for_ssh_host(
     Ok(rows.into_iter().map(|r| r.id).collect())
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn get_schedule_by_id(pool: &PgPool, id: i64) -> Result<ScheduleRow, ApiError> {
     sqlx::query_as!(
         ScheduleRow,
@@ -2304,6 +2633,9 @@ pub async fn get_schedule_by_id(pool: &PgPool, id: i64) -> Result<ScheduleRow, A
     })
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_schedule_target_hostnames(
     pool: &PgPool,
     schedule_id: i64,
@@ -2332,6 +2664,9 @@ pub struct ScheduleRunTarget {
     pub hostname: String,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_schedule_targets_for_run(
     pool: &PgPool,
     schedule_id: i64,
@@ -2348,6 +2683,9 @@ pub async fn get_schedule_targets_for_run(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_schedule_targets(
     pool: &PgPool,
     schedule_id: i64,
@@ -2368,6 +2706,9 @@ pub async fn insert_schedule_targets(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn delete_schedule_targets(pool: &PgPool, schedule_id: i64) -> Result<(), ApiError> {
     sqlx::query!(
         "DELETE FROM schedule_targets WHERE schedule_id = $1",
@@ -2379,6 +2720,9 @@ pub async fn delete_schedule_targets(pool: &PgPool, schedule_id: i64) -> Result<
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_schedule_targets(
     pool: &PgPool,
     schedule_id: i64,
@@ -2394,6 +2738,11 @@ pub async fn list_schedule_targets(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn get_repo_name(pool: &PgPool, repo_id: i64) -> Result<String, ApiError> {
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -2411,6 +2760,11 @@ pub async fn get_repo_name(pool: &PgPool, repo_id: i64) -> Result<String, ApiErr
     Ok(row.name)
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn get_repo_ssh_host(pool: &PgPool, repo_id: i64) -> Result<String, ApiError> {
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -2431,6 +2785,12 @@ pub async fn get_repo_ssh_host(pool: &PgPool, repo_id: i64) -> Result<String, Ap
 /// Resolves a schedule's display name, falling back to `default_name` (typically
 /// the repo name) when the schedule has no custom name set, mirroring the
 /// `COALESCE(NULLIF(s.name, ''), r.name)` convention used elsewhere.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn get_schedule_display_name(
     pool: &PgPool,
     schedule_id: i64,
@@ -2458,6 +2818,9 @@ pub async fn get_schedule_display_name(
     })
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn insert_canary_result(
     pool: &PgPool,
     schedule_id: i64,
@@ -2491,6 +2854,9 @@ pub struct CanaryResultRow {
     pub archive_name: Option<String>,
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn get_latest_canary_result(
     pool: &PgPool,
     schedule_id: i64,
@@ -2506,6 +2872,9 @@ pub async fn get_latest_canary_result(
     Ok(row)
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_canary_results(
     pool: &PgPool,
     schedule_id: i64,
@@ -2613,6 +2982,9 @@ pub struct InsertReportParams {
     pub run_id: Option<String>,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_backup_pending(
     pool: &PgPool,
     agent_id: i64,
@@ -2637,6 +3009,9 @@ pub async fn insert_backup_pending(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_backup_started(
     pool: &PgPool,
     agent_id: i64,
@@ -2676,6 +3051,9 @@ pub async fn insert_backup_started(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn cancel_backup_report(
     pool: &PgPool,
     agent_id: i64,
@@ -2694,6 +3072,9 @@ pub async fn cancel_backup_report(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn cancel_all_active_backups(pool: &PgPool) -> Result<u64, ApiError> {
     let result = sqlx::query!(
         "UPDATE backup_reports SET status = 'cancelled', finished_at = NOW(), \
@@ -2705,6 +3086,9 @@ pub async fn cancel_all_active_backups(pool: &PgPool) -> Result<u64, ApiError> {
     Ok(result.rows_affected())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn acknowledge_cancellation(
     pool: &PgPool,
     agent_id: i64,
@@ -2722,6 +3106,9 @@ pub async fn acknowledge_cancellation(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn fail_other_started_backups(
     pool: &PgPool,
     agent_id: i64,
@@ -2744,6 +3131,9 @@ pub async fn fail_other_started_backups(
     Ok(result.rows_affected())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_backup_report(
     pool: &PgPool,
     params: &InsertReportParams,
@@ -2860,6 +3250,9 @@ pub async fn insert_backup_report(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn bulk_insert_backup_reports(
     pool: &PgPool,
     params: &[InsertReportParams],
@@ -2952,6 +3345,9 @@ pub struct ArchiveStats {
     pub repo_unique_csize: i64,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn update_backup_report_stats(
     pool: &PgPool,
     repo_id: i64,
@@ -2990,6 +3386,9 @@ pub async fn update_backup_report_stats(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_reports_for_agent(
     pool: &PgPool,
     agent_id: i64,
@@ -3033,6 +3432,9 @@ pub async fn list_reports_for_agent(
     }
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_reports_for_schedule(
     pool: &PgPool,
     schedule_id: i64,
@@ -3055,6 +3457,9 @@ pub async fn list_reports_for_schedule(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_storage_stats(pool: &PgPool) -> Result<Vec<StorageStatRow>, ApiError> {
     sqlx::query_as!(
         StorageStatRow,
@@ -3070,6 +3475,9 @@ pub async fn get_storage_stats(pool: &PgPool) -> Result<Vec<StorageStatRow>, Api
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_activity_feed(
     pool: &PgPool,
     limit: i64,
@@ -3100,6 +3508,9 @@ pub async fn get_activity_feed(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_health_summary(pool: &PgPool) -> Result<Vec<HealthRow>, ApiError> {
     sqlx::query_as!(
         HealthRow,
@@ -3137,6 +3548,9 @@ pub struct SessionRow {
     pub remember_me: bool,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_user(
     pool: &PgPool,
     username: &str,
@@ -3154,6 +3568,11 @@ pub async fn insert_user(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn get_user_by_username(pool: &PgPool, username: &str) -> Result<UserRow, ApiError> {
     sqlx::query_as!(
         UserRow,
@@ -3169,6 +3588,11 @@ pub async fn get_user_by_username(pool: &PgPool, username: &str) -> Result<UserR
     })
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn get_user_password_hash(
     pool: &PgPool,
     username: &str,
@@ -3206,6 +3630,11 @@ pub async fn get_user_password_hash(
     Ok((user, row.password_hash))
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn get_user_by_id(pool: &PgPool, user_id: i64) -> Result<UserRow, ApiError> {
     sqlx::query_as!(
         UserRow,
@@ -3221,6 +3650,9 @@ pub async fn get_user_by_id(pool: &PgPool, user_id: i64) -> Result<UserRow, ApiE
     })
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_users(pool: &PgPool) -> Result<Vec<UserRow>, ApiError> {
     sqlx::query_as!(
         UserRow,
@@ -3232,6 +3664,11 @@ pub async fn list_users(pool: &PgPool) -> Result<Vec<UserRow>, ApiError> {
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Database`]: the database query fails
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn delete_user(pool: &PgPool, user_id: i64) -> Result<(), ApiError> {
     let result = sqlx::query!("DELETE FROM users WHERE id = $1", user_id)
         .execute(pool)
@@ -3244,6 +3681,11 @@ pub async fn delete_user(pool: &PgPool, user_id: i64) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Database`]: the database query fails
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn update_user_password(
     pool: &PgPool,
     user_id: i64,
@@ -3264,6 +3706,9 @@ pub async fn update_user_password(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn update_last_login(pool: &PgPool, user_id: i64) -> Result<(), ApiError> {
     sqlx::query!(
         "UPDATE users SET last_login_at = NOW() WHERE id = $1",
@@ -3275,6 +3720,9 @@ pub async fn update_last_login(pool: &PgPool, user_id: i64) -> Result<(), ApiErr
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_session(
     pool: &PgPool,
     session_id: &str,
@@ -3295,6 +3743,11 @@ pub async fn insert_session(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Unauthorized`]: the caller is not authenticated
+/// - [`ApiError::Database`]: the database query fails
 pub async fn get_session(pool: &PgPool, session_id: &str) -> Result<SessionRow, ApiError> {
     sqlx::query_as!(
         SessionRow,
@@ -3312,6 +3765,9 @@ pub async fn get_session(pool: &PgPool, session_id: &str) -> Result<SessionRow, 
     })
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn extend_session(
     pool: &PgPool,
     session_id: &str,
@@ -3328,6 +3784,9 @@ pub async fn extend_session(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn delete_session(pool: &PgPool, session_id: &str) -> Result<(), ApiError> {
     sqlx::query!("DELETE FROM sessions WHERE id = $1", session_id)
         .execute(pool)
@@ -3336,6 +3795,9 @@ pub async fn delete_session(pool: &PgPool, session_id: &str) -> Result<(), ApiEr
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn delete_expired_sessions(pool: &PgPool) -> Result<u64, ApiError> {
     let result = sqlx::query!("DELETE FROM sessions WHERE expires_at <= NOW()")
         .execute(pool)
@@ -3344,6 +3806,9 @@ pub async fn delete_expired_sessions(pool: &PgPool) -> Result<u64, ApiError> {
     Ok(result.rows_affected())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn user_count(pool: &PgPool) -> Result<i64, ApiError> {
     #[derive(sqlx::FromRow)]
     struct CountRow {
@@ -3357,6 +3822,9 @@ pub async fn user_count(pool: &PgPool) -> Result<i64, ApiError> {
     Ok(row.count.unwrap_or(0))
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn count_failed_login_attempts(
     pool: &PgPool,
     username: &str,
@@ -3382,6 +3850,9 @@ pub async fn count_failed_login_attempts(
     Ok(row.count.unwrap_or(0))
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_login_attempt(
     pool: &PgPool,
     username: &str,
@@ -3409,6 +3880,9 @@ pub struct ApiTokenRow {
     pub last_used_at: Option<DateTime<Utc>>,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_api_token(
     pool: &PgPool,
     user_id: i64,
@@ -3428,6 +3902,9 @@ pub async fn insert_api_token(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_api_tokens_for_user(
     pool: &PgPool,
     user_id: i64,
@@ -3443,6 +3920,9 @@ pub async fn list_api_tokens_for_user(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_all_api_tokens(pool: &PgPool) -> Result<Vec<ApiTokenRow>, ApiError> {
     sqlx::query_as!(
         ApiTokenRow,
@@ -3454,6 +3934,11 @@ pub async fn list_all_api_tokens(pool: &PgPool) -> Result<Vec<ApiTokenRow>, ApiE
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Database`]: the database query fails
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn delete_api_token(pool: &PgPool, token_id: i64) -> Result<(), ApiError> {
     let result = sqlx::query!("DELETE FROM api_tokens WHERE id = $1", token_id)
         .execute(pool)
@@ -3468,6 +3953,11 @@ pub async fn delete_api_token(pool: &PgPool, token_id: i64) -> Result<(), ApiErr
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn get_api_token_owner(pool: &PgPool, token_id: i64) -> Result<i64, ApiError> {
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -3493,6 +3983,11 @@ pub struct ApiTokenLookupRow {
     pub user_id: i64,
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Unauthorized`]: the caller is not authenticated
+/// - [`ApiError::Database`]: the database query fails
 pub async fn get_user_by_token_hash(
     pool: &PgPool,
     token_hash: &str,
@@ -3511,6 +4006,9 @@ pub async fn get_user_by_token_hash(
     Ok(row)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn update_api_token_last_used(pool: &PgPool, token_hash: &str) -> Result<(), ApiError> {
     sqlx::query!(
         "UPDATE api_tokens SET last_used_at = NOW() WHERE token_hash = $1",
@@ -3551,6 +4049,9 @@ pub struct UpsertRepoPermissionParams {
     pub can_delete: bool,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn upsert_repo_permission(
     pool: &PgPool,
     params: &UpsertRepoPermissionParams,
@@ -3575,6 +4076,9 @@ pub async fn upsert_repo_permission(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_repo_permission(
     pool: &PgPool,
     user_id: i64,
@@ -3592,6 +4096,9 @@ pub async fn get_repo_permission(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_repo_permissions_for_user(
     pool: &PgPool,
     user_id: i64,
@@ -3607,6 +4114,9 @@ pub async fn list_repo_permissions_for_user(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_repo_permissions_for_repo(
     pool: &PgPool,
     repo_id: i64,
@@ -3631,6 +4141,9 @@ pub struct SystemEventRow {
     pub message: String,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_system_event(
     pool: &PgPool,
     event_type: &str,
@@ -3649,6 +4162,9 @@ pub async fn insert_system_event(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_system_events(pool: &PgPool, limit: i64) -> Result<Vec<SystemEventRow>, ApiError> {
     sqlx::query_as!(
         SystemEventRow,
@@ -3661,6 +4177,9 @@ pub async fn get_system_events(pool: &PgPool, limit: i64) -> Result<Vec<SystemEv
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_setting(pool: &PgPool, key: &str) -> Result<Option<String>, ApiError> {
     let row: Option<String> =
         sqlx::query_scalar!("SELECT value FROM system_settings WHERE key = $1", key)
@@ -3670,6 +4189,9 @@ pub async fn get_setting(pool: &PgPool, key: &str) -> Result<Option<String>, Api
     Ok(row)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn set_setting(pool: &PgPool, key: &str, value: &str) -> Result<(), ApiError> {
     sqlx::query!(
         "INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT \
@@ -3692,6 +4214,9 @@ pub struct DatabaseRelationSizeRow {
     pub total_bytes: i64,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_database_storage(
     pool: &PgPool,
 ) -> Result<(i64, Vec<DatabaseRelationSizeRow>), ApiError> {
@@ -3719,12 +4244,18 @@ pub async fn get_database_storage(
     Ok((total_bytes.unwrap_or(0), relations))
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Internal`] if an internal error occurs.
 pub async fn get_schedule_timezone(pool: &PgPool) -> Result<chrono_tz::Tz, ApiError> {
     let tz_str = get_setting(pool, "timezone").await?.unwrap_or_default();
     shared::schedule::parse_timezone(&tz_str)
         .map_err(|e| ApiError::Internal(format!("invalid timezone setting: {e}")))
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn delete_system_events_before(
     pool: &PgPool,
     before: DateTime<Utc>,
@@ -3744,6 +4275,10 @@ pub async fn delete_system_events_before(
 /// timestamp, and their lifecycle is governed by borg plus the sync stale
 /// removal, not by the report-retention window. Only run history without an
 /// archive (pending/started/failed/cancelled) is pruned.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn delete_backup_reports_before(
     pool: &PgPool,
     before: DateTime<Utc>,
@@ -3758,6 +4293,9 @@ pub async fn delete_backup_reports_before(
     Ok(result.rows_affected())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_user_preferences(
     pool: &PgPool,
     user_id: i64,
@@ -3770,6 +4308,9 @@ pub async fn get_user_preferences(
     Ok(row.unwrap_or(serde_json::Value::Null))
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn set_user_preferences(
     pool: &PgPool,
     user_id: i64,
@@ -3820,6 +4361,9 @@ pub struct RepoWithStatsRow {
     pub last_op_by: Option<String>,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow>, ApiError> {
     sqlx::query_as!(
         RepoWithStatsRow,
@@ -3847,6 +4391,11 @@ pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn get_repo_with_stats(
     pool: &PgPool,
     repo_id: i64,
@@ -3881,6 +4430,9 @@ pub async fn get_repo_with_stats(
     })
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn update_repo_last_op(
     pool: &PgPool,
     repo_id: i64,
@@ -3911,6 +4463,9 @@ pub struct TagRow {
     pub scope: String,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_tags(pool: &PgPool, scope: &str) -> Result<Vec<TagRow>, ApiError> {
     sqlx::query_as!(
         TagRow,
@@ -3922,6 +4477,9 @@ pub async fn list_tags(pool: &PgPool, scope: &str) -> Result<Vec<TagRow>, ApiErr
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_tag(
     pool: &PgPool,
     name: &str,
@@ -3941,6 +4499,11 @@ pub async fn insert_tag(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Database`]: the database query fails
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn delete_tag(pool: &PgPool, id: i64) -> Result<(), ApiError> {
     let result = sqlx::query!("DELETE FROM tags WHERE id = $1", id)
         .execute(pool)
@@ -3952,6 +4515,9 @@ pub async fn delete_tag(pool: &PgPool, id: i64) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn set_repo_tags(pool: &PgPool, repo_id: i64, tag_ids: &[i64]) -> Result<(), ApiError> {
     sqlx::query!("DELETE FROM repo_tags WHERE repo_id = $1", repo_id)
         .execute(pool)
@@ -3971,6 +4537,9 @@ pub async fn set_repo_tags(pool: &PgPool, repo_id: i64, tag_ids: &[i64]) -> Resu
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn set_agent_tags(pool: &PgPool, agent_id: i64, tag_ids: &[i64]) -> Result<(), ApiError> {
     sqlx::query!("DELETE FROM agent_tags WHERE agent_id = $1", agent_id)
         .execute(pool)
@@ -3997,6 +4566,9 @@ pub struct RepoTagRow {
     pub tag_color: String,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_all_repo_tags(pool: &PgPool) -> Result<Vec<RepoTagRow>, ApiError> {
     sqlx::query_as!(
         RepoTagRow,
@@ -4008,6 +4580,9 @@ pub async fn list_all_repo_tags(pool: &PgPool) -> Result<Vec<RepoTagRow>, ApiErr
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_tags_for_repo(pool: &PgPool, repo_id: i64) -> Result<Vec<TagRow>, ApiError> {
     sqlx::query_as!(
         TagRow,
@@ -4027,6 +4602,9 @@ pub struct AgentTagRow {
     pub tag_color: String,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_tags_for_agent(pool: &PgPool, agent_id: i64) -> Result<Vec<TagRow>, ApiError> {
     sqlx::query_as!(
         TagRow,
@@ -4039,6 +4617,9 @@ pub async fn list_tags_for_agent(pool: &PgPool, agent_id: i64) -> Result<Vec<Tag
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_all_agent_tags(pool: &PgPool) -> Result<Vec<AgentTagRow>, ApiError> {
     sqlx::query_as!(
         AgentTagRow,
@@ -4080,6 +4661,9 @@ pub struct DashboardSummaryRow {
     pub last_warning_schedule_name: Option<String>,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow, ApiError> {
     sqlx::query_as!(
         DashboardSummaryRow,
@@ -4144,6 +4728,9 @@ pub struct StorageBreakdownRow {
     pub deduplicated_size: i64,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_storage_breakdown(pool: &PgPool) -> Result<Vec<StorageBreakdownRow>, ApiError> {
     sqlx::query_as!(
         StorageBreakdownRow,
@@ -4156,6 +4743,9 @@ pub async fn get_storage_breakdown(pool: &PgPool) -> Result<Vec<StorageBreakdown
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_activity_feed_days(
     pool: &PgPool,
     days: i64,
@@ -4229,6 +4819,9 @@ pub struct UserRoleRow {
     pub role_id: i64,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_groups(pool: &PgPool) -> Result<Vec<GroupRow>, ApiError> {
     sqlx::query_as!(
         GroupRow,
@@ -4239,6 +4832,9 @@ pub async fn list_groups(pool: &PgPool) -> Result<Vec<GroupRow>, ApiError> {
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_group(pool: &PgPool, id: i64) -> Result<Option<GroupRow>, ApiError> {
     sqlx::query_as!(
         GroupRow,
@@ -4250,6 +4846,9 @@ pub async fn get_group(pool: &PgPool, id: i64) -> Result<Option<GroupRow>, ApiEr
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_group(
     pool: &PgPool,
     name: &str,
@@ -4267,6 +4866,11 @@ pub async fn insert_group(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn update_group(
     pool: &PgPool,
     id: i64,
@@ -4289,6 +4893,11 @@ pub async fn update_group(
     })
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Database`]: the database query fails
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn delete_group(pool: &PgPool, id: i64) -> Result<(), ApiError> {
     let result = sqlx::query!("DELETE FROM groups WHERE id = $1", id)
         .execute(pool)
@@ -4301,6 +4910,9 @@ pub async fn delete_group(pool: &PgPool, id: i64) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_group_members(pool: &PgPool, group_id: i64) -> Result<Vec<i64>, ApiError> {
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -4319,6 +4931,9 @@ pub async fn list_group_members(pool: &PgPool, group_id: i64) -> Result<Vec<i64>
     Ok(rows.into_iter().map(|r| r.user_id).collect())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn set_group_members(
     pool: &PgPool,
     group_id: i64,
@@ -4342,6 +4957,9 @@ pub async fn set_group_members(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_user_groups(pool: &PgPool, user_id: i64) -> Result<Vec<GroupRow>, ApiError> {
     sqlx::query_as!(
         GroupRow,
@@ -4354,6 +4972,9 @@ pub async fn list_user_groups(pool: &PgPool, user_id: i64) -> Result<Vec<GroupRo
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn user_shares_group_with(
     pool: &PgPool,
     user_id: i64,
@@ -4378,6 +4999,9 @@ pub async fn user_shares_group_with(
     Ok(row.shared.unwrap_or(false))
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_roles(pool: &PgPool) -> Result<Vec<RoleRow>, ApiError> {
     sqlx::query_as!(
         RoleRow,
@@ -4391,6 +5015,9 @@ pub async fn list_roles(pool: &PgPool) -> Result<Vec<RoleRow>, ApiError> {
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_role(pool: &PgPool, id: i64) -> Result<Option<RoleRow>, ApiError> {
     sqlx::query_as!(
         RoleRow,
@@ -4425,6 +5052,9 @@ pub struct InsertRoleParams<'a> {
     pub can_manage_tunnels: bool,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn insert_role(
     pool: &PgPool,
     params: &InsertRoleParams<'_>,
@@ -4458,6 +5088,11 @@ pub async fn insert_role(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Database`]: the database query fails
 pub async fn update_role(
     pool: &PgPool,
     id: i64,
@@ -4496,6 +5131,11 @@ pub async fn update_role(
     })
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Database`]: the database query fails
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn delete_role(pool: &PgPool, id: i64) -> Result<(), ApiError> {
     let result = sqlx::query!("DELETE FROM roles WHERE id = $1", id)
         .execute(pool)
@@ -4508,6 +5148,9 @@ pub async fn delete_role(pool: &PgPool, id: i64) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_user_roles(pool: &PgPool, user_id: i64) -> Result<Vec<RoleRow>, ApiError> {
     sqlx::query_as!(
         RoleRow,
@@ -4523,6 +5166,9 @@ pub async fn list_user_roles(pool: &PgPool, user_id: i64) -> Result<Vec<RoleRow>
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn set_user_roles(pool: &PgPool, user_id: i64, role_ids: &[i64]) -> Result<(), ApiError> {
     sqlx::query!("DELETE FROM user_roles WHERE user_id = $1", user_id)
         .execute(pool)
@@ -4542,6 +5188,9 @@ pub async fn set_user_roles(pool: &PgPool, user_id: i64, role_ids: &[i64]) -> Re
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_effective_permissions(pool: &PgPool, user_id: i64) -> Result<RoleRow, ApiError> {
     #[derive(sqlx::FromRow)]
     #[allow(
@@ -4610,6 +5259,9 @@ pub struct TrendRow {
     pub backup_count: i64,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_backup_trends(
     pool: &PgPool,
     repo_id: Option<i64>,
@@ -4664,6 +5316,11 @@ pub struct CalendarEventRow {
     pub archive_name: Option<String>,
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::Database`]: the database query fails
 pub async fn get_calendar_events(
     pool: &PgPool,
     year: i32,
@@ -4750,6 +5407,10 @@ pub struct StorageTrendByRepoRow {
 /// unique compressed size (`repo_unique_csize`) as of the most recent archive on or before that
 /// date. Mixing a single archive's per-archive size with the repo-wide deduplicated size would
 /// make the deduplicated line exceed the original/compressed lines, which is impossible.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_storage_trends(
     pool: &PgPool,
     repo_id: Option<i64>,
@@ -4799,6 +5460,9 @@ pub async fn get_storage_trends(
     }
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_archive_names_for_repo(
     pool: &PgPool,
     repo_id: i64,
@@ -4822,6 +5486,10 @@ pub async fn list_archive_names_for_repo(
 /// - All sizes are still zero (archive was imported but never enriched).
 /// - `repo_unique_csize` is zero even though other sizes are populated (archive was enriched
 ///   before `repo_unique_csize` was tracked).
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_archive_names_needing_stats(
     pool: &PgPool,
     repo_id: i64,
@@ -4841,6 +5509,9 @@ pub async fn list_archive_names_needing_stats(
     Ok(names.into_iter().collect())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn delete_archive_reports_by_names(
     pool: &PgPool,
     repo_id: i64,
@@ -4860,6 +5531,9 @@ pub async fn delete_archive_reports_by_names(
     Ok(result.rows_affected())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn delete_archive_records_by_names(
     pool: &PgPool,
     repo_id: i64,
@@ -4921,6 +5595,9 @@ pub async fn delete_archive_records_by_names(
     Ok(result.rows_affected())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn delete_all_repo_archive_data(pool: &PgPool, repo_id: i64) -> Result<u64, ApiError> {
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
 
@@ -4965,6 +5642,9 @@ pub async fn delete_all_repo_archive_data(pool: &PgPool, repo_id: i64) -> Result
     Ok(result.rows_affected())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn delete_orphaned_placeholder_agents(pool: &PgPool) -> Result<u64, ApiError> {
     let result = sqlx::query!(
         "DELETE FROM agents WHERE agent_token_hash = 'imported:no-auth' AND NOT EXISTS (SELECT 1 \
@@ -4979,6 +5659,10 @@ pub async fn delete_orphaned_placeholder_agents(pool: &PgPool) -> Result<u64, Ap
 /// See [`get_storage_trends`] for why `original_size`/`compressed_size` are a cumulative sum
 /// over all archives up to that date while `deduplicated_size` is the latest repo-wide
 /// `repo_unique_csize` snapshot.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_storage_trends_by_repo(
     pool: &PgPool,
     days: i64,
@@ -5007,6 +5691,9 @@ pub async fn get_storage_trends_by_repo(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_enabled_schedules_for_calendar(
     pool: &PgPool,
 ) -> Result<Vec<ScheduleRow>, ApiError> {

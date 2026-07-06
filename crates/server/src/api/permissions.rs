@@ -55,6 +55,9 @@ pub struct UpsertPermissionRequest {
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_for_repo(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -86,6 +89,9 @@ pub async fn list_for_repo(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn upsert(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -123,6 +129,9 @@ pub async fn upsert(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_for_user(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -137,6 +146,9 @@ pub async fn list_for_user(
     Ok(Json(perms))
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Forbidden`] if the caller lacks permission for this operation.
 pub async fn check_repo_permission(
     pool: &sqlx::PgPool,
     auth: &AuthUser,
@@ -188,6 +200,9 @@ impl From<&str> for RepoVisibility {
     }
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn is_visible_to_user(
     pool: &sqlx::PgPool,
     user_id: i64,

@@ -63,6 +63,9 @@ fn parse_iso_datetime(value: &str) -> Result<DateTime<Utc>, ApiError> {
         (status = 403, description = "Forbidden"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_audit_log(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,

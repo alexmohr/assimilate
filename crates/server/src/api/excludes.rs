@@ -27,6 +27,9 @@ pub struct SetGlobalExcludesRequest {
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn get_excludes(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -47,6 +50,9 @@ pub async fn get_excludes(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn set_excludes(
     State(state): State<AppState>,
     _auth: AuthUser,

@@ -69,6 +69,9 @@ pub struct UpsertServerQuotaRequest {
         (status = 403, description = "Forbidden"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_server_quotas(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -94,6 +97,11 @@ pub async fn list_server_quotas(
         (status = 403, description = "Forbidden"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Database`]: the database query fails
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn upsert_server_quota(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -149,6 +157,11 @@ pub async fn upsert_server_quota(
         (status = 404, description = "Quota not configured"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Database`]: the database query fails
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn delete_server_quota(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,

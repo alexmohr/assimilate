@@ -29,6 +29,9 @@ pub struct NewAuditEntry<'a> {
     pub ip_address: Option<&'a str>,
 }
 
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn insert_audit_entry(
     pool: &PgPool,
     entry: &NewAuditEntry<'_>,
@@ -60,6 +63,9 @@ pub struct AuditEntryFilters<'a> {
     pub filter_to: Option<DateTime<Utc>>,
 }
 
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn list_audit_entries(
     pool: &PgPool,
     filters: &AuditEntryFilters<'_>,

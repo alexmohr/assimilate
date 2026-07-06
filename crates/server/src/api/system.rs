@@ -35,6 +35,9 @@ fn ssh_key_dir() -> PathBuf {
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Internal`] if an internal error occurs.
 pub async fn ssh_public_key(_admin: RequireAdmin) -> Result<Json<SshPublicKeyResponse>, ApiError> {
     let pub_path = ssh_key_dir().join("id_ed25519.pub");
 
@@ -60,6 +63,9 @@ pub async fn ssh_public_key(_admin: RequireAdmin) -> Result<Json<SshPublicKeyRes
         (status = 500, description = "Key generation failed"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Internal`] if an internal error occurs.
 pub async fn ssh_regenerate_key(
     _admin: RequireAdmin,
 ) -> Result<Json<SshPublicKeyResponse>, ApiError> {
@@ -155,6 +161,9 @@ pub struct SettingsResponse {
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn get_settings(
     _admin: RequireAdmin,
     State(state): State<AppState>,
@@ -208,6 +217,9 @@ pub struct UpdateSettingsRequest {
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn update_settings(
     _admin: RequireAdmin,
     State(state): State<AppState>,
@@ -277,6 +289,9 @@ pub struct DatabaseStorageResponse {
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn get_database_storage(
     _admin: RequireAdmin,
     State(state): State<AppState>,
@@ -315,6 +330,9 @@ pub struct VersionResponse {
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn get_version(_admin: RequireAdmin) -> Result<Json<VersionResponse>, ApiError> {
     let binary_dir = agent_binary_dir().await;
     let agent_version = query_available_agent_version(&binary_dir).await;
@@ -357,6 +375,9 @@ pub struct SystemResetResponse {
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn reset_system(
     _admin: RequireAdmin,
     State(state): State<AppState>,

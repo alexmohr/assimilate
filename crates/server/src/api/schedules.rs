@@ -173,6 +173,9 @@ pub struct UpdateScheduleRequest {
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_schedules(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -212,6 +215,9 @@ pub async fn list_schedules(
         (status = 422, description = "Unprocessable -- SSH unreachable"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn create_schedule(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -336,6 +342,9 @@ pub async fn create_schedule(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn get_schedule(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -361,6 +370,11 @@ pub async fn get_schedule(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Forbidden`]: the caller lacks permission for this operation
+/// - [`ApiError::BadRequest`]: the request is invalid
 pub async fn update_schedule(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -511,6 +525,9 @@ pub async fn update_schedule(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Forbidden`] if the caller lacks permission for this operation.
 pub async fn delete_schedule(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -685,6 +702,9 @@ async fn refresh_next_run(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn run_schedule_now(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -755,6 +775,9 @@ pub async fn run_schedule_now(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn cancel_running_backup(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -839,6 +862,9 @@ pub struct ListScheduleReportsQuery {
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_schedule_reports(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -864,6 +890,9 @@ pub async fn list_schedule_reports(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_schedule_targets(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -891,6 +920,9 @@ pub async fn list_schedule_targets(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_schedule_backup_sources(
     State(state): State<AppState>,
     _auth: AuthUser,

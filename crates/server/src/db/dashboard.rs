@@ -63,6 +63,9 @@ pub struct RepositoryRow {
     pub last_synced_at: Option<DateTime<Utc>>,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn targets(pool: &PgPool) -> Result<Vec<TargetRow>, ApiError> {
     sqlx::query_as!(
         TargetRow,
@@ -115,6 +118,9 @@ pub async fn targets(pool: &PgPool) -> Result<Vec<TargetRow>, ApiError> {
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn eligible_hosts(pool: &PgPool) -> Result<Vec<EligibleAgentRow>, ApiError> {
     sqlx::query_as!(
         EligibleAgentRow,
@@ -149,6 +155,9 @@ pub async fn eligible_hosts(pool: &PgPool) -> Result<Vec<EligibleAgentRow>, ApiE
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn upcoming_schedules(pool: &PgPool) -> Result<Vec<UpcomingScheduleRow>, ApiError> {
     sqlx::query_as!(
         UpcomingScheduleRow,
@@ -178,6 +187,9 @@ pub async fn upcoming_schedules(pool: &PgPool) -> Result<Vec<UpcomingScheduleRow
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn repositories(pool: &PgPool) -> Result<Vec<RepositoryRow>, ApiError> {
     sqlx::query_as!(
         RepositoryRow,
@@ -209,6 +221,11 @@ pub async fn repositories(pool: &PgPool) -> Result<Vec<RepositoryRow>, ApiError>
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::Database`]: the database query fails
 pub async fn dismissed_finding_ids(
     pool: &PgPool,
     user_id: i64,
@@ -225,6 +242,11 @@ pub async fn dismissed_finding_ids(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::Database`]: the database query fails
 pub async fn dismiss_finding(
     pool: &PgPool,
     user_id: i64,
@@ -245,6 +267,11 @@ pub async fn dismiss_finding(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::Database`]: the database query fails
 pub async fn undismiss_finding(
     pool: &PgPool,
     user_id: i64,

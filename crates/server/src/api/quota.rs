@@ -62,6 +62,9 @@ async fn require_operator_or_admin(state: &AppState, auth: &AuthUser) -> Result<
         (status = 404, description = "Quota not configured"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] if the requested resource does not exist.
 pub async fn get_quota(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -91,6 +94,9 @@ pub async fn get_quota(
         (status = 403, description = "Forbidden"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn upsert_quota(
     State(state): State<AppState>,
     auth: AuthUser,

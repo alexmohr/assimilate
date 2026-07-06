@@ -52,6 +52,11 @@ pub struct DownloadFilesRequest {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::Internal`]: an internal error occurs
 pub async fn download_files(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -186,6 +191,12 @@ pub struct RestoreFilesResponse {
         (status = 503, description = "Agent offline or timed out"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::ServiceUnavailable`]: a required dependency (e.g. the target agent) is unavailable
+/// - [`ApiError::Internal`]: an internal error occurs
 pub async fn restore_files(
     State(state): State<AppState>,
     RequireAdmin(admin): RequireAdmin,

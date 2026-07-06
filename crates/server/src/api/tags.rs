@@ -120,6 +120,9 @@ async fn ensure_manage_tags(state: &AppState, auth: &AuthUser) -> Result<(), Api
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_tags(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -146,6 +149,9 @@ pub async fn list_tags(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn create_tag(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -172,6 +178,9 @@ pub async fn create_tag(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn delete_tag(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -195,6 +204,9 @@ pub async fn delete_tag(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn set_repo_tags(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -218,6 +230,9 @@ pub async fn set_repo_tags(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn get_repo_tags(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -245,6 +260,9 @@ pub async fn get_repo_tags(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn set_agent_tags(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -269,6 +287,9 @@ pub async fn set_agent_tags(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn get_agent_tags(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -296,6 +317,9 @@ pub async fn get_agent_tags(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_agent_tag_associations(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -321,6 +345,9 @@ pub async fn list_agent_tag_associations(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_repo_tag_associations(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -349,6 +376,9 @@ pub async fn list_repo_tag_associations(
         (status = 403, description = "Forbidden"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_archive_tags(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -383,6 +413,11 @@ pub async fn list_archive_tags(
         (status = 409, description = "Tag already exists"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Conflict`]: the request conflicts with the current state
+/// - [`ApiError::Database`]: the database query fails
 pub async fn add_archive_tag(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -429,6 +464,9 @@ pub async fn add_archive_tag(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] if the requested resource does not exist.
 pub async fn remove_archive_tag(
     State(state): State<AppState>,
     auth: AuthUser,

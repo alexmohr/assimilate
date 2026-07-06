@@ -42,6 +42,9 @@ fn index_status_to_string(s: &crate::archive_index::IndexStatus) -> String {
 
 pub const LOCK_WAIT_SECS: &str = "60";
 
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub fn validate_path(path: &str) -> Result<(), ApiError> {
     if path.is_empty() {
         return Err(ApiError::BadRequest("path must not be empty".to_string()));
@@ -90,6 +93,9 @@ fn validate_extract_path(path: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn get_repo_env(
     pool: &PgPool,
     encryption_key: &[u8; 32],
@@ -277,6 +283,9 @@ struct ListArchivesRow {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_archives(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -338,6 +347,11 @@ pub async fn list_archives(
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Internal`]: an internal error occurs
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn archive_info(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -436,6 +450,9 @@ pub async fn archive_info(
         (status = 409, description = "Another repository operation is in progress"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn delete_archive(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -746,6 +763,9 @@ fn fold_immediate_children(prefix: &str, entries: Vec<ContentEntry>) -> Vec<Cont
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Internal`] if an internal error occurs.
 pub async fn list_contents(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -921,6 +941,9 @@ struct ArchiveIndexStatusRow {
         (status = 403, description = "Forbidden"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_archive_index_status(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -975,6 +998,9 @@ pub async fn get_archive_index_status(
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Internal`] if an internal error occurs.
 pub async fn extract_file(
     State(state): State<AppState>,
     auth: AuthUser,

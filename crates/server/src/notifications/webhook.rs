@@ -14,6 +14,9 @@ pub struct WebhookConfig {
     pub headers: HashMap<String, String>,
 }
 
+/// # Errors
+///
+/// Returns [`NotificationError::Config`] if the notification channel is misconfigured.
 pub async fn send(
     config: &WebhookConfig,
     payload: &serde_json::Value,

@@ -60,6 +60,9 @@ async fn get_or_create_archive_id(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_index_status(
     pool: &PgPool,
     repo_id: i64,
@@ -127,6 +130,10 @@ async fn ensure_archive_paths(
 
 /// Atomically claim the indexing job and spawn a background task if we won the race.
 /// Returns the current status after the claim attempt.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn ensure_indexed(
     pool: PgPool,
     encryption_key: [u8; 32],
@@ -180,6 +187,10 @@ pub async fn ensure_indexed(
 /// Archive names in this repository whose content index is already complete.
 /// A full resync skips these: borg archives are immutable, so a finished
 /// index never needs to be rebuilt.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_indexed_archive_names(
     pool: &PgPool,
     repo_id: i64,
@@ -196,6 +207,10 @@ pub async fn list_indexed_archive_names(
 }
 
 /// Ensure an index job row exists so `run_indexing` can transition it.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn ensure_index_job(
     pool: &PgPool,
     repo_id: i64,
@@ -213,6 +228,9 @@ pub async fn ensure_index_job(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn run_indexing<F: FnMut(u64, Option<&str>)>(
     pool: &PgPool,
     encryption_key: &[u8; 32],
@@ -237,6 +255,9 @@ pub async fn run_indexing<F: FnMut(u64, Option<&str>)>(
     .await
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn run_indexing_with_lock_held<F: FnMut(u64, Option<&str>)>(
     pool: &PgPool,
     encryption_key: &[u8; 32],
@@ -533,6 +554,9 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
     Ok(file_count)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn query_dir(
     pool: &PgPool,
     repo_id: i64,

@@ -83,6 +83,10 @@ impl ServerChild {
     }
 
     /// Wait for the child to exit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying process or I/O operation fails.
     pub async fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
         match self.child.as_mut() {
             Some(child) => child.wait().await,
@@ -91,6 +95,10 @@ impl ServerChild {
     }
 
     /// Kill the child (SIGKILL on Unix).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying process or I/O operation fails.
     pub async fn kill(&mut self) -> std::io::Result<()> {
         match self.child.as_mut() {
             Some(child) => child.kill().await,
@@ -102,6 +110,10 @@ impl ServerChild {
     ///
     /// This drains stdout / stderr concurrently with waiting so the pipe buffer
     /// never fills up and deadlocks the child.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying process or I/O operation fails.
     pub async fn wait_with_output(&mut self) -> std::io::Result<std::process::Output> {
         let stdout = self.child.as_mut().and_then(|c| c.stdout.take());
         let stderr = self.child.as_mut().and_then(|c| c.stderr.take());
@@ -219,6 +231,10 @@ impl Borg {
     ///
     /// Uses [`ServerChild`] internally so the process is killed gracefully (SIGTERM first,
     /// then SIGKILL + break-lock) if the caller's future is dropped (e.g. a timeout fires).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying process or I/O operation fails.
     pub async fn run<A: AsRef<OsStr>>(
         &self,
         args: &[A],
@@ -278,6 +294,9 @@ impl Borg {
         args
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the underlying process or I/O operation fails.
     pub fn spawn<A: AsRef<OsStr>>(
         &self,
         args: &[A],
@@ -303,6 +322,10 @@ impl Borg {
     }
 
     /// Like [`spawn`] but also pipes stdin so the caller can write to it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying process or I/O operation fails.
     pub fn spawn_with_stdin<A: AsRef<OsStr>>(
         &self,
         args: &[A],

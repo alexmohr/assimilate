@@ -45,6 +45,9 @@ impl AgentRegistry {
         self.connections.write().await.remove(hostname);
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the underlying operation fails.
     pub async fn send_to(
         &self,
         hostname: &str,

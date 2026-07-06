@@ -126,6 +126,9 @@ pub struct ListReportsQuery {
         (status = 404, description = "Agent not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_reports(
     State(state): State<AppState>,
     _auth: AuthUser,

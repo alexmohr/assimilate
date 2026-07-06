@@ -98,6 +98,9 @@ pub struct ImportResult {
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn export_config(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -236,6 +239,9 @@ pub async fn export_config(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn import_config(
     State(state): State<AppState>,
     _admin: RequireAdmin,

@@ -190,6 +190,13 @@ pub struct RefreshResponse {
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::TooManyRequests`]: the caller has exceeded a rate limit
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Unauthorized`]: the caller is not authenticated
+/// - [`ApiError::Internal`]: an internal error occurs
 pub async fn login(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -283,6 +290,11 @@ pub async fn login(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::Internal`]: an internal error occurs
 pub async fn logout(State(state): State<AppState>, auth: AuthUser) -> Result<Response, ApiError> {
     let Some(session_id) = &auth.session_id else {
         return Err(ApiError::BadRequest(
@@ -315,6 +327,9 @@ pub async fn logout(State(state): State<AppState>, auth: AuthUser) -> Result<Res
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn me(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -352,6 +367,11 @@ pub async fn me(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::Internal`]: an internal error occurs
 pub async fn refresh_session(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -413,6 +433,9 @@ pub struct ChangePasswordRequest {
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn change_password(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -443,6 +466,9 @@ pub async fn change_password(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn get_preferences(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -465,6 +491,9 @@ pub async fn get_preferences(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn update_preferences(
     auth: AuthUser,
     State(state): State<AppState>,

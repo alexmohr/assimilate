@@ -207,6 +207,9 @@ impl NotificationService {
         DeliveryGuard(self.in_flight_deliveries.clone())
     }
 
+    /// # Errors
+    ///
+    /// Returns [`NotificationError::Config`] if the notification channel is misconfigured.
     pub async fn ensure_vapid_keys(&self) -> Result<(), NotificationError> {
         use base64::Engine;
         use p256::ecdsa::SigningKey;
@@ -261,6 +264,9 @@ struct PushSubscriptionRow {
     auth: String,
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn dispatch(
     service: &NotificationService,
     event: NotificationEvent,
@@ -343,6 +349,11 @@ pub async fn dispatch(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`NotificationError::Config`]: the notification channel is misconfigured
+/// - [`NotificationError::WebPush`]: the operation fails
 pub async fn deliver_to_channel(
     channel_type: ChannelType,
     config: &serde_json::Value,

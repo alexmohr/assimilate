@@ -130,6 +130,9 @@ fn extract_borg_error(stderr: &str) -> &str {
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_repos(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -169,6 +172,9 @@ pub async fn list_repos(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn get_agent_repos(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -219,6 +225,11 @@ pub struct UpdateRepoRequest {
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::BadGateway`]: the upstream operation (e.g. SSH or borg) fails
 pub async fn create_repo(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -400,6 +411,9 @@ pub async fn create_repo(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn update_repo(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -466,6 +480,9 @@ pub async fn update_repo(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn delete_repo(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -495,6 +512,9 @@ pub async fn delete_repo(
         (status = 500, description = "Failed to delete from disk"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Internal`] if an internal error occurs.
 pub async fn destroy_repo(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -547,6 +567,9 @@ pub async fn destroy_repo(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn get_passphrase(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -579,6 +602,9 @@ pub struct AcceptRepoHostKeyRequest {
         (status = 502, description = "SSH host key scan failed"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::BadGateway`] if the upstream operation (e.g. SSH or borg) fails.
 pub async fn scan_repo_host_key(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -609,6 +635,9 @@ pub async fn scan_repo_host_key(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn accept_repo_host_key(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -647,6 +676,9 @@ pub async fn accept_repo_host_key(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_repos_with_stats(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -686,6 +718,9 @@ pub async fn list_repos_with_stats(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn get_repo(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -726,6 +761,11 @@ pub struct InitRepoRequest {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::BadGateway`]: the upstream operation (e.g. SSH or borg) fails
 pub async fn init_repo(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -794,6 +834,9 @@ pub async fn init_repo(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn confirm_relocation(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -832,6 +875,9 @@ pub async fn confirm_relocation(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_schedules_for_repo(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -874,6 +920,9 @@ pub async fn list_schedules_for_repo(
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn break_lock(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -1025,6 +1074,11 @@ pub struct ExecBorgRequest {
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::Internal`]: an internal error occurs
 pub async fn exec_borg(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -1106,6 +1160,12 @@ pub struct MigrateEncryptionRequest {
         (status = 502, description = "Migration failed"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Internal`]: an internal error occurs
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::BadGateway`]: the upstream operation (e.g. SSH or borg) fails
 pub async fn migrate_encryption(
     State(state): State<AppState>,
     RequireAdmin(admin): RequireAdmin,
@@ -2232,6 +2292,9 @@ async fn sync_archives(
     Ok((processed, removed))
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn sync_existing_archives(
     pool: &PgPool,
     encryption_key: &[u8; 32],
@@ -2248,6 +2311,9 @@ pub async fn sync_existing_archives(
     .await
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn sync_new_archives(
     pool: &PgPool,
     encryption_key: &[u8; 32],
@@ -2607,6 +2673,9 @@ struct UnmatchedRow {
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn rescan_repo(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -2689,6 +2758,9 @@ const SYNC_WARN_DURATION: Duration = Duration::from_secs(300);
         (status = 409, description = "Sync already in progress"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Conflict`] if the request conflicts with the current state.
 pub async fn sync_repo(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -2839,6 +2911,9 @@ pub async fn sync_repo(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn reset_import(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -2876,6 +2951,9 @@ pub async fn reset_import(
         (status = 409, description = "Sync already in progress"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Conflict`] if the request conflicts with the current state.
 pub async fn reset_and_sync_repo(
     State(state): State<AppState>,
     _admin: RequireAdmin,

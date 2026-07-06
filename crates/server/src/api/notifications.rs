@@ -160,6 +160,9 @@ fn validate_event_type(t: &str) -> Result<(), ApiError> {
     })
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_channels(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -178,6 +181,9 @@ pub async fn list_channels(
     Ok(Json(channels))
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn create_channel(
     State(state): State<AppState>,
     admin: RequireAdmin,
@@ -220,6 +226,11 @@ pub async fn create_channel(
     Ok((StatusCode::CREATED, Json(channel)))
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn update_channel(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -286,6 +297,9 @@ pub async fn update_channel(
     Ok(Json(channel))
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] if the requested resource does not exist.
 pub async fn delete_channel(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -301,6 +315,11 @@ pub async fn delete_channel(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Internal`]: an internal error occurs
 pub async fn test_channel(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -340,6 +359,9 @@ pub async fn test_channel(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_rules(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -354,6 +376,9 @@ pub async fn list_rules(
     Ok(Json(rules))
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn create_rule(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -381,6 +406,9 @@ pub async fn create_rule(
     Ok((StatusCode::CREATED, Json(rule)))
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] if the requested resource does not exist.
 pub async fn delete_rule(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -396,6 +424,9 @@ pub async fn delete_rule(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn get_vapid_key(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -415,6 +446,9 @@ pub async fn get_vapid_key(
     }
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn set_vapid_keys(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -430,6 +464,9 @@ pub async fn set_vapid_keys(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn subscribe_push(
     State(state): State<AppState>,
     user: AuthUser,
@@ -467,6 +504,9 @@ pub async fn subscribe_push(
     Ok((StatusCode::CREATED, Json(sub)))
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn unsubscribe_push(
     State(state): State<AppState>,
     user: AuthUser,
@@ -482,6 +522,9 @@ pub async fn unsubscribe_push(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_push_subscriptions(
     State(state): State<AppState>,
     user: AuthUser,
@@ -497,6 +540,9 @@ pub async fn list_push_subscriptions(
     Ok(Json(subs))
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_deliveries(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -526,6 +572,9 @@ pub struct ValidateSmtpRequest {
     pub use_tls: bool,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn validate_smtp(
     _admin: RequireAdmin,
     ApiJson(req): ApiJson<ValidateSmtpRequest>,

@@ -2673,13 +2673,16 @@ async function resetImport(): Promise<void> {
 
 .info-card-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: 0.5rem 1rem;
   margin-bottom: 1.25rem;
 }
 
 .info-header-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
 }
 

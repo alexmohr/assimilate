@@ -139,7 +139,11 @@ pub async fn search_archive(
                 })
                 .ok()?;
 
-            let path = v["path"].as_str().unwrap_or("").to_string();
+            let path = v
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string();
 
             if let Some(ref prefix) = query.path_prefix
                 && !path.starts_with(prefix.as_str())
@@ -147,7 +151,10 @@ pub async fn search_archive(
                 return None;
             }
 
-            let mtime_str = v["mtime"].as_str().unwrap_or("");
+            let mtime_str = v
+                .get("mtime")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
             let mtime = DateTime::parse_from_rfc3339(mtime_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .or_else(|_| mtime_str.parse::<DateTime<Utc>>())
@@ -155,9 +162,16 @@ pub async fn search_archive(
 
             Some(SearchEntry {
                 path,
-                size: v["size"].as_i64().unwrap_or(0),
+                size: v
+                    .get("size")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(0),
                 mtime,
-                entry_type: v["type"].as_str().unwrap_or("").to_string(),
+                entry_type: v
+                    .get("type")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
             })
         })
         .collect();
@@ -247,7 +261,9 @@ pub async fn cross_archive_search(
     let archives_to_search: Vec<&ArchiveEntryBrief> = archives.iter().take(max_archives).collect();
     let total_archives_searched = archives_to_search.len();
 
-    let overall_deadline = tokio::time::Instant::now() + OVERALL_TIMEOUT;
+    let overall_deadline = tokio::time::Instant::now()
+        .checked_add(OVERALL_TIMEOUT)
+        .unwrap_or_else(tokio::time::Instant::now);
     let mut seen: HashMap<String, CrossSearchEntry> = HashMap::new();
 
     let borg_pattern = format!("sh:{}", query.pattern);
@@ -311,17 +327,25 @@ async fn list_archives_sorted(
     let json_output: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|e| ApiError::Internal(format!("failed to parse borg output: {e}")))?;
 
-    let mut archives: Vec<ArchiveEntryBrief> =
-        json_output["archives"]
-            .as_array()
-            .map_or_else(Vec::new, |arr| {
-                arr.iter()
-                    .map(|a| ArchiveEntryBrief {
-                        name: a["name"].as_str().unwrap_or("").to_string(),
-                        start: a["start"].as_str().unwrap_or("").to_string(),
-                    })
-                    .collect()
-            });
+    let mut archives: Vec<ArchiveEntryBrief> = json_output
+        .get("archives")
+        .and_then(serde_json::Value::as_array)
+        .map_or_else(Vec::new, |arr| {
+            arr.iter()
+                .map(|a| ArchiveEntryBrief {
+                    name: a
+                        .get("name")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    start: a
+                        .get("start")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                })
+                .collect()
+        });
 
     // Sort by start time descending (most recent first)
     archives.sort_by(|a, b| b.start.cmp(&a.start));
@@ -384,17 +408,31 @@ async fn search_in_archive(
                 })
                 .ok()?;
 
-            let mtime_str = v["mtime"].as_str().unwrap_or("");
+            let mtime_str = v
+                .get("mtime")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
             let mtime = DateTime::parse_from_rfc3339(mtime_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .or_else(|_| mtime_str.parse::<DateTime<Utc>>())
                 .unwrap_or_default();
 
             Some(CrossSearchEntry {
-                path: v["path"].as_str().unwrap_or("").to_string(),
-                size: v["size"].as_i64().unwrap_or(0),
+                path: v
+                    .get("path")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                size: v
+                    .get("size")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(0),
                 mtime,
-                entry_type: v["type"].as_str().unwrap_or("").to_string(),
+                entry_type: v
+                    .get("type")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
                 archive_name: archive_name.to_string(),
             })
         })

@@ -821,7 +821,7 @@ async fn detect_remote_arch(
     Ok(canonical_arch(&stdout))
 }
 
-async fn list_agent_binaries(dir: &std::path::Path) -> Vec<String> {
+pub(crate) async fn list_agent_binaries(dir: &std::path::Path) -> Vec<String> {
     let mut available = Vec::new();
     if let Ok(mut entries) = tokio::fs::read_dir(dir).await {
         while let Ok(Some(entry)) = entries.next_entry().await {

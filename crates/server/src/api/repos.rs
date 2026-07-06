@@ -1108,7 +1108,7 @@ pub struct MigrateEncryptionRequest {
 )]
 pub async fn migrate_encryption(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
     Path(repo_id): Path<i64>,
     ApiJson(req): ApiJson<MigrateEncryptionRequest>,
 ) -> Result<Json<MigrateEncryptionResponse>, ApiError> {
@@ -1183,8 +1183,8 @@ pub async fn migrate_encryption(
     if let Err(e) = db::audit::insert_audit_entry(
         &state.pool,
         &db::audit::NewAuditEntry {
-            user_id: Some(_admin.user_id),
-            username: &_admin.username,
+            user_id: Some(admin.user_id),
+            username: &admin.username,
             action: "migrate_encryption",
             target_type: Some("repo"),
             target_id: Some(repo_id),
@@ -1494,7 +1494,9 @@ async fn run_borg_list_with_retry(
     // immediately; adding `--format` forces per-archive metadata loads and
     // makes full resyncs crawl on large repositories.
     let args = borg_list_args(borg_repo);
-    let stage_deadline = tokio::time::Instant::now() + stage_timeout;
+    let stage_deadline = tokio::time::Instant::now()
+        .checked_add(stage_timeout)
+        .unwrap_or_else(tokio::time::Instant::now);
 
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
         let remaining = stage_deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -1528,9 +1530,13 @@ async fn run_borg_list_with_retry(
             let json: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| {
                 ApiError::Internal(format!("borg list returned malformed JSON: {e}"))
             })?;
-            let archives = json["archives"].as_array().cloned().ok_or_else(|| {
-                ApiError::Internal("borg list JSON missing 'archives' array".to_string())
-            })?;
+            let archives = json
+                .get("archives")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .ok_or_else(|| {
+                    ApiError::Internal("borg list JSON missing 'archives' array".to_string())
+                })?;
             return Ok(archives);
         }
 
@@ -1542,7 +1548,10 @@ async fn run_borg_list_with_retry(
         }
 
         let now = tokio::time::Instant::now();
-        if now + LOCK_RETRY_INTERVAL >= stage_deadline {
+        if now
+            .checked_add(LOCK_RETRY_INTERVAL)
+            .is_none_or(|next| next >= stage_deadline)
+        {
             return Err(ApiError::Internal(format!(
                 "borg list stage timed out after {}s; repository may be locked by a long-running \
                  backup",
@@ -1679,7 +1688,8 @@ fn archive_finish_time(
             .as_f64()
             .and_then(|duration| std::time::Duration::try_from_secs_f64(duration).ok())
             .and_then(|duration| chrono::Duration::from_std(duration).ok())
-            .map_or(started_at, |duration| started_at + duration)
+            .and_then(|duration| started_at.checked_add_signed(duration))
+            .unwrap_or(started_at)
     })
 }
 
@@ -1725,8 +1735,9 @@ async fn fetch_archive_metadata_with_retry(
                     "borg info returned malformed JSON for archive '{archive_name}': {e}"
                 ))
             })?;
-            return json["archives"]
-                .as_array()
+            return json
+                .get("archives")
+                .and_then(serde_json::Value::as_array)
                 .and_then(|archives| archives.first())
                 .cloned()
                 .ok_or_else(|| {
@@ -1776,20 +1787,21 @@ async fn hydrate_archives_with_metadata(
     let mut hydrated = Vec::with_capacity(total);
     let mut completed = 0usize;
     for archive in archives.iter().copied() {
-        let archive_name = archive["name"].as_str().unwrap_or_default();
+        let archive_name = archive
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let next_position = completed.saturating_add(1);
         let loading_msg = if archive_name.is_empty() {
-            format!("Loading archive metadata... ({}/{total})", completed + 1)
+            format!("Loading archive metadata... ({next_position}/{total})")
         } else {
-            format!(
-                "Loading metadata for '{archive_name}' ({}/{total})",
-                completed + 1
-            )
+            format!("Loading metadata for '{archive_name}' ({next_position}/{total})")
         };
         publish_import_progress(
             pool,
             ui_broadcast,
             repo_id,
-            i32::try_from(completed + 1).unwrap_or(i32::MAX),
+            i32::try_from(next_position).unwrap_or(i32::MAX),
             total_i32,
             Some(&loading_msg),
         )
@@ -1804,7 +1816,10 @@ async fn hydrate_archives_with_metadata(
                     return Ok::<serde_json::Value, ApiError>(archive);
                 }
 
-                let archive_name = archive["name"].as_str().unwrap_or_default();
+                let archive_name = archive
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
                 if archive_name.is_empty() {
                     return Ok::<serde_json::Value, ApiError>(archive);
                 }
@@ -1815,9 +1830,14 @@ async fn hydrate_archives_with_metadata(
 
                 let mut merged = archive;
                 for field in ["hostname", "end"] {
-                    if merged[field].is_null() || merged[field].as_str().is_some_and(str::is_empty)
+                    let needs_update = merged.get(field).is_none_or(|v| {
+                        v.is_null() || v.as_str().is_some_and(str::is_empty)
+                    });
+                    if needs_update
+                        && let Some(new_value) = metadata.get(field)
+                        && let Some(obj) = merged.as_object_mut()
                     {
-                        merged[field] = metadata[field].clone();
+                        obj.insert(field.to_string(), new_value.clone());
                     }
                 }
                 Ok::<serde_json::Value, ApiError>(merged)
@@ -1825,7 +1845,7 @@ async fn hydrate_archives_with_metadata(
         }
         .await?;
 
-        completed += 1;
+        completed = completed.saturating_add(1);
         let loaded_msg = if archive_name.is_empty() {
             format!("Loading archive metadata... ({completed}/{total})")
         } else {
@@ -1912,7 +1932,10 @@ async fn build_import_reports(
     let mut hostname_cache: HashMap<String, (i64, bool)> = HashMap::new();
     let mut report_params = Vec::with_capacity(total);
     for (processed, archive) in archives.iter().enumerate() {
-        let name = archive["name"].as_str().unwrap_or_default();
+        let name = archive
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
         if name.is_empty() {
             continue;
         }
@@ -1925,8 +1948,7 @@ async fn build_import_reports(
             cached
         } else {
             let (agent, matched) = match db::resolve_agent_for_hostname(pool, hostname).await? {
-                db::ResolveResult::ExactMatch(c) => (c, true),
-                db::ResolveResult::PatternMatch(c) => (c, true),
+                db::ResolveResult::ExactMatch(c) | db::ResolveResult::PatternMatch(c) => (c, true),
                 db::ResolveResult::Unmatched => {
                     let c = db::get_or_create_agent_by_hostname(pool, hostname).await?;
                     (c, false)
@@ -1937,8 +1959,12 @@ async fn build_import_reports(
             entry
         };
 
-        let Some(started_at) = parse_borg_timestamp(archive["start"].as_str().unwrap_or_default())
-        else {
+        let Some(started_at) = parse_borg_timestamp(
+            archive
+                .get("start")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default(),
+        ) else {
             warn!(repo_id, archive = %name, "skipping archive with unparseable start timestamp");
             continue;
         };
@@ -1948,7 +1974,7 @@ async fn build_import_reports(
             .num_seconds()
             .max(0);
 
-        let processed_count = i32::try_from(processed + 1).unwrap_or(i32::MAX);
+        let processed_count = i32::try_from(processed.saturating_add(1)).unwrap_or(i32::MAX);
         info!(repo_id, archive = %name, processed = processed_count, total, "archive imported");
         let progress_msg = format!("Imported \u{2018}{name}\u{2019} ({processed_count}/{total})");
         publish_import_progress(
@@ -2249,7 +2275,7 @@ fn enrich_archive_stats_background(
                 let pool = pool.clone();
                 let borg_repo = borg_repo.clone();
                 let env = env.clone();
-                let semaphore = semaphore.clone();
+                let semaphore = std::sync::Arc::clone(&semaphore);
                 async move {
                     let _permit = semaphore.acquire_owned().await;
                     let repo_archive = format!("{borg_repo}::{archive_name}");
@@ -2301,32 +2327,51 @@ fn enrich_archive_stats_background(
                         }
                     };
 
-                    let info = match json["archives"].as_array().and_then(|a| a.first()) {
-                        Some(v) => v.clone(),
-                        None => {
-                            warn!(
-                                repo_id,
-                                archive = %archive_name,
-                                "stat enrichment: borg info returned no archive entry"
-                            );
-                            return;
-                        }
+                    let Some(info) = json
+                        .get("archives")
+                        .and_then(serde_json::Value::as_array)
+                        .and_then(|a| a.first())
+                    else {
+                        warn!(
+                            repo_id,
+                            archive = %archive_name,
+                            "stat enrichment: borg info returned no archive entry"
+                        );
+                        return;
                     };
 
-                    let raw_stats = &info["stats"];
+                    let raw_stats = info.get("stats");
                     #[allow(
                         clippy::cast_possible_truncation,
                         reason = "borg durations are small positive second counts; removal \
                                   tracked in #284"
                     )]
                     let archive_stats = db::ArchiveStats {
-                        original_size: raw_stats["original_size"].as_i64().unwrap_or(0),
-                        compressed_size: raw_stats["compressed_size"].as_i64().unwrap_or(0),
-                        deduplicated_size: raw_stats["deduplicated_size"].as_i64().unwrap_or(0),
-                        files_processed: raw_stats["nfiles"].as_i64().unwrap_or(0),
-                        duration_secs: info["duration"].as_f64().unwrap_or(0.0) as i64,
-                        repo_unique_csize: json["cache"]["stats"]["unique_csize"]
-                            .as_i64()
+                        original_size: raw_stats
+                            .and_then(|s| s.get("original_size"))
+                            .and_then(serde_json::Value::as_i64)
+                            .unwrap_or(0),
+                        compressed_size: raw_stats
+                            .and_then(|s| s.get("compressed_size"))
+                            .and_then(serde_json::Value::as_i64)
+                            .unwrap_or(0),
+                        deduplicated_size: raw_stats
+                            .and_then(|s| s.get("deduplicated_size"))
+                            .and_then(serde_json::Value::as_i64)
+                            .unwrap_or(0),
+                        files_processed: raw_stats
+                            .and_then(|s| s.get("nfiles"))
+                            .and_then(serde_json::Value::as_i64)
+                            .unwrap_or(0),
+                        duration_secs: info
+                            .get("duration")
+                            .and_then(serde_json::Value::as_f64)
+                            .unwrap_or(0.0) as i64,
+                        repo_unique_csize: json
+                            .get("cache")
+                            .and_then(|v| v.get("stats"))
+                            .and_then(|v| v.get("unique_csize"))
+                            .and_then(serde_json::Value::as_i64)
                             .unwrap_or(0),
                     };
 
@@ -2438,7 +2483,7 @@ async fn index_archives_with_progress(
         // The progress bar tracks *completed* archives, so it never reaches 100%
         // while an archive (including the last one) is still being scanned.
         let completed = i32::try_from(index).unwrap_or(i32::MAX);
-        let human_position = index + 1;
+        let human_position = index.saturating_add(1);
         let archive_msg = format!(
             "Indexing contents of \u{2018}{archive_name}\u{2019} ({human_position}/{total})"
         );
@@ -2577,7 +2622,7 @@ pub async fn rescan_repo(
             .execute(&state.pool)
             .await
             .map_err(ApiError::Database)?;
-            matched_count += 1;
+            matched_count = matched_count.saturating_add(1);
         }
     }
 

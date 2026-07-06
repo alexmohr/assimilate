@@ -5,6 +5,27 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { test as base, expect, type Page } from '@playwright/test'
 
+export const adminRoutes = [
+  '/system',
+  '/admin/roles',
+  '/admin/groups',
+  '/audit-log',
+  '/notifications',
+] as const
+
+export async function verifyRedirectFromAdminRoutes(
+  page: Page,
+  routes: readonly string[],
+  timeout = 10_000,
+): Promise<void> {
+  for (const route of routes) {
+    await page.goto(route, { waitUntil: 'commit' })
+    await page.waitForURL((url) => !url.pathname.startsWith(route), { timeout })
+    await expect(page).not.toHaveURL(/\/error/)
+    await expect(page).toHaveURL(/\/$/)
+  }
+}
+
 export async function loginAsAdmin(page: Page): Promise<void> {
   // Retry the full login flow up to 3 times to handle transient CI slowness.
   let lastErr: unknown

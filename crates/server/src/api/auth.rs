@@ -11,10 +11,10 @@ use axum::{
 };
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use shared::responses::{MeResponse, PreferencesResponse, RefreshSessionResponse};
+use shared::responses::{LoginResponse, MeResponse, PreferencesResponse, RefreshSessionResponse};
 use uuid::Uuid;
 
-use super::helpers;
+use super::{helpers, users};
 use crate::{
     AppState,
     api::tokens::hash_token,
@@ -172,13 +172,6 @@ pub struct LoginRequest {
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct LoginResponse {
-    pub user: db::UserRow,
-    pub session_expires_at: DateTime<Utc>,
-    pub remember_me: bool,
-}
-
-#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RefreshResponse {
     pub session_expires_at: DateTime<Utc>,
 }
@@ -234,6 +227,8 @@ pub async fn login(
         return Err(ApiError::Unauthorized("invalid credentials".to_string()));
     }
 
+    let user_resp = users::user_row_to_response(&state.pool, user).await?;
+
     let session_id = Uuid::new_v4().to_string();
     let (ttl_hours, max_age_secs) = if req.remember_me {
         (24 * 7, 7 * 86400)
@@ -246,12 +241,12 @@ pub async fn login(
     db::insert_session(
         &state.pool,
         &hashed_id,
-        user.id,
+        user_resp.id,
         expires_at,
         req.remember_me,
     )
     .await?;
-    db::update_last_login(&state.pool, user.id).await?;
+    db::update_last_login(&state.pool, user_resp.id).await?;
 
     let secure_flag = secure_cookie_flag();
     let cookie = format!(
@@ -259,7 +254,7 @@ pub async fn login(
     );
 
     let body = Json(LoginResponse {
-        user,
+        user: user_resp,
         session_expires_at: expires_at,
         remember_me: req.remember_me,
     });
@@ -330,12 +325,7 @@ pub async fn me(
     } else {
         (None, false)
     };
-    let role_names: Vec<String> = db::list_user_roles(&state.pool, auth.user_id)
-        .await?
-        .into_iter()
-        .map(|r| r.name)
-        .collect();
-    let role = role_names.join(",");
+    let role = users::get_user_role_string(&state.pool, auth.user_id).await?;
 
     Ok(Json(MeResponse {
         id: auth.user_id,

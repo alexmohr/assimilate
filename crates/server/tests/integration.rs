@@ -1564,6 +1564,68 @@ async fn test_sessions_stored_as_hashes_not_plaintext(pool: sqlx::PgPool) {
     );
 }
 
+#[sqlx::test(migrations = "./migrations")]
+async fn test_login_response_includes_role(pool: sqlx::PgPool) {
+    let mut app = build_test_app(pool.clone()).await;
+
+    // Create a test user with a known bcrypt hash and the 'viewer' role.
+    let password = "viewer-password";
+    let hash = tokio::task::spawn_blocking(move || bcrypt::hash(password, 4))
+        .await
+        .unwrap()
+        .unwrap();
+
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash, must_change_password)
+         VALUES ('login-role-viewer', $1, false) RETURNING id",
+    )
+    .bind(&hash)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let viewer_role_id: i64 = sqlx::query_scalar("SELECT id FROM roles WHERE name = 'viewer'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    sqlx::query("INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+        .bind(user_id)
+        .bind(viewer_role_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Login as this user and verify the role field is present.
+    // The login handler extracts ConnectInfo<SocketAddr> from the request
+    // extensions, so we must provide one.
+    use std::net::SocketAddr;
+    let body =
+        serde_json::json!({ "username": "login-role-viewer", "password": "viewer-password" });
+    let mut req = Request::builder()
+        .uri("/api/auth/login")
+        .method("POST")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_string(&body).unwrap()))
+        .unwrap();
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo::<SocketAddr>(
+            "127.0.0.1:54321".parse().unwrap(),
+        ));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK, "login should succeed");
+
+    let json: serde_json::Value = body_json(resp).await;
+    assert!(
+        json.get("user").and_then(|u| u.get("role")).is_some(),
+        "login response must include user.role"
+    );
+    assert_eq!(
+        json["user"]["role"], "viewer",
+        "viewer user should have 'viewer' role"
+    );
+}
+
 // -- Excludes API tests --
 
 /// Helper: insert a schedule directly into the DB (bypasses SSH check in the API).

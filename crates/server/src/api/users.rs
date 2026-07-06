@@ -15,19 +15,27 @@ use crate::{
     error::{ApiError, ApiJson},
 };
 
-async fn user_row_to_response(
+pub(crate) async fn get_user_role_string(
     pool: &sqlx::PgPool,
-    row: db::UserRow,
-) -> Result<UserResponse, ApiError> {
-    let role_names: Vec<String> = db::list_user_roles(pool, row.id)
+    user_id: i64,
+) -> Result<String, ApiError> {
+    let role_names: Vec<String> = db::list_user_roles(pool, user_id)
         .await?
         .into_iter()
         .map(|r| r.name)
         .collect();
+    Ok(role_names.join(","))
+}
+
+pub(crate) async fn user_row_to_response(
+    pool: &sqlx::PgPool,
+    row: db::UserRow,
+) -> Result<UserResponse, ApiError> {
+    let role = get_user_role_string(pool, row.id).await?;
     Ok(UserResponse {
         id: row.id,
         username: row.username,
-        role: role_names.join(","),
+        role,
         created_at: row.created_at,
         last_login_at: row.last_login_at,
         must_change_password: row.must_change_password,

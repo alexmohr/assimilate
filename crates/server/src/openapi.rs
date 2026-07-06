@@ -9,10 +9,10 @@ use shared::responses::{
     DashboardProtectionCoverageResponse, DashboardRepositoryCapacityResponse,
     DashboardSummaryCountersResponse, DashboardSummaryResponse, DashboardUpcomingScheduleResponse,
     DeleteApiTokenResponse, HealthCheckResponse, HealthResponse, InitRepoResponse,
-    ListApiTokensResponse, LogEntryResponse, MeResponse, PassphraseResponse, PreferencesResponse,
-    RefreshSessionResponse, RepoTagEntryResponse, RescanResponse, ServerQuotaResponse,
-    StorageRepoEntryResponse, StorageTrendByRepoEntryResponse, StorageTrendEntryResponse,
-    TagResponse, TrendEntryResponse,
+    ListApiTokensResponse, LogEntryResponse, LoginResponse, MeResponse, PassphraseResponse,
+    PreferencesResponse, RefreshSessionResponse, RepoTagEntryResponse, RescanResponse,
+    ServerQuotaResponse, StorageRepoEntryResponse, StorageTrendByRepoEntryResponse,
+    StorageTrendEntryResponse, TagResponse, TrendEntryResponse,
 };
 use utoipa::OpenApi;
 
@@ -20,7 +20,7 @@ use crate::{
     api::{
         agents::{CreateAgentRequest, UpdateAgentRequest},
         archives::{ContentEntry, ContentsResponse},
-        auth::{ChangePasswordRequest, LoginRequest, LoginResponse, RefreshResponse},
+        auth::{ChangePasswordRequest, LoginRequest, RefreshResponse},
         deploy::{DeployAgentRequest, DeployAgentResponse},
         dryrun::{DryRunFileEntry, DryRunRequest, DryRunResponse},
         excludes::SetGlobalExcludesRequest,
@@ -41,7 +41,7 @@ use crate::{
     db::{
         ActivityRow, AgentRow, ApiTokenRow, GlobalExcludesConfig, RepoPermissionRow, RepoRow,
         RepoWithStatsRow, ReportRow, ScheduleCountByAgent, ScheduleRow, ScheduleTargetRow,
-        StorageStatRow, SystemEventRow, UserRow,
+        StorageStatRow, SystemEventRow,
     },
     ssh::{
         DeployKeyRequest, DeployKeyResponse, DirEntryInfo, ListDirRequest, ListDirResponse,
@@ -167,7 +167,6 @@ use crate::{
         CreateTokenRequest,
         CreateApiTokenResponse,
         ListApiTokensResponse,
-        UserRow,
         ApiTokenRow,
         AgentRow,
         AgentResponse,

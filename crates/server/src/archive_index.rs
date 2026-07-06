@@ -333,17 +333,20 @@ async fn run_indexing_impl<F: FnMut(u64, Option<&str>)>(
     }
 }
 
-async fn index_archive<F: FnMut(u64, Option<&str>)>(
-    pool: &PgPool,
-    encryption_key: &[u8; 32],
-    repo_id: i64,
-    archive_id: i64,
+/// Runs `borg list --json-lines` for the archive, parsing each output line
+/// into a [`ContentEntry`] and reporting progress via `on_progress` every
+/// ~300ms. Drains stderr concurrently with stdout: borg writes lock-wait
+/// notices and warnings to stderr, and if that pipe fills (~64 KiB) while
+/// stdout is still being read, borg blocks on the write, stdout stalls, and
+/// `child.wait()` deadlocks with the repository lock held.
+async fn borg_list_archive_entries<F: FnMut(u64, Option<&str>)>(
+    borg_repo: &str,
+    env: &std::collections::HashMap<String, String>,
     archive_name: &str,
     on_progress: &mut F,
-) -> Result<i64, ApiError> {
+) -> Result<Vec<ContentEntry>, ApiError> {
     const LINE_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
-    let (borg_repo, env) = get_repo_env(pool, encryption_key, repo_id).await?;
     let repo_archive = format!("{borg_repo}::{archive_name}");
 
     let mut child = Borg::new()
@@ -355,7 +358,7 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
                 LOCK_WAIT_SECS,
                 &repo_archive,
             ],
-            &env,
+            env,
         )
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
 
@@ -363,10 +366,6 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
         return Err(ApiError::Internal("no stdout from borg".to_string()));
     };
 
-    // Drain stderr concurrently. borg writes lock-wait notices and warnings to
-    // stderr; if that pipe fills (~64 KiB) while we are still reading stdout, borg
-    // blocks on the write, stdout stalls, and `child.wait()` deadlocks with the
-    // repository lock held. Reading both streams concurrently avoids that.
     let stderr = child.take_stderr();
     let stderr_task = tokio::spawn(async move {
         let mut buf = String::new();
@@ -440,7 +439,23 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
         return Err(classify_borg_error(status.code().unwrap_or(1), &stderr_str));
     }
 
-    // Build the full set of entries, synthesising missing ancestor directories.
+    Ok(raw)
+}
+
+struct ExpandedArchiveEntries {
+    paths: Vec<String>,
+    parent_paths: Vec<String>,
+    entry_types: Vec<String>,
+    sizes: Vec<i64>,
+    mtimes: Vec<String>,
+    modes: Vec<String>,
+    path_values: Vec<String>,
+}
+
+/// Flattens the raw `borg list` entries into parallel column vectors ready
+/// for bulk insert, synthesising any missing ancestor directories along the
+/// way (borg only lists the leaf entries actually present in the archive).
+fn expand_entries_with_ancestors(raw: Vec<ContentEntry>) -> ExpandedArchiveEntries {
     let mut paths: Vec<String> = Vec::new();
     let mut parent_paths: Vec<String> = Vec::new();
     let mut entry_types: Vec<String> = Vec::new();
@@ -507,28 +522,44 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
         );
     }
 
-    let file_count = i64::try_from(paths.len()).unwrap_or(i64::MAX);
-    let path_values = path_values.into_iter().collect::<Vec<_>>();
-    let path_id_map = ensure_archive_paths(pool, repo_id, &path_values).await?;
-    let path_id = |path: &str| -> Result<i64, ApiError> {
-        path_id_map
-            .get(path)
-            .copied()
-            .ok_or_else(|| ApiError::Internal(format!("missing archive path id for {path}")))
-    };
+    ExpandedArchiveEntries {
+        paths,
+        parent_paths,
+        entry_types,
+        sizes,
+        mtimes,
+        modes,
+        path_values: path_values.into_iter().collect(),
+    }
+}
 
-    let path_ids: Vec<i64> = paths
-        .iter()
-        .map(|path| path_id(path))
-        .collect::<Result<_, _>>()?;
-    let parent_path_ids: Vec<i64> = parent_paths
-        .iter()
-        .map(|path| path_id(path))
-        .collect::<Result<_, _>>()?;
+/// Inserts the flattened archive-file rows in chunks rather than one giant
+/// statement: archives with millions of files would otherwise build a
+/// single query large enough to trip slow-statement alerts and statement
+/// timeouts.
+struct ArchiveFileColumns<'a> {
+    path_ids: &'a [i64],
+    parent_path_ids: &'a [i64],
+    entry_types: &'a [String],
+    sizes: &'a [i64],
+    mtimes: &'a [String],
+    modes: &'a [String],
+}
 
-    // Insert in chunks rather than one giant statement: archives with millions
-    // of files would otherwise build a single query large enough to trip slow-
-    // statement alerts and statement timeouts.
+async fn insert_archive_files_chunked(
+    pool: &PgPool,
+    archive_id: i64,
+    columns: &ArchiveFileColumns<'_>,
+) -> Result<(), ApiError> {
+    let ArchiveFileColumns {
+        path_ids,
+        parent_path_ids,
+        entry_types,
+        sizes,
+        mtimes,
+        modes,
+    } = *columns;
+
     let mut offset = 0;
     while offset < path_ids.len() {
         let end = offset.saturating_add(INSERT_CHUNK).min(path_ids.len());
@@ -550,6 +581,61 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
         .map_err(ApiError::Database)?;
         offset = end;
     }
+    Ok(())
+}
+
+async fn index_archive<F: FnMut(u64, Option<&str>)>(
+    pool: &PgPool,
+    encryption_key: &[u8; 32],
+    repo_id: i64,
+    archive_id: i64,
+    archive_name: &str,
+    on_progress: &mut F,
+) -> Result<i64, ApiError> {
+    let (borg_repo, env) = get_repo_env(pool, encryption_key, repo_id).await?;
+    let raw = borg_list_archive_entries(&borg_repo, &env, archive_name, on_progress).await?;
+
+    let ExpandedArchiveEntries {
+        paths,
+        parent_paths,
+        entry_types,
+        sizes,
+        mtimes,
+        modes,
+        path_values,
+    } = expand_entries_with_ancestors(raw);
+
+    let file_count = i64::try_from(paths.len()).unwrap_or(i64::MAX);
+    let path_id_map = ensure_archive_paths(pool, repo_id, &path_values).await?;
+    let path_id = |path: &str| -> Result<i64, ApiError> {
+        path_id_map
+            .get(path)
+            .copied()
+            .ok_or_else(|| ApiError::Internal(format!("missing archive path id for {path}")))
+    };
+
+    let path_ids: Vec<i64> = paths
+        .iter()
+        .map(|path| path_id(path))
+        .collect::<Result<_, _>>()?;
+    let parent_path_ids: Vec<i64> = parent_paths
+        .iter()
+        .map(|path| path_id(path))
+        .collect::<Result<_, _>>()?;
+
+    insert_archive_files_chunked(
+        pool,
+        archive_id,
+        &ArchiveFileColumns {
+            path_ids: &path_ids,
+            parent_path_ids: &parent_path_ids,
+            entry_types: &entry_types,
+            sizes: &sizes,
+            mtimes: &mtimes,
+            modes: &modes,
+        },
+    )
+    .await?;
 
     Ok(file_count)
 }

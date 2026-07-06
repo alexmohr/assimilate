@@ -7,3 +7,38 @@ allow-expect-in-tests = true
 allow-panic-in-tests = true
 allow-dbg-in-tests = true
 allow-print-in-tests = true
+
+## Blocking filesystem syscalls must not run on the async executor (see
+## AGENTS.md "Async IO"). Use `tokio::fs` instead. Legitimate sync call sites
+## (build scripts, code already off the executor via spawn_blocking, tests)
+## carry a paired #[allow(clippy::disallowed_methods, reason = "...")].
+disallowed-methods = [
+    { path = "std::fs::read", reason = "blocks the async executor; use tokio::fs::read" },
+    { path = "std::fs::read_to_string", reason = "blocks the async executor; use tokio::fs::read_to_string" },
+    { path = "std::fs::write", reason = "blocks the async executor; use tokio::fs::write" },
+    { path = "std::fs::remove_file", reason = "blocks the async executor; use tokio::fs::remove_file" },
+    { path = "std::fs::remove_dir", reason = "blocks the async executor; use tokio::fs::remove_dir" },
+    { path = "std::fs::remove_dir_all", reason = "blocks the async executor; use tokio::fs::remove_dir_all" },
+    { path = "std::fs::create_dir", reason = "blocks the async executor; use tokio::fs::create_dir" },
+    { path = "std::fs::create_dir_all", reason = "blocks the async executor; use tokio::fs::create_dir_all" },
+    { path = "std::fs::rename", reason = "blocks the async executor; use tokio::fs::rename" },
+    { path = "std::fs::copy", reason = "blocks the async executor; use tokio::fs::copy" },
+    { path = "std::fs::hard_link", reason = "blocks the async executor; use tokio::fs::hard_link" },
+    { path = "std::fs::metadata", reason = "blocks the async executor; use tokio::fs::metadata" },
+    { path = "std::fs::symlink_metadata", reason = "blocks the async executor; use tokio::fs::symlink_metadata" },
+    { path = "std::fs::canonicalize", reason = "blocks the async executor; use tokio::fs::canonicalize" },
+    { path = "std::fs::read_dir", reason = "blocks the async executor; use tokio::fs::read_dir" },
+    { path = "std::fs::read_link", reason = "blocks the async executor; use tokio::fs::read_link" },
+    { path = "std::fs::set_permissions", reason = "blocks the async executor; use tokio::fs::set_permissions" },
+    { path = "std::fs::File::open", reason = "blocks the async executor; use tokio::fs::File::open" },
+    { path = "std::fs::File::create", reason = "blocks the async executor; use tokio::fs::File::create" },
+    { path = "std::path::Path::exists", reason = "blocks the async executor; use tokio::fs::try_exists" },
+    { path = "std::path::Path::try_exists", reason = "blocks the async executor; use tokio::fs::try_exists" },
+    { path = "std::path::Path::is_dir", reason = "blocks the async executor; use tokio::fs::metadata" },
+    { path = "std::path::Path::is_file", reason = "blocks the async executor; use tokio::fs::metadata" },
+    { path = "std::path::Path::is_symlink", reason = "blocks the async executor; use tokio::fs::symlink_metadata" },
+    { path = "std::path::Path::metadata", reason = "blocks the async executor; use tokio::fs::metadata" },
+    { path = "std::path::Path::read_dir", reason = "blocks the async executor; use tokio::fs::read_dir" },
+    { path = "std::path::Path::read_link", reason = "blocks the async executor; use tokio::fs::read_link" },
+    { path = "std::path::Path::canonicalize", reason = "blocks the async executor; use tokio::fs::canonicalize" },
+]

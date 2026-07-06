@@ -3,6 +3,10 @@
 
 use std::path::Path;
 
+#[allow(
+    clippy::disallowed_methods,
+    reason = "build scripts run at compile time, before any async runtime exists"
+)]
 fn resolve_git_sha() -> Option<String> {
     let git_dir = Path::new("../.git");
     let head_content = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;

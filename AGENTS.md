@@ -611,6 +611,14 @@ async fn save(path: &Path, data: &str) {
 }
 ```
 
+### Enforcement: `clippy::disallowed_methods`
+
+Blocking `std::fs::*` functions and `std::path::Path` filesystem probes (`exists`, `is_dir`, `is_file`, `metadata`, `read_dir`, `canonicalize`, ...) are denied workspace-wide via `clippy::disallowed_methods` (`Cargo.toml`), with the disallowed path list and per-path rationale in `clippy.toml`.
+
+* Prefer converting the whole call chain to `async fn` using `tokio::fs` (as with `load_server_private_key`/`agent_binary_dir`) over adding a `spawn_blocking` wrapper — `tokio::fs::*` already runs the blocking syscall via `spawn_blocking` internally, so wrapping it again is redundant.
+* Sites that are legitimately synchronous — build scripts (`build.rs`, which run at compile time before any async runtime exists), code already inside a `spawn_blocking` closure that mixes CPU-bound work with IO (e.g. the key-generation block in `system.rs`), and test modules — carry a `#[allow(clippy::disallowed_methods, reason = "...")]` at the enclosing fn/module.
+* Run it locally with `cargo clippy --workspace --all-targets`; no separate command needed.
+
 ## SSH Agent Forwarding
 
 Agents can tunnel the server's SSH agent socket to `borg` for passwordless repository access. This avoids distributing SSH keys to agent machines.

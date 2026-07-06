@@ -3,6 +3,10 @@
 
 use std::{env, io, path::Path};
 
+#[allow(
+    clippy::disallowed_methods,
+    reason = "build scripts run at compile time, before any async runtime exists"
+)]
 fn main() -> Result<(), io::Error> {
     // Ensure output directory exists for generated TS files
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").map_err(io::Error::other)?;

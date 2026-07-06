@@ -44,20 +44,25 @@ fn tunnel_server_url(tunnel: &db::SshTunnel) -> Option<String> {
         .then(|| format!("ws://127.0.0.1:{}", tunnel.tunnel_port))
 }
 
-pub fn agent_binary_dir() -> PathBuf {
+async fn has_agent_binary(dir: &std::path::Path) -> bool {
+    let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
+        return false;
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        if entry.file_name().to_string_lossy().starts_with("agent-") {
+            return true;
+        }
+    }
+    false
+}
+
+pub async fn agent_binary_dir() -> PathBuf {
     if let Ok(path) = std::env::var("AGENT_BINARY_DIR") {
         return PathBuf::from(path);
     }
 
     let docker_path = PathBuf::from("/app");
-    if std::fs::read_dir(&docker_path)
-        .map(|entries| {
-            entries
-                .filter_map(|e| e.ok())
-                .any(|e| e.file_name().to_string_lossy().starts_with("agent-"))
-        })
-        .unwrap_or(false)
-    {
+    if has_agent_binary(&docker_path).await {
         return docker_path;
     }
 
@@ -78,7 +83,14 @@ pub async fn query_available_agent_version(binary_dir: &std::path::Path) -> Opti
         binary_dir.join("agent-aarch64"),
     ];
 
-    let binary_path = candidates.iter().find(|p| p.exists())?;
+    let mut binary_path = None;
+    for candidate in &candidates {
+        if tokio::fs::try_exists(candidate).await.unwrap_or(false) {
+            binary_path = Some(candidate);
+            break;
+        }
+    }
+    let binary_path = binary_path?;
     let output = tokio::process::Command::new(binary_path)
         .arg("--version")
         .output()
@@ -128,7 +140,7 @@ pub async fn deploy_agent(
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
     helpers::validate_non_empty(&req.server_url, "server_url")?;
 
-    let binary_dir = agent_binary_dir();
+    let binary_dir = agent_binary_dir().await;
 
     let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
     let tunnel_server_url = db::get_tunnel_by_agent_id(&state.pool, agent.id)
@@ -333,15 +345,13 @@ mod tests {
     }
 
     // Tests combined into one: both mutate AGENT_BINARY_DIR env var, causing races when parallel.
-    #[test]
-    fn agent_binary_dir_selection() {
+    #[tokio::test]
+    async fn agent_binary_dir_selection() {
         unsafe { std::env::set_var("AGENT_BINARY_DIR", "/custom/path") };
-        let path = agent_binary_dir();
-        assert_eq!(path, PathBuf::from("/custom/path"));
+        assert_eq!(agent_binary_dir().await, PathBuf::from("/custom/path"));
 
         unsafe { std::env::remove_var("AGENT_BINARY_DIR") };
-        let path = agent_binary_dir();
-        assert!(path.is_absolute());
+        assert!(agent_binary_dir().await.is_absolute());
     }
 
     #[test]

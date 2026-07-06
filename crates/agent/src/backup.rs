@@ -727,21 +727,23 @@ impl BackupEngine {
         Ok(1)
     }
 
-    pub fn write_canary(backup_sources: &[String]) -> Result<CanaryToken, BackupError> {
-        let source_dir = backup_sources
-            .iter()
-            .find(|s| !s.starts_with('!') && Path::new(s).is_dir())
-            .ok_or_else(|| {
-                BackupError::BorgFailed(
-                    "no usable backup source directory for canary file".to_owned(),
-                )
-            })?;
+    pub async fn write_canary(backup_sources: &[String]) -> Result<CanaryToken, BackupError> {
+        let mut source_dir = None;
+        for s in backup_sources {
+            if !s.starts_with('!') && tokio::fs::metadata(s).await.is_ok_and(|m| m.is_dir()) {
+                source_dir = Some(s);
+                break;
+            }
+        }
+        let source_dir = source_dir.ok_or_else(|| {
+            BackupError::BorgFailed("no usable backup source directory for canary file".to_owned())
+        })?;
 
         let nonce = Uuid::new_v4().to_string();
         let canary_path = Path::new(source_dir).join(".assimilate-canary");
         let content = format!("{{\"nonce\":\"{nonce}\"}}");
 
-        std::fs::write(&canary_path, &content)?;
+        tokio::fs::write(&canary_path, &content).await?;
         info!(path = %canary_path.display(), "canary file written");
 
         Ok(CanaryToken {
@@ -834,8 +836,8 @@ impl BackupEngine {
         Ok(())
     }
 
-    pub fn cleanup_canary(canary: &CanaryToken) {
-        if let Err(e) = std::fs::remove_file(&canary.canary_path) {
+    pub async fn cleanup_canary(canary: &CanaryToken) {
+        if let Err(e) = tokio::fs::remove_file(&canary.canary_path).await {
             warn!(path = %canary.canary_path.display(), error = %e, "failed to remove canary file");
         }
     }
@@ -858,6 +860,7 @@ fn timeout_secs(timeout: Duration) -> u64 {
     timeout.as_secs().max(1)
 }
 
+#[derive(Debug)]
 pub struct CanaryToken {
     pub nonce: String,
     pub canary_path: PathBuf,
@@ -1066,6 +1069,10 @@ pub(crate) fn parse_source_not_found_errors(stderr: &str) -> Vec<String> {
 #[allow(
     clippy::indexing_slicing,
     reason = "test-only assertions on known fixtures"
+)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "tests use std::fs for simple synchronous setup/assertions"
 )]
 mod tests {
     use super::*;
@@ -1623,5 +1630,63 @@ mod tests {
         };
         assert_eq!(seconds, 1);
         assert!(command.contains(" borg prune "));
+    }
+
+    #[tokio::test]
+    async fn write_canary_creates_file_in_first_directory_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let sources = vec![
+            "!/excluded".to_owned(),
+            "/definitely-not-a-real-dir-assimilate-test".to_owned(),
+            dir.path().to_string_lossy().into_owned(),
+        ];
+
+        let canary = BackupEngine::write_canary(&sources).await.unwrap();
+
+        assert_eq!(canary.canary_path, dir.path().join(".assimilate-canary"));
+        let content = tokio::fs::read_to_string(&canary.canary_path)
+            .await
+            .unwrap();
+        assert_eq!(content, canary.expected_content);
+        assert!(content.contains(&canary.nonce));
+    }
+
+    #[tokio::test]
+    async fn write_canary_errors_without_usable_directory() {
+        let sources = vec![
+            "!/excluded".to_owned(),
+            "/definitely-not-a-real-dir-assimilate-test".to_owned(),
+        ];
+
+        let err = BackupEngine::write_canary(&sources).await.unwrap_err();
+        assert!(matches!(err, BackupError::BorgFailed(_)));
+    }
+
+    #[tokio::test]
+    async fn cleanup_canary_removes_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let canary_path = dir.path().join(".assimilate-canary");
+        tokio::fs::write(&canary_path, "content").await.unwrap();
+        let token = CanaryToken {
+            nonce: "nonce".to_owned(),
+            canary_path: canary_path.clone(),
+            expected_content: "content".to_owned(),
+        };
+
+        BackupEngine::cleanup_canary(&token).await;
+
+        assert!(!canary_path.exists());
+    }
+
+    #[tokio::test]
+    async fn cleanup_canary_tolerates_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let token = CanaryToken {
+            nonce: "nonce".to_owned(),
+            canary_path: dir.path().join("missing-canary"),
+            expected_content: "content".to_owned(),
+        };
+
+        BackupEngine::cleanup_canary(&token).await;
     }
 }

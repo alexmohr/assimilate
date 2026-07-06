@@ -914,7 +914,7 @@ async fn run_backup_task(
     let _ssh_forward = setup_ssh_forward(&mut target, &hostname, &server_url, &token).await;
 
     let canary = if target.canary_enabled {
-        match BackupEngine::write_canary(&target.backup_sources) {
+        match BackupEngine::write_canary(&target.backup_sources).await {
             Ok(c) => Some(c),
             Err(e) => {
                 warn!(repo_id = ?repo_id, error = %e, "canary write failed, proceeding without");
@@ -972,7 +972,7 @@ async fn run_backup_task(
 
     if let Some(canary) = &canary {
         send_canary_result(repo_id, canary.nonce.clone(), canary_result, outbound_tx).await;
-        BackupEngine::cleanup_canary(canary);
+        BackupEngine::cleanup_canary(canary).await;
     }
 }
 
@@ -1596,6 +1596,10 @@ fn build_borg_env(target: &BackupTarget) -> Vec<(String, String)> {
 #[allow(
     clippy::indexing_slicing,
     reason = "test-only assertions on known fixtures"
+)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "tests use std::fs for simple synchronous setup/assertions"
 )]
 mod tests {
     use super::*;

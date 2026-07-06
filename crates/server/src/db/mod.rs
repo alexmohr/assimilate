@@ -3139,114 +3139,138 @@ pub async fn insert_backup_report(
     params: &InsertReportParams,
 ) -> Result<(), ApiError> {
     if let Some(ref run_id) = params.run_id {
-        sqlx::query!(
-            "UPDATE backup_reports SET schedule_id = COALESCE($1, schedule_id), finished_at = $2, \
-             status = $3, original_size = $4, compressed_size = $5, deduplicated_size = $6, \
-             repo_unique_csize = $7, files_processed = $8, duration_secs = $9, error_message = \
-             $10, warnings = $11, borg_version = $12, matched = $13, archive_name = $14, \
-             borg_command = COALESCE($15, borg_command), started_at = $16 WHERE run_id = $17 AND \
-             agent_id = $18 AND status IN ('pending', 'started')",
-            params.schedule_id,
-            params.finished_at,
-            &params.status,
-            params.original_size,
-            params.compressed_size,
-            params.deduplicated_size,
-            params.repo_unique_csize,
-            params.files_processed,
-            params.duration_secs,
-            params.error_message.as_deref(),
-            &params.warnings,
-            params.borg_version.as_deref(),
-            params.matched,
-            params.archive_name.as_deref(),
-            params.borg_command.as_deref(),
-            params.started_at,
-            run_id,
-            params.agent_id,
-        )
-        .execute(pool)
-        .await
-        .map_err(ApiError::Database)?;
+        update_backup_report_by_run_id(pool, params, run_id).await
     } else if params.archive_name.is_some() {
-        sqlx::query!(
-            "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
-             status, original_size, compressed_size, deduplicated_size, repo_unique_csize, \
-             files_processed, duration_secs, error_message, warnings, borg_version, matched, \
-             archive_name, borg_command) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, \
-             $12, $13, $14, $15, $16, $17, $18) ON CONFLICT (repo_id, agent_id, started_at, \
-             archive_name) WHERE archive_name IS NOT NULL DO UPDATE SET schedule_id = \
-             COALESCE(EXCLUDED.schedule_id, backup_reports.schedule_id), finished_at = \
-             EXCLUDED.finished_at, status = EXCLUDED.status, original_size = \
-             EXCLUDED.original_size, compressed_size = EXCLUDED.compressed_size, \
-             deduplicated_size = EXCLUDED.deduplicated_size, repo_unique_csize = \
-             EXCLUDED.repo_unique_csize, files_processed = EXCLUDED.files_processed, \
-             duration_secs = EXCLUDED.duration_secs, error_message = EXCLUDED.error_message, \
-             warnings = EXCLUDED.warnings, borg_version = EXCLUDED.borg_version, matched = \
-             EXCLUDED.matched, archive_name = EXCLUDED.archive_name, borg_command = \
-             COALESCE(EXCLUDED.borg_command, backup_reports.borg_command)",
-            params.agent_id,
-            params.repo_id,
-            params.schedule_id,
-            params.started_at,
-            params.finished_at,
-            &params.status,
-            params.original_size,
-            params.compressed_size,
-            params.deduplicated_size,
-            params.repo_unique_csize,
-            params.files_processed,
-            params.duration_secs,
-            params.error_message.as_deref(),
-            &params.warnings,
-            params.borg_version.as_deref(),
-            params.matched,
-            params.archive_name.as_deref(),
-            params.borg_command.as_deref(),
-        )
-        .execute(pool)
-        .await
-        .map_err(ApiError::Database)?;
+        upsert_backup_report_with_archive_name(pool, params).await
     } else {
-        sqlx::query!(
-            "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
-             status, original_size, compressed_size, deduplicated_size, repo_unique_csize, \
-             files_processed, duration_secs, error_message, warnings, borg_version, matched, \
-             archive_name, borg_command) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, \
-             $12, $13, $14, $15, $16, $17, $18) ON CONFLICT (repo_id, agent_id, started_at) WHERE \
-             archive_name IS NULL DO UPDATE SET schedule_id = COALESCE(EXCLUDED.schedule_id, \
-             backup_reports.schedule_id), finished_at = EXCLUDED.finished_at, status = \
-             EXCLUDED.status, original_size = EXCLUDED.original_size, compressed_size = \
-             EXCLUDED.compressed_size, deduplicated_size = EXCLUDED.deduplicated_size, \
-             repo_unique_csize = EXCLUDED.repo_unique_csize, files_processed = \
-             EXCLUDED.files_processed, duration_secs = EXCLUDED.duration_secs, error_message = \
-             EXCLUDED.error_message, warnings = EXCLUDED.warnings, borg_version = \
-             EXCLUDED.borg_version, matched = EXCLUDED.matched, archive_name = \
-             EXCLUDED.archive_name, borg_command = COALESCE(EXCLUDED.borg_command, \
-             backup_reports.borg_command)",
-            params.agent_id,
-            params.repo_id,
-            params.schedule_id,
-            params.started_at,
-            params.finished_at,
-            &params.status,
-            params.original_size,
-            params.compressed_size,
-            params.deduplicated_size,
-            params.repo_unique_csize,
-            params.files_processed,
-            params.duration_secs,
-            params.error_message.as_deref(),
-            &params.warnings,
-            params.borg_version.as_deref(),
-            params.matched,
-            params.archive_name.as_deref(),
-            params.borg_command.as_deref(),
-        )
-        .execute(pool)
-        .await
-        .map_err(ApiError::Database)?;
+        upsert_backup_report_without_archive_name(pool, params).await
     }
+}
+
+async fn update_backup_report_by_run_id(
+    pool: &PgPool,
+    params: &InsertReportParams,
+    run_id: &str,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE backup_reports SET schedule_id = COALESCE($1, schedule_id), finished_at = $2, \
+         status = $3, original_size = $4, compressed_size = $5, deduplicated_size = $6, \
+         repo_unique_csize = $7, files_processed = $8, duration_secs = $9, error_message = $10, \
+         warnings = $11, borg_version = $12, matched = $13, archive_name = $14, borg_command = \
+         COALESCE($15, borg_command), started_at = $16 WHERE run_id = $17 AND agent_id = $18 AND \
+         status IN ('pending', 'started')",
+        params.schedule_id,
+        params.finished_at,
+        &params.status,
+        params.original_size,
+        params.compressed_size,
+        params.deduplicated_size,
+        params.repo_unique_csize,
+        params.files_processed,
+        params.duration_secs,
+        params.error_message.as_deref(),
+        &params.warnings,
+        params.borg_version.as_deref(),
+        params.matched,
+        params.archive_name.as_deref(),
+        params.borg_command.as_deref(),
+        params.started_at,
+        run_id,
+        params.agent_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+async fn upsert_backup_report_with_archive_name(
+    pool: &PgPool,
+    params: &InsertReportParams,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
+         status, original_size, compressed_size, deduplicated_size, repo_unique_csize, \
+         files_processed, duration_secs, error_message, warnings, borg_version, matched, \
+         archive_name, borg_command) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, \
+         $13, $14, $15, $16, $17, $18) ON CONFLICT (repo_id, agent_id, started_at, archive_name) \
+         WHERE archive_name IS NOT NULL DO UPDATE SET schedule_id = \
+         COALESCE(EXCLUDED.schedule_id, backup_reports.schedule_id), finished_at = \
+         EXCLUDED.finished_at, status = EXCLUDED.status, original_size = EXCLUDED.original_size, \
+         compressed_size = EXCLUDED.compressed_size, deduplicated_size = \
+         EXCLUDED.deduplicated_size, repo_unique_csize = EXCLUDED.repo_unique_csize, \
+         files_processed = EXCLUDED.files_processed, duration_secs = EXCLUDED.duration_secs, \
+         error_message = EXCLUDED.error_message, warnings = EXCLUDED.warnings, borg_version = \
+         EXCLUDED.borg_version, matched = EXCLUDED.matched, archive_name = \
+         EXCLUDED.archive_name, borg_command = COALESCE(EXCLUDED.borg_command, \
+         backup_reports.borg_command)",
+        params.agent_id,
+        params.repo_id,
+        params.schedule_id,
+        params.started_at,
+        params.finished_at,
+        &params.status,
+        params.original_size,
+        params.compressed_size,
+        params.deduplicated_size,
+        params.repo_unique_csize,
+        params.files_processed,
+        params.duration_secs,
+        params.error_message.as_deref(),
+        &params.warnings,
+        params.borg_version.as_deref(),
+        params.matched,
+        params.archive_name.as_deref(),
+        params.borg_command.as_deref(),
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+async fn upsert_backup_report_without_archive_name(
+    pool: &PgPool,
+    params: &InsertReportParams,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
+         status, original_size, compressed_size, deduplicated_size, repo_unique_csize, \
+         files_processed, duration_secs, error_message, warnings, borg_version, matched, \
+         archive_name, borg_command) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, \
+         $13, $14, $15, $16, $17, $18) ON CONFLICT (repo_id, agent_id, started_at) WHERE \
+         archive_name IS NULL DO UPDATE SET schedule_id = COALESCE(EXCLUDED.schedule_id, \
+         backup_reports.schedule_id), finished_at = EXCLUDED.finished_at, status = \
+         EXCLUDED.status, original_size = EXCLUDED.original_size, compressed_size = \
+         EXCLUDED.compressed_size, deduplicated_size = EXCLUDED.deduplicated_size, \
+         repo_unique_csize = EXCLUDED.repo_unique_csize, files_processed = \
+         EXCLUDED.files_processed, duration_secs = EXCLUDED.duration_secs, error_message = \
+         EXCLUDED.error_message, warnings = EXCLUDED.warnings, borg_version = \
+         EXCLUDED.borg_version, matched = EXCLUDED.matched, archive_name = \
+         EXCLUDED.archive_name, borg_command = COALESCE(EXCLUDED.borg_command, \
+         backup_reports.borg_command)",
+        params.agent_id,
+        params.repo_id,
+        params.schedule_id,
+        params.started_at,
+        params.finished_at,
+        &params.status,
+        params.original_size,
+        params.compressed_size,
+        params.deduplicated_size,
+        params.repo_unique_csize,
+        params.files_processed,
+        params.duration_secs,
+        params.error_message.as_deref(),
+        &params.warnings,
+        params.borg_version.as_deref(),
+        params.matched,
+        params.archive_name.as_deref(),
+        params.borg_command.as_deref(),
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
     Ok(())
 }
 

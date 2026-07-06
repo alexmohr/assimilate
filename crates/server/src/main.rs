@@ -661,7 +661,7 @@ async fn main() -> Result<(), StartupError> {
 
     let docs_dir = std::env::var("ASSIMILATE_DOCS_DIR")
         .map_or_else(|_| PathBuf::from("./docs_html"), PathBuf::from);
-    let app = if docs_dir.exists() {
+    let app = if tokio::fs::try_exists(&docs_dir).await.unwrap_or(false) {
         app.route("/docs", get(|| async { Redirect::permanent("/docs/") }))
             .nest_service("/docs/", ServeDir::new(&docs_dir))
     } else {
@@ -674,7 +674,7 @@ async fn main() -> Result<(), StartupError> {
 
     let static_dir = std::env::var("ASSIMILATE_STATIC_DIR")
         .map_or_else(|_| PathBuf::from("./static"), PathBuf::from);
-    let app = if static_dir.exists() {
+    let app = if tokio::fs::try_exists(&static_dir).await.unwrap_or(false) {
         let index = static_dir.join("index.html");
         app.fallback_service(ServeDir::new(&static_dir).fallback(ServeFile::new(index)))
     } else {

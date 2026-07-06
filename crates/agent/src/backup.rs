@@ -728,14 +728,16 @@ impl BackupEngine {
     }
 
     pub async fn write_canary(backup_sources: &[String]) -> Result<CanaryToken, BackupError> {
-        let source_dir = backup_sources
-            .iter()
-            .find(|s| !s.starts_with('!') && Path::new(s).is_dir())
-            .ok_or_else(|| {
-                BackupError::BorgFailed(
-                    "no usable backup source directory for canary file".to_owned(),
-                )
-            })?;
+        let mut source_dir = None;
+        for s in backup_sources {
+            if !s.starts_with('!') && tokio::fs::metadata(s).await.is_ok_and(|m| m.is_dir()) {
+                source_dir = Some(s);
+                break;
+            }
+        }
+        let source_dir = source_dir.ok_or_else(|| {
+            BackupError::BorgFailed("no usable backup source directory for canary file".to_owned())
+        })?;
 
         let nonce = Uuid::new_v4().to_string();
         let canary_path = Path::new(source_dir).join(".assimilate-canary");
@@ -1067,6 +1069,10 @@ pub(crate) fn parse_source_not_found_errors(stderr: &str) -> Vec<String> {
 #[allow(
     clippy::indexing_slicing,
     reason = "test-only assertions on known fixtures"
+)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "tests use std::fs for simple synchronous setup/assertions"
 )]
 mod tests {
     use super::*;

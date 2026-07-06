@@ -141,20 +141,22 @@ pub async fn scan_host_key(host: &str, port: u16) -> Result<String, SshError> {
         .ok_or_else(|| SshError::Connection(format!("{host}:{port}: no SSH host key received")))
 }
 
-pub fn read_server_public_key() -> Result<String, SshError> {
+pub async fn read_server_public_key() -> Result<String, SshError> {
     let ssh_key_dir = std::env::var("SSH_KEY_DIR").unwrap_or_else(|_| "/ssh-keys".to_string());
     let pub_key_path = PathBuf::from(&ssh_key_dir).join("id_ed25519.pub");
 
-    std::fs::read_to_string(&pub_key_path)
+    tokio::fs::read_to_string(&pub_key_path)
+        .await
         .map(|s| s.trim().to_string())
         .map_err(|_| SshError::PublicKeyNotFound(pub_key_path))
 }
 
-pub fn load_server_private_key() -> Result<PrivateKey, SshError> {
+pub async fn load_server_private_key() -> Result<PrivateKey, SshError> {
     let ssh_key_dir = std::env::var("SSH_KEY_DIR").unwrap_or_else(|_| "/ssh-keys".to_string());
     let key_path = PathBuf::from(&ssh_key_dir).join("id_ed25519");
 
-    let key_data = std::fs::read_to_string(&key_path)
+    let key_data = tokio::fs::read_to_string(&key_path)
+        .await
         .map_err(|_| SshError::PublicKeyNotFound(key_path.clone()))?;
 
     russh::keys::decode_secret_key(&key_data, None).map_err(|e| {
@@ -163,22 +165,6 @@ pub fn load_server_private_key() -> Result<PrivateKey, SshError> {
             key_path.display()
         ))
     })
-}
-
-/// Runs [`read_server_public_key`] on a blocking-safe thread; the read is a
-/// small file syscall but must not run directly on the async executor.
-pub(crate) async fn read_server_public_key_async() -> Result<String, SshError> {
-    tokio::task::spawn_blocking(read_server_public_key)
-        .await
-        .map_err(|e| SshError::Auth(format!("key loading task failed: {e}")))?
-}
-
-/// Runs [`load_server_private_key`] on a blocking-safe thread; see
-/// [`read_server_public_key_async`].
-pub(crate) async fn load_server_private_key_async() -> Result<PrivateKey, SshError> {
-    tokio::task::spawn_blocking(load_server_private_key)
-        .await
-        .map_err(|e| SshError::Auth(format!("key loading task failed: {e}")))?
 }
 
 pub(crate) async fn connect_with_key(
@@ -194,7 +180,7 @@ pub(crate) async fn connect_with_key(
         .await
         .map_err(|e| SshError::Connection(format!("{host}:{port}: {e}")))?;
 
-    let key = load_server_private_key_async().await?;
+    let key = load_server_private_key().await?;
     let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), None);
 
     let auth_result = session
@@ -354,7 +340,7 @@ pub async fn deploy_key(req: &DeployKeyRequest) -> DeployKeyResponse {
         };
     }
 
-    let our_key = match read_server_public_key_async().await {
+    let our_key = match read_server_public_key().await {
         Ok(k) => k,
         Err(e) => {
             return DeployKeyResponse {
@@ -957,6 +943,10 @@ pub async fn read_remote_file(params: &ReadFileParams<'_>) -> Result<Option<Stri
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "tests use std::fs for simple synchronous setup/assertions"
+)]
 mod tests {
     use super::*;
 
@@ -1271,11 +1261,11 @@ mod tests {
         unsafe { std::env::set_var("SSH_KEY_DIR", dir.path()) };
 
         assert!(matches!(
-            read_server_public_key_async().await,
+            read_server_public_key().await,
             Err(SshError::PublicKeyNotFound(_))
         ));
         assert!(matches!(
-            load_server_private_key_async().await,
+            load_server_private_key().await,
             Err(SshError::PublicKeyNotFound(_))
         ));
 
@@ -1294,8 +1284,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(read_server_public_key_async().await.unwrap(), public_line);
-        assert!(load_server_private_key_async().await.is_ok());
+        assert_eq!(read_server_public_key().await.unwrap(), public_line);
+        assert!(load_server_private_key().await.is_ok());
 
         unsafe { std::env::remove_var("SSH_KEY_DIR") };
     }

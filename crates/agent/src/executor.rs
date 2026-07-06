@@ -1597,6 +1597,10 @@ fn build_borg_env(target: &BackupTarget) -> Vec<(String, String)> {
     clippy::indexing_slicing,
     reason = "test-only assertions on known fixtures"
 )]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "tests use std::fs for simple synchronous setup/assertions"
+)]
 mod tests {
     use super::*;
 

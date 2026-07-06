@@ -11,7 +11,7 @@ use shared::{
 };
 use ssh_key::{Algorithm, LineEnding, rand_core::OsRng};
 
-use super::deploy::{agent_binary_dir_async, query_available_agent_version};
+use super::deploy::{agent_binary_dir, query_available_agent_version};
 use crate::{AppState, api::auth::RequireAdmin, db, error::ApiError};
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -71,14 +71,14 @@ pub async fn ssh_regenerate_key(
 
     let key_path = key_dir.join("id_ed25519");
 
-    if key_path.exists() {
+    if tokio::fs::try_exists(&key_path).await.unwrap_or(false) {
         tokio::fs::remove_file(&key_path)
             .await
             .map_err(|e| ApiError::Internal(format!("failed to remove old private key: {e}")))?;
     }
 
     let pub_path = key_dir.join("id_ed25519.pub");
-    if pub_path.exists() {
+    if tokio::fs::try_exists(&pub_path).await.unwrap_or(false) {
         tokio::fs::remove_file(&pub_path)
             .await
             .map_err(|e| ApiError::Internal(format!("failed to remove old public key: {e}")))?;
@@ -86,6 +86,11 @@ pub async fn ssh_regenerate_key(
 
     let key_path_clone = key_path.clone();
     let pub_path_clone = pub_path.clone();
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "runs inside spawn_blocking alongside CPU-bound key generation, off the async \
+                  executor"
+    )]
     tokio::task::spawn_blocking(move || -> Result<(), ApiError> {
         let private_key = ssh_key::PrivateKey::random(&mut OsRng, Algorithm::Ed25519)
             .map_err(|e| ApiError::Internal(format!("failed to generate key: {e}")))?;
@@ -311,7 +316,7 @@ pub struct VersionResponse {
     )
 )]
 pub async fn get_version(_admin: RequireAdmin) -> Result<Json<VersionResponse>, ApiError> {
-    let binary_dir = agent_binary_dir_async().await?;
+    let binary_dir = agent_binary_dir().await;
     let agent_version = query_available_agent_version(&binary_dir).await;
 
     let git_sha = option_env!("GIT_SHA").unwrap_or_default();

@@ -3,7 +3,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises, type DOMWrapper, type VueWrapper } from '@vue/test-utils'
-import { ref, type ComponentPublicInstance } from 'vue'
+import { ref, nextTick, type ComponentPublicInstance } from 'vue'
 import { renderWithPlugins } from '../test-utils'
 import HostDetailView from './HostDetailView.vue'
 
@@ -16,8 +16,15 @@ vi.mock('../api/client', () => ({
   },
 }))
 
+// Captured WebSocket message handlers - populated during component setup().
+const wsHandlers: Record<string, (payload: unknown) => void> = {}
+
 vi.mock('../composables/useWebSocket', () => ({
-  useWebSocket: () => ({ onMessage: vi.fn() }),
+  useWebSocket: () => ({
+    onMessage: (type: string, cb: (p: unknown) => void) => {
+      wsHandlers[type] = cb
+    },
+  }),
 }))
 
 vi.mock('../composables/useEscapeKey', () => ({
@@ -431,6 +438,130 @@ describe('HostDetailView — schedules tab', () => {
     await openSchedulesTab(wrapper)
 
     expect(wrapper.text()).toContain('No schedules for this agent.')
+  })
+})
+
+describe('HostDetailView — backup progress', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    for (const key of Object.keys(wsHandlers)) delete wsHandlers[key]
+  })
+
+  it('BackupStarted for this host shows the backup in progress card', async () => {
+    setupApi([], [{ id: 10, target_name: 'server-daily' }])
+    const wrapper = renderWithPlugins(HostDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    wsHandlers['BackupStarted']?.({
+      hostname: 'test-host',
+      target_name: 'server-daily',
+      archive_name: 'server-daily-2026-07-06',
+      schedule_id: 1,
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-card').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Backup in progress')
+    expect(wrapper.text()).toContain('server-daily')
+  })
+
+  it('BackupStarted for a different host does not show a progress card', async () => {
+    setupApi([], [{ id: 10, target_name: 'server-daily' }])
+    const wrapper = renderWithPlugins(HostDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    wsHandlers['BackupStarted']?.({
+      hostname: 'other-host',
+      target_name: 'server-daily',
+      archive_name: null,
+      schedule_id: 1,
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-card').exists()).toBe(false)
+  })
+
+  it('BackupCompleted hides the progress card', async () => {
+    setupApi([], [{ id: 10, target_name: 'server-daily' }])
+    const wrapper = renderWithPlugins(HostDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    wsHandlers['BackupStarted']?.({
+      hostname: 'test-host',
+      target_name: 'server-daily',
+      archive_name: null,
+      schedule_id: 1,
+    })
+    await nextTick()
+    expect(wrapper.find('.live-log-card').exists()).toBe(true)
+
+    wsHandlers['BackupCompleted']?.({
+      hostname: 'test-host',
+      target_name: 'server-daily',
+      report: { id: 1 },
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-card').exists()).toBe(false)
+  })
+
+  it('BackupLog with archive_progress JSON updates the progress data', async () => {
+    setupApi([], [{ id: 10, target_name: 'server-daily' }])
+    const wrapper = renderWithPlugins(HostDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    wsHandlers['BackupStarted']?.({
+      hostname: 'test-host',
+      target_name: 'server-daily',
+      archive_name: null,
+      schedule_id: 1,
+    })
+    await nextTick()
+
+    wsHandlers['BackupLog']?.({
+      hostname: 'test-host',
+      schedule_id: 1,
+      repo_id: 10,
+      line: JSON.stringify({
+        type: 'archive_progress',
+        nfiles: 1234,
+        original_size: 1024 * 1024,
+        path: '/home/alex/documents/report.pdf',
+      }),
+    })
+    await nextTick()
+
+    expect(wrapper.text()).toContain('1,234')
+    expect(wrapper.text()).toContain('/home/alex/documents/report.pdf')
+  })
+
+  it('shows the progress card on load when a report is already running', async () => {
+    const runningReport = {
+      ...mockReports[0],
+      id: 99,
+      status: 'started',
+      started_at: '2026-07-06T09:55:00Z',
+    }
+    setupApi([runningReport], [{ id: 10, target_name: 'server-daily' }])
+    const wrapper = renderWithPlugins(HostDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.live-log-card').exists()).toBe(true)
   })
 })
 

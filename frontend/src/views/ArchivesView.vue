@@ -638,7 +638,7 @@ onMounted(loadRepos)
             :value="browserEntries"
             :row-class="(data: DisplayEntry) => (data.isDir ? 'clickable' : '')"
             filter-display="row"
-            table-class="data-table"
+            table-class="data-table browser-table"
             @row-click="
               (e: { data: DisplayEntry }) =>
                 e.data.isDir && e.data.displayName !== '.' && navigateTo(e.data.path)
@@ -660,7 +660,10 @@ onMounted(loadRepos)
                 />
               </template>
               <template #body="{ data }">
-                <span class="td-name">
+                <span
+                  class="td-name"
+                  :title="data.displayName"
+                >
                   <Folder
                     v-if="data.isDir"
                     :size="16"
@@ -671,7 +674,7 @@ onMounted(loadRepos)
                     :size="16"
                     class="entry-icon"
                   />
-                  {{ data.displayName }}
+                  <span class="name-text">{{ data.displayName }}</span>
                 </span>
               </template>
             </Column>
@@ -680,6 +683,7 @@ onMounted(loadRepos)
               header="Size"
               :sortable="true"
               :show-filter-menu="false"
+              style="width: 6rem"
             >
               <template #filter="{ filterModel, filterCallback }">
                 <input
@@ -699,6 +703,7 @@ onMounted(loadRepos)
               header="Modified"
               :sortable="true"
               :show-filter-menu="false"
+              style="width: 10rem"
             >
               <template #filter="{ filterModel, filterCallback }">
                 <input
@@ -713,7 +718,10 @@ onMounted(loadRepos)
                 <span class="td-date">{{ formatDate(data.mtime) }}</span>
               </template>
             </Column>
-            <Column header="">
+            <Column
+              header=""
+              style="width: 3rem"
+            >
               <template #body="{ data }">
                 <span class="td-action">
                   <button
@@ -999,12 +1007,24 @@ onMounted(loadRepos)
   color: var(--warning);
 }
 
+.browser-table {
+  table-layout: fixed;
+}
+
 .td-name {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  min-width: 0;
   font-family: var(--mono);
   font-size: 0.82rem;
+}
+
+.name-text {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .td-size {

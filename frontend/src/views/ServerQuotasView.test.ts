@@ -3,12 +3,17 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { nextTick, ref } from 'vue'
 
 vi.mock('../api/serverQuotas', () => ({
   listServerQuotas: vi.fn(),
   upsertServerQuota: vi.fn(),
   deleteServerQuota: vi.fn(),
+}))
+
+const isMobileRef = ref(false)
+vi.mock('../composables/useMobile', () => ({
+  useMobile: () => ({ isMobile: isMobileRef }),
 }))
 
 vi.mock('../utils/format', () => ({
@@ -65,6 +70,7 @@ const unconfiguredQuota = {
 describe('ServerQuotasView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    isMobileRef.value = false
   })
 
   it('shows loading state initially', async () => {
@@ -118,6 +124,32 @@ describe('ServerQuotasView', () => {
   })
 
   it('removes a configured quota', async () => {
+    mockList.mockResolvedValue([configuredQuota])
+    mockDelete.mockResolvedValue(undefined)
+    const wrapper = renderWithPlugins(ServerQuotasView)
+    await flushPromises()
+
+    await wrapper.find('button.btn-danger-text').trigger('click')
+    await flushPromises()
+
+    expect(mockDelete).toHaveBeenCalledWith('backup.example.com')
+  })
+
+  it('renders a card list instead of a table on narrow viewports', async () => {
+    isMobileRef.value = true
+    mockList.mockResolvedValue([configuredQuota, unconfiguredQuota])
+    const wrapper = renderWithPlugins(ServerQuotasView)
+    await flushPromises()
+
+    expect(wrapper.find('table').exists()).toBe(false)
+    expect(wrapper.findAll('.quota-card')).toHaveLength(2)
+    expect(wrapper.text()).toContain('backup.example.com')
+    expect(wrapper.text()).toContain('Block backups')
+    expect(wrapper.text()).toContain('Not set')
+  })
+
+  it('removes a configured quota from the mobile card list', async () => {
+    isMobileRef.value = true
     mockList.mockResolvedValue([configuredQuota])
     mockDelete.mockResolvedValue(undefined)
     const wrapper = renderWithPlugins(ServerQuotasView)

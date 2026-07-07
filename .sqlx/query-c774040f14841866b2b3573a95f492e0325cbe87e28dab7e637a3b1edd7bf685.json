@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE agents SET is_hidden = $2 WHERE hostname = $1 RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, is_hidden",
+  "query": "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user FROM agents WHERE hostname = $1",
   "describe": {
     "columns": [
       {
@@ -92,12 +92,16 @@
         "ordinal": 17,
         "name": "is_hidden",
         "type_info": "Bool"
+      },
+      {
+        "ordinal": 18,
+        "name": "last_ssh_user",
+        "type_info": "Text"
       }
     ],
     "parameters": {
       "Left": [
-        "Text",
-        "Bool"
+        "Text"
       ]
     },
     "nullable": [
@@ -118,8 +122,9 @@
       false,
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "69e75e18c107a2998571dd09cefaf8e57d9dcc90028725f219118d7cbff6dca7"
+  "hash": "c774040f14841866b2b3573a95f492e0325cbe87e28dab7e637a3b1edd7bf685"
 }

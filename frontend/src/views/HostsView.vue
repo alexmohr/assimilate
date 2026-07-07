@@ -972,6 +972,7 @@ watch(
       v-if="showDeployDialog && deployTarget"
       :hostname="deployTarget.hostname"
       :agent-version="deployTarget.agent_version ?? null"
+      :last-ssh-user="deployTarget.last_ssh_user"
       @close="showDeployDialog = false"
       @deployed="
         (version) => {

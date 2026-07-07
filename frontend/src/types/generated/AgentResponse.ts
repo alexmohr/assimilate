@@ -88,4 +88,8 @@ export type AgentResponse = {
    * Reason why restart is unavailable, if applicable.
    */
   restart_unavailable_reason: string | null;
+  /**
+   * SSH username last used to deploy/upgrade this agent.
+   */
+  last_ssh_user: string | null;
 };

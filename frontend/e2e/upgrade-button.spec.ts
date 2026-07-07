@@ -18,6 +18,7 @@ interface AgentMock {
   is_imported: boolean
   is_hidden: boolean
   default_backup_paths: string[]
+  last_ssh_user?: string | null
 }
 
 interface VersionMock {
@@ -154,4 +155,36 @@ test('deploy button shown for agent with no version', async ({ page }) => {
   await page.goto('/agents')
   await agentCard(page)
   await expect(page.getByRole('button', { name: 'Deploy' })).toBeVisible({ timeout: 5_000 })
+})
+
+test('deploy dialog prefills the last-used SSH user and auto-loads the remote unit', async ({
+  page,
+}) => {
+  await loginAsAdmin(page)
+  await interceptAgentPage(
+    page,
+    { ...BASE_AGENT, agent_version: '0.1.0', last_ssh_user: 'deploy-user' },
+    makeVersion(null, '0.2.0'),
+  )
+  await page.route(
+    (url) => url.pathname === '/api/agents/fixture-agent/service-unit',
+    async (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          content: '[Service]\nEnvironment=BORG_AGENT_TOKEN=[REDACTED]\n',
+        }),
+      }),
+  )
+  await page.goto('/agents')
+  await agentCard(page)
+
+  await page.getByRole('button', { name: 'Upgrade' }).click()
+  await expect(page.getByRole('heading', { name: /Upgrade Agent/ })).toBeVisible()
+
+  await expect(page.getByPlaceholder('root')).toHaveValue('deploy-user')
+  await expect(page.locator('textarea.service-textarea')).toHaveValue(
+    /Environment=BORG_AGENT_TOKEN=\[REDACTED\]/,
+  )
 })

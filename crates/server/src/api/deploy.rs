@@ -224,6 +224,7 @@ pub async fn deploy_agent(
                 )
                 .await?;
             }
+            db::update_last_ssh_user(&state.pool, agent.id, &req.ssh_user).await?;
             info!(hostname = %hostname, ssh_host = %req.ssh_host, "agent deployed successfully");
             Ok(Json(DeployAgentResponse {
                 success: true,
@@ -300,7 +301,8 @@ pub async fn fetch_service_unit(
         path: "/etc/systemd/system/assimilate-agent.service",
     })
     .await
-    .map_err(|e| ApiError::BadGateway(e.to_string()))?;
+    .map_err(|e| ApiError::BadGateway(e.to_string()))?
+    .map(|content| ssh::redact_agent_token(&content));
 
     Ok(Json(FetchServiceUnitResponse { content }))
 }

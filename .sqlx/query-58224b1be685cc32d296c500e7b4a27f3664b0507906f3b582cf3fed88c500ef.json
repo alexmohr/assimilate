@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, is_hidden FROM agents WHERE is_hidden = false ORDER BY hostname",
+  "query": "UPDATE agents SET hostname = $2, display_name = $3, default_backup_paths = $4, default_exclude_patterns = $5, default_pre_backup_commands = $6, default_post_backup_commands = $7, default_file_change_patterns_raw = $8 WHERE hostname = $1 RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user",
   "describe": {
     "columns": [
       {
@@ -92,10 +92,24 @@
         "ordinal": 17,
         "name": "is_hidden",
         "type_info": "Bool"
+      },
+      {
+        "ordinal": 18,
+        "name": "last_ssh_user",
+        "type_info": "Text"
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "TextArray",
+        "TextArray",
+        "Text",
+        "Text",
+        "Text"
+      ]
     },
     "nullable": [
       false,
@@ -115,8 +129,9 @@
       false,
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "1a9e8e5ecd7f6b0f2a60f7df910d0eb8a47db25522478d3ca659c111b8b58c76"
+  "hash": "58224b1be685cc32d296c500e7b4a27f3664b0507906f3b582cf3fed88c500ef"
 }

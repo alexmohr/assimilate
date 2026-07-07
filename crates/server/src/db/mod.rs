@@ -3537,12 +3537,13 @@ pub async fn record_failed_login_and_check_lockout(
 
     if count >= max_account_failures {
         let escalation_level = (count - 1) / max_account_failures;
-        let tier_index = usize::try_from(escalation_level)
-            .unwrap_or(LOCKOUT_DURATIONS.len() - 1)
-            .min(LOCKOUT_DURATIONS.len() - 1);
-        let locked_until = Utc::now() + chrono::Duration::minutes(LOCKOUT_DURATIONS[tier_index]);
+        let duration_minutes = LOCKOUT_DURATIONS
+            .get(usize::try_from(escalation_level).unwrap_or(0))
+            .copied()
+            .unwrap_or(*LOCKOUT_DURATIONS.last().unwrap_or(&1));
+        let locked_until = Utc::now() + chrono::Duration::minutes(duration_minutes);
 
-        sqlx::query!(
+        let result = sqlx::query!(
             "UPDATE users SET locked_until = $1 WHERE username = $2",
             locked_until,
             username,
@@ -3551,17 +3552,26 @@ pub async fn record_failed_login_and_check_lockout(
         .await
         .map_err(ApiError::Database)?;
 
+        // Only log the lockout event if the user actually exists. For
+        // nonexistent usernames (the bcrypt dummy-hash path) the UPDATE
+        // silently affects 0 rows and logging a fake event would pollute
+        // the audit trail.
+        let user_exists = result.rows_affected() > 0;
+
         tx.commit().await.map_err(ApiError::Database)?;
 
-        let _ = insert_system_event(
-            pool,
-            "account_locked",
-            None,
-            &format!(
-                "Account '{username}' locked until {locked_until} after {count} failed attempts"
-            ),
-        )
-        .await;
+        if user_exists {
+            let _ = insert_system_event(
+                pool,
+                "account_locked",
+                None,
+                &format!(
+                    "Account '{username}' locked until {locked_until} after {count} failed \
+                     attempts"
+                ),
+            )
+            .await;
+        }
 
         return Ok(());
     }

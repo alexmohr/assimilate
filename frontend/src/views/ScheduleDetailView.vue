@@ -159,6 +159,7 @@ const form = ref({
   keep_monthly: 12,
   keep_yearly: 10,
   compact_enabled: true,
+  rate_limit_kbps: 0,
   pre_backup_commands: '',
   post_backup_commands: '',
   backup_sources: '',
@@ -234,6 +235,7 @@ function populateForm(s: ScheduleRow): void {
     keep_monthly: s.keep_monthly,
     keep_yearly: s.keep_yearly,
     compact_enabled: s.compact_enabled,
+    rate_limit_kbps: s.rate_limit_kbps ?? 0,
     pre_backup_commands: (JSON.parse(s.pre_backup_commands || '[]') as string[]).join('\n'),
     post_backup_commands: (JSON.parse(s.post_backup_commands || '[]') as string[]).join('\n'),
     backup_sources: '',
@@ -376,6 +378,7 @@ async function save(): Promise<void> {
       keep_monthly: form.value.keep_monthly,
       keep_yearly: form.value.keep_yearly,
       compact_enabled: form.value.compact_enabled,
+      rate_limit_kbps: form.value.rate_limit_kbps,
       pre_backup_commands: parseLines(form.value.pre_backup_commands),
       post_backup_commands: parseLines(form.value.post_backup_commands),
       backup_sources: usePerHostPaths.value ? [] : parseLines(form.value.backup_sources),
@@ -1236,6 +1239,16 @@ watch(activeTab, (tab) => {
             <div class="form-group form-group-inline">
               <label class="form-label">Compact after backup</label>
               <ToggleSwitch v-model="form.compact_enabled" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Remote Rate Limit (kB/s)</label>
+              <input
+                v-model.number="form.rate_limit_kbps"
+                type="number"
+                min="0"
+                class="form-input"
+              />
+              <span class="field-hint">Caps borg's upload bandwidth. Set to 0 for unlimited.</span>
             </div>
           </div>
 

@@ -30,5 +30,6 @@ pub mod stats;
 pub mod system;
 pub mod tags;
 pub mod tokens;
+pub mod totp;
 pub mod tunnels;
 pub mod users;

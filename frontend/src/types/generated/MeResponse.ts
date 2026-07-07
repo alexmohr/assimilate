@@ -7,4 +7,5 @@ export type MeResponse = {
   must_change_password: boolean;
   session_expires_at: string | null;
   remember_me: boolean;
+  totp_enabled: boolean;
 };

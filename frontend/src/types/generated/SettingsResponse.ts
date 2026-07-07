@@ -7,4 +7,5 @@ export type SettingsResponse = {
   system_event_retention_days: number;
   timezone: string;
   borg_query_timeout_secs: number;
+  session_idle_timeout_minutes: number | null;
 };

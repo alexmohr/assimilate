@@ -30,6 +30,10 @@ pub struct LoginResponse {
     pub user: UserResponse,
     pub session_expires_at: DateTime<Utc>,
     pub remember_me: bool,
+    #[serde(default)]
+    pub totp_required: bool,
+    #[serde(default)]
+    pub temp_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -42,12 +46,47 @@ pub struct MeResponse {
     pub must_change_password: bool,
     pub session_expires_at: Option<DateTime<Utc>>,
     pub remember_me: bool,
+    pub totp_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct RefreshSessionResponse {
     pub session_expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct TotpSetupResponse {
+    pub secret: String,
+    pub qr_uri: String,
+    pub recovery_codes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct TotpVerifyResponse {
+    pub success: bool,
+    pub backup_codes_remaining: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct SessionResponse {
+    pub id: String,
+    #[ts(type = "number")]
+    pub user_id: i64,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub last_seen_at: DateTime<Utc>,
+    pub remember_me: bool,
+    pub current: bool,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct SessionListResponse {
+    pub sessions: Vec<SessionResponse>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -640,6 +679,8 @@ pub struct SettingsResponse {
     pub timezone: String,
     #[ts(type = "number")]
     pub borg_query_timeout_secs: u64,
+    #[ts(type = "number | null")]
+    pub session_idle_timeout_minutes: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

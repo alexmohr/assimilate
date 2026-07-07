@@ -144,6 +144,8 @@ pub struct SettingsResponse {
     pub system_event_retention_days: i64,
     pub timezone: String,
     pub borg_query_timeout_secs: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_idle_timeout_minutes: Option<i64>,
 }
 
 #[utoipa::path(
@@ -216,6 +218,14 @@ pub async fn get_settings(
         .filter(|&s| s > 0)
         .unwrap_or(300);
 
+    let session_idle_timeout_minutes = db::get_setting(&state.pool, "session_idle_timeout_minutes")
+        .await?
+        .and_then(|v| {
+            v.parse::<i64>().inspect_err(|e| {
+                tracing::warn!(value = %v, error = %e, "failed to parse session_idle_timeout_minutes setting");
+            }).ok()
+        });
+
     Ok(Json(SettingsResponse {
         retention_days,
         report_retention_days,
@@ -223,6 +233,7 @@ pub async fn get_settings(
         system_event_retention_days,
         timezone: timezone.name().to_owned(),
         borg_query_timeout_secs,
+        session_idle_timeout_minutes,
     }))
 }
 
@@ -234,6 +245,7 @@ pub struct UpdateSettingsRequest {
     pub system_event_retention_days: Option<i64>,
     pub timezone: Option<String>,
     pub borg_query_timeout_secs: Option<u64>,
+    pub session_idle_timeout_minutes: Option<i64>,
 }
 
 #[utoipa::path(
@@ -319,6 +331,15 @@ pub async fn update_settings(
     )
     .await?;
 
+    if let Some(v) = body.session_idle_timeout_minutes {
+        if v < 1 {
+            return Err(ApiError::BadRequest(
+                "session_idle_timeout_minutes must be positive".to_string(),
+            ));
+        }
+        db::set_setting(&state.pool, "session_idle_timeout_minutes", &v.to_string()).await?;
+    }
+
     let effective_tz = db::get_schedule_timezone(&state.pool).await?;
 
     let legacy = db::get_setting(&state.pool, "retention_days")
@@ -331,6 +352,8 @@ pub async fn update_settings(
 
     let system_event_retention_days = body.system_event_retention_days.or(legacy).unwrap_or(90);
 
+    let session_idle_timeout_minutes = body.session_idle_timeout_minutes;
+
     Ok(Json(SettingsResponse {
         retention_days: body.retention_days,
         report_retention_days,
@@ -338,6 +361,7 @@ pub async fn update_settings(
         system_event_retention_days,
         timezone: effective_tz.name().to_owned(),
         borg_query_timeout_secs,
+        session_idle_timeout_minutes,
     }))
 }
 

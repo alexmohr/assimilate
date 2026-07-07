@@ -5,4 +5,6 @@ export type LoginResponse = {
   user: UserResponse;
   session_expires_at: string;
   remember_me: boolean;
+  totp_required: boolean;
+  temp_token: string | null;
 };

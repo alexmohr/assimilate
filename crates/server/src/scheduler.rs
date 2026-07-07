@@ -30,7 +30,6 @@ const RETENTION_INTERVAL: Duration = Duration::from_hours(1);
 const SYNC_CHECK_INTERVAL: Duration = Duration::from_mins(1);
 const SESSION_CLEANUP_INTERVAL: Duration = Duration::from_hours(1);
 const SYNC_WARN_DURATION: Duration = Duration::from_mins(5);
-const DEFAULT_RETENTION_DAYS: i64 = 7;
 
 /// Main scheduler loop: ticks schedules, runs retention, syncs repos, and cleans up sessions.
 pub async fn run(state: AppState) {
@@ -359,18 +358,24 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
     let mut archive_reports_deleted: u64 = 0;
 
     if report_days > 0 {
-        let cutoff = Utc::now() - chrono::Duration::days(report_days);
+        let cutoff = Utc::now()
+            .checked_sub_signed(chrono::Duration::days(report_days))
+            .unwrap_or_else(Utc::now);
         archive_reports_deleted =
             db::delete_backup_reports_with_archive_before(pool, cutoff).await?;
     }
 
     if failed_days > 0 {
-        let cutoff = Utc::now() - chrono::Duration::days(failed_days);
+        let cutoff = Utc::now()
+            .checked_sub_signed(chrono::Duration::days(failed_days))
+            .unwrap_or_else(Utc::now);
         reports_deleted = db::delete_backup_reports_before(pool, cutoff).await?;
     }
 
     if event_days > 0 {
-        let cutoff = Utc::now() - chrono::Duration::days(event_days);
+        let cutoff = Utc::now()
+            .checked_sub_signed(chrono::Duration::days(event_days))
+            .unwrap_or_else(Utc::now);
         events_deleted = db::delete_system_events_before(pool, cutoff).await?;
     }
 

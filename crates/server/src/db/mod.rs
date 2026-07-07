@@ -4701,6 +4701,11 @@ pub async fn delete_backup_reports_with_archive_before(
     Ok(result.rows_affected())
 }
 
+/// Get user preferences.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_user_preferences(
     pool: &PgPool,
     user_id: i64,

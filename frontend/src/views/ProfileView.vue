@@ -258,17 +258,19 @@ function cancelRevokeSession(): void {
   revokeSessionId.value = null
 }
 
-onMounted(() => {
+function handleSessionsTab(): void {
+  activeTab.value = 'sessions'
+  fetchSessions()
+}
+
+onMounted(async () => {
   fetchTokens()
   loadFromBackend()
-  authStore.fetchMe().then(() => {
+  try {
+    await authStore.fetchMe()
     totpEnabled.value = authStore.user?.totp_enabled ?? false
-  })
-})
-
-onMounted(() => {
-  if (activeTab.value === 'sessions') {
-    fetchSessions()
+  } catch {
+    totpEnabled.value = false
   }
 })
 </script>
@@ -307,10 +309,7 @@ onMounted(() => {
       <button
         class="tab"
         :class="{ active: activeTab === 'sessions' }"
-        @click="
-          activeTab = 'sessions'
-          fetchSessions()
-        "
+        @click="handleSessionsTab"
       >
         Sessions
       </button>

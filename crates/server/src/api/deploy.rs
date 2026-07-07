@@ -44,25 +44,13 @@ fn tunnel_server_url(tunnel: &db::SshTunnel) -> Option<String> {
         .then(|| format!("ws://127.0.0.1:{}", tunnel.tunnel_port))
 }
 
-async fn has_agent_binary(dir: &std::path::Path) -> bool {
-    let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
-        return false;
-    };
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        if entry.file_name().to_string_lossy().starts_with("agent-") {
-            return true;
-        }
-    }
-    false
-}
-
 pub async fn agent_binary_dir() -> PathBuf {
     if let Ok(path) = std::env::var("AGENT_BINARY_DIR") {
         return PathBuf::from(path);
     }
 
     let docker_path = PathBuf::from("/app");
-    if has_agent_binary(&docker_path).await {
+    if !ssh::list_agent_binaries(&docker_path).await.is_empty() {
         return docker_path;
     }
 

@@ -3,6 +3,9 @@
 
 use std::path::Path;
 
+/// Builds the `--rsh` command line passed to `borg` for SSH transport,
+/// using batch mode and auto-accepting unknown host keys on first
+/// connection. Suitable when no pinned `known_hosts` file is available.
 #[must_use]
 pub fn borg_rsh() -> String {
     [
@@ -16,6 +19,9 @@ pub fn borg_rsh() -> String {
     .join(" ")
 }
 
+/// Builds the `--rsh` command line passed to `borg` for SSH transport,
+/// pinning host key verification to the `known_hosts` file at `path` instead
+/// of accepting new keys automatically.
 #[must_use]
 pub fn borg_rsh_with_known_hosts(path: &Path) -> String {
     [
@@ -30,6 +36,9 @@ pub fn borg_rsh_with_known_hosts(path: &Path) -> String {
     .join(" ")
 }
 
+/// Formats `host` as it should appear in a `known_hosts` file entry: the
+/// bare hostname for the default SSH port (22), or a bracketed
+/// `[host]:port` form for any non-default port.
 #[must_use]
 pub fn known_hosts_host(host: &str, port: u16) -> String {
     if port == 22 {

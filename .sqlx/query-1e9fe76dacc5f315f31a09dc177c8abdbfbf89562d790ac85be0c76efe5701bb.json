@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET totp_enabled = true, totp_last_verified_at = NOW() WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1e9fe76dacc5f315f31a09dc177c8abdbfbf89562d790ac85be0c76efe5701bb"
+}

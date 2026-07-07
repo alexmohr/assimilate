@@ -326,6 +326,19 @@ fn core_routes() -> Router<AppState> {
             "/api/auth/preferences",
             get(api::auth::get_preferences).put(api::auth::update_preferences),
         )
+        .route("/api/auth/totp/setup", post(api::totp::totp_setup))
+        .route("/api/auth/totp/verify", post(api::totp::totp_verify))
+        .route(
+            "/api/auth/totp/verify-login",
+            post(api::totp::totp_verify_login),
+        )
+        .route("/api/auth/totp/disable", post(api::totp::totp_disable))
+        .route("/api/auth/totp/recovery", post(api::totp::totp_recovery))
+        .route("/api/auth/sessions", get(api::auth::list_sessions))
+        .route(
+            "/api/auth/sessions/{session_id}",
+            delete(api::auth::revoke_session),
+        )
         .route(
             "/api/users",
             get(api::users::list_users).post(api::users::create_user),

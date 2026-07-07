@@ -3879,6 +3879,17 @@ pub struct SessionRow {
     pub expires_at: DateTime<Utc>,
     /// Whether the "remember me" flag was set.
     pub remember_me: bool,
+    pub last_seen_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct SessionForUser {
+    pub id: String,
+    pub user_id: i64,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub last_seen_at: DateTime<Utc>,
+    pub remember_me: bool,
 }
 
 /// # Errors
@@ -4053,6 +4064,154 @@ pub async fn update_last_login(pool: &PgPool, user_id: i64) -> Result<(), ApiErr
     Ok(())
 }
 
+pub async fn get_user_totp_fields(
+    pool: &PgPool,
+    user_id: i64,
+) -> Result<Option<UserTotpFields>, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        totp_secret_encrypted: Option<Vec<u8>>,
+        totp_enabled: bool,
+        totp_recovery_codes: Option<Vec<String>>,
+        totp_last_verified_at: Option<DateTime<Utc>>,
+    }
+
+    let row = sqlx::query_as!(
+        Row,
+        "SELECT totp_secret_encrypted, totp_enabled, totp_recovery_codes, totp_last_verified_at \
+         FROM users WHERE id = $1",
+        user_id,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    Ok(row.map(|r| UserTotpFields {
+        secret_encrypted: r.totp_secret_encrypted,
+        enabled: r.totp_enabled,
+        recovery_codes: r.totp_recovery_codes.unwrap_or_default(),
+        last_verified_at: r.totp_last_verified_at,
+    }))
+}
+
+pub struct UserTotpFields {
+    pub secret_encrypted: Option<Vec<u8>>,
+    pub enabled: bool,
+    pub recovery_codes: Vec<String>,
+    pub last_verified_at: Option<DateTime<Utc>>,
+}
+
+pub async fn set_user_totp_secret(
+    pool: &PgPool,
+    user_id: i64,
+    encrypted_secret: &[u8],
+    recovery_codes: &[String],
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE users SET totp_secret_encrypted = $2, totp_recovery_codes = $3 WHERE id = $1",
+        user_id,
+        encrypted_secret,
+        recovery_codes,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+pub async fn enable_user_totp(pool: &PgPool, user_id: i64) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE users SET totp_enabled = true, totp_last_verified_at = NOW() WHERE id = $1",
+        user_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+pub async fn disable_user_totp(pool: &PgPool, user_id: i64) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE users SET totp_enabled = false, totp_secret_encrypted = NULL, totp_recovery_codes \
+         = NULL, totp_last_verified_at = NULL WHERE id = $1",
+        user_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+pub async fn replace_totp_recovery_codes(
+    pool: &PgPool,
+    user_id: i64,
+    recovery_codes: &[String],
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE users SET totp_recovery_codes = $2 WHERE id = $1",
+        user_id,
+        recovery_codes,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+pub async fn update_session_last_seen(pool: &PgPool, session_id: &str) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE sessions SET last_seen_at = NOW() WHERE id = $1",
+        session_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+pub async fn list_sessions_for_user(
+    pool: &PgPool,
+    user_id: i64,
+) -> Result<Vec<SessionForUser>, ApiError> {
+    sqlx::query_as!(
+        SessionForUser,
+        "SELECT id, user_id, created_at, expires_at, last_seen_at, remember_me FROM sessions \
+         WHERE user_id = $1 AND expires_at > NOW() ORDER BY created_at DESC",
+        user_id,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
+pub async fn delete_session_by_id(pool: &PgPool, session_id: &str) -> Result<bool, ApiError> {
+    let result = sqlx::query!("DELETE FROM sessions WHERE id = $1", session_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(result.rows_affected() > 0)
+}
+
+pub async fn get_user_password_hash_by_id(pool: &PgPool, user_id: i64) -> Result<String, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        password_hash: String,
+    }
+
+    let row = sqlx::query_as!(
+        Row,
+        "SELECT password_hash FROM users WHERE id = $1",
+        user_id,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| match e {
+        sqlx::Error::RowNotFound => ApiError::NotFound(format!("user {user_id} not found")),
+        other => ApiError::Database(other),
+    })?;
+    Ok(row.password_hash)
+}
+
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -4064,7 +4223,8 @@ pub async fn insert_session(
     remember_me: bool,
 ) -> Result<(), ApiError> {
     sqlx::query!(
-        "INSERT INTO sessions (id, user_id, expires_at, remember_me) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO sessions (id, user_id, expires_at, remember_me, last_seen_at) VALUES ($1, \
+         $2, $3, $4, NOW())",
         session_id,
         user_id,
         expires_at,
@@ -4084,8 +4244,8 @@ pub async fn insert_session(
 pub async fn get_session(pool: &PgPool, session_id: &str) -> Result<SessionRow, ApiError> {
     sqlx::query_as!(
         SessionRow,
-        "SELECT id, user_id, created_at, expires_at, remember_me FROM sessions WHERE id = $1 AND \
-         expires_at > NOW()",
+        "SELECT id, user_id, created_at, expires_at, remember_me, last_seen_at FROM sessions \
+         WHERE id = $1 AND expires_at > NOW()",
         session_id,
     )
     .fetch_one(pool)

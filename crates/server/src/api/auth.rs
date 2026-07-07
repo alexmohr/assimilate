@@ -5,13 +5,16 @@ use std::net::SocketAddr;
 
 use axum::{
     Json,
-    extract::{ConnectInfo, FromRequestParts, State},
+    extract::{ConnectInfo, FromRequestParts, Path, State},
     http::{HeaderMap, StatusCode, header, request::Parts},
     response::{IntoResponse, Response},
 };
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use shared::responses::{LoginResponse, MeResponse, PreferencesResponse, RefreshSessionResponse};
+use shared::responses::{
+    LoginResponse, MeResponse, PreferencesResponse, RefreshSessionResponse, SessionListResponse,
+    SessionResponse,
+};
 use uuid::Uuid;
 
 use super::{helpers, users};
@@ -52,7 +55,7 @@ impl CookieSecurity {
     }
 }
 
-fn secure_cookie_flag() -> &'static str {
+pub fn secure_cookie_flag() -> &'static str {
     CookieSecurity::from(std::env::var("ASSIMILATE_SECURE_COOKIES").ok()).cookie_flag()
 }
 
@@ -71,6 +74,9 @@ const ALLOWED_PATHS_DURING_PASSWORD_CHANGE: &[&str] = &[
     "/api/auth/change-password",
     "/api/auth/logout",
     "/api/auth/me",
+    "/api/auth/totp/setup",
+    "/api/auth/totp/verify",
+    "/api/auth/totp/disable",
 ];
 
 impl FromRequestParts<AppState> for AuthUser {
@@ -88,6 +94,21 @@ impl FromRequestParts<AppState> for AuthUser {
         let hashed_id = hash_token(&session_id);
         let session = db::get_session(&state.pool, &hashed_id).await?;
         let user = db::get_user_by_id(&state.pool, session.user_id).await?;
+
+        // Idle timeout check
+        let idle_timeout_minutes: i64 =
+            db::get_setting(&state.pool, "session_idle_timeout_minutes")
+                .await?
+                .and_then(|v| v.parse::<i64>().ok())
+                .unwrap_or(480);
+
+        let idle_duration = Utc::now() - session.last_seen_at;
+        if idle_duration.num_minutes() > idle_timeout_minutes {
+            db::delete_session(&state.pool, &hashed_id).await?;
+            return Err(ApiError::Unauthorized(
+                "session expired due to inactivity".to_string(),
+            ));
+        }
 
         if user.must_change_password {
             let path = parts.uri.path();
@@ -247,6 +268,27 @@ pub async fn login(
 
     let user_resp = users::user_row_to_response(&state.pool, user).await?;
 
+    // Check if TOTP is enabled for this user
+    let totp_fields = db::get_user_totp_fields(&state.pool, user_resp.id).await?;
+    let totp_enabled = totp_fields.is_some_and(|f| f.enabled);
+
+    if totp_enabled {
+        // Create a short-lived temp token session for TOTP verification
+        let temp_token = Uuid::new_v4().to_string();
+        let temp_hashed = hash_token(&temp_token);
+        let temp_expires = Utc::now() + Duration::minutes(10);
+        db::insert_session(&state.pool, &temp_hashed, user_resp.id, temp_expires, false).await?;
+
+        let body = Json(LoginResponse {
+            user: user_resp,
+            session_expires_at: temp_expires,
+            remember_me: req.remember_me,
+            totp_required: true,
+            temp_token: Some(temp_token),
+        });
+        return Ok(body.into_response());
+    }
+
     let session_id = Uuid::new_v4().to_string();
     let (ttl_hours, max_age_secs) = if req.remember_me {
         (24 * 7, 7 * 86400)
@@ -277,6 +319,8 @@ pub async fn login(
         user: user_resp,
         session_expires_at: expires_at,
         remember_me: req.remember_me,
+        totp_required: false,
+        temp_token: None,
     });
     let mut response = body.into_response();
     response.headers_mut().insert(
@@ -349,11 +393,16 @@ pub async fn me(
     let (session_expires_at, remember_me) = if let Some(ref session_id) = auth.session_id {
         let hashed_id = hash_token(session_id);
         let session = db::get_session(&state.pool, &hashed_id).await?;
+        // Update last_seen_at on me requests to slide the idle window
+        db::update_session_last_seen(&state.pool, &hashed_id).await?;
         (Some(session.expires_at), session.remember_me)
     } else {
         (None, false)
     };
     let role = users::get_user_role_string(&state.pool, auth.user_id).await?;
+
+    let totp_fields = db::get_user_totp_fields(&state.pool, auth.user_id).await?;
+    let totp_enabled = totp_fields.is_some_and(|f| f.enabled);
 
     Ok(Json(MeResponse {
         id: auth.user_id,
@@ -362,6 +411,7 @@ pub async fn me(
         must_change_password: user.must_change_password,
         session_expires_at,
         remember_me,
+        totp_enabled,
     }))
 }
 
@@ -405,6 +455,8 @@ pub async fn refresh_session(
         .checked_add_signed(Duration::days(7))
         .unwrap_or_else(Utc::now);
     db::extend_session(&state.pool, &hashed_id, new_expires_at).await?;
+    // Update last_seen_at to slide idle window
+    db::update_session_last_seen(&state.pool, &hashed_id).await?;
 
     let secure_flag = secure_cookie_flag();
     let max_age_secs = 7 * 86400i64;
@@ -519,6 +571,75 @@ pub async fn update_preferences(
     }
     db::set_user_preferences(&state.pool, auth.user_id, &body).await?;
     Ok(Json(PreferencesResponse { inner: body }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/auth/sessions",
+    tag = "Authentication",
+    operation_id = "list_sessions",
+    summary = "List all active sessions for the current user",
+    responses(
+        (status = 200, description = "List of active sessions", body = SessionListResponse),
+        (status = 401, description = "Not authenticated"),
+    )
+)]
+pub async fn list_sessions(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<SessionListResponse>, ApiError> {
+    let sessions = db::list_sessions_for_user(&state.pool, auth.user_id).await?;
+
+    let current_session_id = auth.session_id.map(|s| hash_token(&s));
+    let sessions: Vec<SessionResponse> = sessions
+        .into_iter()
+        .map(|s| SessionResponse {
+            current: current_session_id.as_deref() == Some(&s.id),
+            id: s.id,
+            user_id: s.user_id,
+            created_at: s.created_at,
+            expires_at: s.expires_at,
+            last_seen_at: s.last_seen_at,
+            remember_me: s.remember_me,
+        })
+        .collect();
+
+    Ok(Json(SessionListResponse { sessions }))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/auth/sessions/{session_id}",
+    tag = "Authentication",
+    operation_id = "revoke_session",
+    summary = "Revoke another active session (cannot revoke own current session)",
+    responses(
+        (status = 204, description = "Session revoked"),
+        (status = 400, description = "Cannot revoke own current session"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Session not found"),
+    )
+)]
+pub async fn revoke_session(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(session_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let current_hashed = auth.session_id.map(|s| hash_token(&s));
+    let target_hashed = hash_token(&session_id);
+
+    if current_hashed.as_deref() == Some(&target_hashed) {
+        return Err(ApiError::BadRequest(
+            "cannot revoke your own current session".to_string(),
+        ));
+    }
+
+    let deleted = db::delete_session_by_id(&state.pool, &target_hashed).await?;
+    if !deleted {
+        return Err(ApiError::NotFound("session not found".to_string()));
+    }
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[cfg(test)]

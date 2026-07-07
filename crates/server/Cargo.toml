@@ -47,6 +47,11 @@ base64 = { workspace = true }
 glob-match = { workspace = true }
 nix = { workspace = true }
 ipnetwork = { workspace = true }
+hex = "0.4"
+url-escape = "0.1"
+totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
+qrcode = { version = "0.14" }
+image = { version = "0.25", default-features = false, features = ["png"] }
 utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
 utoipa-axum = "0.1"
 utoipa-scalar = { version = "0.3", features = ["axum"] }

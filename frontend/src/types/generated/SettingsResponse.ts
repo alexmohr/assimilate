@@ -19,4 +19,5 @@ export type SettingsResponse = {
    * Timeout for borg queries in seconds.
    */
   borg_query_timeout_secs: number;
+  session_idle_timeout_minutes: number | null;
 };

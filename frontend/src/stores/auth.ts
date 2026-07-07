@@ -112,14 +112,26 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function verifyTotp(code: string, recovery = false): Promise<void> {
     if (recovery) {
-      const res = await apiClient.post<{ success: boolean; backup_codes_remaining: number | null }>(
-        '/auth/totp/recovery',
-        { code, temp_token: tempToken.value },
-      )
-      if (!res.data.success) {
-        throw new Error('Invalid recovery code')
+      // Recovery code endpoint creates the real session directly
+      const res = await apiClient.post<{
+        user: AuthUser
+        session_expires_at: string
+        remember_me: boolean
+      }>('/auth/totp/recovery', {
+        code,
+        temp_token: tempToken.value,
+      })
+
+      user.value = res.data.user
+      rememberMe.value = res.data.remember_me
+      sessionExpiresAt.value = res.data.session_expires_at
+      if (res.data.remember_me) {
+        scheduleRefresh(res.data.session_expires_at)
       }
-      // After successful recovery, get the TOTP-verify-login to complete the flow
+
+      totpRequired.value = false
+      tempToken.value = null
+      return
     }
 
     // Complete the login with TOTP verification

@@ -226,39 +226,6 @@ pub async fn get_settings(
         .or(legacy)
         .unwrap_or(90);
 
-    let legacy = db::get_setting(&state.pool, "retention_days")
-        .await?
-        .and_then(|v| v.parse::<i64>().ok());
-
-    let report_retention_days = db::get_setting(&state.pool, "report_retention_days")
-        .await?
-        .and_then(|v| {
-            v.parse::<i64>().inspect_err(|e| {
-                tracing::warn!(value = %v, error = %e, "failed to parse report_retention_days setting");
-            }).ok()
-        })
-        .unwrap_or(0);
-
-    let failed_report_retention_days = db::get_setting(&state.pool, "failed_report_retention_days")
-        .await?
-        .and_then(|v| {
-            v.parse::<i64>().inspect_err(|e| {
-                tracing::warn!(value = %v, error = %e, "failed to parse failed_report_retention_days setting");
-            }).ok()
-        })
-        .or(legacy)
-        .unwrap_or(365);
-
-    let system_event_retention_days = db::get_setting(&state.pool, "system_event_retention_days")
-        .await?
-        .and_then(|v| {
-            v.parse::<i64>().inspect_err(|e| {
-                tracing::warn!(value = %v, error = %e, "failed to parse system_event_retention_days setting");
-            }).ok()
-        })
-        .or(legacy)
-        .unwrap_or(90);
-
     let timezone = db::get_schedule_timezone(&state.pool).await?;
 
     let borg_query_timeout_secs = db::get_setting(&state.pool, "borg_query_timeout_secs")

@@ -59,6 +59,7 @@ pub mod system;
 pub mod tags;
 /// API token endpoints.
 pub mod tokens;
+pub mod totp;
 /// SSH tunnel endpoints.
 pub mod tunnels;
 /// User management endpoints.

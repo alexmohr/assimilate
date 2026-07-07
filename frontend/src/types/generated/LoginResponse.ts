@@ -17,4 +17,6 @@ export type LoginResponse = {
    * Whether the session should be remembered beyond the current browser session.
    */
   remember_me: boolean;
+  totp_required: boolean;
+  temp_token: string | null;
 };

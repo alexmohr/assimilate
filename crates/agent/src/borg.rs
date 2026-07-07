@@ -5,7 +5,7 @@ use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
     process::Stdio,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use shared::types::BORG_REPO_ENV_KEY;
@@ -34,9 +34,24 @@ fn log_run_result(
     }
 }
 
+const DEFAULT_KILL_ESCALATION_SECS: u64 = 30;
+
+/// Delay before escalating a SIGTERM'd borg child to SIGKILL. Overridable via
+/// `BORG_KILL_ESCALATION_SECS` so CI coverage runs (which tear down the container on a
+/// matching 30 s timeout, see `ci.yml`'s e2e job) can shorten it enough that the
+/// escalation path reliably completes, and gets recorded as covered, before teardown.
+fn kill_escalation_delay() -> Duration {
+    let secs = std::env::var("BORG_KILL_ESCALATION_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_KILL_ESCALATION_SECS);
+    Duration::from_secs(secs)
+}
+
 /// Wraps a borg child process and sends SIGTERM (not SIGKILL) on drop, giving borg time
-/// to release its repository lock. Escalates to SIGKILL after 30 s if borg does not exit,
-/// then runs `borg break-lock` to remove the stale lock that SIGKILL leaves behind.
+/// to release its repository lock. Escalates to SIGKILL after
+/// [`kill_escalation_delay`] if borg does not exit, then runs `borg break-lock` to
+/// remove the stale lock that SIGKILL leaves behind.
 struct GracefulChild {
     child: tokio::process::Child,
     binary: PathBuf,
@@ -170,13 +185,14 @@ impl Drop for GracefulChild {
             let repo = self.repo.clone();
             let env = self.env.clone();
 
-            // Escalate to SIGKILL if borg has not responded to SIGTERM after 30 s.
-            // SIGKILL leaves lock.exclusive on the repository, so break-lock is run
-            // immediately after to remove the stale lock.
+            // Escalate to SIGKILL if borg has not responded to SIGTERM within
+            // kill_escalation_delay(). SIGKILL leaves lock.exclusive on the repository,
+            // so break-lock is run immediately after to remove the stale lock.
+            let escalation_delay = kill_escalation_delay();
             let _ = std::thread::Builder::new()
                 .name("borg-reaper".to_owned())
                 .spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_secs(30));
+                    std::thread::sleep(escalation_delay);
 
                     // Send signal 0 (existence check) before escalating to SIGKILL.
                     // If the process is already gone, skip SIGKILL to avoid hitting a
@@ -392,5 +408,26 @@ mod tests {
             result,
             vec!["create".to_owned(), "--".to_owned(), "/data".to_owned(),]
         );
+    }
+
+    // Combined into one test: both cases mutate BORG_KILL_ESCALATION_SECS, causing races
+    // when parallel.
+    #[test]
+    fn kill_escalation_delay_reads_env_override_and_falls_back_to_default() {
+        unsafe { std::env::set_var("BORG_KILL_ESCALATION_SECS", "2") };
+        assert_eq!(kill_escalation_delay(), Duration::from_secs(2));
+
+        unsafe { std::env::remove_var("BORG_KILL_ESCALATION_SECS") };
+        assert_eq!(
+            kill_escalation_delay(),
+            Duration::from_secs(DEFAULT_KILL_ESCALATION_SECS)
+        );
+
+        unsafe { std::env::set_var("BORG_KILL_ESCALATION_SECS", "not-a-number") };
+        assert_eq!(
+            kill_escalation_delay(),
+            Duration::from_secs(DEFAULT_KILL_ESCALATION_SECS)
+        );
+        unsafe { std::env::remove_var("BORG_KILL_ESCALATION_SECS") };
     }
 }

@@ -1901,7 +1901,7 @@ async fn test_export_config_with_hosts(pool: sqlx::PgPool) {
     sqlx::query(
         "INSERT INTO agents (hostname, display_name, agent_token_hash, default_backup_paths, \
          default_exclude_patterns) VALUES ('export-host', 'Export Host', 'real-token', \
-         ARRAY.get('/etc','/home').unwrap(), ARRAY.get('*.log').unwrap())",
+         ARRAY['/etc','/home'], ARRAY['*.log'])",
     )
     .execute(&pool)
     .await
@@ -2208,7 +2208,7 @@ async fn test_export_then_import_roundtrip(pool: sqlx::PgPool) {
     sqlx::query(
         "INSERT INTO agents (hostname, display_name, agent_token_hash, default_backup_paths, \
          default_exclude_patterns) VALUES ('roundtrip-host', 'RT Host', 'real-token', \
-         ARRAY.get('/etc').unwrap(), ARRAY.get('*.swp').unwrap())",
+         ARRAY['/etc'], ARRAY['*.swp'])",
     )
     .execute(&pool)
     .await

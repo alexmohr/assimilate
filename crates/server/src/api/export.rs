@@ -20,8 +20,10 @@ use super::{
 };
 use crate::{AppState, borg::Borg, error::ApiError};
 
+/// Query parameters for archive export.
 #[derive(Debug, Deserialize)]
 pub struct ExportQuery {
+    /// Optional subdirectory path to limit the export to.
     pub path: Option<String>,
 }
 
@@ -82,6 +84,9 @@ fn validate_export_path(path: &str) -> Result<(), ApiError> {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Internal`] if an internal error occurs.
 pub async fn export_archive(
     State(state): State<AppState>,
     auth: AuthUser,

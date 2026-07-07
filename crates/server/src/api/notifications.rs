@@ -17,111 +17,181 @@ use crate::{
     notifications::{ChannelType, EventType},
 };
 
+/// A configured destination (email, webhook, or web push) that notification events can be
+/// delivered to.
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct NotificationChannel {
+    /// Unique identifier of the channel.
     pub id: i64,
+    /// Human-readable name shown in the UI.
     pub name: String,
+    /// Transport used to deliver notifications for this channel.
     pub channel_type: ChannelType,
+    /// Channel-specific configuration (e.g. SMTP settings, webhook URL) as raw JSON.
     pub config: serde_json::Value,
+    /// Whether the channel is currently active and eligible for delivery.
     pub enabled: bool,
+    /// Restricts which repositories/agents this channel applies to; empty means "all".
     pub scope: serde_json::Value,
+    /// Timestamp when the channel was created.
     pub created_at: DateTime<Utc>,
+    /// Timestamp when the channel was last updated.
     pub updated_at: DateTime<Utc>,
 }
 
+/// Request body for creating a new notification channel.
 #[derive(Debug, Deserialize)]
 pub struct CreateChannelRequest {
+    /// Human-readable name for the new channel.
     pub name: String,
+    /// Transport to use for delivery (email, webhook, or web push).
     pub channel_type: ChannelType,
+    /// Channel-specific configuration, validated against `channel_type`.
     pub config: serde_json::Value,
+    /// Whether the channel should be enabled immediately; defaults to `true`.
     pub enabled: Option<bool>,
+    /// Optional scope restricting which repositories/agents trigger this channel.
     pub scope: Option<serde_json::Value>,
 }
 
+/// Request body for partially updating an existing notification channel. Omitted fields are
+/// left unchanged.
 #[derive(Debug, Deserialize)]
 pub struct UpdateChannelRequest {
+    /// New name for the channel, if changing.
     pub name: Option<String>,
+    /// New transport type for the channel, if changing.
     pub channel_type: Option<ChannelType>,
+    /// New channel-specific configuration, if changing.
     pub config: Option<serde_json::Value>,
+    /// New enabled/disabled state, if changing.
     pub enabled: Option<bool>,
+    /// New scope restriction, if changing.
     pub scope: Option<serde_json::Value>,
 }
 
+/// A rule that routes events of a given type (optionally scoped to a repo or agent) to a
+/// notification channel.
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct NotificationRule {
+    /// Unique identifier of the rule.
     pub id: i64,
+    /// Channel that events matching this rule are delivered to.
     pub channel_id: i64,
+    /// Event type this rule triggers on (see [`EventType`]).
     pub event_type: String,
+    /// Restricts the rule to events for a specific repository, if set.
     pub repo_id: Option<i64>,
+    /// Restricts the rule to events for a specific agent, if set.
     pub agent_id: Option<i64>,
+    /// Whether the rule is currently active.
     pub enabled: bool,
 }
 
+/// Request body for creating a new notification rule.
 #[derive(Debug, Deserialize)]
 pub struct CreateRuleRequest {
+    /// Channel that matching events should be delivered to.
     pub channel_id: i64,
+    /// Event type to match; must be one of [`EventType::ALL_DB_STRS`].
     pub event_type: String,
+    /// Restricts the rule to a specific repository, if set.
     pub repo_id: Option<i64>,
+    /// Restricts the rule to a specific agent, if set.
     pub agent_id: Option<i64>,
+    /// Whether the rule should be enabled immediately; defaults to `true`.
     pub enabled: Option<bool>,
 }
 
+/// A browser web-push subscription registered by a user, used to deliver push notifications.
 #[derive(Debug, Clone, Serialize, FromRow)]
 pub struct PushSubscription {
+    /// Unique identifier of the subscription.
     pub id: i64,
+    /// User the subscription belongs to.
     pub user_id: i64,
+    /// Push service endpoint URL supplied by the browser.
     pub endpoint: String,
+    /// Client public key used to encrypt push payloads.
     pub p256dh: String,
+    /// Client authentication secret used to encrypt push payloads.
     pub auth: String,
+    /// User agent string of the browser that registered the subscription, if known.
     pub user_agent: Option<String>,
+    /// Timestamp when the subscription was created.
     pub created_at: DateTime<Utc>,
 }
 
+/// Request body for registering a new web-push subscription.
 #[derive(Debug, Deserialize)]
 pub struct SubscribePushRequest {
+    /// Push service endpoint URL supplied by the browser.
     pub endpoint: String,
+    /// Encryption keys supplied by the browser's push subscription.
     pub keys: PushKeys,
 }
 
+/// Encryption keys for a web-push subscription, as supplied by the browser.
 #[derive(Debug, Deserialize)]
 pub struct PushKeys {
+    /// Client public key used to encrypt push payloads.
     pub p256dh: String,
+    /// Client authentication secret used to encrypt push payloads.
     pub auth: String,
 }
 
+/// Request body for removing a web-push subscription.
 #[derive(Debug, Deserialize)]
 pub struct UnsubscribePushRequest {
+    /// Endpoint of the subscription to remove.
     pub endpoint: String,
 }
 
+/// Response describing the server's VAPID public key for web push.
 #[derive(Debug, Serialize)]
 pub struct VapidKeyResponse {
+    /// VAPID public key, or an empty string if none is configured.
     pub public_key: String,
+    /// Whether a VAPID key pair is currently configured on the server.
     pub configured: bool,
 }
 
+/// Request body for setting the server's VAPID key pair used for web push.
 #[derive(Debug, Deserialize)]
 pub struct SetVapidKeysRequest {
+    /// VAPID public key to store.
     pub public_key: String,
+    /// VAPID private key to store.
     pub private_key: String,
 }
 
+/// A record of a single attempt to deliver a notification event through a channel.
 #[derive(Debug, Clone, Serialize, FromRow)]
 pub struct NotificationDelivery {
+    /// Unique identifier of the delivery attempt.
     pub id: i64,
+    /// Channel the notification was delivered through.
     pub channel_id: i64,
+    /// Event type that triggered the delivery.
     pub event_type: String,
+    /// Payload sent to the channel.
     pub payload: serde_json::Value,
+    /// Outcome of the delivery attempt (e.g. success or failure).
     pub status: String,
+    /// Error message from the delivery attempt, if it failed.
     pub error_message: Option<String>,
+    /// Timestamp when the delivery was attempted.
     pub attempted_at: DateTime<Utc>,
 }
 
+/// Query parameters for listing notification deliveries.
 #[derive(Debug, Deserialize)]
 pub struct DeliveryQuery {
+    /// Maximum number of deliveries to return; defaults to 50.
     pub limit: Option<i64>,
 }
 
+/// Validates that a channel's configuration is well-formed for its declared `channel_type`.
 fn validate_channel_config(
     channel_type: ChannelType,
     config: &serde_json::Value,
@@ -151,6 +221,7 @@ fn validate_channel_config(
     Ok(())
 }
 
+/// Validates that a string is a recognized [`EventType`] variant.
 fn validate_event_type(t: &str) -> Result<(), ApiError> {
     t.parse::<EventType>().map(|_| ()).map_err(|_| {
         ApiError::BadRequest(format!(
@@ -160,6 +231,11 @@ fn validate_event_type(t: &str) -> Result<(), ApiError> {
     })
 }
 
+/// Lists all configured notification channels, ordered by ID.
+///
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_channels(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -178,6 +254,12 @@ pub async fn list_channels(
     Ok(Json(channels))
 }
 
+/// Creates a new notification channel. Requires admin privileges. For web-push channels the
+/// creating admin's user ID is injected into the config automatically.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn create_channel(
     State(state): State<AppState>,
     admin: RequireAdmin,
@@ -220,6 +302,13 @@ pub async fn create_channel(
     Ok((StatusCode::CREATED, Json(channel)))
 }
 
+/// Partially updates an existing notification channel's fields.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn update_channel(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -233,9 +322,10 @@ pub async fn update_channel(
     }
 
     if req.channel_type.is_some() || req.config.is_some() {
-        let (effective_type, effective_config) = match (&req.channel_type, &req.config) {
-            (Some(ct), Some(cfg)) => (*ct, cfg.clone()),
-            _ => {
+        let (effective_type, effective_config) =
+            if let (Some(ct), Some(cfg)) = (&req.channel_type, &req.config) {
+                (*ct, cfg.clone())
+            } else {
                 let existing: NotificationChannel = sqlx::query_as!(
                     NotificationChannel,
                     r#"
@@ -253,8 +343,7 @@ pub async fn update_channel(
                     req.channel_type.unwrap_or(existing.channel_type),
                     req.config.clone().unwrap_or(existing.config),
                 )
-            }
-        };
+            };
         validate_channel_config(effective_type, &effective_config)?;
     }
 
@@ -286,6 +375,11 @@ pub async fn update_channel(
     Ok(Json(channel))
 }
 
+/// Deletes a notification channel by ID.
+///
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] if the requested resource does not exist.
 pub async fn delete_channel(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -301,6 +395,14 @@ pub async fn delete_channel(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Sends a synthetic test notification through the given channel so an admin can verify its
+/// configuration works end-to-end.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Internal`]: an internal error occurs
 pub async fn test_channel(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -340,6 +442,11 @@ pub async fn test_channel(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Lists all configured notification rules, ordered by ID.
+///
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_rules(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -354,6 +461,11 @@ pub async fn list_rules(
     Ok(Json(rules))
 }
 
+/// Creates a new notification rule routing a given event type to a channel.
+///
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn create_rule(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -381,6 +493,11 @@ pub async fn create_rule(
     Ok((StatusCode::CREATED, Json(rule)))
 }
 
+/// Deletes a notification rule by ID.
+///
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] if the requested resource does not exist.
 pub async fn delete_rule(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -396,6 +513,11 @@ pub async fn delete_rule(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Returns the server's configured VAPID public key for web push, if any.
+///
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn get_vapid_key(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -415,6 +537,11 @@ pub async fn get_vapid_key(
     }
 }
 
+/// Stores the server's VAPID key pair used to sign web-push notifications.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn set_vapid_keys(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -430,6 +557,12 @@ pub async fn set_vapid_keys(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Registers a web-push subscription for the authenticated user, validating that the push
+/// endpoint is a permitted outbound destination.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn subscribe_push(
     State(state): State<AppState>,
     user: AuthUser,
@@ -467,6 +600,11 @@ pub async fn subscribe_push(
     Ok((StatusCode::CREATED, Json(sub)))
 }
 
+/// Removes the authenticated user's web-push subscription for a given endpoint.
+///
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn unsubscribe_push(
     State(state): State<AppState>,
     user: AuthUser,
@@ -482,6 +620,9 @@ pub async fn unsubscribe_push(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_push_subscriptions(
     State(state): State<AppState>,
     user: AuthUser,
@@ -497,6 +638,9 @@ pub async fn list_push_subscriptions(
     Ok(Json(subs))
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_deliveries(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -514,18 +658,29 @@ pub async fn list_deliveries(
     Ok(Json(deliveries))
 }
 
+/// Request payload for test-connecting to an SMTP server before saving it as a
+/// notification channel.
 #[derive(Debug, Deserialize)]
 pub struct ValidateSmtpRequest {
+    /// Hostname or IP address of the SMTP server.
     pub smtp_host: String,
+    /// Port to connect to on the SMTP server.
     pub smtp_port: u16,
+    /// Username to authenticate with, if the server requires it.
     pub smtp_user: String,
+    /// Password to authenticate with, if the server requires it.
     pub smtp_password: String,
+    /// Transport security mode to use for the connection.
     #[serde(default)]
     pub security: crate::notifications::email::SmtpSecurity,
+    /// Deprecated alias for `security`; kept for backward-compatible clients.
     #[serde(default)]
     pub use_tls: bool,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn validate_smtp(
     _admin: RequireAdmin,
     ApiJson(req): ApiJson<ValidateSmtpRequest>,

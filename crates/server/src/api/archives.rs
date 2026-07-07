@@ -40,8 +40,12 @@ fn index_status_to_string(s: &crate::archive_index::IndexStatus) -> String {
     .to_string()
 }
 
+/// Number of seconds to wait for a lock before timing out.
 pub const LOCK_WAIT_SECS: &str = "60";
 
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub fn validate_path(path: &str) -> Result<(), ApiError> {
     if path.is_empty() {
         return Err(ApiError::BadRequest("path must not be empty".to_string()));
@@ -90,6 +94,9 @@ fn validate_extract_path(path: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn get_repo_env(
     pool: &PgPool,
     encryption_key: &[u8; 32],
@@ -119,6 +126,8 @@ pub async fn get_repo_env(
     Ok((borg_repo, env))
 }
 
+/// Classify a borg exit code and stderr into an [`ApiError`].
+#[must_use]
 pub fn classify_borg_error(exit_code: i32, stderr: &str) -> ApiError {
     if exit_code == 1 && stderr.to_lowercase().contains("lock") {
         return ApiError::Conflict("repository is locked by another operation".to_string());
@@ -136,6 +145,7 @@ pub fn classify_borg_error(exit_code: i32, stderr: &str) -> ApiError {
     ApiError::Internal(format!("borg command failed (exit {exit_code}): {stderr}"))
 }
 
+/// MIME content type derived from a file extension.
 enum ContentType {
     TextPlain,
     TextHtml,
@@ -219,34 +229,59 @@ fn ensure_utc_suffix(ts: &str) -> String {
 
 pub use shared::responses::ContentEntryResponse as ContentEntry;
 
+/// Directory listing response for an archive.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContentsResponse {
+    /// Status of the content index (pending, indexing, done, failed).
     pub index_status: String,
+    /// Immediate child entries at the requested path.
     pub entries: Vec<ContentEntry>,
 }
 
+/// Status of the content index for an archive.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ArchiveIndexStatus {
+    /// Current indexing status.
     pub status: crate::archive_index::IndexStatus,
+    /// Number of files indexed (if done).
     pub file_count: Option<i64>,
+    /// Error message if indexing failed.
     pub error: Option<String>,
 }
 
+/// Query parameters for listing archive contents.
 #[derive(Debug, Deserialize)]
 pub struct ContentsQuery {
+    /// Directory path to list (default: root).
     pub path: Option<String>,
+    /// Max entries to return (default: 100).
     pub limit: Option<usize>,
 }
 
+/// Query parameters for extracting a file from an archive.
 #[derive(Debug, Deserialize)]
 pub struct ExtractQuery {
+    /// File path within the archive to extract.
     pub path: String,
 }
 
+/// Result of an archive deletion request.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DeleteArchiveResponse {
+    /// Whether the deletion was accepted.
     pub success: bool,
+    /// Name of the archive being deleted.
     pub archive_name: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct ListArchivesRow {
+    archive_name: Option<String>,
+    started_at: DateTime<Utc>,
+    original_size: i64,
+    deduplicated_size: i64,
+    matched: bool,
+    agent_hostname: String,
 }
 
 #[utoipa::path(
@@ -266,6 +301,9 @@ pub struct DeleteArchiveResponse {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_archives(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -273,18 +311,8 @@ pub async fn list_archives(
 ) -> Result<Json<Vec<ArchiveEntryResponse>>, ApiError> {
     check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_view).await?;
 
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        archive_name: Option<String>,
-        started_at: DateTime<Utc>,
-        original_size: i64,
-        deduplicated_size: i64,
-        matched: bool,
-        agent_hostname: String,
-    }
-
     let rows = sqlx::query_as!(
-        Row,
+        ListArchivesRow,
         "WITH latest_archives AS (SELECT DISTINCT ON (br.archive_name) br.archive_name, \
          br.started_at, br.original_size, br.deduplicated_size, br.matched, c.hostname AS \
          agent_hostname FROM backup_reports br JOIN agents c ON c.id = br.agent_id WHERE \
@@ -337,6 +365,11 @@ pub async fn list_archives(
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Internal`]: an internal error occurs
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn archive_info(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -370,22 +403,47 @@ pub async fn archive_info(
     let json_output: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|e| ApiError::Internal(format!("failed to parse borg output: {e}")))?;
 
-    let archives = &json_output["archives"];
-    let archive = archives
-        .as_array()
+    let archive = json_output
+        .get("archives")
+        .and_then(serde_json::Value::as_array)
         .and_then(|a| a.first())
         .ok_or_else(|| ApiError::NotFound(format!("archive '{archive_name}' not found")))?;
 
-    let stats = &archive["stats"];
+    let stats = archive.get("stats");
 
     let info = ArchiveInfoResponse {
-        original_size: stats["original_size"].as_i64().unwrap_or(0),
-        compressed_size: stats["compressed_size"].as_i64().unwrap_or(0),
-        deduplicated_size: stats["deduplicated_size"].as_i64().unwrap_or(0),
-        nfiles: stats["nfiles"].as_i64().unwrap_or(0),
-        duration: archive["duration"].as_f64().unwrap_or(0.0),
-        start: ensure_utc_suffix(archive["start"].as_str().unwrap_or("")),
-        end: ensure_utc_suffix(archive["end"].as_str().unwrap_or("")),
+        original_size: stats
+            .and_then(|s| s.get("original_size"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
+        compressed_size: stats
+            .and_then(|s| s.get("compressed_size"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
+        deduplicated_size: stats
+            .and_then(|s| s.get("deduplicated_size"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
+        nfiles: stats
+            .and_then(|s| s.get("nfiles"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
+        duration: archive
+            .get("duration")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0),
+        start: ensure_utc_suffix(
+            archive
+                .get("start")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(""),
+        ),
+        end: ensure_utc_suffix(
+            archive
+                .get("end")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(""),
+        ),
     };
 
     Ok(Json(info))
@@ -410,6 +468,9 @@ pub async fn archive_info(
         (status = 409, description = "Another repository operation is in progress"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn delete_archive(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -478,6 +539,41 @@ async fn run_archive_deletion(
             op: state.repo_op_tracker.get(repo_id).await,
         });
 
+    let deleted = execute_borg_delete(&state, repo_id, &borg_repo, &archive_name, &env).await;
+
+    state.repo_op_tracker.clear(repo_id).await;
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::RepoOpChanged {
+            repo_id,
+            op: state.repo_op_tracker.get(repo_id).await,
+        });
+
+    if !deleted {
+        state
+            .ui_broadcast
+            .send(shared::protocol::ServerToUi::DataChanged);
+        return;
+    }
+
+    finalize_archive_deletion(&state, repo_id, &archive_name, user_id, &username).await;
+
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::DataChanged);
+}
+
+/// Runs `borg delete` for the given archive, logging and recording a system
+/// event on failure. Returns `true` if the archive was actually deleted (or
+/// borg reported it as already gone, exit code 1) and the caller should
+/// proceed with local bookkeeping.
+async fn execute_borg_delete(
+    state: &AppState,
+    repo_id: i64,
+    borg_repo: &str,
+    archive_name: &str,
+    env: &HashMap<String, String>,
+) -> bool {
     let repo_archive = format!("{borg_repo}::{archive_name}");
     let result = Borg::new()
         .run(
@@ -488,17 +584,9 @@ async fn run_archive_deletion(
                 "--",
                 repo_archive.as_str(),
             ],
-            &env,
+            env,
         )
         .await;
-
-    state.repo_op_tracker.clear(repo_id).await;
-    state
-        .ui_broadcast
-        .send(shared::protocol::ServerToUi::RepoOpChanged {
-            repo_id,
-            op: state.repo_op_tracker.get(repo_id).await,
-        });
 
     match result {
         Ok(output) => {
@@ -514,11 +602,9 @@ async fn run_archive_deletion(
                 {
                     tracing::warn!(error = %e, "failed to log archive delete failure");
                 }
-                state
-                    .ui_broadcast
-                    .send(shared::protocol::ServerToUi::DataChanged);
-                return;
+                return false;
             }
+            true
         }
         Err(e) => {
             tracing::error!(repo_id, archive = %archive_name, error = %e, "failed to execute borg delete");
@@ -528,28 +614,33 @@ async fn run_archive_deletion(
             {
                 tracing::warn!(error = %log_err, "failed to log archive delete failure");
             }
-            state
-                .ui_broadcast
-                .send(shared::protocol::ServerToUi::DataChanged);
-            return;
+            false
         }
     }
+}
 
-    if let Err(e) = db::delete_archive_records_by_names(
-        &state.pool,
-        repo_id,
-        std::slice::from_ref(&archive_name),
-    )
-    .await
+/// Deletes the local archive records, writes an audit log entry, and (once
+/// the deletion queue for this repo has drained) reconciles the archive list
+/// and repo stats by reusing the metadata import path. Content indexing is
+/// deliberately not run here.
+async fn finalize_archive_deletion(
+    state: &AppState,
+    repo_id: i64,
+    archive_name: &str,
+    user_id: i64,
+    username: &str,
+) {
+    if let Err(e) =
+        db::delete_archive_records_by_names(&state.pool, repo_id, &[archive_name.to_owned()]).await
     {
-        tracing::error!(repo_id, archive = %archive_name, error = %e, "failed to delete archive records");
+        tracing::error!(repo_id, archive = %archive_name, error = %e, "failed to delete archive record");
     }
 
     if let Err(e) = db::audit::insert_audit_entry(
         &state.pool,
         &db::audit::NewAuditEntry {
             user_id: Some(user_id),
-            username: &username,
+            username,
             action: "delete_archive",
             target_type: Some("archive"),
             target_id: Some(repo_id),
@@ -562,9 +653,6 @@ async fn run_archive_deletion(
         tracing::warn!("failed to write audit log: {e}");
     }
 
-    // Once the queue has drained, reconcile the archive list and repo stats
-    // (notably the total archive count, which is sourced from borg) by reusing
-    // the metadata import path. Content indexing is deliberately not run here.
     if state.repo_op_tracker.queued_count(repo_id).await == 0 {
         if let Err(e) = crate::api::repos::sync_existing_archives(
             &state.pool,
@@ -579,10 +667,6 @@ async fn run_archive_deletion(
         crate::api::repos::clear_import_progress_state(&state.pool, &state.ui_broadcast, repo_id)
             .await;
     }
-
-    state
-        .ui_broadcast
-        .send(shared::protocol::ServerToUi::DataChanged);
 }
 
 // Strip the leading "./" or bare "." that borg emits when archives are
@@ -720,6 +804,9 @@ fn fold_immediate_children(prefix: &str, entries: Vec<ContentEntry>) -> Vec<Cont
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Internal`] if an internal error occurs.
 pub async fn list_contents(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -740,10 +827,7 @@ pub async fn list_contents(
 
     match status {
         Some(IndexStatus::Done) => {
-            let parent_path = path
-                .map(|p| p.trim_end_matches('/'))
-                .unwrap_or("")
-                .to_string();
+            let parent_path = path.map_or("", |p| p.trim_end_matches('/')).to_string();
             let entries = archive_index::query_dir(
                 &state.pool,
                 repo_id,
@@ -760,9 +844,9 @@ pub async fn list_contents(
         Some(IndexStatus::Failed) => {
             // Fall through to the borg-based path below so browsing still works.
         }
-        Some(IndexStatus::Pending | IndexStatus::Indexing) => {
+        Some(ref pending @ (IndexStatus::Pending | IndexStatus::Indexing)) => {
             return Ok(Json(ContentsResponse {
-                index_status: index_status_to_string(status.as_ref().unwrap()),
+                index_status: index_status_to_string(pending),
                 entries: vec![],
             }));
         }
@@ -785,6 +869,32 @@ pub async fn list_contents(
 
     // Fallback: borg-based listing (used when index is in 'failed' state).
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
+    let raw_entries = borg_list_raw_entries(&env, &borg_repo, &archive_name, path).await?;
+
+    let prefix = path
+        .map(|p| p.trim_end_matches('/').to_string())
+        .unwrap_or_default();
+    let children = fold_immediate_children(&prefix, raw_entries);
+    let limited: Vec<ContentEntry> = children.into_iter().take(limit).collect();
+
+    Ok(Json(ContentsResponse {
+        index_status: index_status_to_string(&IndexStatus::Failed),
+        entries: limited,
+    }))
+}
+
+/// Runs `borg list --json-lines` for the archive and parses each line into a
+/// [`ContentEntry`], tolerating and skipping unparseable lines. Used as the
+/// listing fallback when an archive's content index is in the `failed`
+/// state, since browsing should still work even if indexing didn't.
+async fn borg_list_raw_entries(
+    env: &HashMap<String, String>,
+    borg_repo: &str,
+    archive_name: &str,
+    path: Option<&str>,
+) -> Result<Vec<ContentEntry>, ApiError> {
+    const LINE_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
     let repo_archive = format!("{borg_repo}::{archive_name}");
     let patterns = list_patterns(path);
 
@@ -795,7 +905,7 @@ pub async fn list_contents(
     args.push(repo_archive.as_str());
 
     let mut child = Borg::new()
-        .spawn(&args, &env)
+        .spawn(&args, env)
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
 
     let Some(stdout) = child.take_stdout() else {
@@ -804,7 +914,6 @@ pub async fn list_contents(
 
     let mut lines = BufReader::new(stdout).lines();
     let mut raw_entries: Vec<ContentEntry> = Vec::new();
-    const LINE_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
     loop {
         let line = tokio::time::timeout(LINE_READ_TIMEOUT, lines.next_line())
@@ -823,11 +932,29 @@ pub async fn list_contents(
             continue;
         };
         raw_entries.push(ContentEntry {
-            entry_type: v["type"].as_str().unwrap_or("").to_string(),
-            path: v["path"].as_str().map_or_else(String::new, normalize_path),
-            size: v["size"].as_i64().unwrap_or(0),
-            mtime: v["mtime"].as_str().unwrap_or("").to_string(),
-            mode: v["mode"].as_str().unwrap_or("").to_string(),
+            entry_type: v
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            path: v
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .map_or_else(String::new, normalize_path),
+            size: v
+                .get("size")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0),
+            mtime: v
+                .get("mtime")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            mode: v
+                .get("mode")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string(),
         });
     }
 
@@ -844,16 +971,14 @@ pub async fn list_contents(
         return Err(classify_borg_error(code, &stderr_str));
     }
 
-    let prefix = path
-        .map(|p| p.trim_end_matches('/').to_string())
-        .unwrap_or_default();
-    let children = fold_immediate_children(&prefix, raw_entries);
-    let limited: Vec<ContentEntry> = children.into_iter().take(limit).collect();
+    Ok(raw_entries)
+}
 
-    Ok(Json(ContentsResponse {
-        index_status: index_status_to_string(&IndexStatus::Failed),
-        entries: limited,
-    }))
+#[derive(sqlx::FromRow)]
+struct ArchiveIndexStatusRow {
+    status: String,
+    file_count: Option<i64>,
+    error_message: Option<String>,
 }
 
 #[utoipa::path(
@@ -872,6 +997,9 @@ pub async fn list_contents(
         (status = 403, description = "Forbidden"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_archive_index_status(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -879,15 +1007,8 @@ pub async fn get_archive_index_status(
 ) -> Result<Json<ArchiveIndexStatusResponse>, ApiError> {
     check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_view).await?;
 
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        status: String,
-        file_count: Option<i64>,
-        error_message: Option<String>,
-    }
-
     let row = sqlx::query_as!(
-        Row,
+        ArchiveIndexStatusRow,
         "SELECT j.status, j.file_count, j.error_message FROM archive_index_jobs j JOIN archives a \
          ON a.id = j.archive_id WHERE a.repo_id = $1 AND a.name = $2",
         repo_id,
@@ -933,6 +1054,9 @@ pub async fn get_archive_index_status(
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Internal`] if an internal error occurs.
 pub async fn extract_file(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -1118,8 +1242,8 @@ mod tests {
         let entries = vec![make_entry("-", "etc/passwd")];
         let result = fold_immediate_children("", entries);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].entry_type, "d");
-        assert_eq!(result[0].path, "etc");
+        assert_eq!(result.first().unwrap().entry_type, "d");
+        assert_eq!(result.first().unwrap().path, "etc");
     }
 
     #[test]
@@ -1127,8 +1251,8 @@ mod tests {
         let entries = vec![make_entry("-", "file.txt")];
         let result = fold_immediate_children("", entries);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].entry_type, "-");
-        assert_eq!(result[0].path, "file.txt");
+        assert_eq!(result.first().unwrap().entry_type, "-");
+        assert_eq!(result.first().unwrap().path, "file.txt");
     }
 
     #[test]
@@ -1139,8 +1263,8 @@ mod tests {
         ];
         let result = fold_immediate_children("", entries);
         assert_eq!(result.len(), 1, "etc should appear only once");
-        assert_eq!(result[0].entry_type, "d");
-        assert_eq!(result[0].path, "etc");
+        assert_eq!(result.first().unwrap().entry_type, "d");
+        assert_eq!(result.first().unwrap().path, "etc");
     }
 
     #[test]
@@ -1152,8 +1276,8 @@ mod tests {
         ];
         let result = fold_immediate_children("", entries);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].path, "home");
-        assert_eq!(result[0].entry_type, "d");
+        assert_eq!(result.first().unwrap().path, "home");
+        assert_eq!(result.first().unwrap().entry_type, "d");
     }
 
     #[test]
@@ -1175,8 +1299,8 @@ mod tests {
         let entries = vec![make_entry("-", "usr/local/bin/tool")];
         let result = fold_immediate_children("usr", entries);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].entry_type, "d");
-        assert_eq!(result[0].path, "usr/local");
+        assert_eq!(result.first().unwrap().entry_type, "d");
+        assert_eq!(result.first().unwrap().path, "usr/local");
     }
 
     #[test]
@@ -1185,7 +1309,7 @@ mod tests {
         let entries = vec![make_entry("-", "etc/passwd")];
         let result = fold_immediate_children("", entries);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].path, "etc");
+        assert_eq!(result.first().unwrap().path, "etc");
     }
 
     #[test]
@@ -1244,8 +1368,8 @@ mod tests {
             ("binary", "application/octet-stream"),
         ];
 
-        cases.iter().for_each(|(filename, expected)| {
+        for (filename, expected) in &cases {
             assert_eq!(content_type_for_extension(filename), *expected);
-        });
+        }
     }
 }

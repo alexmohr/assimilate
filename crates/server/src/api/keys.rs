@@ -24,13 +24,17 @@ use crate::{
     error::ApiError,
 };
 
+/// Request payload for importing a borg repository key.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ImportKeyRequest {
+    /// The key data to import.
     pub key_data: String,
 }
 
+/// Request payload for changing a repository passphrase.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ChangePassphraseRequest {
+    /// The new passphrase.
     pub new_passphrase: String,
 }
 
@@ -51,6 +55,11 @@ pub struct ChangePassphraseRequest {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Internal`]: an internal error occurs
+/// - [`ApiError::Database`]: the database query fails
 pub async fn export_key(
     State(state): State<AppState>,
     RequireAdmin(auth): RequireAdmin,
@@ -112,6 +121,11 @@ pub async fn export_key(
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Internal`]: an internal error occurs
+/// - [`ApiError::Database`]: the database query fails
 pub async fn import_key(
     State(state): State<AppState>,
     RequireAdmin(auth): RequireAdmin,
@@ -182,6 +196,11 @@ pub async fn import_key(
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Internal`]: an internal error occurs
+/// - [`ApiError::Database`]: the database query fails
 pub async fn change_passphrase(
     State(state): State<AppState>,
     RequireAdmin(auth): RequireAdmin,

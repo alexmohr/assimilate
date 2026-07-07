@@ -15,6 +15,9 @@ use web_push::{
 
 use super::NotificationError;
 
+/// # Errors
+///
+/// Returns [`NotificationError::Config`] if the notification channel is misconfigured.
 pub async fn send(
     vapid_private_key: &str,
     endpoint: String,

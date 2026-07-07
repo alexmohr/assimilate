@@ -83,6 +83,10 @@ impl ServerChild {
     }
 
     /// Wait for the child to exit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying process or I/O operation fails.
     pub async fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
         match self.child.as_mut() {
             Some(child) => child.wait().await,
@@ -91,6 +95,10 @@ impl ServerChild {
     }
 
     /// Kill the child (SIGKILL on Unix).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying process or I/O operation fails.
     pub async fn kill(&mut self) -> std::io::Result<()> {
         match self.child.as_mut() {
             Some(child) => child.kill().await,
@@ -102,6 +110,10 @@ impl ServerChild {
     ///
     /// This drains stdout / stderr concurrently with waiting so the pipe buffer
     /// never fills up and deadlocks the child.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying process or I/O operation fails.
     pub async fn wait_with_output(&mut self) -> std::io::Result<std::process::Output> {
         let stdout = self.child.as_mut().and_then(|c| c.stdout.take());
         let stderr = self.child.as_mut().and_then(|c| c.stderr.take());
@@ -198,6 +210,7 @@ impl Default for Borg {
 }
 
 impl Borg {
+    /// Create a new Borg wrapper, resolving the binary path from `BORG_BINARY` env var.
     pub fn new() -> Self {
         #[cfg(test)]
         if let Some(binary) = test_binary_override() {
@@ -210,6 +223,8 @@ impl Borg {
         }
     }
 
+    /// Return the path to the borg binary being used.
+    #[must_use]
     pub fn binary(&self) -> &Path {
         &self.binary
     }
@@ -218,15 +233,19 @@ impl Borg {
     ///
     /// Uses [`ServerChild`] internally so the process is killed gracefully (SIGTERM first,
     /// then SIGKILL + break-lock) if the caller's future is dropped (e.g. a timeout fires).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying process or I/O operation fails.
     pub async fn run<A: AsRef<OsStr>>(
         &self,
         args: &[A],
         env: &HashMap<String, String>,
     ) -> std::io::Result<std::process::Output> {
-        let subcommand = args
-            .first()
-            .map(|a| a.as_ref().to_string_lossy().into_owned())
-            .unwrap_or_else(|| "<none>".to_owned());
+        let subcommand = args.first().map_or_else(
+            || "<none>".to_owned(),
+            |a| a.as_ref().to_string_lossy().into_owned(),
+        );
         tracing::info!(subcommand, "borg: starting");
         let start = Instant::now();
 
@@ -277,15 +296,18 @@ impl Borg {
         args
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the underlying process or I/O operation fails.
     pub fn spawn<A: AsRef<OsStr>>(
         &self,
         args: &[A],
         env: &HashMap<String, String>,
     ) -> std::io::Result<ServerChild> {
-        let subcommand = args
-            .first()
-            .map(|a| a.as_ref().to_string_lossy().into_owned())
-            .unwrap_or_else(|| "<none>".to_owned());
+        let subcommand = args.first().map_or_else(
+            || "<none>".to_owned(),
+            |a| a.as_ref().to_string_lossy().into_owned(),
+        );
         tracing::info!(subcommand, "borg: spawning");
 
         let mut cmd = Command::new(&self.binary);
@@ -302,15 +324,19 @@ impl Borg {
     }
 
     /// Like [`spawn`] but also pipes stdin so the caller can write to it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the underlying process or I/O operation fails.
     pub fn spawn_with_stdin<A: AsRef<OsStr>>(
         &self,
         args: &[A],
         env: &HashMap<String, String>,
     ) -> std::io::Result<ServerChild> {
-        let subcommand = args
-            .first()
-            .map(|a| a.as_ref().to_string_lossy().into_owned())
-            .unwrap_or_else(|| "<none>".to_owned());
+        let subcommand = args.first().map_or_else(
+            || "<none>".to_owned(),
+            |a| a.as_ref().to_string_lossy().into_owned(),
+        );
         tracing::info!(subcommand, "borg: spawning");
 
         let mut cmd = Command::new(&self.binary);
@@ -562,6 +588,8 @@ mod tests {
 
     #[tokio::test]
     async fn server_child_wait_with_output_with_stdin_allows_writing() {
+        use tokio::io::AsyncWriteExt;
+
         let mut child = ServerChild::new(
             tokio::process::Command::new("sh")
                 .arg("-c")
@@ -577,7 +605,6 @@ mod tests {
             Vec::new(),
         );
         let mut stdin = child.take_stdin().unwrap();
-        use tokio::io::AsyncWriteExt;
         stdin.write_all(b"hello from stdin\n").await.unwrap();
         drop(stdin);
         let output = child.wait_with_output().await.unwrap();

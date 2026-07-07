@@ -42,14 +42,19 @@ pub(crate) async fn user_row_to_response(
     })
 }
 
+/// Request payload for creating a new user.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateUserRequest {
+    /// Username.
     pub username: String,
+    /// Password (minimum 8 characters).
     pub password: String,
 }
 
+/// Request payload for updating a user's password.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdatePasswordRequest {
+    /// New password (minimum 8 characters).
     pub password: String,
 }
 
@@ -66,6 +71,9 @@ pub struct UpdatePasswordRequest {
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_users(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -93,6 +101,9 @@ pub async fn list_users(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn create_user(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -132,6 +143,9 @@ pub async fn create_user(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn update_password(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -168,6 +182,9 @@ pub async fn update_password(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn delete_user(
     State(state): State<AppState>,
     RequireAdmin(admin): RequireAdmin,

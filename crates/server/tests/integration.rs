@@ -38,6 +38,7 @@ impl Drop for BorgBinaryGuard {
     }
 }
 
+#[cfg(test)]
 async fn oneshot(app: &mut Router, req: Request<Body>) -> axum::response::Response {
     ServiceExt::<Request<Body>>::ready(app)
         .await
@@ -47,18 +48,20 @@ async fn oneshot(app: &mut Router, req: Request<Body>) -> axum::response::Respon
         .unwrap()
 }
 
+#[cfg(test)]
 async fn body_json(response: axum::response::Response) -> Value {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&body).unwrap()
 }
 
-async fn build_test_app(pool: PgPool) -> Router {
+#[cfg(test)]
+fn build_test_state(pool: PgPool) -> server::AppState {
     let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-integration").unwrap();
     let ui_broadcast = server::ws::ui_broadcast::UiBroadcast::new();
     let server_addr: std::net::SocketAddr = "127.0.0.1:8080".parse().unwrap();
     let tunnel_manager =
         server::tunnel::TunnelManager::new(pool.clone(), ui_broadcast.clone(), server_addr);
-    let state = server::AppState {
+    server::AppState {
         pool: pool.clone(),
         encryption_key,
         registry: server::ws::registry::AgentRegistry::new(),
@@ -84,8 +87,11 @@ async fn build_test_app(pool: PgPool) -> Router {
         import_tasks: server::ImportTaskRegistry::default(),
         shutdown_token: tokio_util::sync::CancellationToken::new(),
         client_ip_resolver: server::client_ip::ClientIpResolver::new(),
-    };
+    }
+}
 
+#[cfg(test)]
+fn test_app_core_routes() -> Router<server::AppState> {
     Router::new()
         .route("/api/health", get(server::api::health::health))
         .route("/api/auth/login", post(server::api::auth::login))
@@ -106,6 +112,15 @@ async fn build_test_app(pool: PgPool) -> Router {
                 .put(server::api::agents::update_agent)
                 .delete(server::api::agents::delete_agent),
         )
+        .route(
+            "/api/agents/{hostname}/reports",
+            get(server::api::reports::list_reports),
+        )
+}
+
+#[cfg(test)]
+fn test_app_repo_routes() -> Router<server::AppState> {
+    Router::new()
         .route("/api/repos", get(server::api::repos::list_repos))
         .route(
             "/api/repos/{repo_id}",
@@ -154,9 +169,18 @@ async fn build_test_app(pool: PgPool) -> Router {
             get(server::api::schedules::list_schedule_backup_sources),
         )
         .route(
-            "/api/agents/{hostname}/reports",
-            get(server::api::reports::list_reports),
+            "/api/config/export",
+            get(server::api::config_io::export_config),
         )
+        .route(
+            "/api/config/import",
+            post(server::api::config_io::import_config),
+        )
+}
+
+#[cfg(test)]
+fn test_app_stats_and_notification_routes() -> Router<server::AppState> {
+    Router::new()
         .route("/api/stats/storage", get(server::api::stats::storage))
         .route("/api/stats/activity", get(server::api::stats::activity))
         .route("/api/stats/health", get(server::api::stats::health))
@@ -196,17 +220,20 @@ async fn build_test_app(pool: PgPool) -> Router {
                 .put(server::api::tunnels::update_tunnel)
                 .delete(server::api::tunnels::delete_tunnel),
         )
-        .route(
-            "/api/config/export",
-            get(server::api::config_io::export_config),
-        )
-        .route(
-            "/api/config/import",
-            post(server::api::config_io::import_config),
-        )
+}
+
+#[cfg(test)]
+fn build_test_app(pool: PgPool) -> Router {
+    let state = build_test_state(pool);
+
+    Router::new()
+        .merge(test_app_core_routes())
+        .merge(test_app_repo_routes())
+        .merge(test_app_stats_and_notification_routes())
         .with_state(state)
 }
 
+#[cfg(test)]
 async fn setup_pool() -> PgPool {
     let database_url =
         std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for integration tests");
@@ -215,6 +242,7 @@ async fn setup_pool() -> PgPool {
     pool
 }
 
+#[cfg(test)]
 async fn create_test_user_and_session(pool: &PgPool) {
     let user_id: i64 = sqlx::query_scalar(
         "INSERT INTO users (username, password_hash) VALUES ('integration-admin', \
@@ -237,7 +265,9 @@ async fn create_test_user_and_session(pool: &PgPool) {
         .await
         .unwrap();
 
-    let expires = chrono::Utc::now() + chrono::Duration::hours(24);
+    let expires = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::hours(24))
+        .unwrap();
     let hashed_id = hash_token(TEST_SESSION_ID);
     sqlx::query(
         "INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3) ON CONFLICT (id) DO \
@@ -251,10 +281,12 @@ async fn create_test_user_and_session(pool: &PgPool) {
     .unwrap();
 }
 
+#[cfg(test)]
 async fn borg_binary_lock() -> tokio::sync::MutexGuard<'static, ()> {
     BORG_BINARY_LOCK.get_or_init(|| Mutex::new(())).lock().await
 }
 
+#[cfg(test)]
 async fn install_fake_borg(
     list_json: &str,
     info_all_json: &str,
@@ -333,6 +365,7 @@ esac
 /// but `info` sleeps indefinitely. Used to reproduce the bug where
 /// `refresh_repo_info_stats` had no timeout, causing repos with no archives
 /// to hang forever with `importing = true`.
+#[cfg(test)]
 async fn install_borg_empty_list_hanging_info() -> (TempDir, BorgBinaryGuard) {
     let tempdir = tempfile::tempdir().unwrap();
     let script = concat!(
@@ -363,6 +396,7 @@ async fn install_borg_empty_list_hanging_info() -> (TempDir, BorgBinaryGuard) {
 /// Installs a fake borg whose `list` returns an empty archive list after
 /// sleeping for `delay_secs`. Used to verify that the scheduler dispatches
 /// repo syncs concurrently instead of sequentially.
+#[cfg(test)]
 async fn install_slow_borg_list(delay_secs: u64) -> (TempDir, BorgBinaryGuard) {
     let tempdir = tempfile::tempdir().unwrap();
     let info_json = concat!(
@@ -396,6 +430,7 @@ esac
 }
 
 /// Installs a fake borg whose `list` hangs, to exercise the query timeout.
+#[cfg(test)]
 async fn install_hanging_borg() -> (TempDir, BorgBinaryGuard) {
     let tempdir = tempfile::tempdir().unwrap();
     let script = "#!/bin/sh\ncase \"$1\" in\n  list) sleep 60 ;;\n  *) exit 1 ;;\nesac\n";
@@ -413,6 +448,7 @@ async fn install_hanging_borg() -> (TempDir, BorgBinaryGuard) {
     (tempdir, BorgBinaryGuard { previous })
 }
 
+#[cfg(test)]
 async fn wait_for_archive_index(
     pool: &PgPool,
     repo_id: i64,
@@ -446,6 +482,7 @@ async fn wait_for_archive_index(
 }
 
 /// Poll the `importing` flag until the background sync/reset task finishes.
+#[cfg(test)]
 async fn wait_for_import_completion(pool: &PgPool, repo_id: i64) {
     use tokio::time::{Duration, timeout};
 
@@ -467,6 +504,7 @@ async fn wait_for_import_completion(pool: &PgPool, repo_id: i64) {
     .expect("import did not complete within 30 seconds");
 }
 
+#[cfg(test)]
 async fn clean_tables(pool: &PgPool) {
     sqlx::query("DELETE FROM backup_reports")
         .execute(pool)
@@ -491,6 +529,7 @@ async fn clean_tables(pool: &PgPool) {
 }
 
 /// Inserts a repo directly into DB, bypassing the API (which requires SSH connectivity).
+#[cfg(test)]
 async fn insert_test_repo(pool: &PgPool, name: &str) -> i64 {
     let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-integration").unwrap();
     let passphrase_encrypted = shared::crypto::encrypt_passphrase("test-pass", &encryption_key)
@@ -503,7 +542,7 @@ async fn insert_test_repo(pool: &PgPool, name: &str) -> i64 {
     .bind("/backups/test")
     .bind("backup")
     .bind("storage.local")
-    .bind(22_i32)
+    .bind(22i32)
     .bind(&passphrase_encrypted)
     .bind("lz4")
     .bind("repokey")
@@ -512,10 +551,12 @@ async fn insert_test_repo(pool: &PgPool, name: &str) -> i64 {
     .unwrap()
 }
 
+#[cfg(test)]
 fn session_cookie() -> String {
     format!("session={TEST_SESSION_ID}")
 }
 
+#[cfg(test)]
 fn json_request(method: &str, uri: &str, body: Option<Value>) -> Request<Body> {
     let builder = Request::builder()
         .uri(uri)
@@ -530,6 +571,7 @@ fn json_request(method: &str, uri: &str, body: Option<Value>) -> Request<Body> {
     }
 }
 
+#[cfg(test)]
 fn get_request(uri: &str) -> Request<Body> {
     Request::builder()
         .uri(uri)
@@ -539,6 +581,7 @@ fn get_request(uri: &str) -> Request<Body> {
         .unwrap()
 }
 
+#[cfg(test)]
 fn delete_request(uri: &str) -> Request<Body> {
     Request::builder()
         .uri(uri)
@@ -549,12 +592,12 @@ fn delete_request(uri: &str) -> Request<Body> {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_agent_crud() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let req = json_request(
         "POST",
@@ -567,24 +610,35 @@ async fn test_agent_crud() {
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::CREATED);
     let body = body_json(resp).await;
-    assert_eq!(body["agent"]["hostname"], "test-host-1");
-    assert_eq!(body["agent"]["display_name"], "Test Host 1");
-    assert!(body["token"].as_str().is_some_and(|t| t.len() == 64));
+    assert_eq!(
+        body.get("agent").unwrap().get("hostname").unwrap(),
+        "test-host-1"
+    );
+    assert_eq!(
+        body.get("agent").unwrap().get("display_name").unwrap(),
+        "Test Host 1"
+    );
+    assert!(
+        body.get("token")
+            .unwrap()
+            .as_str()
+            .is_some_and(|t| t.len() == 64)
+    );
 
     let req = get_request("/api/agents/test-host-1");
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
     assert!(body.is_object());
-    assert_eq!(body["hostname"], "test-host-1");
+    assert_eq!(body.get("hostname").unwrap(), "test-host-1");
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_notification_channels_list() {
     let pool = setup_pool().await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let req = get_request("/api/notifications/channels");
     let resp = oneshot(&mut app, req).await;
@@ -594,11 +648,11 @@ async fn test_notification_channels_list() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_notification_channel_create_webhook() {
     let pool = setup_pool().await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let req = json_request(
         "POST",
@@ -614,16 +668,16 @@ async fn test_notification_channel_create_webhook() {
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::CREATED);
     let body = body_json(resp).await;
-    assert_eq!(body["name"], "test-webhook");
-    assert_eq!(body["channel_type"], "webhook");
+    assert_eq!(body.get("name").unwrap(), "test-webhook");
+    assert_eq!(body.get("channel_type").unwrap(), "webhook");
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_tunnels_list() {
     let pool = setup_pool().await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let req = get_request("/api/tunnels");
     let resp = oneshot(&mut app, req).await;
@@ -633,12 +687,12 @@ async fn test_tunnels_list() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_tunnel_create() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, display_name, agent_token_hash) VALUES ('tunnel-host', \
@@ -663,17 +717,17 @@ async fn test_tunnel_create() {
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::CREATED);
     let body = body_json(resp).await;
-    assert_eq!(body["ssh_host"], "remote.example.com");
-    assert_eq!(body["tunnel_port"], 2222);
+    assert_eq!(body.get("ssh_host").unwrap(), "remote.example.com");
+    assert_eq!(body.get("tunnel_port").unwrap(), 2222);
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_delete_agent() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let req = json_request(
         "POST",
@@ -693,12 +747,12 @@ async fn test_delete_agent() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_repo_update() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "update-repo").await;
 
@@ -714,16 +768,16 @@ async fn test_repo_update() {
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    assert_eq!(body["compression"], "zstd,3");
+    assert_eq!(body.get("compression").unwrap(), "zstd,3");
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_repo_accept_ssh_host_key() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "accept-host-key-repo").await;
     let ssh_host_key = "ssh-ed25519 AAAAACCEPTED";
@@ -736,7 +790,7 @@ async fn test_repo_accept_ssh_host_key() {
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    assert_eq!(body["ssh_host_key"], ssh_host_key);
+    assert_eq!(body.get("ssh_host_key").unwrap(), ssh_host_key);
 
     let stored: Option<String> = sqlx::query_scalar("SELECT ssh_host_key FROM repos WHERE id = $1")
         .bind(repo_id)
@@ -747,12 +801,12 @@ async fn test_repo_accept_ssh_host_key() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_repo_delete() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "delete-repo").await;
 
@@ -766,12 +820,12 @@ async fn test_repo_delete() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_list_archives_deduplicates_archive_names() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "archive-list-repo").await;
     let agent_id: i64 = sqlx::query_scalar(
@@ -786,19 +840,19 @@ async fn test_list_archives_deduplicates_archive_names() {
         (
             "2026-06-01T10:00:00Z",
             "2026-06-01T10:05:00Z",
-            100_i64,
+            100i64,
             "dup-archive",
         ),
         (
             "2026-06-02T10:00:00Z",
             "2026-06-02T10:05:00Z",
-            200_i64,
+            200i64,
             "dup-archive",
         ),
         (
             "2026-06-03T10:00:00Z",
             "2026-06-03T10:05:00Z",
-            300_i64,
+            300i64,
             "unique-archive",
         ),
     ] {
@@ -831,14 +885,23 @@ async fn test_list_archives_deduplicates_archive_names() {
     let body = body_json(resp).await;
     let archives = body.as_array().unwrap();
     assert_eq!(archives.len(), 2);
-    assert_eq!(archives[0]["name"], "unique-archive");
-    assert_eq!(archives[0]["start"], "2026-06-03T10:00:00.000000Z");
-    assert_eq!(archives[1]["name"], "dup-archive");
-    assert_eq!(archives[1]["start"], "2026-06-02T10:00:00.000000Z");
+    assert_eq!(
+        archives.first().unwrap().get("name").unwrap(),
+        "unique-archive"
+    );
+    assert_eq!(
+        archives.first().unwrap().get("start").unwrap(),
+        "2026-06-03T10:00:00.000000Z"
+    );
+    assert_eq!(archives.get(1).unwrap().get("name").unwrap(), "dup-archive");
+    assert_eq!(
+        archives.get(1).unwrap().get("start").unwrap(),
+        "2026-06-02T10:00:00.000000Z"
+    );
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_sync_repo_unreachable_returns_error_and_clears_importing() {
     // sync_repo now accepts the sync request immediately (202) and runs the
     // actual sync in a background task. The test verifies that the background
@@ -846,7 +909,7 @@ async fn test_sync_repo_unreachable_returns_error_and_clears_importing() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "sync-accepted-repo").await;
 
@@ -875,7 +938,7 @@ async fn test_sync_repo_unreachable_returns_error_and_clears_importing() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_sync_repo_times_out_on_hanging_borg_and_clears_importing() {
     let _borg_lock = borg_binary_lock().await;
     let pool = setup_pool().await;
@@ -887,7 +950,7 @@ async fn test_sync_repo_times_out_on_hanging_borg_and_clears_importing() {
     // SAFETY: BORG_BINARY/env changes are serialised by borg_binary_lock.
     unsafe { std::env::set_var("ASSIMILATE_BORG_QUERY_TIMEOUT_SECS", "1") };
 
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
     let repo_id = insert_test_repo(&pool, "hanging-borg-repo").await;
 
     let started = std::time::Instant::now();
@@ -925,8 +988,10 @@ async fn test_sync_repo_times_out_on_hanging_borg_and_clears_importing() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_delete_archive_runs_in_background() {
+    use tokio::time::{Duration, timeout};
+
     let _borg_lock = borg_binary_lock().await;
     let pool = setup_pool().await;
     clean_tables(&pool).await;
@@ -947,7 +1012,7 @@ async fn test_delete_archive_runs_in_background() {
     let (_borg_dir, _borg_guard) =
         install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
 
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
     let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('del-host', 'hash') RETURNING id",
     )
@@ -990,9 +1055,6 @@ async fn test_delete_archive_runs_in_background() {
 
     // The audit entry is written last in the background task, so waiting for it
     // guarantees the borg delete and DB cleanup have already completed.
-    // The audit entry is written last in the background task, so waiting for it
-    // (scoped to this repo) guarantees the borg delete and DB cleanup completed.
-    use tokio::time::{Duration, timeout};
     timeout(Duration::from_secs(10), async {
         loop {
             let audit_rows: i64 = sqlx::query_scalar(
@@ -1037,8 +1099,10 @@ async fn test_delete_archive_runs_in_background() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_delete_multiple_archives_queues_without_conflict() {
+    use tokio::time::{Duration, timeout};
+
     let _borg_lock = borg_binary_lock().await;
     let pool = setup_pool().await;
     clean_tables(&pool).await;
@@ -1059,7 +1123,7 @@ async fn test_delete_multiple_archives_queues_without_conflict() {
     let (_borg_dir, _borg_guard) =
         install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
 
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
     let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('multi-del', 'hash') RETURNING id",
     )
@@ -1093,7 +1157,6 @@ async fn test_delete_multiple_archives_queues_without_conflict() {
         );
     }
 
-    use tokio::time::{Duration, timeout};
     timeout(Duration::from_secs(15), async {
         loop {
             let done: i64 = sqlx::query_scalar(
@@ -1103,7 +1166,7 @@ async fn test_delete_multiple_archives_queues_without_conflict() {
             .fetch_one(&pool)
             .await
             .unwrap();
-            if done == names.len() as i64 {
+            if done == i64::try_from(names.len()).unwrap_or(i64::MAX) {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1122,12 +1185,12 @@ async fn test_delete_multiple_archives_queues_without_conflict() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_sync_repo_returns_409_when_already_importing() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "sync-conflict-repo").await;
 
@@ -1153,8 +1216,102 @@ async fn test_sync_repo_returns_409_when_already_importing() {
     );
 }
 
+/// Inserts a completed backup report, archive, and fully-indexed archive
+/// files/paths for a stale archive that a sync should prune away.
+#[cfg(test)]
+async fn insert_stale_archive_with_index(pool: &PgPool, agent_id: i64, repo_id: i64) {
+    let stale_started_at = chrono::Utc::now()
+        .checked_sub_signed(chrono::Duration::days(1))
+        .unwrap();
+    let stale_finished_at = stale_started_at
+        .checked_add_signed(chrono::Duration::minutes(5))
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
+         status, original_size, compressed_size, deduplicated_size, repo_unique_csize, \
+         files_processed, duration_secs, error_message, warnings, borg_version, matched, \
+         archive_name, borg_command) VALUES ($1, $2, NULL, $3, $4, 'success', 10, 5, 5, 5, 1, \
+         300, NULL, '{}'::text[], NULL, true, $5, NULL)",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .bind(stale_started_at)
+    .bind(stale_finished_at)
+    .bind("stale-archive")
+    .execute(pool)
+    .await
+    .unwrap();
+    let stale_archive_id: i64 =
+        sqlx::query_scalar("INSERT INTO archives (repo_id, name) VALUES ($1, $2) RETURNING id")
+            .bind(repo_id)
+            .bind("stale-archive")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    sqlx::query(
+        "INSERT INTO archive_index_jobs (archive_id, status, file_count) VALUES ($1, 'done', 1)",
+    )
+    .bind(stale_archive_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO archive_paths (repo_id, path) VALUES ($1, $2), ($1, $3)")
+        .bind(repo_id)
+        .bind("")
+        .bind("stale.txt")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO archive_files (archive_id, path_id, parent_path_id, entry_type, size, mtime, \
+         mode) SELECT $1, child.id, parent.id, 'f', 1, '', '' FROM archive_paths child JOIN \
+         archive_paths parent ON parent.repo_id = $2 AND parent.path = $4 WHERE child.repo_id = \
+         $2 AND child.path = $3",
+    )
+    .bind(stale_archive_id)
+    .bind(repo_id)
+    .bind("stale.txt")
+    .bind("")
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[cfg(test)]
+async fn assert_stale_archive_purged(pool: &PgPool, repo_id: i64) {
+    let stale_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",
+    )
+    .bind(repo_id)
+    .bind("stale-archive")
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(stale_count, 0);
+    let stale_index_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM archive_index_jobs j JOIN archives a ON a.id = j.archive_id WHERE \
+         a.repo_id = $1 AND a.name = $2",
+    )
+    .bind(repo_id)
+    .bind("stale-archive")
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(stale_index_rows, 0);
+    let stale_file_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM archive_files f JOIN archives a ON a.id = f.archive_id WHERE \
+         a.repo_id = $1 AND a.name = $2",
+    )
+    .bind(repo_id)
+    .bind("stale-archive")
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(stale_file_rows, 0);
+}
+
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_sync_repo_indexes_new_archive_after_success() {
     let _borg_lock = borg_binary_lock().await;
     let pool = setup_pool().await;
@@ -1213,7 +1370,7 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
     )
     .await;
 
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
     let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, display_name, agent_token_hash) VALUES ($1, $2, $3) \
          RETURNING id",
@@ -1226,57 +1383,7 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
     .unwrap();
     let repo_id = insert_test_repo(&pool, "sync-success-repo").await;
 
-    let stale_started_at = chrono::Utc::now() - chrono::Duration::days(1);
-    let stale_finished_at = stale_started_at + chrono::Duration::minutes(5);
-    sqlx::query(
-        "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
-         status, original_size, compressed_size, deduplicated_size, repo_unique_csize, \
-         files_processed, duration_secs, error_message, warnings, borg_version, matched, \
-         archive_name, borg_command) VALUES ($1, $2, NULL, $3, $4, 'success', 10, 5, 5, 5, 1, \
-         300, NULL, '{}'::text[], NULL, true, $5, NULL)",
-    )
-    .bind(agent_id)
-    .bind(repo_id)
-    .bind(stale_started_at)
-    .bind(stale_finished_at)
-    .bind("stale-archive")
-    .execute(&pool)
-    .await
-    .unwrap();
-    let stale_archive_id: i64 =
-        sqlx::query_scalar("INSERT INTO archives (repo_id, name) VALUES ($1, $2) RETURNING id")
-            .bind(repo_id)
-            .bind("stale-archive")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    sqlx::query(
-        "INSERT INTO archive_index_jobs (archive_id, status, file_count) VALUES ($1, 'done', 1)",
-    )
-    .bind(stale_archive_id)
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query("INSERT INTO archive_paths (repo_id, path) VALUES ($1, $2), ($1, $3)")
-        .bind(repo_id)
-        .bind("")
-        .bind("stale.txt")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(
-        "INSERT INTO archive_files (archive_id, path_id, parent_path_id, entry_type, size, mtime, \
-         mode) SELECT $1, child.id, parent.id, 'f', 1, '', '' FROM archive_paths child JOIN \
-         archive_paths parent ON parent.repo_id = $2 AND parent.path = $4 WHERE child.repo_id = \
-         $2 AND child.path = $3",
-    )
-    .bind(stale_archive_id)
-    .bind(repo_id)
-    .bind("stale.txt")
-    .bind("")
-    .execute(&pool)
-    .await
-    .unwrap();
+    insert_stale_archive_with_index(&pool, agent_id, repo_id).await;
 
     let req = json_request(
         "POST",
@@ -1292,35 +1399,7 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
     assert_eq!(status, "done");
     assert_eq!(file_count, Some(2));
 
-    let stale_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",
-    )
-    .bind(repo_id)
-    .bind("stale-archive")
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(stale_count, 0);
-    let stale_index_rows: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM archive_index_jobs j JOIN archives a ON a.id = j.archive_id WHERE \
-         a.repo_id = $1 AND a.name = $2",
-    )
-    .bind(repo_id)
-    .bind("stale-archive")
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(stale_index_rows, 0);
-    let stale_file_rows: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM archive_files f JOIN archives a ON a.id = f.archive_id WHERE \
-         a.repo_id = $1 AND a.name = $2",
-    )
-    .bind(repo_id)
-    .bind("stale-archive")
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(stale_file_rows, 0);
+    assert_stale_archive_purged(&pool, repo_id).await;
 
     let file_rows: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM archive_files f JOIN archives a ON a.id = f.archive_id WHERE \
@@ -1335,30 +1414,30 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_stats_summary_returns_200() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let req = get_request("/api/stats/summary");
     let resp = oneshot(&mut app, req).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
     assert!(body.is_object(), "summary should be a JSON object");
-    assert!(body["total_agents"].is_number());
-    assert!(body["total_repos"].is_number());
-    assert!(body["total_storage_bytes"].is_number());
+    assert!(body.get("total_agents").unwrap().is_number());
+    assert!(body.get("total_repos").unwrap().is_number());
+    assert!(body.get("total_storage_bytes").unwrap().is_number());
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_storage_breakdown_empty() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let req = get_request("/api/stats/storage-breakdown");
     let resp = oneshot(&mut app, req).await;
@@ -1368,12 +1447,12 @@ async fn test_storage_breakdown_empty() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_storage_breakdown_with_data() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "breakdown-repo").await;
     server::db::update_repo_info_stats(
@@ -1394,11 +1473,26 @@ async fn test_storage_breakdown_with_data() {
     let body = body_json(resp).await;
     let entries = body.as_array().unwrap();
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0]["name"], "breakdown-repo");
-    assert_eq!(entries[0]["compressed_size"], 500_000);
-    assert_eq!(entries[0]["deduplicated_size"], 250_000);
+    assert_eq!(
+        entries.first().unwrap().get("name").unwrap(),
+        "breakdown-repo"
+    );
+    assert_eq!(
+        entries.first().unwrap().get("compressed_size").unwrap(),
+        500_000
+    );
+    assert_eq!(
+        entries.first().unwrap().get("deduplicated_size").unwrap(),
+        250_000
+    );
     // sole repo owns 100 % of storage
-    let pct = entries[0]["percentage"].as_f64().unwrap();
+    let pct = entries
+        .first()
+        .unwrap()
+        .get("percentage")
+        .unwrap()
+        .as_f64()
+        .unwrap();
     assert!(
         (pct - 100.0).abs() < 0.01,
         "single repo should be 100%, got {pct}"
@@ -1406,12 +1500,12 @@ async fn test_storage_breakdown_with_data() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_reset_import_clears_state() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "reset-import-repo").await;
 
@@ -1438,7 +1532,7 @@ async fn test_reset_import_clears_state() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_reset_import_cancels_active_sync() {
     let _borg_lock = borg_binary_lock().await;
     let pool = setup_pool().await;
@@ -1446,7 +1540,7 @@ async fn test_reset_import_cancels_active_sync() {
     create_test_user_and_session(&pool).await;
     let (_borg_dir, _borg_guard) = install_slow_borg_list(30).await;
 
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
     let repo_id = insert_test_repo(&pool, "cancel-active-import-repo").await;
 
     let sync_req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
@@ -1486,10 +1580,10 @@ async fn test_reset_import_cancels_active_sync() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_auth_me_without_session() {
     let pool = setup_pool().await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let req = Request::builder()
         .uri("/api/auth/me")
@@ -1524,7 +1618,9 @@ async fn test_sessions_stored_as_hashes_not_plaintext(pool: sqlx::PgPool) {
         .await
         .unwrap();
 
-    let expires = chrono::Utc::now() + chrono::Duration::hours(24);
+    let expires = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::hours(24))
+        .unwrap();
     let hashed_id = server::api::tokens::hash_token(plaintext_id);
     sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3)")
         .bind(&hashed_id)
@@ -1566,7 +1662,9 @@ async fn test_sessions_stored_as_hashes_not_plaintext(pool: sqlx::PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_login_response_includes_role(pool: sqlx::PgPool) {
-    let mut app = build_test_app(pool.clone()).await;
+    use std::net::SocketAddr;
+
+    let mut app = build_test_app(pool.clone());
 
     // Create a test user with a known bcrypt hash and the 'viewer' role.
     let password = "viewer-password";
@@ -1599,7 +1697,6 @@ async fn test_login_response_includes_role(pool: sqlx::PgPool) {
     // Login as this user and verify the role field is present.
     // The login handler extracts ConnectInfo<SocketAddr> from the request
     // extensions, so we must provide one.
-    use std::net::SocketAddr;
     let body =
         serde_json::json!({ "username": "login-role-viewer", "password": "viewer-password" });
     let mut req = Request::builder()
@@ -1621,7 +1718,8 @@ async fn test_login_response_includes_role(pool: sqlx::PgPool) {
         "login response must include user.role"
     );
     assert_eq!(
-        json["user"]["role"], "viewer",
+        json.get("user").and_then(|u| u.get("role")).unwrap(),
+        "viewer",
         "viewer user should have 'viewer' role"
     );
 }
@@ -1629,6 +1727,7 @@ async fn test_login_response_includes_role(pool: sqlx::PgPool) {
 // -- Excludes API tests --
 
 /// Helper: insert a schedule directly into the DB (bypasses SSH check in the API).
+#[cfg(test)]
 async fn insert_test_schedule(pool: &sqlx::PgPool, agent_id: i64, repo_id: i64) -> i64 {
     let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-integration").unwrap();
     let passphrase_encrypted = shared::crypto::encrypt_passphrase("pass", &encryption_key).unwrap();
@@ -1675,18 +1774,18 @@ async fn insert_test_schedule(pool: &sqlx::PgPool, agent_id: i64, repo_id: i64) 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_global_excludes_get_initially_empty(pool: sqlx::PgPool) {
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let resp = oneshot(&mut app, get_request("/api/excludes")).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    assert_eq!(body["raw_text"], "");
+    assert_eq!(body.get("raw_text").unwrap(), "");
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_global_excludes_roundtrip_preserves_blank_lines_and_comments(pool: sqlx::PgPool) {
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let raw = "# System paths\n/proc\n/sys\n\n# Cache\n*.cache\npp:__pycache__";
 
@@ -1704,13 +1803,13 @@ async fn test_global_excludes_roundtrip_preserves_blank_lines_and_comments(pool:
     let resp = oneshot(&mut app, get_request("/api/excludes")).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    assert_eq!(body["raw_text"], raw);
+    assert_eq!(body.get("raw_text").unwrap(), raw);
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_global_excludes_overwrite_replaces_fully(pool: sqlx::PgPool) {
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     for text in &["first\nsecond\nthird", "only-this-one"] {
         let resp = oneshot(
@@ -1727,13 +1826,13 @@ async fn test_global_excludes_overwrite_replaces_fully(pool: sqlx::PgPool) {
 
     let resp = oneshot(&mut app, get_request("/api/excludes")).await;
     let body = body_json(resp).await;
-    assert_eq!(body["raw_text"], "only-this-one");
+    assert_eq!(body.get("raw_text").unwrap(), "only-this-one");
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_per_agent_excludes_roundtrip_preserves_raw_text(pool: sqlx::PgPool) {
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     // Set up agent and repo directly
     let agent_id: i64 = sqlx::query_scalar(
@@ -1767,30 +1866,37 @@ async fn test_per_agent_excludes_roundtrip_preserves_raw_text(pool: sqlx::PgPool
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
 
-    let per_agent = body["exclude_patterns_per_agent"].as_array().unwrap();
+    let per_agent = body
+        .get("exclude_patterns_per_agent")
+        .unwrap()
+        .as_array()
+        .unwrap();
     assert_eq!(per_agent.len(), 1);
-    assert_eq!(per_agent[0]["agent_id"], agent_id);
-    assert_eq!(per_agent[0]["raw_text"], raw);
+    assert_eq!(
+        per_agent.first().unwrap().get("agent_id").unwrap(),
+        agent_id
+    );
+    assert_eq!(per_agent.first().unwrap().get("raw_text").unwrap(), raw);
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_export_config_empty(pool: sqlx::PgPool) {
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let resp = oneshot(&mut app, get_request("/api/config/export")).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    assert_eq!(body["version"], 1);
-    assert!(body["exported_at"].is_string());
-    assert_eq!(body["hosts"].as_array().unwrap().len(), 0);
-    assert_eq!(body["schedules"].as_array().unwrap().len(), 0);
+    assert_eq!(body.get("version").unwrap(), 1);
+    assert!(body.get("exported_at").unwrap().is_string());
+    assert_eq!(body.get("hosts").unwrap().as_array().unwrap().len(), 0);
+    assert_eq!(body.get("schedules").unwrap().as_array().unwrap().len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_export_config_with_hosts(pool: sqlx::PgPool) {
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     sqlx::query(
         "INSERT INTO agents (hostname, display_name, agent_token_hash, default_backup_paths, \
@@ -1804,19 +1910,52 @@ async fn test_export_config_with_hosts(pool: sqlx::PgPool) {
     let resp = oneshot(&mut app, get_request("/api/config/export")).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    let hosts = body["hosts"].as_array().unwrap();
+    let hosts = body.get("hosts").unwrap().as_array().unwrap();
     assert_eq!(hosts.len(), 1);
-    assert_eq!(hosts[0]["hostname"], "export-host");
-    assert_eq!(hosts[0]["display_name"], "Export Host");
-    assert_eq!(hosts[0]["default_backup_paths"][0], "/etc");
-    assert_eq!(hosts[0]["default_backup_paths"][1], "/home");
-    assert_eq!(hosts[0]["default_exclude_patterns"][0], "*.log");
+    assert_eq!(
+        hosts.first().unwrap().get("hostname").unwrap(),
+        "export-host"
+    );
+    assert_eq!(
+        hosts.first().unwrap().get("display_name").unwrap(),
+        "Export Host"
+    );
+    assert_eq!(
+        hosts
+            .first()
+            .unwrap()
+            .get("default_backup_paths")
+            .unwrap()
+            .get(0)
+            .unwrap(),
+        "/etc"
+    );
+    assert_eq!(
+        hosts
+            .first()
+            .unwrap()
+            .get("default_backup_paths")
+            .unwrap()
+            .get(1)
+            .unwrap(),
+        "/home"
+    );
+    assert_eq!(
+        hosts
+            .first()
+            .unwrap()
+            .get("default_exclude_patterns")
+            .unwrap()
+            .get(0)
+            .unwrap(),
+        "*.log"
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_export_config_skips_imported_token_hosts(pool: sqlx::PgPool) {
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     sqlx::query(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('real-host', 'real-token'), \
@@ -1829,15 +1968,15 @@ async fn test_export_config_skips_imported_token_hosts(pool: sqlx::PgPool) {
     let resp = oneshot(&mut app, get_request("/api/config/export")).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    let hosts = body["hosts"].as_array().unwrap();
+    let hosts = body.get("hosts").unwrap().as_array().unwrap();
     assert_eq!(hosts.len(), 1);
-    assert_eq!(hosts[0]["hostname"], "real-host");
+    assert_eq!(hosts.first().unwrap().get("hostname").unwrap(), "real-host");
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_import_config_creates_hosts(pool: sqlx::PgPool) {
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let payload = json!({
         "version": 1,
@@ -1863,9 +2002,9 @@ async fn test_import_config_creates_hosts(pool: sqlx::PgPool) {
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    assert_eq!(body["hosts_created"], 1);
-    assert_eq!(body["hosts_updated"], 0);
-    assert_eq!(body["schedules_created"], 0);
+    assert_eq!(body.get("hosts_created").unwrap(), 1);
+    assert_eq!(body.get("hosts_updated").unwrap(), 0);
+    assert_eq!(body.get("schedules_created").unwrap(), 0);
 
     let count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM agents WHERE hostname = 'new-host-1'")
@@ -1878,7 +2017,7 @@ async fn test_import_config_creates_hosts(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn test_import_config_updates_existing_host(pool: sqlx::PgPool) {
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     sqlx::query(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('existing-host', 'real-token')",
@@ -1911,14 +2050,14 @@ async fn test_import_config_updates_existing_host(pool: sqlx::PgPool) {
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    assert_eq!(body["hosts_created"], 0);
-    assert_eq!(body["hosts_updated"], 1);
+    assert_eq!(body.get("hosts_created").unwrap(), 0);
+    assert_eq!(body.get("hosts_updated").unwrap(), 1);
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_import_config_rejects_wrong_version(pool: sqlx::PgPool) {
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let payload = json!({
         "version": 999,
@@ -1938,7 +2077,7 @@ async fn test_import_config_rejects_wrong_version(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn test_import_config_warns_on_missing_repo(pool: sqlx::PgPool) {
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     sqlx::query(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('sched-host', 'real-token')",
@@ -1992,15 +2131,15 @@ async fn test_import_config_warns_on_missing_repo(pool: sqlx::PgPool) {
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    assert_eq!(body["schedules_created"], 0);
-    let warnings = body["warnings"].as_array().unwrap();
+    assert_eq!(body.get("schedules_created").unwrap(), 0);
+    let warnings = body.get("warnings").unwrap().as_array().unwrap();
     assert!(!warnings.is_empty());
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_import_config_creates_schedule_with_matching_repo(pool: sqlx::PgPool) {
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "import-repo").await;
     let _ = repo_id;
@@ -2057,14 +2196,14 @@ async fn test_import_config_creates_schedule_with_matching_repo(pool: sqlx::PgPo
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    assert_eq!(body["schedules_created"], 1);
-    assert_eq!(body["warnings"].as_array().unwrap().len(), 0);
+    assert_eq!(body.get("schedules_created").unwrap(), 1);
+    assert_eq!(body.get("warnings").unwrap().as_array().unwrap().len(), 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_export_then_import_roundtrip(pool: sqlx::PgPool) {
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     sqlx::query(
         "INSERT INTO agents (hostname, display_name, agent_token_hash, default_backup_paths, \
@@ -2091,7 +2230,7 @@ async fn test_export_then_import_roundtrip(pool: sqlx::PgPool) {
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    assert_eq!(body["hosts_created"], 1);
+    assert_eq!(body.get("hosts_created").unwrap(), 1);
 
     let paths: Vec<String> = sqlx::query_scalar(
         "SELECT default_backup_paths FROM agents WHERE hostname = 'roundtrip-host'",
@@ -2106,6 +2245,7 @@ async fn test_export_then_import_roundtrip(pool: sqlx::PgPool) {
 
 const NON_ADMIN_SESSION_ID: &str = "non-admin-session-id-000000000000000";
 
+#[cfg(test)]
 async fn create_non_admin_user_and_session(pool: &PgPool) {
     let user_id: i64 = sqlx::query_scalar(
         "INSERT INTO users (username, password_hash) VALUES ('integration-viewer', \
@@ -2128,7 +2268,9 @@ async fn create_non_admin_user_and_session(pool: &PgPool) {
         .await
         .unwrap();
 
-    let expires = chrono::Utc::now() + chrono::Duration::hours(24);
+    let expires = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::hours(24))
+        .unwrap();
     let hashed_id = server::api::tokens::hash_token(NON_ADMIN_SESSION_ID);
     sqlx::query(
         "INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3) ON CONFLICT (id) DO \
@@ -2142,6 +2284,7 @@ async fn create_non_admin_user_and_session(pool: &PgPool) {
     .unwrap();
 }
 
+#[cfg(test)]
 fn non_admin_delete_request(uri: &str) -> Request<Body> {
     Request::builder()
         .uri(uri)
@@ -2151,6 +2294,7 @@ fn non_admin_delete_request(uri: &str) -> Request<Body> {
         .unwrap()
 }
 
+#[cfg(test)]
 fn non_admin_get_request(uri: &str) -> Request<Body> {
     Request::builder()
         .uri(uri)
@@ -2163,7 +2307,7 @@ fn non_admin_get_request(uri: &str) -> Request<Body> {
 #[sqlx::test(migrations = "./migrations")]
 async fn delete_agent_forbidden_for_non_admin(pool: sqlx::PgPool) {
     create_non_admin_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     sqlx::query("INSERT INTO agents (hostname, agent_token_hash) VALUES ('guarded-host', 'hash')")
         .execute(&pool)
@@ -2195,7 +2339,7 @@ async fn delete_agent_forbidden_for_non_admin(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn delete_agent_allowed_for_admin(pool: sqlx::PgPool) {
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     sqlx::query("INSERT INTO agents (hostname, agent_token_hash) VALUES ('admin-host', 'hash')")
         .execute(&pool)
@@ -2223,7 +2367,7 @@ async fn delete_agent_allowed_for_admin(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn get_logs_forbidden_for_non_admin(pool: sqlx::PgPool) {
     create_non_admin_user_and_session(&pool).await;
-    let mut app = build_test_app(pool).await;
+    let mut app = build_test_app(pool);
 
     let resp = oneshot(&mut app, non_admin_get_request("/api/logs")).await;
     assert_eq!(
@@ -2236,7 +2380,7 @@ async fn get_logs_forbidden_for_non_admin(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn get_logs_allowed_for_admin(pool: sqlx::PgPool) {
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool).await;
+    let mut app = build_test_app(pool);
 
     let resp = oneshot(&mut app, get_request("/api/logs")).await;
     assert_eq!(
@@ -2250,6 +2394,7 @@ async fn get_logs_allowed_for_admin(pool: sqlx::PgPool) {
 
 const MCP_SESSION_ID: &str = "must-change-password-session-0000000";
 
+#[cfg(test)]
 async fn create_must_change_password_user_and_session(pool: &PgPool) {
     let user_id: i64 = sqlx::query_scalar(
         "INSERT INTO users (username, password_hash, must_change_password) VALUES ('mcp-user', \
@@ -2272,7 +2417,9 @@ async fn create_must_change_password_user_and_session(pool: &PgPool) {
         .await
         .unwrap();
 
-    let expires = chrono::Utc::now() + chrono::Duration::hours(24);
+    let expires = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::hours(24))
+        .unwrap();
     let hashed_id = server::api::tokens::hash_token(MCP_SESSION_ID);
     sqlx::query(
         "INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3) ON CONFLICT (id) DO \
@@ -2286,6 +2433,7 @@ async fn create_must_change_password_user_and_session(pool: &PgPool) {
     .unwrap();
 }
 
+#[cfg(test)]
 fn mcp_session_request(method: &str, uri: &str) -> Request<Body> {
     Request::builder()
         .uri(uri)
@@ -2296,11 +2444,11 @@ fn mcp_session_request(method: &str, uri: &str) -> Request<Body> {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn must_change_password_blocks_regular_endpoints() {
     let pool = setup_pool().await;
     create_must_change_password_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let resp = oneshot(&mut app, mcp_session_request("GET", "/api/agents")).await;
     assert_eq!(
@@ -2311,11 +2459,11 @@ async fn must_change_password_blocks_regular_endpoints() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn must_change_password_allows_me_endpoint() {
     let pool = setup_pool().await;
     create_must_change_password_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let resp = oneshot(&mut app, mcp_session_request("GET", "/api/auth/me")).await;
     assert_eq!(
@@ -2324,16 +2472,16 @@ async fn must_change_password_allows_me_endpoint() {
         "/api/auth/me should be accessible even with must_change_password"
     );
     let body = body_json(resp).await;
-    assert_eq!(body["must_change_password"], true);
+    assert_eq!(body.get("must_change_password").unwrap(), true);
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_list_schedules_for_repo() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
 
     let repo_id = insert_test_repo(&pool, "sched-repo-endpoint").await;
     let agent_id: i64 = sqlx::query_scalar(
@@ -2352,9 +2500,13 @@ async fn test_list_schedules_for_repo() {
     let body = body_json(resp).await;
     let schedules = body.as_array().unwrap();
     assert_eq!(schedules.len(), 1);
-    assert_eq!(schedules[0]["id"], schedule_id);
+    assert_eq!(schedules.first().unwrap().get("id").unwrap(), schedule_id);
     assert_eq!(
-        schedules[0]["target_hostnames"]
+        schedules
+            .first()
+            .unwrap()
+            .get("target_hostnames")
+            .unwrap()
             .as_array()
             .unwrap()
             .first()
@@ -2383,7 +2535,7 @@ async fn test_list_schedules_for_repo() {
 /// hangs on `borg info`, sets the per-command timeout to 1 s, and verifies that the
 /// sync endpoint returns quickly and always clears the importing flag.
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_sync_empty_repo_does_not_hang_when_borg_info_hangs() {
     let _borg_lock = borg_binary_lock().await;
     // SAFETY: serialised by borg_binary_lock.
@@ -2394,7 +2546,7 @@ async fn test_sync_empty_repo_does_not_hang_when_borg_info_hangs() {
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
     let repo_id = insert_test_repo(&pool, "empty-repo-hanging-info").await;
 
     let started = std::time::Instant::now();
@@ -2439,20 +2591,21 @@ async fn test_sync_empty_repo_does_not_hang_when_borg_info_hangs() {
 ///
 /// `run_repo_sync` previously called `sync_existing_archives` inline in a `for`
 /// loop, so a slow repo held up every subsequent repo. With two repos that each
-/// take BORG_DELAY_SECS seconds, sequential processing would block for at least
-/// BORG_DELAY_SECS * 2; concurrent dispatching should return almost immediately
+/// take `BORG_DELAY_SECS` seconds, sequential processing would block for at least
+/// `BORG_DELAY_SECS` * 2; concurrent dispatching should return almost immediately
 /// and let both syncs run in parallel.
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_scheduler_dispatches_repo_syncs_concurrently() {
+    // Each borg call sleeps for this long, simulating a slow network / large repo.
+    const BORG_DELAY_SECS: u64 = 2;
+
     let _borg_lock = borg_binary_lock().await;
 
     let pool = setup_pool().await;
     clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
 
-    // Each borg call sleeps for this long, simulating a slow network / large repo.
-    const BORG_DELAY_SECS: u64 = 2;
     let (_borg_dir, _borg_guard) = install_slow_borg_list(BORG_DELAY_SECS).await;
 
     let repo_a = insert_test_repo(&pool, "concurrent-sync-repo-a").await;
@@ -2525,7 +2678,7 @@ async fn test_scheduler_dispatches_repo_syncs_concurrently() {
 /// Regression test: full sync must keep the fast manifest-only `borg list`
 /// path, then fetch authoritative per-archive metadata only after discovery.
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_sync_fetches_missing_hostname_via_borg_info() {
     let _borg_lock = borg_binary_lock().await;
     let pool = setup_pool().await;
@@ -2567,7 +2720,7 @@ async fn test_sync_fetches_missing_hostname_via_borg_info() {
     let (_borg_dir, _borg_guard) =
         install_fake_borg(list_json, info_all_json, info_repo_json, "", "").await;
 
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
     let repo_id = insert_test_repo(&pool, "hostname-format-repo").await;
 
     let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
@@ -2622,7 +2775,7 @@ async fn test_sync_fetches_missing_hostname_via_borg_info() {
 /// which would prune all existing archive records. Now it must be a hard error
 /// so no records are touched.
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_sync_returns_error_on_malformed_borg_list_json() {
     let _borg_lock = borg_binary_lock().await;
     let pool = setup_pool().await;
@@ -2635,7 +2788,7 @@ async fn test_sync_returns_error_on_malformed_borg_list_json() {
     let (_borg_dir, _borg_guard) =
         install_fake_borg("this is not valid json", "{}", info_repo_json, "", "").await;
 
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
     let repo_id = insert_test_repo(&pool, "malformed-json-repo").await;
 
     let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
@@ -2664,7 +2817,7 @@ async fn test_sync_returns_error_on_malformed_borg_list_json() {
 /// same reason as malformed JSON - silently treating it as empty would prune
 /// all existing archive records.
 #[tokio::test]
-#[ignore]
+#[ignore = "requires DATABASE_URL"]
 async fn test_sync_returns_error_when_borg_list_json_has_no_archives_key() {
     let _borg_lock = borg_binary_lock().await;
     let pool = setup_pool().await;
@@ -2683,7 +2836,7 @@ async fn test_sync_returns_error_when_borg_list_json_has_no_archives_key() {
     )
     .await;
 
-    let mut app = build_test_app(pool.clone()).await;
+    let mut app = build_test_app(pool.clone());
     let repo_id = insert_test_repo(&pool, "missing-archives-key-repo").await;
 
     let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);

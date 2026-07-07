@@ -25,6 +25,7 @@ impl Default for ClientIpResolver {
 impl ClientIpResolver {
     /// Create a resolver that trusts no upstream proxy.
     /// `X-Forwarded-For` is always ignored.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             trusted: Vec::new(),
@@ -34,6 +35,7 @@ impl ClientIpResolver {
     /// Create a resolver from a comma- or space-separated list of CIDR
     /// notations or single IP addresses.  Invalid entries are logged
     /// and silently skipped.
+    #[must_use]
     pub fn from_env(env_value: Option<String>) -> Self {
         let trusted = env_value
             .into_iter()
@@ -91,17 +93,14 @@ impl ClientIpResolver {
         }
 
         // Walk right-to-left: the rightmost IP is the most recent hop.
-        let hops: Vec<&str> = xff_value.split(',').map(|s| s.trim()).collect();
+        let hops: Vec<&str> = xff_value.split(',').map(str::trim).collect();
 
         // Find the first hop that is *not* in the trusted set.
         // If all hops are trusted, return the rightmost (the load balancer / proxy itself).
         for hop in hops.iter().rev() {
-            let ip: IpAddr = match hop.parse() {
-                Ok(ip) => ip,
-                Err(_) => {
-                    tracing::warn!(hop = %hop, "skipping unparseable IP in X-Forwarded-For header");
-                    continue;
-                }
+            let Ok(ip) = hop.parse::<IpAddr>() else {
+                tracing::warn!(hop = %hop, "skipping unparseable IP in X-Forwarded-For header");
+                continue;
             };
             if !self.is_trusted(&ip) {
                 tracing::info!(%ip, %peer_ip, "resolved client IP from X-Forwarded-For header");
@@ -124,7 +123,7 @@ impl ClientIpResolver {
         // so CIDR rules like 10.0.0.0/8 match regardless of the wire format.
         let normalized = match ip {
             IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(*ip, IpAddr::V4),
-            _ => *ip,
+            IpAddr::V4(_) => *ip,
         };
         self.trusted.iter().any(|net| net.contains(normalized))
     }
@@ -241,7 +240,7 @@ mod tests {
 
     #[test]
     fn empty_env_is_no_proxies() {
-        let resolver = ClientIpResolver::from_env(Some("".to_string()));
+        let resolver = ClientIpResolver::from_env(Some(String::new()));
         let headers = headers_with_xff("1.2.3.4");
         assert_eq!(
             resolver.resolve(peer_v4([10, 0, 0, 1]), &headers),

@@ -38,9 +38,10 @@ async fn enforce_quota_action(
                 disable_schedule_and_push(state, schedule_id).await;
             }
         }
-        QuotaAction::DisableSchedule => match triggering_schedule_id {
-            Some(schedule_id) => disable_schedule_and_push(state, schedule_id).await,
-            None => {
+        QuotaAction::DisableSchedule => {
+            if let Some(schedule_id) = triggering_schedule_id {
+                disable_schedule_and_push(state, schedule_id).await;
+            } else {
                 tracing::warn!(
                     "quota action disable_schedule has no triggering schedule (manual/ad-hoc \
                      backup); disabling every schedule in scope as a fallback"
@@ -49,7 +50,7 @@ async fn enforce_quota_action(
                     disable_schedule_and_push(state, schedule_id).await;
                 }
             }
-        },
+        }
     }
 }
 

@@ -25,6 +25,7 @@ use super::{
 };
 use crate::{AppState, borg::Borg, db, error::ApiError};
 
+/// Request payload for downloading files from an archive.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct DownloadFilesRequest {
     /// Paths within the archive to include in the download
@@ -52,6 +53,11 @@ pub struct DownloadFilesRequest {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::Internal`]: an internal error occurs
 pub async fn download_files(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -150,18 +156,25 @@ pub async fn download_files(
         .into_response())
 }
 
+/// Request payload for restoring files from an archive to an agent.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct RestoreFilesRequest {
     /// Paths within the archive. An empty list restores the whole archive.
     pub paths: Vec<String>,
+    /// Target directory on the agent filesystem.
     pub target_path: String,
+    /// Hostname of the agent to restore to.
     pub hostname: String,
 }
 
+/// Result of a remote restore operation.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct RestoreFilesResponse {
+    /// Whether the restore completed successfully.
     pub success: bool,
+    /// Number of files restored.
     pub files_restored: u64,
+    /// Error message if the restore failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
 }
@@ -186,9 +199,15 @@ pub struct RestoreFilesResponse {
         (status = 503, description = "Agent offline or timed out"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::ServiceUnavailable`]: a required dependency (e.g. the target agent) is unavailable
+/// - [`ApiError::Internal`]: an internal error occurs
 pub async fn restore_files(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
     AxumPath((repo_id, archive_name)): AxumPath<(i64, String)>,
     Json(body): Json<RestoreFilesRequest>,
 ) -> Result<Json<RestoreFilesResponse>, ApiError> {
@@ -227,8 +246,8 @@ pub async fn restore_files(
     if let Err(e) = db::audit::insert_audit_entry(
         &state.pool,
         &db::audit::NewAuditEntry {
-            user_id: Some(_admin.user_id),
-            username: &_admin.username,
+            user_id: Some(admin.user_id),
+            username: &admin.username,
             action: "restore_files",
             target_type: Some("archive"),
             target_id: Some(repo_id),

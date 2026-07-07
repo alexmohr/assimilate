@@ -2,9 +2,24 @@
 import type { HostExportResponse } from "./HostExportResponse";
 import type { ScheduleExportResponse } from "./ScheduleExportResponse";
 
+/**
+ * Response containing config export.
+ */
 export type ConfigExportResponse = {
+  /**
+   * Version number.
+   */
   version: number;
+  /**
+   * Timestamp of when the exported occurred.
+   */
   exported_at: string;
+  /**
+   * Exported hosts.
+   */
   hosts: Array<HostExportResponse>;
+  /**
+   * List of schedules.
+   */
   schedules: Array<ScheduleExportResponse>;
 };

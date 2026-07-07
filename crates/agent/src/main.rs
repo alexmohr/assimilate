@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+//! The `assimilate-agent` binary: connects to the server over WebSocket,
+//! receives backup configuration, and runs `borg` on the local machine.
+
 mod backup;
 mod borg;
 mod executor;
@@ -50,6 +53,8 @@ async fn shutdown_signal() {
     tracing::info!("Received Ctrl+C, shutting down");
 }
 
+/// Version string reported to the server and by `--version`: the crate's
+/// version, plus the build's git SHA suffix when one was embedded.
 #[must_use]
 pub fn agent_version_string() -> &'static str {
     if env!("GIT_SHA").is_empty() {
@@ -59,6 +64,7 @@ pub fn agent_version_string() -> &'static str {
     }
 }
 
+/// Command-line/environment arguments the agent needs to connect to its server.
 #[derive(Parser)]
 #[command(version = agent_version_string())]
 pub struct Args {

@@ -16,6 +16,7 @@ use crate::AppState;
         (status = 200, description = "Server is healthy", body = HealthCheckResponse),
     )
 )]
+/// Server health check endpoint.
 pub async fn health(State(state): State<AppState>) -> (StatusCode, Json<HealthCheckResponse>) {
     let background_ops_in_flight = state.repo_op_tracker.any_active().await
         || state.notification_service.in_flight_deliveries() > 0;

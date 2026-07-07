@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+//! Build script that embeds version metadata (git SHA and commit count)
+//! into the `agent` binary at compile time.
+
 use std::path::Path;
 
 #[allow(

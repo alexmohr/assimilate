@@ -26,12 +26,13 @@ use crate::{
 };
 
 const TICK_INTERVAL: Duration = Duration::from_secs(30);
-const RETENTION_INTERVAL: Duration = Duration::from_secs(3600);
-const SYNC_CHECK_INTERVAL: Duration = Duration::from_secs(60);
-const SESSION_CLEANUP_INTERVAL: Duration = Duration::from_secs(3600);
-const SYNC_WARN_DURATION: Duration = Duration::from_secs(300);
+const RETENTION_INTERVAL: Duration = Duration::from_hours(1);
+const SYNC_CHECK_INTERVAL: Duration = Duration::from_mins(1);
+const SESSION_CLEANUP_INTERVAL: Duration = Duration::from_hours(1);
+const SYNC_WARN_DURATION: Duration = Duration::from_mins(5);
 const DEFAULT_RETENTION_DAYS: i64 = 7;
 
+/// Main scheduler loop: ticks schedules, runs retention, syncs repos, and cleans up sessions.
 pub async fn run(state: AppState) {
     let _receiver = state.completion_bus.subscribe();
     let schedule_state = state.clone();
@@ -109,6 +110,7 @@ pub async fn run(state: AppState) {
     );
 }
 
+/// Check every repo with a `sync_schedule` cron and trigger a sync if due.
 pub async fn run_repo_sync(
     pool: &PgPool,
     encryption_key: &[u8; 32],
@@ -190,131 +192,127 @@ pub async fn run_repo_sync(
             op: repo_op_tracker.get(repo.id).await,
         });
 
-        let task_pool = pool.clone();
-        let task_key = *encryption_key;
-        let task_broadcast = ui_broadcast.clone();
-        let task_op_tracker = repo_op_tracker.clone();
-        let task_repo_lock = repo_lock.clone();
-        let repo_id = repo.id;
-        let repo_name = repo.name.clone();
-        tokio::spawn(async move {
-            let _repo_guard = task_repo_lock.acquire(repo_id).await;
-            let start = std::time::Instant::now();
-            let sync_result =
-                sync_existing_archives(&task_pool, &task_key, repo_id, &task_broadcast).await;
+        let task = ScheduledRepoSync {
+            pool: pool.clone(),
+            encryption_key: *encryption_key,
+            ui_broadcast: ui_broadcast.clone(),
+            repo_op_tracker: repo_op_tracker.clone(),
+            repo_lock: repo_lock.clone(),
+            repo_id: repo.id,
+            repo_name: repo.name.clone(),
+        };
+        tokio::spawn(run_scheduled_repo_sync(task));
+    }
+}
 
-            task_op_tracker.clear(repo_id).await;
-            task_broadcast.send(ServerToUi::RepoOpChanged { repo_id, op: None });
+struct ScheduledRepoSync {
+    pool: PgPool,
+    encryption_key: [u8; 32],
+    ui_broadcast: UiBroadcast,
+    repo_op_tracker: RepoOpTracker,
+    repo_lock: RepoLock,
+    repo_id: i64,
+    repo_name: String,
+}
 
-            match sync_result {
-                Ok((added, removed)) => {
-                    let elapsed = start.elapsed();
-                    let duration_secs = elapsed.as_secs();
+async fn run_scheduled_repo_sync(task: ScheduledRepoSync) {
+    let ScheduledRepoSync {
+        pool,
+        encryption_key,
+        ui_broadcast,
+        repo_op_tracker,
+        repo_lock,
+        repo_id,
+        repo_name,
+    } = task;
 
-                    if let Err(e) = db::update_repo_last_synced(&task_pool, repo_id).await {
-                        tracing::error!(repo_id, error = %e, "failed to update last_synced_at");
-                    }
-                    if let Err(e) = db::update_repo_last_op(
-                        &task_pool,
-                        repo_id,
-                        "server_sync",
-                        Utc::now(),
-                        "server",
-                    )
-                    .await
-                    {
-                        tracing::error!(repo_id, error = %e, "failed to update last_op after sync");
-                    }
+    let _repo_guard = repo_lock.acquire(repo_id).await;
+    let start = std::time::Instant::now();
+    let sync_result = sync_existing_archives(&pool, &encryption_key, repo_id, &ui_broadcast).await;
 
-                    if let Err(e) = db::set_repo_importing(&task_pool, repo_id, false).await {
-                        tracing::error!(repo_id, error = %e, "failed to clear importing flag after sync");
-                    }
-                    if let Err(e) = db::set_repo_import_error(&task_pool, repo_id, None).await {
-                        tracing::error!(repo_id, error = %e, "failed to clear import_error after sync");
-                    }
-                    crate::api::repos::clear_import_progress_state(
-                        &task_pool,
-                        &task_broadcast,
-                        repo_id,
-                    )
-                    .await;
-                    task_broadcast.send(ServerToUi::DataChanged);
+    repo_op_tracker.clear(repo_id).await;
+    ui_broadcast.send(ServerToUi::RepoOpChanged { repo_id, op: None });
 
-                    if added > 0 || removed > 0 {
-                        let msg = format!(
-                            "periodic sync for '{repo_name}': added {added}, removed {removed} \
-                             archives in {duration_secs}s",
-                        );
-                        tracing::info!("{msg}");
-                        if let Err(e) =
-                            db::insert_system_event(&task_pool, "repo_sync", None, &msg).await
-                        {
-                            tracing::error!(error = %e, "failed to log sync event");
-                        }
-                    }
+    match sync_result {
+        Ok((added, removed)) => {
+            let elapsed = start.elapsed();
+            let duration_secs = elapsed.as_secs();
 
-                    if elapsed > SYNC_WARN_DURATION {
-                        let msg = format!(
-                            "periodic sync for '{repo_name}' took {duration_secs}s (exceeds {}s \
-                             threshold)",
-                            SYNC_WARN_DURATION.as_secs()
-                        );
-                        tracing::error!("{msg}");
-                        if let Err(e) =
-                            db::insert_system_event(&task_pool, "repo_sync_slow", None, &msg).await
-                        {
-                            tracing::error!(error = %e, "failed to log slow sync event");
-                        }
-                    }
-                }
-                Err(crate::error::ApiError::NotFound(ref reason)) => {
-                    tracing::warn!(
-                        repo_id,
-                        repo_name = %repo_name,
-                        reason = %reason,
-                        "skipping sync for repo that no longer exists"
-                    );
-                    if let Err(e) = db::set_repo_importing(&task_pool, repo_id, false).await {
-                        tracing::error!(repo_id, error = %e, "failed to clear importing flag after NotFound");
-                    }
-                    crate::api::repos::clear_import_progress_state(
-                        &task_pool,
-                        &task_broadcast,
-                        repo_id,
-                    )
-                    .await;
-                    task_broadcast.send(ServerToUi::DataChanged);
-                }
-                Err(e) => {
-                    let elapsed = start.elapsed();
-                    let msg = format!(
-                        "periodic sync failed for '{repo_name}' after {:.1}s: {e}",
-                        elapsed.as_secs_f64()
-                    );
-                    tracing::error!("{msg}");
-                    if let Err(log_err) =
-                        db::insert_system_event(&task_pool, "repo_sync_failed", None, &msg).await
-                    {
-                        tracing::error!(error = %log_err, "failed to log sync event");
-                    }
-                    if let Err(e2) = db::set_repo_importing(&task_pool, repo_id, false).await {
-                        tracing::error!(repo_id, error = %e2, "failed to clear import flag");
-                    }
-                    if let Err(e2) =
-                        db::set_repo_import_error(&task_pool, repo_id, Some(&format!("{e}"))).await
-                    {
-                        tracing::error!(repo_id, error = %e2, "failed to set import_error");
-                    }
-                    crate::api::repos::clear_import_progress_state(
-                        &task_pool,
-                        &task_broadcast,
-                        repo_id,
-                    )
-                    .await;
-                    task_broadcast.send(ServerToUi::DataChanged);
+            if let Err(e) = db::update_repo_last_synced(&pool, repo_id).await {
+                tracing::error!(repo_id, error = %e, "failed to update last_synced_at");
+            }
+            if let Err(e) =
+                db::update_repo_last_op(&pool, repo_id, "server_sync", Utc::now(), "server").await
+            {
+                tracing::error!(repo_id, error = %e, "failed to update last_op after sync");
+            }
+
+            if let Err(e) = db::set_repo_importing(&pool, repo_id, false).await {
+                tracing::error!(repo_id, error = %e, "failed to clear importing flag after sync");
+            }
+            if let Err(e) = db::set_repo_import_error(&pool, repo_id, None).await {
+                tracing::error!(repo_id, error = %e, "failed to clear import_error after sync");
+            }
+            crate::api::repos::clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
+            ui_broadcast.send(ServerToUi::DataChanged);
+
+            if added > 0 || removed > 0 {
+                let msg = format!(
+                    "periodic sync for '{repo_name}': added {added}, removed {removed} archives \
+                     in {duration_secs}s",
+                );
+                tracing::info!("{msg}");
+                if let Err(e) = db::insert_system_event(&pool, "repo_sync", None, &msg).await {
+                    tracing::error!(error = %e, "failed to log sync event");
                 }
             }
-        });
+
+            if elapsed > SYNC_WARN_DURATION {
+                let msg = format!(
+                    "periodic sync for '{repo_name}' took {duration_secs}s (exceeds {}s threshold)",
+                    SYNC_WARN_DURATION.as_secs()
+                );
+                tracing::error!("{msg}");
+                if let Err(e) = db::insert_system_event(&pool, "repo_sync_slow", None, &msg).await {
+                    tracing::error!(error = %e, "failed to log slow sync event");
+                }
+            }
+        }
+        Err(crate::error::ApiError::NotFound(ref reason)) => {
+            tracing::warn!(
+                repo_id,
+                repo_name = %repo_name,
+                reason = %reason,
+                "skipping sync for repo that no longer exists"
+            );
+            if let Err(e) = db::set_repo_importing(&pool, repo_id, false).await {
+                tracing::error!(repo_id, error = %e, "failed to clear importing flag");
+            }
+            crate::api::repos::clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
+            ui_broadcast.send(ServerToUi::DataChanged);
+        }
+        Err(e) => {
+            let elapsed = start.elapsed();
+            let msg = format!(
+                "periodic sync failed for '{repo_name}' after {:.1}s: {e}",
+                elapsed.as_secs_f64()
+            );
+            tracing::error!("{msg}");
+            if let Err(log_err) =
+                db::insert_system_event(&pool, "repo_sync_failed", None, &msg).await
+            {
+                tracing::error!(error = %log_err, "failed to log sync event");
+            }
+            if let Err(e2) = db::set_repo_importing(&pool, repo_id, false).await {
+                tracing::error!(repo_id, error = %e2, "failed to clear import flag");
+            }
+            if let Err(e2) = db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}"))).await
+            {
+                tracing::error!(repo_id, error = %e2, "failed to set import_error");
+            }
+            crate::api::repos::clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
+            ui_broadcast.send(ServerToUi::DataChanged);
+        }
     }
 }
 
@@ -332,7 +330,9 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
         return Ok(());
     }
 
-    let cutoff = Utc::now() - chrono::Duration::days(retention_days);
+    let cutoff = Utc::now()
+        .checked_sub_signed(chrono::Duration::days(retention_days))
+        .unwrap_or_else(Utc::now);
 
     let events_deleted = db::delete_system_events_before(pool, cutoff).await?;
     let reports_deleted = db::delete_backup_reports_before(pool, cutoff).await?;
@@ -400,7 +400,9 @@ async fn tick(deps: &TickDeps<'_>) -> Result<(), crate::error::ApiError> {
     }
 
     for (schedule_id, cron, targets) in schedule_groups {
-        let first = &targets[0];
+        let Some(first) = targets.first() else {
+            continue;
+        };
         let on_failure = first.on_failure.parse::<OnFailure>().unwrap_or_else(|_| {
             tracing::warn!(
                 schedule_id,
@@ -522,8 +524,30 @@ struct SequentialExecution {
     tz: chrono_tz::Tz,
     run_id: String,
     /// Signalled once the first target's messages have been sent (or skipped).
-    /// Allows tick() to wait briefly so callers using try_recv() see messages.
+    /// Allows `tick()` to wait briefly so callers using `try_recv()` see messages.
     triggered_tx: tokio::sync::oneshot::Sender<()>,
+}
+
+struct SequentialTargetCtx<'a> {
+    pool: &'a PgPool,
+    registry: &'a AgentRegistry,
+    encryption_key: &'a [u8; 32],
+    tunnel_manager: &'a TunnelManager,
+    completion_bus: &'a CompletionBus,
+    repo_lock: &'a RepoLock,
+    repo_op_tracker: &'a RepoOpTracker,
+    ui_broadcast: &'a UiBroadcast,
+    schedule_id: i64,
+    cron: &'a str,
+    on_failure: OnFailure,
+    now: DateTime<Utc>,
+    tz: chrono_tz::Tz,
+    run_id: &'a str,
+}
+
+enum TargetControl {
+    Continue,
+    Stop,
 }
 
 async fn run_sequential_schedule(ctx: SequentialExecution) {
@@ -548,185 +572,241 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
     let mut marked_triggered = false;
     let mut triggered_tx = Some(triggered_tx);
 
-    'targets: for target in &targets {
-        let Ok(schedule_type) = target.schedule_type.parse::<ScheduleType>() else {
-            tracing::error!(
-                schedule_id,
-                schedule_type = %target.schedule_type,
-                "sequential: invalid schedule type in database, skipping target"
-            );
-            match on_failure {
-                OnFailure::Stop => break 'targets,
-                OnFailure::Continue => continue 'targets,
-            }
-        };
+    let target_ctx = SequentialTargetCtx {
+        pool: &pool,
+        registry: &registry,
+        encryption_key: &encryption_key,
+        tunnel_manager: &tunnel_manager,
+        completion_bus: &completion_bus,
+        repo_lock: &repo_lock,
+        repo_op_tracker: &repo_op_tracker,
+        ui_broadcast: &ui_broadcast,
+        schedule_id,
+        cron: &cron,
+        on_failure,
+        now,
+        tz,
+        run_id: &run_id,
+    };
 
-        // Subscribe before sending so we don't miss the completion event.
-        let rx = completion_bus.subscribe();
-
-        // Acquire the per-repo lock to prevent concurrent backups across schedules.
-        let _repo_guard = repo_lock.acquire(target.repo_id).await;
-
-        tunnel_manager
-            .ensure_agent_tunnel_connected(target.agent_id)
-            .await;
-
-        match config_assembler::assemble_config(&pool, &encryption_key, &target.hostname).await {
-            Ok(config) => {
-                let config_msg = ServerToAgent::ConfigUpdate(config);
-                if let Err(e) = registry.send_to(&target.hostname, config_msg).await {
-                    tracing::warn!(
-                        hostname = %target.hostname,
-                        schedule_id,
-                        error = %e,
-                        "sequential: agent not connected for pre-run config push, skipping target"
-                    );
-                    // Signal tick() that we've attempted the first target
-                    if let Some(tx) = triggered_tx.take() {
-                        let _ = tx.send(());
-                    }
-                    match on_failure {
-                        OnFailure::Stop => break 'targets,
-                        OnFailure::Continue => continue 'targets,
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    hostname = %target.hostname,
-                    schedule_id,
-                    error = %e,
-                    "sequential: failed to assemble config, skipping target"
-                );
-                // Signal tick() that we've attempted the first target
-                if let Some(tx) = triggered_tx.take() {
-                    let _ = tx.send(());
-                }
-                match on_failure {
-                    OnFailure::Stop => break 'targets,
-                    OnFailure::Continue => continue 'targets,
-                }
-            }
-        }
-
-        let repo_id = RepoId(target.repo_id);
-        let msg = build_trigger_msg(schedule_type, repo_id, schedule_id, &run_id);
-        let action = schedule_type_label(schedule_type);
-
-        match registry.send_to(&target.hostname, msg).await {
-            Ok(()) => {
-                tracing::info!(
-                    hostname = %target.hostname,
-                    repo_id = target.repo_id,
-                    action,
-                    schedule_id,
-                    "sequential: triggered"
-                );
-                // Signal tick() that the first target's messages are now in the channel.
-                if let Some(tx) = triggered_tx.take() {
-                    let _ = tx.send(());
-                }
-                // Mark the repo as actively in use for the lifetime of the lock guard
-                // (not just while the agent happens to be reporting progress), so the
-                // repo detail page can show that it's locked right now rather than
-                // only ever showing the last completed operation.
-                repo_op_tracker
-                    .set(
-                        target.repo_id,
-                        repo_op_kind_for(schedule_type),
-                        target.hostname.clone(),
-                    )
-                    .await;
-                ui_broadcast.send(ServerToUi::RepoOpChanged {
-                    repo_id: target.repo_id,
-                    op: repo_op_tracker.get(target.repo_id).await,
-                });
-                if !marked_triggered {
-                    match calculate_next_run(&cron, now, tz) {
-                        Ok(next) => {
-                            if let Err(e) =
-                                db::mark_schedule_triggered(&pool, schedule_id, now, next).await
-                            {
-                                tracing::error!(
-                                    schedule_id,
-                                    error = %e,
-                                    "sequential: failed to mark schedule triggered"
-                                );
-                            } else {
-                                marked_triggered = true;
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                schedule_id,
-                                cron = %cron,
-                                error = %e,
-                                "sequential: invalid cron expression"
-                            );
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    hostname = %target.hostname,
-                    repo_id = target.repo_id,
-                    action,
-                    schedule_id,
-                    error = %e,
-                    "sequential: agent not connected, skipping target"
-                );
-                // Signal tick() that we've attempted the first target
-                if let Some(tx) = triggered_tx.take() {
-                    let _ = tx.send(());
-                }
-                match on_failure {
-                    OnFailure::Stop => break 'targets,
-                    OnFailure::Continue => continue 'targets,
-                }
-            }
-        }
-
-        let hostname = target.hostname.clone();
-        let repo_id_val = target.repo_id;
-
-        let outcome =
-            completion_bus::wait_for_completion(&registry, rx, &hostname, repo_id_val).await;
-
-        repo_op_tracker.clear(repo_id_val).await;
-        ui_broadcast.send(ServerToUi::RepoOpChanged {
-            repo_id: repo_id_val,
-            op: None,
-        });
-
-        let success = match outcome {
-            completion_bus::CompletionOutcome::Success => true,
-            completion_bus::CompletionOutcome::Failed => false,
-            completion_bus::CompletionOutcome::AgentDisconnected => {
-                tracing::error!(
-                    schedule_id,
-                    hostname = %target.hostname,
-                    repo_id = target.repo_id,
-                    "sequential: agent disconnected before reporting completion"
-                );
-                false
-            }
-        };
-
-        if !success {
-            match on_failure {
-                OnFailure::Stop => {
-                    tracing::warn!(
-                        schedule_id,
-                        hostname = %target.hostname,
-                        "sequential: stopping remaining targets due to failure"
-                    );
-                    break 'targets;
-                }
-                OnFailure::Continue => {}
-            }
+    for target in &targets {
+        match run_sequential_target(
+            &target_ctx,
+            target,
+            &mut marked_triggered,
+            &mut triggered_tx,
+        )
+        .await
+        {
+            TargetControl::Continue => {}
+            TargetControl::Stop => break,
         }
     }
+}
+
+async fn run_sequential_target(
+    ctx: &SequentialTargetCtx<'_>,
+    target: &DueScheduleRow,
+    marked_triggered: &mut bool,
+    triggered_tx: &mut Option<tokio::sync::oneshot::Sender<()>>,
+) -> TargetControl {
+    let schedule_id = ctx.schedule_id;
+    let Ok(schedule_type) = target.schedule_type.parse::<ScheduleType>() else {
+        tracing::error!(
+            schedule_id,
+            schedule_type = %target.schedule_type,
+            "sequential: invalid schedule type in database, skipping target"
+        );
+        return match ctx.on_failure {
+            OnFailure::Stop => TargetControl::Stop,
+            OnFailure::Continue => TargetControl::Continue,
+        };
+    };
+
+    // Subscribe before sending so we don't miss the completion event.
+    let rx = ctx.completion_bus.subscribe();
+
+    // Acquire the per-repo lock to prevent concurrent backups across schedules.
+    let _repo_guard = ctx.repo_lock.acquire(target.repo_id).await;
+
+    ctx.tunnel_manager
+        .ensure_agent_tunnel_connected(target.agent_id)
+        .await;
+
+    if !push_pre_run_config(ctx, target).await {
+        signal_first_target_attempted(triggered_tx);
+        return match ctx.on_failure {
+            OnFailure::Stop => TargetControl::Stop,
+            OnFailure::Continue => TargetControl::Continue,
+        };
+    }
+
+    let repo_id = RepoId(target.repo_id);
+    let msg = build_trigger_msg(schedule_type, repo_id, schedule_id, ctx.run_id);
+    let action = schedule_type_label(schedule_type);
+
+    match ctx.registry.send_to(&target.hostname, msg).await {
+        Ok(()) => {
+            tracing::info!(
+                hostname = %target.hostname,
+                repo_id = target.repo_id,
+                action,
+                schedule_id,
+                "sequential: triggered"
+            );
+            // Signal tick() that the first target's messages are now in the channel.
+            signal_first_target_attempted(triggered_tx);
+            // Mark the repo as actively in use for the lifetime of the lock guard
+            // (not just while the agent happens to be reporting progress), so the
+            // repo detail page can show that it's locked right now rather than
+            // only ever showing the last completed operation.
+            ctx.repo_op_tracker
+                .set(
+                    target.repo_id,
+                    repo_op_kind_for(schedule_type),
+                    target.hostname.clone(),
+                )
+                .await;
+            ctx.ui_broadcast.send(ServerToUi::RepoOpChanged {
+                repo_id: target.repo_id,
+                op: ctx.repo_op_tracker.get(target.repo_id).await,
+            });
+            if !*marked_triggered {
+                mark_schedule_triggered_once(ctx, marked_triggered).await;
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                hostname = %target.hostname,
+                repo_id = target.repo_id,
+                action,
+                schedule_id,
+                error = %e,
+                "sequential: agent not connected, skipping target"
+            );
+            // Signal tick() that we've attempted the first target
+            signal_first_target_attempted(triggered_tx);
+            return match ctx.on_failure {
+                OnFailure::Stop => TargetControl::Stop,
+                OnFailure::Continue => TargetControl::Continue,
+            };
+        }
+    }
+
+    await_target_completion(ctx, target, rx).await
+}
+
+fn signal_first_target_attempted(triggered_tx: &mut Option<tokio::sync::oneshot::Sender<()>>) {
+    if let Some(tx) = triggered_tx.take() {
+        let _ = tx.send(());
+    }
+}
+
+/// Pushes a fresh config to the target agent before triggering the run.
+/// Returns `false` (after logging) if the config could not be assembled or
+/// the agent is unreachable, so the caller can apply the schedule's
+/// `on_failure` policy.
+async fn push_pre_run_config(ctx: &SequentialTargetCtx<'_>, target: &DueScheduleRow) -> bool {
+    let schedule_id = ctx.schedule_id;
+    match config_assembler::assemble_config(ctx.pool, ctx.encryption_key, &target.hostname).await {
+        Ok(config) => {
+            let config_msg = ServerToAgent::ConfigUpdate(config);
+            if let Err(e) = ctx.registry.send_to(&target.hostname, config_msg).await {
+                tracing::warn!(
+                    hostname = %target.hostname,
+                    schedule_id,
+                    error = %e,
+                    "sequential: agent not connected for pre-run config push, skipping target"
+                );
+                return false;
+            }
+            true
+        }
+        Err(e) => {
+            tracing::warn!(
+                hostname = %target.hostname,
+                schedule_id,
+                error = %e,
+                "sequential: failed to assemble config, skipping target"
+            );
+            false
+        }
+    }
+}
+
+async fn mark_schedule_triggered_once(ctx: &SequentialTargetCtx<'_>, marked_triggered: &mut bool) {
+    let schedule_id = ctx.schedule_id;
+    match calculate_next_run(ctx.cron, ctx.now, ctx.tz) {
+        Ok(next) => {
+            if let Err(e) = db::mark_schedule_triggered(ctx.pool, schedule_id, ctx.now, next).await
+            {
+                tracing::error!(
+                    schedule_id,
+                    error = %e,
+                    "sequential: failed to mark schedule triggered"
+                );
+            } else {
+                *marked_triggered = true;
+            }
+        }
+        Err(e) => {
+            tracing::error!(
+                schedule_id,
+                cron = %ctx.cron,
+                error = %e,
+                "sequential: invalid cron expression"
+            );
+        }
+    }
+}
+
+async fn await_target_completion(
+    ctx: &SequentialTargetCtx<'_>,
+    target: &DueScheduleRow,
+    rx: tokio::sync::broadcast::Receiver<completion_bus::OperationOutcome>,
+) -> TargetControl {
+    let schedule_id = ctx.schedule_id;
+    let hostname = target.hostname.clone();
+    let repo_id_val = target.repo_id;
+
+    let outcome =
+        completion_bus::wait_for_completion(ctx.registry, rx, &hostname, repo_id_val).await;
+
+    ctx.repo_op_tracker.clear(repo_id_val).await;
+    ctx.ui_broadcast.send(ServerToUi::RepoOpChanged {
+        repo_id: repo_id_val,
+        op: None,
+    });
+
+    let success = match outcome {
+        completion_bus::CompletionOutcome::Success => true,
+        completion_bus::CompletionOutcome::Failed => false,
+        completion_bus::CompletionOutcome::AgentDisconnected => {
+            tracing::error!(
+                schedule_id,
+                hostname = %target.hostname,
+                repo_id = target.repo_id,
+                "sequential: agent disconnected before reporting completion"
+            );
+            false
+        }
+    };
+
+    if !success {
+        match ctx.on_failure {
+            OnFailure::Stop => {
+                tracing::warn!(
+                    schedule_id,
+                    hostname = %target.hostname,
+                    "sequential: stopping remaining targets due to failure"
+                );
+                return TargetControl::Stop;
+            }
+            OnFailure::Continue => {}
+        }
+    }
+
+    TargetControl::Continue
 }
 
 #[cfg(test)]
@@ -910,8 +990,12 @@ esac
         .await
         .unwrap();
 
-        let stale_started_at = Utc::now() - chrono::Duration::days(1);
-        let stale_finished_at = stale_started_at + chrono::Duration::minutes(5);
+        let stale_started_at = Utc::now()
+            .checked_sub_signed(chrono::Duration::days(1))
+            .unwrap();
+        let stale_finished_at = stale_started_at
+            .checked_add_signed(chrono::Duration::minutes(5))
+            .unwrap();
         sqlx::query!(
             "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
              status, original_size, compressed_size, deduplicated_size, repo_unique_csize, \
@@ -1025,7 +1109,9 @@ esac
         db::insert_schedule_targets(pool, schedule.id, &[(agent.id, 0)])
             .await
             .unwrap();
-        let past = Utc::now() - chrono::Duration::hours(1);
+        let past = Utc::now()
+            .checked_sub_signed(chrono::Duration::hours(1))
+            .unwrap();
         db::set_next_run_at(pool, schedule.id, past).await.unwrap();
         (repo.id, schedule.id)
     }
@@ -1040,7 +1126,7 @@ esac
         rx
     }
 
-    /// tick() must send ConfigUpdate *before* the run trigger so the agent
+    /// `tick()` must send `ConfigUpdate` *before* the run trigger so the agent
     /// always executes with the current config.
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
@@ -1085,7 +1171,7 @@ esac
         }
     }
 
-    /// ConfigUpdate sent before each trigger must reflect the *current* global
+    /// `ConfigUpdate` sent before each trigger must reflect the *current* global
     /// excludes, not those that were in place when the schedule was created.
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
@@ -1136,7 +1222,7 @@ esac
         }
     }
 
-    /// When the target agent is not connected, tick() must not error and must
+    /// When the target agent is not connected, `tick()` must not error and must
     /// leave the schedule in due state (not mark it as triggered).
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]

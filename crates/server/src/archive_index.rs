@@ -19,12 +19,17 @@ use crate::{
     error::ApiError,
 };
 
+/// Status of an archive content indexing job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum IndexStatus {
+    /// Index job not yet started.
     Pending,
+    /// Indexing is in progress.
     Indexing,
+    /// Indexing completed successfully.
     Done,
+    /// Indexing failed.
     Failed,
 }
 
@@ -43,7 +48,7 @@ impl std::str::FromStr for IndexStatus {
     }
 }
 
-/// Returns the `archives.id` for the given (repo_id, archive_name), creating the row if absent.
+/// Returns the `archives.id` for the given `(repo_id, archive_name)`, creating the row if absent.
 async fn get_or_create_archive_id(
     pool: &PgPool,
     repo_id: i64,
@@ -60,6 +65,9 @@ async fn get_or_create_archive_id(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_index_status(
     pool: &PgPool,
     repo_id: i64,
@@ -82,6 +90,12 @@ pub async fn get_index_status(
 /// statement never grows big enough to trip slow-statement alerts or timeouts.
 const INSERT_CHUNK: usize = 5000;
 
+#[derive(sqlx::FromRow)]
+struct ArchivePathRow {
+    id: i64,
+    path: String,
+}
+
 async fn ensure_archive_paths(
     pool: &PgPool,
     repo_id: i64,
@@ -90,12 +104,6 @@ async fn ensure_archive_paths(
     let mut unique_paths = paths.to_vec();
     unique_paths.sort_unstable();
     unique_paths.dedup();
-
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        id: i64,
-        path: String,
-    }
 
     let mut map = HashMap::with_capacity(unique_paths.len());
     for chunk in unique_paths.chunks(INSERT_CHUNK) {
@@ -110,7 +118,7 @@ async fn ensure_archive_paths(
         .map_err(ApiError::Database)?;
 
         let rows = sqlx::query_as!(
-            Row,
+            ArchivePathRow,
             "SELECT id, path FROM archive_paths WHERE repo_id = $1 AND path = ANY($2::text[])",
             repo_id,
             chunk,
@@ -127,6 +135,10 @@ async fn ensure_archive_paths(
 
 /// Atomically claim the indexing job and spawn a background task if we won the race.
 /// Returns the current status after the claim attempt.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn ensure_indexed(
     pool: PgPool,
     encryption_key: [u8; 32],
@@ -180,6 +192,10 @@ pub async fn ensure_indexed(
 /// Archive names in this repository whose content index is already complete.
 /// A full resync skips these: borg archives are immutable, so a finished
 /// index never needs to be rebuilt.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_indexed_archive_names(
     pool: &PgPool,
     repo_id: i64,
@@ -196,6 +212,10 @@ pub async fn list_indexed_archive_names(
 }
 
 /// Ensure an index job row exists so `run_indexing` can transition it.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn ensure_index_job(
     pool: &PgPool,
     repo_id: i64,
@@ -213,6 +233,9 @@ pub async fn ensure_index_job(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn run_indexing<F: FnMut(u64, Option<&str>)>(
     pool: &PgPool,
     encryption_key: &[u8; 32],
@@ -237,6 +260,9 @@ pub async fn run_indexing<F: FnMut(u64, Option<&str>)>(
     .await
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn run_indexing_with_lock_held<F: FnMut(u64, Option<&str>)>(
     pool: &PgPool,
     encryption_key: &[u8; 32],
@@ -312,15 +338,20 @@ async fn run_indexing_impl<F: FnMut(u64, Option<&str>)>(
     }
 }
 
-async fn index_archive<F: FnMut(u64, Option<&str>)>(
-    pool: &PgPool,
-    encryption_key: &[u8; 32],
-    repo_id: i64,
-    archive_id: i64,
+/// Runs `borg list --json-lines` for the archive, parsing each output line
+/// into a [`ContentEntry`] and reporting progress via `on_progress` every
+/// ~300ms. Drains stderr concurrently with stdout: borg writes lock-wait
+/// notices and warnings to stderr, and if that pipe fills (~64 KiB) while
+/// stdout is still being read, borg blocks on the write, stdout stalls, and
+/// `child.wait()` deadlocks with the repository lock held.
+async fn borg_list_archive_entries<F: FnMut(u64, Option<&str>)>(
+    borg_repo: &str,
+    env: &std::collections::HashMap<String, String>,
     archive_name: &str,
     on_progress: &mut F,
-) -> Result<i64, ApiError> {
-    let (borg_repo, env) = get_repo_env(pool, encryption_key, repo_id).await?;
+) -> Result<Vec<ContentEntry>, ApiError> {
+    const LINE_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
     let repo_archive = format!("{borg_repo}::{archive_name}");
 
     let mut child = Borg::new()
@@ -332,7 +363,7 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
                 LOCK_WAIT_SECS,
                 &repo_archive,
             ],
-            &env,
+            env,
         )
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
 
@@ -340,10 +371,6 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
         return Err(ApiError::Internal("no stdout from borg".to_string()));
     };
 
-    // Drain stderr concurrently. borg writes lock-wait notices and warnings to
-    // stderr; if that pipe fills (~64 KiB) while we are still reading stdout, borg
-    // blocks on the write, stdout stalls, and `child.wait()` deadlocks with the
-    // repository lock held. Reading both streams concurrently avoids that.
     let stderr = child.take_stderr();
     let stderr_task = tokio::spawn(async move {
         let mut buf = String::new();
@@ -357,7 +384,6 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
     let mut raw: Vec<ContentEntry> = Vec::new();
     let mut lines = BufReader::new(stdout).lines();
     let mut last_emit = std::time::Instant::now();
-    const LINE_READ_TIMEOUT: Duration = Duration::from_secs(30);
     loop {
         let line = tokio::time::timeout(LINE_READ_TIMEOUT, lines.next_line())
             .await
@@ -374,11 +400,29 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
             continue;
         };
         raw.push(ContentEntry {
-            entry_type: v["type"].as_str().unwrap_or("").to_string(),
-            path: v["path"].as_str().map_or_else(String::new, normalize_path),
-            size: v["size"].as_i64().unwrap_or(0),
-            mtime: v["mtime"].as_str().unwrap_or("").to_string(),
-            mode: v["mode"].as_str().unwrap_or("").to_string(),
+            entry_type: v
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            path: v
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .map_or_else(String::new, normalize_path),
+            size: v
+                .get("size")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0),
+            mtime: v
+                .get("mtime")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            mode: v
+                .get("mode")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string(),
         });
         if last_emit.elapsed() >= std::time::Duration::from_millis(300) {
             let current = raw.last().map(|entry| entry.path.as_str());
@@ -400,7 +444,23 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
         return Err(classify_borg_error(status.code().unwrap_or(1), &stderr_str));
     }
 
-    // Build the full set of entries, synthesising missing ancestor directories.
+    Ok(raw)
+}
+
+struct ExpandedArchiveEntries {
+    paths: Vec<String>,
+    parent_paths: Vec<String>,
+    entry_types: Vec<String>,
+    sizes: Vec<i64>,
+    mtimes: Vec<String>,
+    modes: Vec<String>,
+    path_values: Vec<String>,
+}
+
+/// Flattens the raw `borg list` entries into parallel column vectors ready
+/// for bulk insert, synthesising any missing ancestor directories along the
+/// way (borg only lists the leaf entries actually present in the archive).
+fn expand_entries_with_ancestors(raw: Vec<ContentEntry>) -> ExpandedArchiveEntries {
     let mut paths: Vec<String> = Vec::new();
     let mut parent_paths: Vec<String> = Vec::new();
     let mut entry_types: Vec<String> = Vec::new();
@@ -434,11 +494,14 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
         // Ensure all ancestor directories are present.
         let segments: Vec<&str> = entry.path.split('/').collect();
         for depth in 1..segments.len() {
-            let dir_path = segments[..depth].join("/");
+            let dir_path = segments.get(..depth).unwrap_or(&[]).join("/");
             let dir_parent = if depth == 1 {
                 String::new()
             } else {
-                segments[..depth - 1].join("/")
+                segments
+                    .get(..depth.saturating_sub(1))
+                    .unwrap_or(&[])
+                    .join("/")
             };
             add(
                 dir_path,
@@ -464,8 +527,90 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
         );
     }
 
+    ExpandedArchiveEntries {
+        paths,
+        parent_paths,
+        entry_types,
+        sizes,
+        mtimes,
+        modes,
+        path_values: path_values.into_iter().collect(),
+    }
+}
+
+/// Inserts the flattened archive-file rows in chunks rather than one giant
+/// statement: archives with millions of files would otherwise build a
+/// single query large enough to trip slow-statement alerts and statement
+/// timeouts.
+struct ArchiveFileColumns<'a> {
+    path_ids: &'a [i64],
+    parent_path_ids: &'a [i64],
+    entry_types: &'a [String],
+    sizes: &'a [i64],
+    mtimes: &'a [String],
+    modes: &'a [String],
+}
+
+async fn insert_archive_files_chunked(
+    pool: &PgPool,
+    archive_id: i64,
+    columns: &ArchiveFileColumns<'_>,
+) -> Result<(), ApiError> {
+    let ArchiveFileColumns {
+        path_ids,
+        parent_path_ids,
+        entry_types,
+        sizes,
+        mtimes,
+        modes,
+    } = *columns;
+
+    let mut offset = 0;
+    while offset < path_ids.len() {
+        let end = offset.saturating_add(INSERT_CHUNK).min(path_ids.len());
+        sqlx::query!(
+            "INSERT INTO archive_files (archive_id, path_id, parent_path_id, entry_type, size, \
+             mtime, mode) SELECT $1, unnest($2::bigint[]), unnest($3::bigint[]), \
+             unnest($4::text[]), unnest($5::bigint[]), unnest($6::text[]), unnest($7::text[]) ON \
+             CONFLICT DO NOTHING",
+            archive_id,
+            path_ids.get(offset..end).unwrap_or(&[]) as &[i64],
+            parent_path_ids.get(offset..end).unwrap_or(&[]) as &[i64],
+            entry_types.get(offset..end).unwrap_or(&[]) as &[String],
+            sizes.get(offset..end).unwrap_or(&[]) as &[i64],
+            mtimes.get(offset..end).unwrap_or(&[]) as &[String],
+            modes.get(offset..end).unwrap_or(&[]) as &[String],
+        )
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+        offset = end;
+    }
+    Ok(())
+}
+
+async fn index_archive<F: FnMut(u64, Option<&str>)>(
+    pool: &PgPool,
+    encryption_key: &[u8; 32],
+    repo_id: i64,
+    archive_id: i64,
+    archive_name: &str,
+    on_progress: &mut F,
+) -> Result<i64, ApiError> {
+    let (borg_repo, env) = get_repo_env(pool, encryption_key, repo_id).await?;
+    let raw = borg_list_archive_entries(&borg_repo, &env, archive_name, on_progress).await?;
+
+    let ExpandedArchiveEntries {
+        paths,
+        parent_paths,
+        entry_types,
+        sizes,
+        mtimes,
+        modes,
+        path_values,
+    } = expand_entries_with_ancestors(raw);
+
     let file_count = i64::try_from(paths.len()).unwrap_or(i64::MAX);
-    let path_values = path_values.into_iter().collect::<Vec<_>>();
     let path_id_map = ensure_archive_paths(pool, repo_id, &path_values).await?;
     let path_id = |path: &str| -> Result<i64, ApiError> {
         path_id_map
@@ -483,34 +628,26 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
         .map(|path| path_id(path))
         .collect::<Result<_, _>>()?;
 
-    // Insert in chunks rather than one giant statement: archives with millions
-    // of files would otherwise build a single query large enough to trip slow-
-    // statement alerts and statement timeouts.
-    let mut offset = 0;
-    while offset < path_ids.len() {
-        let end = (offset + INSERT_CHUNK).min(path_ids.len());
-        sqlx::query!(
-            "INSERT INTO archive_files (archive_id, path_id, parent_path_id, entry_type, size, \
-             mtime, mode) SELECT $1, unnest($2::bigint[]), unnest($3::bigint[]), \
-             unnest($4::text[]), unnest($5::bigint[]), unnest($6::text[]), unnest($7::text[]) ON \
-             CONFLICT DO NOTHING",
-            archive_id,
-            &path_ids[offset..end] as &[i64],
-            &parent_path_ids[offset..end] as &[i64],
-            &entry_types[offset..end] as &[String],
-            &sizes[offset..end] as &[i64],
-            &mtimes[offset..end] as &[String],
-            &modes[offset..end] as &[String],
-        )
-        .execute(pool)
-        .await
-        .map_err(ApiError::Database)?;
-        offset = end;
-    }
+    insert_archive_files_chunked(
+        pool,
+        archive_id,
+        &ArchiveFileColumns {
+            path_ids: &path_ids,
+            parent_path_ids: &parent_path_ids,
+            entry_types: &entry_types,
+            sizes: &sizes,
+            mtimes: &mtimes,
+            modes: &modes,
+        },
+    )
+    .await?;
 
     Ok(file_count)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn query_dir(
     pool: &PgPool,
     repo_id: i64,
@@ -620,7 +757,7 @@ mod tests {
         let segments: Vec<&str> = path.split('/').collect();
         let mut dirs: Vec<String> = Vec::new();
         for depth in 1..segments.len() {
-            dirs.push(segments[..depth].join("/"));
+            dirs.push(segments.get(..depth).unwrap_or(&[]).join("/"));
         }
         assert_eq!(dirs, vec!["a", "a/b", "a/b/c"]);
     }

@@ -28,12 +28,22 @@ impl From<db::RepoPermissionRow> for RepoPermissionResponse {
     }
 }
 
+/// Request payload for setting a user's repository permissions.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
+)]
 pub struct UpsertPermissionRequest {
+    /// Permission to view the repository.
     pub can_view: bool,
+    /// Permission to back up to the repository.
     pub can_backup: bool,
+    /// Permission to modify schedules for the repository.
     pub can_modify_schedules: bool,
+    /// Permission to extract files from the repository.
     pub can_extract: bool,
+    /// Permission to delete archives from the repository.
     pub can_delete: bool,
 }
 
@@ -51,6 +61,9 @@ pub struct UpsertPermissionRequest {
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_for_repo(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -82,6 +95,9 @@ pub async fn list_for_repo(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn upsert(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -119,6 +135,9 @@ pub async fn upsert(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_for_user(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -133,6 +152,9 @@ pub async fn list_for_user(
     Ok(Json(perms))
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Forbidden`] if the caller lacks permission for this operation.
 pub async fn check_repo_permission(
     pool: &sqlx::PgPool,
     auth: &AuthUser,
@@ -184,6 +206,9 @@ impl From<&str> for RepoVisibility {
     }
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn is_visible_to_user(
     pool: &sqlx::PgPool,
     user_id: i64,

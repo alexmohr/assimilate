@@ -11,8 +11,10 @@ use crate::{
     error::{ApiError, ApiJson},
 };
 
+/// Request payload for setting global exclude patterns.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SetGlobalExcludesRequest {
+    /// Raw exclude pattern text (one pattern per line).
     pub raw_text: String,
 }
 
@@ -27,6 +29,9 @@ pub struct SetGlobalExcludesRequest {
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn get_excludes(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -47,6 +52,9 @@ pub async fn get_excludes(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn set_excludes(
     State(state): State<AppState>,
     _auth: AuthUser,

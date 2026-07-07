@@ -56,10 +56,14 @@ fn secure_cookie_flag() -> &'static str {
     CookieSecurity::from(std::env::var("ASSIMILATE_SECURE_COOKIES").ok()).cookie_flag()
 }
 
+/// Authenticated user extracted from a session cookie or bearer token.
 #[derive(Debug, Clone)]
 pub struct AuthUser {
+    /// The user's database ID.
     pub user_id: i64,
+    /// The user's username.
     pub username: String,
+    /// Session ID if authenticated via cookie, None if via bearer token.
     pub session_id: Option<String>,
 }
 
@@ -126,6 +130,7 @@ async fn try_bearer_auth(parts: &Parts, state: &AppState) -> Result<Option<AuthU
     }))
 }
 
+/// Extractor that requires the current user to have admin (delete repo) permission.
 pub struct RequireAdmin(pub AuthUser);
 
 impl FromRequestParts<AppState> for RequireAdmin {
@@ -163,16 +168,22 @@ fn extract_session_cookie(parts: &Parts) -> Result<String, ApiError> {
     Err(ApiError::Unauthorized("not authenticated".to_string()))
 }
 
+/// Login credentials.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct LoginRequest {
+    /// Username.
     pub username: String,
+    /// Password.
     pub password: String,
+    /// Whether to extend the session for 7 days.
     #[serde(default)]
     pub remember_me: bool,
 }
 
+/// Response for a session refresh operation.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RefreshResponse {
+    /// New session expiration timestamp.
     pub session_expires_at: DateTime<Utc>,
 }
 
@@ -190,6 +201,13 @@ pub struct RefreshResponse {
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::TooManyRequests`]: the caller has exceeded a rate limit
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::Unauthorized`]: the caller is not authenticated
+/// - [`ApiError::Internal`]: an internal error occurs
 pub async fn login(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -235,7 +253,9 @@ pub async fn login(
     } else {
         (24, 86400)
     };
-    let expires_at = Utc::now() + Duration::hours(ttl_hours);
+    let expires_at = Utc::now()
+        .checked_add_signed(Duration::hours(ttl_hours))
+        .unwrap_or_else(Utc::now);
 
     let hashed_id = hash_token(&session_id);
     db::insert_session(
@@ -281,6 +301,11 @@ pub async fn login(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::Internal`]: an internal error occurs
 pub async fn logout(State(state): State<AppState>, auth: AuthUser) -> Result<Response, ApiError> {
     let Some(session_id) = &auth.session_id else {
         return Err(ApiError::BadRequest(
@@ -313,6 +338,9 @@ pub async fn logout(State(state): State<AppState>, auth: AuthUser) -> Result<Res
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn me(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -350,6 +378,11 @@ pub async fn me(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::Internal`]: an internal error occurs
 pub async fn refresh_session(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -368,11 +401,13 @@ pub async fn refresh_session(
         ));
     }
 
-    let new_expires_at = Utc::now() + Duration::days(7);
+    let new_expires_at = Utc::now()
+        .checked_add_signed(Duration::days(7))
+        .unwrap_or_else(Utc::now);
     db::extend_session(&state.pool, &hashed_id, new_expires_at).await?;
 
     let secure_flag = secure_cookie_flag();
-    let max_age_secs = 7 * 86400_i64;
+    let max_age_secs = 7 * 86400i64;
     let cookie = format!(
         "session={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age_secs}{secure_flag}"
     );
@@ -390,8 +425,10 @@ pub async fn refresh_session(
     Ok(response)
 }
 
+/// Request payload for changing the current user's password.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ChangePasswordRequest {
+    /// The new password (minimum 8 characters).
     pub new_password: String,
 }
 
@@ -409,6 +446,9 @@ pub struct ChangePasswordRequest {
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn change_password(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -439,6 +479,9 @@ pub async fn change_password(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn get_preferences(
     auth: AuthUser,
     State(state): State<AppState>,
@@ -461,6 +504,9 @@ pub async fn get_preferences(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn update_preferences(
     auth: AuthUser,
     State(state): State<AppState>,

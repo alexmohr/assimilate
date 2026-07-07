@@ -12,15 +12,22 @@ use crate::types::{
     AgentConfig, AgentStatus, BackupReport, BorgEncryption, DryRunFile, RepoId, SearchEntry,
 };
 
+/// The kind of repository operation being performed.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum RepoOpKind {
+    /// Backup operation initiated by the agent.
     AgentBackup,
+    /// Check operation initiated by the agent.
     AgentCheck,
+    /// Verify operation initiated by the agent.
     AgentVerify,
+    /// Sync operation initiated by the server.
     ServerSync,
+    /// Break a lock on the repository.
     BreakLock,
+    /// Delete one or more archives from the repository.
     DeleteArchive,
 }
 
@@ -33,319 +40,541 @@ impl FromStr for RepoOpKind {
     }
 }
 
+/// An active operation on a repository, including its queued depth.
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema, TS)]
 #[ts(export)]
 pub struct ActiveRepoOp {
+    /// The kind of operation being performed.
     pub kind: RepoOpKind,
+    /// The name of the actor (agent hostname) performing the operation.
     pub actor: String,
+    /// Timestamp when the operation started.
     pub started_at: DateTime<Utc>,
     /// Number of further operations waiting behind this one for the repository.
     #[serde(default)]
     pub queued: u32,
 }
 
+/// Messages sent from the server to an agent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum ServerToAgent {
+    /// Update the agent's configuration.
     ConfigUpdate(AgentConfig),
+    /// Instruct the agent to run a backup immediately.
     RunBackupNow {
+        /// The repository to back up.
         repo_id: RepoId,
+        /// The schedule that triggered this backup, if any.
         #[serde(default)]
         schedule_id: Option<i64>,
+        /// Optional opaque request identifier for correlating responses.
         #[serde(default)]
         request_id: Option<String>,
+        /// The run identifier for this backup execution.
         #[serde(default)]
         run_id: Option<String>,
     },
+    /// Instruct the agent to run a repository check immediately.
     RunCheckNow {
+        /// The repository to check.
         repo_id: RepoId,
+        /// Optional opaque request identifier for correlating responses.
         #[serde(default)]
         request_id: Option<String>,
     },
+    /// Instruct the agent to verify repository data immediately.
     RunVerifyNow {
+        /// The repository to verify.
         repo_id: RepoId,
+        /// Optional opaque request identifier for correlating responses.
         #[serde(default)]
         request_id: Option<String>,
     },
+    /// Instruct the agent to initialize a new borg repository.
     InitRepo {
+        /// Remote path for the repository.
         repo_path: String,
+        /// SSH username for the repository host.
         ssh_user: String,
+        /// SSH hostname for the repository host.
         ssh_host: String,
+        /// SSH port for the repository host.
         ssh_port: u16,
+        /// Passphrase for repository encryption.
         passphrase: String,
+        /// Encryption mode to use for the new repository.
         encryption: BorgEncryption,
+        /// Optional opaque request identifier for correlating responses.
         #[serde(default)]
         request_id: Option<String>,
     },
+    /// Instruct the agent to search archives on a repository.
     SearchArchive {
+        /// Request identifier for correlating results.
         request_id: String,
+        /// The repository to search.
         repo_id: RepoId,
+        /// Optional archive name filter.
         #[serde(default)]
         archive_name: Option<String>,
+        /// Glob pattern to match files against.
         pattern: String,
+        /// Maximum number of archives to search.
         #[serde(default)]
         max_archives: Option<u32>,
     },
+    /// Instruct the agent to restore files from an archive.
     RestoreFiles {
+        /// Request identifier for correlating results.
         request_id: String,
+        /// The repository containing the archive.
         repo_id: RepoId,
+        /// Name of the archive to restore from.
         archive_name: String,
+        /// Paths within the archive to restore.
         paths: Vec<String>,
+        /// Local target path for restored files.
         target_path: String,
     },
+    /// Instruct the agent to perform a dry-run of a backup schedule.
     DryRun {
+        /// Request identifier for correlating results.
         request_id: String,
+        /// The repository for the dry run.
         repo_id: RepoId,
+        /// The schedule to simulate.
         schedule_id: i64,
     },
+    /// Instruct the agent to export an archive from a repository.
     ExportArchive {
+        /// Request identifier for correlating results.
         request_id: String,
+        /// The repository containing the archive.
         repo_id: RepoId,
+        /// Name of the archive to export.
         archive_name: String,
     },
+    /// Instruct the agent to export a repository's encryption key.
     KeyExport {
+        /// Request identifier for correlating results.
         request_id: String,
+        /// The repository to export the key from.
         repo_id: RepoId,
     },
+    /// Instruct the agent to import a repository's encryption key.
     KeyImport {
+        /// Request identifier for correlating results.
         request_id: String,
+        /// The repository to import the key for.
         repo_id: RepoId,
+        /// The key data to import.
         key_data: String,
     },
+    /// Instruct the agent to change a repository's passphrase.
     ChangePassphrase {
+        /// Request identifier for correlating results.
         request_id: String,
+        /// The repository to change the passphrase for.
         repo_id: RepoId,
+        /// The new passphrase.
         new_passphrase: String,
     },
+    /// Instruct the agent to restart (reconnect with updated config).
     RestartAgent,
+    /// Instruct the agent to delete archives from a repository.
     DeleteArchives {
+        /// Request identifier for correlating results.
         request_id: String,
+        /// The repository containing the archives.
         repo_id: RepoId,
+        /// Names of the archives to delete.
         archive_names: Vec<String>,
     },
+    /// Instruct the agent to cancel a running backup.
     CancelBackup {
+        /// The repository whose backup should be cancelled.
         repo_id: RepoId,
     },
+    /// Heartbeat ping to check agent connectivity.
     Ping,
+    /// Notification that the server is shutting down.
     ShuttingDown,
 }
 
+/// Messages sent from an agent to the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum AgentToServer {
+    /// Initial handshake sent by the agent upon connecting.
     Hello {
+        /// Hostname of the agent machine.
         hostname: String,
+        /// Authentication token for the agent.
         token: String,
+        /// Version string of the agent binary.
         agent_version: String,
+        /// Git SHA of the agent build, if available.
         #[serde(default)]
         agent_git_sha: Option<String>,
+        /// Build timestamp, if available.
         #[serde(default)]
         agent_build_time: Option<String>,
+        /// Number of commits at build time, if available.
         #[serde(default)]
         agent_commit_count: Option<u32>,
+        /// Whether this agent version supports graceful restart.
         #[serde(default)]
         supports_restart: bool,
+        /// Reason restart is unavailable, if applicable.
         #[serde(default)]
         restart_unavailable_reason: Option<String>,
     },
+    /// Notification that a backup has started.
     BackupStarted {
+        /// The repository being backed up.
         repo_id: RepoId,
+        /// The schedule that triggered this backup, if any.
         #[serde(default)]
         schedule_id: Option<i64>,
+        /// Timestamp when the backup started.
         started_at: DateTime<Utc>,
+        /// The borg command being executed.
         #[serde(default)]
         borg_command: Option<String>,
+        /// The run identifier for this backup.
         #[serde(default)]
         run_id: Option<String>,
     },
+    /// Report that a backup completed.
     BackupCompleted {
+        /// The backup result report.
         report: BackupReport,
     },
+    /// Report that a backup was rejected (e.g., repo locked).
     BackupRejected {
+        /// The repository that rejected the backup.
         repo_id: RepoId,
+        /// Human-readable reason for rejection.
         reason: String,
     },
+    /// Report that a repository check completed.
     CheckCompleted {
+        /// The repository that was checked.
         repo_id: RepoId,
+        /// Whether the check succeeded.
         success: bool,
+        /// Duration of the check in seconds.
         duration_secs: i64,
+        /// Error message if the check failed.
         error_message: Option<String>,
     },
+    /// Report that a repository verification completed.
     VerifyCompleted {
+        /// The repository that was verified.
         repo_id: RepoId,
+        /// Whether the verification succeeded.
         success: bool,
+        /// Duration of the verification in seconds.
         duration_secs: i64,
+        /// Error message if verification failed.
         error_message: Option<String>,
+        /// Number of files verified.
         files_verified: i64,
     },
+    /// Report that a canary archive was verified.
     CanaryVerified {
+        /// The repository where the canary was verified.
         repo_id: RepoId,
+        /// Whether the canary verification succeeded.
         success: bool,
+        /// The canary nonce that was verified.
         nonce: String,
+        /// Name of the archive containing the canary.
         archive_name: String,
+        /// Error message if verification failed.
         error_message: Option<String>,
     },
+    /// Report that a repository initialization completed.
     InitRepoCompleted {
+        /// Path of the initialized repository.
         repo_path: String,
+        /// Whether initialization succeeded.
         success: bool,
+        /// Error message if initialization failed.
         error_message: Option<String>,
     },
+    /// Status update for a repository.
     StatusUpdate {
+        /// The repository whose status changed.
         repo_id: RepoId,
+        /// The new agent status.
         status: AgentStatus,
     },
+    /// Report that the agent failed to restart.
     RestartFailed {
+        /// Error message describing the failure.
         error_message: String,
     },
+    /// Results of an archive search.
     SearchResult {
+        /// Request identifier from the original search request.
         request_id: String,
+        /// Matching entries found.
         entries: Vec<SearchEntry>,
+        /// Whether this is the final batch of results.
         done: bool,
     },
+    /// Report that a file restore operation completed.
     RestoreCompleted {
+        /// Request identifier from the original restore request.
         request_id: String,
+        /// Whether the restore succeeded.
         success: bool,
+        /// Number of files restored.
         files_restored: u64,
+        /// Error message if the restore failed.
         error_message: Option<String>,
     },
+    /// Results of a dry-run backup simulation.
     DryRunResult {
+        /// Request identifier from the original dry-run request.
         request_id: String,
+        /// Files that would be included in the backup.
         files: Vec<DryRunFile>,
+        /// Total size of files in bytes.
         total_size: i64,
+        /// Error message if the dry run failed.
         error_message: Option<String>,
     },
+    /// Notification that an archive export is ready for download.
     ExportReady {
+        /// Request identifier from the original export request.
         request_id: String,
+        /// Whether the export succeeded.
         success: bool,
+        /// Error message if the export failed.
         error_message: Option<String>,
     },
+    /// Results of a key export operation.
     KeyExportResult {
+        /// Request identifier from the original key export request.
         request_id: String,
+        /// The exported key data.
         key_data: String,
+        /// Error message if the export failed.
         error_message: Option<String>,
     },
+    /// Results of a key import operation.
     KeyImportResult {
+        /// Request identifier from the original key import request.
         request_id: String,
+        /// Whether the import succeeded.
         success: bool,
+        /// Error message if the import failed.
         error_message: Option<String>,
     },
+    /// Confirmation that a passphrase was changed.
     PassphraseChanged {
+        /// Request identifier from the original change passphrase request.
         request_id: String,
+        /// Whether the change succeeded.
         success: bool,
+        /// Error message if the change failed.
         error_message: Option<String>,
     },
+    /// Progress update for a long-running operation.
     OperationProgress {
+        /// Request identifier for the operation.
         request_id: String,
+        /// Progress percentage (0-100).
         percent: u8,
+        /// Human-readable progress message.
         message: String,
     },
+    /// Notification that a long-running operation failed.
     OperationFailed {
+        /// Request identifier for the operation.
         request_id: String,
+        /// Error message describing the failure.
         error: String,
     },
+    /// Report that an encryption migration completed.
     MigrateEncryptionCompleted {
+        /// Request identifier from the original migration request.
         request_id: String,
+        /// Whether the migration succeeded.
         success: bool,
+        /// Error message if the migration failed.
         error_message: Option<String>,
     },
+    /// Results of an archive deletion operation.
     DeleteArchivesResult {
+        /// Request identifier from the original deletion request.
         request_id: String,
+        /// Whether the deletion succeeded.
         success: bool,
+        /// Number of archives deleted.
         deleted_count: u32,
+        /// Error message if the deletion failed.
         error_message: Option<String>,
     },
+    /// Notification that a backup was cancelled.
     BackupCancelled {
+        /// The repository whose backup was cancelled.
         repo_id: RepoId,
     },
+    /// Log line emitted during a backup operation.
     BackupLog {
+        /// The repository the log line relates to.
         repo_id: RepoId,
+        /// The schedule that triggered the backup, if any.
         #[serde(default)]
         schedule_id: Option<i64>,
+        /// The log line content.
         line: String,
     },
+    /// Response to a server ping.
     Pong,
 }
 
+/// The connection status of a reverse SSH tunnel.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum TunnelStatus {
+    /// The tunnel is connected and operational.
     Connected,
+    /// The tunnel is disconnected.
     Disconnected,
+    /// The tunnel is attempting to reconnect.
     Reconnecting,
-    Error { message: String },
+    /// The tunnel encountered an error.
+    Error {
+        /// Description of the error.
+        message: String,
+    },
 }
 
+/// Messages sent from the server to the UI (web client) via WebSocket.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "type", content = "payload")]
 #[ts(export)]
 pub enum ServerToUi {
+    /// Notification that an agent has connected.
     AgentConnected {
+        /// The hostname of the agent that connected.
         hostname: String,
     },
+    /// Notification that an agent has disconnected.
     AgentDisconnected {
+        /// The hostname of the agent that disconnected.
         hostname: String,
     },
+    /// Notification that a backup has started on an agent.
     BackupStarted {
+        /// The hostname of the agent running the backup.
         hostname: String,
+        /// The name of the backup target (repository).
         target_name: String,
+        /// The archive name being created, if known.
         #[serde(default)]
         archive_name: Option<String>,
+        /// The schedule that triggered this backup, if any.
         #[serde(default)]
         #[ts(type = "number | null")]
         schedule_id: Option<i64>,
     },
+    /// Notification that a backup has completed.
     BackupCompleted {
+        /// The hostname of the agent that ran the backup.
         hostname: String,
+        /// The name of the backup target (repository).
         target_name: String,
+        /// The backup result report.
         report: Box<BackupReport>,
     },
+    /// Notification that a repository check has completed.
     CheckCompleted {
+        /// The hostname of the agent that ran the check.
         hostname: String,
+        /// The name of the target that was checked.
         target_name: String,
+        /// Whether the check succeeded.
         success: bool,
+        /// Error message if the check failed.
         error_message: Option<String>,
     },
+    /// Notification that a repository verification has completed.
     VerifyCompleted {
+        /// The hostname of the agent that ran the verification.
         hostname: String,
+        /// The name of the target that was verified.
         target_name: String,
+        /// Whether the verification succeeded.
         success: bool,
+        /// Error message if verification failed.
         error_message: Option<String>,
     },
+    /// Notification that a canary archive has been verified.
     CanaryVerified {
+        /// The hostname of the agent that verified the canary.
         hostname: String,
+        /// The name of the target where the canary resides.
         target_name: String,
+        /// Whether the canary verification succeeded.
         success: bool,
+        /// Error message if verification failed.
         error_message: Option<String>,
     },
+    /// Notification that an agent's configuration has been updated.
     ConfigUpdated {
+        /// The hostname of the agent whose config was updated.
         hostname: String,
     },
+    /// Generic signal that data has changed and the UI should refresh.
     DataChanged,
+    /// Progress update for an import operation.
     ImportProgress {
+        /// The repository being imported.
         #[ts(type = "number")]
         repo_id: i64,
+        /// Current progress count.
         progress: i32,
+        /// Total items to import.
         total: i32,
+        /// Optional human-readable progress message.
         message: Option<String>,
     },
+    /// Notification that an SSH tunnel's status changed.
     TunnelStatusChanged {
+        /// The agent ID whose tunnel status changed.
         #[ts(type = "number")]
         agent_id: i64,
+        /// The hostname of the agent.
         hostname: String,
+        /// The new tunnel status.
         status: TunnelStatus,
     },
+    /// Notification that a repository operation has changed.
     RepoOpChanged {
+        /// The repository whose operation changed.
         #[ts(type = "number")]
         repo_id: i64,
+        /// The current operation, or `None` if no operation is active.
         op: Option<ActiveRepoOp>,
     },
+    /// Log line emitted during a backup.
     BackupLog {
+        /// The hostname of the agent generating the log.
         hostname: String,
+        /// The schedule that triggered the backup, if any.
         #[serde(default)]
         #[ts(type = "number | null")]
         schedule_id: Option<i64>,
+        /// The repository the log line relates to.
         #[ts(type = "number")]
         repo_id: i64,
+        /// The log line content.
         line: String,
     },
 }

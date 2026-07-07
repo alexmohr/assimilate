@@ -16,6 +16,7 @@ use crate::{error::ApiError, ssh};
 /// (`BORG_RELOCATED_REPO_ACCESS_IS_OK`) is intentionally *not* part of the base:
 /// it is added only by callers that have a confirmed pending relocation, so that
 /// unrelated operations never silently accept a moved repository.
+#[must_use]
 pub fn borg_base_env(passphrase: &str) -> HashMap<String, String> {
     let mut env = HashMap::from([
         ("BORG_PASSPHRASE".to_owned(), passphrase.to_owned()),
@@ -27,11 +28,17 @@ pub fn borg_base_env(passphrase: &str) -> HashMap<String, String> {
     env
 }
 
+/// Default SSH user for borg repository connections.
+#[must_use]
 pub fn default_ssh_user() -> String {
     "borg".to_string()
 }
 
 /// Validates that a field value is not empty, returning a `BadRequest` error with the field name.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub fn validate_non_empty(value: &str, field_name: &str) -> Result<(), ApiError> {
     if value.is_empty() {
         return Err(ApiError::BadRequest(format!(
@@ -43,6 +50,10 @@ pub fn validate_non_empty(value: &str, field_name: &str) -> Result<(), ApiError>
 
 /// Validates and normalizes the compression string from API requests.
 /// Accepts: "none", "lz4", "zstd", "zstd,3", "zlib", "zlib,6", or None (defaults to "lz4").
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub fn validate_compression(value: Option<&str>) -> Result<String, ApiError> {
     let s = value
         .map(str::trim)
@@ -59,6 +70,12 @@ pub fn validate_compression(value: Option<&str>) -> Result<String, ApiError> {
 }
 
 /// Hashes a password using bcrypt in a blocking task.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Internal`]: an internal error occurs
+/// - [`ApiError::Bcrypt`]: password hashing fails
 pub async fn hash_password(password: String) -> Result<String, ApiError> {
     tokio::task::spawn_blocking(move || bcrypt::hash(password, 10))
         .await
@@ -67,6 +84,10 @@ pub async fn hash_password(password: String) -> Result<String, ApiError> {
 }
 
 /// Verifies a password against a bcrypt hash in a blocking task.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Internal`] if an internal error occurs.
 pub async fn verify_password(password: String, hash: String) -> Result<bool, ApiError> {
     tokio::task::spawn_blocking(move || bcrypt::verify(password, &hash))
         .await
@@ -76,13 +97,21 @@ pub async fn verify_password(password: String, hash: String) -> Result<bool, Api
 
 /// Generates a cryptographically random hex string of the specified byte length.
 pub fn generate_random_hex(len_bytes: usize) -> String {
+    use std::fmt::Write as _;
+
     use rand::rngs::OsRng;
 
     let mut bytes = vec![0u8; len_bytes];
     rand::RngCore::fill_bytes(&mut OsRng, &mut bytes);
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    bytes.iter().fold(String::new(), |mut acc, b| {
+        let _ = write!(acc, "{b:02x}");
+        acc
+    })
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn validate_path_exists(
     ssh_host: &str,
     ssh_user: &str,

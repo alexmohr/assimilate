@@ -24,7 +24,9 @@ pub struct RepoOpTracker {
 impl RepoOpTracker {
     /// Record that an operation is waiting to run for this repository.
     pub async fn enqueue(&self, repo_id: i64) {
-        self.state.write().await.entry(repo_id).or_default().queued += 1;
+        let mut state = self.state.write().await;
+        let entry = state.entry(repo_id).or_default();
+        entry.queued = entry.queued.saturating_add(1);
     }
 
     /// Remove a previously enqueued operation that will no longer run.
@@ -84,6 +86,7 @@ impl RepoOpTracker {
             .map_or(0, |state| state.queued)
     }
 
+    /// Return the currently active operation for this repository, if any.
     pub async fn get(&self, repo_id: i64) -> Option<ActiveRepoOp> {
         let map = self.state.read().await;
         map.get(&repo_id).and_then(|state| {

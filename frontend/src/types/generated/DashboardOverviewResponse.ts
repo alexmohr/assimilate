@@ -6,11 +6,32 @@ import type { DashboardRepositoryCapacityResponse } from "./DashboardRepositoryC
 import type { DashboardSummaryCountersResponse } from "./DashboardSummaryCountersResponse";
 import type { DashboardUpcomingScheduleResponse } from "./DashboardUpcomingScheduleResponse";
 
+/**
+ * Response containing dashboard overview.
+ */
 export type DashboardOverviewResponse = {
+  /**
+   * Summary counters for the dashboard overview.
+   */
   summary: DashboardSummaryCountersResponse;
+  /**
+   * Dashboard findings.
+   */
   findings: Array<DashboardFindingResponse>;
+  /**
+   * Protection coverage data.
+   */
   protection: DashboardProtectionCoverageResponse;
+  /**
+   * Currently running operations.
+   */
   running_operations: Array<DashboardOperationResponse>;
+  /**
+   * Upcoming scheduled backups.
+   */
   upcoming_schedules: Array<DashboardUpcomingScheduleResponse>;
+  /**
+   * Repository capacity information.
+   */
   repository_capacity: Array<DashboardRepositoryCapacityResponse>;
 };

@@ -9,36 +9,51 @@ use axum::{
 };
 use serde_json::json;
 
+/// API error types with structured HTTP response mapping.
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
+    /// Resource not found (404).
     #[error("not found: {0}")]
     NotFound(String),
+    /// Invalid request (400).
     #[error("bad request: {0}")]
     BadRequest(String),
+    /// Unprocessable entity (422).
     #[error("unprocessable entity: {0}")]
     Unprocessable(String),
+    /// Authentication required (401).
     #[error("unauthorized: {0}")]
     Unauthorized(String),
+    /// Insufficient permissions (403).
     #[error("forbidden: {0}")]
     Forbidden(String),
+    /// Database query error.
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
+    /// Cryptographic operation error.
     #[error("crypto error: {0}")]
     Crypto(#[from] shared::crypto::CryptoError),
+    /// Password hashing error.
     #[error("bcrypt error: {0}")]
     Bcrypt(#[from] bcrypt::BcryptError),
+    /// Rate limited (429).
     #[error("too many requests: {0}")]
     TooManyRequests(String),
+    /// Resource conflict (409).
     #[error("conflict: {0}")]
     Conflict(String),
+    /// Upstream service error (502).
     #[error("bad gateway: {0}")]
     BadGateway(String),
+    /// Service temporarily unavailable (503).
     #[error("service unavailable: {0}")]
     ServiceUnavailable(String),
+    /// Unexpected internal error (500).
     #[error("internal error: {0}")]
     Internal(String),
 }
 
+/// JSON body extractor that returns `ApiError::BadRequest` on deserialization failure.
 pub struct ApiJson<T>(pub T);
 
 impl<S, T> FromRequest<S> for ApiJson<T>
@@ -70,10 +85,51 @@ fn simplify_serde_error(msg: &str) -> String {
 }
 
 fn generate_error_id() -> String {
+    use std::fmt::Write as _;
+
     use rand::RngCore;
     let mut bytes = [0u8; 8];
     rand::thread_rng().fill_bytes(&mut bytes);
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    bytes.iter().fold(String::new(), |mut acc, b| {
+        let _ = write!(acc, "{b:02x}");
+        acc
+    })
+}
+
+fn database_error_response(e: &sqlx::Error) -> (StatusCode, String, Option<String>) {
+    if let sqlx::Error::RowNotFound = e {
+        tracing::debug!("database row not found");
+        (
+            StatusCode::NOT_FOUND,
+            "resource not found".to_string(),
+            None,
+        )
+    } else if let Some(db_err) = e.as_database_error() {
+        if db_err.is_unique_violation() {
+            tracing::debug!(error = %db_err, "unique constraint violation");
+            (
+                StatusCode::CONFLICT,
+                "resource already exists".to_string(),
+                None,
+            )
+        } else {
+            let id = generate_error_id();
+            tracing::error!(error_id = %id, "database error: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "database error".to_string(),
+                Some(id),
+            )
+        }
+    } else {
+        let id = generate_error_id();
+        tracing::error!(error_id = %id, "database error: {e}");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "database error".to_string(),
+            Some(id),
+        )
+    }
 }
 
 impl IntoResponse for ApiError {
@@ -103,41 +159,7 @@ impl IntoResponse for ApiError {
                 tracing::warn!(error = %msg, "too many requests");
                 (StatusCode::TOO_MANY_REQUESTS, msg.clone(), None)
             }
-            Self::Database(e) => {
-                if let sqlx::Error::RowNotFound = e {
-                    tracing::debug!("database row not found");
-                    (
-                        StatusCode::NOT_FOUND,
-                        "resource not found".to_string(),
-                        None,
-                    )
-                } else if let Some(db_err) = e.as_database_error() {
-                    if db_err.is_unique_violation() {
-                        tracing::debug!(error = %db_err, "unique constraint violation");
-                        (
-                            StatusCode::CONFLICT,
-                            "resource already exists".to_string(),
-                            None,
-                        )
-                    } else {
-                        let id = generate_error_id();
-                        tracing::error!(error_id = %id, "database error: {e}");
-                        (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            "database error".to_string(),
-                            Some(id),
-                        )
-                    }
-                } else {
-                    let id = generate_error_id();
-                    tracing::error!(error_id = %id, "database error: {e}");
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "database error".to_string(),
-                        Some(id),
-                    )
-                }
-            }
+            Self::Database(e) => database_error_response(e),
             Self::Crypto(e) => {
                 let id = generate_error_id();
                 tracing::error!(error_id = %id, "crypto error: {e}");

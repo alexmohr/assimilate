@@ -19,8 +19,10 @@ use crate::{
     error::{ApiError, ApiJson},
 };
 
+/// Request payload for creating a new API token.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateTokenRequest {
+    /// Human-readable name for the token.
     pub name: String,
 }
 
@@ -40,11 +42,18 @@ fn generate_token() -> String {
     helpers::generate_random_hex(32)
 }
 
+/// Hash a plaintext token using SHA-256.
+#[must_use]
 pub fn hash_token(plaintext: &str) -> String {
+    use std::fmt::Write as _;
+
     let mut hasher = Sha256::new();
     hasher.update(plaintext.as_bytes());
     let result = hasher.finalize();
-    result.iter().map(|b| format!("{b:02x}")).collect()
+    result.iter().fold(String::new(), |mut acc, b| {
+        let _ = write!(acc, "{b:02x}");
+        acc
+    })
 }
 
 #[utoipa::path(
@@ -61,6 +70,9 @@ pub fn hash_token(plaintext: &str) -> String {
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn create_token(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -91,6 +103,9 @@ pub async fn create_token(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_tokens(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -123,6 +138,9 @@ pub async fn list_tokens(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Forbidden`] if the caller lacks permission for this operation.
 pub async fn delete_token(
     State(state): State<AppState>,
     auth: AuthUser,

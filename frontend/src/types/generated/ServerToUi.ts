@@ -3,74 +3,208 @@ import type { ActiveRepoOp } from "./ActiveRepoOp";
 import type { BackupReport } from "./BackupReport";
 import type { TunnelStatus } from "./TunnelStatus";
 
+/**
+ * Messages sent from the server to the UI (web client) via WebSocket.
+ */
 export type ServerToUi =
-  | { "type": "AgentConnected"; "payload": { hostname: string } }
-  | { "type": "AgentDisconnected"; "payload": { hostname: string } }
+  | {
+    "type": "AgentConnected";
+    "payload": {
+      /**
+       * The hostname of the agent that connected.
+       */
+      hostname: string;
+    };
+  }
+  | {
+    "type": "AgentDisconnected";
+    "payload": {
+      /**
+       * The hostname of the agent that disconnected.
+       */
+      hostname: string;
+    };
+  }
   | {
     "type": "BackupStarted";
     "payload": {
+      /**
+       * The hostname of the agent running the backup.
+       */
       hostname: string;
+      /**
+       * The name of the backup target (repository).
+       */
       target_name: string;
+      /**
+       * The archive name being created, if known.
+       */
       archive_name: string | null;
+      /**
+       * The schedule that triggered this backup, if any.
+       */
       schedule_id: number | null;
     };
   }
   | {
     "type": "BackupCompleted";
-    "payload": { hostname: string; target_name: string; report: BackupReport };
+    "payload": {
+      /**
+       * The hostname of the agent that ran the backup.
+       */
+      hostname: string;
+      /**
+       * The name of the backup target (repository).
+       */
+      target_name: string;
+      /**
+       * The backup result report.
+       */
+      report: BackupReport;
+    };
   }
   | {
     "type": "CheckCompleted";
     "payload": {
+      /**
+       * The hostname of the agent that ran the check.
+       */
       hostname: string;
+      /**
+       * The name of the target that was checked.
+       */
       target_name: string;
+      /**
+       * Whether the check succeeded.
+       */
       success: boolean;
+      /**
+       * Error message if the check failed.
+       */
       error_message: string | null;
     };
   }
   | {
     "type": "VerifyCompleted";
     "payload": {
+      /**
+       * The hostname of the agent that ran the verification.
+       */
       hostname: string;
+      /**
+       * The name of the target that was verified.
+       */
       target_name: string;
+      /**
+       * Whether the verification succeeded.
+       */
       success: boolean;
+      /**
+       * Error message if verification failed.
+       */
       error_message: string | null;
     };
   }
   | {
     "type": "CanaryVerified";
     "payload": {
+      /**
+       * The hostname of the agent that verified the canary.
+       */
       hostname: string;
+      /**
+       * The name of the target where the canary resides.
+       */
       target_name: string;
+      /**
+       * Whether the canary verification succeeded.
+       */
       success: boolean;
+      /**
+       * Error message if verification failed.
+       */
       error_message: string | null;
     };
   }
-  | { "type": "ConfigUpdated"; "payload": { hostname: string } }
+  | {
+    "type": "ConfigUpdated";
+    "payload": {
+      /**
+       * The hostname of the agent whose config was updated.
+       */
+      hostname: string;
+    };
+  }
   | { "type": "DataChanged" }
   | {
     "type": "ImportProgress";
     "payload": {
+      /**
+       * The repository being imported.
+       */
       repo_id: number;
+      /**
+       * Current progress count.
+       */
       progress: number;
+      /**
+       * Total items to import.
+       */
       total: number;
+      /**
+       * Optional human-readable progress message.
+       */
       message: string | null;
     };
   }
   | {
     "type": "TunnelStatusChanged";
-    "payload": { agent_id: number; hostname: string; status: TunnelStatus };
+    "payload": {
+      /**
+       * The agent ID whose tunnel status changed.
+       */
+      agent_id: number;
+      /**
+       * The hostname of the agent.
+       */
+      hostname: string;
+      /**
+       * The new tunnel status.
+       */
+      status: TunnelStatus;
+    };
   }
   | {
     "type": "RepoOpChanged";
-    "payload": { repo_id: number; op: ActiveRepoOp | null };
+    "payload": {
+      /**
+       * The repository whose operation changed.
+       */
+      repo_id: number;
+      /**
+       * The current operation, or `None` if no operation is active.
+       */
+      op: ActiveRepoOp | null;
+    };
   }
   | {
     "type": "BackupLog";
     "payload": {
+      /**
+       * The hostname of the agent generating the log.
+       */
       hostname: string;
+      /**
+       * The schedule that triggered the backup, if any.
+       */
       schedule_id: number | null;
+      /**
+       * The repository the log line relates to.
+       */
       repo_id: number;
+      /**
+       * The log line content.
+       */
       line: string;
     };
   };

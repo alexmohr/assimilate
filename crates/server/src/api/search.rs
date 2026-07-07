@@ -17,34 +17,49 @@ use super::{
 };
 use crate::{AppState, borg::Borg, error::ApiError};
 
-const SEARCH_TIMEOUT: Duration = Duration::from_secs(60);
-const PER_ARCHIVE_TIMEOUT: Duration = Duration::from_secs(60);
-const OVERALL_TIMEOUT: Duration = Duration::from_secs(300);
+const SEARCH_TIMEOUT: Duration = Duration::from_mins(1);
+const PER_ARCHIVE_TIMEOUT: Duration = Duration::from_mins(1);
+const OVERALL_TIMEOUT: Duration = Duration::from_mins(5);
 const DEFAULT_MAX_ARCHIVES: usize = 20;
 const MAX_ARCHIVES_CAP: usize = 100;
 
+/// Query parameters for searching files within an archive.
 #[derive(Debug, Deserialize)]
 pub struct SearchQuery {
+    /// Glob pattern to match file paths.
     pub pattern: String,
+    /// Optional path prefix to filter results.
     pub path_prefix: Option<String>,
+    /// Maximum number of results to return.
     pub limit: Option<usize>,
+    /// Number of results to skip.
     pub offset: Option<usize>,
 }
 
+/// A single file entry matching a search query.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SearchEntry {
+    /// Relative file path.
     pub path: String,
+    /// File size in bytes.
     pub size: i64,
+    /// Last modification timestamp.
     pub mtime: DateTime<Utc>,
+    /// Entry type ("-" for file, "d" for directory).
     #[serde(rename = "type")]
     pub entry_type: String,
 }
 
+/// Paginated search results for a single archive.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SearchResponse {
+    /// Matching file entries.
     pub items: Vec<SearchEntry>,
+    /// Total matching entries before pagination.
     pub total_matched: usize,
+    /// Maximum entries returned.
     pub limit: usize,
+    /// Number of entries skipped.
     pub offset: usize,
 }
 
@@ -73,6 +88,13 @@ pub struct SearchResponse {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::BadGateway`]: the upstream operation (e.g. SSH or borg) fails
+/// - [`ApiError::Internal`]: an internal error occurs
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn search_archive(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -139,7 +161,11 @@ pub async fn search_archive(
                 })
                 .ok()?;
 
-            let path = v["path"].as_str().unwrap_or("").to_string();
+            let path = v
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string();
 
             if let Some(ref prefix) = query.path_prefix
                 && !path.starts_with(prefix.as_str())
@@ -147,7 +173,10 @@ pub async fn search_archive(
                 return None;
             }
 
-            let mtime_str = v["mtime"].as_str().unwrap_or("");
+            let mtime_str = v
+                .get("mtime")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
             let mtime = DateTime::parse_from_rfc3339(mtime_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .or_else(|_| mtime_str.parse::<DateTime<Utc>>())
@@ -155,9 +184,16 @@ pub async fn search_archive(
 
             Some(SearchEntry {
                 path,
-                size: v["size"].as_i64().unwrap_or(0),
+                size: v
+                    .get("size")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(0),
                 mtime,
-                entry_type: v["type"].as_str().unwrap_or("").to_string(),
+                entry_type: v
+                    .get("type")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
             })
         })
         .collect();
@@ -173,29 +209,45 @@ pub async fn search_archive(
     }))
 }
 
+/// Query parameters for cross-archive search.
 #[derive(Debug, Deserialize)]
 pub struct CrossSearchQuery {
+    /// Glob pattern to match file paths.
     pub pattern: String,
+    /// Maximum number of archives to search (default 20, max 100).
     pub max_archives: Option<usize>,
+    /// Maximum number of results to return.
     pub limit: Option<usize>,
+    /// Number of results to skip.
     pub offset: Option<usize>,
 }
 
+/// A file entry in a cross-archive search result, annotated with the archive name.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CrossSearchEntry {
+    /// Relative file path.
     pub path: String,
+    /// File size in bytes.
     pub size: i64,
+    /// Last modification timestamp.
     pub mtime: DateTime<Utc>,
+    /// Entry type ("-" for file, "d" for directory).
     #[serde(rename = "type")]
     pub entry_type: String,
+    /// Name of the archive containing this file.
     pub archive_name: String,
 }
 
+/// Paginated cross-archive search results.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CrossSearchResponse {
+    /// Matching file entries.
     pub items: Vec<CrossSearchEntry>,
+    /// Number of archives searched.
     pub total_archives_searched: usize,
+    /// Maximum entries returned.
     pub limit: usize,
+    /// Number of entries skipped.
     pub offset: usize,
 }
 
@@ -221,6 +273,9 @@ pub struct CrossSearchResponse {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn cross_archive_search(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -247,7 +302,9 @@ pub async fn cross_archive_search(
     let archives_to_search: Vec<&ArchiveEntryBrief> = archives.iter().take(max_archives).collect();
     let total_archives_searched = archives_to_search.len();
 
-    let overall_deadline = tokio::time::Instant::now() + OVERALL_TIMEOUT;
+    let overall_deadline = tokio::time::Instant::now()
+        .checked_add(OVERALL_TIMEOUT)
+        .unwrap_or_else(tokio::time::Instant::now);
     let mut seen: HashMap<String, CrossSearchEntry> = HashMap::new();
 
     let borg_pattern = format!("sh:{}", query.pattern);
@@ -311,17 +368,25 @@ async fn list_archives_sorted(
     let json_output: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|e| ApiError::Internal(format!("failed to parse borg output: {e}")))?;
 
-    let mut archives: Vec<ArchiveEntryBrief> =
-        json_output["archives"]
-            .as_array()
-            .map_or_else(Vec::new, |arr| {
-                arr.iter()
-                    .map(|a| ArchiveEntryBrief {
-                        name: a["name"].as_str().unwrap_or("").to_string(),
-                        start: a["start"].as_str().unwrap_or("").to_string(),
-                    })
-                    .collect()
-            });
+    let mut archives: Vec<ArchiveEntryBrief> = json_output
+        .get("archives")
+        .and_then(serde_json::Value::as_array)
+        .map_or_else(Vec::new, |arr| {
+            arr.iter()
+                .map(|a| ArchiveEntryBrief {
+                    name: a
+                        .get("name")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    start: a
+                        .get("start")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                })
+                .collect()
+        });
 
     // Sort by start time descending (most recent first)
     archives.sort_by(|a, b| b.start.cmp(&a.start));
@@ -384,17 +449,31 @@ async fn search_in_archive(
                 })
                 .ok()?;
 
-            let mtime_str = v["mtime"].as_str().unwrap_or("");
+            let mtime_str = v
+                .get("mtime")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
             let mtime = DateTime::parse_from_rfc3339(mtime_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .or_else(|_| mtime_str.parse::<DateTime<Utc>>())
                 .unwrap_or_default();
 
             Some(CrossSearchEntry {
-                path: v["path"].as_str().unwrap_or("").to_string(),
-                size: v["size"].as_i64().unwrap_or(0),
+                path: v
+                    .get("path")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                size: v
+                    .get("size")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(0),
                 mtime,
-                entry_type: v["type"].as_str().unwrap_or("").to_string(),
+                entry_type: v
+                    .get("type")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
                 archive_name: archive_name.to_string(),
             })
         })
@@ -453,8 +532,8 @@ mod tests {
             entry_type: "r".to_string(),
         };
         let json = serde_json::to_value(&entry).unwrap();
-        assert_eq!(json["path"], "etc/hosts");
-        assert_eq!(json["size"], 220);
-        assert_eq!(json["type"], "r");
+        assert_eq!(json.get("path").unwrap(), "etc/hosts");
+        assert_eq!(json.get("size").unwrap(), 220);
+        assert_eq!(json.get("type").unwrap(), "r");
     }
 }

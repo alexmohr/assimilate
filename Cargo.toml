@@ -48,6 +48,9 @@ lz4_flex = "0.11"
 nix = { version = "0.29", features = ["signal", "process"] }
 ipnetwork = "0.20"
 
+[workspace.lints.rust]
+missing_docs = "warn"
+
 [workspace.lints.clippy]
 pedantic = { level = "deny", priority = -1 }
 clone_on_ref_ptr = "deny"

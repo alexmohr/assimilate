@@ -6,26 +6,39 @@ use serde::{Deserialize, Serialize};
 use shared::types::QuotaAction;
 use sqlx::PgPool;
 
+/// Per-repository storage quota configuration.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct RepoQuota {
+    /// Repository primary key.
     pub repo_id: i64,
+    /// Warn threshold in bytes.
     pub warn_bytes: Option<i64>,
+    /// Critical threshold in bytes.
     pub critical_bytes: Option<i64>,
+    /// Action to take when the warn threshold is breached.
     pub warn_action: String,
+    /// Action to take when the critical threshold is breached.
     pub critical_action: String,
+    /// Whether this quota is enforced.
     pub enabled: bool,
+    /// When this quota was last updated.
     pub updated_at: DateTime<Utc>,
 }
 
+/// Health classification of a storage quota.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum QuotaStatus {
+    /// Usage is below all thresholds.
     Ok,
+    /// Usage exceeds the warn threshold.
     Warning,
+    /// Usage exceeds the critical threshold.
     Critical,
 }
 
 /// Shared warn/critical threshold comparison used by both repo and server quotas.
+#[must_use]
 pub fn evaluate_thresholds(
     enabled: bool,
     warn_bytes: Option<i64>,
@@ -47,6 +60,8 @@ pub fn evaluate_thresholds(
     QuotaStatus::Ok
 }
 
+/// Evaluate whether a repo's deduplicated size breaches its configured thresholds.
+#[must_use]
 pub fn evaluate_quota(quota: &RepoQuota, deduplicated_size: i64) -> QuotaStatus {
     evaluate_thresholds(
         quota.enabled,
@@ -57,6 +72,7 @@ pub fn evaluate_quota(quota: &RepoQuota, deduplicated_size: i64) -> QuotaStatus 
 }
 
 impl RepoQuota {
+    /// Current quota status for the given repository size.
     #[must_use]
     pub fn status(&self, deduplicated_size: i64) -> QuotaStatus {
         evaluate_quota(self, deduplicated_size)
@@ -73,6 +89,9 @@ impl RepoQuota {
     }
 }
 
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn upsert_quota(
     pool: &PgPool,
     repo_id: i64,
@@ -109,6 +128,9 @@ pub async fn upsert_quota(
     .await
 }
 
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn get_quota(pool: &PgPool, repo_id: i64) -> Result<Option<RepoQuota>, sqlx::Error> {
     let quota = sqlx::query_as!(
         RepoQuota,

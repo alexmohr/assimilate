@@ -46,14 +46,20 @@ impl From<db::server_quota::ServerQuotaWithUsage> for ServerQuotaResponse {
     }
 }
 
+/// Request payload for creating or updating a server-level quota.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpsertServerQuotaRequest {
+    /// Warning threshold in bytes.
     pub warn_bytes: Option<i64>,
+    /// Critical threshold in bytes.
     pub critical_bytes: Option<i64>,
+    /// Action to take when warning threshold is reached.
     #[serde(default)]
     pub warn_action: QuotaAction,
+    /// Action to take when critical threshold is reached.
     #[serde(default)]
     pub critical_action: QuotaAction,
+    /// Whether the quota is enabled.
     pub enabled: bool,
 }
 
@@ -69,6 +75,9 @@ pub struct UpsertServerQuotaRequest {
         (status = 403, description = "Forbidden"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_server_quotas(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -94,6 +103,11 @@ pub async fn list_server_quotas(
         (status = 403, description = "Forbidden"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Database`]: the database query fails
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn upsert_server_quota(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -149,6 +163,11 @@ pub async fn upsert_server_quota(
         (status = 404, description = "Quota not configured"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Database`]: the database query fails
+/// - [`ApiError::NotFound`]: the requested resource does not exist
 pub async fn delete_server_quota(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,

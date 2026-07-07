@@ -85,7 +85,7 @@ fn row_to_report_response(row: db::ReportRow, hostname: String) -> ReportRespons
                 raw_status = %row.status,
                 "failed to parse backup status, defaulting to Success"
             );
-            Default::default()
+            shared::types::BackupStatus::default()
         }),
         original_size: row.original_size,
         compressed_size: row.compressed_size,
@@ -103,9 +103,12 @@ fn row_to_report_response(row: db::ReportRow, hostname: String) -> ReportRespons
     }
 }
 
+/// Query parameters for listing backup reports.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ListReportsQuery {
+    /// Filter by target repository name.
     pub target: Option<String>,
+    /// Maximum number of reports to return.
     pub limit: Option<i64>,
 }
 
@@ -126,6 +129,9 @@ pub struct ListReportsQuery {
         (status = 404, description = "Agent not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_reports(
     State(state): State<AppState>,
     _auth: AuthUser,

@@ -26,6 +26,9 @@ use crate::{
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn test_connection(
     RequireAdmin(_admin): RequireAdmin,
     ApiJson(req): ApiJson<TestConnectionRequest>,
@@ -50,6 +53,9 @@ pub async fn test_connection(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn deploy_key(
     RequireAdmin(_admin): RequireAdmin,
     ApiJson(req): ApiJson<DeployKeyRequest>,
@@ -75,6 +81,9 @@ pub async fn deploy_key(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_dir(
     RequireAdmin(_admin): RequireAdmin,
     ApiJson(req): ApiJson<ListDirRequest>,
@@ -99,6 +108,9 @@ pub async fn list_dir(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn mkdir(
     RequireAdmin(_admin): RequireAdmin,
     ApiJson(req): ApiJson<MkdirRequest>,

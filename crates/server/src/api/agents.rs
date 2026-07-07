@@ -29,24 +29,35 @@ use crate::{
     error::{ApiError, ApiJson},
 };
 
+/// Request payload for registering a new agent.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateAgentRequest {
+    /// Agent hostname.
     pub hostname: String,
+    /// Optional display name.
     pub display_name: Option<String>,
 }
 
+/// Request payload for updating an agent's configuration.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateAgentRequest {
+    /// New hostname (if changing).
     pub hostname: Option<String>,
+    /// New display name.
     pub display_name: Option<String>,
+    /// Default backup source paths.
     #[serde(default)]
     pub default_backup_paths: Vec<String>,
+    /// Default exclude patterns.
     #[serde(default)]
     pub default_exclude_patterns: Vec<String>,
+    /// Default pre-backup commands.
     #[serde(default)]
     pub default_pre_backup_commands: Vec<String>,
+    /// Default post-backup commands.
     #[serde(default)]
     pub default_post_backup_commands: Vec<String>,
+    /// Default file change detection patterns.
     #[serde(default)]
     pub default_file_change_patterns_raw: String,
 }
@@ -95,6 +106,9 @@ async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentRespons
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn create_agent(
     State(state): State<AppState>,
     RequireAdmin(admin): RequireAdmin,
@@ -124,8 +138,10 @@ pub async fn create_agent(
     ))
 }
 
+/// Query parameters for listing agents.
 #[derive(Debug, Deserialize)]
 pub struct ListAgentsQuery {
+    /// Whether to include hidden agents in the response.
     #[serde(default)]
     pub include_hidden: bool,
 }
@@ -141,6 +157,9 @@ pub struct ListAgentsQuery {
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_agents(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -183,6 +202,9 @@ pub async fn list_agents(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn get_agent(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -208,6 +230,9 @@ pub async fn get_agent(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn update_agent(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -252,6 +277,9 @@ pub async fn update_agent(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn delete_agent(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -282,6 +310,9 @@ pub async fn delete_agent(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn regenerate_token(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -344,6 +375,11 @@ pub async fn regenerate_token(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::Internal`]: an internal error occurs
 pub async fn restart_agent(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -381,6 +417,9 @@ pub async fn restart_agent(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn list_hostname_patterns(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -391,8 +430,10 @@ pub async fn list_hostname_patterns(
     Ok(Json(patterns))
 }
 
+/// Request payload for adding a hostname pattern to an agent.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct AddPatternRequest {
+    /// Glob pattern for matching archive hostnames.
     pub pattern: String,
 }
 
@@ -413,6 +454,9 @@ pub struct AddPatternRequest {
         (status = 409, description = "Duplicate pattern"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn add_hostname_pattern(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -441,6 +485,9 @@ pub async fn add_hostname_pattern(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn delete_hostname_pattern(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -451,8 +498,10 @@ pub async fn delete_hostname_pattern(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Request payload for merging a placeholder agent into a real one.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct MergeAgentRequest {
+    /// Optional hostname pattern to create on the target agent.
     pub create_pattern: Option<String>,
 }
 
@@ -474,6 +523,9 @@ pub struct MergeAgentRequest {
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn merge_agent(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -507,6 +559,9 @@ pub async fn merge_agent(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn hide_agent(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -531,6 +586,9 @@ pub async fn hide_agent(
         (status = 404, description = "Not found"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn unhide_agent(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -556,6 +614,9 @@ pub async fn unhide_agent(
         (status = 503, description = "Agent offline"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn delete_agent_archives(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -609,16 +670,16 @@ pub async fn delete_agent_archives(
             continue;
         }
 
-        match tokio::time::timeout(Duration::from_secs(300), rx).await {
+        match tokio::time::timeout(Duration::from_mins(5), rx).await {
             Ok(Ok((true, count, _))) => {
-                total_deleted += count;
+                total_deleted = total_deleted.saturating_add(count);
             }
             Ok(Ok((false, count, Some(err)))) => {
-                total_deleted += count;
+                total_deleted = total_deleted.saturating_add(count);
                 errors.push(format!("repo {}: {err}", repo_id.0));
             }
             Ok(Ok((false, count, None))) => {
-                total_deleted += count;
+                total_deleted = total_deleted.saturating_add(count);
                 errors.push(format!("repo {}: unknown error", repo_id.0));
             }
             Ok(Err(_)) => {

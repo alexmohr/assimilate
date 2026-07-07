@@ -24,28 +24,45 @@ use super::auth::AuthUser;
 use crate::{AppState, db, error::ApiError};
 
 /// Computes `(part / total) * 100.0` without using `as` casts.
+///
 /// Uses integer division scaled by 10000 to maintain precision for display percentages.
 fn percentage_of(part: i64, total: i64) -> f64 {
-    let scaled = part.saturating_mul(10_000) / total;
+    if total == 0 {
+        return 0.0;
+    }
+    let scaled = part.saturating_mul(10_000).checked_div(total).unwrap_or(0);
     f64::from(i32::try_from(scaled).unwrap_or(10_000)) / 100.0
 }
 
+/// Query parameters for filtering the activity feed.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ActivityQuery {
+    /// Maximum number of entries to return.
     pub limit: Option<i64>,
+    /// Return entries from the last N days.
     pub days: Option<i64>,
+    /// Filter by activity category.
     pub category: Option<String>,
+    /// Filter by repository ID.
     pub repo_id: Option<i64>,
+    /// Filter by agent hostname.
     pub hostname: Option<String>,
+    /// Filter by schedule ID.
     pub schedule_id: Option<i64>,
+    /// Filter by run ID.
     pub run_id: Option<String>,
 }
 
+/// Health status of a repository's storage quota.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DashboardQuotaStatus {
+    /// No quota is configured for this repository.
     Unconfigured,
+    /// Usage is below the warning threshold.
     Healthy,
+    /// Usage is at or above the warning threshold.
     Warning,
+    /// Usage is at or above the critical threshold.
     Critical,
 }
 
@@ -71,6 +88,9 @@ impl DashboardQuotaStatus {
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn dashboard_overview(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -90,12 +110,62 @@ pub async fn dashboard_overview(
         .collect();
     let timezone = db::get_schedule_timezone(&state.pool).await?;
     let now = Utc::now();
-    let due_soon = now + chrono::Duration::hours(2);
+    let due_soon = now
+        .checked_add_signed(chrono::Duration::hours(2))
+        .unwrap_or(now);
 
+    let findings = dashboard_findings(
+        &targets,
+        &hosts,
+        &repositories,
+        &connected,
+        now,
+        due_soon,
+        timezone,
+        &dismissed,
+    );
+    let running_operations = dashboard_running_operations(&targets);
+    let protection = dashboard_protection_coverage(&targets, &hosts);
+    let upcoming_schedules = dashboard_upcoming_schedules(upcoming, &targets, &connected);
+
+    let total_storage_bytes = repositories.iter().map(|repo| repo.deduplicated_size).sum();
+    let repository_capacity = repositories.iter().map(repository_capacity).collect();
+
+    Ok(Json(DashboardOverviewResponse {
+        summary: DashboardSummaryCountersResponse {
+            protected_hosts: protection.protected_hosts,
+            eligible_hosts: protection.eligible_hosts,
+            needs_attention: findings.len(),
+            running_operations: running_operations.len(),
+            total_storage_bytes,
+        },
+        findings,
+        protection,
+        running_operations,
+        upcoming_schedules,
+        repository_capacity,
+    }))
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "grouping these into a struct would obscure the call site more than it would clarify \
+              it; all params are single-use scalars/refs from the caller's own locals"
+)]
+fn dashboard_findings(
+    targets: &[db::dashboard::TargetRow],
+    hosts: &[db::dashboard::EligibleAgentRow],
+    repositories: &[db::dashboard::RepositoryRow],
+    connected: &HashSet<String>,
+    now: chrono::DateTime<Utc>,
+    due_soon: chrono::DateTime<Utc>,
+    timezone: chrono_tz::Tz,
+    dismissed: &HashSet<String>,
+) -> Vec<DashboardFindingResponse> {
     let mut findings = targets
         .iter()
         .filter(|target| target.schedule_enabled)
-        .filter_map(|target| target_finding(target, &connected, now, due_soon, timezone))
+        .filter_map(|target| target_finding(target, connected, now, due_soon, timezone))
         .collect::<Vec<_>>();
 
     findings.extend(
@@ -121,7 +191,7 @@ pub async fn dashboard_overview(
             }),
     );
 
-    repositories.iter().for_each(|repo| {
+    for repo in repositories {
         if repo.enabled_schedule_count.unwrap_or(0) == 0 {
             findings.push(repository_finding(
                 repo,
@@ -159,11 +229,16 @@ pub async fn dashboard_overview(
                     .unwrap_or("Repository import failed"),
             ));
         }
-    });
+    }
     findings.sort_by_key(|finding| severity_rank(&finding.severity));
     findings.retain(|finding| !dismissed.contains(&finding.id));
+    findings
+}
 
-    let running_operations = targets
+fn dashboard_running_operations(
+    targets: &[db::dashboard::TargetRow],
+) -> Vec<DashboardOperationResponse> {
+    targets
         .iter()
         .filter_map(|target| {
             let (Some(report_id), Some(started_at), Some(true)) = (
@@ -185,8 +260,13 @@ pub async fn dashboard_overview(
                 destination: DashboardDestinationResponse::Activity { report_id },
             })
         })
-        .collect::<Vec<_>>();
+        .collect::<Vec<_>>()
+}
 
+fn dashboard_protection_coverage(
+    targets: &[db::dashboard::TargetRow],
+    hosts: &[db::dashboard::EligibleAgentRow],
+) -> DashboardProtectionCoverageResponse {
     let protected_hosts = hosts
         .iter()
         .filter(|host| host.successful_enabled_assignment_count.unwrap_or(0) > 0)
@@ -227,7 +307,23 @@ pub async fn dashboard_overview(
         .map(agent_link)
         .collect();
 
-    let upcoming_schedules = upcoming
+    DashboardProtectionCoverageResponse {
+        protected_hosts,
+        eligible_hosts,
+        protected_agent_links,
+        unassigned_agents,
+        never_succeeded_targets,
+        never_succeeded_agents,
+        disabled_only_agents,
+    }
+}
+
+fn dashboard_upcoming_schedules(
+    upcoming: Vec<db::dashboard::UpcomingScheduleRow>,
+    targets: &[db::dashboard::TargetRow],
+    connected: &HashSet<String>,
+) -> Vec<DashboardUpcomingScheduleResponse> {
+    upcoming
         .into_iter()
         .map(|schedule| {
             let offline_target_count = targets
@@ -245,33 +341,7 @@ pub async fn dashboard_overview(
                 offline_target_count,
             }
         })
-        .collect();
-
-    let total_storage_bytes = repositories.iter().map(|repo| repo.deduplicated_size).sum();
-    let repository_capacity = repositories.iter().map(repository_capacity).collect();
-
-    Ok(Json(DashboardOverviewResponse {
-        summary: DashboardSummaryCountersResponse {
-            protected_hosts,
-            eligible_hosts,
-            needs_attention: findings.len(),
-            running_operations: running_operations.len(),
-            total_storage_bytes,
-        },
-        findings,
-        protection: DashboardProtectionCoverageResponse {
-            protected_hosts,
-            eligible_hosts,
-            protected_agent_links,
-            unassigned_agents,
-            never_succeeded_targets,
-            never_succeeded_agents,
-            disabled_only_agents,
-        },
-        running_operations,
-        upcoming_schedules,
-        repository_capacity,
-    }))
+        .collect()
 }
 
 fn target_finding(
@@ -288,7 +358,7 @@ fn target_finding(
     let overdue_at = target.last_success_at.and_then(|last_success| {
         shared::schedule::calculate_next_run(&target.cron_expression, last_success, timezone)
             .ok()
-            .map(|expected| expected + chrono::Duration::minutes(30))
+            .and_then(|expected| expected.checked_add_signed(chrono::Duration::minutes(30)))
     });
 
     let (kind, severity, status, reason, occurred_at, deadline, destination) =
@@ -494,6 +564,9 @@ fn repository_capacity(repo: &db::dashboard::RepositoryRow) -> DashboardReposito
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn summary(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -563,6 +636,9 @@ pub async fn summary(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn storage(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -586,6 +662,9 @@ pub async fn storage(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn schedule_counts(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -605,6 +684,9 @@ pub async fn schedule_counts(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn storage_breakdown(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -651,6 +733,9 @@ pub async fn storage_breakdown(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn activity(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -693,6 +778,9 @@ pub async fn activity(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn system_events(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -715,6 +803,9 @@ pub async fn system_events(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn health(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -757,12 +848,17 @@ fn is_overdue(
     let Ok(expected_next) = shared::schedule::calculate_next_run(cron_expr, last, tz) else {
         return false;
     };
-    Utc::now() > expected_next + grace
+    expected_next
+        .checked_add_signed(grace)
+        .is_some_and(|deadline| Utc::now() > deadline)
 }
 
+/// Query parameters for backup trends.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct TrendsQuery {
+    /// Filter by repository ID.
     pub repo_id: Option<i64>,
+    /// Number of days (30, 90, 365).
     pub days: Option<i64>,
 }
 
@@ -781,6 +877,9 @@ pub struct TrendsQuery {
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn trends(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -792,7 +891,11 @@ pub async fn trends(
         .into_iter()
         .map(|row| {
             let dedup_ratio = if row.original_size > 0 {
-                let scaled = row.deduplicated_size.saturating_mul(10_000) / row.original_size;
+                let scaled = row
+                    .deduplicated_size
+                    .saturating_mul(10_000)
+                    .checked_div(row.original_size)
+                    .unwrap_or(0);
                 f64::from(i32::try_from(scaled).unwrap_or(10_000)) / 100.0
             } else {
                 0.0
@@ -826,6 +929,9 @@ pub async fn trends(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn storage_trends(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -860,6 +966,9 @@ pub async fn storage_trends(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn storage_trends_by_repo(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -881,16 +990,23 @@ pub async fn storage_trends_by_repo(
     Ok(Json(entries))
 }
 
+/// Query parameters for the calendar view.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CalendarQuery {
+    /// Month in YYYY-MM format.
     pub month: String,
+    /// Filter by repository ID.
     pub repo_id: Option<i64>,
 }
 
+/// Type of event displayed on the calendar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CalendarEventType {
+    /// A backup operation.
     Backup,
+    /// A repository check operation.
     Check,
+    /// A repository verify operation.
     Verify,
 }
 
@@ -917,10 +1033,14 @@ impl TryFrom<&str> for CalendarEventType {
     }
 }
 
+/// Status of a calendar event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CalendarEventStatus {
+    /// The event completed successfully.
     Success,
+    /// The event failed.
     Failed,
+    /// The event is scheduled to occur.
     Scheduled,
 }
 
@@ -947,88 +1067,28 @@ impl TryFrom<&str> for CalendarEventStatus {
     }
 }
 
-#[utoipa::path(
-    get,
-    path = "/api/stats/calendar",
-    tag = "Statistics",
-    operation_id = "getCalendar",
-    summary = "Get calendar view of backups for a month",
-    params(
-        ("month" = String, Query, description = "Month in YYYY-MM format"),
-        ("repo_id" = Option<i64>, Query, description = "Filter by repository ID"),
-    ),
-    responses(
-        (status = 200, description = "Calendar events", body = Vec<CalendarDayResponse>),
-        (status = 401, description = "Unauthorized"),
-    )
+/// Projects each schedule's upcoming cron occurrences within `[month_start, month_end)`
+/// into `day_map` as `Scheduled` calendar events, skipping schedules filtered out by
+/// `filter_repo_id` and stopping each schedule's projection after 62 occurrences (a
+/// generous bound for one calendar month across any supported cron cadence).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "grouping these into a struct would obscure the call site more than it would clarify \
+              it; all params are single-use scalars from the caller's own locals"
 )]
-pub async fn calendar(
-    State(state): State<AppState>,
-    _auth: AuthUser,
-    Query(query): Query<CalendarQuery>,
-) -> Result<Json<Vec<CalendarDayResponse>>, ApiError> {
-    let parts: Vec<&str> = query.month.split('-').collect();
-    if parts.len() != 2 {
-        return Err(ApiError::BadRequest(
-            "month must be in YYYY-MM format".to_string(),
-        ));
-    }
-    let year: i32 = parts[0]
-        .parse()
-        .map_err(|_| ApiError::BadRequest("invalid year".to_string()))?;
-    let month: u32 = parts[1]
-        .parse()
-        .map_err(|_| ApiError::BadRequest("invalid month".to_string()))?;
-
-    let tz = db::get_schedule_timezone(&state.pool).await?;
-    let rows = db::get_calendar_events(&state.pool, year, month, query.repo_id, tz).await?;
-
-    let schedules = db::get_enabled_schedules_for_calendar(&state.pool).await?;
-    let now = Utc::now();
-
-    let month_start = chrono::NaiveDate::from_ymd_opt(year, month, 1)
-        .ok_or_else(|| ApiError::BadRequest("invalid month".to_string()))?;
-    let month_end = if month == 12 {
-        chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
-    } else {
-        chrono::NaiveDate::from_ymd_opt(year, month + 1, 1)
-    }
-    .ok_or_else(|| ApiError::BadRequest("invalid month".to_string()))?;
-
-    let mut day_map: std::collections::BTreeMap<String, Vec<CalendarEventResponse>> =
-        std::collections::BTreeMap::new();
-
-    for row in rows {
-        let Ok(event_type) = CalendarEventType::try_from(row.event_type.as_str()) else {
-            continue;
-        };
-        let Ok(status) = CalendarEventStatus::try_from(row.status.as_str()) else {
-            continue;
-        };
-        day_map
-            .entry(row.date.to_string())
-            .or_default()
-            .push(CalendarEventResponse {
-                event_type: event_type.as_str().to_owned(),
-                status: status.as_str().to_owned(),
-                repo_name: row.repo_name,
-                hostname: row.hostname,
-                time: row.time,
-                report_id: row.report_id,
-                repo_id: row.repo_id,
-                schedule_id: None,
-                archive_name: row.archive_name,
-                error_message: row.error_message,
-            });
-    }
-
-    let repos = db::list_all_repos(&state.pool).await?;
-
-    for schedule in &schedules {
-        if query
-            .repo_id
-            .is_some_and(|rid| schedule.repo_id != Some(rid))
-        {
+async fn project_upcoming_schedule_events(
+    pool: &sqlx::PgPool,
+    schedules: &[db::ScheduleRow],
+    repos: &[db::RepoRow],
+    filter_repo_id: Option<i64>,
+    tz: chrono_tz::Tz,
+    now: chrono::DateTime<Utc>,
+    month_start: chrono::NaiveDate,
+    month_end: chrono::NaiveDate,
+    day_map: &mut std::collections::BTreeMap<String, Vec<CalendarEventResponse>>,
+) {
+    for schedule in schedules {
+        if filter_repo_id.is_some_and(|rid| schedule.repo_id != Some(rid)) {
             continue;
         }
         let repo_name = schedule
@@ -1036,7 +1096,7 @@ pub async fn calendar(
             .and_then(|rid| repos.iter().find(|r| r.id == rid))
             .map(|r| r.name.clone())
             .unwrap_or_default();
-        let hostname = db::get_schedule_target_hostnames(&state.pool, schedule.id)
+        let hostname = db::get_schedule_target_hostnames(pool, schedule.id)
             .await
             .ok()
             .and_then(|h| h.into_iter().next())
@@ -1074,6 +1134,103 @@ pub async fn calendar(
             cursor = next;
         }
     }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/stats/calendar",
+    tag = "Statistics",
+    operation_id = "getCalendar",
+    summary = "Get calendar view of backups for a month",
+    params(
+        ("month" = String, Query, description = "Month in YYYY-MM format"),
+        ("repo_id" = Option<i64>, Query, description = "Filter by repository ID"),
+    ),
+    responses(
+        (status = 200, description = "Calendar events", body = Vec<CalendarDayResponse>),
+        (status = 401, description = "Unauthorized"),
+    )
+)]
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
+pub async fn calendar(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Query(query): Query<CalendarQuery>,
+) -> Result<Json<Vec<CalendarDayResponse>>, ApiError> {
+    let parts: Vec<&str> = query.month.split('-').collect();
+    let [year_str, month_str] = parts.as_slice() else {
+        return Err(ApiError::BadRequest(
+            "month must be in YYYY-MM format".to_string(),
+        ));
+    };
+    let year: i32 = year_str
+        .parse()
+        .map_err(|_| ApiError::BadRequest("invalid year".to_string()))?;
+    let month: u32 = month_str
+        .parse()
+        .map_err(|_| ApiError::BadRequest("invalid month".to_string()))?;
+
+    let tz = db::get_schedule_timezone(&state.pool).await?;
+    let rows = db::get_calendar_events(&state.pool, year, month, query.repo_id, tz).await?;
+
+    let schedules = db::get_enabled_schedules_for_calendar(&state.pool).await?;
+    let now = Utc::now();
+
+    let month_start = chrono::NaiveDate::from_ymd_opt(year, month, 1)
+        .ok_or_else(|| ApiError::BadRequest("invalid month".to_string()))?;
+    let month_end = if month == 12 {
+        year.checked_add(1)
+            .and_then(|y| chrono::NaiveDate::from_ymd_opt(y, 1, 1))
+    } else {
+        month
+            .checked_add(1)
+            .and_then(|m| chrono::NaiveDate::from_ymd_opt(year, m, 1))
+    }
+    .ok_or_else(|| ApiError::BadRequest("invalid month".to_string()))?;
+
+    let mut day_map: std::collections::BTreeMap<String, Vec<CalendarEventResponse>> =
+        std::collections::BTreeMap::new();
+
+    for row in rows {
+        let Ok(event_type) = CalendarEventType::try_from(row.event_type.as_str()) else {
+            continue;
+        };
+        let Ok(status) = CalendarEventStatus::try_from(row.status.as_str()) else {
+            continue;
+        };
+        day_map
+            .entry(row.date.to_string())
+            .or_default()
+            .push(CalendarEventResponse {
+                event_type: event_type.as_str().to_owned(),
+                status: status.as_str().to_owned(),
+                repo_name: row.repo_name,
+                hostname: row.hostname,
+                time: row.time,
+                report_id: row.report_id,
+                repo_id: row.repo_id,
+                schedule_id: None,
+                archive_name: row.archive_name,
+                error_message: row.error_message,
+            });
+    }
+
+    let repos = db::list_all_repos(&state.pool).await?;
+
+    project_upcoming_schedule_events(
+        &state.pool,
+        &schedules,
+        &repos,
+        query.repo_id,
+        tz,
+        now,
+        month_start,
+        month_end,
+        &mut day_map,
+    )
+    .await;
 
     let result = day_map
         .into_iter()
@@ -1083,6 +1240,9 @@ pub async fn calendar(
     Ok(Json(result))
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn dismiss_finding(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -1092,6 +1252,9 @@ pub async fn dismiss_finding(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn undismiss_finding(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -1232,16 +1395,16 @@ mod tests {
 
     #[test]
     fn percentage_of_zero_part_yields_zero() {
-        assert_eq!(super::percentage_of(0, 100), 0.0);
+        assert!((super::percentage_of(0, 100) - 0.0).abs() < f64::EPSILON);
     }
 
     #[test]
     fn percentage_of_equal_values_yields_100() {
-        assert_eq!(super::percentage_of(100, 100), 100.0);
+        assert!((super::percentage_of(100, 100) - 100.0).abs() < f64::EPSILON);
     }
 
     #[test]
     fn percentage_of_half_yields_50() {
-        assert_eq!(super::percentage_of(50, 100), 50.0);
+        assert!((super::percentage_of(50, 100) - 50.0).abs() < f64::EPSILON);
     }
 }

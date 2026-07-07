@@ -12,24 +12,36 @@ use serde::{Deserialize, Serialize};
 use super::{auth::AuthUser, permissions::check_repo_permission};
 use crate::{AppState, api::archives::get_repo_env, borg::Borg, error::ApiError};
 
-const DIFF_TIMEOUT: Duration = Duration::from_secs(60);
+const DIFF_TIMEOUT: Duration = Duration::from_mins(1);
 const LOCK_WAIT_SECS: &str = "60";
 
+/// Result of a borg diff between two archives.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DiffResponse {
+    /// Files added in archive2.
     pub added: Vec<String>,
+    /// Files removed from archive2.
     pub removed: Vec<String>,
+    /// Files modified in archive2.
     pub modified: Vec<String>,
+    /// Total number of changes found.
     pub total_changes: usize,
+    /// Max entries returned per category.
     pub limit: usize,
+    /// Number of changes skipped.
     pub offset: usize,
 }
 
+/// Query parameters for diffing two archives.
 #[derive(Debug, Deserialize)]
 pub struct DiffQuery {
+    /// First archive name (base).
     pub archive1: String,
+    /// Second archive name (comparison).
     pub archive2: String,
+    /// Max entries to return per category (default: 100).
     pub limit: Option<usize>,
+    /// Offset into the combined sorted change list (default: 0).
     pub offset: Option<usize>,
 }
 
@@ -67,7 +79,7 @@ impl From<&str> for BorgDiffChangeType {
     }
 }
 
-fn classify_change(change_type: BorgDiffChangeType) -> ChangeCategory {
+fn classify_change(change_type: &BorgDiffChangeType) -> ChangeCategory {
     match change_type {
         BorgDiffChangeType::Added => ChangeCategory::Added,
         BorgDiffChangeType::Removed => ChangeCategory::Removed,
@@ -121,6 +133,11 @@ fn classify_borg_diff_error(exit_code: i32, stderr: &str) -> ApiError {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::Internal`]: an internal error occurs
 pub async fn diff_archives(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -179,13 +196,18 @@ pub async fn diff_archives(
                     tracing::trace!(error = %e, "skipping unparseable borg diff line");
                 })
                 .ok()?;
-            let path = v["path"].as_str()?.to_string();
-            let category = v["changes"]
-                .as_array()
+            let path = v
+                .get("path")
+                .and_then(serde_json::Value::as_str)?
+                .to_string();
+            let category = v
+                .get("changes")
+                .and_then(serde_json::Value::as_array)
                 .and_then(|changes| changes.first())
-                .and_then(|c| c["type"].as_str())
+                .and_then(|c| c.get("type"))
+                .and_then(serde_json::Value::as_str)
                 .map_or(ChangeCategory::Modified, |change_type| {
-                    classify_change(BorgDiffChangeType::from(change_type))
+                    classify_change(&BorgDiffChangeType::from(change_type))
                 });
             Some((path, category))
         })
@@ -226,35 +248,35 @@ mod tests {
     #[test]
     fn classify_known_types() {
         assert_eq!(
-            classify_change(BorgDiffChangeType::from("added")),
+            classify_change(&BorgDiffChangeType::from("added")),
             ChangeCategory::Added
         );
         assert_eq!(
-            classify_change(BorgDiffChangeType::from("removed")),
+            classify_change(&BorgDiffChangeType::from("removed")),
             ChangeCategory::Removed
         );
         assert_eq!(
-            classify_change(BorgDiffChangeType::from("modified")),
+            classify_change(&BorgDiffChangeType::from("modified")),
             ChangeCategory::Modified
         );
         assert_eq!(
-            classify_change(BorgDiffChangeType::from("mode changed")),
+            classify_change(&BorgDiffChangeType::from("mode changed")),
             ChangeCategory::Modified
         );
         assert_eq!(
-            classify_change(BorgDiffChangeType::from("owner changed")),
+            classify_change(&BorgDiffChangeType::from("owner changed")),
             ChangeCategory::Modified
         );
         assert_eq!(
-            classify_change(BorgDiffChangeType::from("link target changed")),
+            classify_change(&BorgDiffChangeType::from("link target changed")),
             ChangeCategory::Modified
         );
         assert_eq!(
-            classify_change(BorgDiffChangeType::from("time changed")),
+            classify_change(&BorgDiffChangeType::from("time changed")),
             ChangeCategory::Modified
         );
         assert_eq!(
-            classify_change(BorgDiffChangeType::from("unknown type")),
+            classify_change(&BorgDiffChangeType::from("unknown type")),
             ChangeCategory::Modified
         );
     }
@@ -271,13 +293,18 @@ mod tests {
             .iter()
             .filter_map(|line| {
                 let v: serde_json::Value = serde_json::from_str(line).ok()?;
-                let path = v["path"].as_str()?.to_string();
-                let category = v["changes"]
-                    .as_array()
+                let path = v
+                    .get("path")
+                    .and_then(serde_json::Value::as_str)?
+                    .to_string();
+                let category = v
+                    .get("changes")
+                    .and_then(serde_json::Value::as_array)
                     .and_then(|c| c.first())
-                    .and_then(|c| c["type"].as_str())
+                    .and_then(|c| c.get("type"))
+                    .and_then(serde_json::Value::as_str)
                     .map_or(ChangeCategory::Modified, |change_type| {
-                        classify_change(BorgDiffChangeType::from(change_type))
+                        classify_change(&BorgDiffChangeType::from(change_type))
                     });
                 Some((path, category))
             })
@@ -285,18 +312,17 @@ mod tests {
 
         entries.sort_by(|a, b| a.0.cmp(&b.0));
 
-        assert_eq!(entries.len(), 3);
+        let [hosts, new_file, old_file] = entries.as_slice() else {
+            panic!("expected exactly 3 entries, got {entries:?}");
+        };
+        assert_eq!(hosts, &("etc/hosts".to_string(), ChangeCategory::Modified));
         assert_eq!(
-            entries[0],
-            ("etc/hosts".to_string(), ChangeCategory::Modified)
+            new_file,
+            &("etc/new-file".to_string(), ChangeCategory::Added)
         );
         assert_eq!(
-            entries[1],
-            ("etc/new-file".to_string(), ChangeCategory::Added)
-        );
-        assert_eq!(
-            entries[2],
-            ("etc/old-file".to_string(), ChangeCategory::Removed)
+            old_file,
+            &("etc/old-file".to_string(), ChangeCategory::Removed)
         );
     }
 }

@@ -14,6 +14,7 @@ const CSP_VALUE_APIDOCS: &str = "default-src 'self'; \
      font-src 'self' https://cdn.jsdelivr.net; \
      frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
 
+/// Axum middleware that injects Content-Security-Policy headers into every response.
 pub async fn csp_headers(request: Request, next: Next) -> Response {
     let is_apidocs = request.uri().path().starts_with("/api/docs");
     let mut response = next.run(request).await;

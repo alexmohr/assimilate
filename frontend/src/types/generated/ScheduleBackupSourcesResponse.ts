@@ -4,10 +4,28 @@ import type { PerAgentCommandsResponse } from "./PerAgentCommandsResponse";
 import type { PerAgentExcludePatternsResponse } from "./PerAgentExcludePatternsResponse";
 import type { PerAgentFileChangePatternsResponse } from "./PerAgentFileChangePatternsResponse";
 
+/**
+ * Response containing schedule backup sources.
+ */
 export type ScheduleBackupSourcesResponse = {
+  /**
+   * Backup source paths.
+   */
   backup_sources: Array<string>;
+  /**
+   * Backup sources per agent.
+   */
   backup_sources_per_agent: Array<PerAgentBackupSourcesResponse>;
+  /**
+   * Exclude patterns per agent.
+   */
   exclude_patterns_per_agent: Array<PerAgentExcludePatternsResponse>;
+  /**
+   * Commands per agent.
+   */
   commands_per_agent: Array<PerAgentCommandsResponse>;
+  /**
+   * File change patterns per agent.
+   */
   file_change_patterns_per_agent: Array<PerAgentFileChangePatternsResponse>;
 };

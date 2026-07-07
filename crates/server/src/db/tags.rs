@@ -5,16 +5,31 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::PgPool;
 
+/// A user-assigned tag on a specific archive (e.g. `pre-upgrade`,
+/// `weekly-baseline`), joined from the `archive_tags` and `archives` tables.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ArchiveTag {
+    /// Primary key of the tag row.
     pub id: i64,
+    /// Repository the tagged archive belongs to, resolved via the
+    /// `archives` table; `None` if the archive row could not be resolved.
     pub repo_id: Option<i64>,
+    /// Name of the tagged archive, resolved via the `archives` table.
     pub archive_name: Option<String>,
+    /// The tag text itself.
     pub tag: String,
+    /// ID of the user who created the tag, if known.
     pub created_by: Option<i64>,
+    /// Timestamp at which the tag was created.
     pub created_at: DateTime<Utc>,
 }
 
+/// Tags an archive, creating the archive's placeholder row first if it does
+/// not already exist (e.g. before the archive has been indexed).
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn add_tag(
     pool: &PgPool,
     repo_id: i64,
@@ -49,6 +64,9 @@ pub async fn add_tag(
     .await
 }
 
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn remove_tag(
     pool: &PgPool,
     repo_id: i64,
@@ -68,6 +86,9 @@ pub async fn remove_tag(
     Ok(result.rows_affected() > 0)
 }
 
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn list_tags_for_archive(
     pool: &PgPool,
     repo_id: i64,
@@ -85,6 +106,9 @@ pub async fn list_tags_for_archive(
     .await
 }
 
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn list_archives_by_tag(
     pool: &PgPool,
     repo_id: i64,

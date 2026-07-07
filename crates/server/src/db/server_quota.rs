@@ -12,16 +12,24 @@ use super::quota::{QuotaStatus, evaluate_thresholds};
 /// multiple repositories reside on one server with a shared disk quota.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ServerQuota {
+    /// SSH hostname shared by repos on the same server.
     pub ssh_host: String,
+    /// Warn threshold in bytes.
     pub warn_bytes: Option<i64>,
+    /// Critical threshold in bytes.
     pub critical_bytes: Option<i64>,
+    /// Action to take when the warn threshold is breached.
     pub warn_action: String,
+    /// Action to take when the critical threshold is breached.
     pub critical_action: String,
+    /// Whether this quota is enforced.
     pub enabled: bool,
+    /// When this quota was last updated.
     pub updated_at: DateTime<Utc>,
 }
 
 impl ServerQuota {
+    /// Current quota status for the given total deduplicated size across the host's repos.
     #[must_use]
     pub fn status(&self, total_deduplicated_size: i64) -> QuotaStatus {
         evaluate_thresholds(
@@ -47,12 +55,19 @@ impl ServerQuota {
 /// `server_quotas` configuration and current aggregated usage across those repos.
 #[derive(Debug, Clone)]
 pub struct ServerQuotaWithUsage {
+    /// SSH hostname.
     pub ssh_host: String,
+    /// Number of repos on this host.
     pub repo_count: i64,
+    /// Combined deduplicated size across all repos on this host.
     pub total_deduplicated_size: i64,
+    /// Server-level quota configuration, if any.
     pub quota: Option<ServerQuota>,
 }
 
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn upsert_server_quota(
     pool: &PgPool,
     ssh_host: &str,
@@ -90,6 +105,9 @@ pub async fn upsert_server_quota(
     .await
 }
 
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn get_server_quota(
     pool: &PgPool,
     ssh_host: &str,
@@ -105,6 +123,10 @@ pub async fn get_server_quota(
 }
 
 /// Returns `true` if a quota row existed and was deleted.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn delete_server_quota(pool: &PgPool, ssh_host: &str) -> Result<bool, sqlx::Error> {
     let result = sqlx::query!("DELETE FROM server_quotas WHERE ssh_host = $1", ssh_host)
         .execute(pool)
@@ -116,6 +138,10 @@ pub async fn delete_server_quota(pool: &PgPool, ssh_host: &str) -> Result<bool, 
 /// Every distinct `ssh_host` that hosts at least one repo, together with the number of
 /// repos on that host, their combined deduplicated size, and the quota configured for it
 /// (if any).
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn list_server_quotas_with_usage(
     pool: &PgPool,
 ) -> Result<Vec<ServerQuotaWithUsage>, sqlx::Error> {
@@ -192,6 +218,10 @@ pub async fn list_server_quotas_with_usage(
 
 /// Total deduplicated size across every repo sharing `ssh_host`, from the authoritative
 /// `repo_stats` snapshot (never derived from `backup_reports`).
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn total_deduplicated_size_for_ssh_host(
     pool: &PgPool,
     ssh_host: &str,
@@ -222,6 +252,10 @@ pub async fn total_deduplicated_size_for_ssh_host(
 /// (fresh) `report.deduplicated_size` with its sibling repos' (possibly stale, since
 /// `repo_stats` is only refreshed by a sync/rescan) snapshot, so a quota breach on an otherwise
 /// idle host is detected immediately rather than only after an unrelated rescan.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn total_deduplicated_size_for_ssh_host_excluding(
     pool: &PgPool,
     ssh_host: &str,
@@ -250,6 +284,10 @@ pub async fn total_deduplicated_size_for_ssh_host_excluding(
 }
 
 /// Number of repos sharing `ssh_host`.
+///
+/// # Errors
+///
+/// Returns an error if the database query fails.
 pub async fn repo_count_for_ssh_host(pool: &PgPool, ssh_host: &str) -> Result<i64, sqlx::Error> {
     #[derive(sqlx::FromRow)]
     struct Row {

@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+//! Build script that prepares the output directory used by `ts-rs` to
+//! generate TypeScript bindings for the frontend from this crate's types.
+
 use std::{env, io, path::Path};
 
+/// Prepares the output directory for `ts-rs` generated TypeScript bindings
+/// and re-exports its path to `rustc` so `#[ts(export)]` types write into it.
 #[allow(
     clippy::disallowed_methods,
     reason = "build scripts run at compile time, before any async runtime exists"

@@ -28,14 +28,20 @@ impl From<db::quota::RepoQuota> for RepoQuotaResponse {
     }
 }
 
+/// Request payload for creating or updating a repository quota.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpsertQuotaRequest {
+    /// Warning threshold in bytes.
     pub warn_bytes: Option<i64>,
+    /// Critical threshold in bytes.
     pub critical_bytes: Option<i64>,
+    /// Action to take when warning threshold is reached.
     #[serde(default)]
     pub warn_action: QuotaAction,
+    /// Action to take when critical threshold is reached.
     #[serde(default)]
     pub critical_action: QuotaAction,
+    /// Whether the quota is enabled.
     pub enabled: bool,
 }
 
@@ -62,6 +68,9 @@ async fn require_operator_or_admin(state: &AppState, auth: &AuthUser) -> Result<
         (status = 404, description = "Quota not configured"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] if the requested resource does not exist.
 pub async fn get_quota(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -91,6 +100,9 @@ pub async fn get_quota(
         (status = 403, description = "Forbidden"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub async fn upsert_quota(
     State(state): State<AppState>,
     auth: AuthUser,

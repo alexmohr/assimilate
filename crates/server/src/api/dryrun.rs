@@ -18,20 +18,28 @@ use crate::{
     error::{ApiError, ApiJson},
 };
 
+/// Request payload for a backup dry-run.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct DryRunRequest {
+    /// Schedule ID whose configuration should be used for the dry-run.
     pub schedule_id: i64,
 }
 
+/// A file entry in a dry-run result.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DryRunFileEntry {
+    /// Relative file path.
     pub path: String,
+    /// File size in bytes.
     pub size: i64,
 }
 
+/// Result of a backup dry-run (preview of files to be backed up).
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DryRunResponse {
+    /// Files that would be included in the backup.
     pub files: Vec<DryRunFileEntry>,
+    /// Total size of all matched files in bytes.
     pub total_size: i64,
 }
 
@@ -51,6 +59,12 @@ pub struct DryRunResponse {
         (status = 503, description = "Agent offline or timed out"),
     )
 )]
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the requested resource does not exist
+/// - [`ApiError::ServiceUnavailable`]: a required dependency (e.g. the target agent) is unavailable
+/// - [`ApiError::Internal`]: an internal error occurs
 pub async fn dry_run(
     State(state): State<AppState>,
     auth: AuthUser,

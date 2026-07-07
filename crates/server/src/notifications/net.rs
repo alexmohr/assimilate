@@ -27,7 +27,7 @@ pub(crate) fn is_private_ip(ip: IpAddr) -> bool {
     // ordinary IPv6.
     let ip = match ip {
         IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(IpAddr::V6(v6), IpAddr::V4),
-        other => other,
+        IpAddr::V4(_) => ip,
     };
 
     match ip {

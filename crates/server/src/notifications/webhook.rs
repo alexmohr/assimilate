@@ -7,13 +7,19 @@ use serde::Deserialize;
 
 use super::NotificationError;
 
+/// Configuration for an HTTP webhook notification channel.
 #[derive(Debug, Deserialize)]
 pub struct WebhookConfig {
+    /// Target URL to POST the notification payload to.
     pub url: String,
+    /// Optional custom HTTP headers to include in the request.
     #[serde(default)]
     pub headers: HashMap<String, String>,
 }
 
+/// # Errors
+///
+/// Returns [`NotificationError::Config`] if the notification channel is misconfigured.
 pub async fn send(
     config: &WebhookConfig,
     payload: &serde_json::Value,

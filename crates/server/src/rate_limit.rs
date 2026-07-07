@@ -148,19 +148,24 @@ impl UserRateLimiter {
     }
 }
 
-/// Wraps the auth extractor to populate request extensions with the authenticated
-/// user's ID so downstream middleware (e.g. rate limiting) can read it.
+/// Wraps the auth extractor to populate request extensions with the
+/// authenticated user so the handler's own extractor can reuse it,
+/// and to apply per-user rate limiting to mutating requests.
 pub async fn auth_tracking_middleware(
     axum::extract::State(state): axum::extract::State<crate::AppState>,
     req: Request,
     next: Next,
 ) -> Response {
-    // Try to extract AuthUser - this duplicates the extraction that the handler
-    // will do, but it's cheap (reads headers + one DB lookup).
+    // Extract AuthUser and stash it in request extensions so the handler's
+    // own `AuthUser` extractor can reuse it instead of doing a second DB
+    // round trip.
     let (mut parts, body) = req.into_parts();
     let auth_user = crate::api::auth::AuthUser::from_request_parts(&mut parts, &state)
         .await
         .ok();
+    if let Some(ref user) = auth_user {
+        parts.extensions.insert(user.clone());
+    }
     let req = Request::from_parts(parts, body);
 
     // Only rate-limit mutating requests (POST, PUT, PATCH, DELETE).

@@ -55,6 +55,13 @@ impl FromRequestParts<AppState> for AuthUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
+        // If `auth_tracking_middleware` (rate_limit.rs) already extracted the
+        // authenticated user, reuse it from request extensions -- avoids an
+        // extra DB round trip on every request.
+        if let Some(auth_user) = parts.extensions.get::<AuthUser>() {
+            return Ok(auth_user.clone());
+        }
+
         if let Some(token_user) = try_bearer_auth(parts, state).await? {
             return Ok(token_user);
         }

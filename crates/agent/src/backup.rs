@@ -522,8 +522,8 @@ impl BackupEngine {
             exclude_file.to_string_lossy().into_owned(),
         ];
 
-        if let Some(rate_limit_kbps) = target.rate_limit_kbps {
-            flags.push("--remote-ratelimit".to_owned());
+        if let Some(rate_limit_kbps) = target.rate_limit_kbps.filter(|&kbps| kbps > 0) {
+            flags.push("--upload-ratelimit".to_owned());
             flags.push(rate_limit_kbps.to_string());
         }
 
@@ -1131,8 +1131,23 @@ mod tests {
             "archive-name",
         );
 
-        assert!(args.iter().any(|arg| arg == "--remote-ratelimit"));
+        assert!(args.iter().any(|arg| arg == "--upload-ratelimit"));
         assert!(args.iter().any(|arg| arg == "5000"));
+    }
+
+    #[test]
+    fn test_rate_limit_flag_absent_when_zero() {
+        let mut target = test_target();
+        target.rate_limit_kbps = Some(0);
+
+        let args = BackupEngine::borg_create_args(
+            &target,
+            &target.backup_sources,
+            Path::new("/tmp/excludes"),
+            "archive-name",
+        );
+
+        assert!(!args.iter().any(|arg| arg == "--upload-ratelimit"));
     }
 
     #[test]
@@ -1180,7 +1195,7 @@ mod tests {
             "archive-name",
         );
 
-        assert!(!args.iter().any(|arg| arg == "--remote-ratelimit"));
+        assert!(!args.iter().any(|arg| arg == "--upload-ratelimit"));
     }
 
     #[test]

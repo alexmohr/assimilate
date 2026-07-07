@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 Assimilate runs backups on a schedule you define per repository. Each schedule carries its own cron expression, retention policy, exclude patterns, optional pre/post commands, and optional Borg bandwidth cap.
 
-When set, the bandwidth cap is passed to Borg as `--remote-ratelimit` in kB/s.
+When set, the bandwidth cap is passed to Borg as `--upload-ratelimit` in kB/s.
 
 ## Creating a Schedule
 
@@ -149,7 +149,7 @@ Change the timezone under **System → Settings** (the `timezone` setting, e.g. 
 
 Each schedule can cap the bandwidth that borg uses when communicating with the repository server. This prevents backups from saturating network links during business hours.
 
-Set the **Remote rate limit** field (in kB/s) when creating or editing a schedule. The value is passed to borg as `--remote-ratelimit`. Set to `0` to disable rate limiting on that schedule.
+Set the **Remote rate limit** field (in kB/s) when creating or editing a schedule. The value is passed to borg as `--upload-ratelimit`. Set to `0` to disable rate limiting on that schedule.
 
 !!! tip
     For schedules that run during the day, set a low rate limit (e.g. 1000 kB/s) to avoid impacting other traffic. Remove the limit for overnight schedules where full bandwidth is available.

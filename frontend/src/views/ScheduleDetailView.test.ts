@@ -207,6 +207,34 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(tabs.some((t) => t.text() === 'Advanced')).toBe(true)
   })
 
+  it('shows and saves the remote rate limit field on the Advanced tab', async () => {
+    setupEditMode()
+    mockApiClient.put.mockResolvedValue({ data: mockSchedule })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    const tabs = wrapper.findAll('.tab-btn')
+    await tabs.find((t) => t.text() === 'Advanced')!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Remote Rate Limit')
+    const rateLimitInput = wrapper
+      .findAll('input[type="number"]')
+      .find((i) => i.element.value === '0')
+    expect(rateLimitInput).toBeTruthy()
+
+    await rateLimitInput!.setValue(2000)
+
+    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save Changes')
+    await saveBtn!.trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.put).toHaveBeenCalledWith(
+      '/schedules/1',
+      expect.objectContaining({ rate_limit_kbps: 2000 }),
+    )
+  })
+
   it('does not show Advanced tab for check type', async () => {
     setupEditMode(mockCheckSchedule)
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '2' } })

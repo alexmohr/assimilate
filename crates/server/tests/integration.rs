@@ -1662,7 +1662,9 @@ async fn test_sessions_stored_as_hashes_not_plaintext(pool: sqlx::PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_login_response_includes_role(pool: sqlx::PgPool) {
-    let mut app = build_test_app(pool.clone()).await;
+    use std::net::SocketAddr;
+
+    let mut app = build_test_app(pool.clone());
 
     // Create a test user with a known bcrypt hash and the 'viewer' role.
     let password = "viewer-password";
@@ -1695,7 +1697,6 @@ async fn test_login_response_includes_role(pool: sqlx::PgPool) {
     // Login as this user and verify the role field is present.
     // The login handler extracts ConnectInfo<SocketAddr> from the request
     // extensions, so we must provide one.
-    use std::net::SocketAddr;
     let body =
         serde_json::json!({ "username": "login-role-viewer", "password": "viewer-password" });
     let mut req = Request::builder()
@@ -1717,7 +1718,8 @@ async fn test_login_response_includes_role(pool: sqlx::PgPool) {
         "login response must include user.role"
     );
     assert_eq!(
-        json["user"]["role"], "viewer",
+        json.get("user").and_then(|u| u.get("role")).unwrap(),
+        "viewer",
         "viewer user should have 'viewer' role"
     );
 }

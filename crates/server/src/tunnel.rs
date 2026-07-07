@@ -196,8 +196,10 @@ impl TunnelManager {
             let _completion = TunnelTaskCompletion(completion);
             let mut backoff = Duration::from_secs(1);
             loop {
-                match run_tunnel_connection_attempt(&manager, tunnel_id, &hostname, &cancel, backoff)
-                    .await
+                match run_tunnel_connection_attempt(
+                    &manager, tunnel_id, &hostname, &cancel, backoff,
+                )
+                .await
                 {
                     ConnectionOutcome::Stop => return,
                     ConnectionOutcome::Retry(next_backoff) => backoff = next_backoff,

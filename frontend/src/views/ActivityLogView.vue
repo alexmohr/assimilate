@@ -208,9 +208,9 @@ function liveSessionKey(hostname: string, target: string): string {
 }
 
 const { onMessage } = useWebSocket()
-onMessage('DataChanged', () => fetchData(true).catch(logger.error))
-onMessage('AgentConnected', () => fetchData(true).catch(logger.error))
-onMessage('AgentDisconnected', () => fetchData(true).catch(logger.error))
+onMessage('DataChanged', () => fetchData(true, true).catch(logger.error))
+onMessage('AgentConnected', () => fetchData(true, true).catch(logger.error))
+onMessage('AgentDisconnected', () => fetchData(true, true).catch(logger.error))
 
 onMessage('BackupStarted', (payload) => {
   const key = liveSessionKey(payload.hostname, payload.target_name)
@@ -304,7 +304,7 @@ async function fetchLogs(): Promise<void> {
   }
 }
 
-async function fetchData(reset: boolean): Promise<void> {
+async function fetchData(reset: boolean, preserveExpanded = false): Promise<void> {
   if (activeCategory.value === 'logs') return
 
   if (reset) {
@@ -312,9 +312,11 @@ async function fetchData(reset: boolean): Promise<void> {
     offset.value = 0
     rows.value = []
     systemEvents.value = []
-    expandedId.value = null
-    expandedDetail.value = null
-    expandedSystemId.value = null
+    if (!preserveExpanded) {
+      expandedId.value = null
+      expandedDetail.value = null
+      expandedSystemId.value = null
+    }
   } else {
     loadingMore.value = true
   }

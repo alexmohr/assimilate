@@ -15,10 +15,20 @@ vi.mock('../api/client', () => ({
   apiClient: { get: vi.fn() },
 }))
 
+const wsMessageHandlers = new Map<string, Array<(payload?: unknown) => void>>()
+
+function triggerWsMessage(type: string): void {
+  for (const handler of wsMessageHandlers.get(type) ?? []) handler()
+}
+
 vi.mock('../composables/useWebSocket', () => ({
   useWebSocket: () => ({
     status: { value: 'connected' },
-    onMessage: vi.fn(),
+    onMessage: (type: string, handler: (payload?: unknown) => void) => {
+      const handlers = wsMessageHandlers.get(type) ?? []
+      handlers.push(handler)
+      wsMessageHandlers.set(type, handlers)
+    },
   }),
 }))
 
@@ -169,6 +179,7 @@ function setupDefaultMocks(): void {
 describe('ActivityLogView', () => {
   beforeEach(() => {
     mockGet.mockReset()
+    wsMessageHandlers.clear()
   })
 
   describe('page header', () => {
@@ -349,6 +360,31 @@ describe('ActivityLogView', () => {
       expect(warningPre.exists()).toBe(true)
       expect(warningPre.text()).toContain('some file changed during backup')
       expect(warningPre.text()).toContain('slow read on /var/www/logs')
+    })
+
+    it('keeps the expanded detail panel open when a background DataChanged event arrives', async () => {
+      setupDefaultMocks()
+      const wrapper = mountView()
+      await flushPromises()
+
+      const warningRows = wrapper
+        .findAll('tr.log-row')
+        .filter(
+          (r) =>
+            r.find('.badge-warning').exists() &&
+            r.find('.cell-host').text() === 'web-server-01' &&
+            r.find('.cell-target').text().startsWith('/var/www'),
+        )
+      await warningRows[0].trigger('click')
+      await flushPromises()
+      expect(wrapper.find('pre.warning-pre').exists()).toBe(true)
+
+      triggerWsMessage('DataChanged')
+      await flushPromises()
+
+      const warningPre = wrapper.find('pre.warning-pre')
+      expect(warningPre.exists()).toBe(true)
+      expect(warningPre.text()).toContain('some file changed during backup')
     })
   })
 

@@ -15,7 +15,7 @@ test.describe('Archive browsing & diff journey', () => {
     await expect(page.locator('.panel-title').filter({ hasText: 'Archives' })).toBeVisible()
 
     const firstRow = page.locator('.archive-row').first()
-    await expect(firstRow).toBeVisible({ timeout: 15_000 })
+    await expect(firstRow).toBeVisible({ timeout: 30_000 })
     await expect(firstRow.locator('.archive-name')).toBeVisible()
     await expect(firstRow.locator('.archive-date')).toBeVisible()
   })

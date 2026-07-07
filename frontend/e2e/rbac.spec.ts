@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsOperator, loginAsViewer, test } from './fixtures'
+import {
+  adminRoutes,
+  expect,
+  loginAsOperator,
+  loginAsViewer,
+  test,
+  verifyRedirectFromAdminRoutes,
+} from './fixtures'
 
 test.describe('RBAC - operator permissions', () => {
   test('operator can view hosts, repositories, and schedules', async ({ page }) => {
@@ -20,16 +27,12 @@ test.describe('RBAC - operator permissions', () => {
     await expect(page).toHaveURL(/\/schedules/)
   })
 
-  for (const path of ['/users', '/admin/roles', '/admin/groups']) {
-    test(`operator is redirected away from ${path}`, async ({ page }) => {
-      await loginAsOperator(page)
-      await page.goto(path)
-      await page.waitForLoadState('networkidle')
-
-      // requiresAdmin route guard redirects non-admins to the dashboard.
-      await expect(page).toHaveURL('/')
-    })
-  }
+  // login-role.spec.ts covers the equivalent viewer-role redirect scenario, so
+  // only the operator role (untested elsewhere) is checked here.
+  test('operator is redirected away from admin routes', async ({ page }) => {
+    await loginAsOperator(page)
+    await verifyRedirectFromAdminRoutes(page, ['/users', ...adminRoutes])
+  })
 })
 
 test.describe('RBAC - viewer permissions', () => {
@@ -44,14 +47,4 @@ test.describe('RBAC - viewer permissions', () => {
     await page.waitForLoadState('networkidle')
     await expect(page).toHaveURL(/\/agents/)
   })
-
-  for (const path of ['/users', '/admin/roles', '/admin/groups']) {
-    test(`viewer is redirected away from ${path}`, async ({ page }) => {
-      await loginAsViewer(page)
-      await page.goto(path)
-      await page.waitForLoadState('networkidle')
-
-      await expect(page).toHaveURL('/')
-    })
-  }
 })

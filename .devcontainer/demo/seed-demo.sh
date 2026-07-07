@@ -333,9 +333,18 @@ WHERE br.schedule_id IS NULL
 SQL
 
 echo "==> Adding global excludes..."
-for PATTERN in "pp:__pycache__" "pp:.cache" "pp:node_modules" "*.pyc" "*.swp" "*~" "/proc" "/sys" "/tmp"; do
-    api POST "/api/excludes" "{\"pattern\": \"$PATTERN\"}" > /dev/null 2>&1 || true
-done
+# /api/excludes stores a single raw_text blob (one pattern per line) - it is not
+# a per-pattern collection endpoint.
+EXCLUDES_RAW_TEXT="pp:__pycache__
+pp:.cache
+pp:node_modules
+*.pyc
+*.swp
+*~
+/proc
+/sys
+/tmp"
+api PUT "/api/excludes" "$(jq -n --arg raw_text "$EXCLUDES_RAW_TEXT" '{raw_text: $raw_text}')" > /dev/null
 
 echo "==> Creating tags..."
 api POST "/api/tags" '{"name":"production","color":"#ef4444","scope":"agent"}' > /dev/null 2>&1 || true
@@ -344,11 +353,13 @@ api POST "/api/tags" '{"name":"critical","color":"#dc2626","scope":"repo"}' > /d
 api POST "/api/tags" '{"name":"archival","color":"#6366f1","scope":"repo"}' > /dev/null 2>&1 || true
 
 echo "==> Creating additional users and roles..."
+# Passwords match the usernames (bcrypt cost 10, pre-computed), the same convention
+# used for the admin account above, so e2e RBAC tests can log in as these roles.
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<'SQL'
 INSERT INTO users (username, password_hash) VALUES
-    ('operator1', '$2b$12$LJ3m4sFQH/0.s3VDlIBNOeRbEEziXlg5V5X1A0x0aM0ABs3LHfMwq'),
-    ('viewer1', '$2b$12$LJ3m4sFQH/0.s3VDlIBNOeRbEEziXlg5V5X1A0x0aM0ABs3LHfMwq')
-ON CONFLICT (username) DO NOTHING;
+    ('operator1', '$2b$10$bO6/.9GSDqqTPFqe1CiOGOf2UZt3rxK71x7CfBXlFotSLhT0aUoZ2'),
+    ('viewer1', '$2b$10$Ex5wHmqtI7IFdor4vJdXo.6YvqGErhf3PtiKGKCDORiArpZwyg3Ze')
+ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash;
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id FROM users u, roles r WHERE u.username = 'operator1' AND r.name = 'operator'
 ON CONFLICT DO NOTHING;

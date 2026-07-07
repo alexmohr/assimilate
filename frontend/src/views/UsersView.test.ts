@@ -130,4 +130,36 @@ describe('UsersView', () => {
 
     expect(document.body.textContent).toContain('Add User')
   })
+
+  it('shows repository names in the permissions tab', async () => {
+    mockApiGet.mockImplementation((url: string) => {
+      if (url === '/repos') {
+        return Promise.resolve({
+          data: [{ id: 1, name: 'web-server-01 / daily', enabled: true }],
+        })
+      }
+      if (url === '/users/1/permissions') {
+        return Promise.resolve({ data: [] })
+      }
+      return Promise.resolve({ data: mockUsers })
+    })
+
+    const wrapper = renderWithPlugins(UsersView, {
+      storeState: { auth: { user: { id: 99, username: 'admin', role: 'admin' } } },
+    })
+
+    await flushPromises()
+
+    const editButtons = wrapper.findAll('button').filter((b) => b.text().includes('Edit'))
+    await editButtons[0]!.trigger('click')
+    await flushPromises()
+
+    const permissionsTab = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('button.tab'),
+    ).find((t) => t.textContent?.trim() === 'Permissions')
+    permissionsTab!.click()
+    await flushPromises()
+
+    expect(document.body.textContent).toContain('web-server-01 / daily')
+  })
 })

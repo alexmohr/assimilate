@@ -22,8 +22,7 @@ interface User {
 
 interface RepoOption {
   id: number
-  hostname: string
-  target_name: string
+  name: string
   enabled: boolean
 }
 
@@ -677,7 +676,7 @@ onMounted(fetchUsers)
                       v-for="repo in permissionsRepos"
                       :key="repo.id"
                     >
-                      <td class="perm-repo-cell">{{ repo.hostname }} / {{ repo.target_name }}</td>
+                      <td class="perm-repo-cell">{{ repo.name }}</td>
                       <td class="perm-check-cell">
                         <input
                           type="checkbox"

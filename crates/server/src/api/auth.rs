@@ -277,6 +277,8 @@ pub async fn login(
         user: user_resp,
         session_expires_at: expires_at,
         remember_me: req.remember_me,
+        totp_required: false,
+        temp_token: None,
     });
     let mut response = body.into_response();
     response.headers_mut().insert(
@@ -362,6 +364,7 @@ pub async fn me(
         must_change_password: user.must_change_password,
         session_expires_at,
         remember_me,
+        totp_enabled: false,
     }))
 }
 

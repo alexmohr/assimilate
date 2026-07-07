@@ -204,7 +204,7 @@ impl NotificationService {
     fn begin_delivery(&self) -> DeliveryGuard {
         self.in_flight_deliveries
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        DeliveryGuard(self.in_flight_deliveries.clone())
+        DeliveryGuard(std::sync::Arc::clone(&self.in_flight_deliveries))
     }
 
     /// # Errors

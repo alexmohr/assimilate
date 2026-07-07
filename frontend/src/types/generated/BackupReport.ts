@@ -4,28 +4,86 @@ import type { BackupStatus } from "./BackupStatus";
 import type { RepoId } from "./RepoId";
 import type { ReportId } from "./ReportId";
 
+/**
+ * A record of a single completed (or failed) backup run, persisted for
+ * history, stats, and quota tracking.
+ */
 export type BackupReport = {
+  /**
+   * Unique database identifier for this report.
+   */
   id: ReportId;
+  /**
+   * Agent that performed the backup this report describes.
+   */
   agent_id: AgentId;
+  /**
+   * Repository the backup was written into.
+   */
   repo_id: RepoId;
+  /**
+   * Schedule that triggered this backup, if it wasn't run manually.
+   */
   schedule_id: number | null;
+  /**
+   * When the backup began.
+   */
   started_at: string;
+  /**
+   * When the backup finished (successfully or not).
+   */
   finished_at: string;
+  /**
+   * Overall outcome of the backup.
+   */
   status: BackupStatus;
+  /**
+   * Total uncompressed size of the files borg processed, in bytes.
+   */
   original_size: number;
+  /**
+   * Total compressed size borg wrote for this backup, in bytes.
+   */
   compressed_size: number;
+  /**
+   * Size after deduplication against existing chunks in the repository, in bytes.
+   */
   deduplicated_size: number;
   /**
    * Total unique compressed size of the repository at backup time (`cache.stats.unique_csize`).
    * This is the actual on-disk usage of the repository.
    */
   repo_unique_csize: number;
+  /**
+   * Number of files borg processed during this backup.
+   */
   files_processed: number;
+  /**
+   * How long the backup took to run, in seconds.
+   */
   duration_secs: number;
+  /**
+   * Human-readable error message, present when the backup failed.
+   */
   error_message: string | null;
+  /**
+   * Warning messages borg emitted during the backup, if any.
+   */
   warnings: Array<string>;
+  /**
+   * Version string reported by the agent's `borg --version`, if known.
+   */
   borg_version: string | null;
+  /**
+   * Name of the archive borg created for this backup, if it got that far.
+   */
   archive_name: string | null;
+  /**
+   * The exact borg command line that was executed, for troubleshooting.
+   */
   borg_command: string | null;
+  /**
+   * Correlation ID linking this report to related log lines and events.
+   */
   run_id: string | null;
 };

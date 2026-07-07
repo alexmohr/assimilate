@@ -7,14 +7,24 @@ use sqlx::PgPool;
 
 use crate::error::ApiError;
 
+/// A row from `agent_hostname_patterns`, associating a glob-style hostname
+/// pattern with the agent whose configuration it should apply to.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct HostnamePatternRow {
+    /// Primary key of the pattern row.
     pub id: i64,
+    /// Foreign key of the agent this pattern is associated with.
     pub agent_id: i64,
+    /// Glob-style hostname pattern (e.g. `web-server-*`) matched against
+    /// unmatched/imported client hostnames.
     pub pattern: String,
+    /// Timestamp at which the pattern was created.
     pub created_at: DateTime<Utc>,
 }
 
+/// Lists all hostname patterns registered for a given agent, ordered
+/// alphabetically by pattern.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -33,6 +43,8 @@ pub async fn list_patterns_for_agent(
     .map_err(ApiError::Database)
 }
 
+/// Inserts a new hostname pattern for an agent and returns the created row.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -53,6 +65,8 @@ pub async fn add_hostname_pattern(
     .map_err(ApiError::Database)
 }
 
+/// Deletes a hostname pattern by its primary key.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -90,6 +104,10 @@ struct PatternAgentJoinRow {
     pub is_hidden: bool,
 }
 
+/// Looks up an agent whose registered hostname pattern glob-matches the
+/// given hostname, used to resolve unmatched/imported clients to a
+/// configured agent.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.

@@ -17,45 +17,69 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use tracing::{info, warn};
 
+/// Errors that can occur while connecting to, authenticating with, or
+/// running commands on a remote host over SSH/SFTP.
 #[derive(Debug, thiserror::Error)]
 pub enum SshError {
+    /// Establishing the SSH connection itself failed (DNS, TCP, protocol negotiation, etc.).
     #[error("SSH connection failed: {0}")]
     Connection(String),
+    /// The remote host rejected our credentials (password or public key).
     #[error("SSH authentication failed: {0}")]
     Auth(String),
+    /// An SFTP subsystem operation (open, read, write, create directory) failed.
     #[error("SFTP error: {0}")]
     Sftp(String),
+    /// Running a remote shell command failed or the channel could not be opened.
     #[error("command execution failed: {0}")]
     Exec(String),
+    /// The server's own SSH public key was not found at the expected path.
     #[error("server public key not found at {0}")]
     PublicKeyNotFound(PathBuf),
+    /// A local I/O error occurred while preparing or reading data for the SSH operation.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
 
+/// Request payload for testing SSH connectivity and borg availability on a candidate host.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct TestConnectionRequest {
+    /// Hostname or IP address of the remote machine to test.
     pub ssh_host: String,
+    /// SSH user to authenticate as; defaults to `borg`.
     #[serde(default = "default_ssh_user")]
     pub ssh_user: String,
+    /// SSH port to connect to; defaults to 22 when unset.
     pub ssh_port: Option<u16>,
 }
 
+/// Result of a [`test_connection`] probe against a remote host.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct TestConnectionResponse {
+    /// Whether the SSH connection and authentication succeeded.
     pub ssh_ok: bool,
+    /// Whether the `borg` binary was found and runnable on the remote host.
     pub borg_installed: bool,
+    /// Version string reported by `borg --version`, if borg was found.
     pub borg_version: Option<String>,
+    /// Human-readable error message, present when either the connection or the borg check failed.
     pub error: Option<String>,
 }
 
+/// Request payload for deploying the server's SSH public key to a remote host's
+/// `authorized_keys`, authenticating with a password for the initial connection.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct DeployKeyRequest {
+    /// Hostname or IP address of the remote machine to deploy the key to.
     pub ssh_host: String,
+    /// SSH user to authenticate as; defaults to `borg`.
     #[serde(default = "default_ssh_user")]
     pub ssh_user: String,
+    /// SSH port to connect to; defaults to 22 when unset.
     pub ssh_port: Option<u16>,
+    /// Password used for the initial password-authenticated connection.
     pub password: String,
+    /// Whether to deploy the key via SFTP (default) rather than a raw shell command.
     #[serde(default = "default_use_sftp")]
     pub use_sftp: bool,
 }
@@ -68,10 +92,14 @@ fn default_use_sftp() -> bool {
     true
 }
 
+/// Result of a [`deploy_key`] attempt.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DeployKeyResponse {
+    /// Whether the key ended up authorized on the remote host (either just now or already).
     pub success: bool,
+    /// Whether the key was already present in `authorized_keys` before this call.
     pub already_deployed: bool,
+    /// Human-readable error message, present when deployment or verification failed.
     pub error: Option<String>,
 }
 
@@ -290,6 +318,8 @@ pub(crate) async fn exec_command(
     ))
 }
 
+/// Connect to a candidate host via SSH and check whether `borg` is installed,
+/// reporting connectivity and borg availability without mutating remote state.
 pub async fn test_connection(req: &TestConnectionRequest) -> TestConnectionResponse {
     let port = req.ssh_port.unwrap_or(22);
 
@@ -336,6 +366,8 @@ pub async fn test_connection(req: &TestConnectionRequest) -> TestConnectionRespo
     }
 }
 
+/// Deploy the server's SSH public key to the remote host's `authorized_keys`,
+/// authenticating with the supplied password, then verify the key works.
 pub async fn deploy_key(req: &DeployKeyRequest) -> DeployKeyResponse {
     let port = req.ssh_port.unwrap_or(22);
 
@@ -486,28 +518,42 @@ async fn deploy_key_shell(
     Ok(())
 }
 
+/// Request payload for listing the contents of a directory on a remote host over SFTP.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ListDirRequest {
+    /// Hostname or IP address of the remote machine.
     pub ssh_host: String,
+    /// SSH user to authenticate as; defaults to `borg`.
     #[serde(default = "default_ssh_user")]
     pub ssh_user: String,
+    /// SSH port to connect to; defaults to 22 when unset.
     pub ssh_port: Option<u16>,
+    /// Directory path to list on the remote host; empty means the filesystem root.
     pub path: String,
 }
 
+/// A single entry returned when listing a remote directory.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DirEntryInfo {
+    /// File or directory name (without the parent path).
     pub name: String,
+    /// Whether the entry is a directory rather than a regular file.
     pub is_dir: bool,
 }
 
+/// Result of a [`list_dir`] call.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ListDirResponse {
+    /// Canonicalized path that was actually listed.
     pub path: String,
+    /// Directory entries, sorted with directories first, then alphabetically.
     pub entries: Vec<DirEntryInfo>,
+    /// Human-readable error message, present when the connection or listing failed.
     pub error: Option<String>,
 }
 
+/// List the contents of a directory on a remote host over SFTP, resolving `req.path`
+/// to its canonical form and sorting directories before files.
 pub async fn list_dir(req: &ListDirRequest) -> ListDirResponse {
     let port = req.ssh_port.unwrap_or(22);
     let path = if req.path.is_empty() { "/" } else { &req.path };
@@ -566,22 +612,32 @@ pub async fn list_dir(req: &ListDirRequest) -> ListDirResponse {
     }
 }
 
+/// Request payload for creating a directory on a remote host over SFTP.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct MkdirRequest {
+    /// Hostname or IP address of the remote machine.
     pub ssh_host: String,
+    /// SSH user to authenticate as; defaults to `borg`.
     #[serde(default = "default_ssh_user")]
     pub ssh_user: String,
+    /// SSH port to connect to; defaults to 22 when unset.
     pub ssh_port: Option<u16>,
+    /// Directory path to create on the remote host; must not be empty.
     pub path: String,
 }
 
+/// Result of a [`mkdir`] call.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MkdirResponse {
+    /// Whether the directory was created successfully.
     pub success: bool,
+    /// Canonicalized path of the created directory, or the requested path on failure.
     pub path: String,
+    /// Human-readable error message, present when the connection or creation failed.
     pub error: Option<String>,
 }
 
+/// Create a directory on a remote host over SFTP and return its canonical path.
 pub async fn mkdir(req: &MkdirRequest) -> MkdirResponse {
     let port = req.ssh_port.unwrap_or(22);
     let path = if req.path.is_empty() {
@@ -636,15 +692,26 @@ pub async fn mkdir(req: &MkdirRequest) -> MkdirResponse {
     }
 }
 
+/// Parameters for deploying (or upgrading) the agent binary and its systemd
+/// unit on a remote host over SSH/SFTP.
 pub struct DeployAgentParams<'a> {
+    /// Hostname or IP address of the remote machine to deploy to.
     pub host: &'a str,
+    /// SSH user to authenticate as on the remote machine.
     pub user: &'a str,
+    /// SSH port to connect to.
     pub port: u16,
+    /// Local directory containing the agent binaries to choose from by architecture.
     pub binary_dir: &'a std::path::Path,
+    /// Destination path for the agent binary on the remote host.
     pub remote_path: &'a str,
+    /// WebSocket URL the deployed agent should connect back to.
     pub server_url: &'a str,
+    /// Agent authentication token to embed in the deployed systemd unit.
     pub token: &'a str,
+    /// Password for the initial SSH connection; omit to authenticate with the server's key.
     pub password: Option<&'a str>,
+    /// Custom systemd unit file contents; falls back to [`default_unit_content`] when unset.
     pub systemd_service_content: Option<&'a str>,
 }
 
@@ -937,14 +1004,23 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
     Ok(())
 }
 
+/// Parameters for reading a single file's contents from a remote host over SSH.
 pub struct ReadFileParams<'a> {
+    /// Hostname or IP address of the remote machine to read from.
     pub host: &'a str,
+    /// SSH user to authenticate as on the remote machine.
     pub user: &'a str,
+    /// SSH port to connect to.
     pub port: u16,
+    /// Password for the initial SSH connection; omit to authenticate with the server's key.
     pub password: Option<&'a str>,
+    /// Absolute path of the remote file to read.
     pub path: &'a str,
 }
 
+/// Reads a remote file's contents via `cat`, falling back to `sudo cat` when
+/// the initial read is denied. Returns `Ok(None)` if the file does not exist.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.

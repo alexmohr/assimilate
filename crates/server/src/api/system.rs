@@ -147,9 +147,13 @@ pub async fn ssh_regenerate_key(
 /// Current system settings.
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct SettingsResponse {
+    /// Number of days to retain backup records.
     pub retention_days: i64,
+    /// Number of days to retain successful/archived backup reports.
     pub report_retention_days: i64,
+    /// Number of days to retain failed/archive-less backup reports.
     pub failed_report_retention_days: i64,
+    /// Number of days to retain system event log entries.
     pub system_event_retention_days: i64,
     /// System timezone (e.g. "UTC").
     pub timezone: String,
@@ -244,9 +248,13 @@ pub async fn get_settings(
 /// Request payload for updating system settings.
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct UpdateSettingsRequest {
+    /// Number of days to retain backup records.
     pub retention_days: i64,
+    /// Number of days to retain successful/archived backup reports.
     pub report_retention_days: Option<i64>,
+    /// Number of days to retain failed/archive-less backup reports.
     pub failed_report_retention_days: Option<i64>,
+    /// Number of days to retain system event log entries.
     pub system_event_retention_days: Option<i64>,
     /// New timezone (e.g. `"America/New_York"`).
     pub timezone: Option<String>,

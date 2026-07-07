@@ -324,7 +324,7 @@ See [Audit Log](audit-log.md) for details.
 |--------|------|-------------|
 | `GET` | `/api/health` | Liveness check — returns `200 OK` when the server is up |
 
-No authentication required for `/api/health`.
+No authentication required for `/api/health`. The response also includes `background_ops_in_flight`, a boolean reporting whether any repo sync or notification delivery is currently running — used by CI to wait for background work to finish before tearing down test infrastructure.
 
 ## WebSocket Protocol
 

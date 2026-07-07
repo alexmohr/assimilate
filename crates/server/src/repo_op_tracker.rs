@@ -94,6 +94,14 @@ impl RepoOpTracker {
         })
     }
 
+    /// Whether any repository has an active or queued operation right now. Used by the
+    /// health check so e2e coverage teardown can wait for background repo syncs
+    /// (`scheduler.rs`'s spawned sync task) to finish before stopping containers,
+    /// instead of racing a fixed timeout against a variable-duration operation.
+    pub async fn any_active(&self) -> bool {
+        !self.state.read().await.is_empty()
+    }
+
     /// Clear all active operations whose actor matches `hostname` and return
     /// the repo IDs that were affected, so callers can broadcast updates.
     pub async fn clear_for_agent(&self, hostname: &str) -> Vec<i64> {
@@ -170,5 +178,25 @@ mod tests {
         let cleared = tracker.clear_for_agent("gremlin").await;
         assert!(cleared.is_empty());
         assert!(tracker.get(1).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn any_active_reflects_active_and_queued_operations() {
+        let tracker = RepoOpTracker::default();
+        assert!(!tracker.any_active().await);
+
+        tracker
+            .set(1, RepoOpKind::AgentBackup, "some-host".to_owned())
+            .await;
+        assert!(tracker.any_active().await);
+
+        tracker.clear(1).await;
+        assert!(!tracker.any_active().await);
+
+        tracker.enqueue(2).await;
+        assert!(tracker.any_active().await);
+
+        tracker.dequeue(2).await;
+        assert!(!tracker.any_active().await);
     }
 }

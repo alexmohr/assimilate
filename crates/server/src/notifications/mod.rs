@@ -164,17 +164,47 @@ pub struct NotificationEvent {
 #[derive(Debug, Clone)]
 pub struct NotificationService {
     pool: PgPool,
+    in_flight_deliveries: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+/// Decrements the in-flight delivery counter when a spawned delivery task ends,
+/// whether it completes normally or panics.
+struct DeliveryGuard(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for DeliveryGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 impl NotificationService {
     #[must_use]
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            in_flight_deliveries: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        }
     }
 
     #[must_use]
     pub fn pool(&self) -> &PgPool {
         &self.pool
+    }
+
+    /// Number of spawned per-channel deliveries that have not yet finished. Used by
+    /// the health check so e2e coverage teardown can wait for these to complete
+    /// before stopping containers, instead of racing a fixed timeout against a
+    /// variable-duration webhook/email/push delivery.
+    #[must_use]
+    pub fn in_flight_deliveries(&self) -> usize {
+        self.in_flight_deliveries
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn begin_delivery(&self) -> DeliveryGuard {
+        self.in_flight_deliveries
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        DeliveryGuard(self.in_flight_deliveries.clone())
     }
 
     pub async fn ensure_vapid_keys(&self) -> Result<(), NotificationError> {
@@ -274,8 +304,10 @@ pub async fn dispatch(
         let channel_config = channel.config.clone();
         let channel_id = channel.id;
         let event_type_str = event.event_type.to_string();
+        let delivery_guard = service.begin_delivery();
 
         tokio::spawn(async move {
+            let _delivery_guard = delivery_guard;
             let result =
                 deliver_to_channel(channel.channel_type, &channel_config, &payload, &pool).await;
 

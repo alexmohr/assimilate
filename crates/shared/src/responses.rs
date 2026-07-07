@@ -17,6 +17,11 @@ use crate::{
 #[ts(export)]
 pub struct HealthCheckResponse {
     pub status: String,
+    /// Whether any background operation (repo sync, notification delivery) is
+    /// currently in flight. Polled by e2e coverage teardown so it can wait for
+    /// these to finish before stopping containers, rather than racing a fixed
+    /// timeout against variable-duration background work.
+    pub background_ops_in_flight: bool,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

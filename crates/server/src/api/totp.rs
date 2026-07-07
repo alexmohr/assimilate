@@ -371,23 +371,21 @@ pub async fn totp_disable(
     path = "/api/auth/totp/recovery",
     tag = "Authentication",
     operation_id = "totp_recovery",
-    summary = "Verify a recovery code during login",
+    summary = "Verify a recovery code during login (completes the login)",
     responses(
-        (status = 200, description = "Recovery code accepted"),
-        (status = 401, description = "Invalid recovery code"),
+        (status = 200, description = "Recovery accepted, login complete", body = LoginResponse),
+        (status = 401, description = "Invalid recovery code or temp token"),
     )
 )]
 pub async fn totp_recovery(
     State(state): State<AppState>,
     ApiJson(req): ApiJson<TotpRecoveryRequest>,
-) -> Result<Json<TotpVerifyResponse>, ApiError> {
+) -> Result<Response, ApiError> {
     // Validate the temp_token and get the user
-    let session = db::get_session(
-        &state.pool,
-        &crate::api::tokens::hash_token(&req.temp_token),
-    )
-    .await
-    .map_err(|_| ApiError::Unauthorized("invalid temp token".to_string()))?;
+    let temp_hashed = crate::api::tokens::hash_token(&req.temp_token);
+    let session = db::get_session(&state.pool, &temp_hashed)
+        .await
+        .map_err(|_| ApiError::Unauthorized("invalid temp token".to_string()))?;
 
     let totp_fields = db::get_user_totp_fields(&state.pool, session.user_id)
         .await?
@@ -403,12 +401,45 @@ pub async fn totp_recovery(
     remaining.remove(idx);
     db::replace_totp_recovery_codes(&state.pool, session.user_id, &remaining).await?;
 
-    let backup_codes_remaining = Some(remaining.len() as i32);
+    // Delete the temp session
+    db::delete_session(&state.pool, &temp_hashed).await?;
 
-    Ok(Json(TotpVerifyResponse {
-        success: true,
-        backup_codes_remaining,
-    }))
+    // Create the real session
+    let user = db::get_user_by_id(&state.pool, session.user_id).await?;
+    let remember_me = session.remember_me;
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let (ttl_hours, max_age_secs) = if remember_me {
+        (24 * 7, 7 * 86400)
+    } else {
+        (24, 86400)
+    };
+    let expires_at = chrono::Utc::now() + chrono::Duration::hours(ttl_hours);
+
+    let hashed_id = crate::api::tokens::hash_token(&session_id);
+    db::insert_session(&state.pool, &hashed_id, user.id, expires_at, remember_me).await?;
+    db::update_last_login(&state.pool, user.id).await?;
+
+    let secure_flag = super::auth::secure_cookie_flag();
+    let cookie = format!(
+        "session={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age_secs}{secure_flag}"
+    );
+
+    let user_resp = super::users::user_row_to_response(&state.pool, user).await?;
+    let body = Json(LoginResponse {
+        user: user_resp,
+        session_expires_at: expires_at,
+        remember_me,
+        totp_required: false,
+        temp_token: None,
+    });
+    let mut response = body.into_response();
+    response.headers_mut().insert(
+        axum::http::header::SET_COOKIE,
+        cookie
+            .parse()
+            .map_err(|e| ApiError::Internal(format!("failed to build cookie header: {e}")))?,
+    );
+    Ok(response)
 }
 
 #[cfg(test)]

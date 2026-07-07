@@ -177,10 +177,16 @@ pub async fn get_settings(
     State(state): State<AppState>,
 ) -> Result<Json<SettingsResponse>, ApiError> {
     let retention_raw = db::get_setting(&state.pool, "retention_days").await?;
-    let legacy: Option<i64> = retention_raw.as_deref().and_then(|v| {
-        v.parse::<i64>().inspect_err(|e| {
-            tracing::warn!(value = %v, error = %e, "failed to parse retention_days setting");
-        }).ok()
+    let legacy = retention_raw.as_deref().and_then(|v| {
+        v.parse::<i64>()
+            .inspect_err(|e| {
+                tracing::warn!(
+                    value = %v,
+                    error = %e,
+                    "failed to parse retention_days setting"
+                );
+            })
+            .ok()
     });
     let retention_days = legacy.unwrap_or(7);
 

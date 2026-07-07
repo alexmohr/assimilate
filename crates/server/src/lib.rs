@@ -6,6 +6,7 @@ pub mod archive_index;
 pub mod borg;
 pub mod client_ip;
 pub mod config_assembler;
+pub mod cookies;
 pub mod db;
 pub mod error;
 pub mod log_buffer;

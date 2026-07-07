@@ -13,7 +13,7 @@ use totp_rs::{Algorithm, Secret, TOTP};
 
 use super::auth::AuthUser;
 use crate::{
-    AppState, db,
+    AppState, cookies, db,
     error::{ApiError, ApiJson},
 };
 
@@ -308,11 +308,6 @@ pub async fn totp_verify_login(
     db::insert_session(&state.pool, &hashed_id, user.id, expires_at, remember_me).await?;
     db::update_last_login(&state.pool, user.id).await?;
 
-    let secure_flag = super::auth::secure_cookie_flag();
-    let cookie = format!(
-        "session={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age_secs}{secure_flag}"
-    );
-
     let user_resp = super::users::user_row_to_response(&state.pool, user).await?;
     let body = Json(LoginResponse {
         user: user_resp,
@@ -324,8 +319,7 @@ pub async fn totp_verify_login(
     let mut response = body.into_response();
     response.headers_mut().insert(
         axum::http::header::SET_COOKIE,
-        cookie
-            .parse()
+        cookies::session_set_cookie(Some(&session_id), max_age_secs)
             .map_err(|e| ApiError::Internal(format!("failed to build cookie header: {e}")))?,
     );
     Ok(response)
@@ -419,11 +413,6 @@ pub async fn totp_recovery(
     db::insert_session(&state.pool, &hashed_id, user.id, expires_at, remember_me).await?;
     db::update_last_login(&state.pool, user.id).await?;
 
-    let secure_flag = super::auth::secure_cookie_flag();
-    let cookie = format!(
-        "session={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age_secs}{secure_flag}"
-    );
-
     let user_resp = super::users::user_row_to_response(&state.pool, user).await?;
     let body = Json(LoginResponse {
         user: user_resp,
@@ -435,8 +424,7 @@ pub async fn totp_recovery(
     let mut response = body.into_response();
     response.headers_mut().insert(
         axum::http::header::SET_COOKIE,
-        cookie
-            .parse()
+        cookies::session_set_cookie(Some(&session_id), max_age_secs)
             .map_err(|e| ApiError::Internal(format!("failed to build cookie header: {e}")))?,
     );
     Ok(response)

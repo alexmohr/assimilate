@@ -51,7 +51,7 @@ async fn database_storage_lists_application_tables(pool: PgPool) {
     assert!(
         relations
             .windows(2)
-            .all(|rows| rows[0].total_bytes >= rows[1].total_bytes)
+            .all(|rows| rows.first().unwrap().total_bytes >= rows.get(1).unwrap().total_bytes)
     );
 }
 
@@ -126,8 +126,8 @@ async fn agent_list(pool: PgPool) {
 
     let agents = db::list_agents(&pool, false).await.unwrap();
     assert_eq!(agents.len(), 2);
-    assert_eq!(agents[0].hostname, "alpha");
-    assert_eq!(agents[1].hostname, "beta");
+    assert_eq!(agents.first().unwrap().hostname, "alpha");
+    assert_eq!(agents.get(1).unwrap().hostname, "beta");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -188,6 +188,7 @@ async fn agent_delete_not_found(pool: PgPool) {
     assert!(result.is_err());
 }
 
+#[cfg(test)]
 async fn create_test_repo(pool: &PgPool) -> RepoRow {
     db::insert_repo(
         pool,
@@ -210,6 +211,7 @@ async fn create_test_repo(pool: &PgPool) -> RepoRow {
 /// Sets a repo's authoritative `borg info` statistics. Values mirror
 /// `insert_test_report` so stat assertions stay consistent now that repo
 /// size/archive numbers come from `repos.info_*` rather than backup reports.
+#[cfg(test)]
 async fn set_test_repo_info_stats(pool: &PgPool, repo_id: i64, archive_count: i64) {
     db::update_repo_info_stats(
         pool,
@@ -403,9 +405,9 @@ async fn test_audit_insert_and_list(pool: PgPool) {
 
     assert_eq!(total, 1);
     assert_eq!(items.len(), 1);
-    assert_eq!(items[0].username, "admin");
-    assert_eq!(items[0].action, "created_repo");
-    assert_eq!(items[0].target_type.as_deref(), Some("repo"));
+    assert_eq!(items.first().unwrap().username, "admin");
+    assert_eq!(items.first().unwrap().action, "created_repo");
+    assert_eq!(items.first().unwrap().target_type.as_deref(), Some("repo"));
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -445,8 +447,8 @@ async fn test_audit_list_pagination(pool: PgPool) {
 
     assert_eq!(total, 5);
     assert_eq!(items.len(), 2);
-    assert_eq!(items[0].action, "action-2");
-    assert_eq!(items[1].action, "action-1");
+    assert_eq!(items.first().unwrap().action, "action-2");
+    assert_eq!(items.get(1).unwrap().action, "action-1");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -497,7 +499,7 @@ async fn test_audit_list_filter_by_action(pool: PgPool) {
 
     assert_eq!(total, 1);
     assert_eq!(items.len(), 1);
-    assert_eq!(items[0].action, "repo_created");
+    assert_eq!(items.first().unwrap().action, "repo_created");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -709,6 +711,7 @@ async fn excludes_crud(pool: PgPool) {
     assert_eq!(raw, "*.log");
 }
 
+#[cfg(test)]
 async fn create_test_schedule(pool: &PgPool) -> (AgentRow, RepoRow, ScheduleRow) {
     let agent = db::insert_agent(pool, "sched-host", None, "hash", None)
         .await
@@ -875,7 +878,10 @@ async fn schedule_list_for_repo(pool: PgPool) {
 
     let schedules = db::list_schedules_for_repo(&pool, repo.id).await.unwrap();
     assert_eq!(schedules.len(), 1);
-    assert_eq!(schedules[0].target_hostnames, vec![agent.hostname]);
+    assert_eq!(
+        schedules.first().unwrap().target_hostnames,
+        vec![agent.hostname]
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -977,7 +983,7 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
     // repo_b must only return its own schedule
     let results_b = db::list_schedules_for_repo(&pool, repo_b.id).await.unwrap();
     assert_eq!(results_b.len(), 1);
-    assert_eq!(results_b[0].id, schedule_b.id);
+    assert_eq!(results_b.first().unwrap().id, schedule_b.id);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1002,15 +1008,15 @@ async fn schedule_delete(pool: PgPool) {
 async fn schedule_due_and_trigger(pool: PgPool) {
     let (_, _, schedule) = create_test_schedule(&pool).await;
     let now = Utc::now();
-    let past = now - Duration::hours(1);
+    let past = now.checked_sub_signed(Duration::hours(1)).unwrap();
 
     db::set_next_run_at(&pool, schedule.id, past).await.unwrap();
 
     let due = db::list_due_schedules(&pool, now).await.unwrap();
     assert_eq!(due.len(), 1);
-    assert_eq!(due[0].schedule_id, schedule.id);
+    assert_eq!(due.first().unwrap().schedule_id, schedule.id);
 
-    let future = now + Duration::hours(3);
+    let future = now.checked_add_signed(Duration::hours(3)).unwrap();
     db::mark_schedule_triggered(&pool, schedule.id, now, future)
         .await
         .unwrap();
@@ -1048,8 +1054,8 @@ async fn backup_sources_crud(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(sources.len(), 2);
-    assert_eq!(sources[0], "/home");
-    assert_eq!(sources[1], "/etc");
+    assert_eq!(sources.first().unwrap(), "/home");
+    assert_eq!(sources.get(1).unwrap(), "/etc");
 
     db::delete_backup_sources_for_schedule(&pool, schedule.id)
         .await
@@ -1102,10 +1108,13 @@ async fn backup_sources_per_agent_crud(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(all_per_agent.len(), 2);
-    assert_eq!(all_per_agent[0].agent_id, agent.id);
-    assert_eq!(all_per_agent[0].paths, vec!["/home/one", "/var/one"]);
-    assert_eq!(all_per_agent[1].agent_id, agent2.id);
-    assert_eq!(all_per_agent[1].paths, vec!["/data/two"]);
+    assert_eq!(all_per_agent.first().unwrap().agent_id, agent.id);
+    assert_eq!(
+        all_per_agent.first().unwrap().paths,
+        vec!["/home/one", "/var/one"]
+    );
+    assert_eq!(all_per_agent.get(1).unwrap().agent_id, agent2.id);
+    assert_eq!(all_per_agent.get(1).unwrap().paths, vec!["/data/two"]);
 
     db::delete_per_agent_backup_sources_for_schedule(&pool, schedule.id)
         .await
@@ -1141,10 +1150,10 @@ async fn excludes_per_agent_crud(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(all_per_agent.len(), 2);
-    assert_eq!(all_per_agent[0].agent_id, agent.id);
-    assert_eq!(all_per_agent[0].raw_text, "*.tmp\n*.cache");
-    assert_eq!(all_per_agent[1].agent_id, agent2.id);
-    assert_eq!(all_per_agent[1].raw_text, "*.bak");
+    assert_eq!(all_per_agent.first().unwrap().agent_id, agent.id);
+    assert_eq!(all_per_agent.first().unwrap().raw_text, "*.tmp\n*.cache");
+    assert_eq!(all_per_agent.get(1).unwrap().agent_id, agent2.id);
+    assert_eq!(all_per_agent.get(1).unwrap().raw_text, "*.bak");
 
     // Upsert updates existing row
     db::upsert_per_agent_excludes_raw(&pool, schedule.id, agent.id, "*.tmp\n*.cache\n\n# new")
@@ -1153,7 +1162,10 @@ async fn excludes_per_agent_crud(pool: PgPool) {
     let all_per_agent = db::list_all_per_agent_excludes_for_schedule(&pool, schedule.id)
         .await
         .unwrap();
-    assert_eq!(all_per_agent[0].raw_text, "*.tmp\n*.cache\n\n# new");
+    assert_eq!(
+        all_per_agent.first().unwrap().raw_text,
+        "*.tmp\n*.cache\n\n# new"
+    );
 
     db::delete_per_agent_excludes_for_schedule(&pool, schedule.id)
         .await
@@ -1204,13 +1216,13 @@ async fn file_change_patterns_per_agent_crud(pool: PgPool) {
             .await
             .unwrap();
     assert_eq!(all_per_agent.len(), 2);
-    assert_eq!(all_per_agent[0].agent_id, agent.id);
+    assert_eq!(all_per_agent.first().unwrap().agent_id, agent.id);
     assert_eq!(
-        all_per_agent[0].raw_text,
+        all_per_agent.first().unwrap().raw_text,
         "*/etc/config* ignore\n*/var/log* fatal"
     );
-    assert_eq!(all_per_agent[1].agent_id, agent2.id);
-    assert_eq!(all_per_agent[1].raw_text, "*/tmp* warn");
+    assert_eq!(all_per_agent.get(1).unwrap().agent_id, agent2.id);
+    assert_eq!(all_per_agent.get(1).unwrap().raw_text, "*/tmp* warn");
 
     // Upsert updates the existing row rather than inserting a duplicate
     db::upsert_per_agent_file_change_patterns_raw(
@@ -1226,7 +1238,10 @@ async fn file_change_patterns_per_agent_crud(pool: PgPool) {
             .await
             .unwrap();
     assert_eq!(all_per_agent.len(), 2);
-    assert_eq!(all_per_agent[0].raw_text, "*/etc/config* fatal");
+    assert_eq!(
+        all_per_agent.first().unwrap().raw_text,
+        "*/etc/config* fatal"
+    );
 
     db::delete_per_agent_file_change_patterns_for_schedule(&pool, schedule.id)
         .await
@@ -1317,7 +1332,7 @@ async fn per_agent_excludes_preserves_blank_lines_and_comments(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(all.len(), 1);
-    assert_eq!(all[0].raw_text, raw);
+    assert_eq!(all.first().unwrap().raw_text, raw);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1335,13 +1350,13 @@ async fn per_agent_excludes_upsert_replaces_existing(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(all.len(), 1);
-    assert_eq!(all[0].raw_text, "second\n\n# comment");
+    assert_eq!(all.first().unwrap().raw_text, "second\n\n# comment");
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPool) {
     let encryption_key = shared::crypto::derive_key(b"test-assembly-key-for-excludes").unwrap();
-    let (agent, repo, _schedule) = create_test_schedule(&pool).await;
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
 
     // Global excludes: blank lines and comments should be stripped
     db::set_global_excludes_raw(&pool, "# system\n/proc\n/sys\n\n# cache\n*.cache")
@@ -1351,7 +1366,7 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
     // Schedule-level excludes: same
     db::update_schedule(
         &pool,
-        _schedule.id,
+        schedule.id,
         &ScheduleParams {
             name: "test-schedule",
             schedule_type: "backup",
@@ -1388,7 +1403,7 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
         .unwrap();
 
     // Insert a backup source so assemble_config does not fail
-    db::insert_backup_source_for_schedule(&pool, _schedule.id, "/home", 0)
+    db::insert_backup_source_for_schedule(&pool, schedule.id, "/home", 0)
         .await
         .unwrap();
 
@@ -1403,9 +1418,18 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
         .await
         .unwrap();
 
-    assert_eq!(config.repos[0].ssh_host_key, "ssh-ed25519 AAAATEST");
+    assert_eq!(
+        config.repos.first().unwrap().ssh_host_key,
+        "ssh-ed25519 AAAATEST"
+    );
 
-    let patterns: Vec<&str> = config.repos[0].schedules[0]
+    let patterns: Vec<&str> = config
+        .repos
+        .first()
+        .unwrap()
+        .schedules
+        .first()
+        .unwrap()
         .exclude_patterns
         .iter()
         .map(String::as_str)
@@ -1494,15 +1518,28 @@ async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool)
         .await
         .unwrap();
 
-    let patterns = &config.repos[0].schedules[0].file_change_patterns;
+    let patterns = &config
+        .repos
+        .first()
+        .unwrap()
+        .schedules
+        .first()
+        .unwrap()
+        .file_change_patterns;
     assert_eq!(patterns.len(), 2);
     // Schedule-level pattern must come first: `filter_file_change_warnings`
     // uses first-match-wins, so the schedule's own configuration must win
     // over the agent-wide fallback.
-    assert_eq!(patterns[0].path, "*/schedule-specific*");
-    assert_eq!(patterns[0].action, shared::types::FileChangeAction::Ignore);
-    assert_eq!(patterns[1].path, "*/agent-fallback*");
-    assert_eq!(patterns[1].action, shared::types::FileChangeAction::Fatal);
+    assert_eq!(patterns.first().unwrap().path, "*/schedule-specific*");
+    assert_eq!(
+        patterns.first().unwrap().action,
+        shared::types::FileChangeAction::Ignore
+    );
+    assert_eq!(patterns.get(1).unwrap().path, "*/agent-fallback*");
+    assert_eq!(
+        patterns.get(1).unwrap().action,
+        shared::types::FileChangeAction::Fatal
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1545,6 +1582,7 @@ async fn canary_results_crud(pool: PgPool) {
     assert_eq!(all.len(), 2);
 }
 
+#[cfg(test)]
 async fn insert_test_report(pool: &PgPool, agent_id: i64, repo_id: i64) {
     let now = Utc::now();
     db::insert_backup_report(
@@ -1553,7 +1591,7 @@ async fn insert_test_report(pool: &PgPool, agent_id: i64, repo_id: i64) {
             agent_id,
             repo_id,
             schedule_id: None,
-            started_at: now - Duration::minutes(5),
+            started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
             finished_at: now,
             status: "success".to_string(),
             original_size: 1_000_000,
@@ -1575,6 +1613,7 @@ async fn insert_test_report(pool: &PgPool, agent_id: i64, repo_id: i64) {
     .unwrap();
 }
 
+#[cfg(test)]
 async fn insert_test_report_for_schedule(
     pool: &PgPool,
     agent_id: i64,
@@ -1589,7 +1628,7 @@ async fn insert_test_report_for_schedule(
             agent_id,
             repo_id,
             schedule_id: Some(schedule_id),
-            started_at: now - Duration::minutes(5),
+            started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
             finished_at: now,
             status: status.to_string(),
             original_size: 1_000_000,
@@ -1624,13 +1663,16 @@ async fn backup_report_insert_and_list(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
-    assert_eq!(reports[0].status, "success");
-    assert_eq!(reports[0].original_size, 1_000_000);
-    assert_eq!(reports[0].compressed_size, 500_000);
-    assert_eq!(reports[0].deduplicated_size, 250_000);
-    assert_eq!(reports[0].files_processed, 1000);
-    assert_eq!(reports[0].duration_secs, 300);
-    assert_eq!(reports[0].borg_version.as_deref(), Some("1.4.0"));
+    assert_eq!(reports.first().unwrap().status, "success");
+    assert_eq!(reports.first().unwrap().original_size, 1_000_000);
+    assert_eq!(reports.first().unwrap().compressed_size, 500_000);
+    assert_eq!(reports.first().unwrap().deduplicated_size, 250_000);
+    assert_eq!(reports.first().unwrap().files_processed, 1000);
+    assert_eq!(reports.first().unwrap().duration_secs, 300);
+    assert_eq!(
+        reports.first().unwrap().borg_version.as_deref(),
+        Some("1.4.0")
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1667,7 +1709,7 @@ async fn backup_report_with_warnings(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now - Duration::minutes(5),
+            started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
             finished_at: now,
             status: "warning".to_string(),
             original_size: 100,
@@ -1691,8 +1733,11 @@ async fn backup_report_with_warnings(pool: PgPool) {
     let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
         .await
         .unwrap();
-    assert_eq!(reports[0].warnings.len(), 2);
-    assert_eq!(reports[0].error_message.as_deref(), Some("partial failure"));
+    assert_eq!(reports.first().unwrap().warnings.len(), 2);
+    assert_eq!(
+        reports.first().unwrap().error_message.as_deref(),
+        Some("partial failure")
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1704,7 +1749,7 @@ async fn backup_report_delete_before(pool: PgPool) {
 
     insert_test_report(&pool, agent.id, repo.id).await;
 
-    let future = Utc::now() + Duration::hours(1);
+    let future = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
     let deleted = db::delete_backup_reports_before(&pool, future)
         .await
         .unwrap();
@@ -1723,11 +1768,11 @@ async fn storage_stats_with_sum(pool: PgPool) {
 
     let stats = db::get_storage_stats(&pool).await.unwrap();
     assert_eq!(stats.len(), 1);
-    assert_eq!(stats[0].hostname, "stats-host");
-    assert_eq!(stats[0].total_original_size, 2_000_000);
-    assert_eq!(stats[0].total_compressed_size, 1_000_000);
-    assert_eq!(stats[0].total_deduplicated_size, 500_000);
-    assert_eq!(stats[0].report_count, 2);
+    assert_eq!(stats.first().unwrap().hostname, "stats-host");
+    assert_eq!(stats.first().unwrap().total_original_size, 2_000_000);
+    assert_eq!(stats.first().unwrap().total_compressed_size, 1_000_000);
+    assert_eq!(stats.first().unwrap().total_deduplicated_size, 500_000);
+    assert_eq!(stats.first().unwrap().report_count, 2);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1749,8 +1794,8 @@ async fn activity_feed(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(activity.len(), 1);
-    assert_eq!(activity[0].hostname, "act-host");
-    assert_eq!(activity[0].target_name, "test-repo");
+    assert_eq!(activity.first().unwrap().hostname, "act-host");
+    assert_eq!(activity.first().unwrap().target_name, "test-repo");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1775,9 +1820,12 @@ async fn health_summary(pool: PgPool) {
 
     let health = db::get_health_summary(&pool).await.unwrap();
     assert_eq!(health.len(), 1);
-    assert_eq!(health[0].hostname, "sched-host");
-    assert_eq!(health[0].schedule_id, schedule.id);
-    assert_eq!(health[0].last_status.as_deref(), Some("success"));
+    assert_eq!(health.first().unwrap().hostname, "sched-host");
+    assert_eq!(health.first().unwrap().schedule_id, schedule.id);
+    assert_eq!(
+        health.first().unwrap().last_status.as_deref(),
+        Some("success")
+    );
 }
 
 /// Two schedules that share the same repository and agent must report
@@ -1857,11 +1905,11 @@ async fn health_summary_with_invalid_status_silently_returns_none(pool: PgPool) 
     let health = db::get_health_summary(&pool).await.unwrap();
     assert_eq!(health.len(), 1);
     assert_eq!(
-        health[0].last_status.as_deref(),
+        health.first().unwrap().last_status.as_deref(),
         Some("completely_invalid_status_value"),
         "raw invalid status is returned as-is from the db layer"
     );
-    assert_eq!(health[0].schedule_id, schedule.id);
+    assert_eq!(health.first().unwrap().schedule_id, schedule.id);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -1994,8 +2042,8 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
 
     let upcoming = db::dashboard::upcoming_schedules(&pool).await.unwrap();
     assert_eq!(upcoming.len(), 1);
-    assert_eq!(upcoming[0].schedule_id, schedule_a.id);
-    assert_eq!(upcoming[0].target_count, Some(1));
+    assert_eq!(upcoming.first().unwrap().schedule_id, schedule_a.id);
+    assert_eq!(upcoming.first().unwrap().target_count, Some(1));
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2016,10 +2064,13 @@ async fn dashboard_repository_capacity_uses_repo_stats_and_quota(pool: PgPool) {
 
     let repositories = db::dashboard::repositories(&pool).await.unwrap();
     assert_eq!(repositories.len(), 1);
-    assert_eq!(repositories[0].deduplicated_size, 250_000);
-    assert_eq!(repositories[0].warn_bytes, Some(200_000));
-    assert_eq!(repositories[0].critical_bytes, Some(300_000));
-    assert_eq!(repositories[0].enabled_schedule_count, Some(0));
+    assert_eq!(repositories.first().unwrap().deduplicated_size, 250_000);
+    assert_eq!(repositories.first().unwrap().warn_bytes, Some(200_000));
+    assert_eq!(repositories.first().unwrap().critical_bytes, Some(300_000));
+    assert_eq!(
+        repositories.first().unwrap().enabled_schedule_count,
+        Some(0)
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2034,12 +2085,12 @@ async fn repos_with_stats(pool: PgPool) {
 
     let repos = db::list_repos_with_stats(&pool).await.unwrap();
     assert_eq!(repos.len(), 1);
-    assert_eq!(repos[0].name, "test-repo");
-    assert_eq!(repos[0].archive_count, 1);
-    assert_eq!(repos[0].total_original_size, 1_000_000);
-    assert_eq!(repos[0].total_compressed_size, 500_000);
-    assert_eq!(repos[0].total_deduplicated_size, 250_000);
-    assert_eq!(repos[0].agent_count, 1);
+    assert_eq!(repos.first().unwrap().name, "test-repo");
+    assert_eq!(repos.first().unwrap().archive_count, 1);
+    assert_eq!(repos.first().unwrap().total_original_size, 1_000_000);
+    assert_eq!(repos.first().unwrap().total_compressed_size, 500_000);
+    assert_eq!(repos.first().unwrap().total_deduplicated_size, 250_000);
+    assert_eq!(repos.first().unwrap().agent_count, 1);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2048,9 +2099,9 @@ async fn repos_with_stats_empty(pool: PgPool) {
 
     let repos = db::list_repos_with_stats(&pool).await.unwrap();
     assert_eq!(repos.len(), 1);
-    assert_eq!(repos[0].total_original_size, 0);
-    assert_eq!(repos[0].total_deduplicated_size, 0);
-    assert_eq!(repos[0].archive_count, 0);
+    assert_eq!(repos.first().unwrap().total_original_size, 0);
+    assert_eq!(repos.first().unwrap().total_deduplicated_size, 0);
+    assert_eq!(repos.first().unwrap().archive_count, 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2079,12 +2130,12 @@ async fn storage_breakdown(pool: PgPool) {
 
     let breakdown = db::get_storage_breakdown(&pool).await.unwrap();
     assert_eq!(breakdown.len(), 1);
-    assert_eq!(breakdown[0].name, "test-repo");
-    assert_eq!(breakdown[0].deduplicated_size, 250_000);
+    assert_eq!(breakdown.first().unwrap().name, "test-repo");
+    assert_eq!(breakdown.first().unwrap().deduplicated_size, 250_000);
 }
 
 /// Repos are returned in descending `info_deduplicated_size` order and
-/// compressed_size is also sourced from the info columns.
+/// `compressed_size` is also sourced from the info columns.
 #[sqlx::test(migrations = "./migrations")]
 async fn storage_breakdown_multi_repo_ordering(pool: PgPool) {
     let repo_small = create_test_repo(&pool).await;
@@ -2131,11 +2182,11 @@ async fn storage_breakdown_multi_repo_ordering(pool: PgPool) {
     let breakdown = db::get_storage_breakdown(&pool).await.unwrap();
     assert_eq!(breakdown.len(), 2);
     // largest dedup first
-    assert_eq!(breakdown[0].name, "large-repo");
-    assert_eq!(breakdown[0].deduplicated_size, 400_000);
-    assert_eq!(breakdown[0].compressed_size, 800_000);
-    assert_eq!(breakdown[1].name, "test-repo");
-    assert_eq!(breakdown[1].deduplicated_size, 100_000);
+    assert_eq!(breakdown.first().unwrap().name, "large-repo");
+    assert_eq!(breakdown.first().unwrap().deduplicated_size, 400_000);
+    assert_eq!(breakdown.first().unwrap().compressed_size, 800_000);
+    assert_eq!(breakdown.get(1).unwrap().name, "test-repo");
+    assert_eq!(breakdown.get(1).unwrap().deduplicated_size, 100_000);
 }
 
 /// A repo that has never had `update_repo_info_stats` called must return zeros
@@ -2146,8 +2197,8 @@ async fn storage_breakdown_repo_with_no_info_stats(pool: PgPool) {
 
     let breakdown = db::get_storage_breakdown(&pool).await.unwrap();
     assert_eq!(breakdown.len(), 1);
-    assert_eq!(breakdown[0].compressed_size, 0);
-    assert_eq!(breakdown[0].deduplicated_size, 0);
+    assert_eq!(breakdown.first().unwrap().compressed_size, 0);
+    assert_eq!(breakdown.first().unwrap().deduplicated_size, 0);
 }
 
 /// `update_repo_info_stats` persists all six fields and they are readable back
@@ -2237,7 +2288,7 @@ async fn dashboard_summary(pool: PgPool) {
 }
 
 /// `total_storage_bytes` in the dashboard summary must now aggregate
-/// `repos.info_deduplicated_size` rather than backup_reports.
+/// `repos.info_deduplicated_size` rather than `backup_reports`.
 #[sqlx::test(migrations = "./migrations")]
 async fn dashboard_summary_total_storage_from_repo_info(pool: PgPool) {
     let agent = db::insert_agent(&pool, "ds-storage-host", None, "hash", None)
@@ -2393,15 +2444,15 @@ async fn user_preferences(pool: PgPool) {
         .unwrap();
 
     let fetched = db::get_user_preferences(&pool, user.id).await.unwrap();
-    assert_eq!(fetched["theme"], "dark");
-    assert_eq!(fetched["lang"], "en");
+    assert_eq!(fetched.get("theme").unwrap(), "dark");
+    assert_eq!(fetched.get("lang").unwrap(), "en");
 }
 
 #[sqlx::test(migrations = "./migrations")]
 async fn session_crud(pool: PgPool) {
     let user = db::insert_user(&pool, "sessuser", "hash").await.unwrap();
 
-    let expires = Utc::now() + Duration::hours(24);
+    let expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
     db::insert_session(&pool, "sess_abc123", user.id, expires, false)
         .await
         .unwrap();
@@ -2421,7 +2472,7 @@ async fn session_crud(pool: PgPool) {
 async fn session_expired(pool: PgPool) {
     let user = db::insert_user(&pool, "expuser", "hash").await.unwrap();
 
-    let expired = Utc::now() - Duration::hours(1);
+    let expired = Utc::now().checked_sub_signed(Duration::hours(1)).unwrap();
     db::insert_session(&pool, "sess_expired", user.id, expired, false)
         .await
         .unwrap();
@@ -2434,7 +2485,7 @@ async fn session_expired(pool: PgPool) {
 async fn session_delete_expired(pool: PgPool) {
     let user = db::insert_user(&pool, "cleanuser", "hash").await.unwrap();
 
-    let expired = Utc::now() - Duration::hours(1);
+    let expired = Utc::now().checked_sub_signed(Duration::hours(1)).unwrap();
     db::insert_session(&pool, "sess_old", user.id, expired, false)
         .await
         .unwrap();
@@ -2449,7 +2500,7 @@ async fn session_remember_me(pool: PgPool) {
         .await
         .unwrap();
 
-    let expires = Utc::now() + Duration::days(7);
+    let expires = Utc::now().checked_add_signed(Duration::days(7)).unwrap();
     db::insert_session(&pool, "sess_remember", user.id, expires, true)
         .await
         .unwrap();
@@ -2463,12 +2514,12 @@ async fn session_remember_me(pool: PgPool) {
 async fn session_extend(pool: PgPool) {
     let user = db::insert_user(&pool, "extenduser", "hash").await.unwrap();
 
-    let original_expires = Utc::now() + Duration::hours(1);
+    let original_expires = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
     db::insert_session(&pool, "sess_extend", user.id, original_expires, true)
         .await
         .unwrap();
 
-    let new_expires = Utc::now() + Duration::days(7);
+    let new_expires = Utc::now().checked_add_signed(Duration::days(7)).unwrap();
     db::extend_session(&pool, "sess_extend", new_expires)
         .await
         .unwrap();
@@ -2602,7 +2653,7 @@ async fn system_events_crud(pool: PgPool) {
     let events = db::get_system_events(&pool, 10).await.unwrap();
     assert_eq!(events.len(), 2);
 
-    let future = Utc::now() + Duration::hours(1);
+    let future = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
     let deleted = db::delete_system_events_before(&pool, future)
         .await
         .unwrap();
@@ -2669,7 +2720,7 @@ async fn test_tag_add_and_list(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(tags.len(), 1);
-    assert_eq!(tags[0].tag, "nightly");
+    assert_eq!(tags.first().unwrap().tag, "nightly");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -2769,7 +2820,7 @@ async fn agent_tags_assignment(pool: PgPool) {
 
     let tags = db::list_tags_for_agent(&pool, agent.id).await.unwrap();
     assert_eq!(tags.len(), 1);
-    assert_eq!(tags[0].name, "critical");
+    assert_eq!(tags.first().unwrap().name, "critical");
 
     let all = db::list_all_agent_tags(&pool).await.unwrap();
     assert_eq!(all.len(), 1);
@@ -2814,7 +2865,7 @@ async fn group_members(pool: PgPool) {
 
     let user_groups = db::list_user_groups(&pool, user1.id).await.unwrap();
     assert_eq!(user_groups.len(), 1);
-    assert_eq!(user_groups[0].name, "team");
+    assert_eq!(user_groups.first().unwrap().name, "team");
 
     let shared = db::user_shares_group_with(&pool, user1.id, user2.id)
         .await
@@ -2888,7 +2939,7 @@ async fn roles_crud(pool: PgPool) {
     assert!(updated.can_manage_tunnels);
 
     let roles = db::list_roles(&pool).await.unwrap();
-    assert_eq!(roles.len(), initial_count + 1);
+    assert_eq!(roles.len(), initial_count.saturating_add(1));
 
     db::delete_role(&pool, role.id).await.unwrap();
     let roles = db::list_roles(&pool).await.unwrap();
@@ -2963,7 +3014,7 @@ async fn repos_for_agent(pool: PgPool) {
 
     let repos = db::list_repos_for_agent(&pool, agent.id).await.unwrap();
     assert_eq!(repos.len(), 1);
-    assert_eq!(repos[0].id, repo.id);
+    assert_eq!(repos.first().unwrap().id, repo.id);
 
     let public_repos = db::list_repos_for_agent_public(&pool, agent.id)
         .await
@@ -2978,7 +3029,7 @@ async fn backup_sources_for_repo(pool: PgPool) {
     sqlx::query("INSERT INTO backup_sources (repo_id, path, sort_order) VALUES ($1, $2, $3)")
         .bind(repo.id)
         .bind("/data")
-        .bind(1_i32)
+        .bind(1i32)
         .execute(&pool)
         .await
         .unwrap();
@@ -2987,7 +3038,7 @@ async fn backup_sources_for_repo(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(sources.len(), 1);
-    assert_eq!(sources[0], "/data");
+    assert_eq!(sources.first().unwrap(), "/data");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -3031,7 +3082,7 @@ async fn ssh_tunnel_crud(pool: PgPool) {
 
     let enabled_tunnels = db::list_enabled_tunnels(&pool).await.unwrap();
     assert_eq!(enabled_tunnels.len(), 1);
-    assert_eq!(enabled_tunnels[0].id, tunnel.id);
+    assert_eq!(enabled_tunnels.first().unwrap().id, tunnel.id);
 
     let updated = db::update_tunnel(
         &pool,
@@ -3056,7 +3107,7 @@ async fn ssh_tunnel_crud(pool: PgPool) {
 
     let all_tunnels = db::list_all_tunnels(&pool).await.unwrap();
     assert_eq!(all_tunnels.len(), 1);
-    assert_eq!(all_tunnels[0].id, tunnel.id);
+    assert_eq!(all_tunnels.first().unwrap().id, tunnel.id);
 
     db::delete_tunnel(&pool, tunnel.id).await.unwrap();
     assert!(matches!(
@@ -3167,6 +3218,7 @@ async fn test_quota_get_nonexistent(pool: PgPool) {
     assert!(result.is_none());
 }
 
+#[cfg(test)]
 async fn create_test_repo_with_host(pool: &PgPool, name: &str, ssh_host: &str) -> RepoRow {
     db::insert_repo(
         pool,
@@ -3418,8 +3470,8 @@ async fn test_backup_trends_with_data(pool: PgPool) {
 
     let trends = db::get_backup_trends(&pool, None, 30).await.unwrap();
     assert_eq!(trends.len(), 1);
-    assert_eq!(trends[0].backup_count, 1);
-    assert!(trends[0].original_size > 0);
+    assert_eq!(trends.first().unwrap().backup_count, 1);
+    assert!(trends.first().unwrap().original_size > 0);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -3436,7 +3488,7 @@ async fn test_backup_trends_filtered_by_repo(pool: PgPool) {
         .unwrap();
     assert_eq!(trends.len(), 1);
 
-    let trends_other = db::get_backup_trends(&pool, Some(repo.id + 999), 30)
+    let trends_other = db::get_backup_trends(&pool, Some(repo.id.saturating_add(999)), 30)
         .await
         .unwrap();
     assert!(trends_other.is_empty());
@@ -3470,9 +3522,9 @@ async fn test_calendar_events_with_data(pool: PgPool) {
     .await
     .unwrap();
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].event_type, "backup");
-    assert_eq!(events[0].status, "success");
-    assert_eq!(events[0].repo_name, "test-repo");
+    assert_eq!(events.first().unwrap().event_type, "backup");
+    assert_eq!(events.first().unwrap().status, "success");
+    assert_eq!(events.first().unwrap().repo_name, "test-repo");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -3500,7 +3552,7 @@ async fn test_calendar_events_filtered_by_repo(pool: PgPool) {
         &pool,
         now.date_naive().year(),
         now.date_naive().month(),
-        Some(repo.id + 999),
+        Some(repo.id.saturating_add(999)),
         Tz::UTC,
     )
     .await
@@ -3514,7 +3566,7 @@ async fn test_enabled_schedules_for_calendar(pool: PgPool) {
 
     let schedules = db::get_enabled_schedules_for_calendar(&pool).await.unwrap();
     assert_eq!(schedules.len(), 1);
-    assert!(schedules[0].enabled);
+    assert!(schedules.first().unwrap().enabled);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -3543,8 +3595,8 @@ async fn test_audit_filter_by_date_range(pool: PgPool) {
             filter_user_id: None,
             filter_action: None,
             filter_target_type: None,
-            filter_from: Some(now - Duration::hours(1)),
-            filter_to: Some(now + Duration::hours(1)),
+            filter_from: Some(now.checked_sub_signed(Duration::hours(1)).unwrap()),
+            filter_to: Some(now.checked_add_signed(Duration::hours(1)).unwrap()),
         },
     )
     .await
@@ -3561,8 +3613,8 @@ async fn test_audit_filter_by_date_range(pool: PgPool) {
             filter_user_id: None,
             filter_action: None,
             filter_target_type: None,
-            filter_from: Some(now + Duration::hours(1)),
-            filter_to: Some(now + Duration::hours(2)),
+            filter_from: Some(now.checked_add_signed(Duration::hours(1)).unwrap()),
+            filter_to: Some(now.checked_add_signed(Duration::hours(2)).unwrap()),
         },
     )
     .await
@@ -3592,7 +3644,7 @@ async fn test_hostname_pattern_crud(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(patterns.len(), 1);
-    assert_eq!(patterns[0].pattern, "crud.*");
+    assert_eq!(patterns.first().unwrap().pattern, "crud.*");
 
     patterns::delete_hostname_pattern(&pool, pattern.id)
         .await
@@ -3785,7 +3837,7 @@ async fn test_mark_agent_reports_matched(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now - Duration::minutes(5),
+            started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
             finished_at: now,
             status: "success".to_string(),
             original_size: 1_000_000,
@@ -3873,8 +3925,8 @@ async fn get_archives_for_agent_across_multiple_repos(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo1.id,
             schedule_id: None,
-            started_at: now - Duration::minutes(10),
-            finished_at: now - Duration::minutes(5),
+            started_at: now.checked_sub_signed(Duration::minutes(10)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
             status: "success".to_string(),
             original_size: 1_000_000,
             compressed_size: 500_000,
@@ -3899,8 +3951,8 @@ async fn get_archives_for_agent_across_multiple_repos(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo1.id,
             schedule_id: None,
-            started_at: now - Duration::minutes(20),
-            finished_at: now - Duration::minutes(15),
+            started_at: now.checked_sub_signed(Duration::minutes(20)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::minutes(15)).unwrap(),
             status: "success".to_string(),
             original_size: 2_000_000,
             compressed_size: 1_000_000,
@@ -3926,8 +3978,8 @@ async fn get_archives_for_agent_across_multiple_repos(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo2.id,
             schedule_id: None,
-            started_at: now - Duration::minutes(30),
-            finished_at: now - Duration::minutes(25),
+            started_at: now.checked_sub_signed(Duration::minutes(30)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::minutes(25)).unwrap(),
             status: "success".to_string(),
             original_size: 3_000_000,
             compressed_size: 1_500_000,
@@ -3953,8 +4005,8 @@ async fn get_archives_for_agent_across_multiple_repos(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo1.id,
             schedule_id: None,
-            started_at: now - Duration::minutes(40),
-            finished_at: now - Duration::minutes(35),
+            started_at: now.checked_sub_signed(Duration::minutes(40)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::minutes(35)).unwrap(),
             status: "success".to_string(),
             original_size: 100_000,
             compressed_size: 50_000,
@@ -3998,7 +4050,7 @@ async fn get_archives_for_agent_across_multiple_repos(pool: PgPool) {
 
 /// Verifies that `get_archives_for_agent_with_patterns` finds archives from imported agents
 /// whose hostnames match the configured glob patterns, even when those archives haven't been
-/// merged/reassigned yet (agent_id still points to the imported agent).
+/// merged/reassigned yet (`agent_id` still points to the imported agent).
 #[sqlx::test(migrations = "./migrations")]
 async fn get_archives_for_agent_includes_pattern_matched_archives(pool: PgPool) {
     let agent = db::insert_agent(&pool, "web-server-01", None, "hash", None)
@@ -4017,8 +4069,8 @@ async fn get_archives_for_agent_includes_pattern_matched_archives(pool: PgPool) 
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now - Duration::minutes(10),
-            finished_at: now - Duration::minutes(5),
+            started_at: now.checked_sub_signed(Duration::minutes(10)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
             status: "success".to_string(),
             original_size: 1_000_000,
             compressed_size: 500_000,
@@ -4044,8 +4096,8 @@ async fn get_archives_for_agent_includes_pattern_matched_archives(pool: PgPool) 
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now - Duration::minutes(20),
-            finished_at: now - Duration::minutes(15),
+            started_at: now.checked_sub_signed(Duration::minutes(20)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::minutes(15)).unwrap(),
             status: "success".to_string(),
             original_size: 2_000_000,
             compressed_size: 1_000_000,
@@ -4080,8 +4132,8 @@ async fn get_archives_for_agent_includes_pattern_matched_archives(pool: PgPool) 
             agent_id: imported.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now - Duration::minutes(30),
-            finished_at: now - Duration::minutes(25),
+            started_at: now.checked_sub_signed(Duration::minutes(30)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::minutes(25)).unwrap(),
             status: "success".to_string(),
             original_size: 3_000_000,
             compressed_size: 1_500_000,
@@ -4176,8 +4228,8 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo1.id,
             schedule_id: None,
-            started_at: now - Duration::minutes(10),
-            finished_at: now - Duration::minutes(5),
+            started_at: now.checked_sub_signed(Duration::minutes(10)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
             status: "success".to_string(),
             original_size: 1_000_000,
             compressed_size: 500_000,
@@ -4202,8 +4254,8 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo2.id,
             schedule_id: None,
-            started_at: now - Duration::minutes(20),
-            finished_at: now - Duration::minutes(15),
+            started_at: now.checked_sub_signed(Duration::minutes(20)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::minutes(15)).unwrap(),
             status: "success".to_string(),
             original_size: 5_000_000,
             compressed_size: 2_500_000,
@@ -4238,8 +4290,8 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
             agent_id: imported.id,
             repo_id: repo1.id,
             schedule_id: None,
-            started_at: now - Duration::minutes(30),
-            finished_at: now - Duration::minutes(25),
+            started_at: now.checked_sub_signed(Duration::minutes(30)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::minutes(25)).unwrap(),
             status: "success".to_string(),
             original_size: 1_500_000,
             compressed_size: 750_000,
@@ -4274,8 +4326,8 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
             agent_id: imported2.id,
             repo_id: repo2.id,
             schedule_id: None,
-            started_at: now - Duration::minutes(40),
-            finished_at: now - Duration::minutes(35),
+            started_at: now.checked_sub_signed(Duration::minutes(40)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::minutes(35)).unwrap(),
             status: "success".to_string(),
             original_size: 4_000_000,
             compressed_size: 2_000_000,
@@ -4310,8 +4362,8 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
             agent_id: unrelated.id,
             repo_id: repo1.id,
             schedule_id: None,
-            started_at: now - Duration::minutes(50),
-            finished_at: now - Duration::minutes(45),
+            started_at: now.checked_sub_signed(Duration::minutes(50)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::minutes(45)).unwrap(),
             status: "success".to_string(),
             original_size: 1_000_000,
             compressed_size: 500_000,
@@ -4499,8 +4551,8 @@ async fn bulk_insert_backup_reports_basic(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now - Duration::minutes(10),
-            finished_at: now - Duration::minutes(5),
+            started_at: now.checked_sub_signed(Duration::minutes(10)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
             status: "success".to_string(),
             original_size: 2_000_000,
             compressed_size: 1_000_000,
@@ -4520,8 +4572,8 @@ async fn bulk_insert_backup_reports_basic(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now - Duration::minutes(20),
-            finished_at: now - Duration::minutes(15),
+            started_at: now.checked_sub_signed(Duration::minutes(20)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::minutes(15)).unwrap(),
             status: "success".to_string(),
             original_size: 1_000_000,
             compressed_size: 500_000,
@@ -4557,7 +4609,7 @@ async fn bulk_insert_backup_reports_conflict_skipped(pool: PgPool) {
         .unwrap();
     let repo = create_test_repo(&pool).await;
     let now = Utc::now();
-    let started = now - Duration::minutes(10);
+    let started = now.checked_sub_signed(Duration::minutes(10)).unwrap();
 
     let param = InsertReportParams {
         agent_id: agent.id,
@@ -4604,8 +4656,10 @@ async fn bulk_insert_keeps_distinct_archives_sharing_start_second(pool: PgPool) 
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let started = Utc::now() - Duration::minutes(10);
-    let finished = started + Duration::minutes(1);
+    let started = Utc::now()
+        .checked_sub_signed(Duration::minutes(10))
+        .unwrap();
+    let finished = started.checked_add_signed(Duration::minutes(1)).unwrap();
 
     let base = InsertReportParams {
         agent_id: agent.id,
@@ -5015,7 +5069,7 @@ async fn schedule_targets_list_and_delete(pool: PgPool) {
 
     let targets = db::list_schedule_targets(&pool, schedule.id).await.unwrap();
     assert_eq!(targets.len(), 1);
-    assert_eq!(targets[0].agent_id, agent.id);
+    assert_eq!(targets.first().unwrap().agent_id, agent.id);
 
     db::delete_schedule_targets(&pool, schedule.id)
         .await
@@ -5058,10 +5112,10 @@ async fn get_schedule_targets_for_run_returns_ordered_and_excludes_hidden(pool: 
         .unwrap();
 
     assert_eq!(targets.len(), 2);
-    assert_eq!(targets[0].agent_id, agent_a.id);
-    assert_eq!(targets[0].hostname, "sched-host");
-    assert_eq!(targets[1].agent_id, agent_b.id);
-    assert_eq!(targets[1].hostname, "run-target-b");
+    assert_eq!(targets.first().unwrap().agent_id, agent_a.id);
+    assert_eq!(targets.first().unwrap().hostname, "sched-host");
+    assert_eq!(targets.get(1).unwrap().agent_id, agent_b.id);
+    assert_eq!(targets.get(1).unwrap().hostname, "run-target-b");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -5090,12 +5144,15 @@ async fn reports_for_schedule_test(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
-    assert_eq!(reports[0].status, "success");
-    assert_eq!(reports[0].repo_name, repo.name);
-    assert_eq!(reports[0].schedule_id, Some(schedule.id));
-    assert_eq!(reports[0].schedule_name.as_deref(), Some("test-schedule"));
+    assert_eq!(reports.first().unwrap().status, "success");
+    assert_eq!(reports.first().unwrap().repo_name, repo.name);
+    assert_eq!(reports.first().unwrap().schedule_id, Some(schedule.id));
+    assert_eq!(
+        reports.first().unwrap().schedule_name.as_deref(),
+        Some("test-schedule")
+    );
 
-    let empty = db::list_reports_for_schedule(&pool, schedule.id + 999, 10)
+    let empty = db::list_reports_for_schedule(&pool, schedule.id.saturating_add(999), 10)
         .await
         .unwrap();
     assert!(empty.is_empty());
@@ -5141,10 +5198,10 @@ async fn reports_carry_repo_name_and_fall_back_to_it_when_schedule_unnamed(pool:
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
-    assert_eq!(reports[0].repo_name, repo.name);
-    assert_eq!(reports[0].schedule_id, Some(schedule.id));
+    assert_eq!(reports.first().unwrap().repo_name, repo.name);
+    assert_eq!(reports.first().unwrap().schedule_id, Some(schedule.id));
     assert_eq!(
-        reports[0].schedule_name.as_deref(),
+        reports.first().unwrap().schedule_name.as_deref(),
         Some(repo.name.as_str()),
         "an unnamed schedule should fall back to the repo name"
     );
@@ -5163,9 +5220,9 @@ async fn reports_for_agent_have_no_schedule_when_not_schedule_triggered(pool: Pg
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
-    assert_eq!(reports[0].repo_name, repo.name);
-    assert_eq!(reports[0].schedule_id, None);
-    assert_eq!(reports[0].schedule_name, None);
+    assert_eq!(reports.first().unwrap().repo_name, repo.name);
+    assert_eq!(reports.first().unwrap().schedule_id, None);
+    assert_eq!(reports.first().unwrap().schedule_name, None);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -5187,9 +5244,16 @@ async fn activity_feed_repo_filter(pool: PgPool) {
         .unwrap();
     assert_eq!(filtered.len(), 1);
 
-    let empty = db::get_activity_feed(&pool, 10, Some(repo.id + 999), None, None, None)
-        .await
-        .unwrap();
+    let empty = db::get_activity_feed(
+        &pool,
+        10,
+        Some(repo.id.saturating_add(999)),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     assert!(empty.is_empty());
 }
 
@@ -5288,7 +5352,7 @@ async fn storage_trends_test(pool: PgPool) {
             .any(|t| t.deduplicated_size.is_some_and(|v| v > 0))
     );
 
-    let trends_other = db::get_storage_trends(&pool, Some(repo.id + 999), 7)
+    let trends_other = db::get_storage_trends(&pool, Some(repo.id.saturating_add(999)), 7)
         .await
         .unwrap();
     assert!(trends_other.iter().all(|t| t.deduplicated_size.is_none()));
@@ -5315,7 +5379,7 @@ async fn storage_trends_by_repo_test(pool: PgPool) {
     );
 }
 
-/// Regression test for https://github.com/alexmohr/assimilate/issues/195: the deduplicated
+/// Regression test for <https://github.com/alexmohr/assimilate/issues/195>: the deduplicated
 /// size in the storage trend must never exceed the original/compressed size. Each individual
 /// archive is small, but `repo_unique_csize` (the repo-wide on-disk footprint) grows across
 /// archives, which used to be compared against a single archive's per-archive original size.
@@ -5334,13 +5398,19 @@ async fn storage_trends_dedup_never_exceeds_original(pool: PgPool) {
                 agent_id: agent.id,
                 repo_id: repo.id,
                 schedule_id: None,
-                started_at: now - Duration::days(6 - day) - Duration::minutes(5),
-                finished_at: now - Duration::days(6 - day),
+                started_at: now
+                    .checked_sub_signed(Duration::days(6i64.saturating_sub(day)))
+                    .unwrap()
+                    .checked_sub_signed(Duration::minutes(5))
+                    .unwrap(),
+                finished_at: now
+                    .checked_sub_signed(Duration::days(6i64.saturating_sub(day)))
+                    .unwrap(),
                 status: "success".to_string(),
                 original_size: 1_000,
                 compressed_size: 800,
                 deduplicated_size: 100,
-                repo_unique_csize: (day + 1) * 750,
+                repo_unique_csize: day.saturating_add(1).saturating_mul(750),
                 files_processed: 10,
                 duration_secs: 60,
                 error_message: None,
@@ -5422,8 +5492,8 @@ async fn archive_names_and_delete_test(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now - Duration::minutes(10),
-            finished_at: now - Duration::minutes(5),
+            started_at: now.checked_sub_signed(Duration::minutes(10)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
             status: "success".to_string(),
             original_size: 1_000_000,
             compressed_size: 500_000,
@@ -5449,8 +5519,8 @@ async fn archive_names_and_delete_test(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now - Duration::minutes(20),
-            finished_at: now - Duration::minutes(15),
+            started_at: now.checked_sub_signed(Duration::minutes(20)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::minutes(15)).unwrap(),
             status: "success".to_string(),
             original_size: 2_000_000,
             compressed_size: 1_000_000,
@@ -5507,7 +5577,7 @@ async fn list_archive_names_needing_stats_filters_enriched(pool: PgPool) {
         agent_id: agent.id,
         repo_id: repo.id,
         schedule_id: None,
-        started_at: now - Duration::minutes(10),
+        started_at: now.checked_sub_signed(Duration::minutes(10)).unwrap(),
         finished_at: now,
         status: "success".to_string(),
         original_size: 0,
@@ -5528,7 +5598,7 @@ async fn list_archive_names_needing_stats_filters_enriched(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            started_at: now - Duration::minutes(20),
+            started_at: now.checked_sub_signed(Duration::minutes(20)).unwrap(),
             original_size: 1_000,
             compressed_size: 500,
             deduplicated_size: 250,
@@ -5542,7 +5612,7 @@ async fn list_archive_names_needing_stats_filters_enriched(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            started_at: now - Duration::minutes(30),
+            started_at: now.checked_sub_signed(Duration::minutes(30)).unwrap(),
             original_size: 1_000,
             compressed_size: 500,
             deduplicated_size: 250,
@@ -5610,8 +5680,8 @@ async fn delete_backup_reports_before_test(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now - Duration::hours(2),
-            finished_at: now - Duration::hours(2),
+            started_at: now.checked_sub_signed(Duration::hours(2)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::hours(2)).unwrap(),
             status: "success".to_string(),
             original_size: 1_000_000,
             compressed_size: 500_000,
@@ -5631,7 +5701,7 @@ async fn delete_backup_reports_before_test(pool: PgPool) {
     .await
     .unwrap();
 
-    let cutoff = now - Duration::hours(1);
+    let cutoff = now.checked_sub_signed(Duration::hours(1)).unwrap();
     let deleted = db::delete_backup_reports_before(&pool, cutoff)
         .await
         .unwrap();
@@ -5652,7 +5722,7 @@ async fn delete_backup_reports_before_keeps_archive_rows(pool: PgPool) {
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let old = Utc::now() - Duration::days(365);
+    let old = Utc::now().checked_sub_signed(Duration::days(365)).unwrap();
 
     let base = InsertReportParams {
         agent_id: agent.id,
@@ -5681,8 +5751,8 @@ async fn delete_backup_reports_before_keeps_archive_rows(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            started_at: old + Duration::seconds(1),
-            finished_at: old + Duration::seconds(1),
+            started_at: old.checked_add_signed(Duration::seconds(1)).unwrap(),
+            finished_at: old.checked_add_signed(Duration::seconds(1)).unwrap(),
             status: "failed".to_string(),
             archive_name: None,
             ..base.clone()
@@ -5691,7 +5761,7 @@ async fn delete_backup_reports_before_keeps_archive_rows(pool: PgPool) {
     .await
     .unwrap();
 
-    let cutoff = Utc::now() - Duration::days(7);
+    let cutoff = Utc::now().checked_sub_signed(Duration::days(7)).unwrap();
     let deleted = db::delete_backup_reports_before(&pool, cutoff)
         .await
         .unwrap();
@@ -5753,7 +5823,7 @@ async fn audit_filter_by_target_type(pool: PgPool) {
 
     assert_eq!(total, 1);
     assert_eq!(items.len(), 1);
-    assert_eq!(items[0].target_type.as_deref(), Some("repo"));
+    assert_eq!(items.first().unwrap().target_type.as_deref(), Some("repo"));
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -5804,7 +5874,7 @@ async fn audit_filter_by_action(pool: PgPool) {
     .unwrap();
 
     assert_eq!(total, 1);
-    assert_eq!(items[0].action, "delete");
+    assert_eq!(items.first().unwrap().action, "delete");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -5854,7 +5924,7 @@ async fn cancel_backup_report_updates_started_row(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
-    assert_eq!(reports[0].status, "cancelled");
+    assert_eq!(reports.first().unwrap().status, "cancelled");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -5871,7 +5941,7 @@ async fn cancel_backup_report_ignores_already_completed(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now - Duration::minutes(5),
+            started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
             finished_at: now,
             status: "success".to_string(),
             original_size: 0,
@@ -5900,7 +5970,7 @@ async fn cancel_backup_report_ignores_already_completed(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
-    assert_eq!(reports[0].status, "success");
+    assert_eq!(reports.first().unwrap().status, "success");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -5962,7 +6032,7 @@ async fn run_id_update_scoped_to_agent(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(b_reports.len(), 1);
-    assert_eq!(b_reports[0].status, "pending");
+    assert_eq!(b_reports.first().unwrap().status, "pending");
 
     // Only agent_a sends BackupCompleted.
     db::insert_backup_report(
@@ -5972,7 +6042,7 @@ async fn run_id_update_scoped_to_agent(pool: PgPool) {
             repo_id: repo.id,
             schedule_id: None,
             started_at: now,
-            finished_at: now + Duration::minutes(10),
+            finished_at: now.checked_add_signed(Duration::minutes(10)).unwrap(),
             status: "failed".to_string(),
             original_size: 0,
             compressed_size: 0,
@@ -5997,13 +6067,13 @@ async fn run_id_update_scoped_to_agent(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(b_reports.len(), 1);
-    assert_eq!(b_reports[0].status, "pending");
+    assert_eq!(b_reports.first().unwrap().status, "pending");
 
     let a_reports = db::list_reports_for_agent(&pool, agent_a.id, None, 10)
         .await
         .unwrap();
     assert_eq!(a_reports.len(), 1);
-    assert_eq!(a_reports[0].status, "failed");
+    assert_eq!(a_reports.first().unwrap().status, "failed");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -6292,7 +6362,7 @@ async fn check_agent_repo_access_unassigned_agent_is_rejected(pool: PgPool) {
 }
 
 /// Verify that the `validate_agent_repo` function in handler.rs correctly rejects
-/// an agent reporting on an unassigned repo and logs a security_violation system event.
+/// an agent reporting on an unassigned repo and logs a `security_violation` system event.
 #[sqlx::test(migrations = "./migrations")]
 async fn validate_agent_repo_rejects_and_logs_security_event(pool: PgPool) {
     let (assigned_agent, assigned_repo, _schedule) = create_test_schedule(&pool).await;
@@ -6330,5 +6400,11 @@ async fn validate_agent_repo_rejects_and_logs_security_event(pool: PgPool) {
         .filter(|e| e.event_type == "security_violation")
         .collect();
     assert_eq!(security_events.len(), 1);
-    assert!(security_events[0].message.contains("rogue-agent"));
+    assert!(
+        security_events
+            .first()
+            .unwrap()
+            .message
+            .contains("rogue-agent")
+    );
 }

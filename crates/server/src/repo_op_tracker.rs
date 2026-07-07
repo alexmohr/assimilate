@@ -86,6 +86,7 @@ impl RepoOpTracker {
             .map_or(0, |state| state.queued)
     }
 
+    /// Return the currently active operation for this repository, if any.
     pub async fn get(&self, repo_id: i64) -> Option<ActiveRepoOp> {
         let map = self.state.read().await;
         map.get(&repo_id).and_then(|state| {

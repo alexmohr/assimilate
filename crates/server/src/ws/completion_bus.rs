@@ -13,29 +13,38 @@ use super::registry::AgentRegistry;
 /// this poll is only a way to notice early that the agent has gone away.
 const CONNECTIVITY_POLL_INTERVAL: Duration = Duration::from_secs(30);
 
+/// The result of a triggered operation reported by the agent.
 #[derive(Debug, Clone)]
 pub struct OperationOutcome {
+    /// Hostname of the agent that completed the operation.
     pub hostname: String,
+    /// Repository ID the operation was performed on.
     pub repo_id: i64,
+    /// Whether the operation succeeded.
     pub success: bool,
 }
 
+/// Broadcast bus for operation completion events, allowing callers to await
+/// the result of a triggered backup, check, or verify.
 #[derive(Clone, Debug)]
 pub struct CompletionBus {
     tx: broadcast::Sender<OperationOutcome>,
 }
 
 impl CompletionBus {
+    /// Create a new completion bus with a 256-capacity channel.
     #[must_use]
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(256);
         Self { tx }
     }
 
+    /// Publish an operation outcome to all subscribers.
     pub fn publish(&self, outcome: OperationOutcome) {
         let _ = self.tx.send(outcome);
     }
 
+    /// Subscribe to completion events.
     #[must_use]
     pub fn subscribe(&self) -> broadcast::Receiver<OperationOutcome> {
         self.tx.subscribe()
@@ -51,7 +60,9 @@ impl Default for CompletionBus {
 /// The result of waiting for a triggered operation to finish.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompletionOutcome {
+    /// The operation completed successfully.
     Success,
+    /// The operation failed.
     Failed,
     /// The agent disconnected (or the bus shut down) before reporting completion.
     /// Sequential schedules treat this the same as a failure, but it's tracked

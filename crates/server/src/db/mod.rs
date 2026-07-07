@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+/// Audit log database queries.
 pub mod audit;
+/// Dashboard summary queries.
 pub mod dashboard;
+/// Hostname pattern-matching queries.
 pub mod patterns;
+/// Quota database queries.
 pub mod quota;
+/// Server-level quota database queries.
 pub mod server_quota;
+/// Tag database queries.
 pub mod tags;
 
 use chrono::{DateTime, Utc};
@@ -19,10 +25,14 @@ use crate::error::ApiError;
 /// no real authentication token.
 pub const IMPORTED_TOKEN_HASH: &str = "imported:no-auth";
 
+/// Result of resolving an agent for a given hostname.
 #[derive(Debug, Clone, Serialize)]
 pub enum ResolveResult {
+    /// An exact hostname match was found.
     ExactMatch(AgentRow),
+    /// A glob-pattern match was found.
     PatternMatch(AgentRow),
+    /// No matching agent was found.
     Unmatched,
 }
 
@@ -141,140 +151,236 @@ pub async fn merge_agent(pool: &PgPool, source_id: i64, target_id: i64) -> Resul
     Ok(())
 }
 
+/// A row from the `agents` table.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct AgentRow {
+    /// Unique identifier.
     pub id: i64,
+    /// Agent hostname.
     pub hostname: String,
+    /// Optional display name.
     pub display_name: Option<String>,
+    /// Agent binary version string.
     pub agent_version: Option<String>,
+    /// Git SHA of the agent build.
     pub agent_git_sha: Option<String>,
+    /// Agent build timestamp.
     pub agent_build_time: Option<String>,
+    /// Git commit count at build time.
     pub agent_commit_count: Option<i32>,
+    /// When the agent was first registered.
     pub created_at: DateTime<Utc>,
+    /// When the agent last connected.
     pub last_seen_at: Option<DateTime<Utc>>,
+    /// Owning user ID, if any.
     pub owner_id: Option<i64>,
+    /// Visibility scope (e.g. "public", "private").
     pub visibility: String,
+    /// Default backup paths for schedules targeting this agent.
     #[serde(default)]
     pub default_backup_paths: Vec<String>,
+    /// Default exclude patterns for schedules targeting this agent.
     #[serde(default)]
     pub default_exclude_patterns: Vec<String>,
+    /// Default pre-backup commands.
     pub default_pre_backup_commands: String,
+    /// Default post-backup commands.
     pub default_post_backup_commands: String,
+    /// Default file-change detection patterns (raw text).
     #[serde(default)]
     pub default_file_change_patterns_raw: String,
+    /// Hash of the agent's authentication token (never serialized).
     #[serde(skip)]
     pub agent_token_hash: String,
+    /// Whether the agent is hidden from the UI.
     #[serde(default)]
     pub is_hidden: bool,
 }
 
+/// A row from the `repos` table (sensitive fields excluded).
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct RepoRow {
+    /// Unique identifier.
     pub id: i64,
+    /// Repository display name.
     pub name: String,
+    /// Borg repository path on the remote host.
     pub repo_path: String,
+    /// SSH user for the remote host.
     pub ssh_user: String,
+    /// SSH hostname for the remote host.
     pub ssh_host: String,
+    /// SSH port for the remote host.
     pub ssh_port: i32,
+    /// Compression algorithm (e.g. "lz4", "zstd").
     pub compression: String,
+    /// Encryption mode (e.g. "repokey-blake2").
     pub encryption: String,
+    /// Whether the repository is enabled for backups.
     pub enabled: bool,
+    /// Owning user ID, if any.
     pub owner_id: Option<i64>,
+    /// Visibility scope.
     pub visibility: String,
+    /// Optional cron expression for automatic sync.
     pub sync_schedule: Option<String>,
 }
 
+/// SSH connection details for a repository (passphrase omitted).
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct RepoConnectionRow {
+    /// SSH user for the remote host.
     pub ssh_user: String,
+    /// SSH hostname for the remote host.
     pub ssh_host: String,
+    /// SSH port for the remote host.
     pub ssh_port: i32,
 }
 
+/// A row from the `ssh_tunnels` table.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct SshTunnel {
+    /// Unique identifier.
     pub id: i64,
+    /// Agent that owns this tunnel.
     pub agent_id: i64,
+    /// SSH hostname for the tunnel destination.
     pub ssh_host: String,
+    /// SSH user for the tunnel destination.
     pub ssh_user: String,
+    /// SSH port for the tunnel destination.
     pub ssh_port: i32,
+    /// Local port the tunnel listens on.
     pub tunnel_port: i32,
+    /// Known host key of the destination.
     pub ssh_host_key: Option<String>,
+    /// Whether the tunnel is enabled.
     pub enabled: bool,
+    /// When the tunnel was created.
     pub created_at: DateTime<Utc>,
 }
 
+/// Parameters for creating a new SSH tunnel.
 #[derive(Debug, Deserialize)]
 pub struct NewSshTunnel {
+    /// Agent that will own this tunnel.
     pub agent_id: i64,
+    /// SSH hostname for the tunnel destination.
     pub ssh_host: String,
+    /// SSH user for the tunnel destination.
     pub ssh_user: String,
+    /// SSH port (defaults to 22).
     pub ssh_port: Option<i32>,
+    /// Local port the tunnel will listen on.
     pub tunnel_port: i32,
+    /// Whether the tunnel is enabled (defaults to true).
     pub enabled: Option<bool>,
+    /// Known host key of the destination.
     pub ssh_host_key: Option<String>,
 }
 
+/// Parameters for updating an existing SSH tunnel (all fields optional).
 #[derive(Debug, Deserialize)]
 pub struct UpdateSshTunnel {
+    /// New SSH hostname.
     pub ssh_host: Option<String>,
+    /// New SSH user.
     pub ssh_user: Option<String>,
+    /// New SSH port.
     pub ssh_port: Option<i32>,
+    /// New local tunnel port.
     pub tunnel_port: Option<i32>,
+    /// New enabled state.
     pub enabled: Option<bool>,
+    /// New known host key.
     pub ssh_host_key: Option<String>,
 }
 
+/// Global exclude patterns applied to all schedules.
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct GlobalExcludesConfig {
+    /// Raw exclude pattern text.
     pub raw_text: String,
 }
 
+/// A row from the `schedules` table.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
 )]
 pub struct ScheduleRow {
+    /// Unique identifier.
     pub id: i64,
+    /// Target repository ID.
     pub repo_id: Option<i64>,
+    /// Schedule display name.
     pub name: String,
+    /// Schedule type (e.g. "cron", "interval").
     pub schedule_type: String,
+    /// Cron expression for scheduling.
     pub cron_expression: String,
+    /// Whether the schedule is enabled.
     pub enabled: bool,
+    /// Whether canary backups are enabled.
     pub canary_enabled: bool,
+    /// When the schedule last ran.
     pub last_run_at: Option<DateTime<Utc>>,
+    /// When the schedule is next due.
     pub next_run_at: Option<DateTime<Utc>>,
+    /// Raw exclude pattern text.
     pub exclude_patterns_raw: String,
+    /// Raw file-change detection pattern text.
     pub file_change_patterns_raw: String,
+    /// Whether to ignore global exclude patterns.
     pub ignore_global_excludes: bool,
+    /// Number of hourly backups to keep.
     pub keep_hourly: i32,
+    /// Number of daily backups to keep.
     pub keep_daily: i32,
+    /// Number of weekly backups to keep.
     pub keep_weekly: i32,
+    /// Number of monthly backups to keep.
     pub keep_monthly: i32,
+    /// Number of yearly backups to keep.
     pub keep_yearly: i32,
+    /// Whether automatic compaction is enabled.
     pub compact_enabled: bool,
+    /// Rate limit in KB/s, if any.
     pub rate_limit_kbps: Option<i32>,
+    /// Pre-backup commands (raw text).
     pub pre_backup_commands: String,
+    /// Post-backup commands (raw text).
     pub post_backup_commands: String,
+    /// Execution mode (e.g. "sequential").
     pub execution_mode: String,
+    /// On-failure behaviour (e.g. "continue", "abort").
     pub on_failure: String,
+    /// Owning user ID, if any.
     pub owner_id: Option<i64>,
+    /// Visibility scope.
     pub visibility: String,
+    /// Hostnames of target agents, resolved at query time.
     #[serde(default)]
     #[sqlx(default)]
     pub target_hostnames: Vec<String>,
 }
 
+/// A row from the `schedule_targets` join table.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ScheduleTargetRow {
+    /// Agent ID.
     pub agent_id: i64,
+    /// Execution order among targets for the same schedule.
     pub execution_order: i32,
 }
 
+/// Number of schedules targeting a specific agent.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ScheduleCountByAgent {
+    /// Agent ID.
     pub agent_id: i64,
+    /// Number of distinct schedules targeting this agent.
     pub count: i64,
 }
 
@@ -555,12 +661,19 @@ pub async fn insert_agent(
     .map_err(ApiError::Database)
 }
 
+/// Default configuration values for an agent.
 pub struct AgentDefaults<'a> {
+    /// Optional display name.
     pub display_name: Option<&'a str>,
+    /// Default backup paths.
     pub default_backup_paths: &'a [String],
+    /// Default exclude patterns.
     pub default_exclude_patterns: &'a [String],
+    /// Default pre-backup commands.
     pub default_pre_backup_commands: &'a str,
+    /// Default post-backup commands.
     pub default_post_backup_commands: &'a str,
+    /// Default file-change detection patterns (raw text).
     pub default_file_change_patterns_raw: &'a str,
 }
 
@@ -825,28 +938,49 @@ pub async fn get_schedule_target_hostnames_for_repo(
     Ok(rows.into_iter().map(|r| r.hostname).collect())
 }
 
+/// Parameters for inserting a new repository.
 pub struct InsertRepoParams<'a> {
+    /// Repository display name.
     pub name: &'a str,
+    /// Borg repository path on the remote host.
     pub repo_path: &'a str,
+    /// SSH user for the remote host.
     pub ssh_user: &'a str,
+    /// SSH hostname for the remote host.
     pub ssh_host: &'a str,
+    /// SSH port for the remote host.
     pub ssh_port: i32,
+    /// Encrypted passphrase bytes.
     pub passphrase_encrypted: &'a [u8],
+    /// Compression algorithm.
     pub compression: &'a str,
+    /// Encryption mode.
     pub encryption: &'a str,
+    /// Owning user ID, if any.
     pub owner_id: Option<i64>,
 }
 
+/// Parameters for updating an existing repository.
 pub struct UpdateRepoParams<'a> {
+    /// Repository ID to update.
     pub repo_id: i64,
+    /// New display name.
     pub name: &'a str,
+    /// New borg repository path.
     pub repo_path: &'a str,
+    /// New SSH user.
     pub ssh_user: &'a str,
+    /// New SSH hostname.
     pub ssh_host: &'a str,
+    /// New SSH port.
     pub ssh_port: i32,
+    /// New compression algorithm.
     pub compression: &'a str,
+    /// New encryption mode.
     pub encryption: &'a str,
+    /// Whether the repository is enabled.
     pub enabled: bool,
+    /// New sync schedule cron expression.
     pub sync_schedule: Option<&'a str>,
 }
 
@@ -989,11 +1123,17 @@ pub async fn check_agent_repo_access(
 /// for repo size and archive counts; never derive these from `backup_reports`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RepoInfoStats {
+    /// Total original (uncompressed) size in bytes.
     pub original_size: i64,
+    /// Total compressed size in bytes.
     pub compressed_size: i64,
+    /// Total deduplicated size in bytes.
     pub deduplicated_size: i64,
+    /// Total number of chunks.
     pub total_chunks: i64,
+    /// Number of unique chunks.
     pub unique_chunks: i64,
+    /// Number of archives in the repository.
     pub archive_count: i64,
 }
 
@@ -1604,28 +1744,47 @@ pub async fn list_schedules(pool: &PgPool) -> Result<Vec<ScheduleRow>, ApiError>
     Ok(rows)
 }
 
+/// Parameters for creating or updating a schedule.
 #[allow(
     clippy::struct_excessive_bools,
     reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
 )]
 pub struct ScheduleParams<'a> {
+    /// Schedule display name.
     pub name: &'a str,
+    /// Schedule type (e.g. "cron").
     pub schedule_type: &'a str,
+    /// Cron expression.
     pub cron_expression: &'a str,
+    /// Whether the schedule is enabled.
     pub enabled: bool,
+    /// Whether canary backups are enabled.
     pub canary_enabled: bool,
+    /// Raw exclude pattern text.
     pub exclude_patterns_raw: &'a str,
+    /// Whether to ignore global excludes.
     pub ignore_global_excludes: bool,
+    /// Hourly retention count.
     pub keep_hourly: i32,
+    /// Daily retention count.
     pub keep_daily: i32,
+    /// Weekly retention count.
     pub keep_weekly: i32,
+    /// Monthly retention count.
     pub keep_monthly: i32,
+    /// Yearly retention count.
     pub keep_yearly: i32,
+    /// Whether automatic compaction is enabled.
     pub compact_enabled: bool,
+    /// Rate limit in KB/s.
     pub rate_limit_kbps: Option<i32>,
+    /// Pre-backup commands.
     pub pre_backup_commands: &'a str,
+    /// Post-backup commands.
     pub post_backup_commands: &'a str,
+    /// On-failure behaviour.
     pub on_failure: &'a str,
+    /// Raw file-change detection pattern text.
     pub file_change_patterns_raw: &'a str,
 }
 
@@ -1748,6 +1907,7 @@ pub async fn update_schedule_repo(pool: &PgPool, id: i64, repo_id: i64) -> Resul
     Ok(())
 }
 
+/// Converts a [`Compression`] enum to its string representation.
 #[must_use]
 pub fn compression_to_str(c: &Compression) -> String {
     c.to_string()
@@ -1761,20 +1921,34 @@ pub fn compression_from_str(s: &str) -> Result<Compression, ApiError> {
         .map_err(|e| ApiError::Internal(format!("invalid compression: {e}")))
 }
 
+/// A row from the `repos` table including the encrypted passphrase.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct RepoWithPassphraseRow {
+    /// Unique identifier.
     pub id: i64,
+    /// Repository display name.
     pub name: String,
+    /// Borg repository path on the remote host.
     pub repo_path: String,
+    /// SSH user for the remote host.
     pub ssh_user: String,
+    /// SSH hostname for the remote host.
     pub ssh_host: String,
+    /// SSH port for the remote host.
     pub ssh_port: i32,
+    /// Known host key of the remote host.
     pub ssh_host_key: Option<String>,
+    /// Encrypted passphrase bytes.
     pub passphrase_encrypted: Vec<u8>,
+    /// Compression algorithm.
     pub compression: String,
+    /// Encryption mode.
     pub encryption: String,
+    /// Whether the repository is enabled.
     pub enabled: bool,
+    /// Whether a relocation is pending confirmation.
     pub relocation_pending: bool,
+    /// Sync schedule cron expression, if any.
     pub sync_schedule: Option<String>,
 }
 
@@ -1792,20 +1966,34 @@ pub async fn list_all_repos(pool: &PgPool) -> Result<Vec<RepoRow>, ApiError> {
     .map_err(ApiError::Database)
 }
 
+/// Repo row with sync schedule metadata.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct RepoRowWithSync {
+    /// Unique identifier.
     pub id: i64,
+    /// Repository display name.
     pub name: String,
+    /// Borg repository path.
     pub repo_path: String,
+    /// SSH user.
     pub ssh_user: String,
+    /// SSH hostname.
     pub ssh_host: String,
+    /// SSH port.
     pub ssh_port: i32,
+    /// Compression algorithm.
     pub compression: String,
+    /// Encryption mode.
     pub encryption: String,
+    /// Whether the repository is enabled.
     pub enabled: bool,
+    /// Owning user ID.
     pub owner_id: Option<i64>,
+    /// Visibility scope.
     pub visibility: String,
+    /// Sync schedule cron expression.
     pub sync_schedule: Option<String>,
+    /// When the repo was last synced.
     pub last_synced_at: Option<DateTime<Utc>>,
 }
 
@@ -1942,9 +2130,12 @@ pub async fn list_backup_sources_for_schedule_agent(
     Ok(rows.into_iter().map(|r| r.path).collect())
 }
 
+/// Per-agent backup sources for a schedule override.
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct PerAgentBackupSources {
+    /// Agent ID.
     pub agent_id: i64,
+    /// Backup source paths for this agent.
     pub paths: Vec<String>,
 }
 
@@ -2061,9 +2252,12 @@ pub async fn delete_per_agent_backup_sources_for_schedule(
     Ok(())
 }
 
+/// Per-agent exclude patterns for a schedule override.
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct PerAgentExcludePatterns {
+    /// Agent ID.
     pub agent_id: i64,
+    /// Raw exclude pattern text for this agent.
     pub raw_text: String,
 }
 
@@ -2156,10 +2350,14 @@ pub async fn get_per_agent_excludes_raw(
     .map_err(ApiError::Database)
 }
 
+/// Per-agent pre/post backup commands for a schedule override.
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct PerAgentCommands {
+    /// Agent ID.
     pub agent_id: i64,
+    /// Pre-backup commands for this agent.
     pub pre_backup_commands: String,
+    /// Post-backup commands for this agent.
     pub post_backup_commands: String,
 }
 
@@ -2272,9 +2470,12 @@ pub async fn delete_per_agent_commands_for_schedule(
     Ok(())
 }
 
+/// Per-agent file-change detection patterns for a schedule override.
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct PerAgentFileChangePatterns {
+    /// Agent ID.
     pub agent_id: i64,
+    /// Raw file-change pattern text for this agent.
     pub raw_text: String,
 }
 
@@ -2489,15 +2690,24 @@ pub async fn list_schedules_for_agent(
     .map_err(ApiError::Database)
 }
 
+/// A schedule that is due to run, joined with its target agent.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct DueScheduleRow {
+    /// Schedule ID.
     pub schedule_id: i64,
+    /// Repository ID.
     pub repo_id: i64,
+    /// Target agent ID.
     pub agent_id: i64,
+    /// Target agent hostname.
     pub hostname: String,
+    /// Schedule type.
     pub schedule_type: String,
+    /// Cron expression.
     pub cron_expression: String,
+    /// On-failure behaviour.
     pub on_failure: String,
+    /// Execution order among targets.
     pub execution_order: i32,
 }
 
@@ -2658,9 +2868,12 @@ pub async fn get_schedule_target_hostnames(
     Ok(rows.into_iter().map(|r| r.hostname).collect())
 }
 
+/// A target agent for a schedule run.
 #[derive(Debug, sqlx::FromRow)]
 pub struct ScheduleRunTarget {
+    /// Agent ID.
     pub agent_id: i64,
+    /// Agent hostname.
     pub hostname: String,
 }
 
@@ -2843,14 +3056,22 @@ pub async fn insert_canary_result(
     Ok(())
 }
 
+/// A row from the `canary_results` table.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct CanaryResultRow {
+    /// Unique identifier.
     pub id: i64,
+    /// Schedule ID this result belongs to.
     pub schedule_id: Option<i64>,
+    /// When the canary was verified.
     pub verified_at: DateTime<Utc>,
+    /// Whether the canary check succeeded.
     pub success: bool,
+    /// Name of the canary file that was checked.
     pub canary_filename: Option<String>,
+    /// Error message if the check failed.
     pub error_message: Option<String>,
+    /// Archive name created by the canary run.
     pub archive_name: Option<String>,
 }
 
@@ -2893,92 +3114,163 @@ pub async fn list_canary_results(
     Ok(rows)
 }
 
+/// A row from the `backup_reports` table with joined repo/schedule names.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ReportRow {
+    /// Unique identifier.
     pub id: i64,
+    /// Agent that ran the backup.
     pub agent_id: i64,
+    /// Repository that was backed up.
     pub repo_id: i64,
+    /// Repository display name.
     pub repo_name: String,
+    /// Schedule ID that triggered the backup, if any.
     pub schedule_id: Option<i64>,
+    /// Schedule display name, if any.
     pub schedule_name: Option<String>,
+    /// When the backup started.
     pub started_at: DateTime<Utc>,
+    /// When the backup finished.
     pub finished_at: DateTime<Utc>,
+    /// Backup status (e.g. "success", "failed", "warning").
     pub status: String,
+    /// Total original size in bytes.
     pub original_size: i64,
+    /// Total compressed size in bytes.
     pub compressed_size: i64,
+    /// Total deduplicated size in bytes.
     pub deduplicated_size: i64,
+    /// Number of files processed.
     pub files_processed: i64,
+    /// Duration in seconds.
     pub duration_secs: i64,
+    /// Error message, if any.
     pub error_message: Option<String>,
+    /// Warning messages, if any.
     pub warnings: Vec<String>,
+    /// Borg version used.
     pub borg_version: Option<String>,
+    /// Borg archive name, if any.
     pub archive_name: Option<String>,
+    /// Borg command that was executed.
     pub borg_command: Option<String>,
 }
 
+/// Storage statistics grouped by agent and repo.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct StorageStatRow {
+    /// Agent hostname.
     pub hostname: String,
+    /// Repository display name.
     pub target_name: String,
+    /// Total original size in bytes.
     pub total_original_size: i64,
+    /// Total compressed size in bytes.
     pub total_compressed_size: i64,
+    /// Total deduplicated size in bytes.
     pub total_deduplicated_size: i64,
+    /// Number of backup reports.
     pub report_count: i64,
 }
 
+/// An activity feed entry representing a backup run.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ActivityRow {
+    /// Report ID.
     pub id: i64,
+    /// Agent hostname.
     pub hostname: String,
+    /// Repository display name.
     pub target_name: String,
+    /// When the backup started.
     pub started_at: DateTime<Utc>,
+    /// When the backup finished.
     pub finished_at: DateTime<Utc>,
+    /// Backup status.
     pub status: String,
+    /// Duration in seconds.
     pub duration_secs: i64,
+    /// Repository ID.
     pub repo_id: Option<i64>,
+    /// Borg archive name, if any.
     pub archive_name: Option<String>,
+    /// Error message, if any.
     pub error_message: Option<String>,
+    /// Schedule ID, if any.
     #[serde(default)]
     pub schedule_id: Option<i64>,
+    /// Schedule display name, if any.
     #[serde(default)]
     pub schedule_name: Option<String>,
+    /// Run ID for tracking multi-step backups.
     #[serde(default)]
     pub run_id: Option<String>,
 }
 
+/// Health summary for a schedule-agent-repo combination.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct HealthRow {
+    /// Repository ID.
     pub repo_id: i64,
+    /// Schedule ID.
     pub schedule_id: i64,
+    /// Agent hostname.
     pub hostname: String,
+    /// Repository display name.
     pub target_name: String,
+    /// Status of the last backup run.
     pub last_status: Option<String>,
+    /// When the last backup finished.
     pub last_backup_at: Option<DateTime<Utc>>,
+    /// Error message from the last failure.
     pub last_error_message: Option<String>,
+    /// Schedule cron expression.
     pub cron_expression: Option<String>,
+    /// Whether the schedule is enabled.
     pub schedule_enabled: Option<bool>,
 }
 
+/// Parameters for inserting or upserting a backup report.
 #[derive(Clone)]
 pub struct InsertReportParams {
+    /// Agent that ran the backup.
     pub agent_id: i64,
+    /// Repository that was backed up.
     pub repo_id: i64,
+    /// Schedule ID, if any.
     pub schedule_id: Option<i64>,
+    /// When the backup started.
     pub started_at: DateTime<Utc>,
+    /// When the backup finished.
     pub finished_at: DateTime<Utc>,
+    /// Backup status.
     pub status: String,
+    /// Total original size in bytes.
     pub original_size: i64,
+    /// Total compressed size in bytes.
     pub compressed_size: i64,
+    /// Total deduplicated size in bytes.
     pub deduplicated_size: i64,
+    /// Repository-level unique compressed size.
     pub repo_unique_csize: i64,
+    /// Number of files processed.
     pub files_processed: i64,
+    /// Duration in seconds.
     pub duration_secs: i64,
+    /// Error message, if any.
     pub error_message: Option<String>,
+    /// Warning messages, if any.
     pub warnings: Vec<String>,
+    /// Borg version used.
     pub borg_version: Option<String>,
+    /// Whether the agent has been matched to a known host.
     pub matched: bool,
+    /// Borg archive name, if any.
     pub archive_name: Option<String>,
+    /// Borg command that was executed.
     pub borg_command: Option<String>,
+    /// Run ID for tracking multi-step backups.
     pub run_id: Option<String>,
 }
 
@@ -3358,12 +3650,19 @@ pub async fn bulk_insert_backup_reports(
     Ok(result.rows_affected())
 }
 
+/// Statistics for a single borg archive.
 pub struct ArchiveStats {
+    /// Original (uncompressed) size in bytes.
     pub original_size: i64,
+    /// Compressed size in bytes.
     pub compressed_size: i64,
+    /// Deduplicated size in bytes.
     pub deduplicated_size: i64,
+    /// Number of files processed.
     pub files_processed: i64,
+    /// Duration in seconds.
     pub duration_secs: i64,
+    /// Repository-level unique compressed size.
     pub repo_unique_csize: i64,
 }
 
@@ -3552,21 +3851,33 @@ pub async fn get_health_summary(pool: &PgPool) -> Result<Vec<HealthRow>, ApiErro
     .map_err(ApiError::Database)
 }
 
+/// A row from the `users` table (excluding the password hash).
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct UserRow {
+    /// Unique identifier.
     pub id: i64,
+    /// Username for login.
     pub username: String,
+    /// Whether the user must change their password on next login.
     pub must_change_password: bool,
+    /// When the user was created.
     pub created_at: DateTime<Utc>,
+    /// When the user last logged in.
     pub last_login_at: Option<DateTime<Utc>>,
 }
 
+/// A row from the `sessions` table.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct SessionRow {
+    /// Session ID (token).
     pub id: String,
+    /// User ID this session belongs to.
     pub user_id: i64,
+    /// When the session was created.
     pub created_at: DateTime<Utc>,
+    /// When the session expires.
     pub expires_at: DateTime<Utc>,
+    /// Whether the "remember me" flag was set.
     pub remember_me: bool,
 }
 
@@ -3893,12 +4204,18 @@ pub async fn insert_login_attempt(
     Ok(())
 }
 
+/// A row from the `api_tokens` table (excluding the token hash).
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ApiTokenRow {
+    /// Unique identifier.
     pub id: i64,
+    /// User ID that owns this token.
     pub user_id: i64,
+    /// Human-readable token name.
     pub name: String,
+    /// When the token was created.
     pub created_at: DateTime<Utc>,
+    /// When the token was last used.
     pub last_used_at: Option<DateTime<Utc>>,
 }
 
@@ -4000,8 +4317,10 @@ pub async fn get_api_token_owner(pool: &PgPool, token_id: i64) -> Result<i64, Ap
     Ok(row.user_id)
 }
 
+/// Minimal row for API token lookup, containing only the user ID.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ApiTokenLookupRow {
+    /// User ID that owns the token.
     pub user_id: i64,
 }
 
@@ -4042,32 +4361,48 @@ pub async fn update_api_token_last_used(pool: &PgPool, token_hash: &str) -> Resu
     Ok(())
 }
 
+/// A row from the `repo_permissions` table.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
 )]
 pub struct RepoPermissionRow {
+    /// User ID.
     pub user_id: i64,
+    /// Repository ID.
     pub repo_id: i64,
+    /// Whether the user can view the repo.
     pub can_view: bool,
+    /// Whether the user can trigger backups.
     pub can_backup: bool,
+    /// Whether the user can modify schedules.
     pub can_modify_schedules: bool,
+    /// Whether the user can extract archives.
     pub can_extract: bool,
+    /// Whether the user can delete archives.
     pub can_delete: bool,
 }
 
+/// Parameters for upserting a repo permission.
 #[allow(
     clippy::struct_excessive_bools,
     reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
 )]
 pub struct UpsertRepoPermissionParams {
+    /// User ID.
     pub user_id: i64,
+    /// Repository ID.
     pub repo_id: i64,
+    /// View permission.
     pub can_view: bool,
+    /// Backup permission.
     pub can_backup: bool,
+    /// Schedule modification permission.
     pub can_modify_schedules: bool,
+    /// Extract permission.
     pub can_extract: bool,
+    /// Delete permission.
     pub can_delete: bool,
 }
 
@@ -4154,12 +4489,18 @@ pub async fn list_repo_permissions_for_repo(
     .map_err(ApiError::Database)
 }
 
+/// A row from the `system_events` table.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct SystemEventRow {
+    /// Unique identifier.
     pub id: i64,
+    /// When the event occurred.
     pub created_at: DateTime<Utc>,
+    /// Event type (e.g. ``agent_connected``, ``backup_failed``).
     pub event_type: String,
+    /// Hostname the event relates to, if any.
     pub hostname: Option<String>,
+    /// Human-readable event message.
     pub message: String,
 }
 
@@ -4227,12 +4568,18 @@ pub async fn set_setting(pool: &PgPool, key: &str, value: &str) -> Result<(), Ap
     Ok(())
 }
 
+/// Size breakdown of a database relation (table + indexes + TOAST).
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct DatabaseRelationSizeRow {
+    /// Table name.
     pub table_name: String,
+    /// Bytes used by the main table.
     pub table_bytes: i64,
+    /// Bytes used by indexes.
     pub index_bytes: i64,
+    /// Bytes used by TOAST storage.
     pub toast_bytes: i64,
+    /// Total bytes (table + indexes + TOAST).
     pub total_bytes: i64,
 }
 
@@ -4349,37 +4696,68 @@ pub async fn set_user_preferences(
     Ok(())
 }
 
+/// Full repository row with aggregated stats (sizes, agent count, import state, last op).
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct RepoWithStatsRow {
+    /// Unique identifier.
     pub id: i64,
+    /// Repository display name.
     pub name: String,
+    /// Borg repository path.
     pub repo_path: String,
+    /// SSH user.
     pub ssh_user: String,
+    /// SSH hostname.
     pub ssh_host: String,
+    /// SSH port.
     pub ssh_port: i32,
+    /// Known host key.
     pub ssh_host_key: Option<String>,
+    /// Compression algorithm.
     pub compression: String,
+    /// Encryption mode.
     pub encryption: String,
+    /// Whether the repository is enabled.
     pub enabled: bool,
+    /// Whether the repo is currently being imported.
     pub importing: bool,
+    /// Import error message, if any.
     pub import_error: Option<String>,
+    /// Import progress (items processed).
     pub import_progress: i32,
+    /// Import total items.
     pub import_total: i32,
+    /// Import status message.
     pub import_status_message: Option<String>,
+    /// Owning user ID.
     pub owner_id: Option<i64>,
+    /// Visibility scope.
     pub visibility: String,
+    /// Sync schedule cron expression.
     pub sync_schedule: Option<String>,
+    /// When the repo was last synced.
     pub last_synced_at: Option<DateTime<Utc>>,
+    /// Number of archives.
     pub archive_count: i64,
+    /// When the last successful backup finished.
     pub last_backup_at: Option<DateTime<Utc>>,
+    /// Total original size in bytes.
     pub total_original_size: i64,
+    /// Total compressed size in bytes.
     pub total_compressed_size: i64,
+    /// Total deduplicated size in bytes.
     pub total_deduplicated_size: i64,
+    /// Number of distinct agents that backed up to this repo.
     pub agent_count: i64,
+    /// Number of unmatched agents (imported placeholders).
     pub unmatched_count: i64,
+    /// Kind of the last operation performed on the repo.
     pub last_op_kind: Option<String>,
+    /// Whether a relocation is pending confirmation.
     pub relocation_pending: bool,
+    /// When the last operation was performed.
     pub last_op_at: Option<DateTime<Utc>>,
+    /// Who performed the last operation.
     pub last_op_by: Option<String>,
 }
 
@@ -4477,11 +4855,16 @@ pub async fn update_repo_last_op(
     Ok(())
 }
 
+/// A row from the `tags` table.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct TagRow {
+    /// Unique identifier.
     pub id: i64,
+    /// Tag name.
     pub name: String,
+    /// Tag color (hex string).
     pub color: String,
+    /// Tag scope (e.g. "agent", "repo").
     pub scope: String,
 }
 
@@ -4581,10 +4964,14 @@ pub async fn set_agent_tags(pool: &PgPool, agent_id: i64, tag_ids: &[i64]) -> Re
     Ok(())
 }
 
+/// A tag associated with a repository (joined from `repo_tags` + `tags`).
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct RepoTagRow {
+    /// Repository ID.
     pub repo_id: i64,
+    /// Tag name.
     pub tag_name: String,
+    /// Tag color.
     pub tag_color: String,
 }
 
@@ -4617,10 +5004,14 @@ pub async fn list_tags_for_repo(pool: &PgPool, repo_id: i64) -> Result<Vec<TagRo
     .map_err(ApiError::Database)
 }
 
+/// A tag associated with an agent (joined from `agent_tags` + `tags`).
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct AgentTagRow {
+    /// Agent ID.
     pub agent_id: i64,
+    /// Tag name.
     pub tag_name: String,
+    /// Tag color.
     pub tag_color: String,
 }
 
@@ -4653,33 +5044,60 @@ pub async fn list_all_agent_tags(pool: &PgPool) -> Result<Vec<AgentTagRow>, ApiE
     .map_err(ApiError::Database)
 }
 
+/// Dashboard summary aggregated from all tables.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct DashboardSummaryRow {
+    /// Total non-hidden agents.
     pub total_agents: i64,
+    /// Total repositories.
     pub total_repos: i64,
+    /// Number of enabled schedules.
     pub active_schedules: i64,
+    /// Total number of schedules.
     pub total_schedules: i64,
+    /// Total deduplicated storage across all repos.
     pub total_storage_bytes: i64,
+    /// When the last successful backup finished.
     pub last_backup_at: Option<DateTime<Utc>>,
+    /// When the next backup is scheduled.
     pub next_backup_at: Option<DateTime<Utc>>,
+    /// Schedule ID of the last backup.
     pub last_backup_schedule_id: Option<i64>,
+    /// Repo ID of the last backup.
     pub last_backup_repo_id: Option<i64>,
+    /// Archive name of the last backup.
     pub last_backup_archive_name: Option<String>,
+    /// Schedule ID of the next backup.
     pub next_backup_schedule_id: Option<i64>,
+    /// Successful backups in the last 30 days.
     pub success_30d: i64,
+    /// Failed backups in the last 30 days.
     pub failed_30d: i64,
+    /// Total backups in the last 30 days.
     pub total_30d: i64,
+    /// When the last failure occurred.
     pub last_failure_at: Option<DateTime<Utc>>,
+    /// When the last warning occurred.
     pub last_warning_at: Option<DateTime<Utc>>,
+    /// Schedule ID of the last failure.
     pub last_failure_schedule_id: Option<i64>,
+    /// Schedule ID of the last warning.
     pub last_warning_schedule_id: Option<i64>,
+    /// Error message from the last failure.
     pub last_failure_message: Option<String>,
+    /// Warning message from the last warning.
     pub last_warning_message: Option<String>,
+    /// Repo ID of the last failure.
     pub last_failure_repo_id: Option<i64>,
+    /// Repo ID of the last warning.
     pub last_warning_repo_id: Option<i64>,
+    /// Repo name of the last failure.
     pub last_failure_repo_name: Option<String>,
+    /// Repo name of the last warning.
     pub last_warning_repo_name: Option<String>,
+    /// Schedule name (cron expression) of the last failure.
     pub last_failure_schedule_name: Option<String>,
+    /// Schedule name (cron expression) of the last warning.
     pub last_warning_schedule_name: Option<String>,
 }
 
@@ -4743,10 +5161,14 @@ pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow,
     .map_err(ApiError::Database)
 }
 
+/// Storage breakdown by repository.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct StorageBreakdownRow {
+    /// Repository name.
     pub name: String,
+    /// Compressed size in bytes.
     pub compressed_size: i64,
+    /// Deduplicated size in bytes.
     pub deduplicated_size: i64,
 }
 
@@ -4798,46 +5220,73 @@ pub async fn get_activity_feed_days(
     .map_err(ApiError::Database)
 }
 
+/// A row from the `groups` table.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct GroupRow {
+    /// Unique identifier.
     pub id: i64,
+    /// Group name.
     pub name: String,
+    /// Optional group description.
     pub description: Option<String>,
+    /// When the group was created.
     pub created_at: DateTime<Utc>,
 }
 
+/// A row from the `roles` table representing an RBAC role.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
 )]
 pub struct RoleRow {
+    /// Unique identifier.
     pub id: i64,
+    /// Role name.
     pub name: String,
+    /// Permission to create agents.
     pub can_create_agent: bool,
+    /// Permission to delete any agent.
     pub can_delete_agent: bool,
+    /// Permission to delete own agents.
     pub can_delete_own_agent: bool,
+    /// Permission to create repos.
     pub can_create_repo: bool,
+    /// Permission to delete any repo.
     pub can_delete_repo: bool,
+    /// Permission to delete own repos.
     pub can_delete_own_repo: bool,
+    /// Permission to create schedules.
     pub can_create_schedule: bool,
+    /// Permission to delete any schedule.
     pub can_delete_schedule: bool,
+    /// Permission to delete own schedules.
     pub can_delete_own_schedule: bool,
+    /// Permission to manage tags.
     pub can_manage_tags: bool,
+    /// Permission to view all repos.
     pub can_view_all_repos: bool,
+    /// Permission to manage tunnels.
     pub can_manage_tunnels: bool,
+    /// When the role was created.
     pub created_at: DateTime<Utc>,
 }
 
+/// A row from the `user_groups` join table.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct UserGroupRow {
+    /// User ID.
     pub user_id: i64,
+    /// Group ID.
     pub group_id: i64,
 }
 
+/// A row from the `user_roles` join table.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct UserRoleRow {
+    /// User ID.
     pub user_id: i64,
+    /// Role ID.
     pub role_id: i64,
 }
 
@@ -5054,23 +5503,37 @@ pub async fn get_role(pool: &PgPool, id: i64) -> Result<Option<RoleRow>, ApiErro
     .map_err(ApiError::Database)
 }
 
+/// Parameters for inserting a new role.
 #[allow(
     clippy::struct_excessive_bools,
     reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
 )]
 pub struct InsertRoleParams<'a> {
+    /// Role name.
     pub name: &'a str,
+    /// Create agents permission.
     pub can_create_agent: bool,
+    /// Delete any agent permission.
     pub can_delete_agent: bool,
+    /// Delete own agents permission.
     pub can_delete_own_agent: bool,
+    /// Create repos permission.
     pub can_create_repo: bool,
+    /// Delete any repo permission.
     pub can_delete_repo: bool,
+    /// Delete own repos permission.
     pub can_delete_own_repo: bool,
+    /// Create schedules permission.
     pub can_create_schedule: bool,
+    /// Delete any schedule permission.
     pub can_delete_schedule: bool,
+    /// Delete own schedules permission.
     pub can_delete_own_schedule: bool,
+    /// Manage tags permission.
     pub can_manage_tags: bool,
+    /// View all repos permission.
     pub can_view_all_repos: bool,
+    /// Manage tunnels permission.
     pub can_manage_tunnels: bool,
 }
 
@@ -5270,14 +5733,22 @@ pub async fn get_effective_permissions(pool: &PgPool, user_id: i64) -> Result<Ro
     })
 }
 
+/// A single day's aggregated backup trend data.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct TrendRow {
+    /// The date of the trend point.
     pub date: chrono::NaiveDate,
+    /// Average original size.
     pub original_size: i64,
+    /// Average compressed size.
     pub compressed_size: i64,
+    /// Average deduplicated size.
     pub deduplicated_size: i64,
+    /// Average file count.
     pub file_count: i64,
+    /// Average duration in seconds.
     pub duration_seconds: i64,
+    /// Number of backups on this date.
     pub backup_count: i64,
 }
 
@@ -5324,17 +5795,28 @@ pub async fn get_backup_trends(
     }
 }
 
+/// A calendar event representing a backup run.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct CalendarEventRow {
+    /// Event date.
     pub date: chrono::NaiveDate,
+    /// Event type (e.g. "backup").
     pub event_type: String,
+    /// Backup status.
     pub status: String,
+    /// Repository name.
     pub repo_name: String,
+    /// Agent hostname.
     pub hostname: String,
+    /// Event time string (HH:MM).
     pub time: String,
+    /// Report ID, if any.
     pub report_id: Option<i64>,
+    /// Repository ID, if any.
     pub repo_id: Option<i64>,
+    /// Error message, if any.
     pub error_message: Option<String>,
+    /// Archive name, if any.
     pub archive_name: Option<String>,
 }
 
@@ -5405,21 +5887,33 @@ pub async fn get_calendar_events(
     }
 }
 
+/// A single day's storage trend data (cumulative across all repos).
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct StorageTrendRow {
+    /// The date of the trend point.
     pub date: chrono::NaiveDate,
+    /// Cumulative original size up to this date.
     pub original_size: i64,
+    /// Cumulative compressed size up to this date.
     pub compressed_size: i64,
+    /// Latest deduplicated (``repo_unique_csize``) as of this date.
     pub deduplicated_size: Option<i64>,
 }
 
+/// A single day's storage trend data, per repository.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct StorageTrendByRepoRow {
+    /// The date of the trend point.
     pub date: chrono::NaiveDate,
+    /// Repository ID.
     pub repo_id: i64,
+    /// Repository name.
     pub repo_name: String,
+    /// Cumulative original size up to this date.
     pub original_size: i64,
+    /// Cumulative compressed size up to this date.
     pub compressed_size: i64,
+    /// Latest deduplicated size as of this date.
     pub deduplicated_size: Option<i64>,
 }
 

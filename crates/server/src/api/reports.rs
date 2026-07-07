@@ -103,9 +103,12 @@ fn row_to_report_response(row: db::ReportRow, hostname: String) -> ReportRespons
     }
 }
 
+/// Query parameters for listing backup reports.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ListReportsQuery {
+    /// Filter by target repository name.
     pub target: Option<String>,
+    /// Maximum number of reports to return.
     pub limit: Option<i64>,
 }
 

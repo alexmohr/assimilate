@@ -13,6 +13,10 @@ use futures_util::{SinkExt, StreamExt};
 
 use crate::{AppState, api::tokens::hash_token, db};
 
+/// WebSocket upgrade handler for browser UI clients.
+///
+/// Extracts the session token from the cookie header, validates it, and upgrades
+/// the connection to a UI broadcast receiver.
 pub async fn ui_ws_handler(
     ws: WebSocketUpgrade,
     headers: axum::http::HeaderMap,

@@ -16,30 +16,46 @@ use crate::{
     error::{ApiError, ApiJson},
 };
 
+/// Request payload for creating a new SSH tunnel.
 #[derive(Debug, Deserialize)]
 pub struct CreateTunnelRequest {
+    /// ID of the agent to associate with the tunnel.
     pub agent_id: i64,
+    /// SSH hostname or IP address.
     pub ssh_host: String,
+    /// SSH user (defaults to "borg").
     #[serde(default = "super::helpers::default_ssh_user")]
     pub ssh_user: String,
+    /// SSH port (defaults to 22).
     pub ssh_port: Option<i32>,
+    /// Local tunnel port to forward.
     pub tunnel_port: i32,
+    /// Whether the tunnel is enabled on creation.
     pub enabled: Option<bool>,
 }
 
+/// Request payload for updating an SSH tunnel configuration.
 #[derive(Debug, Deserialize)]
 pub struct UpdateTunnelRequest {
+    /// New SSH hostname or IP.
     pub ssh_host: Option<String>,
+    /// New SSH user.
     pub ssh_user: Option<String>,
+    /// New SSH port.
     pub ssh_port: Option<i32>,
+    /// New local tunnel port.
     pub tunnel_port: Option<i32>,
+    /// Whether the tunnel should be enabled.
     pub enabled: Option<bool>,
 }
 
+/// SSH tunnel information with current connection status.
 #[derive(Debug, Serialize)]
 pub struct TunnelResponse {
+    /// Tunnel configuration.
     #[serde(flatten)]
     pub tunnel: SshTunnel,
+    /// Current tunnel connection status.
     pub status: TunnelStatus,
 }
 

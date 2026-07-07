@@ -29,24 +29,35 @@ use crate::{
     error::{ApiError, ApiJson},
 };
 
+/// Request payload for registering a new agent.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateAgentRequest {
+    /// Agent hostname.
     pub hostname: String,
+    /// Optional display name.
     pub display_name: Option<String>,
 }
 
+/// Request payload for updating an agent's configuration.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateAgentRequest {
+    /// New hostname (if changing).
     pub hostname: Option<String>,
+    /// New display name.
     pub display_name: Option<String>,
+    /// Default backup source paths.
     #[serde(default)]
     pub default_backup_paths: Vec<String>,
+    /// Default exclude patterns.
     #[serde(default)]
     pub default_exclude_patterns: Vec<String>,
+    /// Default pre-backup commands.
     #[serde(default)]
     pub default_pre_backup_commands: Vec<String>,
+    /// Default post-backup commands.
     #[serde(default)]
     pub default_post_backup_commands: Vec<String>,
+    /// Default file change detection patterns.
     #[serde(default)]
     pub default_file_change_patterns_raw: String,
 }
@@ -127,8 +138,10 @@ pub async fn create_agent(
     ))
 }
 
+/// Query parameters for listing agents.
 #[derive(Debug, Deserialize)]
 pub struct ListAgentsQuery {
+    /// Whether to include hidden agents in the response.
     #[serde(default)]
     pub include_hidden: bool,
 }
@@ -417,8 +430,10 @@ pub async fn list_hostname_patterns(
     Ok(Json(patterns))
 }
 
+/// Request payload for adding a hostname pattern to an agent.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct AddPatternRequest {
+    /// Glob pattern for matching archive hostnames.
     pub pattern: String,
 }
 
@@ -483,8 +498,10 @@ pub async fn delete_hostname_pattern(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Request payload for merging a placeholder agent into a real one.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct MergeAgentRequest {
+    /// Optional hostname pattern to create on the target agent.
     pub create_pattern: Option<String>,
 }
 
@@ -653,7 +670,7 @@ pub async fn delete_agent_archives(
             continue;
         }
 
-        match tokio::time::timeout(Duration::from_secs(300), rx).await {
+        match tokio::time::timeout(Duration::from_mins(5), rx).await {
             Ok(Ok((true, count, _))) => {
                 total_deleted = total_deleted.saturating_add(count);
             }

@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+/// Email notification channel dispatcher.
 pub mod email;
+/// Outbound URL validation and DNS resolution helpers.
 pub mod net;
+/// Web push (VAPID) notification channel dispatcher.
 pub mod web_push;
+/// Webhook notification channel dispatcher.
 pub mod webhook;
 
 use std::fmt;
@@ -12,12 +16,16 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
 
+/// Supported notification channel types.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelType {
+    /// SMTP email delivery.
     #[default]
     Email,
+    /// HTTP POST to a configured webhook URL.
     Webhook,
+    /// Web push notification via browser push API.
     WebPush,
 }
 
@@ -44,6 +52,7 @@ impl std::str::FromStr for ChannelType {
     }
 }
 
+/// Error returned when parsing an unknown channel type string.
 #[derive(Debug, PartialEq, thiserror::Error)]
 #[error("unknown channel type: {0}")]
 pub struct UnknownChannelType(pub String);
@@ -70,35 +79,51 @@ impl sqlx::Encode<'_, sqlx::Postgres> for ChannelType {
     }
 }
 
+/// Errors that can occur during notification delivery.
 #[derive(Debug, thiserror::Error)]
 pub enum NotificationError {
+    /// SMTP transport error.
     #[error("smtp error: {0}")]
     Smtp(#[from] lettre::transport::smtp::Error),
+    /// HTTP request error.
     #[error("http error: {0}")]
     Http(#[from] reqwest::Error),
+    /// Web push protocol error.
     #[error("web push error: {0}")]
     WebPush(#[from] ::web_push::WebPushError),
+    /// Database query or connection error.
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
+    /// Invalid or missing configuration.
     #[error("configuration error: {0}")]
     Config(String),
+    /// JSON serialization or deserialization error.
     #[error("serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 }
 
+/// Notification event categories that can trigger delivery rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EventType {
+    /// Backup completed successfully.
     BackupSuccess,
+    /// Backup completed with warnings.
     BackupWarning,
+    /// Backup failed.
     BackupFailed,
+    /// Repository integrity check succeeded.
     CheckSuccess,
+    /// Repository integrity check failed.
     CheckFailed,
+    /// Agent connected to the server.
     AgentConnected,
+    /// Agent disconnected from the server.
     AgentDisconnected,
 }
 
 impl EventType {
+    /// All event type names as static string slices for DB queries.
     pub const ALL_DB_STRS: &[&'static str] = &[
         "backup_success",
         "backup_warning",
@@ -142,25 +167,39 @@ impl std::str::FromStr for EventType {
     }
 }
 
+/// Error returned when parsing an unknown event type string.
 #[derive(Debug, thiserror::Error)]
 #[error("unknown event type: {0}")]
 pub struct UnknownEventType(pub String);
 
+/// A notification event carrying all context for delivery to a channel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationEvent {
+    /// The category of event that occurred.
     pub event_type: EventType,
+    /// Hostname of the agent that triggered the event.
     pub hostname: String,
+    /// Repository name associated with the event.
     pub repo_name: String,
+    /// Outcome status string (e.g. "success", "failed", "warning").
     pub status: String,
+    /// Optional error or warning message from the operation.
     pub error_message: Option<String>,
+    /// When the event occurred.
     pub timestamp: DateTime<Utc>,
+    /// Optional repository ID for scoping.
     pub repo_id: Option<i64>,
+    /// Optional agent ID for scoping.
     pub agent_id: Option<i64>,
+    /// Optional schedule ID for scoping.
     pub schedule_id: Option<i64>,
+    /// Optional human-readable schedule name.
     pub schedule_name: Option<String>,
+    /// Optional borg archive name.
     pub archive_name: Option<String>,
 }
 
+/// Service for dispatching notification events to configured channels.
 #[derive(Debug, Clone)]
 pub struct NotificationService {
     pool: PgPool,
@@ -178,6 +217,7 @@ impl Drop for DeliveryGuard {
 }
 
 impl NotificationService {
+    /// Create a new notification service backed by the given database pool.
     #[must_use]
     pub fn new(pool: PgPool) -> Self {
         Self {
@@ -186,6 +226,7 @@ impl NotificationService {
         }
     }
 
+    /// Access the underlying database pool.
     #[must_use]
     pub fn pool(&self) -> &PgPool {
         &self.pool

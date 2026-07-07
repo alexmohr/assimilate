@@ -17,24 +17,38 @@ use crate::{
     ssh,
 };
 
+/// Request payload for deploying the agent binary via SSH.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct DeployAgentRequest {
+    /// SSH hostname or IP address.
     pub ssh_host: String,
+    /// SSH user (defaults to "borg").
     #[serde(default = "super::helpers::default_ssh_user")]
     pub ssh_user: String,
+    /// SSH port (defaults to 22).
     pub ssh_port: Option<u16>,
+    /// Server URL the agent should connect to (e.g. `<ws://host:8080>`).
     pub server_url: String,
+    /// Remote install path for the binary.
     pub install_path: Option<String>,
+    /// Optional SSH password (key-based auth preferred).
     pub ssh_password: Option<String>,
+    /// Optional custom systemd service unit content.
     pub systemd_service_content: Option<String>,
 }
 
+/// Result of an agent deployment attempt.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DeployAgentResponse {
+    /// Whether the deployment succeeded.
     pub success: bool,
+    /// Whether the agent was already at the latest version and skipped.
     pub skipped: bool,
+    /// The generated agent token (shown once).
     pub token: Option<String>,
+    /// Latest available agent version.
     pub available_version: Option<String>,
+    /// Error message if the deployment failed.
     pub error: Option<String>,
 }
 
@@ -44,6 +58,7 @@ fn tunnel_server_url(tunnel: &db::SshTunnel) -> Option<String> {
         .then(|| format!("ws://127.0.0.1:{}", tunnel.tunnel_port))
 }
 
+/// Resolve the directory containing agent binaries.
 pub async fn agent_binary_dir() -> PathBuf {
     if let Ok(path) = std::env::var("AGENT_BINARY_DIR") {
         return PathBuf::from(path);
@@ -63,6 +78,7 @@ pub async fn agent_binary_dir() -> PathBuf {
     docker_path
 }
 
+/// Query the available agent version from the binary directory.
 pub async fn query_available_agent_version(binary_dir: &std::path::Path) -> Option<String> {
     let server_arch = std::env::consts::ARCH;
     let candidates = [
@@ -226,17 +242,24 @@ pub async fn deploy_agent(
         })),
     }
 }
+/// Request payload for fetching a systemd service unit from a remote host.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct FetchServiceUnitRequest {
+    /// SSH hostname or IP address.
     pub ssh_host: String,
+    /// SSH user (defaults to "borg").
     #[serde(default = "super::helpers::default_ssh_user")]
     pub ssh_user: String,
+    /// SSH port (defaults to 22).
     pub ssh_port: Option<u16>,
+    /// Optional SSH password.
     pub ssh_password: Option<String>,
 }
 
+/// Content of a remote systemd service unit file.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct FetchServiceUnitResponse {
+    /// Service unit file content, or None if not found.
     pub content: Option<String>,
 }
 

@@ -61,25 +61,35 @@ impl From<db::RepoTagRow> for RepoTagEntryResponse {
     }
 }
 
+/// Query parameter for filtering tags by scope.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct TagScopeQuery {
+    /// Tag scope (e.g. "repo" or "agent").
     pub scope: String,
 }
 
+/// Request payload for creating a new tag.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateTagRequest {
+    /// Tag name.
     pub name: String,
+    /// Tag color (hex, e.g. "#6b7280").
     pub color: Option<String>,
+    /// Tag scope ("repo" or "agent").
     pub scope: String,
 }
 
+/// Request payload for assigning tags to a resource.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SetTagsRequest {
+    /// Tag IDs to assign.
     pub tag_ids: Vec<i64>,
 }
 
+/// Request payload for adding a tag to an archive.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ArchiveTagRequest {
+    /// Tag string to add.
     pub tag: String,
 }
 

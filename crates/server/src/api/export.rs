@@ -20,8 +20,10 @@ use super::{
 };
 use crate::{AppState, borg::Borg, error::ApiError};
 
+/// Query parameters for archive export.
 #[derive(Debug, Deserialize)]
 pub struct ExportQuery {
+    /// Optional subdirectory path to limit the export to.
     pub path: Option<String>,
 }
 

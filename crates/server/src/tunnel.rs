@@ -24,6 +24,7 @@ use tracing::{error, warn};
 
 use crate::{db, ws::ui_broadcast::UiBroadcast};
 
+/// Replace an unspecified IP (0.0.0.0 / ::) with the loopback address.
 #[must_use]
 pub fn tunnel_target_addr(bind_addr: SocketAddr) -> SocketAddr {
     if !bind_addr.ip().is_unspecified() {
@@ -37,10 +38,15 @@ pub fn tunnel_target_addr(bind_addr: SocketAddr) -> SocketAddr {
     SocketAddr::new(ip, bind_addr.port())
 }
 
+/// Handles SSH channel open requests for forwarded TCP/IP connections in a reverse tunnel.
 pub struct TunnelSshHandler {
+    /// Address to forward connections to on the server side.
     pub server_addr: SocketAddr,
+    /// Broadcast channel for UI status updates.
     pub ui_broadcast: UiBroadcast,
+    /// Agent this tunnel belongs to.
     pub agent_id: i64,
+    /// Expected SSH host key fingerprint, if pinned.
     pub expected_host_key: Option<String>,
 }
 
@@ -96,6 +102,7 @@ impl client::Handler for TunnelSshHandler {
     }
 }
 
+/// SSH client configuration for tunnel connections (no inactivity timeout, 15 s keepalive).
 #[must_use]
 pub fn tunnel_ssh_config() -> Arc<client::Config> {
     Arc::new(client::Config {
@@ -106,6 +113,7 @@ pub fn tunnel_ssh_config() -> Arc<client::Config> {
     })
 }
 
+/// Manages SSH reverse tunnels to agents, including lifecycle, retry, and status tracking.
 #[derive(Clone)]
 pub struct TunnelManager {
     pool: PgPool,
@@ -131,6 +139,7 @@ impl Drop for TunnelTaskCompletion {
 }
 
 impl TunnelManager {
+    /// Create a new tunnel manager with the given pool, broadcast, and server address.
     #[must_use]
     pub fn new(pool: PgPool, ui_broadcast: UiBroadcast, server_addr: SocketAddr) -> Self {
         Self {
@@ -141,6 +150,7 @@ impl TunnelManager {
         }
     }
 
+    /// Load all enabled tunnels from the database and start them with staggered delays.
     pub async fn run(&self) {
         let tunnels = match db::list_enabled_tunnels(&self.pool).await {
             Ok(t) => t,
@@ -163,6 +173,7 @@ impl TunnelManager {
         }
     }
 
+    /// Start a reverse tunnel by its ID, stopping any previous instance first.
     pub async fn start_tunnel(&self, tunnel_id: i64) {
         self.stop_tunnel(tunnel_id).await;
 
@@ -208,6 +219,7 @@ impl TunnelManager {
         });
     }
 
+    /// Stop a running tunnel by its ID, cancelling the task and waiting for it to complete.
     pub async fn stop_tunnel(&self, tunnel_id: i64) {
         // Extract the state in a separate let binding so the write guard is
         // dropped before awaiting completion. Holding it across notified().await
@@ -220,6 +232,7 @@ impl TunnelManager {
         }
     }
 
+    /// Return the current tunnel status for the given tunnel ID, if it exists.
     pub async fn tunnel_status(&self, tunnel_id: i64) -> Option<TunnelStatus> {
         self.tunnels
             .read()
@@ -228,6 +241,7 @@ impl TunnelManager {
             .map(|s| s.status.clone())
     }
 
+    /// Return all active tunnel IDs and their current status.
     pub async fn all_statuses(&self) -> Vec<(i64, TunnelStatus)> {
         self.tunnels
             .read()
@@ -237,6 +251,7 @@ impl TunnelManager {
             .collect()
     }
 
+    /// Cancel all running tunnels without waiting for them to stop.
     pub async fn shutdown(&self) {
         let tunnels = self.tunnels.read().await;
         for state in tunnels.values() {
@@ -434,7 +449,7 @@ async fn connect_and_forward(
         handler,
     } = params;
 
-    let next_backoff = backoff.saturating_mul(2).min(Duration::from_secs(120));
+    let next_backoff = backoff.saturating_mul(2).min(Duration::from_mins(2));
 
     let session = tokio::select! {
         () = cancel.cancelled() => return Err(ConnectionOutcome::Stop),
@@ -577,7 +592,7 @@ async fn run_tunnel_connection_attempt(
             ConnectionOutcome::Stop
         }
         () = tokio::time::sleep(backoff) => {
-            ConnectionOutcome::Retry(backoff.saturating_mul(2).min(Duration::from_secs(120)))
+            ConnectionOutcome::Retry(backoff.saturating_mul(2).min(Duration::from_mins(2)))
         }
     }
 }

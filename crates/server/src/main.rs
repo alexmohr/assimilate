@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+//! Assimilate server binary.
+
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use axum::{
@@ -299,7 +301,7 @@ fn spawn_background_tasks(state: &AppState, tunnel_manager: &TunnelManager) {
 }
 
 fn build_login_router(state: &AppState, client_ip_resolver: ClientIpResolver) -> Router<AppState> {
-    let login_rate_limiter = RateLimiter::new(10, Duration::from_secs(60), client_ip_resolver);
+    let login_rate_limiter = RateLimiter::new(10, Duration::from_mins(1), client_ip_resolver);
 
     Router::new()
         .route("/api/auth/login", post(api::auth::login))

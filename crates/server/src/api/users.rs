@@ -42,14 +42,19 @@ pub(crate) async fn user_row_to_response(
     })
 }
 
+/// Request payload for creating a new user.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateUserRequest {
+    /// Username.
     pub username: String,
+    /// Password (minimum 8 characters).
     pub password: String,
 }
 
+/// Request payload for updating a user's password.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdatePasswordRequest {
+    /// New password (minimum 8 characters).
     pub password: String,
 }
 

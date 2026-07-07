@@ -46,14 +46,20 @@ impl From<db::server_quota::ServerQuotaWithUsage> for ServerQuotaResponse {
     }
 }
 
+/// Request payload for creating or updating a server-level quota.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpsertServerQuotaRequest {
+    /// Warning threshold in bytes.
     pub warn_bytes: Option<i64>,
+    /// Critical threshold in bytes.
     pub critical_bytes: Option<i64>,
+    /// Action to take when warning threshold is reached.
     #[serde(default)]
     pub warn_action: QuotaAction,
+    /// Action to take when critical threshold is reached.
     #[serde(default)]
     pub critical_action: QuotaAction,
+    /// Whether the quota is enabled.
     pub enabled: bool,
 }
 

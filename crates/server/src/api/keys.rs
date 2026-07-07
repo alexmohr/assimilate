@@ -24,13 +24,17 @@ use crate::{
     error::ApiError,
 };
 
+/// Request payload for importing a borg repository key.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ImportKeyRequest {
+    /// The key data to import.
     pub key_data: String,
 }
 
+/// Request payload for changing a repository passphrase.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ChangePassphraseRequest {
+    /// The new passphrase.
     pub new_passphrase: String,
 }
 

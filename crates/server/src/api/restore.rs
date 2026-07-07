@@ -25,6 +25,7 @@ use super::{
 };
 use crate::{AppState, borg::Borg, db, error::ApiError};
 
+/// Request payload for downloading files from an archive.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct DownloadFilesRequest {
     /// Paths within the archive to include in the download
@@ -155,18 +156,25 @@ pub async fn download_files(
         .into_response())
 }
 
+/// Request payload for restoring files from an archive to an agent.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct RestoreFilesRequest {
     /// Paths within the archive. An empty list restores the whole archive.
     pub paths: Vec<String>,
+    /// Target directory on the agent filesystem.
     pub target_path: String,
+    /// Hostname of the agent to restore to.
     pub hostname: String,
 }
 
+/// Result of a remote restore operation.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct RestoreFilesResponse {
+    /// Whether the restore completed successfully.
     pub success: bool,
+    /// Number of files restored.
     pub files_restored: u64,
+    /// Error message if the restore failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
 }

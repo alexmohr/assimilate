@@ -14,8 +14,10 @@ use ssh_key::{Algorithm, LineEnding, rand_core::OsRng};
 use super::deploy::{agent_binary_dir, query_available_agent_version};
 use crate::{AppState, api::auth::RequireAdmin, db, error::ApiError};
 
+/// The server's SSH public key.
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct SshPublicKeyResponse {
+    /// SSH public key (ed25519).
     pub public_key: String,
 }
 
@@ -142,10 +144,14 @@ pub async fn ssh_regenerate_key(
     }))
 }
 
+/// Current system settings.
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct SettingsResponse {
+    /// Number of days to retain backup reports.
     pub retention_days: i64,
+    /// System timezone (e.g. "UTC").
     pub timezone: String,
+    /// Timeout in seconds for borg query operations.
     pub borg_query_timeout_secs: u64,
 }
 
@@ -196,10 +202,14 @@ pub async fn get_settings(
     }))
 }
 
+/// Request payload for updating system settings.
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct UpdateSettingsRequest {
+    /// Number of days to retain backup reports.
     pub retention_days: i64,
+    /// New timezone (e.g. `"America/New_York"`).
     pub timezone: Option<String>,
+    /// Timeout in seconds for borg query operations.
     pub borg_query_timeout_secs: Option<u64>,
 }
 
@@ -270,10 +280,14 @@ pub async fn update_settings(
     }))
 }
 
+/// `PostgreSQL` storage usage breakdown.
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct DatabaseStorageResponse {
+    /// Total database size in bytes.
     pub database_bytes: i64,
+    /// Size consumed by non-application objects (indexes, system tables).
     pub other_bytes: i64,
+    /// Per-relation size breakdown.
     pub relations: Vec<db::DatabaseRelationSizeRow>,
 }
 
@@ -309,12 +323,18 @@ pub async fn get_database_storage(
     }))
 }
 
+/// Server and agent version information.
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct VersionResponse {
+    /// Server version string.
     pub server_version: String,
+    /// Git SHA of the server build.
     pub server_git_sha: String,
+    /// Build timestamp.
     pub build_timestamp: String,
+    /// Number of Git commits for the server build.
     pub server_commit_count: Option<u32>,
+    /// Latest available agent version.
     pub agent_version: Option<String>,
 }
 
@@ -357,9 +377,12 @@ pub async fn get_version(_admin: RequireAdmin) -> Result<Json<VersionResponse>, 
     }))
 }
 
+/// Result of a system reset operation.
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct SystemResetResponse {
+    /// Number of backup reports cancelled.
     pub cancelled_backups: u64,
+    /// Number of agents notified of the reset.
     pub notified_agents: usize,
 }
 

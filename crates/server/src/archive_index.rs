@@ -19,12 +19,17 @@ use crate::{
     error::ApiError,
 };
 
+/// Status of an archive content indexing job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum IndexStatus {
+    /// Index job not yet started.
     Pending,
+    /// Indexing is in progress.
     Indexing,
+    /// Indexing completed successfully.
     Done,
+    /// Indexing failed.
     Failed,
 }
 

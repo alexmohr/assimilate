@@ -28,14 +28,20 @@ impl From<db::quota::RepoQuota> for RepoQuotaResponse {
     }
 }
 
+/// Request payload for creating or updating a repository quota.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpsertQuotaRequest {
+    /// Warning threshold in bytes.
     pub warn_bytes: Option<i64>,
+    /// Critical threshold in bytes.
     pub critical_bytes: Option<i64>,
+    /// Action to take when warning threshold is reached.
     #[serde(default)]
     pub warn_action: QuotaAction,
+    /// Action to take when critical threshold is reached.
     #[serde(default)]
     pub critical_action: QuotaAction,
+    /// Whether the quota is enabled.
     pub enabled: bool,
 }
 

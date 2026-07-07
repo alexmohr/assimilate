@@ -11,8 +11,10 @@ use crate::{
     error::{ApiError, ApiJson},
 };
 
+/// Request payload for setting global exclude patterns.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SetGlobalExcludesRequest {
+    /// Raw exclude pattern text (one pattern per line).
     pub raw_text: String,
 }
 

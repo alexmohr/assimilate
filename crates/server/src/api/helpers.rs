@@ -28,6 +28,7 @@ pub fn borg_base_env(passphrase: &str) -> HashMap<String, String> {
     env
 }
 
+/// Default SSH user for borg repository connections.
 #[must_use]
 pub fn default_ssh_user() -> String {
     "borg".to_string()

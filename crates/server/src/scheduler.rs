@@ -26,12 +26,13 @@ use crate::{
 };
 
 const TICK_INTERVAL: Duration = Duration::from_secs(30);
-const RETENTION_INTERVAL: Duration = Duration::from_secs(3600);
-const SYNC_CHECK_INTERVAL: Duration = Duration::from_secs(60);
-const SESSION_CLEANUP_INTERVAL: Duration = Duration::from_secs(3600);
-const SYNC_WARN_DURATION: Duration = Duration::from_secs(300);
+const RETENTION_INTERVAL: Duration = Duration::from_hours(1);
+const SYNC_CHECK_INTERVAL: Duration = Duration::from_mins(1);
+const SESSION_CLEANUP_INTERVAL: Duration = Duration::from_hours(1);
+const SYNC_WARN_DURATION: Duration = Duration::from_mins(5);
 const DEFAULT_RETENTION_DAYS: i64 = 7;
 
+/// Main scheduler loop: ticks schedules, runs retention, syncs repos, and cleans up sessions.
 pub async fn run(state: AppState) {
     let _receiver = state.completion_bus.subscribe();
     let schedule_state = state.clone();
@@ -109,6 +110,7 @@ pub async fn run(state: AppState) {
     );
 }
 
+/// Check every repo with a `sync_schedule` cron and trigger a sync if due.
 pub async fn run_repo_sync(
     pool: &PgPool,
     encryption_key: &[u8; 32],

@@ -33,6 +33,10 @@ use crate::{
 const PING_INTERVAL: Duration = Duration::from_secs(30);
 const CHANNEL_BUFFER: usize = 32;
 
+/// WebSocket upgrade handler for agent connections.
+///
+/// Expects a `Hello` message as the first frame, authenticates the agent,
+/// registers it in the agent registry, and starts the bidirectional message loop.
 pub fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,

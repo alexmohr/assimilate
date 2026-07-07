@@ -186,30 +186,48 @@ pub async fn get_agent_repos(
     Ok(Json(repos))
 }
 
+/// Request payload for adding an existing borg repository.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateRepoRequest {
+    /// Display name for the repository.
     pub name: String,
+    /// Remote path on the SSH host.
     pub repo_path: String,
+    /// SSH user (defaults to "borg").
     #[serde(default = "helpers::default_ssh_user")]
     pub ssh_user: String,
+    /// SSH hostname or IP.
     pub ssh_host: String,
+    /// SSH port (defaults to 22).
     pub ssh_port: Option<i32>,
+    /// Repository passphrase.
     pub passphrase: String,
+    /// Compression algorithm (defaults to "lz4").
     pub compression: Option<String>,
 }
 
+/// Request payload for updating a repository.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateRepoRequest {
+    /// New display name.
     pub name: Option<String>,
+    /// Remote path on the SSH host.
     pub repo_path: String,
+    /// SSH user (defaults to "borg").
     #[serde(default = "helpers::default_ssh_user")]
     pub ssh_user: String,
+    /// SSH hostname or IP.
     pub ssh_host: String,
+    /// SSH port (defaults to 22).
     pub ssh_port: Option<i32>,
+    /// Compression algorithm.
     pub compression: Option<String>,
+    /// Encryption mode.
     #[schema(value_type = Option<String>)]
     pub encryption: Option<BorgEncryption>,
+    /// Whether the repository is enabled.
     pub enabled: Option<bool>,
+    /// Sync schedule cron expression (None = disable).
     pub sync_schedule: Option<Option<String>>,
 }
 
@@ -627,8 +645,10 @@ pub async fn get_passphrase(
     Ok(Json(PassphraseResponse { passphrase }))
 }
 
+/// Request payload for accepting a scanned SSH host key.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct AcceptRepoHostKeyRequest {
+    /// The SSH host key string (e.g. "ssh-rsa AAAA...").
     pub ssh_host_key: String,
 }
 
@@ -779,17 +799,26 @@ pub async fn get_repo(
     Ok(Json(res))
 }
 
+/// Request payload for initializing a new borg repository.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct InitRepoRequest {
+    /// Display name for the repository.
     pub name: String,
+    /// Remote path on the SSH host.
     pub repo_path: String,
+    /// SSH user (defaults to "borg").
     #[serde(default = "helpers::default_ssh_user")]
     pub ssh_user: String,
+    /// SSH hostname or IP.
     pub ssh_host: String,
+    /// SSH port (defaults to 22).
     pub ssh_port: Option<i32>,
+    /// Repository passphrase.
     pub passphrase: String,
+    /// Encryption mode for the new repository.
     #[schema(value_type = String)]
     pub encryption: BorgEncryption,
+    /// Compression algorithm (defaults to "lz4").
     pub compression: Option<String>,
 }
 
@@ -1098,8 +1127,10 @@ impl std::str::FromStr for BorgSubcommand {
     }
 }
 
+/// Request payload for executing an ad-hoc borg command.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ExecBorgRequest {
+    /// Borg subcommand and arguments (e.g. `["info", "--json"]`).
     pub args: Vec<String>,
 }
 
@@ -1180,8 +1211,10 @@ pub async fn exec_borg(
     }))
 }
 
+/// Request payload for migrating a repository's encryption mode.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct MigrateEncryptionRequest {
+    /// Target encryption mode.
     #[schema(value_type = String)]
     pub target_encryption: BorgEncryption,
 }
@@ -2013,12 +2046,14 @@ async fn publish_import_progress(
     let _ = db::set_import_status_message(pool, repo_id, message).await;
 }
 
+/// Clear the import progress state for a repository.
 pub async fn clear_import_progress_state(pool: &PgPool, ui_broadcast: &UiBroadcast, repo_id: i64) {
     ui_broadcast.clear_import_progress(repo_id);
     let _ = db::update_repo_import_progress(pool, repo_id, 0, 0).await;
     let _ = db::set_import_status_message(pool, repo_id, None).await;
 }
 
+/// Mark a repository as being synced by the server.
 pub async fn set_server_sync_op(state: &AppState, repo_id: i64) {
     state
         .repo_op_tracker
@@ -2036,6 +2071,7 @@ pub async fn set_server_sync_op(state: &AppState, repo_id: i64) {
         });
 }
 
+/// Clear the server-sync operation marker for a repository.
 pub async fn clear_server_sync_op(state: &AppState, repo_id: i64) {
     state.repo_op_tracker.clear(repo_id).await;
     state
@@ -2923,13 +2959,15 @@ pub async fn rescan_repo(
     }))
 }
 
+/// Query parameters for the repo sync endpoint.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SyncQuery {
+    /// Whether to rebuild the archive index after sync.
     #[serde(default)]
     pub build_index: bool,
 }
 
-const SYNC_WARN_DURATION: Duration = Duration::from_secs(300);
+const SYNC_WARN_DURATION: Duration = Duration::from_mins(5);
 
 #[utoipa::path(
     post,

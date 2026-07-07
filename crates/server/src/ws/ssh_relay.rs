@@ -14,6 +14,10 @@ use tokio_util::io::ReaderStream;
 
 use crate::{AppState, db};
 
+/// WebSocket upgrade handler for SSH agent forwarding.
+///
+/// Authenticates the agent via its token, then relays bytes bidirectionally
+/// between the WebSocket and the server's local `SSH_AUTH_SOCK`.
 pub fn ssh_relay_handler(
     ws: WebSocketUpgrade,
     Path(hostname): Path<String>,

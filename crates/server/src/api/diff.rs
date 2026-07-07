@@ -12,24 +12,36 @@ use serde::{Deserialize, Serialize};
 use super::{auth::AuthUser, permissions::check_repo_permission};
 use crate::{AppState, api::archives::get_repo_env, borg::Borg, error::ApiError};
 
-const DIFF_TIMEOUT: Duration = Duration::from_secs(60);
+const DIFF_TIMEOUT: Duration = Duration::from_mins(1);
 const LOCK_WAIT_SECS: &str = "60";
 
+/// Result of a borg diff between two archives.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DiffResponse {
+    /// Files added in archive2.
     pub added: Vec<String>,
+    /// Files removed from archive2.
     pub removed: Vec<String>,
+    /// Files modified in archive2.
     pub modified: Vec<String>,
+    /// Total number of changes found.
     pub total_changes: usize,
+    /// Max entries returned per category.
     pub limit: usize,
+    /// Number of changes skipped.
     pub offset: usize,
 }
 
+/// Query parameters for diffing two archives.
 #[derive(Debug, Deserialize)]
 pub struct DiffQuery {
+    /// First archive name (base).
     pub archive1: String,
+    /// Second archive name (comparison).
     pub archive2: String,
+    /// Max entries to return per category (default: 100).
     pub limit: Option<usize>,
+    /// Offset into the combined sorted change list (default: 0).
     pub offset: Option<usize>,
 }
 

@@ -11,23 +11,35 @@ use tokio::sync::broadcast;
 
 const CHANNEL_CAPACITY: usize = 128;
 
+/// Snapshot of a repository import operation's progress.
 #[derive(Debug, Clone)]
 pub struct ImportProgressSnapshot {
+    /// Number of items processed so far.
     pub progress: i32,
+    /// Total number of items to process.
     pub total: i32,
+    /// Optional human-readable status message.
     pub message: Option<String>,
 }
 
+/// Snapshot of an actively running backup operation.
 #[derive(Debug, Clone)]
 pub struct ActiveBackupSnapshot {
+    /// Hostname of the agent running the backup.
     pub hostname: String,
+    /// Display name of the repository being backed up.
     pub target_name: String,
+    /// Borg archive name being created (set once the backup starts).
     pub archive_name: Option<String>,
+    /// ID of the schedule that triggered this backup, if any.
     pub schedule_id: Option<i64>,
+    /// Repository ID being backed up.
     pub repo_id: i64,
+    /// Most recent archive progress line from the agent.
     pub progress_line: Option<String>,
 }
 
+/// Broadcast channel for real-time UI events sent to all connected browser clients.
 #[derive(Debug, Clone)]
 pub struct UiBroadcast {
     sender: Arc<broadcast::Sender<ServerToUi>>,
@@ -42,6 +54,7 @@ impl Default for UiBroadcast {
 }
 
 impl UiBroadcast {
+    /// Create a new broadcast with a channel capacity of 128.
     #[must_use]
     pub fn new() -> Self {
         let (sender, _) = broadcast::channel(CHANNEL_CAPACITY);
@@ -52,6 +65,8 @@ impl UiBroadcast {
         }
     }
 
+    /// Broadcast an event to all connected UI clients and update internal state
+    /// (import progress, active backup tracking) as needed.
     pub fn send(&self, event: ServerToUi) {
         match &event {
             ServerToUi::ImportProgress {
@@ -87,23 +102,27 @@ impl UiBroadcast {
         }
     }
 
+    /// Subscribe to the broadcast channel.
     #[must_use]
     pub fn subscribe(&self) -> broadcast::Receiver<ServerToUi> {
         self.sender.subscribe()
     }
 
+    /// Record or update the import progress snapshot for a given repo.
     pub fn set_import_progress(&self, repo_id: i64, snapshot: ImportProgressSnapshot) {
         if let Ok(mut map) = self.import_progress.write() {
             map.insert(repo_id, snapshot);
         }
     }
 
+    /// Remove the import progress snapshot for a given repo.
     pub fn clear_import_progress(&self, repo_id: i64) {
         if let Ok(mut map) = self.import_progress.write() {
             map.remove(&repo_id);
         }
     }
 
+    /// Return all current import progress snapshots (repo ID + snapshot pairs).
     #[must_use]
     pub fn current_import_snapshots(&self) -> Vec<(i64, ImportProgressSnapshot)> {
         self.import_progress.read().map_or_else(
@@ -116,6 +135,7 @@ impl UiBroadcast {
         )
     }
 
+    /// Return all current active backup snapshots.
     #[must_use]
     pub fn current_active_backups(&self) -> Vec<ActiveBackupSnapshot> {
         self.active_backups
@@ -123,12 +143,14 @@ impl UiBroadcast {
             .map_or_else(|_| Vec::new(), |map| map.values().cloned().collect())
     }
 
+    /// Record a new active backup for a repo.
     pub fn set_active_backup(&self, snapshot: ActiveBackupSnapshot) {
         if let Ok(mut map) = self.active_backups.write() {
             map.insert(snapshot.repo_id, snapshot);
         }
     }
 
+    /// Remove the active backup entry for a repo.
     pub fn clear_active_backup(&self, repo_id: i64) {
         if let Ok(mut map) = self.active_backups.write() {
             map.remove(&repo_id);

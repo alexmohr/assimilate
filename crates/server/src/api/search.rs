@@ -17,34 +17,49 @@ use super::{
 };
 use crate::{AppState, borg::Borg, error::ApiError};
 
-const SEARCH_TIMEOUT: Duration = Duration::from_secs(60);
-const PER_ARCHIVE_TIMEOUT: Duration = Duration::from_secs(60);
-const OVERALL_TIMEOUT: Duration = Duration::from_secs(300);
+const SEARCH_TIMEOUT: Duration = Duration::from_mins(1);
+const PER_ARCHIVE_TIMEOUT: Duration = Duration::from_mins(1);
+const OVERALL_TIMEOUT: Duration = Duration::from_mins(5);
 const DEFAULT_MAX_ARCHIVES: usize = 20;
 const MAX_ARCHIVES_CAP: usize = 100;
 
+/// Query parameters for searching files within an archive.
 #[derive(Debug, Deserialize)]
 pub struct SearchQuery {
+    /// Glob pattern to match file paths.
     pub pattern: String,
+    /// Optional path prefix to filter results.
     pub path_prefix: Option<String>,
+    /// Maximum number of results to return.
     pub limit: Option<usize>,
+    /// Number of results to skip.
     pub offset: Option<usize>,
 }
 
+/// A single file entry matching a search query.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SearchEntry {
+    /// Relative file path.
     pub path: String,
+    /// File size in bytes.
     pub size: i64,
+    /// Last modification timestamp.
     pub mtime: DateTime<Utc>,
+    /// Entry type ("-" for file, "d" for directory).
     #[serde(rename = "type")]
     pub entry_type: String,
 }
 
+/// Paginated search results for a single archive.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SearchResponse {
+    /// Matching file entries.
     pub items: Vec<SearchEntry>,
+    /// Total matching entries before pagination.
     pub total_matched: usize,
+    /// Maximum entries returned.
     pub limit: usize,
+    /// Number of entries skipped.
     pub offset: usize,
 }
 
@@ -194,29 +209,45 @@ pub async fn search_archive(
     }))
 }
 
+/// Query parameters for cross-archive search.
 #[derive(Debug, Deserialize)]
 pub struct CrossSearchQuery {
+    /// Glob pattern to match file paths.
     pub pattern: String,
+    /// Maximum number of archives to search (default 20, max 100).
     pub max_archives: Option<usize>,
+    /// Maximum number of results to return.
     pub limit: Option<usize>,
+    /// Number of results to skip.
     pub offset: Option<usize>,
 }
 
+/// A file entry in a cross-archive search result, annotated with the archive name.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CrossSearchEntry {
+    /// Relative file path.
     pub path: String,
+    /// File size in bytes.
     pub size: i64,
+    /// Last modification timestamp.
     pub mtime: DateTime<Utc>,
+    /// Entry type ("-" for file, "d" for directory).
     #[serde(rename = "type")]
     pub entry_type: String,
+    /// Name of the archive containing this file.
     pub archive_name: String,
 }
 
+/// Paginated cross-archive search results.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CrossSearchResponse {
+    /// Matching file entries.
     pub items: Vec<CrossSearchEntry>,
+    /// Number of archives searched.
     pub total_archives_searched: usize,
+    /// Maximum entries returned.
     pub limit: usize,
+    /// Number of entries skipped.
     pub offset: usize,
 }
 

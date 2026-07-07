@@ -56,10 +56,14 @@ fn secure_cookie_flag() -> &'static str {
     CookieSecurity::from(std::env::var("ASSIMILATE_SECURE_COOKIES").ok()).cookie_flag()
 }
 
+/// Authenticated user extracted from a session cookie or bearer token.
 #[derive(Debug, Clone)]
 pub struct AuthUser {
+    /// The user's database ID.
     pub user_id: i64,
+    /// The user's username.
     pub username: String,
+    /// Session ID if authenticated via cookie, None if via bearer token.
     pub session_id: Option<String>,
 }
 
@@ -126,6 +130,7 @@ async fn try_bearer_auth(parts: &Parts, state: &AppState) -> Result<Option<AuthU
     }))
 }
 
+/// Extractor that requires the current user to have admin (delete repo) permission.
 pub struct RequireAdmin(pub AuthUser);
 
 impl FromRequestParts<AppState> for RequireAdmin {
@@ -163,16 +168,22 @@ fn extract_session_cookie(parts: &Parts) -> Result<String, ApiError> {
     Err(ApiError::Unauthorized("not authenticated".to_string()))
 }
 
+/// Login credentials.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct LoginRequest {
+    /// Username.
     pub username: String,
+    /// Password.
     pub password: String,
+    /// Whether to extend the session for 7 days.
     #[serde(default)]
     pub remember_me: bool,
 }
 
+/// Response for a session refresh operation.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RefreshResponse {
+    /// New session expiration timestamp.
     pub session_expires_at: DateTime<Utc>,
 }
 
@@ -414,8 +425,10 @@ pub async fn refresh_session(
     Ok(response)
 }
 
+/// Request payload for changing the current user's password.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ChangePasswordRequest {
+    /// The new password (minimum 8 characters).
     pub new_password: String,
 }
 

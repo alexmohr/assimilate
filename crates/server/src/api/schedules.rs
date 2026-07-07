@@ -77,87 +77,151 @@ use crate::{
     ws::{completion_bus, ui_broadcast::ActiveBackupSnapshot},
 };
 
+/// Per-agent backup sources for a schedule target.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct AgentBackupSources {
+    /// The agent's ID.
     pub agent_id: i64,
+    /// Paths to back up on this agent.
     pub paths: Vec<String>,
 }
 
+/// Per-agent exclude patterns for a schedule target.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct AgentExcludePatterns {
+    /// The agent's ID.
     pub agent_id: i64,
+    /// Raw exclude pattern text.
     pub raw_text: String,
 }
 
+/// Per-agent pre/post backup commands for a schedule target.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct AgentCommands {
+    /// The agent's ID.
     pub agent_id: i64,
+    /// Commands to run before the backup.
     pub pre_backup_commands: Vec<String>,
+    /// Commands to run after the backup.
     pub post_backup_commands: Vec<String>,
 }
 
+/// Per-agent file change detection patterns for a schedule target.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct AgentFileChangePatterns {
+    /// The agent's ID.
     pub agent_id: i64,
+    /// Raw file change pattern text.
     pub raw_text: String,
 }
 
+/// Request payload for creating a new backup schedule.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateScheduleRequest {
+    /// IDs of agents to assign as targets.
     pub agent_ids: Vec<i64>,
+    /// Repository ID to back up to.
     pub repo_id: i64,
+    /// Optional display name for the schedule.
     pub name: Option<String>,
+    /// Schedule type (backup, check, verify).
     #[schema(value_type = Option<String>)]
     pub schedule_type: Option<ScheduleType>,
+    /// Cron expression defining the schedule.
     pub cron_expression: String,
+    /// Whether the schedule is enabled (defaults to true).
     pub enabled: Option<bool>,
+    /// Whether canary backups are enabled (defaults to true).
     pub canary_enabled: Option<bool>,
+    /// Raw exclude pattern text.
     pub exclude_patterns_raw: Option<String>,
+    /// Whether to ignore global excludes.
     pub ignore_global_excludes: Option<bool>,
+    /// Number of hourly backups to keep.
     pub keep_hourly: Option<i32>,
+    /// Number of daily backups to keep.
     pub keep_daily: Option<i32>,
+    /// Number of weekly backups to keep.
     pub keep_weekly: Option<i32>,
+    /// Number of monthly backups to keep.
     pub keep_monthly: Option<i32>,
+    /// Number of yearly backups to keep.
     pub keep_yearly: Option<i32>,
+    /// Whether compaction is enabled.
     pub compact_enabled: Option<bool>,
+    /// Rate limit in KB/s.
     pub rate_limit_kbps: Option<u32>,
+    /// Commands to run before the backup.
     pub pre_backup_commands: Option<Vec<String>>,
+    /// Commands to run after the backup.
     pub post_backup_commands: Option<Vec<String>>,
+    /// Backup sources (schedule-level).
     pub backup_sources: Option<Vec<String>>,
+    /// Per-agent backup sources.
     pub backup_sources_per_agent: Option<Vec<AgentBackupSources>>,
+    /// Per-agent exclude patterns.
     pub exclude_patterns_per_agent: Option<Vec<AgentExcludePatterns>>,
+    /// Per-agent pre/post commands.
     pub commands_per_agent: Option<Vec<AgentCommands>>,
+    /// Raw file change detection pattern text (schedule-level).
     pub file_change_patterns_raw: Option<String>,
+    /// Per-agent file change patterns.
     pub file_change_patterns_per_agent: Option<Vec<AgentFileChangePatterns>>,
+    /// Behaviour when the backup fails.
     #[schema(value_type = Option<String>)]
     pub on_failure: Option<OnFailure>,
 }
 
+/// Request payload for updating an existing schedule.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateScheduleRequest {
+    /// Optional new display name.
     pub name: Option<String>,
+    /// Updated cron expression.
     pub cron_expression: String,
+    /// New repository ID to assign.
     pub repo_id: Option<i64>,
+    /// Whether the schedule is enabled.
     pub enabled: Option<bool>,
+    /// Whether canary backups are enabled.
     pub canary_enabled: Option<bool>,
+    /// Raw exclude pattern text.
     pub exclude_patterns_raw: Option<String>,
+    /// Whether to ignore global excludes.
     pub ignore_global_excludes: Option<bool>,
+    /// Number of hourly backups to keep.
     pub keep_hourly: Option<i32>,
+    /// Number of daily backups to keep.
     pub keep_daily: Option<i32>,
+    /// Number of weekly backups to keep.
     pub keep_weekly: Option<i32>,
+    /// Number of monthly backups to keep.
     pub keep_monthly: Option<i32>,
+    /// Number of yearly backups to keep.
     pub keep_yearly: Option<i32>,
+    /// Whether compaction is enabled.
     pub compact_enabled: Option<bool>,
+    /// Rate limit in KB/s.
     pub rate_limit_kbps: Option<u32>,
+    /// Commands to run before the backup.
     pub pre_backup_commands: Option<Vec<String>>,
+    /// Commands to run after the backup.
     pub post_backup_commands: Option<Vec<String>>,
+    /// Backup sources (schedule-level, replaces all).
     pub backup_sources: Option<Vec<String>>,
+    /// Per-agent backup sources (replaces all).
     pub backup_sources_per_agent: Option<Vec<AgentBackupSources>>,
+    /// Per-agent exclude patterns (replaces all).
     pub exclude_patterns_per_agent: Option<Vec<AgentExcludePatterns>>,
+    /// Per-agent pre/post commands (replaces all).
     pub commands_per_agent: Option<Vec<AgentCommands>>,
+    /// Raw file change pattern text (schedule-level).
     pub file_change_patterns_raw: Option<String>,
+    /// Per-agent file change patterns (replaces all).
     pub file_change_patterns_per_agent: Option<Vec<AgentFileChangePatterns>>,
+    /// Agent IDs to assign as targets (replaces all).
     pub agent_ids: Option<Vec<i64>>,
+    /// Behaviour when the backup fails.
     #[schema(value_type = Option<String>)]
     pub on_failure: Option<OnFailure>,
 }
@@ -852,8 +916,10 @@ pub async fn cancel_running_backup(
     Ok(StatusCode::ACCEPTED)
 }
 
+/// Query parameters for listing backup reports for a schedule.
 #[derive(Debug, Deserialize)]
 pub struct ListScheduleReportsQuery {
+    /// Maximum number of reports to return.
     pub limit: Option<i64>,
 }
 

@@ -8,58 +8,101 @@ use sqlx::PgPool;
 
 use crate::error::ApiError;
 
+/// A schedule target (agent + repo) with its latest backup status for the dashboard.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TargetRow {
+    /// Schedule primary key.
     pub schedule_id: i64,
+    /// Display name (falls back to repo name).
     pub schedule_name: Option<String>,
+    /// Cron expression for schedule timing.
     pub cron_expression: String,
+    /// Whether the schedule is enabled.
     pub schedule_enabled: bool,
+    /// When the schedule last ran.
     pub schedule_last_run_at: Option<DateTime<Utc>>,
+    /// When the schedule is next due.
     pub next_run_at: Option<DateTime<Utc>>,
+    /// Agent primary key.
     pub agent_id: i64,
+    /// Agent hostname.
     pub hostname: String,
+    /// Repository primary key.
     pub repo_id: i64,
+    /// Repository name.
     pub repo_name: String,
+    /// Most recent backup report ID for this target.
     pub latest_report_id: Option<i64>,
+    /// When the latest backup started.
     pub latest_started_at: Option<DateTime<Utc>>,
+    /// When the latest backup finished.
     pub latest_finished_at: Option<DateTime<Utc>>,
+    /// Whether the latest backup failed.
     pub latest_failed: Option<bool>,
+    /// Whether the latest backup completed with warnings.
     pub latest_warning: Option<bool>,
+    /// Whether the latest backup is still running.
     pub latest_started: Option<bool>,
+    /// Human-readable message from the latest backup.
     pub latest_message: Option<String>,
+    /// When the last successful backup finished.
     pub last_success_at: Option<DateTime<Utc>>,
 }
 
+/// An agent with counts of enabled/disabled/successful schedule assignments.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct EligibleAgentRow {
+    /// Agent primary key.
     pub agent_id: i64,
+    /// Agent hostname.
     pub hostname: String,
+    /// Number of enabled schedule assignments for this agent.
     pub enabled_assignment_count: Option<i64>,
+    /// Number of disabled schedule assignments.
     pub disabled_assignment_count: Option<i64>,
+    /// Number of enabled assignments that have at least one success.
     pub successful_enabled_assignment_count: Option<i64>,
 }
 
+/// A schedule with its next run time and number of target agents.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct UpcomingScheduleRow {
+    /// Schedule primary key.
     pub schedule_id: i64,
+    /// Schedule display name.
     pub schedule_name: Option<String>,
+    /// Repository primary key.
     pub repo_id: i64,
+    /// Repository name.
     pub repo_name: String,
+    /// When the schedule is next due.
     pub next_run_at: Option<DateTime<Utc>>,
+    /// Number of target agents assigned to this schedule.
     pub target_count: Option<i64>,
 }
 
+/// A repository with its quota thresholds and import state for the dashboard.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct RepositoryRow {
+    /// Repository primary key.
     pub repo_id: i64,
+    /// Repository name.
     pub repo_name: String,
+    /// Current deduplicated size in bytes.
     pub deduplicated_size: i64,
+    /// Warn threshold in bytes.
     pub warn_bytes: Option<i64>,
+    /// Critical threshold in bytes.
     pub critical_bytes: Option<i64>,
+    /// Whether the repository quota is enabled.
     pub quota_enabled: Option<bool>,
+    /// Number of enabled schedules for this repo.
     pub enabled_schedule_count: Option<i64>,
+    /// Whether an import is in progress.
     pub importing: bool,
+    /// Error message from a failed import, if any.
     pub import_error: Option<String>,
+    /// When repo stats were last synced.
     pub last_synced_at: Option<DateTime<Utc>>,
 }
 

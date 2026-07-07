@@ -18,6 +18,7 @@ use tokio::sync::Mutex;
 
 use crate::client_ip::ClientIpResolver;
 
+/// IP-based rate limiter with a sliding window per IP address.
 #[derive(Clone)]
 pub struct RateLimiter {
     state: Arc<Mutex<RateLimiterState>>,
@@ -32,6 +33,7 @@ struct RateLimiterState {
 }
 
 impl RateLimiter {
+    /// Create a new rate limiter allowing up to `max_requests` per `window` duration per IP.
     #[must_use]
     pub fn new(max_requests: u32, window: Duration, resolver: ClientIpResolver) -> Self {
         Self {
@@ -70,6 +72,7 @@ impl RateLimiter {
     }
 }
 
+/// Axum middleware that enforces per-IP rate limits.
 pub async fn rate_limit_middleware(
     axum::extract::State(limiter): axum::extract::State<RateLimiter>,
     req: Request,

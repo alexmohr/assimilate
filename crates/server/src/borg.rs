@@ -210,6 +210,7 @@ impl Default for Borg {
 }
 
 impl Borg {
+    /// Create a new Borg wrapper, resolving the binary path from `BORG_BINARY` env var.
     pub fn new() -> Self {
         #[cfg(test)]
         if let Some(binary) = test_binary_override() {
@@ -222,6 +223,7 @@ impl Borg {
         }
     }
 
+    /// Return the path to the borg binary being used.
     #[must_use]
     pub fn binary(&self) -> &Path {
         &self.binary

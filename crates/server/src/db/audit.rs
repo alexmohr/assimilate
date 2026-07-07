@@ -6,26 +6,44 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::PgPool;
 
+/// A row from the `audit_log` table.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct AuditEntry {
+    /// Primary key.
     pub id: i64,
+    /// User who performed the action, if authenticated.
     pub user_id: Option<i64>,
+    /// Username at the time of the action.
     pub username: String,
+    /// Action identifier (e.g. "login", "repo.create").
     pub action: String,
+    /// Type of target resource, if applicable.
     pub target_type: Option<String>,
+    /// ID of target resource, if applicable.
     pub target_id: Option<i64>,
+    /// Arbitrary JSON payload with action-specific details.
     pub details: Option<Value>,
+    /// IP address from which the request originated.
     pub ip_address: Option<String>,
+    /// When the entry was created.
     pub created_at: DateTime<Utc>,
 }
 
+/// Input parameters for inserting a new audit log entry.
 pub struct NewAuditEntry<'a> {
+    /// User who performed the action, if authenticated.
     pub user_id: Option<i64>,
+    /// Username at the time of the action.
     pub username: &'a str,
+    /// Action identifier.
     pub action: &'a str,
+    /// Type of target resource, if applicable.
     pub target_type: Option<&'a str>,
+    /// ID of target resource, if applicable.
     pub target_id: Option<i64>,
+    /// Arbitrary JSON payload.
     pub details: Option<Value>,
+    /// Client IP address.
     pub ip_address: Option<&'a str>,
 }
 
@@ -53,13 +71,21 @@ pub async fn insert_audit_entry(
     Ok(())
 }
 
+/// Filtering and pagination parameters for listing audit log entries.
 pub struct AuditEntryFilters<'a> {
+    /// Page number (1-indexed).
     pub page: i64,
+    /// Number of entries per page.
     pub per_page: i64,
+    /// Filter by user ID.
     pub filter_user_id: Option<i64>,
+    /// Filter by action name.
     pub filter_action: Option<&'a str>,
+    /// Filter by target type.
     pub filter_target_type: Option<&'a str>,
+    /// Only include entries created at or after this time.
     pub filter_from: Option<DateTime<Utc>>,
+    /// Only include entries created at or before this time.
     pub filter_to: Option<DateTime<Utc>>,
 }
 

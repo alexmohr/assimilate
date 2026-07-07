@@ -48,70 +48,110 @@ impl From<db::RoleRow> for RoleResponse {
     }
 }
 
+/// Request payload for creating a new group.
 #[derive(Debug, Deserialize)]
 pub struct CreateGroupRequest {
+    /// Group name.
     pub name: String,
+    /// Optional group description.
     pub description: Option<String>,
 }
 
+/// Request payload for updating a group.
 #[derive(Debug, Deserialize)]
 pub struct UpdateGroupRequest {
+    /// Updated group name.
     pub name: String,
+    /// Optional group description.
     pub description: Option<String>,
 }
 
+/// Request payload for setting group membership.
 #[derive(Debug, Deserialize)]
 pub struct SetGroupMembersRequest {
+    /// User IDs to include in the group.
     pub user_ids: Vec<i64>,
 }
 
+/// Request payload for creating a new role.
 #[derive(Debug, Deserialize)]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
 )]
 pub struct CreateRoleRequest {
+    /// Role name.
     pub name: String,
+    /// Permission to create agents.
     pub can_create_agent: bool,
+    /// Permission to delete any agent.
     pub can_delete_agent: bool,
+    /// Permission to delete own agents.
     pub can_delete_own_agent: bool,
+    /// Permission to create repositories.
     pub can_create_repo: bool,
+    /// Permission to delete any repository.
     pub can_delete_repo: bool,
+    /// Permission to delete own repositories.
     pub can_delete_own_repo: bool,
+    /// Permission to create schedules.
     pub can_create_schedule: bool,
+    /// Permission to delete any schedule.
     pub can_delete_schedule: bool,
+    /// Permission to delete own schedules.
     pub can_delete_own_schedule: bool,
+    /// Permission to manage tags.
     pub can_manage_tags: bool,
+    /// Permission to view all repositories.
     pub can_view_all_repos: bool,
+    /// Permission to manage tunnels.
     pub can_manage_tunnels: bool,
 }
 
+/// Request payload for updating a role.
 #[derive(Debug, Deserialize)]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
 )]
 pub struct UpdateRoleRequest {
+    /// Updated role name.
     pub name: String,
+    /// Permission to create agents.
     pub can_create_agent: bool,
+    /// Permission to delete any agent.
     pub can_delete_agent: bool,
+    /// Permission to delete own agents.
     pub can_delete_own_agent: bool,
+    /// Permission to create repositories.
     pub can_create_repo: bool,
+    /// Permission to delete any repository.
     pub can_delete_repo: bool,
+    /// Permission to delete own repositories.
     pub can_delete_own_repo: bool,
+    /// Permission to create schedules.
     pub can_create_schedule: bool,
+    /// Permission to delete any schedule.
     pub can_delete_schedule: bool,
+    /// Permission to delete own schedules.
     pub can_delete_own_schedule: bool,
+    /// Permission to manage tags.
     pub can_manage_tags: bool,
+    /// Permission to view all repositories.
     pub can_view_all_repos: bool,
+    /// Permission to manage tunnels.
     pub can_manage_tunnels: bool,
 }
 
+/// Request payload for setting a user's role assignments.
 #[derive(Debug, Deserialize)]
 pub struct SetUserRolesRequest {
+    /// Role IDs to assign to the user.
     pub role_ids: Vec<i64>,
 }
 
+/// List all groups (admin only).
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -127,6 +167,8 @@ pub async fn list_groups(
     Ok(Json(groups))
 }
 
+/// Create a new group (admin only).
+///
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if the request is invalid.
@@ -147,6 +189,8 @@ pub async fn create_group(
     Ok((StatusCode::CREATED, Json(group)))
 }
 
+/// Update a group (admin only).
+///
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if the request is invalid.
@@ -168,6 +212,8 @@ pub async fn update_group(
     Ok(Json(group))
 }
 
+/// Delete a group (admin only).
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -180,6 +226,8 @@ pub async fn delete_group(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// List members of a group (admin only).
+///
 /// # Errors
 ///
 /// Returns [`ApiError::NotFound`] if the requested resource does not exist.
@@ -196,6 +244,8 @@ pub async fn list_group_members(
     Ok(Json(shared::responses::GroupMembersResponse { user_ids }))
 }
 
+/// Set the member list of a group (admin only).
+///
 /// # Errors
 ///
 /// Returns [`ApiError::NotFound`] if the requested resource does not exist.
@@ -213,6 +263,8 @@ pub async fn set_group_members(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// List all roles (admin only).
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -228,6 +280,8 @@ pub async fn list_roles(
     Ok(Json(roles))
 }
 
+/// Create a new role (admin only).
+///
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if the request is invalid.
@@ -261,6 +315,8 @@ pub async fn create_role(
     Ok((StatusCode::CREATED, Json(role)))
 }
 
+/// Update a role (admin only).
+///
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if the request is invalid.
@@ -297,6 +353,8 @@ pub async fn update_role(
 
 const PROTECTED_ROLE_NAMES: &[&str] = &["admin", "operator", "viewer"];
 
+/// Delete a role (admin only). Built-in roles cannot be deleted.
+///
 /// # Errors
 ///
 /// Returns an error if:
@@ -321,6 +379,8 @@ pub async fn delete_role(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// List roles assigned to a user (admin only).
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -337,6 +397,8 @@ pub async fn list_user_roles(
     Ok(Json(roles))
 }
 
+/// Set roles for a user (admin only).
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -350,6 +412,8 @@ pub async fn set_user_roles(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// List groups a user belongs to (admin only).
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -366,6 +430,8 @@ pub async fn list_user_groups(
     Ok(Json(groups))
 }
 
+/// Get effective permissions for a user. Admins see any user; users see only themselves.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Forbidden`] if the caller lacks permission for this operation.

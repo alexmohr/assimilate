@@ -28,16 +28,22 @@ impl From<db::RepoPermissionRow> for RepoPermissionResponse {
     }
 }
 
+/// Request payload for setting a user's repository permissions.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
 )]
 pub struct UpsertPermissionRequest {
+    /// Permission to view the repository.
     pub can_view: bool,
+    /// Permission to back up to the repository.
     pub can_backup: bool,
+    /// Permission to modify schedules for the repository.
     pub can_modify_schedules: bool,
+    /// Permission to extract files from the repository.
     pub can_extract: bool,
+    /// Permission to delete archives from the repository.
     pub can_delete: bool,
 }
 

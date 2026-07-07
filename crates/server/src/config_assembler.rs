@@ -309,6 +309,7 @@ async fn build_repo_config(
     })
 }
 
+/// Push the assembled config to a single agent via its WebSocket connection.
 pub async fn push_config_to_agent(state: &AppState, hostname: &str) {
     match assemble_config(&state.pool, &state.encryption_key, hostname).await {
         Ok(config) => {
@@ -331,6 +332,7 @@ pub async fn push_config_to_agent(state: &AppState, hostname: &str) {
     }
 }
 
+/// Push the assembled config to every target agent of the given schedule.
 pub async fn push_config_to_all_schedule_targets(state: &AppState, schedule_id: i64) {
     let hostnames = match db::get_schedule_target_hostnames(&state.pool, schedule_id).await {
         Ok(h) => h,

@@ -40,6 +40,7 @@ fn index_status_to_string(s: &crate::archive_index::IndexStatus) -> String {
     .to_string()
 }
 
+/// Number of seconds to wait for a lock before timing out.
 pub const LOCK_WAIT_SECS: &str = "60";
 
 /// # Errors
@@ -125,6 +126,7 @@ pub async fn get_repo_env(
     Ok((borg_repo, env))
 }
 
+/// Classify a borg exit code and stderr into an [`ApiError`].
 #[must_use]
 pub fn classify_borg_error(exit_code: i32, stderr: &str) -> ApiError {
     if exit_code == 1 && stderr.to_lowercase().contains("lock") {
@@ -143,6 +145,7 @@ pub fn classify_borg_error(exit_code: i32, stderr: &str) -> ApiError {
     ApiError::Internal(format!("borg command failed (exit {exit_code}): {stderr}"))
 }
 
+/// MIME content type derived from a file extension.
 enum ContentType {
     TextPlain,
     TextHtml,
@@ -226,33 +229,48 @@ fn ensure_utc_suffix(ts: &str) -> String {
 
 pub use shared::responses::ContentEntryResponse as ContentEntry;
 
+/// Directory listing response for an archive.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContentsResponse {
+    /// Status of the content index (pending, indexing, done, failed).
     pub index_status: String,
+    /// Immediate child entries at the requested path.
     pub entries: Vec<ContentEntry>,
 }
 
+/// Status of the content index for an archive.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ArchiveIndexStatus {
+    /// Current indexing status.
     pub status: crate::archive_index::IndexStatus,
+    /// Number of files indexed (if done).
     pub file_count: Option<i64>,
+    /// Error message if indexing failed.
     pub error: Option<String>,
 }
 
+/// Query parameters for listing archive contents.
 #[derive(Debug, Deserialize)]
 pub struct ContentsQuery {
+    /// Directory path to list (default: root).
     pub path: Option<String>,
+    /// Max entries to return (default: 100).
     pub limit: Option<usize>,
 }
 
+/// Query parameters for extracting a file from an archive.
 #[derive(Debug, Deserialize)]
 pub struct ExtractQuery {
+    /// File path within the archive to extract.
     pub path: String,
 }
 
+/// Result of an archive deletion request.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DeleteArchiveResponse {
+    /// Whether the deletion was accepted.
     pub success: bool,
+    /// Name of the archive being deleted.
     pub archive_name: String,
 }
 

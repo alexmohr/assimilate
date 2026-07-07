@@ -12,16 +12,24 @@ use super::quota::{QuotaStatus, evaluate_thresholds};
 /// multiple repositories reside on one server with a shared disk quota.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ServerQuota {
+    /// SSH hostname shared by repos on the same server.
     pub ssh_host: String,
+    /// Warn threshold in bytes.
     pub warn_bytes: Option<i64>,
+    /// Critical threshold in bytes.
     pub critical_bytes: Option<i64>,
+    /// Action to take when the warn threshold is breached.
     pub warn_action: String,
+    /// Action to take when the critical threshold is breached.
     pub critical_action: String,
+    /// Whether this quota is enforced.
     pub enabled: bool,
+    /// When this quota was last updated.
     pub updated_at: DateTime<Utc>,
 }
 
 impl ServerQuota {
+    /// Current quota status for the given total deduplicated size across the host's repos.
     #[must_use]
     pub fn status(&self, total_deduplicated_size: i64) -> QuotaStatus {
         evaluate_thresholds(
@@ -47,9 +55,13 @@ impl ServerQuota {
 /// `server_quotas` configuration and current aggregated usage across those repos.
 #[derive(Debug, Clone)]
 pub struct ServerQuotaWithUsage {
+    /// SSH hostname.
     pub ssh_host: String,
+    /// Number of repos on this host.
     pub repo_count: i64,
+    /// Combined deduplicated size across all repos on this host.
     pub total_deduplicated_size: i64,
+    /// Server-level quota configuration, if any.
     pub quota: Option<ServerQuota>,
 }
 

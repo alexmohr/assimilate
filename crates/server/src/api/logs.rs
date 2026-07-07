@@ -22,10 +22,14 @@ impl From<LogEntry> for LogEntryResponse {
     }
 }
 
+/// Query parameters for filtering server logs.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct LogQuery {
+    /// Maximum number of entries to return (default 200).
     pub limit: Option<usize>,
+    /// Minimum log level: error, warn, info, debug, trace.
     pub level: Option<String>,
+    /// Case-insensitive search in message/target.
     pub search: Option<String>,
 }
 
@@ -49,6 +53,11 @@ pub struct LogQuery {
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// Get recent server log entries from the in-memory ring buffer.
+///
+/// # Errors
+///
+/// Returns an error if the underlying operation fails.
 pub fn get_logs(
     State(state): State<AppState>,
     _admin: RequireAdmin,

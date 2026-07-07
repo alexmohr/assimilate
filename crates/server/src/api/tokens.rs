@@ -19,8 +19,10 @@ use crate::{
     error::{ApiError, ApiJson},
 };
 
+/// Request payload for creating a new API token.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateTokenRequest {
+    /// Human-readable name for the token.
     pub name: String,
 }
 
@@ -40,6 +42,7 @@ fn generate_token() -> String {
     helpers::generate_random_hex(32)
 }
 
+/// Hash a plaintext token using SHA-256.
 #[must_use]
 pub fn hash_token(plaintext: &str) -> String {
     use std::fmt::Write as _;

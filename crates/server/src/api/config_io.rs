@@ -16,73 +16,121 @@ use crate::{
 
 const EXPORT_VERSION: u32 = 1;
 
+/// Exported host (agent) data for config import/export.
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct HostExport {
+    /// Agent hostname.
     pub hostname: String,
+    /// Optional display name.
     pub display_name: Option<String>,
+    /// Default backup source paths.
     pub default_backup_paths: Vec<String>,
+    /// Default exclude patterns.
     pub default_exclude_patterns: Vec<String>,
+    /// Default pre-backup commands (JSON-encoded).
     pub default_pre_backup_commands: String,
+    /// Default post-backup commands (JSON-encoded).
     pub default_post_backup_commands: String,
+    /// Default file change detection patterns.
     #[serde(default)]
     pub default_file_change_patterns_raw: String,
+    /// Hostname pattern globs for archive matching.
     pub hostname_patterns: Vec<String>,
 }
 
+/// Exported per-target overrides for a schedule.
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ScheduleTargetExport {
+    /// Target agent hostname.
     pub hostname: String,
+    /// Execution order among targets.
     pub execution_order: i32,
+    /// Per-agent backup source paths.
     pub backup_sources: Vec<String>,
+    /// Per-agent exclude patterns.
     pub exclude_patterns: String,
+    /// Per-agent file change patterns.
     #[serde(default)]
     pub file_change_patterns: String,
 }
 
+/// Exported schedule data for config import/export.
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
 )]
 pub struct ScheduleExport {
+    /// Schedule display name.
     pub name: String,
+    /// Schedule type (backup, check, verify).
     pub schedule_type: String,
+    /// Cron expression.
     pub cron_expression: String,
+    /// Whether the schedule is enabled.
     pub enabled: bool,
+    /// Whether canary backups are enabled.
     pub canary_enabled: bool,
+    /// Execution mode (e.g. sequential).
     pub execution_mode: String,
+    /// Behaviour on backup failure.
     pub on_failure: String,
+    /// Raw exclude pattern text.
     pub exclude_patterns_raw: String,
+    /// Raw file change pattern text.
     #[serde(default)]
     pub file_change_patterns_raw: String,
+    /// Whether global excludes are ignored.
     pub ignore_global_excludes: bool,
+    /// Hourly retention count.
     pub keep_hourly: i32,
+    /// Daily retention count.
     pub keep_daily: i32,
+    /// Weekly retention count.
     pub keep_weekly: i32,
+    /// Monthly retention count.
     pub keep_monthly: i32,
+    /// Yearly retention count.
     pub keep_yearly: i32,
+    /// Whether compaction is enabled.
     pub compact_enabled: bool,
+    /// Rate limit in KB/s.
     pub rate_limit_kbps: Option<i32>,
+    /// Pre-backup commands.
     pub pre_backup_commands: Vec<String>,
+    /// Post-backup commands.
     pub post_backup_commands: Vec<String>,
+    /// Repository name this schedule targets.
     pub repo_name: Option<String>,
+    /// Schedule-level backup source paths.
     pub backup_sources: Vec<String>,
+    /// Per-target overrides.
     pub targets: Vec<ScheduleTargetExport>,
 }
 
+/// Top-level config export payload wrapping hosts and schedules.
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ConfigExport {
+    /// Export format version.
     pub version: u32,
+    /// Timestamp when the export was created.
     pub exported_at: DateTime<Utc>,
+    /// Exported host configurations.
     pub hosts: Vec<HostExport>,
+    /// Exported schedule configurations.
     pub schedules: Vec<ScheduleExport>,
 }
 
+/// Result summary after importing config from a JSON export.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ImportResult {
+    /// Number of new agent hosts created.
     pub hosts_created: u32,
+    /// Number of existing agent hosts updated.
     pub hosts_updated: u32,
+    /// Number of schedules created.
     pub schedules_created: u32,
+    /// Warnings encountered during import.
     pub warnings: Vec<String>,
 }
 

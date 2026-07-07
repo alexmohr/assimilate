@@ -9,36 +9,51 @@ use axum::{
 };
 use serde_json::json;
 
+/// API error types with structured HTTP response mapping.
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
+    /// Resource not found (404).
     #[error("not found: {0}")]
     NotFound(String),
+    /// Invalid request (400).
     #[error("bad request: {0}")]
     BadRequest(String),
+    /// Unprocessable entity (422).
     #[error("unprocessable entity: {0}")]
     Unprocessable(String),
+    /// Authentication required (401).
     #[error("unauthorized: {0}")]
     Unauthorized(String),
+    /// Insufficient permissions (403).
     #[error("forbidden: {0}")]
     Forbidden(String),
+    /// Database query error.
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
+    /// Cryptographic operation error.
     #[error("crypto error: {0}")]
     Crypto(#[from] shared::crypto::CryptoError),
+    /// Password hashing error.
     #[error("bcrypt error: {0}")]
     Bcrypt(#[from] bcrypt::BcryptError),
+    /// Rate limited (429).
     #[error("too many requests: {0}")]
     TooManyRequests(String),
+    /// Resource conflict (409).
     #[error("conflict: {0}")]
     Conflict(String),
+    /// Upstream service error (502).
     #[error("bad gateway: {0}")]
     BadGateway(String),
+    /// Service temporarily unavailable (503).
     #[error("service unavailable: {0}")]
     ServiceUnavailable(String),
+    /// Unexpected internal error (500).
     #[error("internal error: {0}")]
     Internal(String),
 }
 
+/// JSON body extractor that returns `ApiError::BadRequest` on deserialization failure.
 pub struct ApiJson<T>(pub T);
 
 impl<S, T> FromRequest<S> for ApiJson<T>

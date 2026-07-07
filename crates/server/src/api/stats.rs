@@ -24,6 +24,7 @@ use super::auth::AuthUser;
 use crate::{AppState, db, error::ApiError};
 
 /// Computes `(part / total) * 100.0` without using `as` casts.
+///
 /// Uses integer division scaled by 10000 to maintain precision for display percentages.
 fn percentage_of(part: i64, total: i64) -> f64 {
     if total == 0 {
@@ -33,22 +34,35 @@ fn percentage_of(part: i64, total: i64) -> f64 {
     f64::from(i32::try_from(scaled).unwrap_or(10_000)) / 100.0
 }
 
+/// Query parameters for filtering the activity feed.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ActivityQuery {
+    /// Maximum number of entries to return.
     pub limit: Option<i64>,
+    /// Return entries from the last N days.
     pub days: Option<i64>,
+    /// Filter by activity category.
     pub category: Option<String>,
+    /// Filter by repository ID.
     pub repo_id: Option<i64>,
+    /// Filter by agent hostname.
     pub hostname: Option<String>,
+    /// Filter by schedule ID.
     pub schedule_id: Option<i64>,
+    /// Filter by run ID.
     pub run_id: Option<String>,
 }
 
+/// Health status of a repository's storage quota.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DashboardQuotaStatus {
+    /// No quota is configured for this repository.
     Unconfigured,
+    /// Usage is below the warning threshold.
     Healthy,
+    /// Usage is at or above the warning threshold.
     Warning,
+    /// Usage is at or above the critical threshold.
     Critical,
 }
 
@@ -839,9 +853,12 @@ fn is_overdue(
         .is_some_and(|deadline| Utc::now() > deadline)
 }
 
+/// Query parameters for backup trends.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct TrendsQuery {
+    /// Filter by repository ID.
     pub repo_id: Option<i64>,
+    /// Number of days (30, 90, 365).
     pub days: Option<i64>,
 }
 
@@ -973,16 +990,23 @@ pub async fn storage_trends_by_repo(
     Ok(Json(entries))
 }
 
+/// Query parameters for the calendar view.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CalendarQuery {
+    /// Month in YYYY-MM format.
     pub month: String,
+    /// Filter by repository ID.
     pub repo_id: Option<i64>,
 }
 
+/// Type of event displayed on the calendar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CalendarEventType {
+    /// A backup operation.
     Backup,
+    /// A repository check operation.
     Check,
+    /// A repository verify operation.
     Verify,
 }
 
@@ -1009,10 +1033,14 @@ impl TryFrom<&str> for CalendarEventType {
     }
 }
 
+/// Status of a calendar event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CalendarEventStatus {
+    /// The event completed successfully.
     Success,
+    /// The event failed.
     Failed,
+    /// The event is scheduled to occur.
     Scheduled,
 }
 

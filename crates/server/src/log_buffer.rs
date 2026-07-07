@@ -13,14 +13,20 @@ use tracing_subscriber::{Layer, layer::Context, registry::LookupSpan};
 
 const DEFAULT_CAPACITY: usize = 2000;
 
+/// A single log entry stored in the ring buffer.
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct LogEntry {
+    /// When the log entry was created.
     pub timestamp: DateTime<Utc>,
+    /// Log level (ERROR, WARN, INFO, DEBUG, TRACE).
     pub level: String,
+    /// Tracing target / module path.
     pub target: String,
+    /// Log message content.
     pub message: String,
 }
 
+/// An in-memory ring buffer of recent log entries.
 #[derive(Clone)]
 pub struct LogBuffer {
     inner: Arc<Mutex<VecDeque<LogEntry>>>,
@@ -28,6 +34,7 @@ pub struct LogBuffer {
 }
 
 impl LogBuffer {
+    /// Create a new buffer with the given maximum capacity.
     #[must_use]
     pub fn new(capacity: usize) -> Self {
         Self {
@@ -46,6 +53,7 @@ impl LogBuffer {
         buf.push_back(entry);
     }
 
+    /// Return the most recent entries, optionally filtered by minimum level and search text.
     #[must_use]
     pub fn entries(
         &self,
@@ -157,11 +165,13 @@ impl Visit for MessageVisitor {
     }
 }
 
+/// A tracing-subscriber layer that captures log events into the shared ring buffer.
 pub struct LogBufferLayer {
     buffer: LogBuffer,
 }
 
 impl LogBufferLayer {
+    /// Create a new layer that writes events into the given buffer.
     #[must_use]
     pub fn new(buffer: LogBuffer) -> Self {
         Self { buffer }

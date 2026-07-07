@@ -400,6 +400,23 @@ jobs:
       - name: Generate frontend e2e coverage report
         run: npx nyc report --reporter=lcov --report-dir=coverage-e2e --temp-dir=.nyc_output
         working-directory: frontend
+      - name: Wait for background operations to quiesce
+        run: |
+          # Repo syncs and notification deliveries are fire-and-forget background
+          # tasks with variable, data-dependent duration (not a fixed timer like the
+          # borg kill-escalation delay). Poll /api/health so they get a chance to
+          # finish - and have their remaining code recorded as covered - before the
+          # teardown below stops containers on a fixed timeout, instead of racing it.
+          for i in $(seq 1 25); do
+            STATUS=$(curl -s -m 2 http://localhost:8080/api/health || echo '{}')
+            IN_FLIGHT=$(echo "$STATUS" | jq -r '.background_ops_in_flight // true')
+            if [ "$IN_FLIGHT" = "false" ]; then
+              echo "No background operations in flight."
+              break
+            fi
+            echo "Background operations still in flight, waiting... ($i/25)"
+            sleep 1
+          done
       - name: Collect backend coverage from Docker
         run: |
           # Stop agents with --timeout 30 so LLVM atexit handlers can flush profraw files

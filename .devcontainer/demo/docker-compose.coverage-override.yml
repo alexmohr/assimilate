@@ -38,6 +38,10 @@ services:
       - ../../.coverage:/tmp/coverage
     environment:
       LLVM_PROFILE_FILE: /tmp/coverage/agent-web-server-01.profraw
+      # Shortened from the 30s production default so a killed borg process's
+      # SIGKILL-escalation path reliably completes (and gets recorded as covered)
+      # well before docker compose's own 30s stop --timeout forces the container down.
+      BORG_KILL_ESCALATION_SECS: "2"
 
   db-server-01:
     image: assimilate-demo:coverage
@@ -45,6 +49,7 @@ services:
       - ../../.coverage:/tmp/coverage
     environment:
       LLVM_PROFILE_FILE: /tmp/coverage/agent-db-server-01.profraw
+      BORG_KILL_ESCALATION_SECS: "2"
 
   media-store-01:
     image: assimilate-demo:coverage
@@ -52,3 +57,4 @@ services:
       - ../../.coverage:/tmp/coverage
     environment:
       LLVM_PROFILE_FILE: /tmp/coverage/agent-media-store-01.profraw
+      BORG_KILL_ESCALATION_SECS: "2"

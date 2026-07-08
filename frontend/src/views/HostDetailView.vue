@@ -30,13 +30,9 @@ import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import type { TagRow } from '../types/tag'
 import type { CreateAgentResponse } from '../types/generated'
+import type { Repo } from '../types/repo'
 
 type TabId = 'overview' | 'schedules' | 'backups'
-
-interface RepoRow {
-  id: number
-  target_name: string
-}
 
 const props = defineProps<{ hostname: string }>()
 const route = useRoute()
@@ -61,7 +57,7 @@ const tabs: { id: TabId; label: string }[] = [
 ]
 
 const agent = ref<AgentRow | null>(null)
-const repos = ref<RepoRow[]>([])
+const repos = ref<Repo[]>([])
 const schedules = ref<ScheduleRow[]>([])
 const reports = ref<ReportRow[]>([])
 const { loading, error, run } = useAsyncAction()
@@ -556,7 +552,7 @@ async function loadTabData(): Promise<void> {
   const hostname = agent.value.hostname
   try {
     const [repoRes, schedRes, reportRes] = await Promise.all([
-      apiClient.get<RepoRow[]>(`/agents/${hostname}/repos`),
+      apiClient.get<Repo[]>(`/agents/${hostname}/repos`),
       apiClient.get<ScheduleRow[]>('/schedules'),
       apiClient.get<ReportRow[]>(`/agents/${hostname}/reports`),
     ])
@@ -611,7 +607,7 @@ const agentSchedules = computed(() => {
 
 function repoNameForSchedule(s: ScheduleRow): string {
   return (
-    repos.value.find((r) => r.id === s.repo_id)?.target_name ??
+    repos.value.find((r) => r.id === s.repo_id)?.name ??
     (s.repo_id != null ? `repo #${s.repo_id}` : 'no repository')
   )
 }
@@ -825,7 +821,7 @@ onMessage('BackupCompleted', (payload) => {
 
 onMessage('BackupLog', (payload) => {
   if (payload.hostname !== props.hostname) return
-  const targetName = repos.value.find((r) => r.id === payload.repo_id)?.target_name
+  const targetName = repos.value.find((r) => r.id === payload.repo_id)?.name
   if (!targetName) return
   const backup = activeBackups.value.find((b) => b.targetName === targetName)
   if (!backup) return

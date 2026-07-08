@@ -16,6 +16,23 @@ test.describe('Admin journey', () => {
     await expect(page.getByText('viewer').first()).toBeVisible()
   })
 
+  test('user edit permissions tab shows repository names', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/users')
+    await page.waitForLoadState('networkidle')
+
+    const operatorRow = page.locator('tr', { hasText: 'operator1' })
+    await operatorRow.getByRole('button', { name: 'Edit' }).click()
+
+    await page.getByRole('button', { name: 'Permissions' }).click()
+
+    const repoCell = page.locator('.perm-repo-cell').first()
+    await expect(repoCell).toBeVisible()
+    await expect(repoCell).not.toHaveText('')
+    await expect(repoCell).not.toHaveText('/')
+    await expect(page.getByText('server-daily')).toBeVisible()
+  })
+
   test('groups page shows seeded groups', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/admin/groups')

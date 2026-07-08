@@ -10,9 +10,10 @@ use shared::responses::{
     DashboardSummaryCountersResponse, DashboardSummaryResponse, DashboardUpcomingScheduleResponse,
     DeleteApiTokenResponse, HealthCheckResponse, HealthResponse, InitRepoResponse,
     ListApiTokensResponse, LogEntryResponse, LoginResponse, MeResponse, PassphraseResponse,
-    PreferencesResponse, RefreshSessionResponse, RepoQuotaResponse, RepoTagEntryResponse,
-    RescanResponse, ServerQuotaResponse, StorageRepoEntryResponse, StorageTrendByRepoEntryResponse,
-    StorageTrendEntryResponse, TagResponse, TrendEntryResponse,
+    PreferencesResponse, RefreshSessionResponse, RepoQuotaResponse, RepoResponse,
+    RepoTagEntryResponse, RepoWithStatsResponse, RescanResponse, ServerQuotaResponse,
+    StorageRepoEntryResponse, StorageTrendByRepoEntryResponse, StorageTrendEntryResponse,
+    TagResponse, TrendEntryResponse,
 };
 use utoipa::OpenApi;
 
@@ -43,9 +44,8 @@ use crate::{
         users::{CreateUserRequest, UpdatePasswordRequest},
     },
     db::{
-        ActivityRow, AgentRow, ApiTokenRow, GlobalExcludesConfig, RepoPermissionRow, RepoRow,
-        RepoWithStatsRow, ReportRow, ScheduleCountByAgent, ScheduleRow, ScheduleTargetRow,
-        StorageStatRow, SystemEventRow,
+        ActivityRow, AgentRow, ApiTokenRow, GlobalExcludesConfig, RepoPermissionRow, ReportRow,
+        ScheduleCountByAgent, ScheduleRow, ScheduleTargetRow, StorageStatRow, SystemEventRow,
     },
     ssh::{
         DeployKeyRequest, DeployKeyResponse, DirEntryInfo, ListDirRequest, ListDirResponse,
@@ -184,8 +184,8 @@ use crate::{
         CreateAgentRequest,
         CreateAgentResponse,
         UpdateAgentRequest,
-        RepoRow,
-        RepoWithStatsRow,
+        RepoResponse,
+        RepoWithStatsResponse,
         CreateRepoRequest,
         UpdateRepoRequest,
         PassphraseResponse,

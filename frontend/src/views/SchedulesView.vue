@@ -29,13 +29,7 @@ import EmptyState from '../components/EmptyState.vue'
 import CardError from '../components/CardError.vue'
 import type { AgentRow } from '../types/agent'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
-
-interface RepoRow {
-  id: number
-  name: string
-  repo_path: string
-  enabled: boolean
-}
+import type { Repo } from '../types/repo'
 
 interface HealthEntry {
   schedule_id: number
@@ -50,7 +44,7 @@ interface HealthEntry {
 }
 
 const schedules = ref<ScheduleRow[]>([])
-const repos = ref<RepoRow[]>([])
+const repos = ref<Repo[]>([])
 const agents = ref<AgentRow[]>([])
 const health = ref<HealthEntry[]>([])
 const { loading, error, run } = useAsyncAction('Failed to load schedules.')
@@ -93,14 +87,14 @@ function scheduleTypeLabel(t: ScheduleType): string {
 }
 
 const repoMap = computed(() => {
-  const m = new Map<number, RepoRow>()
+  const m = new Map<number, Repo>()
   repos.value.forEach((r) => m.set(r.id, r))
   return m
 })
 
 interface EnrichedSchedule extends ScheduleRow {
   hostLabels: string[]
-  repo: RepoRow | null
+  repo: Repo | null
   health: HealthEntry | null
   isRunning: boolean
 }
@@ -129,7 +123,7 @@ const enrichedSchedules = computed<EnrichedSchedule[]>(() =>
       const agent = agentMap.value.get(hostname)
       return agent?.display_name ? `${agent.display_name} (${hostname})` : hostname
     })
-    const repo: RepoRow | null = s.repo_id != null ? (repoMap.value.get(s.repo_id) ?? null) : null
+    const repo: Repo | null = s.repo_id != null ? (repoMap.value.get(s.repo_id) ?? null) : null
     const entries = healthBySchedule.value.get(s.id) ?? []
     const healthEntry: HealthEntry | null =
       entries.find((h) => h.is_overdue) ??
@@ -255,7 +249,7 @@ async function fetchAll(): Promise<void> {
   await run(async () => {
     const [schRes, repoRes, agentsRes, healthRes] = await Promise.all([
       apiClient.get<ScheduleRow[]>('/schedules'),
-      apiClient.get<RepoRow[]>('/repos'),
+      apiClient.get<Repo[]>('/repos'),
       apiClient.get<AgentRow[]>('/agents'),
       apiClient.get<HealthEntry[]>('/stats/health'),
     ])

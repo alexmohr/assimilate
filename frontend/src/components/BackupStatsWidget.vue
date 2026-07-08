@@ -10,6 +10,7 @@ import { apiClient } from '../api/client'
 import { formatDuration } from '../utils/format'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
+import type { Repo } from '../types/repo'
 
 interface ActivityEntry {
   id: number
@@ -21,12 +22,7 @@ interface ActivityEntry {
   duration_secs: number
 }
 
-interface RepoOption {
-  id: number
-  name: string
-}
-
-const props = defineProps<{ repos: RepoOption[] }>()
+const props = defineProps<{ repos: Repo[] }>()
 const router = useRouter()
 
 const selectedDays = ref<number>(30)

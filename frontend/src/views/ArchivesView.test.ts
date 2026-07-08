@@ -39,8 +39,8 @@ import ArchivesView from './ArchivesView.vue'
 const mockGet = apiClient.get as MockInstance
 
 const REPOS = [
-  { id: 1, hostname: 'web-server-01', target_name: 'server-daily', enabled: true },
-  { id: 2, hostname: 'db-server-01', target_name: 'database-hourly', enabled: true },
+  { id: 1, name: 'server-daily', enabled: true },
+  { id: 2, name: 'database-hourly', enabled: true },
 ]
 
 const ARCHIVES = [
@@ -122,9 +122,10 @@ describe('ArchivesView', () => {
     const wrapper = mountView()
     await flushPromises()
 
-    const options = wrapper.findAll('option').filter((o) => o.text().includes('web-server-01'))
+    const options = wrapper.findAll('option').filter((o) => o.text().includes('server-daily'))
     expect(options.length).toBeGreaterThan(0)
-    expect(wrapper.text()).toContain('web-server-01 / server-daily')
+    expect(wrapper.text()).toContain('server-daily')
+    expect(wrapper.text()).not.toContain('undefined')
   })
 
   it('shows "No repositories configured yet." hint when repos list is empty', async () => {

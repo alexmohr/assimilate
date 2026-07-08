@@ -22,6 +22,7 @@ import ProtectionCoverage from '../components/ProtectionCoverage.vue'
 import UpcomingWork from '../components/UpcomingWork.vue'
 import RepositoryCapacity from '../components/RepositoryCapacity.vue'
 import type { DashboardOperation, DashboardOverview } from '../types/dashboard'
+import type { Repo } from '../types/repo'
 
 interface StorageRepoEntry {
   name: string
@@ -82,15 +83,10 @@ interface ActivityEntry {
   duration_secs: number
 }
 
-interface RepoOption {
-  id: number
-  name: string
-}
-
 const summary = ref<DashboardSummary | null>(null)
 const overview = ref<DashboardOverview | null>(null)
 const health = ref<HealthEntry[]>([])
-const repoOptions = ref<RepoOption[]>([])
+const repoOptions = ref<Repo[]>([])
 const loading = ref(true)
 
 const router = useRouter()
@@ -149,13 +145,13 @@ async function fetchAll(): Promise<void> {
       apiClient.get<DashboardSummary>('/stats/summary'),
       apiClient.get<HealthEntry[]>('/stats/health'),
       apiClient.get<DashboardOverview>('/stats/dashboard-overview'),
-      apiClient.get<RepoOption[]>('/repos'),
+      apiClient.get<Repo[]>('/repos'),
     ])
     summary.value = s.data
     health.value = h.data
     overview.value = o.data
     mergeActiveBackups(o.data.running_operations)
-    repoOptions.value = r.data.map((repo) => ({ id: repo.id, name: repo.name }))
+    repoOptions.value = r.data
     storageBreakdown.value = s.data.storage_by_repo
     await fetchSuccessActivity()
   } finally {

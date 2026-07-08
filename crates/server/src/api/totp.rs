@@ -48,26 +48,38 @@ fn hex_grouped(bytes: &[u8]) -> String {
     out
 }
 
-fn hash_recovery_code(code: &str) -> String {
-    use sha2::Digest;
-    let normalized = code.replace('-', "").to_lowercase();
-    hex_of_digest(sha2::Sha256::digest(normalized.as_bytes()))
+fn normalize_recovery_code(code: &str) -> String {
+    code.replace('-', "").to_lowercase()
 }
 
-fn hex_of_digest(digest: sha2::digest::Output<sha2::Sha256>) -> String {
-    let mut out = String::with_capacity(64);
-    for b in &digest {
-        use std::fmt::Write;
-        let _ = write!(out, "{b:02x}");
-    }
-    out
+async fn hash_recovery_code(code: &str) -> Result<String, ApiError> {
+    let normalized = normalize_recovery_code(code);
+    tokio::task::spawn_blocking(move || {
+        bcrypt::hash(&normalized, bcrypt::DEFAULT_COST)
+            .map_err(|e| ApiError::Internal(format!("failed to hash recovery code: {e}")))
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("spawn blocking failed: {e}")))?
 }
 
-fn verify_recovery_code(input: &str, hashed_codes: &[String]) -> Option<usize> {
-    use sha2::Digest;
-    let normalized_input = input.replace('-', "").to_lowercase();
-    let input_hash = hex_of_digest(sha2::Sha256::digest(normalized_input.as_bytes()));
-    hashed_codes.iter().position(|c| c == &input_hash)
+async fn verify_recovery_code(
+    input: &str,
+    hashed_codes: &[String],
+) -> Result<Option<usize>, ApiError> {
+    let normalized_input = normalize_recovery_code(input);
+    let hashes = hashed_codes.to_vec();
+    tokio::task::spawn_blocking(move || -> Result<Option<usize>, ApiError> {
+        for (idx, hash) in hashes.iter().enumerate() {
+            if bcrypt::verify(&normalized_input, hash)
+                .map_err(|e| ApiError::Internal(format!("failed to verify recovery code: {e}")))?
+            {
+                return Ok(Some(idx));
+            }
+        }
+        Ok(None)
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("spawn blocking failed: {e}")))?
 }
 
 fn generate_qr_code_uri(uri: &str) -> Result<String, ApiError> {
@@ -198,10 +210,10 @@ pub async fn totp_setup(
 
     // Generate recovery codes
     let recovery_codes = generate_recovery_codes();
-    let hashed_codes: Vec<String> = recovery_codes
-        .iter()
-        .map(|c| hash_recovery_code(c))
-        .collect();
+    let mut hashed_codes = Vec::with_capacity(recovery_codes.len());
+    for code in &recovery_codes {
+        hashed_codes.push(hash_recovery_code(code).await?);
+    }
 
     // Store encrypted secret and hashed recovery codes (but don't enable yet)
     db::set_user_totp_secret(&state.pool, auth.user_id, &encrypted, &hashed_codes).await?;
@@ -308,6 +320,18 @@ pub async fn totp_verify_login(
         return Err(ApiError::BadRequest("TOTP not enabled".to_string()));
     }
 
+    // TOTP replay protection: reject if last_verified_at is within the current
+    // 30-second TOTP window, preventing the same code from being reused.
+    if let Some(last_verified) = totp_fields.last_verified_at {
+        let within_window = chrono::Utc::now()
+            .signed_duration_since(last_verified)
+            .num_seconds()
+            < 30;
+        if within_window {
+            return Err(ApiError::Unauthorized("TOTP code already used".to_string()));
+        }
+    }
+
     // Verify TOTP code
     let Some(ref encrypted) = totp_fields.secret_encrypted else {
         return Err(ApiError::BadRequest("TOTP not configured".to_string()));
@@ -328,6 +352,9 @@ pub async fn totp_verify_login(
         ));
     }
 
+    // Record the verification time to prevent replay of the same code
+    db::update_totp_last_verified_at(&state.pool, user.id).await?;
+
     // Delete the temp session
     db::delete_session(&state.pool, &temp_hashed).await?;
 
@@ -344,13 +371,16 @@ pub async fn totp_verify_login(
         .ok_or_else(|| ApiError::Internal("failed to compute session expiry".to_string()))?;
 
     let hashed_id = crate::api::tokens::hash_token(&session_id);
-    db::insert_session(&state.pool, &hashed_id, user.id, expires_at, remember_me).await?;
+    db::insert_session(
+        &state.pool,
+        &hashed_id,
+        user.id,
+        expires_at,
+        remember_me,
+        false,
+    )
+    .await?;
     db::update_last_login(&state.pool, user.id).await?;
-
-    let secure_flag = super::auth::secure_cookie_flag();
-    let cookie = format!(
-        "session={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age_secs}{secure_flag}"
-    );
 
     let user_resp = super::users::user_row_to_response(&state.pool, user).await?;
     let body = Json(LoginResponse {
@@ -363,8 +393,7 @@ pub async fn totp_verify_login(
     let mut response = body.into_response();
     response.headers_mut().insert(
         axum::http::header::SET_COOKIE,
-        cookie
-            .parse()
+        crate::cookies::session_set_cookie(Some(&session_id), max_age_secs)
             .map_err(|e| ApiError::Internal(format!("failed to build cookie header: {e}")))?,
     );
     Ok(response)
@@ -440,7 +469,7 @@ pub async fn totp_recovery(
         .await?
         .ok_or_else(|| ApiError::BadRequest("TOTP not set up".to_string()))?;
 
-    let idx = verify_recovery_code(&req.code, &totp_fields.recovery_codes);
+    let idx = verify_recovery_code(&req.code, &totp_fields.recovery_codes).await?;
     let Some(idx) = idx else {
         return Err(ApiError::Unauthorized("invalid recovery code".to_string()));
     };
@@ -467,13 +496,16 @@ pub async fn totp_recovery(
         .ok_or_else(|| ApiError::Internal("failed to compute session expiry".to_string()))?;
 
     let hashed_id = crate::api::tokens::hash_token(&session_id);
-    db::insert_session(&state.pool, &hashed_id, user.id, expires_at, remember_me).await?;
+    db::insert_session(
+        &state.pool,
+        &hashed_id,
+        user.id,
+        expires_at,
+        remember_me,
+        false,
+    )
+    .await?;
     db::update_last_login(&state.pool, user.id).await?;
-
-    let secure_flag = super::auth::secure_cookie_flag();
-    let cookie = format!(
-        "session={session_id}; HttpOnly; SameSite=Lax; Path=/; Max-Age={max_age_secs}{secure_flag}"
-    );
 
     let user_resp = super::users::user_row_to_response(&state.pool, user).await?;
     let body = Json(LoginResponse {
@@ -486,8 +518,7 @@ pub async fn totp_recovery(
     let mut response = body.into_response();
     response.headers_mut().insert(
         axum::http::header::SET_COOKIE,
-        cookie
-            .parse()
+        crate::cookies::session_set_cookie(Some(&session_id), max_age_secs)
             .map_err(|e| ApiError::Internal(format!("failed to build cookie header: {e}")))?,
     );
     Ok(response)
@@ -507,27 +538,33 @@ mod tests {
         assert_eq!(sorted.len(), codes.len(), "recovery codes must be unique");
     }
 
-    #[test]
-    fn recovery_code_hash_and_verify_roundtrip() {
+    #[tokio::test]
+    async fn recovery_code_hash_and_verify_roundtrip() {
         let code = "abcd-1234-ef56-7890";
-        let hashed = hash_recovery_code(code);
-        let idx = verify_recovery_code("abcd-1234-ef56-7890", &[hashed]);
+        let hashed = hash_recovery_code(code).await.unwrap();
+        let idx = verify_recovery_code("abcd-1234-ef56-7890", &[hashed])
+            .await
+            .unwrap();
         assert_eq!(idx, Some(0));
     }
 
-    #[test]
-    fn recovery_code_verify_is_case_insensitive_and_ignores_dashes() {
+    #[tokio::test]
+    async fn recovery_code_verify_is_case_insensitive_and_ignores_dashes() {
         let code = "ABCD-1234-EF56-7890";
-        let hashed = hash_recovery_code(code);
-        let idx = verify_recovery_code("abcd1234ef567890", &[hashed]);
+        let hashed = hash_recovery_code(code).await.unwrap();
+        let idx = verify_recovery_code("abcd1234ef567890", &[hashed])
+            .await
+            .unwrap();
         assert_eq!(idx, Some(0));
     }
 
-    #[test]
-    fn recovery_code_wrong_code_returns_none() {
+    #[tokio::test]
+    async fn recovery_code_wrong_code_returns_none() {
         let code = "abcd-1234-ef56-7890";
-        let hashed = hash_recovery_code(code);
-        let idx = verify_recovery_code("zzzz-zzzz-zzzz-zzzz", &[hashed]);
+        let hashed = hash_recovery_code(code).await.unwrap();
+        let idx = verify_recovery_code("zzzz-zzzz-zzzz-zzzz", &[hashed])
+            .await
+            .unwrap();
         assert!(idx.is_none());
     }
 
@@ -546,11 +583,14 @@ mod tests {
         assert!(totp.is_ok());
     }
 
-    #[test]
-    fn hash_recovery_code_produces_hex_string() {
+    #[tokio::test]
+    async fn hash_recovery_code_uses_bcrypt() {
         let code = "test-code-1234";
-        let hashed = hash_recovery_code(code);
-        assert!(!hashed.is_empty());
-        assert!(hashed.chars().all(|c| c.is_ascii_hexdigit()));
+        let hashed = hash_recovery_code(code).await.unwrap();
+        // bcrypt hashes start with $2b$ or $2a$
+        assert!(
+            hashed.starts_with("$2"),
+            "expected bcrypt hash, got: {hashed}"
+        );
     }
 }

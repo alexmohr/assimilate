@@ -116,6 +116,13 @@ impl FromRequestParts<AppState> for AuthUser {
             ));
         }
 
+        // Reject sessions pending TOTP verification — they are not fully authenticated.
+        if session.pending_totp {
+            return Err(ApiError::Unauthorized(
+                "TOTP verification required".to_string(),
+            ));
+        }
+
         if user.must_change_password {
             let path = parts.uri.path();
             if !ALLOWED_PATHS_DURING_PASSWORD_CHANGE.contains(&path) {
@@ -269,7 +276,15 @@ pub async fn login(
             .ok_or_else(|| {
                 ApiError::Internal("failed to compute temp session expiry".to_string())
             })?;
-        db::insert_session(&state.pool, &temp_hashed, user_resp.id, temp_expires, false).await?;
+        db::insert_session(
+            &state.pool,
+            &temp_hashed,
+            user_resp.id,
+            temp_expires,
+            false,
+            true,
+        )
+        .await?;
 
         let body = Json(LoginResponse {
             user: user_resp,
@@ -298,6 +313,7 @@ pub async fn login(
         user_resp.id,
         expires_at,
         req.remember_me,
+        false,
     )
     .await?;
     db::update_last_login(&state.pool, user_resp.id).await?;
@@ -617,16 +633,18 @@ pub async fn revoke_session(
     auth: AuthUser,
     Path(session_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
+    // The session_id from the path is already a hashed session ID (as returned
+    // by list_sessions). Do NOT hash it again — the sessions table stores
+    // hashed session IDs directly.
     let current_hashed = auth.session_id.map(|s| hash_token(&s));
-    let target_hashed = hash_token(&session_id);
 
-    if current_hashed.as_deref() == Some(&target_hashed) {
+    if current_hashed.as_deref() == Some(&session_id) {
         return Err(ApiError::BadRequest(
             "cannot revoke your own current session".to_string(),
         ));
     }
 
-    let deleted = db::delete_session_by_id(&state.pool, &target_hashed).await?;
+    let deleted = db::delete_session_by_id(&state.pool, &session_id, auth.user_id).await?;
     if !deleted {
         return Err(ApiError::NotFound("session not found".to_string()));
     }

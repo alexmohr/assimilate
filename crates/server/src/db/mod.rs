@@ -3996,6 +3996,8 @@ pub struct SessionRow {
     pub remember_me: bool,
     /// When the session was last used.
     pub last_seen_at: DateTime<Utc>,
+    /// Whether this session is pending TOTP verification (pre-login temp session).
+    pub pending_totp: bool,
 }
 
 /// A session row returned for user-facing session listing.
@@ -4308,6 +4310,20 @@ pub async fn replace_totp_recovery_codes(
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
+pub async fn update_totp_last_verified_at(pool: &PgPool, user_id: i64) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE users SET totp_last_verified_at = NOW() WHERE id = $1",
+        user_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn update_session_last_seen(pool: &PgPool, session_id: &str) -> Result<(), ApiError> {
     sqlx::query!(
         "UPDATE sessions SET last_seen_at = NOW() WHERE id = $1",
@@ -4329,7 +4345,8 @@ pub async fn list_sessions_for_user(
     sqlx::query_as!(
         SessionForUser,
         "SELECT id, user_id, created_at, expires_at, last_seen_at, remember_me FROM sessions \
-         WHERE user_id = $1 AND expires_at > NOW() ORDER BY created_at DESC",
+         WHERE user_id = $1 AND expires_at > NOW() AND pending_totp = false ORDER BY created_at \
+         DESC",
         user_id,
     )
     .fetch_all(pool)
@@ -4340,11 +4357,19 @@ pub async fn list_sessions_for_user(
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
-pub async fn delete_session_by_id(pool: &PgPool, session_id: &str) -> Result<bool, ApiError> {
-    let result = sqlx::query!("DELETE FROM sessions WHERE id = $1", session_id)
-        .execute(pool)
-        .await
-        .map_err(ApiError::Database)?;
+pub async fn delete_session_by_id(
+    pool: &PgPool,
+    session_id: &str,
+    user_id: i64,
+) -> Result<bool, ApiError> {
+    let result = sqlx::query!(
+        "DELETE FROM sessions WHERE id = $1 AND user_id = $2",
+        session_id,
+        user_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
     Ok(result.rows_affected() > 0)
 }
 
@@ -4380,14 +4405,16 @@ pub async fn insert_session(
     user_id: i64,
     expires_at: DateTime<Utc>,
     remember_me: bool,
+    pending_totp: bool,
 ) -> Result<(), ApiError> {
     sqlx::query!(
-        "INSERT INTO sessions (id, user_id, expires_at, remember_me, last_seen_at) VALUES ($1, \
-         $2, $3, $4, NOW())",
+        "INSERT INTO sessions (id, user_id, expires_at, remember_me, last_seen_at, pending_totp) \
+         VALUES ($1, $2, $3, $4, NOW(), $5)",
         session_id,
         user_id,
         expires_at,
         remember_me,
+        pending_totp,
     )
     .execute(pool)
     .await
@@ -4403,8 +4430,8 @@ pub async fn insert_session(
 pub async fn get_session(pool: &PgPool, session_id: &str) -> Result<SessionRow, ApiError> {
     sqlx::query_as!(
         SessionRow,
-        "SELECT id, user_id, created_at, expires_at, remember_me, last_seen_at FROM sessions \
-         WHERE id = $1 AND expires_at > NOW()",
+        "SELECT id, user_id, created_at, expires_at, remember_me, last_seen_at, pending_totp FROM \
+         sessions WHERE id = $1 AND expires_at > NOW()",
         session_id,
     )
     .fetch_one(pool)

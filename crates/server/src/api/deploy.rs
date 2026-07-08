@@ -146,6 +146,7 @@ pub async fn deploy_agent(
     ApiJson(req): ApiJson<DeployAgentRequest>,
 ) -> Result<Json<DeployAgentResponse>, ApiError> {
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
+    helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
     helpers::validate_non_empty(&req.server_url, "server_url")?;
 
     let binary_dir = agent_binary_dir().await;
@@ -225,6 +226,7 @@ pub async fn deploy_agent(
                 )
                 .await?;
             }
+            db::update_last_ssh_user(&state.pool, agent.id, &req.ssh_user).await?;
             info!(hostname = %hostname, ssh_host = %req.ssh_host, "agent deployed successfully");
             Ok(Json(DeployAgentResponse {
                 success: true,
@@ -292,6 +294,7 @@ pub async fn fetch_service_unit(
     ApiJson(req): ApiJson<FetchServiceUnitRequest>,
 ) -> Result<Json<FetchServiceUnitResponse>, ApiError> {
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
+    helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
 
     let port = req.ssh_port.unwrap_or(22);
     let content = ssh::read_remote_file(&ssh::ReadFileParams {
@@ -302,7 +305,8 @@ pub async fn fetch_service_unit(
         path: "/etc/systemd/system/assimilate-agent.service",
     })
     .await
-    .map_err(|e| ApiError::BadGateway(e.to_string()))?;
+    .map_err(|e| ApiError::BadGateway(e.to_string()))?
+    .map(|content| ssh::redact_agent_token(&content));
 
     Ok(Json(FetchServiceUnitResponse { content }))
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE agents SET hostname = $2, display_name = $3, default_backup_paths = $4, default_exclude_patterns = $5, default_pre_backup_commands = $6, default_post_backup_commands = $7, default_file_change_patterns_raw = $8 WHERE hostname = $1 RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, is_hidden",
+  "query": "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, $3, NULL) RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user",
   "describe": {
     "columns": [
       {
@@ -92,15 +92,15 @@
         "ordinal": 17,
         "name": "is_hidden",
         "type_info": "Bool"
+      },
+      {
+        "ordinal": 18,
+        "name": "last_ssh_user",
+        "type_info": "Text"
       }
     ],
     "parameters": {
       "Left": [
-        "Text",
-        "Text",
-        "Text",
-        "TextArray",
-        "TextArray",
         "Text",
         "Text",
         "Text"
@@ -124,8 +124,9 @@
       false,
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "779c0994fc0ab3cf0fbf33f4c8e96f2503bed8477d824d793aae24d61cf83779"
+  "hash": "78e694cd515756ceb3b1646c19f277e7d8f0c8fa0fe7715d9d8cf995bfc77732"
 }

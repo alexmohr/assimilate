@@ -85,6 +85,36 @@ async fn agent_update_last_seen(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn agent_update_last_ssh_user(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "ssh-user-host", None, "hash", None)
+        .await
+        .unwrap();
+
+    let fetched = db::get_agent_by_hostname(&pool, "ssh-user-host")
+        .await
+        .unwrap();
+    assert_eq!(fetched.last_ssh_user, None);
+
+    db::update_last_ssh_user(&pool, agent.id, "deploy-user")
+        .await
+        .unwrap();
+
+    let fetched = db::get_agent_by_hostname(&pool, "ssh-user-host")
+        .await
+        .unwrap();
+    assert_eq!(fetched.last_ssh_user.as_deref(), Some("deploy-user"));
+
+    db::update_last_ssh_user(&pool, agent.id, "root")
+        .await
+        .unwrap();
+
+    let fetched = db::get_agent_by_hostname(&pool, "ssh-user-host")
+        .await
+        .unwrap();
+    assert_eq!(fetched.last_ssh_user.as_deref(), Some("root"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn agent_update_last_seen_and_version(pool: PgPool) {
     let agent = db::insert_agent(&pool, "ver-host", None, "hash", None)
         .await

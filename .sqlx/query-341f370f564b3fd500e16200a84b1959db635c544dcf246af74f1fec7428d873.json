@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO agents (hostname, display_name, agent_token_hash, owner_id) VALUES ($1, $2, $3, $4) RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, is_hidden",
+  "query": "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user FROM agents WHERE is_hidden = false ORDER BY hostname",
   "describe": {
     "columns": [
       {
@@ -92,15 +92,15 @@
         "ordinal": 17,
         "name": "is_hidden",
         "type_info": "Bool"
+      },
+      {
+        "ordinal": 18,
+        "name": "last_ssh_user",
+        "type_info": "Text"
       }
     ],
     "parameters": {
-      "Left": [
-        "Text",
-        "Text",
-        "Text",
-        "Int8"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
@@ -120,8 +120,9 @@
       false,
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "0e1d266252a78383798934e8a158c59787d74ce714efb46147c640f95723827f"
+  "hash": "341f370f564b3fd500e16200a84b1959db635c544dcf246af74f1fec7428d873"
 }

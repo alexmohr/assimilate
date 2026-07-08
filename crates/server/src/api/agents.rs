@@ -90,6 +90,7 @@ async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentRespons
         owner_id: agent.owner_id,
         visibility: agent.visibility,
         restart_unavailable_reason,
+        last_ssh_user: agent.last_ssh_user,
     }
 }
 
@@ -360,6 +361,7 @@ pub async fn regenerate_token(
             owner_id: agent.owner_id,
             visibility: agent.visibility,
             restart_unavailable_reason: None,
+            last_ssh_user: agent.last_ssh_user,
         },
         token: token_hex,
     }))

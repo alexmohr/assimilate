@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO agents (hostname, display_name, agent_token_hash, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, default_file_change_patterns_raw) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, is_hidden",
+  "query": "SELECT id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, created_at, last_seen_at, owner_id, visibility, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user FROM agents WHERE hostname = $1 AND agent_token_hash != 'imported:no-auth'",
   "describe": {
     "columns": [
       {
@@ -92,17 +92,15 @@
         "ordinal": 17,
         "name": "is_hidden",
         "type_info": "Bool"
+      },
+      {
+        "ordinal": 18,
+        "name": "last_ssh_user",
+        "type_info": "Text"
       }
     ],
     "parameters": {
       "Left": [
-        "Text",
-        "Text",
-        "Text",
-        "TextArray",
-        "TextArray",
-        "Text",
-        "Text",
         "Text"
       ]
     },
@@ -124,8 +122,9 @@
       false,
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "b10250dc538f6dbe0e39b60af2f11655ffc0cfbf4ab87c70806bd1027b8ab4a0"
+  "hash": "70511fb85e16d9cbfc413794e7a9cc9425a10127e29e763ecb25aee7d80dfab3"
 }

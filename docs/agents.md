@@ -93,17 +93,23 @@ The dashboard can push the agent binary and install a systemd unit on a remote m
     | Field | Description |
     |-------|-------------|
     | SSH Host | Hostname or IP of the remote machine |
-    | SSH User | SSH user on the remote machine |
+    | SSH User | SSH user on the remote machine (prefilled with the username last used to deploy this agent, defaulting to `root` the first time) |
     | SSH Port | SSH port (default: 22) |
     | Server URL | URL the agent will use to connect back to the server |
     | Install Path | Binary destination (default: `/usr/local/bin/assimilate-agent`) |
 
 3. Click **Deploy**. The server copies the binary, writes the systemd unit, and regenerates the agent token automatically.
 
-If the agent is already at the latest version, the deploy is skipped and the existing token is preserved.
+If the agent is already at the latest version, the deploy is skipped and the existing token is preserved. The SSH user entered is remembered for this agent and prefilled the next time the dialog is opened.
 
 !!! note
     SSH deploy requires admin privileges. The server uses the same Ed25519 key pair used for [SSH Agent Forwarding](ssh-agent-forwarding.md).
+
+### Existing Systemd Unit
+
+Whenever the dialog is opened, the server automatically attempts to read an existing `assimilate-agent.service` unit from the remote host over SSH and, if found, loads it into the **Systemd Service Unit** field so custom settings (e.g. resource limits, extra environment variables) are preserved across upgrades. A **Load from remote** button lets you re-fetch it after changing the SSH connection fields.
+
+If the existing unit contains a `BORG_AGENT_TOKEN` value, the server redacts it to `[REDACTED]` before it is ever sent to the browser — the real token is never exposed in the API response or displayed in the UI. A newly generated token is injected automatically when you click **Deploy**, regardless of what is shown in the field.
 
 ## Token Management
 

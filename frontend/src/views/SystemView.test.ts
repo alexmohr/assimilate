@@ -295,6 +295,7 @@ describe('SystemView', () => {
         failed_report_retention_days: 90,
         system_event_retention_days: 45,
         borg_query_timeout_secs: 600,
+        session_idle_timeout_minutes: 480,
       },
     })
     const wrapper = renderWithPlugins(SystemView)
@@ -309,6 +310,7 @@ describe('SystemView', () => {
       system_event_retention_days: 90,
       timezone: 'Europe/Berlin',
       borg_query_timeout_secs: 600,
+      session_idle_timeout_minutes: 480,
     })
   })
 

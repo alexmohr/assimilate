@@ -146,6 +146,7 @@ pub async fn deploy_agent(
     ApiJson(req): ApiJson<DeployAgentRequest>,
 ) -> Result<Json<DeployAgentResponse>, ApiError> {
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
+    helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
     helpers::validate_non_empty(&req.server_url, "server_url")?;
 
     let binary_dir = agent_binary_dir().await;
@@ -293,6 +294,7 @@ pub async fn fetch_service_unit(
     ApiJson(req): ApiJson<FetchServiceUnitRequest>,
 ) -> Result<Json<FetchServiceUnitResponse>, ApiError> {
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
+    helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
 
     let port = req.ssh_port.unwrap_or(22);
     let content = ssh::read_remote_file(&ssh::ReadFileParams {

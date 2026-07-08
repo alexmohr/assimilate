@@ -870,7 +870,7 @@ fn replace_or_insert_environment(content: &str, key: &str, value: &str) -> Strin
 /// callers. Handles both a single assignment per `Environment=` line and systemd's
 /// space-separated multi-assignment form (`Environment=A=1 BORG_AGENT_TOKEN=secret`),
 /// redacting only the matching assignment and leaving the rest of the line intact.
-/// Only `Environment=` lines are processed — non-`Environment=` lines are passed
+/// Only `Environment=` lines are processed -- non-`Environment=` lines are passed
 /// through unchanged regardless of their content.
 ///
 /// Unlike [`replace_or_insert_environment`], this never inserts a line when the key is

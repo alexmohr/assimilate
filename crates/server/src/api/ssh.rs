@@ -35,6 +35,7 @@ pub async fn test_connection(
     ApiJson(req): ApiJson<TestConnectionRequest>,
 ) -> Result<Json<TestConnectionResponse>, ApiError> {
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
+    helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
 
     let response = ssh::test_connection(&req).await;
     Ok(Json(response))
@@ -63,6 +64,7 @@ pub async fn deploy_key(
     ApiJson(req): ApiJson<DeployKeyRequest>,
 ) -> Result<Json<DeployKeyResponse>, ApiError> {
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
+    helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
     helpers::validate_non_empty(&req.password, "password")?;
 
     let response = ssh::deploy_key(&req).await;
@@ -92,6 +94,7 @@ pub async fn list_dir(
     ApiJson(req): ApiJson<ListDirRequest>,
 ) -> Result<Json<ListDirResponse>, ApiError> {
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
+    helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
 
     let response = ssh::list_dir(&req).await;
     Ok(Json(response))
@@ -120,6 +123,7 @@ pub async fn mkdir(
     ApiJson(req): ApiJson<MkdirRequest>,
 ) -> Result<Json<MkdirResponse>, ApiError> {
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
+    helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
     helpers::validate_non_empty(&req.path, "path")?;
 
     let response = ssh::mkdir(&req).await;

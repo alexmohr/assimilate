@@ -14,7 +14,7 @@ import EmptyState from '../components/EmptyState.vue'
 import { apiClient } from '../api/client'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useMobile } from '../composables/useMobile'
-import { formatDuration, formatBytes, formatDateShort } from '../utils/format'
+import { formatDuration, formatBytes, formatDateShort, formatEventType } from '../utils/format'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import type { ReportRow } from '../types/report'
@@ -978,7 +978,7 @@ function filterByRun(runId: string): void {
                   <span
                     class="badge"
                     :class="eventTypeClass(row.event.event_type)"
-                    >{{ row.event.event_type }}</span
+                    >{{ formatEventType(row.event.event_type) }}</span
                   >
                 </td>
                 <td class="cell-dur">—</td>
@@ -1410,15 +1410,6 @@ function filterByRun(runId: string): void {
 .btn-load-more:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.row-system {
-  background: var(--danger-subtle);
-}
-
-.row-system:hover {
-  background: var(--danger-subtle);
-  opacity: 0.9;
 }
 
 .cell-message {

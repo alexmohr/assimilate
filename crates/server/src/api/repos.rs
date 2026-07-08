@@ -775,8 +775,7 @@ pub async fn list_repos_with_stats(
         )
         .await?
         {
-            let mut response = RepoWithStatsResponse::from(repo);
-            response.current_op = state.repo_op_tracker.get(response.id).await;
+            let response = RepoWithStatsResponse::from(repo);
             visible.push(response);
         }
     }

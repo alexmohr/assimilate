@@ -93,10 +93,7 @@ async fn read_hello_message(ws_stream: &mut SplitStream<WebSocket>) -> Option<He
             }),
             Ok(_) | Err(_) => None,
         },
-        Some(
-            Ok(Message::Close(_) | Message::Binary(_) | Message::Ping(_) | Message::Pong(_))
-            | Err(_),
-        )
+        Some(Ok(Message::Close(_) | Message::Binary(_) | Message::Ping(_) | Message::Pong(_)))
         | None => None,
     }
 }
@@ -1962,7 +1959,7 @@ exit 0
         binary
     }
 
-    #[ignore = "requires DATABASE_URL"]
+<    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn backup_completed_queues_archive_indexing(pool: PgPool) {
         let agent = crate::db::insert_agent(&pool, "agent-1", None, "token-hash", None)
@@ -2147,7 +2144,7 @@ exit 0
         (agent, repo, schedule)
     }
 
-    #[ignore = "requires DATABASE_URL"]
+<    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn validate_agent_repo_rejects_rogue_agent(pool: PgPool) {
         let (assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;
@@ -2197,7 +2194,7 @@ exit 0
         );
     }
 
-    #[ignore = "requires DATABASE_URL"]
+<    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn handle_agent_message_backup_started_rejects_rogue_agent(pool: PgPool) {
         let (_assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;
@@ -2229,7 +2226,7 @@ exit 0
         assert_eq!(reports.unwrap_or(0), 0);
     }
 
-    #[ignore = "requires DATABASE_URL"]
+<    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn handle_agent_message_backup_log_rejects_rogue_agent(pool: PgPool) {
         let (_assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;
@@ -2259,7 +2256,7 @@ exit 0
         assert_eq!(security_events.len(), 1);
     }
 
-    #[ignore = "requires DATABASE_URL"]
+<    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn handle_agent_message_backup_cancelled_rejects_rogue_agent(pool: PgPool) {
         let (_assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;
@@ -2286,7 +2283,7 @@ exit 0
         assert_eq!(security_events.len(), 1);
     }
 
-    #[ignore = "requires DATABASE_URL"]
+<    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn handle_agent_message_backup_rejected_rejects_rogue_agent(pool: PgPool) {
         let (_assigned_agent, assigned_repo, _schedule) = create_agent_repo_schedule(&pool).await;

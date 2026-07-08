@@ -958,6 +958,7 @@ pub struct InsertRepoParams<'a> {
     pub encryption: &'a str,
     /// Owning user ID, if any.
     pub owner_id: Option<i64>,
+    /// Cron expression for automatic repository sync.
     pub sync_schedule: Option<&'a str>,
 }
 
@@ -1698,6 +1699,9 @@ pub async fn update_repo_ssh_host_key(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns `ApiError::Database` if the query fails.
 pub async fn get_repo_ssh_host_key(pool: &PgPool, name: &str) -> Result<Option<String>, ApiError> {
     let row = sqlx::query_scalar!("SELECT ssh_host_key FROM repos WHERE name = $1", name,)
         .fetch_optional(pool)
@@ -4689,6 +4693,9 @@ pub async fn delete_backup_reports_with_archive_before(
     Ok(result.rows_affected())
 }
 
+/// # Errors
+///
+/// Returns `ApiError::Database` if the query fails.
 pub async fn get_user_preferences(
     pool: &PgPool,
     user_id: i64,

@@ -36,6 +36,13 @@ const EXPORT_VERSION: u32 = 1;
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns `ApiError::Database` if a database query fails.
+#[allow(
+    clippy::too_many_lines,
+    reason = "export_config enumerates all config types"
+)]
 pub async fn export_config(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -222,6 +229,14 @@ pub async fn export_config(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// # Errors
+///
+/// Returns `ApiError::Database` if a database query fails,
+/// `ApiError::BadRequest` if the payload version is unsupported.
+#[allow(
+    clippy::too_many_lines,
+    reason = "import_config processes repos, hosts, and schedules sequentially"
+)]
 pub async fn import_config(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -297,7 +312,7 @@ pub async fn import_config(
             // Sync tags
             sync_repo_tags(&state.pool, existing_id, &repo_export.tags).await?;
 
-            result.repos_updated += 1;
+            result.repos_updated = result.repos_updated.saturating_add(1);
         } else {
             // Create new repo
             let new_repo = db::insert_repo(
@@ -342,7 +357,7 @@ pub async fn import_config(
             sync_repo_tags(&state.pool, new_repo.id, &repo_export.tags).await?;
 
             repo_name_to_id.insert(repo_export.name.as_str(), new_repo.id);
-            result.repos_created += 1;
+            result.repos_created = result.repos_created.saturating_add(1);
         }
     }
 
@@ -382,7 +397,7 @@ pub async fn import_config(
                 }
             }
 
-            result.hosts_updated += 1;
+            result.hosts_updated = result.hosts_updated.saturating_add(1);
         } else {
             let agent = db::insert_agent_with_paths(
                 &state.pool,
@@ -402,7 +417,7 @@ pub async fn import_config(
                 db::patterns::add_hostname_pattern(&state.pool, agent.id, pattern).await?;
             }
             hostname_to_id.insert(host.hostname.clone(), agent.id);
-            result.hosts_created += 1;
+            result.hosts_created = result.hosts_created.saturating_add(1);
         }
     }
 
@@ -528,7 +543,7 @@ pub async fn import_config(
             }
         }
 
-        result.schedules_created += 1;
+        result.schedules_created = result.schedules_created.saturating_add(1);
     }
 
     Ok(Json(result))
@@ -569,8 +584,13 @@ fn tag_color_from_name(name: &str) -> String {
         "#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899", "#06B6D4", "#84CC16",
         "#F97316", "#6366F1", "#14B8A6", "#E11D48",
     ];
-    let idx = (hash as usize) % palette.len();
-    palette[idx].to_string()
+    let palette_len = palette.len();
+    // `hash` is a well-distributed fold, and `palette` is non-empty, so this is safe.
+    let idx = usize::try_from(hash)
+        .unwrap_or(0)
+        .checked_rem(palette_len)
+        .unwrap_or(0);
+    palette.get(idx).unwrap_or(&"#6366F1").to_string()
 }
 
 /// Sync tags for a repo: set tags by name (creating tags as needed).

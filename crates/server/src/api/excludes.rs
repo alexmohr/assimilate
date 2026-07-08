@@ -23,12 +23,13 @@ pub struct SetGlobalExcludesRequest {
     path = "/api/excludes",
     tag = "Excludes",
     operation_id = "getExcludes",
-    summary = "Get global exclude patterns as raw text",
     responses(
         (status = 200, description = "Global excludes raw text", body = GlobalExcludesResponse),
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// Get global exclude patterns as raw text.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -45,13 +46,14 @@ pub async fn get_excludes(
     path = "/api/excludes",
     tag = "Excludes",
     operation_id = "setExcludes",
-    summary = "Set global exclude patterns from raw text",
     request_body = SetGlobalExcludesRequest,
     responses(
         (status = 200, description = "Updated", body = GlobalExcludesResponse),
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// Set global exclude patterns from raw text.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.

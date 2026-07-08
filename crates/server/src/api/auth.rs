@@ -192,7 +192,6 @@ pub struct RefreshResponse {
     path = "/api/auth/login",
     tag = "Authentication",
     operation_id = "login",
-    summary = "Log in with username and password",
     request_body = LoginRequest,
     responses(
         (status = 200, description = "Login successful", body = LoginResponse),
@@ -201,6 +200,8 @@ pub struct RefreshResponse {
         (status = 500, description = "Internal server error"),
     )
 )]
+/// Log in with username and password.
+///
 /// # Errors
 ///
 /// Returns an error if:
@@ -293,7 +294,6 @@ pub async fn login(
     path = "/api/auth/logout",
     tag = "Authentication",
     operation_id = "logout",
-    summary = "Log out and invalidate the current session",
     responses(
         (status = 204, description = "Logged out successfully"),
         (status = 400, description = "Cannot logout with token auth"),
@@ -301,6 +301,8 @@ pub async fn login(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// Log out and invalidate the current session.
+///
 /// # Errors
 ///
 /// Returns an error if:
@@ -331,13 +333,14 @@ pub async fn logout(State(state): State<AppState>, auth: AuthUser) -> Result<Res
     path = "/api/auth/me",
     tag = "Authentication",
     operation_id = "me",
-    summary = "Get the currently authenticated user",
     responses(
         (status = 200, description = "Current user info", body = MeResponse),
         (status = 401, description = "Not authenticated"),
         (status = 500, description = "Internal server error"),
     )
 )]
+/// Get the currently authenticated user.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -370,7 +373,6 @@ pub async fn me(
     path = "/api/auth/refresh",
     tag = "Authentication",
     operation_id = "refresh_session",
-    summary = "Extend a remember-me session before it expires",
     responses(
         (status = 200, description = "Session extended", body = RefreshSessionResponse),
         (status = 400, description = "Not a remember-me session or token auth"),
@@ -378,6 +380,8 @@ pub async fn me(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// Extend a remember-me session before it expires.
+///
 /// # Errors
 ///
 /// Returns an error if:
@@ -437,7 +441,6 @@ pub struct ChangePasswordRequest {
     path = "/api/auth/change-password",
     tag = "Authentication",
     operation_id = "change_password",
-    summary = "Change the current user's password",
     request_body = ChangePasswordRequest,
     responses(
         (status = 204, description = "Password changed successfully"),
@@ -446,6 +449,8 @@ pub struct ChangePasswordRequest {
         (status = 500, description = "Internal server error"),
     )
 )]
+/// Change the current user's password.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if the request is invalid.
@@ -472,13 +477,14 @@ pub async fn change_password(
     path = "/api/auth/preferences",
     tag = "Authentication",
     operation_id = "get_preferences",
-    summary = "Get the current user's preferences",
     responses(
         (status = 200, description = "User preferences as JSON object"),
         (status = 401, description = "Not authenticated"),
         (status = 500, description = "Internal server error"),
     )
 )]
+/// Get the current user's preferences.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -495,7 +501,6 @@ pub async fn get_preferences(
     path = "/api/auth/preferences",
     tag = "Authentication",
     operation_id = "update_preferences",
-    summary = "Update the current user's preferences",
     request_body(content = serde_json::Value, description = "Preferences JSON object"),
     responses(
         (status = 200, description = "Updated preferences"),
@@ -504,6 +509,8 @@ pub async fn get_preferences(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// Update the current user's preferences.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if the request is invalid.

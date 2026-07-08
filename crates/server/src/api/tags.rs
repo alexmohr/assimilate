@@ -122,7 +122,6 @@ async fn ensure_manage_tags(state: &AppState, auth: &AuthUser) -> Result<(), Api
     path = "/api/tags",
     tag = "Tags",
     operation_id = "listTags",
-    summary = "List tags by scope",
     params(("scope" = String, Query, description = "Tag scope (e.g. 'repo' or 'agent')")),
     responses(
         (status = 200, description = "List of tags", body = Vec<TagResponse>),
@@ -130,6 +129,8 @@ async fn ensure_manage_tags(state: &AppState, auth: &AuthUser) -> Result<(), Api
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// List tags by scope.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -151,7 +152,6 @@ pub async fn list_tags(
     path = "/api/tags",
     tag = "Tags",
     operation_id = "createTag",
-    summary = "Create a new tag",
     request_body = CreateTagRequest,
     responses(
         (status = 201, description = "Created", body = TagResponse),
@@ -159,6 +159,8 @@ pub async fn list_tags(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// Create a new tag.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -179,7 +181,6 @@ pub async fn create_tag(
     path = "/api/tags/{id}",
     tag = "Tags",
     operation_id = "deleteTag",
-    summary = "Delete a tag",
     params(("id" = i64, Path, description = "Tag ID")),
     responses(
         (status = 204, description = "Deleted"),
@@ -188,6 +189,8 @@ pub async fn create_tag(
         (status = 404, description = "Not found"),
     )
 )]
+/// Delete a tag.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -205,7 +208,6 @@ pub async fn delete_tag(
     path = "/api/repos/{repo_id}/tags",
     tag = "Tags",
     operation_id = "setRepoTags",
-    summary = "Set tags for a repository",
     params(("repo_id" = i64, Path, description = "Repository ID")),
     request_body = SetTagsRequest,
     responses(
@@ -214,6 +216,8 @@ pub async fn delete_tag(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// Set tags for a repository.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -232,7 +236,6 @@ pub async fn set_repo_tags(
     path = "/api/repos/{repo_id}/tags",
     tag = "Tags",
     operation_id = "getRepoTags",
-    summary = "Get tags for a repository",
     params(("repo_id" = i64, Path, description = "Repository ID")),
     responses(
         (status = 200, description = "List of tags", body = Vec<TagResponse>),
@@ -240,6 +243,8 @@ pub async fn set_repo_tags(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// Get tags for a repository.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -261,7 +266,6 @@ pub async fn get_repo_tags(
     path = "/api/agents/{hostname}/tags",
     tag = "Tags",
     operation_id = "setHostTags",
-    summary = "Set tags for a host",
     params(("hostname" = String, Path, description = "Agent hostname")),
     request_body = SetTagsRequest,
     responses(
@@ -270,6 +274,8 @@ pub async fn get_repo_tags(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// Set tags for a host.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -289,7 +295,6 @@ pub async fn set_agent_tags(
     path = "/api/agents/{hostname}/tags",
     tag = "Tags",
     operation_id = "getHostTags",
-    summary = "Get tags for a host",
     params(("hostname" = String, Path, description = "Agent hostname")),
     responses(
         (status = 200, description = "List of tags", body = Vec<TagResponse>),
@@ -297,6 +302,8 @@ pub async fn set_agent_tags(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// Get tags for a host.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -319,7 +326,6 @@ pub async fn get_agent_tags(
     path = "/api/agent-tags",
     tag = "Tags",
     operation_id = "listHostTagAssociations",
-    summary = "List all host-tag associations",
     responses(
         (status = 200, description = "Host-tag associations",
             body = Vec<AgentTagEntryResponse>),
@@ -327,6 +333,8 @@ pub async fn get_agent_tags(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// List all host-tag associations.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -347,7 +355,6 @@ pub async fn list_agent_tag_associations(
     path = "/api/repo-tags",
     tag = "Tags",
     operation_id = "listRepoTagAssociations",
-    summary = "List all repo-tag associations",
     responses(
         (status = 200, description = "Repo-tag associations",
             body = Vec<RepoTagEntryResponse>),
@@ -355,6 +362,8 @@ pub async fn list_agent_tag_associations(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// List all repo-tag associations.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -375,7 +384,6 @@ pub async fn list_repo_tag_associations(
     path = "/api/repos/{repo_id}/archives/{archive_name}/tags",
     tag = "Archives",
     operation_id = "listArchiveTags",
-    summary = "List tags for an archive",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
         ("archive_name" = String, Path, description = "Archive name"),
@@ -386,6 +394,8 @@ pub async fn list_repo_tag_associations(
         (status = 403, description = "Forbidden"),
     )
 )]
+/// List tags for an archive.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -409,7 +419,6 @@ pub async fn list_archive_tags(
     path = "/api/repos/{repo_id}/archives/{archive_name}/tags",
     tag = "Archives",
     operation_id = "addArchiveTag",
-    summary = "Add a tag to an archive",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
         ("archive_name" = String, Path, description = "Archive name"),
@@ -423,6 +432,8 @@ pub async fn list_archive_tags(
         (status = 409, description = "Tag already exists"),
     )
 )]
+/// Add a tag to an archive.
+///
 /// # Errors
 ///
 /// Returns an error if:
@@ -461,7 +472,6 @@ pub async fn add_archive_tag(
     path = "/api/repos/{repo_id}/archives/{archive_name}/tags/{tag}",
     tag = "Archives",
     operation_id = "removeArchiveTag",
-    summary = "Remove a tag from an archive",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
         ("archive_name" = String, Path, description = "Archive name"),
@@ -474,6 +484,8 @@ pub async fn add_archive_tag(
         (status = 404, description = "Not found"),
     )
 )]
+/// Remove a tag from an archive.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::NotFound`] if the requested resource does not exist.

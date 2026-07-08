@@ -38,6 +38,10 @@ export function formatDuration(secs: number): string {
   return `${h}h ${rm}m`
 }
 
+export function formatEventType(eventType: string): string {
+  return eventType.replace(/_/g, ' ')
+}
+
 export function relativeTime(iso: string): string {
   const ts = new Date(iso).getTime()
   if (isNaN(ts) || ts === 0) return 'Never'

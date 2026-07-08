@@ -63,7 +63,6 @@ pub struct UpdatePasswordRequest {
     path = "/api/users",
     tag = "Users",
     operation_id = "list_users",
-    summary = "List all users (admin only)",
     responses(
         (status = 200, description = "List of users", body = Vec<UserResponse>),
         (status = 401, description = "Not authenticated"),
@@ -71,6 +70,8 @@ pub struct UpdatePasswordRequest {
         (status = 500, description = "Internal server error"),
     )
 )]
+/// List all users (admin only).
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -91,7 +92,6 @@ pub async fn list_users(
     path = "/api/users",
     tag = "Users",
     operation_id = "create_user",
-    summary = "Create a new user (admin only)",
     request_body = CreateUserRequest,
     responses(
         (status = 201, description = "User created", body = UserResponse),
@@ -101,6 +101,8 @@ pub async fn list_users(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// Create a new user (admin only).
+///
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if the request is invalid.
@@ -129,7 +131,6 @@ pub async fn create_user(
     path = "/api/users/{user_id}/password",
     tag = "Users",
     operation_id = "update_password",
-    summary = "Update a user's password (admin only)",
     params(
         ("user_id" = i64, Path, description = "User ID"),
     ),
@@ -143,6 +144,8 @@ pub async fn create_user(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// Update a user's password (admin only).
+///
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if the request is invalid.
@@ -169,7 +172,6 @@ pub async fn update_password(
     path = "/api/users/{user_id}",
     tag = "Users",
     operation_id = "delete_user",
-    summary = "Delete a user (admin only)",
     params(
         ("user_id" = i64, Path, description = "User ID"),
     ),
@@ -182,6 +184,8 @@ pub async fn update_password(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// Delete a user (admin only).
+///
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if the request is invalid.

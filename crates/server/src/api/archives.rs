@@ -289,7 +289,6 @@ struct ListArchivesRow {
     path = "/api/repos/{repo_id}/archives",
     tag = "Archives",
     operation_id = "listArchives",
-    summary = "List all archives in a repository",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),
@@ -301,6 +300,8 @@ struct ListArchivesRow {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// List all archives in a repository.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -352,7 +353,6 @@ pub async fn list_archives(
     path = "/api/repos/{repo_id}/archives/{archive_name}",
     tag = "Archives",
     operation_id = "archiveInfo",
-    summary = "Get statistics for a specific archive",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
         ("archive_name" = String, Path, description = "Archive name"),
@@ -365,6 +365,8 @@ pub async fn list_archives(
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// Get statistics for a specific archive.
+///
 /// # Errors
 ///
 /// Returns an error if:
@@ -454,7 +456,6 @@ pub async fn archive_info(
     path = "/api/repos/{repo_id}/archives/{archive_name}",
     tag = "Archives",
     operation_id = "deleteArchive",
-    summary = "Delete a single archive from a repository",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
         ("archive_name" = String, Path, description = "Archive name"),
@@ -468,6 +469,8 @@ pub async fn archive_info(
         (status = 409, description = "Another repository operation is in progress"),
     )
 )]
+/// Delete a single archive from a repository.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -788,7 +791,6 @@ fn fold_immediate_children(prefix: &str, entries: Vec<ContentEntry>) -> Vec<Cont
     path = "/api/repos/{repo_id}/archives/{archive_name}/contents",
     tag = "Archives",
     operation_id = "listContents",
-    summary = "List files in an archive at a given path",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
         ("archive_name" = String, Path, description = "Archive name"),
@@ -804,6 +806,8 @@ fn fold_immediate_children(prefix: &str, entries: Vec<ContentEntry>) -> Vec<Cont
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// List files in an archive at a given path.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Internal`] if an internal error occurs.
@@ -986,7 +990,6 @@ struct ArchiveIndexStatusRow {
     path = "/api/repos/{repo_id}/archives/{archive_name}/index-status",
     tag = "Archives",
     operation_id = "getArchiveIndexStatus",
-    summary = "Get the index status for an archive",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
         ("archive_name" = String, Path, description = "Archive name"),
@@ -997,6 +1000,8 @@ struct ArchiveIndexStatusRow {
         (status = 403, description = "Forbidden"),
     )
 )]
+/// Get the index status for an archive.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -1039,7 +1044,6 @@ pub async fn get_archive_index_status(
     path = "/api/repos/{repo_id}/archives/{archive_name}/extract",
     tag = "Archives",
     operation_id = "extractFile",
-    summary = "Stream a file from an archive as a binary download",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
         ("archive_name" = String, Path, description = "Archive name"),
@@ -1054,6 +1058,8 @@ pub async fn get_archive_index_status(
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// Stream a file from an archive as a binary download.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Internal`] if an internal error occurs.

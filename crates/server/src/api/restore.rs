@@ -37,7 +37,6 @@ pub struct DownloadFilesRequest {
     path = "/api/repos/{repo_id}/archives/{archive_name}/download",
     tag = "Archives",
     operation_id = "downloadFiles",
-    summary = "Download selected files/directories from an archive as a streaming tar.lz4",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
         ("archive_name" = String, Path, description = "Archive name"),
@@ -53,6 +52,8 @@ pub struct DownloadFilesRequest {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// Download selected files/directories from an archive as a streaming tar.lz4.
+///
 /// # Errors
 ///
 /// Returns an error if:
@@ -184,7 +185,6 @@ pub struct RestoreFilesResponse {
     path = "/api/repos/{repo_id}/archives/{archive_name}/restore",
     tag = "Archives",
     operation_id = "restoreFiles",
-    summary = "Restore selected files from an archive to the agent filesystem",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
         ("archive_name" = String, Path, description = "Archive name"),
@@ -199,6 +199,8 @@ pub struct RestoreFilesResponse {
         (status = 503, description = "Agent offline or timed out"),
     )
 )]
+/// Restore selected files from an archive to the agent filesystem.
+///
 /// # Errors
 ///
 /// Returns an error if:

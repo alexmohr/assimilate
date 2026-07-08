@@ -43,7 +43,6 @@ pub struct ChangePassphraseRequest {
     path = "/api/repos/{repo_id}/key/export",
     tag = "Keys",
     operation_id = "exportKey",
-    summary = "Export the borg repository key",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),
@@ -55,6 +54,8 @@ pub struct ChangePassphraseRequest {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// Export the borg repository key.
+///
 /// # Errors
 ///
 /// Returns an error if:
@@ -108,7 +109,6 @@ pub async fn export_key(
     path = "/api/repos/{repo_id}/key/import",
     tag = "Keys",
     operation_id = "importKey",
-    summary = "Import a borg repository key",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),
@@ -121,6 +121,8 @@ pub async fn export_key(
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// Import a borg repository key.
+///
 /// # Errors
 ///
 /// Returns an error if:
@@ -183,7 +185,6 @@ pub async fn import_key(
     path = "/api/repos/{repo_id}/key/change-passphrase",
     tag = "Keys",
     operation_id = "changePassphrase",
-    summary = "Change the borg repository passphrase",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),
@@ -196,6 +197,8 @@ pub async fn import_key(
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// Change the borg repository passphrase.
+///
 /// # Errors
 ///
 /// Returns an error if:

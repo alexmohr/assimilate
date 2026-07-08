@@ -60,7 +60,6 @@ fn parse_iso_datetime(value: &str) -> Result<DateTime<Utc>, ApiError> {
     path = "/api/audit-log",
     tag = "System",
     operation_id = "listAuditLog",
-    summary = "List audit log entries",
     params(
         ("page" = Option<i64>, Query, description = "Page number, default 1"),
         ("per_page" = Option<i64>, Query, description = "Page size, default 50, max 200"),
@@ -76,6 +75,8 @@ fn parse_iso_datetime(value: &str) -> Result<DateTime<Utc>, ApiError> {
         (status = 403, description = "Forbidden"),
     )
 )]
+/// List audit log entries.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.

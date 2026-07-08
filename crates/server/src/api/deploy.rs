@@ -121,7 +121,6 @@ pub async fn query_available_agent_version(binary_dir: &std::path::Path) -> Opti
     path = "/api/agents/{hostname}/deploy",
     tag = "Deployment",
     operation_id = "deployAgent",
-    summary = "Deploy the agent binary to a host via SSH (admin only)",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
     ),
@@ -135,6 +134,8 @@ pub async fn query_available_agent_version(binary_dir: &std::path::Path) -> Opti
         (status = 500, description = "Agent binary not found or internal error"),
     )
 )]
+/// Deploy the agent binary to a host via SSH (admin only).
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -269,7 +270,6 @@ pub struct FetchServiceUnitResponse {
     path = "/api/agents/{hostname}/service-unit",
     tag = "Deployment",
     operation_id = "fetchServiceUnit",
-    summary = "Read the existing systemd service unit from a remote host via SSH (admin only)",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
     ),
@@ -282,6 +282,8 @@ pub struct FetchServiceUnitResponse {
         (status = 403, description = "Forbidden"),
     )
 )]
+/// Read the existing systemd service unit from a remote host via SSH (admin only).
+///
 /// # Errors
 ///
 /// Returns [`ApiError::BadGateway`] if the upstream operation (e.g. SSH or borg) fails.

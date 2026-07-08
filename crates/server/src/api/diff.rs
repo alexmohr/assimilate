@@ -114,7 +114,6 @@ fn classify_borg_diff_error(exit_code: i32, stderr: &str) -> ApiError {
     path = "/api/repos/{repo_id}/archives/diff",
     tag = "Archives",
     operation_id = "diffArchives",
-    summary = "Diff two archives in a repository",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
         ("archive1" = String, Query, description = "First archive name"),
@@ -133,6 +132,8 @@ fn classify_borg_diff_error(exit_code: i32, stderr: &str) -> ApiError {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// Diff two archives in a repository.
+///
 /// # Errors
 ///
 /// Returns an error if:

@@ -6589,8 +6589,14 @@ async fn delete_backup_reports_before_one_sec_before(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::days(7)).and_then(|dt| dt.checked_sub_signed(Duration::seconds(1))).unwrap(),
-            finished_at: now.checked_sub_signed(Duration::days(7)).and_then(|dt| dt.checked_sub_signed(Duration::seconds(1))).unwrap(),
+            started_at: now
+                .checked_sub_signed(Duration::days(7))
+                .and_then(|dt| dt.checked_sub_signed(Duration::seconds(1)))
+                .unwrap(),
+            finished_at: now
+                .checked_sub_signed(Duration::days(7))
+                .and_then(|dt| dt.checked_sub_signed(Duration::seconds(1)))
+                .unwrap(),
             status: "failed".to_string(),
             original_size: 0,
             compressed_size: 0,
@@ -6633,7 +6639,9 @@ async fn delete_system_events_before_keeps_recent(pool: PgPool) {
         .unwrap();
 
     // Use a cutoff just before the insert -- guaranteed to be before created_at
-    let cutoff = before_insert.checked_sub_signed(Duration::seconds(1)).unwrap();
+    let cutoff = before_insert
+        .checked_sub_signed(Duration::seconds(1))
+        .unwrap();
     let deleted = db::delete_system_events_before(&pool, cutoff)
         .await
         .unwrap();

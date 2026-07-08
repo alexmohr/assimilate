@@ -116,7 +116,7 @@ impl FromRequestParts<AppState> for AuthUser {
             ));
         }
 
-        // Reject sessions pending TOTP verification — they are not fully authenticated.
+        // Reject sessions pending TOTP verification - they are not fully authenticated.
         if session.pending_totp {
             return Err(ApiError::Unauthorized(
                 "TOTP verification required".to_string(),
@@ -634,7 +634,7 @@ pub async fn revoke_session(
     Path(session_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     // The session_id from the path is already a hashed session ID (as returned
-    // by list_sessions). Do NOT hash it again — the sessions table stores
+    // by list_sessions). Do NOT hash it again - the sessions table stores
     // hashed session IDs directly.
     let current_hashed = auth.session_id.map(|s| hash_token(&s));
 

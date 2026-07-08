@@ -23,5 +23,8 @@ export type ConfigExportResponse = {
    * List of schedules.
    */
   schedules: Array<ScheduleExportResponse>;
+  /**
+   * Exported repositories.
+   */
   repos: Array<RepoExportResponse>;
 };

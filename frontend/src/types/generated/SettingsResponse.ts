@@ -8,8 +8,17 @@ export type SettingsResponse = {
    * Number of days to retain backup records.
    */
   retention_days: number;
+  /**
+   * Number of days to retain successful/archived backup reports. 0 = keep forever.
+   */
   report_retention_days: number;
+  /**
+   * Number of days to retain failed/archive-less backup reports. 0 = keep forever.
+   */
   failed_report_retention_days: number;
+  /**
+   * Number of days to retain system event log entries. 0 = keep forever.
+   */
   system_event_retention_days: number;
   /**
    * Timezone setting.
@@ -19,4 +28,8 @@ export type SettingsResponse = {
    * Timeout for borg queries in seconds.
    */
   borg_query_timeout_secs: number;
+  /**
+   * Session idle timeout duration in minutes.
+   */
+  session_idle_timeout_minutes: number | null;
 };

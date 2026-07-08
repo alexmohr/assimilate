@@ -2488,7 +2488,7 @@ async fn session_crud(pool: PgPool) {
     let user = db::insert_user(&pool, "sessuser", "hash").await.unwrap();
 
     let expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
-    db::insert_session(&pool, "sess_abc123", user.id, expires, false)
+    db::insert_session(&pool, "sess_abc123", user.id, expires, false, false)
         .await
         .unwrap();
 
@@ -2496,6 +2496,7 @@ async fn session_crud(pool: PgPool) {
     assert_eq!(session.user_id, user.id);
     assert_eq!(session.id, "sess_abc123");
     assert!(!session.remember_me);
+    assert!(!session.pending_totp);
 
     db::delete_session(&pool, "sess_abc123").await.unwrap();
 
@@ -2508,7 +2509,7 @@ async fn session_expired(pool: PgPool) {
     let user = db::insert_user(&pool, "expuser", "hash").await.unwrap();
 
     let expired = Utc::now().checked_sub_signed(Duration::hours(1)).unwrap();
-    db::insert_session(&pool, "sess_expired", user.id, expired, false)
+    db::insert_session(&pool, "sess_expired", user.id, expired, false, false)
         .await
         .unwrap();
 
@@ -2521,7 +2522,7 @@ async fn session_delete_expired(pool: PgPool) {
     let user = db::insert_user(&pool, "cleanuser", "hash").await.unwrap();
 
     let expired = Utc::now().checked_sub_signed(Duration::hours(1)).unwrap();
-    db::insert_session(&pool, "sess_old", user.id, expired, false)
+    db::insert_session(&pool, "sess_old", user.id, expired, false, false)
         .await
         .unwrap();
 
@@ -2536,7 +2537,7 @@ async fn session_remember_me(pool: PgPool) {
         .unwrap();
 
     let expires = Utc::now().checked_add_signed(Duration::days(7)).unwrap();
-    db::insert_session(&pool, "sess_remember", user.id, expires, true)
+    db::insert_session(&pool, "sess_remember", user.id, expires, true, false)
         .await
         .unwrap();
 
@@ -2550,7 +2551,7 @@ async fn session_extend(pool: PgPool) {
     let user = db::insert_user(&pool, "extenduser", "hash").await.unwrap();
 
     let original_expires = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
-    db::insert_session(&pool, "sess_extend", user.id, original_expires, true)
+    db::insert_session(&pool, "sess_extend", user.id, original_expires, true, false)
         .await
         .unwrap();
 

@@ -25,40 +25,48 @@ fn generate_recovery_codes() -> Vec<String> {
         .map(|_| {
             let mut bytes = vec![0u8; RECOVERY_CODE_BYTES];
             rand::RngCore::fill_bytes(&mut OsRng, &mut bytes);
-            // Format as hex groups for readability
-            let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-            hex.chars()
-                .collect::<Vec<_>>()
-                .chunks(4)
-                .map(|c| c.iter().collect::<String>())
-                .collect::<Vec<_>>()
-                .join("-")
+            hex_grouped(&bytes)
         })
         .collect()
 }
 
+fn hex_grouped(bytes: &[u8]) -> String {
+    let capacity = bytes
+        .len()
+        .saturating_mul(2)
+        .saturating_add(bytes.len() / 4);
+    let mut out = String::with_capacity(capacity);
+    for (i, chunk) in bytes.chunks(4).enumerate() {
+        if i > 0 {
+            out.push('-');
+        }
+        for b in chunk {
+            use std::fmt::Write;
+            let _ = write!(out, "{b:02x}");
+        }
+    }
+    out
+}
+
 fn hash_recovery_code(code: &str) -> String {
-    let normalized = code.replace('-', "").to_lowercase();
-    let mut hasher = sha2::Sha256::new();
     use sha2::Digest;
-    hasher.update(normalized.as_bytes());
-    let result = hasher.finalize();
-    result.iter().map(|b| format!("{b:02x}")).collect()
+    let normalized = code.replace('-', "").to_lowercase();
+    hex_of_digest(sha2::Sha256::digest(normalized.as_bytes()))
+}
+
+fn hex_of_digest(digest: sha2::digest::Output<sha2::Sha256>) -> String {
+    let mut out = String::with_capacity(64);
+    for b in &digest {
+        use std::fmt::Write;
+        let _ = write!(out, "{b:02x}");
+    }
+    out
 }
 
 fn verify_recovery_code(input: &str, hashed_codes: &[String]) -> Option<usize> {
+    use sha2::Digest;
     let normalized_input = input.replace('-', "").to_lowercase();
-    let input_hash = {
-        let mut hasher = sha2::Sha256::new();
-        use sha2::Digest;
-        hasher.update(normalized_input.as_bytes());
-        let result = hasher.finalize();
-        result
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()
-    };
-
+    let input_hash = hex_of_digest(sha2::Sha256::digest(normalized_input.as_bytes()));
     hashed_codes.iter().position(|c| c == &input_hash)
 }
 
@@ -105,31 +113,44 @@ fn generate_totp_secret() -> Vec<u8> {
     secret
 }
 
+/// Request payload for TOTP verification during setup.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct TotpVerifyRequest {
+    /// The TOTP code to verify.
     pub code: String,
 }
 
+/// Request payload for disabling TOTP.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct TotpDisableRequest {
+    /// The user's current password (required for security).
     pub password: String,
 }
 
+/// Request payload for logging in with a recovery code.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct TotpRecoveryRequest {
+    /// The recovery code.
     pub code: String,
+    /// The temporary token from the first login step.
     pub temp_token: String,
 }
 
+/// Request payload for completing login with a TOTP code.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct TotpLoginVerifyRequest {
+    /// The TOTP code.
     pub code: String,
+    /// The temporary token from the first login step.
     pub temp_token: String,
 }
 
+/// Response indicating that TOTP is required to complete login.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct TempTokenResponse {
+    /// Whether TOTP is required.
     pub totp_required: bool,
+    /// The temporary token for the second login step.
     pub temp_token: String,
 }
 
@@ -144,6 +165,10 @@ pub struct TempTokenResponse {
         (status = 401, description = "Not authenticated"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Internal`] if TOTP creation, QR generation, or
+/// encryption fails. Returns [`ApiError::Database`] if the DB query fails.
 pub async fn totp_setup(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -157,7 +182,7 @@ pub async fn totp_setup(
         6,
         1,
         30,
-        Secret::Raw(secret.to_vec())
+        Secret::Raw(secret.clone())
             .to_bytes()
             .map_err(|e| ApiError::Internal(format!("failed to parse TOTP secret: {e}")))?,
         Some("Assimilate".to_string()),
@@ -203,6 +228,11 @@ pub async fn totp_setup(
         (status = 400, description = "Invalid code"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if TOTP is not set up or the code
+/// is invalid. Returns [`ApiError::Internal`] if decryption or TOTP
+/// verification fails. Returns [`ApiError::Database`] if the DB query fails.
 pub async fn totp_verify(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -233,7 +263,8 @@ pub async fn totp_verify(
 
     db::enable_user_totp(&state.pool, auth.user_id).await?;
 
-    let backup_codes_remaining = Some(totp_fields.recovery_codes.len() as i32);
+    let backup_codes_remaining =
+        Some(i32::try_from(totp_fields.recovery_codes.len()).unwrap_or(i32::MAX));
 
     Ok(Json(TotpVerifyResponse {
         success: true,
@@ -252,6 +283,12 @@ pub async fn totp_verify(
         (status = 401, description = "Invalid code or temp token"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Unauthorized`] if the temp token or TOTP code is
+/// invalid. Returns [`ApiError::BadRequest`] if TOTP is not configured.
+/// Returns [`ApiError::Internal`] if session creation fails.
+/// Returns [`ApiError::Database`] if the DB query fails.
 pub async fn totp_verify_login(
     State(state): State<AppState>,
     ApiJson(req): ApiJson<TotpLoginVerifyRequest>,
@@ -297,12 +334,14 @@ pub async fn totp_verify_login(
     // Create the real session
     let remember_me = temp_session.remember_me;
     let session_id = uuid::Uuid::new_v4().to_string();
-    let (ttl_hours, max_age_secs) = if remember_me {
+    let (ttl_hours, max_age_secs): (i64, i64) = if remember_me {
         (24 * 7, 7 * 86400)
     } else {
         (24, 86400)
     };
-    let expires_at = chrono::Utc::now() + chrono::Duration::hours(ttl_hours);
+    let expires_at = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::hours(ttl_hours))
+        .ok_or_else(|| ApiError::Internal("failed to compute session expiry".to_string()))?;
 
     let hashed_id = crate::api::tokens::hash_token(&session_id);
     db::insert_session(&state.pool, &hashed_id, user.id, expires_at, remember_me).await?;
@@ -343,6 +382,10 @@ pub async fn totp_verify_login(
         (status = 400, description = "Incorrect password"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the password is incorrect.
+/// Returns [`ApiError::Database`] if the DB query fails.
 pub async fn totp_disable(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -377,6 +420,12 @@ pub async fn totp_disable(
         (status = 401, description = "Invalid recovery code or temp token"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Unauthorized`] if the temp token or recovery code
+/// is invalid. Returns [`ApiError::BadRequest`] if TOTP is not configured.
+/// Returns [`ApiError::Internal`] if session creation fails.
+/// Returns [`ApiError::Database`] if the DB query fails.
 pub async fn totp_recovery(
     State(state): State<AppState>,
     ApiJson(req): ApiJson<TotpRecoveryRequest>,
@@ -408,12 +457,14 @@ pub async fn totp_recovery(
     let user = db::get_user_by_id(&state.pool, session.user_id).await?;
     let remember_me = session.remember_me;
     let session_id = uuid::Uuid::new_v4().to_string();
-    let (ttl_hours, max_age_secs) = if remember_me {
+    let (ttl_hours, max_age_secs): (i64, i64) = if remember_me {
         (24 * 7, 7 * 86400)
     } else {
         (24, 86400)
     };
-    let expires_at = chrono::Utc::now() + chrono::Duration::hours(ttl_hours);
+    let expires_at = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::hours(ttl_hours))
+        .ok_or_else(|| ApiError::Internal("failed to compute session expiry".to_string()))?;
 
     let hashed_id = crate::api::tokens::hash_token(&session_id);
     db::insert_session(&state.pool, &hashed_id, user.id, expires_at, remember_me).await?;

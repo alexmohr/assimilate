@@ -161,6 +161,7 @@ pub struct SettingsResponse {
     pub timezone: String,
     /// Timeout in seconds for borg query operations.
     pub borg_query_timeout_secs: u64,
+    /// Idle timeout for user sessions in minutes. `None` disables the timeout.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_idle_timeout_minutes: Option<i64>,
 }
@@ -274,6 +275,7 @@ pub struct UpdateSettingsRequest {
     pub timezone: Option<String>,
     /// Timeout in seconds for borg query operations.
     pub borg_query_timeout_secs: Option<u64>,
+    /// Idle timeout for user sessions in minutes. `None` disables the timeout.
     pub session_idle_timeout_minutes: Option<i64>,
 }
 

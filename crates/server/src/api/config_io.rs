@@ -617,6 +617,10 @@ mod tests {
 
     use super::*;
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "test exercises full export/import roundtrip with all fields"
+    )]
     #[test]
     fn test_config_export_roundtrip() {
         let export = ConfigExport {
@@ -629,7 +633,7 @@ mod tests {
                 default_exclude_patterns: vec!["*.tmp".to_string()],
                 default_pre_backup_commands: "echo pre".to_string(),
                 default_post_backup_commands: "echo post".to_string(),
-                default_file_change_patterns_raw: "".to_string(),
+                default_file_change_patterns_raw: String::new(),
                 hostname_patterns: vec!["test-*".to_string()],
             }],
             schedules: vec![ScheduleExport {
@@ -640,8 +644,8 @@ mod tests {
                 canary_enabled: false,
                 execution_mode: ExecutionMode::Sequential,
                 on_failure: OnFailure::Stop,
-                exclude_patterns_raw: "".to_string(),
-                file_change_patterns_raw: "".to_string(),
+                exclude_patterns_raw: String::new(),
+                file_change_patterns_raw: String::new(),
                 ignore_global_excludes: false,
                 keep_hourly: 24,
                 keep_daily: 7,
@@ -658,8 +662,8 @@ mod tests {
                     hostname: "test-host".to_string(),
                     execution_order: 0,
                     backup_sources: vec![],
-                    exclude_patterns: "".to_string(),
-                    file_change_patterns: "".to_string(),
+                    exclude_patterns: String::new(),
+                    file_change_patterns: String::new(),
                 }],
             }],
             repos: vec![RepoExport {
@@ -688,24 +692,50 @@ mod tests {
 
         assert_eq!(deserialized.version, export.version);
         assert_eq!(deserialized.hosts.len(), export.hosts.len());
-        assert_eq!(deserialized.hosts[0].hostname, export.hosts[0].hostname);
-        assert_eq!(deserialized.schedules.len(), export.schedules.len());
-        assert_eq!(deserialized.schedules[0].name, export.schedules[0].name);
         assert_eq!(
-            deserialized.schedules[0].targets.len(),
-            export.schedules[0].targets.len()
+            deserialized.hosts.first().unwrap().hostname,
+            export.hosts.first().unwrap().hostname
+        );
+        assert_eq!(deserialized.schedules.len(), export.schedules.len());
+        assert_eq!(
+            deserialized.schedules.first().unwrap().name,
+            export.schedules.first().unwrap().name
         );
         assert_eq!(
-            deserialized.schedules[0].targets[0].hostname,
-            export.schedules[0].targets[0].hostname
+            deserialized.schedules.first().unwrap().targets.len(),
+            export.schedules.first().unwrap().targets.len()
+        );
+        assert_eq!(
+            deserialized
+                .schedules
+                .first()
+                .unwrap()
+                .targets
+                .first()
+                .unwrap()
+                .hostname,
+            export
+                .schedules
+                .first()
+                .unwrap()
+                .targets
+                .first()
+                .unwrap()
+                .hostname
         );
         // Verify repos roundtrip
         assert_eq!(deserialized.repos.len(), export.repos.len());
-        assert_eq!(deserialized.repos[0].name, export.repos[0].name);
-        assert_eq!(deserialized.repos[0].passphrase, export.repos[0].passphrase);
         assert_eq!(
-            deserialized.repos[0].compression,
-            export.repos[0].compression
+            deserialized.repos.first().unwrap().name,
+            export.repos.first().unwrap().name
+        );
+        assert_eq!(
+            deserialized.repos.first().unwrap().passphrase,
+            export.repos.first().unwrap().passphrase
+        );
+        assert_eq!(
+            deserialized.repos.first().unwrap().compression,
+            export.repos.first().unwrap().compression
         );
     }
 

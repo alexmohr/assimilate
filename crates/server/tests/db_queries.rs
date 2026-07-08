@@ -5794,7 +5794,7 @@ async fn delete_backup_reports_with_archive_before_test(pool: PgPool) {
         .unwrap();
     let repo = create_test_repo(&pool).await;
     let now = Utc::now();
-    let old = now - Duration::days(100);
+    let old = now.checked_sub_signed(Duration::days(100)).unwrap();
 
     // Old archived report -- should be deleted
     db::insert_backup_report(
@@ -5852,7 +5852,7 @@ async fn delete_backup_reports_with_archive_before_test(pool: PgPool) {
     .await
     .unwrap();
 
-    let cutoff = now - Duration::days(30);
+    let cutoff = now.checked_sub_signed(Duration::days(30)).unwrap();
     let deleted = db::delete_backup_reports_with_archive_before(&pool, cutoff)
         .await
         .unwrap();
@@ -5873,7 +5873,7 @@ async fn delete_backup_reports_with_archive_before_keeps_null_archive(pool: PgPo
         .unwrap();
     let repo = create_test_repo(&pool).await;
     let now = Utc::now();
-    let old = now - Duration::days(100);
+    let old = now.checked_sub_signed(Duration::days(100)).unwrap();
 
     // Old report with NULL archive_name - not deleted by this function
     db::insert_backup_report(
@@ -5931,7 +5931,7 @@ async fn delete_backup_reports_with_archive_before_keeps_null_archive(pool: PgPo
     .await
     .unwrap();
 
-    let cutoff = now - Duration::days(30);
+    let cutoff = now.checked_sub_signed(Duration::days(30)).unwrap();
     let deleted = db::delete_backup_reports_with_archive_before(&pool, cutoff)
         .await
         .unwrap();
@@ -5943,7 +5943,7 @@ async fn delete_backup_reports_with_archive_before_keeps_null_archive(pool: PgPo
         .await
         .unwrap();
     assert_eq!(reports.len(), 1);
-    assert_eq!(reports[0].archive_name, None);
+    assert_eq!(reports.first().unwrap().archive_name, None);
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -5960,8 +5960,8 @@ async fn delete_backup_reports_with_archive_before_boundary_exact(pool: PgPool) 
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now - Duration::days(30),
-            finished_at: now - Duration::days(30),
+            started_at: now.checked_sub_signed(Duration::days(30)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::days(30)).unwrap(),
             status: "success".to_string(),
             original_size: 100,
             compressed_size: 50,
@@ -5981,7 +5981,7 @@ async fn delete_backup_reports_with_archive_before_boundary_exact(pool: PgPool) 
     .await
     .unwrap();
 
-    let cutoff = now - Duration::days(30);
+    let cutoff = now.checked_sub_signed(Duration::days(30)).unwrap();
     let deleted = db::delete_backup_reports_with_archive_before(&pool, cutoff)
         .await
         .unwrap();
@@ -6007,8 +6007,14 @@ async fn delete_backup_reports_with_archive_before_one_sec_before(pool: PgPool) 
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now - Duration::days(30) - Duration::seconds(1),
-            finished_at: now - Duration::days(30) - Duration::seconds(1),
+            started_at: now
+                .checked_sub_signed(Duration::days(30))
+                .and_then(|dt| dt.checked_sub_signed(Duration::seconds(1)))
+                .unwrap(),
+            finished_at: now
+                .checked_sub_signed(Duration::days(30))
+                .and_then(|dt| dt.checked_sub_signed(Duration::seconds(1)))
+                .unwrap(),
             status: "success".to_string(),
             original_size: 100,
             compressed_size: 50,
@@ -6028,7 +6034,7 @@ async fn delete_backup_reports_with_archive_before_one_sec_before(pool: PgPool) 
     .await
     .unwrap();
 
-    let cutoff = now - Duration::days(30);
+    let cutoff = now.checked_sub_signed(Duration::days(30)).unwrap();
     let deleted = db::delete_backup_reports_with_archive_before(&pool, cutoff)
         .await
         .unwrap();
@@ -6057,8 +6063,8 @@ async fn delete_backup_reports_before_boundary_exact(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now - Duration::days(7),
-            finished_at: now - Duration::days(7),
+            started_at: now.checked_sub_signed(Duration::days(7)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::days(7)).unwrap(),
             status: "failed".to_string(),
             original_size: 0,
             compressed_size: 0,
@@ -6078,7 +6084,7 @@ async fn delete_backup_reports_before_boundary_exact(pool: PgPool) {
     .await
     .unwrap();
 
-    let cutoff = now - Duration::days(7);
+    let cutoff = now.checked_sub_signed(Duration::days(7)).unwrap();
     let deleted = db::delete_backup_reports_before(&pool, cutoff)
         .await
         .unwrap();
@@ -6107,8 +6113,14 @@ async fn delete_backup_reports_before_one_sec_before(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now - Duration::days(7) - Duration::seconds(1),
-            finished_at: now - Duration::days(7) - Duration::seconds(1),
+            started_at: now
+                .checked_sub_signed(Duration::days(7))
+                .and_then(|dt| dt.checked_sub_signed(Duration::seconds(1)))
+                .unwrap(),
+            finished_at: now
+                .checked_sub_signed(Duration::days(7))
+                .and_then(|dt| dt.checked_sub_signed(Duration::seconds(1)))
+                .unwrap(),
             status: "failed".to_string(),
             original_size: 0,
             compressed_size: 0,
@@ -6128,7 +6140,7 @@ async fn delete_backup_reports_before_one_sec_before(pool: PgPool) {
     .await
     .unwrap();
 
-    let cutoff = now - Duration::days(7);
+    let cutoff = now.checked_sub_signed(Duration::days(7)).unwrap();
     let deleted = db::delete_backup_reports_before(&pool, cutoff)
         .await
         .unwrap();
@@ -6151,7 +6163,9 @@ async fn delete_system_events_before_keeps_recent(pool: PgPool) {
         .unwrap();
 
     // Use a cutoff just before the insert -- guaranteed to be before created_at
-    let cutoff = before_insert - Duration::seconds(1);
+    let cutoff = before_insert
+        .checked_sub_signed(Duration::seconds(1))
+        .unwrap();
     let deleted = db::delete_system_events_before(&pool, cutoff)
         .await
         .unwrap();
@@ -6170,7 +6184,7 @@ async fn delete_system_events_before_deletes_old(pool: PgPool) {
         .await
         .unwrap();
 
-    let cutoff = Utc::now() + Duration::hours(1);
+    let cutoff = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
     let deleted = db::delete_system_events_before(&pool, cutoff)
         .await
         .unwrap();

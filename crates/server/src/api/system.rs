@@ -30,13 +30,14 @@ fn ssh_key_dir() -> PathBuf {
     path = "/api/system/ssh-public-key",
     tag = "System",
     operation_id = "getSshPublicKey",
-    summary = "Get the server's SSH public key",
     responses(
         (status = 200, description = "SSH public key", body = SshPublicKeyResponse),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// Get the server's SSH public key.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Internal`] if an internal error occurs.
@@ -57,7 +58,6 @@ pub async fn ssh_public_key(_admin: RequireAdmin) -> Result<Json<SshPublicKeyRes
     path = "/api/system/ssh-regenerate-key",
     tag = "System",
     operation_id = "regenerateSshKey",
-    summary = "Regenerate the server's SSH key pair",
     responses(
         (status = 200, description = "New SSH public key", body = SshPublicKeyResponse),
         (status = 401, description = "Unauthorized"),
@@ -65,6 +65,8 @@ pub async fn ssh_public_key(_admin: RequireAdmin) -> Result<Json<SshPublicKeyRes
         (status = 500, description = "Key generation failed"),
     )
 )]
+/// Regenerate the server's SSH key pair.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Internal`] if an internal error occurs.
@@ -160,13 +162,14 @@ pub struct SettingsResponse {
     path = "/api/system/settings",
     tag = "System",
     operation_id = "getSettings",
-    summary = "Get system settings",
     responses(
         (status = 200, description = "System settings", body = SettingsResponse),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// Get system settings.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -218,7 +221,6 @@ pub struct UpdateSettingsRequest {
     path = "/api/system/settings",
     tag = "System",
     operation_id = "updateSettings",
-    summary = "Update system settings",
     request_body = UpdateSettingsRequest,
     responses(
         (status = 200, description = "Updated settings", body = SettingsResponse),
@@ -227,6 +229,8 @@ pub struct UpdateSettingsRequest {
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// Update system settings.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if the request is invalid.
@@ -296,13 +300,14 @@ pub struct DatabaseStorageResponse {
     path = "/api/system/database-storage",
     tag = "System",
     operation_id = "getDatabaseStorage",
-    summary = "Get PostgreSQL storage usage by application table",
     responses(
         (status = 200, description = "Database storage breakdown", body = DatabaseStorageResponse),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// Get `PostgreSQL` storage usage by application table.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -343,13 +348,14 @@ pub struct VersionResponse {
     path = "/api/system/version",
     tag = "System",
     operation_id = "getVersion",
-    summary = "Get server and agent version information",
     responses(
         (status = 200, description = "Version information", body = VersionResponse),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// Get server and agent version information.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -391,13 +397,14 @@ pub struct SystemResetResponse {
     path = "/api/system/reset",
     tag = "System",
     operation_id = "resetSystem",
-    summary = "Cancel all running and pending backups on all agents",
     responses(
         (status = 200, description = "Reset complete", body = SystemResetResponse),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// Cancel all running and pending backups on all agents.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.

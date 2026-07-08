@@ -68,13 +68,14 @@ pub struct UpsertServerQuotaRequest {
     path = "/api/server-quotas",
     tag = "Quota",
     operation_id = "listServerQuotas",
-    summary = "List every SSH host hosting a repo, with usage and quota configuration",
     responses(
         (status = 200, description = "Server quotas", body = Vec<ServerQuotaResponse>),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden"),
     )
 )]
+/// List every SSH host hosting a repo, with usage and quota configuration.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -94,7 +95,6 @@ pub async fn list_server_quotas(
     path = "/api/server-quotas/{ssh_host}",
     tag = "Quota",
     operation_id = "upsertServerQuota",
-    summary = "Create or update the quota configuration for an SSH host",
     params(("ssh_host" = String, Path, description = "SSH host shared by one or more repos")),
     request_body = UpsertServerQuotaRequest,
     responses(
@@ -103,6 +103,8 @@ pub async fn list_server_quotas(
         (status = 403, description = "Forbidden"),
     )
 )]
+/// Create or update the quota configuration for an SSH host.
+///
 /// # Errors
 ///
 /// Returns an error if:
@@ -154,7 +156,6 @@ pub async fn upsert_server_quota(
     path = "/api/server-quotas/{ssh_host}",
     tag = "Quota",
     operation_id = "deleteServerQuota",
-    summary = "Remove the quota configuration for an SSH host",
     params(("ssh_host" = String, Path, description = "SSH host shared by one or more repos")),
     responses(
         (status = 204, description = "Server quota deleted"),
@@ -163,6 +164,8 @@ pub async fn upsert_server_quota(
         (status = 404, description = "Quota not configured"),
     )
 )]
+/// Remove the quota configuration for an SSH host.
+///
 /// # Errors
 ///
 /// Returns an error if:

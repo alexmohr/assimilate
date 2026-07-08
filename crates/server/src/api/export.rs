@@ -67,7 +67,6 @@ fn validate_export_path(path: &str) -> Result<(), ApiError> {
     path = "/api/repos/{repo_id}/archives/{archive_name}/export",
     tag = "Archives",
     operation_id = "exportArchive",
-    summary = "Export an archive as a streaming tar.lz4 download",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
         ("archive_name" = String, Path, description = "Archive name"),
@@ -84,6 +83,8 @@ fn validate_export_path(path: &str) -> Result<(), ApiError> {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// Export an archive as a streaming tar.lz4 download.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Internal`] if an internal error occurs.

@@ -38,7 +38,6 @@ pub struct LogQuery {
     path = "/api/logs",
     tag = "System",
     operation_id = "getServerLogs",
-    summary = "Get recent server log entries from the in-memory ring buffer",
     params(
         ("limit" = Option<usize>, Query,
             description = "Max entries to return (default 200)"),

@@ -127,7 +127,7 @@ fn extract_borg_error(stderr: &str) -> &str {
     operation_id = "listRepos",
     summary = "List all repositories",
     responses(
-        (status = 200, description = "List of repositories", body = Vec<RepoRow>),
+        (status = 200, description = "List of repositories", body = Vec<RepoResponse>),
         (status = 401, description = "Unauthorized"),
     )
 )]
@@ -137,7 +137,7 @@ fn extract_borg_error(stderr: &str) -> &str {
 pub async fn list_repos(
     State(state): State<AppState>,
     auth: AuthUser,
-) -> Result<Json<Vec<RepoRow>>, ApiError> {
+) -> Result<Json<Vec<RepoResponse>>, ApiError> {
     let repos = db::list_all_repos(&state.pool).await?;
     let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
     let is_admin = effective.can_delete_repo;
@@ -152,7 +152,7 @@ pub async fn list_repos(
         )
         .await?
         {
-            visible.push(repo);
+            visible.push(RepoResponse::from(repo));
         }
     }
     Ok(Json(visible))
@@ -168,7 +168,7 @@ pub async fn list_repos(
         ("hostname" = String, Path, description = "Agent hostname"),
     ),
     responses(
-        (status = 200, description = "List of repositories", body = Vec<RepoRow>),
+        (status = 200, description = "List of repositories", body = Vec<RepoResponse>),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
     )
@@ -180,10 +180,10 @@ pub async fn get_agent_repos(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
-) -> Result<Json<Vec<RepoRow>>, ApiError> {
+) -> Result<Json<Vec<RepoResponse>>, ApiError> {
     let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
     let repos = db::list_repos_for_agent_public(&state.pool, agent.id).await?;
-    Ok(Json(repos))
+    Ok(Json(repos.into_iter().map(RepoResponse::from).collect()))
 }
 
 /// Request payload for adding an existing borg repository.
@@ -239,7 +239,7 @@ pub struct UpdateRepoRequest {
     summary = "Create a new repository",
     request_body = CreateRepoRequest,
     responses(
-        (status = 201, description = "Repository created", body = RepoRow),
+        (status = 201, description = "Repository created", body = RepoResponse),
         (status = 400, description = "Validation error"),
         (status = 401, description = "Unauthorized"),
     )
@@ -253,7 +253,7 @@ pub async fn create_repo(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     ApiJson(req): ApiJson<CreateRepoRequest>,
-) -> Result<(StatusCode, Json<RepoRow>), ApiError> {
+) -> Result<(StatusCode, Json<RepoResponse>), ApiError> {
     helpers::validate_non_empty(&req.name, "name")?;
     helpers::validate_non_empty(&req.repo_path, "repo_path")?;
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
@@ -330,7 +330,7 @@ pub async fn create_repo(
         bg_passphrase,
     }));
 
-    Ok((StatusCode::CREATED, Json(repo)))
+    Ok((StatusCode::CREATED, Json(RepoResponse::from(repo))))
 }
 
 struct InitialImportTask {
@@ -470,7 +470,7 @@ async fn run_initial_import_task(task: InitialImportTask) {
     ),
     request_body = UpdateRepoRequest,
     responses(
-        (status = 200, description = "Updated repository", body = RepoRow),
+        (status = 200, description = "Updated repository", body = RepoResponse),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden"),
         (status = 404, description = "Not found"),
@@ -484,7 +484,7 @@ pub async fn update_repo(
     RequireAdmin(_admin): RequireAdmin,
     Path(repo_id): Path<i64>,
     ApiJson(req): ApiJson<UpdateRepoRequest>,
-) -> Result<Json<RepoRow>, ApiError> {
+) -> Result<Json<RepoResponse>, ApiError> {
     helpers::validate_non_empty(&req.repo_path, "repo_path")?;
     if let Some(ref n) = req.name {
         helpers::validate_non_empty(n, "name")?;
@@ -524,7 +524,7 @@ pub async fn update_repo(
         db::update_repo(&state.pool, &update_params).await?
     };
 
-    Ok(Json(repo))
+    Ok(Json(RepoResponse::from(repo)))
 }
 
 #[utoipa::path(
@@ -739,7 +739,7 @@ pub async fn accept_repo_host_key(
     operation_id = "listReposWithStats",
     summary = "List repositories with backup statistics",
     responses(
-        (status = 200, description = "Repositories with stats", body = Vec<RepoWithStatsRow>),
+        (status = 200, description = "Repositories with stats", body = Vec<RepoWithStatsResponse>),
         (status = 401, description = "Unauthorized"),
     )
 )]
@@ -749,7 +749,7 @@ pub async fn accept_repo_host_key(
 pub async fn list_repos_with_stats(
     State(state): State<AppState>,
     auth: AuthUser,
-) -> Result<Json<Vec<RepoWithStatsRow>>, ApiError> {
+) -> Result<Json<Vec<RepoWithStatsResponse>>, ApiError> {
     let repos = db::list_repos_with_stats(&state.pool).await?;
     let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
     let is_admin = effective.can_delete_repo;
@@ -764,7 +764,9 @@ pub async fn list_repos_with_stats(
         )
         .await?
         {
-            visible.push(repo);
+            let mut response = RepoWithStatsResponse::from(repo);
+            response.current_op = state.repo_op_tracker.get(response.id).await;
+            visible.push(response);
         }
     }
     Ok(Json(visible))

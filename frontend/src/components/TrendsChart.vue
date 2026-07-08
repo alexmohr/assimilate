@@ -21,6 +21,7 @@ import type { TooltipItem } from 'chart.js'
 import { apiClient } from '../api/client'
 import { formatBytes } from '../utils/format'
 import { logger } from '../utils/logger'
+import type { Repo } from '../types/repo'
 
 ChartJS.register(
   CategoryScale,
@@ -43,13 +44,8 @@ interface TrendEntry {
   duration_seconds: number
 }
 
-interface RepoOption {
-  id: number
-  name: string
-}
-
 const props = defineProps<{
-  repos: RepoOption[]
+  repos: Repo[]
 }>()
 
 function cssVar(name: string): string {

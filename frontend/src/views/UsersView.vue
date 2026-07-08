@@ -11,6 +11,7 @@ import { formatDate } from '../utils/format'
 import { extractError } from '../utils/error'
 import { Plus, Pencil, Trash2 } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
+import type { Repo } from '../types/repo'
 
 interface User {
   id: number
@@ -18,12 +19,6 @@ interface User {
   role: 'admin' | 'user'
   created_at: string
   last_login_at: string | null
-}
-
-interface RepoOption {
-  id: number
-  name: string
-  enabled: boolean
 }
 
 interface RepoPermission {
@@ -80,7 +75,7 @@ const editRolesSubmitting = ref(false)
 const editRolesError = ref('')
 
 const editPermsLoading = ref(false)
-const permissionsRepos = ref<RepoOption[]>([])
+const permissionsRepos = ref<Repo[]>([])
 const permissionsData = ref<RepoPermission[]>([])
 
 async function fetchUsers(): Promise<void> {
@@ -149,7 +144,7 @@ async function loadEditPermissions(user: User): Promise<void> {
   editPermsLoading.value = true
   try {
     const [reposRes, permsRes] = await Promise.all([
-      apiClient.get<RepoOption[]>('/repos'),
+      apiClient.get<Repo[]>('/repos'),
       apiClient.get<RepoPermission[]>(`/users/${user.id}/permissions`),
     ])
     permissionsRepos.value = reposRes.data

@@ -389,7 +389,7 @@ describe('HostDetailView — schedules tab', () => {
         enabled: true,
       },
     ]
-    setupApi(mockReports, [{ id: 10, target_name: 'shared-repo' }], schedules)
+    setupApi(mockReports, [{ id: 10, name: 'shared-repo' }], schedules)
     const wrapper = renderWithPlugins(HostDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
@@ -415,7 +415,7 @@ describe('HostDetailView — schedules tab', () => {
         next_run_at: null,
       },
     ]
-    setupApi(mockReports, [{ id: 10, target_name: 'shared-repo' }], schedules)
+    setupApi(mockReports, [{ id: 10, name: 'shared-repo' }], schedules)
     const wrapper = renderWithPlugins(HostDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
@@ -429,7 +429,7 @@ describe('HostDetailView — schedules tab', () => {
   })
 
   it('shows empty state when no schedules target the agent', async () => {
-    setupApi(mockReports, [{ id: 10, target_name: 'shared-repo' }], [])
+    setupApi(mockReports, [{ id: 10, name: 'shared-repo' }], [])
     const wrapper = renderWithPlugins(HostDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
@@ -448,7 +448,7 @@ describe('HostDetailView — backup progress', () => {
   })
 
   it('BackupStarted for this host shows the backup in progress card', async () => {
-    setupApi([], [{ id: 10, target_name: 'server-daily' }])
+    setupApi([], [{ id: 10, name: 'server-daily' }])
     const wrapper = renderWithPlugins(HostDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
@@ -469,7 +469,7 @@ describe('HostDetailView — backup progress', () => {
   })
 
   it('BackupStarted for a different host does not show a progress card', async () => {
-    setupApi([], [{ id: 10, target_name: 'server-daily' }])
+    setupApi([], [{ id: 10, name: 'server-daily' }])
     const wrapper = renderWithPlugins(HostDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
@@ -488,7 +488,7 @@ describe('HostDetailView — backup progress', () => {
   })
 
   it('BackupCompleted hides the progress card', async () => {
-    setupApi([], [{ id: 10, target_name: 'server-daily' }])
+    setupApi([], [{ id: 10, name: 'server-daily' }])
     const wrapper = renderWithPlugins(HostDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
@@ -515,7 +515,7 @@ describe('HostDetailView — backup progress', () => {
   })
 
   it('BackupLog with archive_progress JSON updates the progress data', async () => {
-    setupApi([], [{ id: 10, target_name: 'server-daily' }])
+    setupApi([], [{ id: 10, name: 'server-daily' }])
     const wrapper = renderWithPlugins(HostDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
@@ -554,7 +554,7 @@ describe('HostDetailView — backup progress', () => {
       status: 'started',
       started_at: '2026-07-06T09:55:00Z',
     }
-    setupApi([runningReport], [{ id: 10, target_name: 'server-daily' }])
+    setupApi([runningReport], [{ id: 10, name: 'server-daily' }])
     const wrapper = renderWithPlugins(HostDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },

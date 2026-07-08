@@ -21,8 +21,8 @@ use server::{
     notifications::NotificationService,
     openapi::ApiDoc,
     rate_limit::{
-        IpRateLimitMiddlewareState, IpRateLimiter, UserRateLimiter,
-        auth_tracking_middleware, ip_rate_limit_middleware,
+        IpRateLimitMiddlewareState, IpRateLimiter, UserRateLimiter, auth_tracking_middleware,
+        ip_rate_limit_middleware,
     },
     tunnel::TunnelManager,
     ws,
@@ -116,7 +116,7 @@ async fn main() -> Result<(), StartupError> {
 
     spawn_background_tasks(&state, &tunnel_manager);
 
-    let login_router = build_login_router(&state, client_ip_resolver);
+    let login_router = build_login_router(&state, &client_ip_resolver);
     let registry = state.registry.clone();
     let task_registry = state.task_registry.clone();
     let background_task_tracker = state.background_task_tracker.clone();
@@ -232,7 +232,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
     } = args;
     let task_registry = shared::task_registry::TaskRegistry::default();
 
-    let user_rate_limiter = UserRateLimiter::new(60, Duration::from_secs(60));
+    let user_rate_limiter = UserRateLimiter::new(60, Duration::from_mins(1));
 
     AppState {
         pool,
@@ -368,8 +368,9 @@ fn spawn_background_tasks(state: &AppState, tunnel_manager: &TunnelManager) {
     state.task_registry.register(resume_handle);
 }
 
-fn build_login_router(state: &AppState, client_ip_resolver: ClientIpResolver) -> Router<AppState> {
-    let login_ip_limiter = IpRateLimiter::new(10, Duration::from_secs(60), client_ip_resolver.clone());
+fn build_login_router(state: &AppState, client_ip_resolver: &ClientIpResolver) -> Router<AppState> {
+    let login_ip_limiter =
+        IpRateLimiter::new(10, Duration::from_mins(1), client_ip_resolver.clone());
     let login_rate_limit_state = IpRateLimitMiddlewareState {
         limiter: login_ip_limiter,
         resolver: client_ip_resolver.clone(),
@@ -384,7 +385,33 @@ fn build_login_router(state: &AppState, client_ip_resolver: ClientIpResolver) ->
         .with_state(state.clone())
 }
 
-
+fn core_routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/health", get(api::health::health))
+        .route("/api/auth/logout", post(api::auth::logout))
+        .route("/api/auth/me", get(api::auth::me))
+        .route("/api/auth/refresh", post(api::auth::refresh_session))
+        .route(
+            "/api/auth/change-password",
+            post(api::auth::change_password),
+        )
+        .route(
+            "/api/auth/preferences",
+            get(api::auth::get_preferences).put(api::auth::update_preferences),
+        )
+        .route(
+            "/api/users",
+            get(api::users::list_users).post(api::users::create_user),
+        )
+        .route("/api/users/{id}/password", put(api::users::update_password))
+        .route("/api/users/{id}", delete(api::users::delete_user))
+        .route("/ws/agent", get(ws::handler::ws_handler))
+        .route("/ws/ui", get(ws::ui_handler::ui_ws_handler))
+        .route(
+            "/ws/ssh-agent/{hostname}",
+            get(ws::ssh_relay::ssh_relay_handler),
+        )
+}
 
 fn agent_routes() -> Router<AppState> {
     Router::new()
@@ -854,34 +881,11 @@ fn misc_routes() -> Router<AppState> {
 fn build_router(state: &AppState, login_router: Router<AppState>) -> Router<AppState> {
     let authenticated_routes = Router::new()
         .merge(login_router)
+        .merge(core_routes())
         .layer(axum_middleware::from_fn_with_state(
             state.clone(),
             auth_tracking_middleware,
-        ))
-        .route("/api/health", get(api::health::health))
-        .route("/api/auth/logout", post(api::auth::logout))
-        .route("/api/auth/me", get(api::auth::me))
-        .route("/api/auth/refresh", post(api::auth::refresh_session))
-        .route(
-            "/api/auth/change-password",
-            post(api::auth::change_password),
-        )
-        .route(
-            "/api/auth/preferences",
-            get(api::auth::get_preferences).put(api::auth::update_preferences),
-        )
-        .route(
-            "/api/users",
-            get(api::users::list_users).post(api::users::create_user),
-        )
-        .route("/api/users/{id}/password", put(api::users::update_password))
-        .route("/api/users/{id}", delete(api::users::delete_user))
-        .route("/ws/agent", get(ws::handler::ws_handler))
-        .route("/ws/ui", get(ws::ui_handler::ui_ws_handler))
-        .route(
-            "/ws/ssh-agent/{hostname}",
-            get(ws::ssh_relay::ssh_relay_handler),
-        );
+        ));
 
     Router::new()
         .merge(authenticated_routes)

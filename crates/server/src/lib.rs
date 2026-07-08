@@ -227,5 +227,6 @@ pub struct AppState {
     /// the process exits.
     pub task_registry: shared::task_registry::TaskRegistry,
 
+    /// Per-user rate limiter state.
     pub user_rate_limiter: UserRateLimiter,
 }

@@ -84,7 +84,7 @@ fn build_test_state(pool: PgPool) -> server::AppState {
 
         user_rate_limiter: server::rate_limit::UserRateLimiter::new(
             60,
-            std::time::Duration::from_secs(60),
+            std::time::Duration::from_mins(1),
         ),
     }
 }

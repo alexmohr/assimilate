@@ -11,11 +11,12 @@ use crate::AppState;
     path = "/api/health",
     tag = "Health",
     operation_id = "healthCheck",
-    summary = "Server health check",
     responses(
         (status = 200, description = "Server is healthy", body = HealthCheckResponse),
     )
 )]
+/// Server health check
+///
 /// Server health check endpoint.
 pub async fn health(State(state): State<AppState>) -> (StatusCode, Json<HealthCheckResponse>) {
     let background_ops_in_flight = state.repo_op_tracker.any_active().await

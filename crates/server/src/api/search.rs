@@ -68,7 +68,6 @@ pub struct SearchResponse {
     path = "/api/repos/{repo_id}/archives/{archive_name}/search",
     tag = "Archives",
     operation_id = "searchArchive",
-    summary = "Search files in an archive by glob pattern",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
         ("archive_name" = String, Path, description = "Archive name"),
@@ -88,6 +87,8 @@ pub struct SearchResponse {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// Search files in an archive by glob pattern.
+///
 /// # Errors
 ///
 /// Returns an error if:
@@ -256,7 +257,6 @@ pub struct CrossSearchResponse {
     path = "/api/repos/{repo_id}/search",
     tag = "Search",
     operation_id = "crossArchiveSearch",
-    summary = "Search for files across multiple archives (most recent first)",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
         ("pattern" = String, Query, description = "Glob pattern to search for"),
@@ -273,6 +273,8 @@ pub struct CrossSearchResponse {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// Search for files across multiple archives (most recent first).
+///
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if the request is invalid.

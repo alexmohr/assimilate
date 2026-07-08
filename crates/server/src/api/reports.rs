@@ -117,7 +117,6 @@ pub struct ListReportsQuery {
     path = "/api/agents/{hostname}/reports",
     tag = "Reports",
     operation_id = "listReports",
-    summary = "List backup reports for an agent",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
         ("target" = Option<String>, Query, description = "Filter by target repo name"),
@@ -129,6 +128,8 @@ pub struct ListReportsQuery {
         (status = 404, description = "Agent not found"),
     )
 )]
+/// List backup reports for an agent.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.

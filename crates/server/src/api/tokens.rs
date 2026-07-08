@@ -61,7 +61,6 @@ pub fn hash_token(plaintext: &str) -> String {
     path = "/api/tokens",
     tag = "API Tokens",
     operation_id = "create_token",
-    summary = "Create a new API token for the current user",
     request_body = CreateTokenRequest,
     responses(
         (status = 200, description = "Token created", body = CreateApiTokenResponse),
@@ -70,6 +69,8 @@ pub fn hash_token(plaintext: &str) -> String {
         (status = 500, description = "Internal server error"),
     )
 )]
+/// Create a new API token for the current user.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -96,13 +97,14 @@ pub async fn create_token(
     path = "/api/tokens",
     tag = "API Tokens",
     operation_id = "list_tokens",
-    summary = "List API tokens (all tokens for admin, own tokens for regular users)",
     responses(
         (status = 200, description = "List of tokens", body = ListApiTokensResponse),
         (status = 401, description = "Not authenticated"),
         (status = 500, description = "Internal server error"),
     )
 )]
+/// List API tokens (all tokens for admin, own tokens for regular users).
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -126,7 +128,6 @@ pub async fn list_tokens(
     path = "/api/tokens/{id}",
     tag = "API Tokens",
     operation_id = "delete_token",
-    summary = "Delete an API token",
     params(
         ("id" = i64, Path, description = "Token ID"),
     ),
@@ -138,6 +139,8 @@ pub async fn list_tokens(
         (status = 500, description = "Internal server error"),
     )
 )]
+/// Delete an API token.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Forbidden`] if the caller lacks permission for this operation.

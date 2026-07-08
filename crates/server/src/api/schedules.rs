@@ -231,12 +231,13 @@ pub struct UpdateScheduleRequest {
     path = "/api/schedules",
     tag = "Schedules",
     operation_id = "listSchedules",
-    summary = "List all schedules visible to the current user",
     responses(
         (status = 200, description = "List of schedules", body = Vec<crate::db::ScheduleRow>),
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// List all schedules visible to the current user.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -269,7 +270,6 @@ pub async fn list_schedules(
     path = "/api/schedules",
     tag = "Schedules",
     operation_id = "createSchedule",
-    summary = "Create a new backup schedule",
     request_body = CreateScheduleRequest,
     responses(
         (status = 201, description = "Schedule created", body = crate::db::ScheduleRow),
@@ -279,6 +279,8 @@ pub async fn list_schedules(
         (status = 422, description = "Unprocessable -- SSH unreachable"),
     )
 )]
+/// Create a new backup schedule.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if the request is invalid.
@@ -398,7 +400,6 @@ pub async fn create_schedule(
     path = "/api/schedules/{id}",
     tag = "Schedules",
     operation_id = "getSchedule",
-    summary = "Get a single schedule by ID",
     params(("id" = i64, Path, description = "Schedule ID")),
     responses(
         (status = 200, description = "Schedule details", body = crate::db::ScheduleRow),
@@ -406,6 +407,8 @@ pub async fn create_schedule(
         (status = 404, description = "Not found"),
     )
 )]
+/// Get a single schedule by ID.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -423,7 +426,6 @@ pub async fn get_schedule(
     path = "/api/schedules/{id}",
     tag = "Schedules",
     operation_id = "updateSchedule",
-    summary = "Update an existing schedule",
     params(("id" = i64, Path, description = "Schedule ID")),
     request_body = UpdateScheduleRequest,
     responses(
@@ -434,6 +436,8 @@ pub async fn get_schedule(
         (status = 404, description = "Not found"),
     )
 )]
+/// Update an existing schedule.
+///
 /// # Errors
 ///
 /// Returns an error if:
@@ -591,7 +595,6 @@ async fn apply_schedule_target_overrides(
     path = "/api/schedules/{id}",
     tag = "Schedules",
     operation_id = "deleteSchedule",
-    summary = "Delete a schedule",
     params(("id" = i64, Path, description = "Schedule ID")),
     responses(
         (status = 204, description = "Deleted"),
@@ -600,6 +603,8 @@ async fn apply_schedule_target_overrides(
         (status = 404, description = "Not found"),
     )
 )]
+/// Delete a schedule.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Forbidden`] if the caller lacks permission for this operation.
@@ -768,7 +773,6 @@ async fn refresh_next_run(
     path = "/api/schedules/{id}/run",
     tag = "Schedules",
     operation_id = "runScheduleNow",
-    summary = "Trigger a schedule to run immediately",
     params(("id" = i64, Path, description = "Schedule ID")),
     responses(
         (status = 202, description = "Accepted"),
@@ -777,6 +781,8 @@ async fn refresh_next_run(
         (status = 404, description = "Not found"),
     )
 )]
+/// Trigger a schedule to run immediately.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if the request is invalid.
@@ -841,7 +847,6 @@ pub async fn run_schedule_now(
     path = "/api/schedules/{id}/cancel",
     tag = "Schedules",
     operation_id = "cancelRunningBackup",
-    summary = "Cancel a running backup for a schedule",
     params(("id" = i64, Path, description = "Schedule ID")),
     responses(
         (status = 202, description = "Accepted"),
@@ -850,6 +855,8 @@ pub async fn run_schedule_now(
         (status = 404, description = "Not found"),
     )
 )]
+/// Cancel a running backup for a schedule.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if the request is invalid.
@@ -928,7 +935,6 @@ pub struct ListScheduleReportsQuery {
     path = "/api/schedules/{id}/reports",
     tag = "Schedules",
     operation_id = "listScheduleReports",
-    summary = "List backup reports for a schedule",
     params(
         ("id" = i64, Path, description = "Schedule ID"),
         ("limit" = Option<i64>, Query, description = "Max entries to return"),
@@ -939,6 +945,8 @@ pub struct ListScheduleReportsQuery {
         (status = 404, description = "Not found"),
     )
 )]
+/// List backup reports for a schedule.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -959,7 +967,6 @@ pub async fn list_schedule_reports(
     path = "/api/schedules/{id}/targets",
     tag = "Schedules",
     operation_id = "listScheduleTargets",
-    summary = "List target hosts for a schedule",
     params(("id" = i64, Path, description = "Schedule ID")),
     responses(
         (status = 200, description = "List of targets", body = Vec<ScheduleTargetResponse>),
@@ -967,6 +974,8 @@ pub async fn list_schedule_reports(
         (status = 404, description = "Not found"),
     )
 )]
+/// List target hosts for a schedule.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -989,7 +998,6 @@ pub async fn list_schedule_targets(
     path = "/api/schedules/{id}/sources",
     tag = "Schedules",
     operation_id = "listScheduleBackupSources",
-    summary = "List backup sources for a schedule (schedule-level and per-host)",
     params(("id" = i64, Path, description = "Schedule ID")),
     responses(
         (status = 200, description = "Backup sources", body = ScheduleBackupSourcesResponse),
@@ -997,6 +1005,8 @@ pub async fn list_schedule_targets(
         (status = 404, description = "Not found"),
     )
 )]
+/// List backup sources for a schedule (schedule-level and per-host).
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.

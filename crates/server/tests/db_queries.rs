@@ -6516,7 +6516,7 @@ fn compute_retention_fallbacks(
     failed_raw: Option<String>,
     event_raw: Option<String>,
 ) -> (i64, i64, i64, i64) {
-    let legacy = legacy_raw.as_deref().and_then(|v| v.parse::<i64>().ok());
+    let legacy = legacy_raw.and_then(|v| v.parse::<i64>().ok());
     let retention_days = legacy.unwrap_or(7);
     let report_retention_days = report_raw.and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
     let failed_report_retention_days = failed_raw

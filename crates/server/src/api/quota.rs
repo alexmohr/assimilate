@@ -59,7 +59,6 @@ async fn require_operator_or_admin(state: &AppState, auth: &AuthUser) -> Result<
     path = "/api/repos/{id}/quota",
     tag = "Quota",
     operation_id = "getRepoQuota",
-    summary = "Get a repository quota configuration",
     params(("id" = i64, Path, description = "Repository ID")),
     responses(
         (status = 200, description = "Quota configuration", body = RepoQuotaResponse),
@@ -68,6 +67,8 @@ async fn require_operator_or_admin(state: &AppState, auth: &AuthUser) -> Result<
         (status = 404, description = "Quota not configured"),
     )
 )]
+/// Get a repository quota configuration.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::NotFound`] if the requested resource does not exist.
@@ -91,7 +92,6 @@ pub async fn get_quota(
     path = "/api/repos/{id}/quota",
     tag = "Quota",
     operation_id = "upsertRepoQuota",
-    summary = "Create or update a repository quota configuration",
     params(("id" = i64, Path, description = "Repository ID")),
     request_body = UpsertQuotaRequest,
     responses(
@@ -100,6 +100,8 @@ pub async fn get_quota(
         (status = 403, description = "Forbidden"),
     )
 )]
+/// Create or update a repository quota configuration.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.

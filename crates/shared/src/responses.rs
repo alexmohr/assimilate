@@ -146,6 +146,8 @@ pub struct AgentResponse {
     pub visibility: String,
     /// Reason why restart is unavailable, if applicable.
     pub restart_unavailable_reason: Option<String>,
+    /// SSH username last used to deploy/upgrade this agent.
+    pub last_ssh_user: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

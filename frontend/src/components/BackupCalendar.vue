@@ -8,6 +8,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiClient } from '../api/client'
 import { logger } from '../utils/logger'
+import type { Repo } from '../types/repo'
 
 interface CalendarEvent {
   type: string
@@ -36,13 +37,8 @@ function classifyCalendarEventStatus(status: string): CalendarEventStatus {
   return 'other'
 }
 
-interface RepoOption {
-  id: number
-  name: string
-}
-
 const props = defineProps<{
-  repos: RepoOption[]
+  repos: Repo[]
 }>()
 
 const selectedRepoId = ref<number | undefined>(undefined)

@@ -48,7 +48,6 @@ pub struct DryRunResponse {
     path = "/api/repos/{repo_id}/dry-run",
     tag = "Repos",
     operation_id = "dryRun",
-    summary = "Preview what a backup schedule would include without creating an archive",
     params(("repo_id" = i64, Path, description = "Repository ID")),
     request_body = DryRunRequest,
     responses(
@@ -59,6 +58,8 @@ pub struct DryRunResponse {
         (status = 503, description = "Agent offline or timed out"),
     )
 )]
+/// Preview what a backup schedule would include without creating an archive.
+///
 /// # Errors
 ///
 /// Returns an error if:

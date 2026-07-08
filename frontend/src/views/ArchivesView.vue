@@ -20,13 +20,7 @@ import ArchiveDiff from '../components/ArchiveDiff.vue'
 import FileSearch from '../components/FileSearch.vue'
 import BaseHostLink from '../components/BaseHostLink.vue'
 import type { ContentsResponse, ContentEntryResponse } from '../types/generated'
-
-interface RepoOption {
-  id: number
-  hostname: string
-  target_name: string
-  enabled: boolean
-}
+import type { Repo } from '../types/repo'
 
 interface ArchiveEntry {
   name: string
@@ -61,7 +55,7 @@ function normalizeIndexStatus(status: string): ArchiveIndexStatus {
   return 'pending'
 }
 
-const repos = ref<RepoOption[]>([])
+const repos = ref<Repo[]>([])
 const reposLoading = ref(false)
 const reposError = ref<string | null>(null)
 const selectedRepoId = ref<number | null>(null)
@@ -220,7 +214,7 @@ async function loadRepos(): Promise<void> {
   reposLoading.value = true
   reposError.value = null
   try {
-    const res = await apiClient.get<RepoOption[]>('/repos')
+    const res = await apiClient.get<Repo[]>('/repos')
     repos.value = res.data
   } catch (e: unknown) {
     reposError.value = extractError(e)
@@ -391,7 +385,7 @@ onMounted(loadRepos)
             :key="repo.id"
             :value="repo.id"
           >
-            {{ repo.hostname }} / {{ repo.target_name }}
+            {{ repo.name }}
           </option>
         </select>
         <span

@@ -6,12 +6,12 @@ use axum::{
         State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::{StatusCode, header},
+    http::StatusCode,
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
 
-use crate::{AppState, api::tokens::hash_token, db};
+use crate::{AppState, api::tokens::hash_token, cookies, db};
 
 /// WebSocket upgrade handler for browser UI clients.
 ///
@@ -22,7 +22,7 @@ pub async fn ui_ws_handler(
     headers: axum::http::HeaderMap,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    let Some(session_id) = extract_session_from_headers(&headers) else {
+    let Some(session_id) = cookies::session_cookie(&headers) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
 
@@ -35,19 +35,6 @@ pub async fn ui_ws_handler(
 
     ws.on_upgrade(|socket| handle_ui_socket(socket, state))
         .into_response()
-}
-
-fn extract_session_from_headers(headers: &axum::http::HeaderMap) -> Option<String> {
-    let cookie_header = headers.get(header::COOKIE)?.to_str().ok()?;
-    for pair in cookie_header.split(';') {
-        let pair = pair.trim();
-        if let Some(value) = pair.strip_prefix("session=")
-            && !value.is_empty()
-        {
-            return Some(value.to_string());
-        }
-    }
-    None
 }
 
 async fn handle_ui_socket(socket: WebSocket, state: AppState) {

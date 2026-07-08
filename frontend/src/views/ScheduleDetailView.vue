@@ -24,16 +24,11 @@ import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import type { ScheduleBackupSourcesResponse } from '../types/generated'
+import type { Repo } from '../types/repo'
 
 interface ScheduleTarget {
   agent_id: number
   execution_order: number
-}
-
-interface RepoRow {
-  id: number
-  name: string
-  repo_path: string
 }
 
 const props = defineProps<{ id: string }>()
@@ -48,7 +43,7 @@ const isCreate = computed(() => props.id === NEW_SCHEDULE_ROUTE_ID)
 
 const schedule = ref<ScheduleRow | null>(null)
 const agents = ref<AgentRow[]>([])
-const repos = ref<RepoRow[]>([])
+const repos = ref<Repo[]>([])
 const repo = computed(() => repos.value.find((r) => r.id === selectedRepoId.value) ?? null)
 const scheduleTargets = ref<ScheduleTarget[]>([])
 const { loading, error, run } = useAsyncAction('Failed to load schedule')
@@ -265,7 +260,7 @@ async function loadData(): Promise<void> {
     if (isCreate.value) {
       const [agentsRes, reposRes] = await Promise.all([
         apiClient.get<AgentRow[]>('/agents'),
-        apiClient.get<RepoRow[]>('/repos'),
+        apiClient.get<Repo[]>('/repos'),
       ])
       agents.value = agentsRes.data
       repos.value = reposRes.data
@@ -279,7 +274,7 @@ async function loadData(): Promise<void> {
         await Promise.all([
           apiClient.get<ScheduleRow>(`/schedules/${props.id}`),
           apiClient.get<AgentRow[]>('/agents'),
-          apiClient.get<RepoRow[]>('/repos'),
+          apiClient.get<Repo[]>('/repos'),
           apiClient.get<ScheduleTarget[]>(`/schedules/${props.id}/targets`),
           apiClient.get<ScheduleBackupSourcesResponse>(`/schedules/${props.id}/sources`),
           apiClient.get<ReportRow[]>(`/schedules/${props.id}/reports`, { params: { limit: 20 } }),

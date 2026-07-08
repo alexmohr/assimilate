@@ -82,12 +82,13 @@ impl DashboardQuotaStatus {
     path = "/api/stats/dashboard-overview",
     tag = "Statistics",
     operation_id = "getDashboardOverview",
-    summary = "Get actionable dashboard state",
     responses(
         (status = 200, description = "Dashboard overview", body = DashboardOverviewResponse),
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// Get actionable dashboard state.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -558,12 +559,13 @@ fn repository_capacity(repo: &db::dashboard::RepositoryRow) -> DashboardReposito
     path = "/api/stats/summary",
     tag = "Statistics",
     operation_id = "getDashboardSummary",
-    summary = "Get dashboard summary statistics",
     responses(
         (status = 200, description = "Dashboard summary", body = DashboardSummaryResponse),
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// Get dashboard summary statistics.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -630,12 +632,13 @@ pub async fn summary(
     path = "/api/stats/storage",
     tag = "Statistics",
     operation_id = "getStorageStats",
-    summary = "Get per-repo storage statistics",
     responses(
         (status = 200, description = "Storage stats", body = Vec<crate::db::StorageStatRow>),
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// Get per-repo storage statistics.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -652,7 +655,6 @@ pub async fn storage(
     path = "/api/stats/schedule-counts",
     tag = "Statistics",
     operation_id = "getScheduleCountsByAgent",
-    summary = "Get schedule counts per agent",
     responses(
         (
             status = 200,
@@ -662,6 +664,8 @@ pub async fn storage(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// Get schedule counts per agent.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -678,12 +682,13 @@ pub async fn schedule_counts(
     path = "/api/stats/storage-breakdown",
     tag = "Statistics",
     operation_id = "getStorageBreakdown",
-    summary = "Get per-repo storage breakdown (sourced from borg info)",
     responses(
         (status = 200, description = "Storage breakdown", body = Vec<StorageRepoEntryResponse>),
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// Get per-repo storage breakdown (sourced from borg info).
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -719,7 +724,6 @@ pub async fn storage_breakdown(
     path = "/api/stats/activity",
     tag = "Statistics",
     operation_id = "getActivity",
-    summary = "Get backup activity feed",
     params(
         ("limit" = Option<i64>, Query, description = "Max entries to return"),
         ("days" = Option<i64>, Query, description = "Return entries from last N days"),
@@ -733,6 +737,8 @@ pub async fn storage_breakdown(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// Get backup activity feed.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -771,13 +777,14 @@ pub async fn activity(
     path = "/api/stats/system-events",
     tag = "Statistics",
     operation_id = "getSystemEvents",
-    summary = "Get system event log",
     params(("limit" = Option<i64>, Query, description = "Max entries to return")),
     responses(
         (status = 200, description = "System events", body = Vec<crate::db::SystemEventRow>),
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// Get system event log.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -796,13 +803,14 @@ pub async fn system_events(
     path = "/api/stats/health",
     tag = "Statistics",
     operation_id = "getHealthSummary",
-    summary = "Get backup health summary for all schedules",
     responses(
         (status = 200, description = "Health summary",
             body = Vec<shared::responses::HealthSummaryResponse>),
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// Get backup health summary for all schedules.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -867,7 +875,6 @@ pub struct TrendsQuery {
     path = "/api/stats/trends",
     tag = "Statistics",
     operation_id = "getBackupTrends",
-    summary = "Get backup size trends over time",
     params(
         ("repo_id" = Option<i64>, Query, description = "Filter by repository ID"),
         ("days" = Option<i64>, Query, description = "Number of days (30, 90, 365)"),
@@ -877,6 +884,8 @@ pub struct TrendsQuery {
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// Get backup size trends over time.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -919,7 +928,6 @@ pub async fn trends(
     path = "/api/stats/storage-trends",
     tag = "Statistics",
     operation_id = "getStorageTrends",
-    summary = "Get total repository disk usage over time",
     params(
         ("repo_id" = Option<i64>, Query, description = "Filter by repository ID"),
         ("days" = Option<i64>, Query, description = "Number of days (14, 30, 90, 365)"),
@@ -929,6 +937,8 @@ pub async fn trends(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// Get total repository disk usage over time.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -956,7 +966,6 @@ pub async fn storage_trends(
     path = "/api/stats/storage-trends/by-repo",
     tag = "Statistics",
     operation_id = "getStorageTrendsByRepo",
-    summary = "Get per-repo storage usage over time for stacked view",
     params(
         ("days" = Option<i64>, Query, description = "Number of days (14, 30, 90, 365)"),
     ),
@@ -966,6 +975,8 @@ pub async fn storage_trends(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// Get per-repo storage usage over time for stacked view.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -1141,7 +1152,6 @@ async fn project_upcoming_schedule_events(
     path = "/api/stats/calendar",
     tag = "Statistics",
     operation_id = "getCalendar",
-    summary = "Get calendar view of backups for a month",
     params(
         ("month" = String, Query, description = "Month in YYYY-MM format"),
         ("repo_id" = Option<i64>, Query, description = "Filter by repository ID"),
@@ -1151,6 +1161,8 @@ async fn project_upcoming_schedule_events(
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// Get calendar view of backups for a month.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if the request is invalid.

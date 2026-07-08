@@ -125,19 +125,20 @@ fn extract_borg_error(stderr: &str) -> &str {
     path = "/api/repos",
     tag = "Repositories",
     operation_id = "listRepos",
-    summary = "List all repositories",
     responses(
-        (status = 200, description = "List of repositories", body = Vec<RepoRow>),
+        (status = 200, description = "List of repositories", body = Vec<RepoResponse>),
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// List all repositories.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
 pub async fn list_repos(
     State(state): State<AppState>,
     auth: AuthUser,
-) -> Result<Json<Vec<RepoRow>>, ApiError> {
+) -> Result<Json<Vec<RepoResponse>>, ApiError> {
     let repos = db::list_all_repos(&state.pool).await?;
     let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
     let is_admin = effective.can_delete_repo;
@@ -152,7 +153,7 @@ pub async fn list_repos(
         )
         .await?
         {
-            visible.push(repo);
+            visible.push(RepoResponse::from(repo));
         }
     }
     Ok(Json(visible))
@@ -163,16 +164,17 @@ pub async fn list_repos(
     path = "/api/agents/{hostname}/repos",
     tag = "Repositories",
     operation_id = "getAgentRepos",
-    summary = "List repositories for a specific host",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
     ),
     responses(
-        (status = 200, description = "List of repositories", body = Vec<RepoRow>),
+        (status = 200, description = "List of repositories", body = Vec<RepoResponse>),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not found"),
     )
 )]
+/// List repositories for a specific host.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -180,10 +182,10 @@ pub async fn get_agent_repos(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(hostname): Path<String>,
-) -> Result<Json<Vec<RepoRow>>, ApiError> {
+) -> Result<Json<Vec<RepoResponse>>, ApiError> {
     let agent = db::get_agent_by_hostname(&state.pool, &hostname).await?;
     let repos = db::list_repos_for_agent_public(&state.pool, agent.id).await?;
-    Ok(Json(repos))
+    Ok(Json(repos.into_iter().map(RepoResponse::from).collect()))
 }
 
 /// Request payload for adding an existing borg repository.
@@ -236,14 +238,15 @@ pub struct UpdateRepoRequest {
     path = "/api/repos",
     tag = "Repositories",
     operation_id = "createRepo",
-    summary = "Create a new repository",
     request_body = CreateRepoRequest,
     responses(
-        (status = 201, description = "Repository created", body = RepoRow),
+        (status = 201, description = "Repository created", body = RepoResponse),
         (status = 400, description = "Validation error"),
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// Create a new repository.
+///
 /// # Errors
 ///
 /// Returns an error if:
@@ -253,7 +256,7 @@ pub async fn create_repo(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     ApiJson(req): ApiJson<CreateRepoRequest>,
-) -> Result<(StatusCode, Json<RepoRow>), ApiError> {
+) -> Result<(StatusCode, Json<RepoResponse>), ApiError> {
     helpers::validate_non_empty(&req.name, "name")?;
     helpers::validate_non_empty(&req.repo_path, "repo_path")?;
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
@@ -330,7 +333,7 @@ pub async fn create_repo(
         bg_passphrase,
     }));
 
-    Ok((StatusCode::CREATED, Json(repo)))
+    Ok((StatusCode::CREATED, Json(RepoResponse::from(repo))))
 }
 
 struct InitialImportTask {
@@ -464,18 +467,19 @@ async fn run_initial_import_task(task: InitialImportTask) {
     path = "/api/repos/{repo_id}",
     tag = "Repositories",
     operation_id = "updateRepo",
-    summary = "Update a repository (admin only)",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),
     request_body = UpdateRepoRequest,
     responses(
-        (status = 200, description = "Updated repository", body = RepoRow),
+        (status = 200, description = "Updated repository", body = RepoResponse),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden"),
         (status = 404, description = "Not found"),
     )
 )]
+/// Update a repository (admin only).
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -484,7 +488,7 @@ pub async fn update_repo(
     RequireAdmin(_admin): RequireAdmin,
     Path(repo_id): Path<i64>,
     ApiJson(req): ApiJson<UpdateRepoRequest>,
-) -> Result<Json<RepoRow>, ApiError> {
+) -> Result<Json<RepoResponse>, ApiError> {
     helpers::validate_non_empty(&req.repo_path, "repo_path")?;
     if let Some(ref n) = req.name {
         helpers::validate_non_empty(n, "name")?;
@@ -524,7 +528,7 @@ pub async fn update_repo(
         db::update_repo(&state.pool, &update_params).await?
     };
 
-    Ok(Json(repo))
+    Ok(Json(RepoResponse::from(repo)))
 }
 
 #[utoipa::path(
@@ -532,9 +536,6 @@ pub async fn update_repo(
     path = "/api/repos/{repo_id}",
     tag = "Repositories",
     operation_id = "deleteRepo",
-    summary = "Remove a repository from the database (admin only)",
-    description = "Removes the repository record and associated schedules/reports from the \
-                   database. Does NOT delete any data on disk.",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),
@@ -545,6 +546,11 @@ pub async fn update_repo(
         (status = 404, description = "Not found"),
     )
 )]
+/// Remove a repository from the database (admin only).
+///
+/// Removes the repository record and associated schedules/reports from the database. Does NOT
+/// delete any data on disk.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -562,10 +568,6 @@ pub async fn delete_repo(
     path = "/api/repos/{repo_id}/destroy",
     tag = "Repositories",
     operation_id = "destroyRepo",
-    summary = "Destroy a repository from disk and remove from database (admin only)",
-    description = "DANGEROUS: Permanently deletes the repository data from the remote filesystem \
-                   via SSH (rm -rf) and then removes the database record. This action is \
-                   irreversible.",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),
@@ -577,6 +579,11 @@ pub async fn delete_repo(
         (status = 500, description = "Failed to delete from disk"),
     )
 )]
+/// Destroy a repository from disk and remove from database (admin only).
+///
+/// DANGEROUS: Permanently deletes the repository data from the remote filesystem via SSH (rm -rf)
+/// and then removes the database record. This action is irreversible.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Internal`] if an internal error occurs.
@@ -621,7 +628,6 @@ pub async fn destroy_repo(
     path = "/api/repos/{repo_id}/passphrase",
     tag = "Repositories",
     operation_id = "getRepoPassphrase",
-    summary = "Get the decrypted passphrase for a repository (admin only)",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),
@@ -632,6 +638,8 @@ pub async fn destroy_repo(
         (status = 404, description = "Not found"),
     )
 )]
+/// Get the decrypted passphrase for a repository (admin only).
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -657,7 +665,6 @@ pub struct AcceptRepoHostKeyRequest {
     path = "/api/repos/{repo_id}/ssh-host-key/scan",
     tag = "Repositories",
     operation_id = "scanRepoHostKey",
-    summary = "Scan the repository host key without saving it",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),
@@ -669,6 +676,8 @@ pub struct AcceptRepoHostKeyRequest {
         (status = 502, description = "SSH host key scan failed"),
     )
 )]
+/// Scan the repository host key without saving it.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::BadGateway`] if the upstream operation (e.g. SSH or borg) fails.
@@ -690,7 +699,6 @@ pub async fn scan_repo_host_key(
     path = "/api/repos/{repo_id}/ssh-host-key",
     tag = "Repositories",
     operation_id = "acceptRepoHostKey",
-    summary = "Accept a scanned SSH host key and push updated config",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),
@@ -702,6 +710,8 @@ pub async fn scan_repo_host_key(
         (status = 404, description = "Not found"),
     )
 )]
+/// Accept a scanned SSH host key and push updated config.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -737,19 +747,20 @@ pub async fn accept_repo_host_key(
     path = "/api/repos/stats",
     tag = "Repositories",
     operation_id = "listReposWithStats",
-    summary = "List repositories with backup statistics",
     responses(
-        (status = 200, description = "Repositories with stats", body = Vec<RepoWithStatsRow>),
+        (status = 200, description = "Repositories with stats", body = Vec<RepoWithStatsResponse>),
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// List repositories with backup statistics.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
 pub async fn list_repos_with_stats(
     State(state): State<AppState>,
     auth: AuthUser,
-) -> Result<Json<Vec<RepoWithStatsRow>>, ApiError> {
+) -> Result<Json<Vec<RepoWithStatsResponse>>, ApiError> {
     let repos = db::list_repos_with_stats(&state.pool).await?;
     let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
     let is_admin = effective.can_delete_repo;
@@ -764,7 +775,8 @@ pub async fn list_repos_with_stats(
         )
         .await?
         {
-            visible.push(repo);
+            let response = RepoWithStatsResponse::from(repo);
+            visible.push(response);
         }
     }
     Ok(Json(visible))
@@ -775,7 +787,6 @@ pub async fn list_repos_with_stats(
     path = "/api/repos/{repo_id}",
     tag = "Repositories",
     operation_id = "getRepo",
-    summary = "Get a repository with statistics",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),
@@ -785,6 +796,8 @@ pub async fn list_repos_with_stats(
         (status = 404, description = "Not found"),
     )
 )]
+/// Get a repository with statistics.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -827,7 +840,6 @@ pub struct InitRepoRequest {
     path = "/api/repos/init",
     tag = "Repositories",
     operation_id = "initRepo",
-    summary = "Initialize a new borg repository and register it",
     request_body = InitRepoRequest,
     responses(
         (status = 201, description = "Repository initialized", body = InitRepoResponse),
@@ -837,6 +849,8 @@ pub struct InitRepoRequest {
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// Initialize a new borg repository and register it.
+///
 /// # Errors
 ///
 /// Returns an error if:
@@ -899,7 +913,6 @@ pub async fn init_repo(
     path = "/api/repos/{repo_id}/confirm-relocation",
     tag = "Repositories",
     operation_id = "confirmRepoRelocation",
-    summary = "Accept a borg repository relocation for the next backup run",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),
@@ -910,6 +923,8 @@ pub async fn init_repo(
         (status = 404, description = "Not found"),
     )
 )]
+/// Accept a borg repository relocation for the next backup run.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -941,7 +956,6 @@ pub async fn confirm_relocation(
     path = "/api/repos/{repo_id}/schedules",
     tag = "Repositories",
     operation_id = "listSchedulesForRepo",
-    summary = "List schedules for a repository",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),
@@ -951,6 +965,8 @@ pub async fn confirm_relocation(
         (status = 404, description = "Not found"),
     )
 )]
+/// List schedules for a repository.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -984,7 +1000,6 @@ pub async fn list_schedules_for_repo(
     path = "/api/repos/{repo_id}/break-lock",
     tag = "Repositories",
     operation_id = "breakRepoLock",
-    summary = "Break a stale lock on a borg repository",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),
@@ -996,6 +1011,8 @@ pub async fn list_schedules_for_repo(
         (status = 502, description = "Borg command failed"),
     )
 )]
+/// Break a stale lock on a borg repository.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -1139,7 +1156,6 @@ pub struct ExecBorgRequest {
     path = "/api/repos/{repo_id}/exec",
     tag = "Repositories",
     operation_id = "execBorgCommand",
-    summary = "Execute a borg command against the repository (admin only)",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),
@@ -1152,6 +1168,8 @@ pub struct ExecBorgRequest {
         (status = 404, description = "Not found"),
     )
 )]
+/// Execute a borg command against the repository (admin only).
+///
 /// # Errors
 ///
 /// Returns an error if:
@@ -1224,9 +1242,6 @@ pub struct MigrateEncryptionRequest {
     path = "/api/repos/{repo_id}/migrate-encryption",
     tag = "Repositories",
     operation_id = "migrateRepoEncryption",
-    summary = "Migrate repository to a different encryption mode",
-    description = "Renames the existing repository and creates a new one at the original path \
-                   with the target encryption. Old repo preserved at .migrated-<date> path.",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),
@@ -1240,6 +1255,11 @@ pub struct MigrateEncryptionRequest {
         (status = 502, description = "Migration failed"),
     )
 )]
+/// Migrate repository to a different encryption mode.
+///
+/// Renames the existing repository and creates a new one at the original path with the target
+/// encryption. Old repo preserved at .migrated-<date> path.
+///
 /// # Errors
 ///
 /// Returns an error if:
@@ -2889,7 +2909,6 @@ struct UnmatchedRow {
     path = "/api/repos/{repo_id}/rescan",
     tag = "Repositories",
     operation_id = "rescanRepo",
-    summary = "Re-scan unmatched archives against hostname patterns",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),
@@ -2899,6 +2918,8 @@ struct UnmatchedRow {
         (status = 404, description = "Not found"),
     )
 )]
+/// Re-scan unmatched archives against hostname patterns.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -2974,7 +2995,6 @@ const SYNC_WARN_DURATION: Duration = Duration::from_mins(5);
     path = "/api/repos/{repo_id}/sync",
     tag = "Repositories",
     operation_id = "syncRepo",
-    summary = "Full repository sync - re-reads all archives from borg",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
         ("build_index" = bool, Query, description = "Also build archive indexes while syncing"),
@@ -2986,6 +3006,8 @@ const SYNC_WARN_DURATION: Duration = Duration::from_mins(5);
         (status = 409, description = "Sync already in progress"),
     )
 )]
+/// Full repository sync - re-reads all archives from borg.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Conflict`] if the request conflicts with the current state.
@@ -3256,7 +3278,6 @@ async fn log_repo_sync_completion(
     path = "/api/repos/{repo_id}/reset-and-sync",
     tag = "Repositories",
     operation_id = "resetImport",
-    summary = "Reset a stuck importing state (admin only)",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
     ),
@@ -3266,6 +3287,8 @@ async fn log_repo_sync_completion(
         (status = 404, description = "Not found"),
     )
 )]
+/// Reset a stuck importing state (admin only).
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -3294,7 +3317,6 @@ pub async fn reset_import(
     path = "/api/repos/{repo_id}/reset-and-sync",
     tag = "Repositories",
     operation_id = "resetAndSyncRepo",
-    summary = "Delete all archive metadata and re-import from borg (admin only)",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
         ("build_index" = bool, Query, description = "Also build archive indexes while syncing"),
@@ -3306,6 +3328,8 @@ pub async fn reset_import(
         (status = 409, description = "Sync already in progress"),
     )
 )]
+/// Delete all archive metadata and re-import from borg (admin only).
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Conflict`] if the request conflicts with the current state.

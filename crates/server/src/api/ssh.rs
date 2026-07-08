@@ -17,7 +17,6 @@ use crate::{
     path = "/api/ssh/test-connection",
     tag = "SSH",
     operation_id = "testSshConnection",
-    summary = "Test SSH connectivity and check if borg is installed",
     request_body = TestConnectionRequest,
     responses(
         (status = 200, description = "Connection test result", body = TestConnectionResponse),
@@ -26,6 +25,8 @@ use crate::{
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// Test SSH connectivity and check if borg is installed.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -34,6 +35,7 @@ pub async fn test_connection(
     ApiJson(req): ApiJson<TestConnectionRequest>,
 ) -> Result<Json<TestConnectionResponse>, ApiError> {
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
+    helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
 
     let response = ssh::test_connection(&req).await;
     Ok(Json(response))
@@ -44,7 +46,6 @@ pub async fn test_connection(
     path = "/api/ssh/deploy-key",
     tag = "SSH",
     operation_id = "deploySshKey",
-    summary = "Deploy the server's SSH public key to a remote host",
     request_body = DeployKeyRequest,
     responses(
         (status = 200, description = "Deploy result", body = DeployKeyResponse),
@@ -53,6 +54,8 @@ pub async fn test_connection(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// Deploy the server's SSH public key to a remote host.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -61,6 +64,7 @@ pub async fn deploy_key(
     ApiJson(req): ApiJson<DeployKeyRequest>,
 ) -> Result<Json<DeployKeyResponse>, ApiError> {
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
+    helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
     helpers::validate_non_empty(&req.password, "password")?;
 
     let response = ssh::deploy_key(&req).await;
@@ -72,7 +76,6 @@ pub async fn deploy_key(
     path = "/api/ssh/list-dir",
     tag = "SSH",
     operation_id = "listSshDir",
-    summary = "List directory contents on a remote host via SSH",
     request_body = ListDirRequest,
     responses(
         (status = 200, description = "Directory listing", body = ListDirResponse),
@@ -81,6 +84,8 @@ pub async fn deploy_key(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// List directory contents on a remote host via SSH.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -89,6 +94,7 @@ pub async fn list_dir(
     ApiJson(req): ApiJson<ListDirRequest>,
 ) -> Result<Json<ListDirResponse>, ApiError> {
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
+    helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
 
     let response = ssh::list_dir(&req).await;
     Ok(Json(response))
@@ -99,7 +105,6 @@ pub async fn list_dir(
     path = "/api/ssh/mkdir",
     tag = "SSH",
     operation_id = "mkdirSsh",
-    summary = "Create a directory on a remote host via SSH",
     request_body = MkdirRequest,
     responses(
         (status = 200, description = "Mkdir result", body = MkdirResponse),
@@ -108,6 +113,8 @@ pub async fn list_dir(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// Create a directory on a remote host via SSH.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -116,6 +123,7 @@ pub async fn mkdir(
     ApiJson(req): ApiJson<MkdirRequest>,
 ) -> Result<Json<MkdirResponse>, ApiError> {
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
+    helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
     helpers::validate_non_empty(&req.path, "path")?;
 
     let response = ssh::mkdir(&req).await;

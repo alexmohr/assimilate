@@ -52,7 +52,6 @@ pub struct UpsertPermissionRequest {
     path = "/api/repos/{repo_id}/permissions",
     tag = "Permissions",
     operation_id = "listPermissionsForRepo",
-    summary = "List all user permissions for a repository",
     params(("repo_id" = i64, Path, description = "Repository ID")),
     responses(
         (status = 200, description = "List of permissions",
@@ -61,6 +60,8 @@ pub struct UpsertPermissionRequest {
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// List all user permissions for a repository.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -83,7 +84,6 @@ pub async fn list_for_repo(
     path = "/api/repos/{repo_id}/permissions/{user_id}",
     tag = "Permissions",
     operation_id = "upsertPermission",
-    summary = "Set or update a user's permissions for a repository",
     params(
         ("repo_id" = i64, Path, description = "Repository ID"),
         ("user_id" = i64, Path, description = "User ID"),
@@ -95,6 +95,8 @@ pub async fn list_for_repo(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// Set or update a user's permissions for a repository.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -126,7 +128,6 @@ pub async fn upsert(
     path = "/api/users/{id}/permissions",
     tag = "Permissions",
     operation_id = "listPermissionsForUser",
-    summary = "List all repository permissions for a user",
     params(("id" = i64, Path, description = "User ID")),
     responses(
         (status = 200, description = "List of permissions",
@@ -135,6 +136,8 @@ pub async fn upsert(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// List all repository permissions for a user.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.

@@ -90,6 +90,7 @@ async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentRespons
         owner_id: agent.owner_id,
         visibility: agent.visibility,
         restart_unavailable_reason,
+        last_ssh_user: agent.last_ssh_user,
     }
 }
 
@@ -98,7 +99,6 @@ async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentRespons
     path = "/api/agents",
     tag = "Agents",
     operation_id = "createAgent",
-    summary = "Register a new agent",
     request_body = CreateAgentRequest,
     responses(
         (status = 201, description = "Agent registered", body = CreateAgentResponse),
@@ -106,6 +106,8 @@ async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentRespons
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// Register a new agent.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -151,12 +153,13 @@ pub struct ListAgentsQuery {
     path = "/api/agents",
     tag = "Agents",
     operation_id = "listAgents",
-    summary = "List all agents",
     responses(
         (status = 200, description = "List of agents", body = Vec<AgentResponse>),
         (status = 401, description = "Unauthorized"),
     )
 )]
+/// List all agents.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -192,7 +195,6 @@ pub async fn list_agents(
     path = "/api/agents/{hostname}",
     tag = "Agents",
     operation_id = "getAgent",
-    summary = "Get an agent by hostname",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
     ),
@@ -202,6 +204,8 @@ pub async fn list_agents(
         (status = 404, description = "Not found"),
     )
 )]
+/// Get an agent by hostname.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -219,7 +223,6 @@ pub async fn get_agent(
     path = "/api/agents/{hostname}",
     tag = "Agents",
     operation_id = "updateAgent",
-    summary = "Update an agent",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
     ),
@@ -230,6 +233,8 @@ pub async fn get_agent(
         (status = 404, description = "Not found"),
     )
 )]
+/// Update an agent.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -267,7 +272,6 @@ pub async fn update_agent(
     path = "/api/agents/{hostname}",
     tag = "Agents",
     operation_id = "deleteAgent",
-    summary = "Delete an agent",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
     ),
@@ -277,6 +281,8 @@ pub async fn update_agent(
         (status = 404, description = "Not found"),
     )
 )]
+/// Delete an agent.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -300,7 +306,6 @@ pub async fn delete_agent(
     path = "/api/agents/{hostname}/regenerate-token",
     tag = "Agents",
     operation_id = "regenerateAgentToken",
-    summary = "Regenerate the agent token for an agent",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
     ),
@@ -310,6 +315,8 @@ pub async fn delete_agent(
         (status = 404, description = "Not found"),
     )
 )]
+/// Regenerate the agent token for an agent.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -354,6 +361,7 @@ pub async fn regenerate_token(
             owner_id: agent.owner_id,
             visibility: agent.visibility,
             restart_unavailable_reason: None,
+            last_ssh_user: agent.last_ssh_user,
         },
         token: token_hex,
     }))
@@ -364,7 +372,6 @@ pub async fn regenerate_token(
     path = "/api/agents/{hostname}/restart",
     tag = "Agents",
     operation_id = "restartAgent",
-    summary = "Send a restart command to the agent",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
     ),
@@ -375,6 +382,8 @@ pub async fn regenerate_token(
         (status = 404, description = "Not found"),
     )
 )]
+/// Send a restart command to the agent.
+///
 /// # Errors
 ///
 /// Returns an error if:
@@ -407,7 +416,6 @@ pub async fn restart_agent(
     path = "/api/agents/{hostname}/hostname-patterns",
     tag = "Agents",
     operation_id = "listHostnamePatterns",
-    summary = "List hostname patterns for an agent",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
     ),
@@ -417,6 +425,8 @@ pub async fn restart_agent(
         (status = 404, description = "Not found"),
     )
 )]
+/// List hostname patterns for an agent.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -442,7 +452,6 @@ pub struct AddPatternRequest {
     path = "/api/agents/{hostname}/hostname-patterns",
     tag = "Agents",
     operation_id = "addHostnamePattern",
-    summary = "Add a hostname pattern to an agent",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
     ),
@@ -454,6 +463,8 @@ pub struct AddPatternRequest {
         (status = 409, description = "Duplicate pattern"),
     )
 )]
+/// Add a hostname pattern to an agent.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -474,7 +485,6 @@ pub async fn add_hostname_pattern(
     path = "/api/agents/{hostname}/hostname-patterns/{pattern_id}",
     tag = "Agents",
     operation_id = "deleteHostnamePattern",
-    summary = "Delete a hostname pattern",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
         ("pattern_id" = i64, Path, description = "Pattern ID"),
@@ -485,6 +495,8 @@ pub async fn add_hostname_pattern(
         (status = 404, description = "Not found"),
     )
 )]
+/// Delete a hostname pattern.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -510,7 +522,6 @@ pub struct MergeAgentRequest {
     path = "/api/agents/{hostname}/merge-from/{source_id}",
     tag = "Agents",
     operation_id = "mergeAgent",
-    summary = "Merge a placeholder agent into this agent",
     params(
         ("hostname" = String, Path, description = "Target agent hostname"),
         ("source_id" = i64, Path, description = "Source placeholder agent ID"),
@@ -523,6 +534,8 @@ pub struct MergeAgentRequest {
         (status = 404, description = "Not found"),
     )
 )]
+/// Merge a placeholder agent into this agent.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -549,7 +562,6 @@ pub async fn merge_agent(
     path = "/api/agents/{hostname}/hide",
     tag = "Agents",
     operation_id = "hideAgent",
-    summary = "Hide an agent from all views",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
     ),
@@ -559,6 +571,8 @@ pub async fn merge_agent(
         (status = 404, description = "Not found"),
     )
 )]
+/// Hide an agent from all views.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -576,7 +590,6 @@ pub async fn hide_agent(
     path = "/api/agents/{hostname}/unhide",
     tag = "Agents",
     operation_id = "unhideAgent",
-    summary = "Unhide a previously hidden agent",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
     ),
@@ -586,6 +599,8 @@ pub async fn hide_agent(
         (status = 404, description = "Not found"),
     )
 )]
+/// Unhide a previously hidden agent.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -603,7 +618,6 @@ pub async fn unhide_agent(
     path = "/api/agents/{hostname}/delete-archives",
     tag = "Agents",
     operation_id = "deleteAgentArchives",
-    summary = "Delete all borg archives belonging to this agent and remove the agent",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
     ),
@@ -614,6 +628,8 @@ pub async fn unhide_agent(
         (status = 503, description = "Agent offline"),
     )
 )]
+/// Delete all borg archives belonging to this agent and remove the agent.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.

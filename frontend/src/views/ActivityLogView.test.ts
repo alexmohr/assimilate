@@ -642,8 +642,8 @@ describe('ActivityLogView', () => {
       await flushPromises()
 
       const badges = wrapper.findAll('td .badge')
-      const successBadge = badges.find((b) => b.text() === 'repo_sync')
-      const failedBadge = badges.find((b) => b.text() === 'repo_sync_failed')
+      const successBadge = badges.find((b) => b.text() === 'repo sync')
+      const failedBadge = badges.find((b) => b.text() === 'repo sync failed')
       expect(successBadge?.classes()).toContain('badge-success')
       expect(successBadge?.classes()).not.toContain('badge-failed')
       expect(failedBadge?.classes()).toContain('badge-failed')

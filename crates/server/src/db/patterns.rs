@@ -102,6 +102,7 @@ struct PatternAgentJoinRow {
     pub default_file_change_patterns_raw: String,
     pub agent_token_hash: String,
     pub is_hidden: bool,
+    pub last_ssh_user: Option<String>,
 }
 
 /// Looks up an agent whose registered hostname pattern glob-matches the
@@ -121,8 +122,8 @@ pub async fn find_agent_by_pattern(
          a.agent_build_time, a.agent_commit_count, a.created_at, a.last_seen_at, a.owner_id, \
          a.visibility, a.default_backup_paths, a.default_exclude_patterns, \
          a.default_pre_backup_commands, a.default_post_backup_commands, \
-         a.default_file_change_patterns_raw, a.agent_token_hash, a.is_hidden FROM \
-         agent_hostname_patterns p JOIN agents a ON a.id = p.agent_id ORDER BY p.pattern",
+         a.default_file_change_patterns_raw, a.agent_token_hash, a.is_hidden, a.last_ssh_user \
+         FROM agent_hostname_patterns p JOIN agents a ON a.id = p.agent_id ORDER BY p.pattern",
     )
     .fetch_all(pool)
     .await
@@ -151,5 +152,6 @@ pub async fn find_agent_by_pattern(
         default_file_change_patterns_raw: row.default_file_change_patterns_raw.clone(),
         agent_token_hash: row.agent_token_hash.clone(),
         is_hidden: row.is_hidden,
+        last_ssh_user: row.last_ssh_user.clone(),
     }))
 }

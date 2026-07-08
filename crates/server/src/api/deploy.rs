@@ -121,7 +121,6 @@ pub async fn query_available_agent_version(binary_dir: &std::path::Path) -> Opti
     path = "/api/agents/{hostname}/deploy",
     tag = "Deployment",
     operation_id = "deployAgent",
-    summary = "Deploy the agent binary to a host via SSH (admin only)",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
     ),
@@ -135,6 +134,8 @@ pub async fn query_available_agent_version(binary_dir: &std::path::Path) -> Opti
         (status = 500, description = "Agent binary not found or internal error"),
     )
 )]
+/// Deploy the agent binary to a host via SSH (admin only).
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -145,6 +146,7 @@ pub async fn deploy_agent(
     ApiJson(req): ApiJson<DeployAgentRequest>,
 ) -> Result<Json<DeployAgentResponse>, ApiError> {
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
+    helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
     helpers::validate_non_empty(&req.server_url, "server_url")?;
 
     let binary_dir = agent_binary_dir().await;
@@ -224,6 +226,7 @@ pub async fn deploy_agent(
                 )
                 .await?;
             }
+            db::update_last_ssh_user(&state.pool, agent.id, &req.ssh_user).await?;
             info!(hostname = %hostname, ssh_host = %req.ssh_host, "agent deployed successfully");
             Ok(Json(DeployAgentResponse {
                 success: true,
@@ -268,7 +271,6 @@ pub struct FetchServiceUnitResponse {
     path = "/api/agents/{hostname}/service-unit",
     tag = "Deployment",
     operation_id = "fetchServiceUnit",
-    summary = "Read the existing systemd service unit from a remote host via SSH (admin only)",
     params(
         ("hostname" = String, Path, description = "Agent hostname"),
     ),
@@ -281,6 +283,8 @@ pub struct FetchServiceUnitResponse {
         (status = 403, description = "Forbidden"),
     )
 )]
+/// Read the existing systemd service unit from a remote host via SSH (admin only).
+///
 /// # Errors
 ///
 /// Returns [`ApiError::BadGateway`] if the upstream operation (e.g. SSH or borg) fails.
@@ -290,6 +294,7 @@ pub async fn fetch_service_unit(
     ApiJson(req): ApiJson<FetchServiceUnitRequest>,
 ) -> Result<Json<FetchServiceUnitResponse>, ApiError> {
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
+    helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
 
     let port = req.ssh_port.unwrap_or(22);
     let content = ssh::read_remote_file(&ssh::ReadFileParams {
@@ -300,7 +305,8 @@ pub async fn fetch_service_unit(
         path: "/etc/systemd/system/assimilate-agent.service",
     })
     .await
-    .map_err(|e| ApiError::BadGateway(e.to_string()))?;
+    .map_err(|e| ApiError::BadGateway(e.to_string()))?
+    .map(|content| ssh::redact_agent_token(&content));
 
     Ok(Json(FetchServiceUnitResponse { content }))
 }

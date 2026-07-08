@@ -21,7 +21,7 @@ import BaseModal from '../components/BaseModal.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import SshKeyDeployPanel from '../components/SshKeyDeployPanel.vue'
-import type { RepoWithStats } from '../types/repo'
+import type { Repo, RepoWithStats } from '../types/repo'
 import type { TagRow } from '../types/tag'
 
 type CompressionType = 'lz4' | 'zstd' | 'none'
@@ -504,17 +504,7 @@ async function submitRepo(): Promise<void> {
   try {
     if (repoMode.value === 'create') {
       if (addTab.value === 'import') {
-        const res = await apiClient.post<{
-          id: number
-          name: string
-          repo_path: string
-          ssh_user: string
-          ssh_host: string
-          ssh_port: number
-          compression: string
-          encryption: string
-          enabled: boolean
-        }>('/repos', {
+        const res = await apiClient.post<Repo>('/repos', {
           name: repoForm.name.trim(),
           repo_path: repoForm.repo_path.trim(),
           ssh_user: repoForm.ssh_user.trim(),

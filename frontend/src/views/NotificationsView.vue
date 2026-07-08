@@ -42,6 +42,7 @@ import type {
   NotificationDelivery,
   ChannelScope,
 } from '../types/notifications'
+import type { Repo } from '../types/repo'
 import { apiClient } from '../api/client'
 
 type TabId = 'channels' | 'history'
@@ -313,7 +314,7 @@ async function loadPushStatus(): Promise<void> {
 async function loadScopeOptions(): Promise<void> {
   try {
     const [reposRes, agentsRes, schedulesRes] = await Promise.all([
-      apiClient.get<{ id: number; name: string }[]>('/repos'),
+      apiClient.get<Repo[]>('/repos'),
       apiClient.get<{ id: number; hostname: string; display_name: string | null }[]>('/agents'),
       apiClient.get<{ id: number; agent_id: number; repo_id: number | null }[]>('/schedules'),
     ])

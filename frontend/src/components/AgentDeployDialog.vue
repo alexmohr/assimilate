@@ -12,6 +12,7 @@ import { extractError } from '../utils/error'
 const props = defineProps<{
   hostname: string
   agentVersion: string | null
+  lastSshUser?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -29,6 +30,7 @@ const deployLoading = ref(false)
 const deployError = ref<string | null>(null)
 const fetchServiceLoading = ref(false)
 const fetchServiceError = ref<string | null>(null)
+const serviceContentTouched = ref(false)
 const deployResult = ref<{
   success: boolean
   skipped: boolean
@@ -68,14 +70,16 @@ WantedBy=multi-user.target
 
 onMounted(() => {
   deployForm.ssh_host = props.hostname
+  deployForm.ssh_user = props.lastSshUser || 'root'
   deployForm.server_url = window.location.origin
   deployForm.systemd_service_content = defaultSystemdUnit('/usr/local/bin/assimilate-agent')
+  void loadExistingServiceUnit({ silent: true })
 })
 
-async function loadExistingServiceUnit(): Promise<void> {
+async function loadExistingServiceUnit(options: { silent?: boolean } = {}): Promise<void> {
   if (!deployForm.ssh_host) return
   fetchServiceLoading.value = true
-  fetchServiceError.value = null
+  if (!options.silent) fetchServiceError.value = null
   try {
     const res = await apiClient.post<{ content: string | null }>(
       `/agents/${props.hostname}/service-unit`,
@@ -86,13 +90,16 @@ async function loadExistingServiceUnit(): Promise<void> {
         ssh_password: deployForm.ssh_password || undefined,
       },
     )
+    // A silent (auto-triggered) load must not clobber content the user has already
+    // started editing while the request was in flight.
+    if (options.silent && serviceContentTouched.value) return
     if (res.data.content) {
       deployForm.systemd_service_content = res.data.content
-    } else {
+    } else if (!options.silent) {
       fetchServiceError.value = 'No existing service unit found on remote host.'
     }
   } catch (e: unknown) {
-    fetchServiceError.value = extractError(e)
+    if (!options.silent) fetchServiceError.value = extractError(e)
   } finally {
     fetchServiceLoading.value = false
   }
@@ -237,7 +244,7 @@ async function submitDeploy(): Promise<void> {
                   class="btn btn-sm btn-ghost"
                   type="button"
                   :disabled="fetchServiceLoading || !deployForm.ssh_host"
-                  @click="loadExistingServiceUnit"
+                  @click="loadExistingServiceUnit()"
                 >
                   {{ fetchServiceLoading ? 'Loading…' : 'Load from remote' }}
                 </button>
@@ -247,10 +254,13 @@ async function submitDeploy(): Promise<void> {
                 class="input mono service-textarea"
                 rows="12"
                 spellcheck="false"
+                @input="serviceContentTouched = true"
               />
               <span class="field-hint">
                 The <code>BORG_SERVER_URL</code> and <code>BORG_AGENT_TOKEN</code> environment
-                variables will be injected automatically if not present in custom content.
+                variables will be injected automatically if not present in custom content. When
+                loaded from a remote host, an existing token is shown as <code>[REDACTED]</code> and
+                replaced with a newly generated one on deploy.
               </span>
               <span
                 v-if="fetchServiceError"

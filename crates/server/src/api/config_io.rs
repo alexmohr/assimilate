@@ -139,13 +139,14 @@ pub struct ImportResult {
     path = "/api/config/export",
     tag = "Config",
     operation_id = "exportConfig",
-    summary = "Export all hosts and schedules as a portable JSON snapshot",
     responses(
         (status = 200, description = "Config export", body = ConfigExport),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// Export all hosts and schedules as a portable JSON snapshot.
+///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
@@ -288,7 +289,6 @@ async fn build_schedule_export(
     path = "/api/config/import",
     tag = "Config",
     operation_id = "importConfig",
-    summary = "Import hosts and schedules from a JSON export",
     request_body = ConfigExport,
     responses(
         (status = 200, description = "Import results", body = ImportResult),
@@ -297,6 +297,8 @@ async fn build_schedule_export(
         (status = 403, description = "Forbidden -- admin only"),
     )
 )]
+/// Import hosts and schedules from a JSON export.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if the request is invalid.

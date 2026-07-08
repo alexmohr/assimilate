@@ -28,9 +28,6 @@ const LOGIN_WINDOW_MINUTES: i32 = 15;
 /// Per-account lockout is triggered after this many consecutive failed attempts.
 const MAX_ACCOUNT_FAILURES: i64 = 10;
 
-/// Exponential backoff durations for account lockout (indexed by escalation level).
-const LOCKOUT_DURATIONS_MINUTES: &[i64] = &[1, 5, 15, 60, 1440];
-
 /// Authenticated user extracted from a session cookie or bearer token.
 #[derive(Debug, Clone)]
 pub struct AuthUser {

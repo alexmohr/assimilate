@@ -6633,10 +6633,13 @@ async fn retention_fallback_nothing_set_uses_defaults(pool: PgPool) {
         "default report_retention_days must be 0 (keep forever)"
     );
     assert_eq!(
-        failed, 365,
-        "default failed_report_retention_days must be 365"
+        failed, 7,
+        "default failed_report_retention_days must fall back to legacy retention_days"
     );
-    assert_eq!(events, 90, "default system_event_retention_days must be 90");
+    assert_eq!(
+        events, 7,
+        "default system_event_retention_days must fall back to legacy retention_days"
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]

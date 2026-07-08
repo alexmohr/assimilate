@@ -147,14 +147,19 @@ pub async fn ssh_regenerate_key(
 /// Current system settings.
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct SettingsResponse {
+    /// Number of days to keep backup reports for successful backups.
     pub retention_days: i64,
+    /// Number of days to keep all backup reports.
     pub report_retention_days: i64,
+    /// Number of days to keep failed backup reports.
     pub failed_report_retention_days: i64,
+    /// Number of days to keep system events.
     pub system_event_retention_days: i64,
     /// System timezone (e.g. "UTC").
     pub timezone: String,
     /// Timeout in seconds for borg query operations.
     pub borg_query_timeout_secs: u64,
+    /// Idle timeout for user sessions in minutes. `None` disables the timeout.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_idle_timeout_minutes: Option<i64>,
 }
@@ -255,14 +260,19 @@ pub async fn get_settings(
 /// Request payload for updating system settings.
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct UpdateSettingsRequest {
+    /// Number of days to keep backup reports for successful backups.
     pub retention_days: i64,
+    /// Number of days to keep all backup reports.
     pub report_retention_days: Option<i64>,
+    /// Number of days to keep failed backup reports.
     pub failed_report_retention_days: Option<i64>,
+    /// Number of days to keep system events.
     pub system_event_retention_days: Option<i64>,
     /// New timezone (e.g. `"America/New_York"`).
     pub timezone: Option<String>,
     /// Timeout in seconds for borg query operations.
     pub borg_query_timeout_secs: Option<u64>,
+    /// Idle timeout for user sessions in minutes. `None` disables the timeout.
     pub session_idle_timeout_minutes: Option<i64>,
 }
 

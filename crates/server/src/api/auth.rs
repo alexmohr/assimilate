@@ -55,6 +55,11 @@ impl CookieSecurity {
     }
 }
 
+/// Returns the `Secure` cookie flag based on the `ASSIMILATE_SECURE_COOKIES` env var.
+///
+/// Defaults to `Secure` when the env var is unset or set to any value other
+/// than `"false"`.
+#[must_use]
 pub fn secure_cookie_flag() -> &'static str {
     CookieSecurity::from(std::env::var("ASSIMILATE_SECURE_COOKIES").ok()).cookie_flag()
 }
@@ -102,7 +107,7 @@ impl FromRequestParts<AppState> for AuthUser {
                 .and_then(|v| v.parse::<i64>().ok())
                 .unwrap_or(480);
 
-        let idle_duration = Utc::now() - session.last_seen_at;
+        let idle_duration = Utc::now().signed_duration_since(session.last_seen_at);
         if idle_duration.num_minutes() > idle_timeout_minutes {
             db::delete_session(&state.pool, &hashed_id).await?;
             return Err(ApiError::Unauthorized(
@@ -276,7 +281,11 @@ pub async fn login(
         // Create a short-lived temp token session for TOTP verification
         let temp_token = Uuid::new_v4().to_string();
         let temp_hashed = hash_token(&temp_token);
-        let temp_expires = Utc::now() + Duration::minutes(10);
+        let temp_expires = Utc::now()
+            .checked_add_signed(Duration::minutes(10))
+            .ok_or_else(|| {
+                ApiError::Internal("failed to compute temp session expiry".to_string())
+            })?;
         db::insert_session(&state.pool, &temp_hashed, user_resp.id, temp_expires, false).await?;
 
         let body = Json(LoginResponse {
@@ -584,6 +593,9 @@ pub async fn update_preferences(
         (status = 401, description = "Not authenticated"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_sessions(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -620,6 +632,11 @@ pub async fn list_sessions(
         (status = 404, description = "Session not found"),
     )
 )]
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails, or
+/// [`ApiError::NotFound`] if the session is not found, or
+/// [`ApiError::BadRequest`] if the user tries to revoke their own session.
 pub async fn revoke_session(
     State(state): State<AppState>,
     auth: AuthUser,

@@ -3879,16 +3879,24 @@ pub struct SessionRow {
     pub expires_at: DateTime<Utc>,
     /// Whether the "remember me" flag was set.
     pub remember_me: bool,
+    /// When the session was last used.
     pub last_seen_at: DateTime<Utc>,
 }
 
+/// A session row returned for user-facing session listing.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct SessionForUser {
+    /// Hashed session ID.
     pub id: String,
+    /// User ID the session belongs to.
     pub user_id: i64,
+    /// When the session was created.
     pub created_at: DateTime<Utc>,
+    /// When the session expires.
     pub expires_at: DateTime<Utc>,
+    /// When the session was last used.
     pub last_seen_at: DateTime<Utc>,
+    /// Whether the "remember me" flag was set.
     pub remember_me: bool,
 }
 
@@ -4064,10 +4072,17 @@ pub async fn update_last_login(pool: &PgPool, user_id: i64) -> Result<(), ApiErr
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_user_totp_fields(
     pool: &PgPool,
     user_id: i64,
 ) -> Result<Option<UserTotpFields>, ApiError> {
+    #[allow(
+        clippy::struct_field_names,
+        reason = "fields must match DB column names prefixed with totp_"
+    )]
     #[derive(sqlx::FromRow)]
     struct Row {
         totp_secret_encrypted: Option<Vec<u8>>,
@@ -4094,13 +4109,21 @@ pub async fn get_user_totp_fields(
     }))
 }
 
+/// TOTP configuration fields for a user.
 pub struct UserTotpFields {
+    /// Encrypted TOTP secret (AES-256-GCM).
     pub secret_encrypted: Option<Vec<u8>>,
+    /// Whether TOTP is enabled for this user.
     pub enabled: bool,
+    /// Hashed recovery codes.
     pub recovery_codes: Vec<String>,
+    /// When TOTP was last verified during login.
     pub last_verified_at: Option<DateTime<Utc>>,
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn set_user_totp_secret(
     pool: &PgPool,
     user_id: i64,
@@ -4119,6 +4142,9 @@ pub async fn set_user_totp_secret(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn enable_user_totp(pool: &PgPool, user_id: i64) -> Result<(), ApiError> {
     sqlx::query!(
         "UPDATE users SET totp_enabled = true, totp_last_verified_at = NOW() WHERE id = $1",
@@ -4130,6 +4156,9 @@ pub async fn enable_user_totp(pool: &PgPool, user_id: i64) -> Result<(), ApiErro
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn disable_user_totp(pool: &PgPool, user_id: i64) -> Result<(), ApiError> {
     sqlx::query!(
         "UPDATE users SET totp_enabled = false, totp_secret_encrypted = NULL, totp_recovery_codes \
@@ -4142,6 +4171,9 @@ pub async fn disable_user_totp(pool: &PgPool, user_id: i64) -> Result<(), ApiErr
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn replace_totp_recovery_codes(
     pool: &PgPool,
     user_id: i64,
@@ -4158,6 +4190,9 @@ pub async fn replace_totp_recovery_codes(
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn update_session_last_seen(pool: &PgPool, session_id: &str) -> Result<(), ApiError> {
     sqlx::query!(
         "UPDATE sessions SET last_seen_at = NOW() WHERE id = $1",
@@ -4169,6 +4204,9 @@ pub async fn update_session_last_seen(pool: &PgPool, session_id: &str) -> Result
     Ok(())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_sessions_for_user(
     pool: &PgPool,
     user_id: i64,
@@ -4184,6 +4222,9 @@ pub async fn list_sessions_for_user(
     .map_err(ApiError::Database)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn delete_session_by_id(pool: &PgPool, session_id: &str) -> Result<bool, ApiError> {
     let result = sqlx::query!("DELETE FROM sessions WHERE id = $1", session_id)
         .execute(pool)
@@ -4192,6 +4233,9 @@ pub async fn delete_session_by_id(pool: &PgPool, session_id: &str) -> Result<boo
     Ok(result.rows_affected() > 0)
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_user_password_hash_by_id(pool: &PgPool, user_id: i64) -> Result<String, ApiError> {
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -4839,6 +4883,9 @@ pub async fn delete_backup_reports_with_archive_before(
     Ok(result.rows_affected())
 }
 
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_user_preferences(
     pool: &PgPool,
     user_id: i64,

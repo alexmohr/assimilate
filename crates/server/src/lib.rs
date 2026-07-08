@@ -13,6 +13,8 @@ pub mod borg;
 pub mod client_ip;
 /// Assembles per-agent configuration from the database.
 pub mod config_assembler;
+/// Session cookie parsing and construction helpers.
+pub mod cookies;
 /// Database query helpers.
 pub mod db;
 /// Error types for the API.

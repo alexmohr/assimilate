@@ -6214,6 +6214,183 @@ async fn delete_system_events_before_deletes_old(pool: PgPool) {
     assert!(events.is_empty());
 }
 
+/// Applies the same fallback logic as `get_settings` in `api/system.rs`.
+fn compute_retention_fallbacks(
+    legacy_raw: Option<&str>,
+    report_raw: Option<&str>,
+    failed_raw: Option<&str>,
+    event_raw: Option<&str>,
+) -> (i64, i64, i64, i64) {
+    let legacy = legacy_raw.and_then(|v| v.parse::<i64>().ok());
+    let retention_days = legacy.unwrap_or(7);
+    let report_retention_days = report_raw.and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+    let failed_report_retention_days = failed_raw
+        .and_then(|v| v.parse::<i64>().ok())
+        .or(legacy)
+        .unwrap_or(365);
+    let system_event_retention_days = event_raw
+        .and_then(|v| v.parse::<i64>().ok())
+        .or(legacy)
+        .unwrap_or(90);
+    (
+        retention_days,
+        report_retention_days,
+        failed_report_retention_days,
+        system_event_retention_days,
+    )
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn retention_fallback_new_settings_unset_uses_legacy(pool: PgPool) {
+    db::set_setting(&pool, "retention_days", "30")
+        .await
+        .unwrap();
+
+    let legacy_raw = db::get_setting(&pool, "retention_days").await.unwrap();
+    let report_raw = db::get_setting(&pool, "report_retention_days")
+        .await
+        .unwrap();
+    let failed_raw = db::get_setting(&pool, "failed_report_retention_days")
+        .await
+        .unwrap();
+    let event_raw = db::get_setting(&pool, "system_event_retention_days")
+        .await
+        .unwrap();
+
+    let (ret, report, failed, events) = compute_retention_fallbacks(
+        legacy_raw.as_deref(),
+        report_raw.as_deref(),
+        failed_raw.as_deref(),
+        event_raw.as_deref(),
+    );
+    assert_eq!(ret, 30);
+    assert_eq!(
+        report, 0,
+        "report_retention_days must NOT fall back to legacy"
+    );
+    assert_eq!(
+        failed, 30,
+        "failed_report_retention_days must fall back to legacy (30)"
+    );
+    assert_eq!(
+        events, 30,
+        "system_event_retention_days must fall back to legacy (30)"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn retention_fallback_new_settings_take_precedence(pool: PgPool) {
+    db::set_setting(&pool, "retention_days", "30")
+        .await
+        .unwrap();
+    db::set_setting(&pool, "report_retention_days", "180")
+        .await
+        .unwrap();
+    db::set_setting(&pool, "failed_report_retention_days", "60")
+        .await
+        .unwrap();
+    db::set_setting(&pool, "system_event_retention_days", "45")
+        .await
+        .unwrap();
+
+    let legacy_raw = db::get_setting(&pool, "retention_days").await.unwrap();
+    let report_raw = db::get_setting(&pool, "report_retention_days")
+        .await
+        .unwrap();
+    let failed_raw = db::get_setting(&pool, "failed_report_retention_days")
+        .await
+        .unwrap();
+    let event_raw = db::get_setting(&pool, "system_event_retention_days")
+        .await
+        .unwrap();
+
+    let (ret, report, failed, events) = compute_retention_fallbacks(
+        legacy_raw.as_deref(),
+        report_raw.as_deref(),
+        failed_raw.as_deref(),
+        event_raw.as_deref(),
+    );
+    assert_eq!(ret, 30);
+    assert_eq!(report, 180, "explicit report_retention_days must be used");
+    assert_eq!(
+        failed, 60,
+        "explicit failed_report_retention_days must be used"
+    );
+    assert_eq!(
+        events, 45,
+        "explicit system_event_retention_days must be used"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn retention_fallback_nothing_set_uses_defaults(pool: PgPool) {
+    let legacy_raw = db::get_setting(&pool, "retention_days").await.unwrap();
+    let report_raw = db::get_setting(&pool, "report_retention_days")
+        .await
+        .unwrap();
+    let failed_raw = db::get_setting(&pool, "failed_report_retention_days")
+        .await
+        .unwrap();
+    let event_raw = db::get_setting(&pool, "system_event_retention_days")
+        .await
+        .unwrap();
+
+    let (ret, report, failed, events) = compute_retention_fallbacks(
+        legacy_raw.as_deref(),
+        report_raw.as_deref(),
+        failed_raw.as_deref(),
+        event_raw.as_deref(),
+    );
+    assert_eq!(ret, 7, "default retention_days must be 7");
+    assert_eq!(
+        report, 0,
+        "default report_retention_days must be 0 (keep forever)"
+    );
+    assert_eq!(
+        failed, 7,
+        "default failed_report_retention_days must fall back to legacy retention_days"
+    );
+    assert_eq!(
+        events, 7,
+        "default system_event_retention_days must fall back to legacy retention_days"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn retention_fallback_new_settings_without_legacy(pool: PgPool) {
+    db::set_setting(&pool, "report_retention_days", "100")
+        .await
+        .unwrap();
+    db::set_setting(&pool, "failed_report_retention_days", "200")
+        .await
+        .unwrap();
+    db::set_setting(&pool, "system_event_retention_days", "300")
+        .await
+        .unwrap();
+
+    let legacy_raw = db::get_setting(&pool, "retention_days").await.unwrap();
+    let report_raw = db::get_setting(&pool, "report_retention_days")
+        .await
+        .unwrap();
+    let failed_raw = db::get_setting(&pool, "failed_report_retention_days")
+        .await
+        .unwrap();
+    let event_raw = db::get_setting(&pool, "system_event_retention_days")
+        .await
+        .unwrap();
+
+    let (ret, report, failed, events) = compute_retention_fallbacks(
+        legacy_raw.as_deref(),
+        report_raw.as_deref(),
+        failed_raw.as_deref(),
+        event_raw.as_deref(),
+    );
+    assert_eq!(ret, 7, "default retention_days must be 7");
+    assert_eq!(report, 100);
+    assert_eq!(failed, 200);
+    assert_eq!(events, 300);
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn audit_filter_by_target_type(pool: PgPool) {
     db::audit::insert_audit_entry(

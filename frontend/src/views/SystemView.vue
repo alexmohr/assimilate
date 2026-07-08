@@ -351,7 +351,7 @@ async function resetSystem(): Promise<void> {
           {{ settingsError }}
         </div>
 
-        <div class="settings-form">
+        <form class="settings-form">
           <div class="setting-row">
             <label
               class="setting-label"
@@ -385,6 +385,7 @@ async function resetSystem(): Promise<void> {
                 v-model.number="settingsForm.retention_days"
                 type="number"
                 min="0"
+                step="1"
                 class="form-input retention-input"
               />
               <span class="field-hint">Number of days to keep backup job history.</span>
@@ -404,6 +405,7 @@ async function resetSystem(): Promise<void> {
                 v-model.number="settingsForm.report_retention_days"
                 type="number"
                 min="0"
+                step="1"
                 class="form-input retention-input"
               />
               <span class="field-hint"
@@ -425,6 +427,7 @@ async function resetSystem(): Promise<void> {
                 v-model.number="settingsForm.failed_report_retention_days"
                 type="number"
                 min="0"
+                step="1"
                 class="form-input retention-input"
               />
               <span class="field-hint"
@@ -446,6 +449,7 @@ async function resetSystem(): Promise<void> {
                 v-model.number="settingsForm.system_event_retention_days"
                 type="number"
                 min="0"
+                step="1"
                 class="form-input retention-input"
               />
               <span class="field-hint">Days to keep system events. 0 = keep forever.</span>
@@ -465,6 +469,7 @@ async function resetSystem(): Promise<void> {
                 v-model.number="settingsForm.borg_query_timeout_secs"
                 type="number"
                 min="1"
+                step="1"
                 class="form-input retention-input"
               />
               <span class="field-hint"
@@ -489,7 +494,7 @@ async function resetSystem(): Promise<void> {
               Settings saved
             </span>
           </div>
-        </div>
+        </form>
       </template>
     </div>
 

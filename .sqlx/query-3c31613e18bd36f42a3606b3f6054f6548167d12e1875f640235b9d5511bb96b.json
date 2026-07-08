@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, user_id, created_at, expires_at, last_seen_at, remember_me FROM sessions WHERE user_id = $1 AND expires_at > NOW() ORDER BY created_at DESC",
+  "query": "SELECT id, user_id, created_at, expires_at, last_seen_at, remember_me FROM sessions WHERE user_id = $1 AND expires_at > NOW() AND pending_totp = false ORDER BY created_at DESC",
   "describe": {
     "columns": [
       {
@@ -48,5 +48,5 @@
       false
     ]
   },
-  "hash": "2ba4a118f656ad2582a83d178ac5767ca5eb205acc4540c2fa0fd675ba768732"
+  "hash": "3c31613e18bd36f42a3606b3f6054f6548167d12e1875f640235b9d5511bb96b"
 }

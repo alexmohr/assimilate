@@ -1851,7 +1851,7 @@ mod tests {
 
             user_rate_limiter: crate::rate_limit::UserRateLimiter::new(
                 60,
-                std::time::Duration::from_secs(60),
+                std::time::Duration::from_mins(1),
             ),
         }
     }

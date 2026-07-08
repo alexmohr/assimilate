@@ -214,14 +214,14 @@ mod tests {
 
     #[tokio::test]
     async fn ip_rate_limiter_accepts_first_request() {
-        let limiter = IpRateLimiter::new(5, Duration::from_secs(60), ClientIpResolver::new());
+        let limiter = IpRateLimiter::new(5, Duration::from_mins(1), ClientIpResolver::new());
         let ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
         assert!(limiter.check(ip).await);
     }
 
     #[tokio::test]
     async fn ip_rate_limiter_rejects_excess_requests() {
-        let limiter = IpRateLimiter::new(2, Duration::from_secs(60), ClientIpResolver::new());
+        let limiter = IpRateLimiter::new(2, Duration::from_mins(1), ClientIpResolver::new());
         let ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
         assert!(limiter.check(ip).await);
         assert!(limiter.check(ip).await);
@@ -230,7 +230,7 @@ mod tests {
 
     #[tokio::test]
     async fn ip_rate_limiter_allows_different_ips() {
-        let limiter = IpRateLimiter::new(2, Duration::from_secs(60), ClientIpResolver::new());
+        let limiter = IpRateLimiter::new(2, Duration::from_mins(1), ClientIpResolver::new());
         let ip1 = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
         let ip2 = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
         assert!(limiter.check(ip1).await);
@@ -241,13 +241,13 @@ mod tests {
 
     #[tokio::test]
     async fn user_rate_limiter_accepts_first_request() {
-        let limiter = UserRateLimiter::new(5, Duration::from_secs(60));
+        let limiter = UserRateLimiter::new(5, Duration::from_mins(1));
         assert!(limiter.check(42).await);
     }
 
     #[tokio::test]
     async fn user_rate_limiter_rejects_excess_requests() {
-        let limiter = UserRateLimiter::new(2, Duration::from_secs(60));
+        let limiter = UserRateLimiter::new(2, Duration::from_mins(1));
         assert!(limiter.check(1).await);
         assert!(limiter.check(1).await);
         assert!(!limiter.check(1).await);
@@ -255,7 +255,7 @@ mod tests {
 
     #[tokio::test]
     async fn user_rate_limiter_allows_different_users() {
-        let limiter = UserRateLimiter::new(2, Duration::from_secs(60));
+        let limiter = UserRateLimiter::new(2, Duration::from_mins(1));
         assert!(limiter.check(10).await);
         assert!(limiter.check(10).await);
         assert!(limiter.check(20).await);

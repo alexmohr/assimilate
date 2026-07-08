@@ -2612,7 +2612,7 @@ async fn account_lockout(pool: PgPool) {
     assert_eq!(count, 3);
 
     // Set a lockout
-    let lock_time = Utc::now() + Duration::minutes(30);
+    let lock_time = Utc::now().checked_add_signed(Duration::minutes(30)).unwrap();
     db::set_account_lockout(&pool, "lockuser", lock_time)
         .await
         .unwrap();
@@ -2693,7 +2693,7 @@ async fn lockout_escalation_reaches_60min_tier(pool: PgPool) {
     let locked_until = user.locked_until.expect("user should be locked");
 
     // Lockout duration should be >= 59 minutes (60 min tier, with some slack for test timing)
-    let duration_min = (locked_until - Utc::now()).num_minutes();
+    let duration_min = locked_until.signed_duration_since(Utc::now()).num_minutes();
     assert!(
         duration_min >= 55,
         "expected ~60 min lockout, got {duration_min} min"
@@ -2718,7 +2718,7 @@ async fn lockout_escalation_reaches_24h_tier(pool: PgPool) {
         .unwrap();
     let locked_until = user.locked_until.expect("user should be locked");
 
-    let duration_min = (locked_until - Utc::now()).num_minutes();
+    let duration_min = locked_until.signed_duration_since(Utc::now()).num_minutes();
     assert!(
         duration_min >= 1430,
         "expected ~1440 min lockout, got {duration_min} min"
@@ -2808,7 +2808,7 @@ async fn lockout_escalation_sliding_window_keeps_count_across_lockouts(pool: PgP
     let locked_until = user
         .locked_until
         .expect("user should be locked after phase 2");
-    let duration_min = (locked_until - Utc::now()).num_minutes();
+    let duration_min = locked_until.signed_duration_since(Utc::now()).num_minutes();
     assert!(
         duration_min >= 2,
         "expected level 1 (5 min), got {duration_min} min"
@@ -2859,7 +2859,7 @@ async fn record_failed_login_transactional_rollback(pool: PgPool) {
     .await
     .unwrap();
 
-    assert_eq!(count_after, count_before + 1);
+    assert_eq!(count_after, count_before.checked_add(1).unwrap());
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -6336,14 +6336,8 @@ async fn delete_backup_reports_with_archive_before_one_sec_before(pool: PgPool) 
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now
-                .checked_sub_signed(Duration::days(30))
-                .and_then(|dt| dt.checked_sub_signed(Duration::seconds(1)))
-                .unwrap(),
-            finished_at: now
-                .checked_sub_signed(Duration::days(30))
-                .and_then(|dt| dt.checked_sub_signed(Duration::seconds(1)))
-                .unwrap(),
+            started_at: now.checked_sub_signed(Duration::days(30)).and_then(|dt| dt.checked_sub_signed(Duration::seconds(1))).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::days(30)).and_then(|dt| dt.checked_sub_signed(Duration::seconds(1))).unwrap(),
             status: "success".to_string(),
             original_size: 100,
             compressed_size: 50,
@@ -6442,14 +6436,8 @@ async fn delete_backup_reports_before_one_sec_before(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now
-                .checked_sub_signed(Duration::days(7))
-                .and_then(|dt| dt.checked_sub_signed(Duration::seconds(1)))
-                .unwrap(),
-            finished_at: now
-                .checked_sub_signed(Duration::days(7))
-                .and_then(|dt| dt.checked_sub_signed(Duration::seconds(1)))
-                .unwrap(),
+            started_at: now.checked_sub_signed(Duration::days(7)).and_then(|dt| dt.checked_sub_signed(Duration::seconds(1))).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::days(7)).and_then(|dt| dt.checked_sub_signed(Duration::seconds(1))).unwrap(),
             status: "failed".to_string(),
             original_size: 0,
             compressed_size: 0,
@@ -6492,9 +6480,7 @@ async fn delete_system_events_before_keeps_recent(pool: PgPool) {
         .unwrap();
 
     // Use a cutoff just before the insert -- guaranteed to be before created_at
-    let cutoff = before_insert
-        .checked_sub_signed(Duration::seconds(1))
-        .unwrap();
+    let cutoff = before_insert.checked_sub_signed(Duration::seconds(1)).unwrap();
     let deleted = db::delete_system_events_before(&pool, cutoff)
         .await
         .unwrap();

@@ -810,15 +810,19 @@ fn inject_env_vars(content: &str, server_url: &str, token: &str) -> String {
     replace_or_insert_environment(&result, "BORG_AGENT_TOKEN", token)
 }
 
-/// Returns the environment-assignment content of a systemd unit-file `line`: the part
-/// after an `Environment=` directive (surrounding quotes trimmed), or the trimmed line
-/// itself when there is no such prefix. Shared by [`replace_or_insert_environment`] and
-/// [`redact_agent_token`] so both recognize `KEY=VALUE` assignments identically.
-fn environment_content(line: &str) -> &str {
-    let trimmed = line.trim();
-    trimmed
+/// Returns the value portion of a systemd `Environment=` directive line, or `None` if
+/// the line is not an `Environment=` line. Both single and double quotes surrounding the
+/// value are stripped. Shared by [`replace_or_insert_environment`] and [`redact_agent_token`]
+/// so both recognize `KEY=VALUE` assignments identically.
+fn environment_content(line: &str) -> Option<&str> {
+    line.trim()
         .strip_prefix("Environment=")
-        .map_or(trimmed, |value| value.trim_matches('"'))
+        .map(|value| value.trim().trim_matches(|c| c == '"' || c == '\''))
+}
+
+/// Strips surrounding single or double quotes from a string slice.
+fn strip_env_quotes(s: &str) -> &str {
+    s.trim_matches(|c| c == '"' || c == '\'')
 }
 
 #[allow(
@@ -836,7 +840,7 @@ fn replace_or_insert_environment(content: &str, key: &str, value: &str) -> Strin
     let mut lines = content
         .lines()
         .map(|line| {
-            if environment_content(line).starts_with(&assignment) {
+            if environment_content(line).is_some_and(|v| v.starts_with(&assignment)) {
                 replaced = true;
                 format!("Environment={key}={value}")
             } else {
@@ -866,6 +870,8 @@ fn replace_or_insert_environment(content: &str, key: &str, value: &str) -> Strin
 /// callers. Handles both a single assignment per `Environment=` line and systemd's
 /// space-separated multi-assignment form (`Environment=A=1 BORG_AGENT_TOKEN=secret`),
 /// redacting only the matching assignment and leaving the rest of the line intact.
+/// Only `Environment=` lines are processed — non-`Environment=` lines are passed
+/// through unchanged regardless of their content.
 ///
 /// Unlike [`replace_or_insert_environment`], this never inserts a line when the key is
 /// absent - content without a token assignment is returned unchanged.
@@ -874,10 +880,12 @@ pub(crate) fn redact_agent_token(content: &str) -> String {
     let lines = content
         .lines()
         .map(|line| {
-            let assignments = environment_content(line);
+            let Some(assignments) = environment_content(line) else {
+                return line.to_owned();
+            };
             if !assignments
                 .split_whitespace()
-                .any(|token| token.trim_matches('"').starts_with(assignment))
+                .any(|token| strip_env_quotes(token).starts_with(assignment))
             {
                 return line.to_owned();
             }
@@ -885,7 +893,7 @@ pub(crate) fn redact_agent_token(content: &str) -> String {
             let redacted = assignments
                 .split_whitespace()
                 .map(|token| {
-                    if token.trim_matches('"').starts_with(assignment) {
+                    if strip_env_quotes(token).starts_with(assignment) {
                         "BORG_AGENT_TOKEN=[REDACTED]".to_owned()
                     } else {
                         token.to_owned()
@@ -1227,6 +1235,31 @@ mod tests {
     fn redact_agent_token_masks_value_within_multi_assignment_line() {
         let content = "[Service]\nEnvironment=BORG_SERVER_URL=https://example.com \
                        BORG_AGENT_TOKEN=supersecrettoken\n";
+        let result = redact_agent_token(content);
+        assert!(result.contains(
+            "Environment=BORG_SERVER_URL=https://example.com BORG_AGENT_TOKEN=[REDACTED]"
+        ));
+        assert!(!result.contains("supersecrettoken"));
+    }
+
+    #[test]
+    fn redact_agent_token_masks_single_quoted_value() {
+        let content = "[Service]\nEnvironment='BORG_AGENT_TOKEN=supersecrettoken'\n";
+        let result = redact_agent_token(content);
+        assert!(result.contains("Environment=BORG_AGENT_TOKEN=[REDACTED]"));
+        assert!(!result.contains("supersecrettoken"));
+    }
+
+    #[test]
+    fn redact_agent_token_ignores_non_environment_lines() {
+        let content = "[Service]\nExecStart=/usr/local/bin/BORG_AGENT_TOKEN=not-a-real-token\n";
+        assert_eq!(redact_agent_token(content), content);
+    }
+
+    #[test]
+    fn redact_agent_token_masks_single_quoted_within_multi_assignment() {
+        let content = "[Service]\nEnvironment=BORG_SERVER_URL=https://example.com \
+                       'BORG_AGENT_TOKEN=supersecrettoken'\n";
         let result = redact_agent_token(content);
         assert!(result.contains(
             "Environment=BORG_SERVER_URL=https://example.com BORG_AGENT_TOKEN=[REDACTED]"

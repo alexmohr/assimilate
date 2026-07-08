@@ -17,12 +17,4 @@ export type LoginResponse = {
    * Whether the session should be remembered beyond the current browser session.
    */
   remember_me: boolean;
-  /**
-   * Whether TOTP verification is required to complete login.
-   */
-  totp_required: boolean;
-  /**
-   * Temporary session token used during two-step login.
-   */
-  temp_token: string | null;
 };

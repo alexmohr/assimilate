@@ -28,8 +28,4 @@ export type MeResponse = {
    * Whether the session should be remembered beyond the current browser session.
    */
   remember_me: boolean;
-  /**
-   * Whether TOTP is enabled for the user.
-   */
-  totp_enabled: boolean;
 };

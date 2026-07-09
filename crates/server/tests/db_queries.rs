@@ -6490,8 +6490,14 @@ async fn delete_backup_reports_with_archive_before_one_sec_before(pool: PgPool) 
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::days(30)).and_then(|dt| dt.checked_sub_signed(Duration::seconds(1))).unwrap(),
-            finished_at: now.checked_sub_signed(Duration::days(30)).and_then(|dt| dt.checked_sub_signed(Duration::seconds(1))).unwrap(),
+            started_at: now
+                .checked_sub_signed(Duration::days(30))
+                .and_then(|dt| dt.checked_sub_signed(Duration::seconds(1)))
+                .unwrap(),
+            finished_at: now
+                .checked_sub_signed(Duration::days(30))
+                .and_then(|dt| dt.checked_sub_signed(Duration::seconds(1)))
+                .unwrap(),
             status: "success".to_string(),
             original_size: 100,
             compressed_size: 50,

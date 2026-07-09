@@ -4508,14 +4508,8 @@ pub async fn record_failed_login_and_check_lockout(
             .copied()
             .unwrap_or(*LOCKOUT_DURATIONS.last().unwrap_or(&1));
         let locked_until = Utc::now()
-            .checked_add_signed(chrono::Duration::minutes(duration_minutes))
-            .unwrap_or_else(|| {
-                Utc::now()
-                    .checked_add_signed(
-                        chrono::Duration::try_minutes(duration_minutes).unwrap_or_default(),
-                    )
-                    .unwrap_or_else(Utc::now)
-            });
+            .checked_add_signed(chrono::Duration::try_minutes(duration_minutes).unwrap_or_default())
+            .unwrap_or(Utc::now());
 
         let result = sqlx::query!(
             "UPDATE users SET locked_until = $1 WHERE username = $2",

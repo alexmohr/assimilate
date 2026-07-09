@@ -369,8 +369,7 @@ fn spawn_background_tasks(state: &AppState, tunnel_manager: &TunnelManager) {
 }
 
 fn build_login_router(state: &AppState, client_ip_resolver: &ClientIpResolver) -> Router<AppState> {
-    let login_ip_limiter =
-        IpRateLimiter::new(10, Duration::from_mins(1), client_ip_resolver.clone());
+    let login_ip_limiter = IpRateLimiter::new(10, Duration::from_mins(1));
     let login_rate_limit_state = IpRateLimitMiddlewareState {
         limiter: login_ip_limiter,
         resolver: client_ip_resolver.clone(),

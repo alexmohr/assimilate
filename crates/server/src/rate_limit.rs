@@ -3,6 +3,7 @@
 
 use std::{
     collections::HashMap,
+    hash::Hash,
     net::IpAddr,
     sync::Arc,
     time::{Duration, Instant},
@@ -18,37 +19,34 @@ use tokio::sync::Mutex;
 
 use crate::client_ip::ClientIpResolver;
 
-/// IP-based rate limiter with a sliding window per IP address.
+/// Generic sliding-window rate limiter keyed by `K`.
 #[derive(Clone)]
-pub struct IpRateLimiter {
-    state: Arc<Mutex<IpRateLimiterState>>,
+struct SlidingWindowRateLimiter<K> {
+    state: Arc<Mutex<SlidingWindowState<K>>>,
     max_requests: u32,
     window: Duration,
-    #[allow(dead_code, reason = "accessed through Clone for middleware state")]
-    resolver: ClientIpResolver,
 }
 
-struct IpRateLimiterState {
-    requests: HashMap<IpAddr, Vec<Instant>>,
+struct SlidingWindowState<K> {
+    requests: HashMap<K, Vec<Instant>>,
     last_cleanup: Instant,
 }
 
-impl IpRateLimiter {
-    /// Create a new IP rate limiter.
+impl<K: Hash + Eq + Clone> SlidingWindowRateLimiter<K> {
+    /// Create a new sliding-window rate limiter.
     #[must_use]
-    pub fn new(max_requests: u32, window: Duration, resolver: ClientIpResolver) -> Self {
+    fn new(max_requests: u32, window: Duration) -> Self {
         Self {
-            state: Arc::new(Mutex::new(IpRateLimiterState {
+            state: Arc::new(Mutex::new(SlidingWindowState {
                 requests: HashMap::new(),
                 last_cleanup: Instant::now(),
             })),
             max_requests,
             window,
-            resolver,
         }
     }
 
-    async fn check(&self, ip: IpAddr) -> bool {
+    async fn check(&self, key: K) -> bool {
         let now = Instant::now();
         let mut state = self.state.lock().await;
 
@@ -61,7 +59,7 @@ impl IpRateLimiter {
             state.last_cleanup = now;
         }
 
-        let timestamps = state.requests.entry(ip).or_default();
+        let timestamps = state.requests.entry(key).or_default();
         timestamps.retain(|t| now.duration_since(*t) < self.window);
 
         if u32::try_from(timestamps.len()).unwrap_or(u32::MAX) >= self.max_requests {
@@ -70,6 +68,27 @@ impl IpRateLimiter {
 
         timestamps.push(now);
         true
+    }
+}
+
+/// IP-based rate limiter with a sliding window per IP address.
+#[derive(Clone)]
+pub struct IpRateLimiter {
+    inner: SlidingWindowRateLimiter<IpAddr>,
+}
+
+impl IpRateLimiter {
+    /// Create a new IP rate limiter.
+    #[must_use]
+    pub fn new(max_requests: u32, window: Duration) -> Self {
+        Self {
+            inner: SlidingWindowRateLimiter::new(max_requests, window),
+        }
+    }
+
+    /// Check whether a request from `ip` is allowed.
+    pub(crate) async fn check(&self, ip: IpAddr) -> bool {
+        self.inner.check(ip).await
     }
 }
 
@@ -108,14 +127,7 @@ pub async fn ip_rate_limit_middleware(
 /// Per-user sliding-window rate limiter for mutating / expensive endpoints.
 #[derive(Clone)]
 pub struct UserRateLimiter {
-    state: Arc<Mutex<UserRateLimiterState>>,
-    max_requests: u32,
-    window: Duration,
-}
-
-struct UserRateLimiterState {
-    requests: HashMap<i64, Vec<Instant>>,
-    last_cleanup: Instant,
+    inner: SlidingWindowRateLimiter<i64>,
 }
 
 impl UserRateLimiter {
@@ -123,37 +135,13 @@ impl UserRateLimiter {
     #[must_use]
     pub fn new(max_requests: u32, window: Duration) -> Self {
         Self {
-            state: Arc::new(Mutex::new(UserRateLimiterState {
-                requests: HashMap::new(),
-                last_cleanup: Instant::now(),
-            })),
-            max_requests,
-            window,
+            inner: SlidingWindowRateLimiter::new(max_requests, window),
         }
     }
 
-    async fn check(&self, user_id: i64) -> bool {
-        let now = Instant::now();
-        let mut state = self.state.lock().await;
-
-        if now.duration_since(state.last_cleanup) > self.window.saturating_mul(2) {
-            state.requests.retain(|_, timestamps| {
-                timestamps
-                    .iter()
-                    .any(|t| now.duration_since(*t) < self.window)
-            });
-            state.last_cleanup = now;
-        }
-
-        let timestamps = state.requests.entry(user_id).or_default();
-        timestamps.retain(|t| now.duration_since(*t) < self.window);
-
-        if u32::try_from(timestamps.len()).unwrap_or(u32::MAX) >= self.max_requests {
-            return false;
-        }
-
-        timestamps.push(now);
-        true
+    /// Check whether a request from `user_id` is allowed.
+    pub(crate) async fn check(&self, user_id: i64) -> bool {
+        self.inner.check(user_id).await
     }
 }
 
@@ -214,14 +202,14 @@ mod tests {
 
     #[tokio::test]
     async fn ip_rate_limiter_accepts_first_request() {
-        let limiter = IpRateLimiter::new(5, Duration::from_mins(1), ClientIpResolver::new());
+        let limiter = IpRateLimiter::new(5, Duration::from_mins(1));
         let ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
         assert!(limiter.check(ip).await);
     }
 
     #[tokio::test]
     async fn ip_rate_limiter_rejects_excess_requests() {
-        let limiter = IpRateLimiter::new(2, Duration::from_mins(1), ClientIpResolver::new());
+        let limiter = IpRateLimiter::new(2, Duration::from_mins(1));
         let ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
         assert!(limiter.check(ip).await);
         assert!(limiter.check(ip).await);
@@ -230,7 +218,7 @@ mod tests {
 
     #[tokio::test]
     async fn ip_rate_limiter_allows_different_ips() {
-        let limiter = IpRateLimiter::new(2, Duration::from_mins(1), ClientIpResolver::new());
+        let limiter = IpRateLimiter::new(2, Duration::from_mins(1));
         let ip1 = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
         let ip2 = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
         assert!(limiter.check(ip1).await);

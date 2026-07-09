@@ -375,6 +375,9 @@ pub async fn update_settings(
         db::set_setting(&state.pool, "session_idle_timeout_minutes", &v.to_string()).await?;
     }
 
+    // Refresh the cached session idle timeout
+    state.reload_session_idle_timeout().await;
+
     let effective_tz = db::get_schedule_timezone(&state.pool).await?;
 
     let legacy = Some(body.retention_days);

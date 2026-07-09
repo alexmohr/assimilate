@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use axum::{
-    Json,
-    extract::State,
-    response::{IntoResponse, Response},
-};
+use axum::{Json, extract::State, response::Response};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use shared::responses::{LoginResponse, TotpSetupResponse, TotpVerifyResponse};
@@ -358,44 +354,11 @@ pub async fn totp_verify_login(
     // Delete the temp session
     db::delete_session(&state.pool, &temp_hashed).await?;
 
-    // Create the real session
-    let remember_me = temp_session.remember_me;
-    let session_id = uuid::Uuid::new_v4().to_string();
-    let (ttl_hours, max_age_secs): (i64, i64) = if remember_me {
-        (24 * 7, 7 * 86400)
-    } else {
-        (24, 86400)
-    };
-    let expires_at = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::hours(ttl_hours))
-        .ok_or_else(|| ApiError::Internal("failed to compute session expiry".to_string()))?;
-
-    let hashed_id = crate::api::tokens::hash_token(&session_id);
-    db::insert_session(
-        &state.pool,
-        &hashed_id,
-        user.id,
-        expires_at,
-        remember_me,
-        false,
-    )
-    .await?;
-    db::update_last_login(&state.pool, user.id).await?;
-
+    // Create the real session using the shared helper
     let user_resp = super::users::user_row_to_response(&state.pool, user).await?;
-    let body = Json(LoginResponse {
-        user: user_resp,
-        session_expires_at: expires_at,
-        remember_me,
-        totp_required: false,
-        temp_token: None,
-    });
-    let mut response = body.into_response();
-    response.headers_mut().insert(
-        axum::http::header::SET_COOKIE,
-        crate::cookies::session_set_cookie(Some(&session_id), max_age_secs)
-            .map_err(|e| ApiError::Internal(format!("failed to build cookie header: {e}")))?,
-    );
+    let response =
+        super::auth::create_session_response(&state.pool, user_resp, temp_session.remember_me)
+            .await?;
     Ok(response)
 }
 
@@ -482,45 +445,11 @@ pub async fn totp_recovery(
     // Delete the temp session
     db::delete_session(&state.pool, &temp_hashed).await?;
 
-    // Create the real session
+    // Create the real session using the shared helper
     let user = db::get_user_by_id(&state.pool, session.user_id).await?;
-    let remember_me = session.remember_me;
-    let session_id = uuid::Uuid::new_v4().to_string();
-    let (ttl_hours, max_age_secs): (i64, i64) = if remember_me {
-        (24 * 7, 7 * 86400)
-    } else {
-        (24, 86400)
-    };
-    let expires_at = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::hours(ttl_hours))
-        .ok_or_else(|| ApiError::Internal("failed to compute session expiry".to_string()))?;
-
-    let hashed_id = crate::api::tokens::hash_token(&session_id);
-    db::insert_session(
-        &state.pool,
-        &hashed_id,
-        user.id,
-        expires_at,
-        remember_me,
-        false,
-    )
-    .await?;
-    db::update_last_login(&state.pool, user.id).await?;
-
     let user_resp = super::users::user_row_to_response(&state.pool, user).await?;
-    let body = Json(LoginResponse {
-        user: user_resp,
-        session_expires_at: expires_at,
-        remember_me,
-        totp_required: false,
-        temp_token: None,
-    });
-    let mut response = body.into_response();
-    response.headers_mut().insert(
-        axum::http::header::SET_COOKIE,
-        crate::cookies::session_set_cookie(Some(&session_id), max_age_secs)
-            .map_err(|e| ApiError::Internal(format!("failed to build cookie header: {e}")))?,
-    );
+    let response =
+        super::auth::create_session_response(&state.pool, user_resp, session.remember_me).await?;
     Ok(response)
 }
 

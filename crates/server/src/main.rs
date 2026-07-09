@@ -111,6 +111,9 @@ async fn main() -> Result<(), StartupError> {
         shutdown_token: shutdown_token.clone(),
     });
 
+    // Load the cached session idle timeout from the database
+    state.reload_session_idle_timeout().await;
+
     spawn_background_tasks(&state, &tunnel_manager);
 
     let login_router = build_login_router(&state, client_ip_resolver);
@@ -249,6 +252,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         shutdown_token,
         client_ip_resolver,
         task_registry,
+        session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(480)),
     }
 }
 

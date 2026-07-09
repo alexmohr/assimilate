@@ -28,42 +28,6 @@ use crate::{
 const MAX_LOGIN_ATTEMPTS: i64 = 5;
 const LOGIN_WINDOW_MINUTES: i32 = 15;
 
-/// Whether the session cookie should carry the `Secure` attribute.
-///
-/// Defaults to `Secure` fail-safe: only an explicit `ASSIMILATE_SECURE_COOKIES=false`
-/// disables it (e.g. for local HTTP development).
-enum CookieSecurity {
-    Secure,
-    Insecure,
-}
-
-impl From<Option<String>> for CookieSecurity {
-    fn from(env_value: Option<String>) -> Self {
-        match env_value.as_deref() {
-            Some("false") => Self::Insecure,
-            _ => Self::Secure,
-        }
-    }
-}
-
-impl CookieSecurity {
-    fn cookie_flag(self) -> &'static str {
-        match self {
-            Self::Secure => "; Secure",
-            Self::Insecure => "",
-        }
-    }
-}
-
-/// Returns the `Secure` cookie flag based on the `ASSIMILATE_SECURE_COOKIES` env var.
-///
-/// Defaults to `Secure` when the env var is unset or set to any value other
-/// than `"false"`.
-#[must_use]
-pub fn secure_cookie_flag() -> &'static str {
-    CookieSecurity::from(std::env::var("ASSIMILATE_SECURE_COOKIES").ok()).cookie_flag()
-}
-
 /// Authenticated user extracted from a session cookie or bearer token.
 #[derive(Debug, Clone)]
 pub struct AuthUser {
@@ -101,12 +65,10 @@ impl FromRequestParts<AppState> for AuthUser {
         let session = db::get_session(&state.pool, &hashed_id).await?;
         let user = db::get_user_by_id(&state.pool, session.user_id).await?;
 
-        // Idle timeout check
-        let idle_timeout_minutes: i64 =
-            db::get_setting(&state.pool, "session_idle_timeout_minutes")
-                .await?
-                .and_then(|v| v.parse::<i64>().ok())
-                .unwrap_or(480);
+        // Idle timeout check using the cached value from AppState
+        let idle_timeout_minutes = state
+            .session_idle_timeout_minutes
+            .load(std::sync::atomic::Ordering::Relaxed);
 
         let idle_duration = Utc::now().signed_duration_since(session.last_seen_at);
         if idle_duration.num_minutes() > idle_timeout_minutes {
@@ -296,8 +258,21 @@ pub async fn login(
         return Ok(body.into_response());
     }
 
+    let response = create_session_response(&state.pool, user_resp, req.remember_me).await?;
+    Ok(response)
+}
+
+/// Create a new user session and return the response with a Set-Cookie header.
+///
+/// This is the single point of session creation shared by the normal login path,
+/// the TOTP verify-login path, and the recovery-code login path.
+pub(super) async fn create_session_response(
+    pool: &sqlx::PgPool,
+    user: shared::responses::UserResponse,
+    remember_me: bool,
+) -> Result<Response, ApiError> {
     let session_id = Uuid::new_v4().to_string();
-    let (ttl_hours, max_age_secs) = if req.remember_me {
+    let (ttl_hours, max_age_secs) = if remember_me {
         (24 * 7, 7 * 86400)
     } else {
         (24, 86400)
@@ -307,21 +282,13 @@ pub async fn login(
         .unwrap_or_else(Utc::now);
 
     let hashed_id = hash_token(&session_id);
-    db::insert_session(
-        &state.pool,
-        &hashed_id,
-        user_resp.id,
-        expires_at,
-        req.remember_me,
-        false,
-    )
-    .await?;
-    db::update_last_login(&state.pool, user_resp.id).await?;
+    db::insert_session(pool, &hashed_id, user.id, expires_at, remember_me, false).await?;
+    db::update_last_login(pool, user.id).await?;
 
     let body = Json(LoginResponse {
-        user: user_resp,
+        user,
         session_expires_at: expires_at,
-        remember_me: req.remember_me,
+        remember_me,
         totp_required: false,
         temp_token: None,
     });
@@ -650,30 +617,4 @@ pub async fn revoke_session(
     }
 
     Ok(StatusCode::NO_CONTENT)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::CookieSecurity;
-
-    #[test]
-    fn cookie_security_defaults_to_secure_when_unset() {
-        assert_eq!(CookieSecurity::from(None).cookie_flag(), "; Secure");
-    }
-
-    #[test]
-    fn cookie_security_is_insecure_when_explicitly_false() {
-        assert_eq!(
-            CookieSecurity::from(Some("false".to_string())).cookie_flag(),
-            ""
-        );
-    }
-
-    #[test]
-    fn cookie_security_is_secure_for_any_other_value() {
-        assert_eq!(
-            CookieSecurity::from(Some("0".to_string())).cookie_flag(),
-            "; Secure"
-        );
-    }
 }

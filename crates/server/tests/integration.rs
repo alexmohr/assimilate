@@ -78,6 +78,7 @@ fn build_test_state(pool: PgPool) -> server::AppState {
         background_task_tracker: server::background_tasks::BackgroundTaskTracker::default(),
         repo_lock: server::RepoLock::default(),
         import_tasks: server::ImportTaskRegistry::default(),
+        session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(480)),
         shutdown_token: tokio_util::sync::CancellationToken::new(),
         client_ip_resolver: server::client_ip::ClientIpResolver::new(),
         task_registry: shared::task_registry::TaskRegistry::default(),

@@ -149,8 +149,14 @@ pub async fn ssh_regenerate_key(
 /// Current system settings.
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct SettingsResponse {
-    /// Number of days to retain backup reports.
+    /// Number of days to retain backup data.
     pub retention_days: i64,
+    /// Number of days to retain backup reports.
+    pub report_retention_days: i64,
+    /// Number of days to retain failed backup reports.
+    pub failed_report_retention_days: i64,
+    /// Number of days to retain system events.
+    pub system_event_retention_days: i64,
     /// System timezone (e.g. "UTC").
     pub timezone: String,
     /// Timeout in seconds for borg query operations.
@@ -177,14 +183,48 @@ pub async fn get_settings(
     _admin: RequireAdmin,
     State(state): State<AppState>,
 ) -> Result<Json<SettingsResponse>, ApiError> {
-    let retention_days = db::get_setting(&state.pool, "retention_days")
+    let retention_raw = db::get_setting(&state.pool, "retention_days").await?;
+    let legacy = retention_raw.as_deref().and_then(|v| {
+        v.parse::<i64>()
+            .inspect_err(|e| {
+                tracing::warn!(
+                    value = %v,
+                    error = %e,
+                    "failed to parse retention_days setting"
+                );
+            })
+            .ok()
+    });
+    let retention_days = legacy.unwrap_or(7);
+
+    let report_retention_days = db::get_setting(&state.pool, "report_retention_days")
         .await?
         .and_then(|v| {
             v.parse::<i64>().inspect_err(|e| {
-                tracing::warn!(value = %v, error = %e, "failed to parse retention_days setting");
+                tracing::warn!(value = %v, error = %e, "failed to parse report_retention_days setting");
             }).ok()
         })
-        .unwrap_or(7);
+        .unwrap_or(0);
+
+    let failed_report_retention_days = db::get_setting(&state.pool, "failed_report_retention_days")
+        .await?
+        .and_then(|v| {
+            v.parse::<i64>().inspect_err(|e| {
+                tracing::warn!(value = %v, error = %e, "failed to parse failed_report_retention_days setting");
+            }).ok()
+        })
+        .or(legacy)
+        .unwrap_or(365);
+
+    let system_event_retention_days = db::get_setting(&state.pool, "system_event_retention_days")
+        .await?
+        .and_then(|v| {
+            v.parse::<i64>().inspect_err(|e| {
+                tracing::warn!(value = %v, error = %e, "failed to parse system_event_retention_days setting");
+            }).ok()
+        })
+        .or(legacy)
+        .unwrap_or(90);
 
     let timezone = db::get_schedule_timezone(&state.pool).await?;
 
@@ -200,6 +240,9 @@ pub async fn get_settings(
 
     Ok(Json(SettingsResponse {
         retention_days,
+        report_retention_days,
+        failed_report_retention_days,
+        system_event_retention_days,
         timezone: timezone.name().to_owned(),
         borg_query_timeout_secs,
     }))
@@ -208,8 +251,14 @@ pub async fn get_settings(
 /// Request payload for updating system settings.
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct UpdateSettingsRequest {
-    /// Number of days to retain backup reports.
+    /// Number of days to retain backup data.
     pub retention_days: i64,
+    /// Number of days to retain backup reports.
+    pub report_retention_days: Option<i64>,
+    /// Number of days to retain failed backup reports.
+    pub failed_report_retention_days: Option<i64>,
+    /// Number of days to retain system events.
+    pub system_event_retention_days: Option<i64>,
     /// New timezone (e.g. `"America/New_York"`).
     pub timezone: Option<String>,
     /// Timeout in seconds for borg query operations.
@@ -245,6 +294,24 @@ pub async fn update_settings(
         ));
     }
 
+    for (key, val) in [
+        ("report_retention_days", body.report_retention_days),
+        (
+            "failed_report_retention_days",
+            body.failed_report_retention_days,
+        ),
+        (
+            "system_event_retention_days",
+            body.system_event_retention_days,
+        ),
+    ] {
+        if let Some(v) = val
+            && v < 0
+        {
+            return Err(ApiError::BadRequest(format!("{key} must be non-negative")));
+        }
+    }
+
     let timezone = body.timezone.unwrap_or_default();
     if !timezone.is_empty() {
         timezone
@@ -266,6 +333,16 @@ pub async fn update_settings(
     )
     .await?;
 
+    if let Some(v) = body.report_retention_days {
+        db::set_setting(&state.pool, "report_retention_days", &v.to_string()).await?;
+    }
+    if let Some(v) = body.failed_report_retention_days {
+        db::set_setting(&state.pool, "failed_report_retention_days", &v.to_string()).await?;
+    }
+    if let Some(v) = body.system_event_retention_days {
+        db::set_setting(&state.pool, "system_event_retention_days", &v.to_string()).await?;
+    }
+
     db::set_setting(&state.pool, "timezone", &timezone).await?;
 
     db::set_setting(
@@ -277,8 +354,19 @@ pub async fn update_settings(
 
     let effective_tz = db::get_schedule_timezone(&state.pool).await?;
 
+    let legacy = Some(body.retention_days);
+
+    let report_retention_days = body.report_retention_days.unwrap_or(0);
+
+    let failed_report_retention_days = body.failed_report_retention_days.or(legacy).unwrap_or(365);
+
+    let system_event_retention_days = body.system_event_retention_days.or(legacy).unwrap_or(90);
+
     Ok(Json(SettingsResponse {
         retention_days: body.retention_days,
+        report_retention_days,
+        failed_report_retention_days,
+        system_event_retention_days,
         timezone: effective_tz.name().to_owned(),
         borg_query_timeout_secs,
     }))

@@ -30,7 +30,6 @@ const RETENTION_INTERVAL: Duration = Duration::from_hours(1);
 const SYNC_CHECK_INTERVAL: Duration = Duration::from_mins(1);
 const SESSION_CLEANUP_INTERVAL: Duration = Duration::from_hours(1);
 const SYNC_WARN_DURATION: Duration = Duration::from_mins(5);
-const DEFAULT_RETENTION_DAYS: i64 = 7;
 
 /// Main scheduler loop: ticks schedules, runs retention, syncs repos, and cleans up sessions.
 pub async fn run(state: AppState) {
@@ -317,31 +316,77 @@ async fn run_scheduled_repo_sync(task: ScheduledRepoSync) {
 }
 
 async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiError> {
-    let retention_days = db::get_setting(pool, "retention_days")
+    let legacy_retention = db::get_setting(pool, "retention_days")
         .await?
         .and_then(|v| {
             v.parse::<i64>().inspect_err(|e| {
                 tracing::warn!(value = %v, error = %e, "failed to parse retention_days setting");
             }).ok()
-        })
-        .unwrap_or(DEFAULT_RETENTION_DAYS);
+        });
 
-    if retention_days <= 0 {
-        return Ok(());
+    let report_days = db::get_setting(pool, "report_retention_days")
+        .await?
+        .and_then(|v| {
+            v.parse::<i64>().inspect_err(|e| {
+                tracing::warn!(value = %v, error = %e, "failed to parse report_retention_days setting");
+            }).ok()
+        })
+        .unwrap_or(0);
+
+    let failed_days = db::get_setting(pool, "failed_report_retention_days")
+        .await?
+        .and_then(|v| {
+            v.parse::<i64>().inspect_err(|e| {
+                tracing::warn!(value = %v, error = %e, "failed to parse failed_report_retention_days setting");
+            }).ok()
+        })
+        .or(legacy_retention)
+        .unwrap_or(365);
+
+    let event_days = db::get_setting(pool, "system_event_retention_days")
+        .await?
+        .and_then(|v| {
+            v.parse::<i64>().inspect_err(|e| {
+                tracing::warn!(value = %v, error = %e, "failed to parse system_event_retention_days setting");
+            }).ok()
+        })
+        .or(legacy_retention)
+        .unwrap_or(90);
+
+    let mut events_deleted: u64 = 0;
+    let mut reports_deleted: u64 = 0;
+    let mut archive_reports_deleted: u64 = 0;
+
+    if report_days > 0 {
+        let cutoff = Utc::now()
+            .checked_sub_signed(chrono::Duration::days(report_days))
+            .unwrap_or_else(Utc::now);
+        archive_reports_deleted =
+            db::delete_backup_reports_with_archive_before(pool, cutoff).await?;
     }
 
-    let cutoff = Utc::now()
-        .checked_sub_signed(chrono::Duration::days(retention_days))
-        .unwrap_or_else(Utc::now);
+    if failed_days > 0 {
+        let cutoff = Utc::now()
+            .checked_sub_signed(chrono::Duration::days(failed_days))
+            .unwrap_or_else(Utc::now);
+        reports_deleted = db::delete_backup_reports_before(pool, cutoff).await?;
+    }
 
-    let events_deleted = db::delete_system_events_before(pool, cutoff).await?;
-    let reports_deleted = db::delete_backup_reports_before(pool, cutoff).await?;
+    if event_days > 0 {
+        let cutoff = Utc::now()
+            .checked_sub_signed(chrono::Duration::days(event_days))
+            .unwrap_or_else(Utc::now);
+        events_deleted = db::delete_system_events_before(pool, cutoff).await?;
+    }
 
-    if events_deleted > 0 || reports_deleted > 0 {
+    if events_deleted > 0 || reports_deleted > 0 || archive_reports_deleted > 0 {
         tracing::info!(
             events_deleted,
             reports_deleted,
-            retention_days,
+            archive_reports_deleted,
+            report_days,
+            failed_days,
+            event_days,
             "retention cleanup completed"
         );
     }

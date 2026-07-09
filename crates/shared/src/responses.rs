@@ -976,8 +976,17 @@ pub struct SshPublicKeyResponse {
 /// Response containing settings.
 pub struct SettingsResponse {
     #[ts(type = "number")]
-    /// Number of days to retain backup records.
+    /// Number of days to retain backup data.
     pub retention_days: i64,
+    #[ts(type = "number")]
+    /// Number of days to retain backup reports.
+    pub report_retention_days: i64,
+    #[ts(type = "number")]
+    /// Number of days to retain failed backup reports.
+    pub failed_report_retention_days: i64,
+    #[ts(type = "number")]
+    /// Number of days to retain system events.
+    pub system_event_retention_days: i64,
     /// Timezone setting.
     pub timezone: String,
     #[ts(type = "number")]

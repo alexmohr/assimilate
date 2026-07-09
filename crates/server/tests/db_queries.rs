@@ -5805,6 +5805,593 @@ async fn delete_backup_reports_before_keeps_archive_rows(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn delete_backup_reports_with_archive_before_test(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "del-arch-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+    let old = now.checked_sub_signed(Duration::days(100)).unwrap();
+
+    // Old archived report -- should be deleted
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            schedule_id: None,
+            started_at: old,
+            finished_at: old,
+            status: "success".to_string(),
+            original_size: 100,
+            compressed_size: 50,
+            deduplicated_size: 25,
+            repo_unique_csize: 0,
+            files_processed: 10,
+            duration_secs: 60,
+            error_message: None,
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: Some("old-archive".to_string()),
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    // Recent archived report -- must be kept
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            schedule_id: None,
+            started_at: now,
+            finished_at: now,
+            status: "success".to_string(),
+            original_size: 200,
+            compressed_size: 100,
+            deduplicated_size: 50,
+            repo_unique_csize: 0,
+            files_processed: 20,
+            duration_secs: 120,
+            error_message: None,
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: Some("recent-archive".to_string()),
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let cutoff = now.checked_sub_signed(Duration::days(30)).unwrap();
+    let deleted = db::delete_backup_reports_with_archive_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 1);
+
+    let names = db::list_archive_names_for_repo(&pool, repo.id)
+        .await
+        .unwrap();
+    assert!(names.contains("recent-archive"));
+    assert!(!names.contains("old-archive"));
+    assert_eq!(names.len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_backup_reports_with_archive_before_keeps_null_archive(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "del-arch-null-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+    let old = now.checked_sub_signed(Duration::days(100)).unwrap();
+
+    // Old report with NULL archive_name - not deleted by this function
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            schedule_id: None,
+            started_at: old,
+            finished_at: old,
+            status: "failed".to_string(),
+            original_size: 0,
+            compressed_size: 0,
+            deduplicated_size: 0,
+            repo_unique_csize: 0,
+            files_processed: 0,
+            duration_secs: 0,
+            error_message: Some("error".to_string()),
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: None,
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    // Old report with archive_name -- should be deleted
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            schedule_id: None,
+            started_at: old,
+            finished_at: old,
+            status: "success".to_string(),
+            original_size: 100,
+            compressed_size: 50,
+            deduplicated_size: 25,
+            repo_unique_csize: 0,
+            files_processed: 10,
+            duration_secs: 60,
+            error_message: None,
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: Some("archived-report".to_string()),
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let cutoff = now.checked_sub_signed(Duration::days(30)).unwrap();
+    let deleted = db::delete_backup_reports_with_archive_before(&pool, cutoff)
+        .await
+        .unwrap();
+    // Only the row WITH an archive_name should be deleted
+    assert_eq!(deleted, 1);
+
+    // The archive-less row should still exist
+    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports.first().unwrap().archive_name, None);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_backup_reports_with_archive_before_boundary_exact(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "arch-exact-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            schedule_id: None,
+            started_at: now.checked_sub_signed(Duration::days(30)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::days(30)).unwrap(),
+            status: "success".to_string(),
+            original_size: 100,
+            compressed_size: 50,
+            deduplicated_size: 25,
+            repo_unique_csize: 0,
+            files_processed: 10,
+            duration_secs: 60,
+            error_message: None,
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: Some("exact-boundary-archive".to_string()),
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let cutoff = now.checked_sub_signed(Duration::days(30)).unwrap();
+    let deleted = db::delete_backup_reports_with_archive_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 0, "report exactly at cutoff must not be deleted");
+
+    let names = db::list_archive_names_for_repo(&pool, repo.id)
+        .await
+        .unwrap();
+    assert!(names.contains("exact-boundary-archive"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_backup_reports_with_archive_before_one_sec_before(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "arch-1s-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            schedule_id: None,
+            started_at: now
+                .checked_sub_signed(Duration::days(30))
+                .and_then(|dt| dt.checked_sub_signed(Duration::seconds(1)))
+                .unwrap(),
+            finished_at: now
+                .checked_sub_signed(Duration::days(30))
+                .and_then(|dt| dt.checked_sub_signed(Duration::seconds(1)))
+                .unwrap(),
+            status: "success".to_string(),
+            original_size: 100,
+            compressed_size: 50,
+            deduplicated_size: 25,
+            repo_unique_csize: 0,
+            files_processed: 10,
+            duration_secs: 60,
+            error_message: None,
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: Some("one-sec-before-archive".to_string()),
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let cutoff = now.checked_sub_signed(Duration::days(30)).unwrap();
+    let deleted = db::delete_backup_reports_with_archive_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(
+        deleted, 1,
+        "report one second before cutoff must be deleted"
+    );
+
+    let names = db::list_archive_names_for_repo(&pool, repo.id)
+        .await
+        .unwrap();
+    assert!(!names.contains("one-sec-before-archive"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_backup_reports_before_boundary_exact(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "fail-exact-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            schedule_id: None,
+            started_at: now.checked_sub_signed(Duration::days(7)).unwrap(),
+            finished_at: now.checked_sub_signed(Duration::days(7)).unwrap(),
+            status: "failed".to_string(),
+            original_size: 0,
+            compressed_size: 0,
+            deduplicated_size: 0,
+            repo_unique_csize: 0,
+            files_processed: 0,
+            duration_secs: 0,
+            error_message: Some("timeout".to_string()),
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: None,
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let cutoff = now.checked_sub_signed(Duration::days(7)).unwrap();
+    let deleted = db::delete_backup_reports_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(
+        deleted, 0,
+        "failed report exactly at cutoff must not be deleted"
+    );
+
+    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(reports.len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_backup_reports_before_one_sec_before(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "fail-1s-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    let now = Utc::now();
+
+    db::insert_backup_report(
+        &pool,
+        &InsertReportParams {
+            agent_id: agent.id,
+            repo_id: repo.id,
+            schedule_id: None,
+            started_at: now
+                .checked_sub_signed(Duration::days(7))
+                .and_then(|dt| dt.checked_sub_signed(Duration::seconds(1)))
+                .unwrap(),
+            finished_at: now
+                .checked_sub_signed(Duration::days(7))
+                .and_then(|dt| dt.checked_sub_signed(Duration::seconds(1)))
+                .unwrap(),
+            status: "failed".to_string(),
+            original_size: 0,
+            compressed_size: 0,
+            deduplicated_size: 0,
+            repo_unique_csize: 0,
+            files_processed: 0,
+            duration_secs: 0,
+            error_message: Some("timeout".to_string()),
+            warnings: vec![],
+            borg_version: None,
+            matched: true,
+            archive_name: None,
+            borg_command: None,
+            run_id: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let cutoff = now.checked_sub_signed(Duration::days(7)).unwrap();
+    let deleted = db::delete_backup_reports_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(
+        deleted, 1,
+        "failed report one second before cutoff must be deleted"
+    );
+
+    let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
+        .await
+        .unwrap();
+    assert!(reports.is_empty());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_system_events_before_keeps_recent(pool: PgPool) {
+    let before_insert = Utc::now();
+    db::insert_system_event(&pool, "test_event", None, "recent event")
+        .await
+        .unwrap();
+
+    // Use a cutoff just before the insert -- guaranteed to be before created_at
+    let cutoff = before_insert
+        .checked_sub_signed(Duration::seconds(1))
+        .unwrap();
+    let deleted = db::delete_system_events_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(
+        deleted, 0,
+        "system event created after cutoff must not be deleted"
+    );
+
+    let events = db::get_system_events(&pool, 10).await.unwrap();
+    assert_eq!(events.len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_system_events_before_deletes_old(pool: PgPool) {
+    db::insert_system_event(&pool, "old_event", None, "old event to prune")
+        .await
+        .unwrap();
+
+    let cutoff = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+    let deleted = db::delete_system_events_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(
+        deleted, 1,
+        "system event must be deleted with future cutoff"
+    );
+
+    let events = db::get_system_events(&pool, 10).await.unwrap();
+    assert!(events.is_empty());
+}
+
+/// Applies the same fallback logic as `get_settings` in `api/system.rs`.
+fn compute_retention_fallbacks(
+    legacy_raw: Option<&str>,
+    report_raw: Option<&str>,
+    failed_raw: Option<&str>,
+    event_raw: Option<&str>,
+) -> (i64, i64, i64, i64) {
+    let legacy = legacy_raw.and_then(|v| v.parse::<i64>().ok());
+    let retention_days = legacy.unwrap_or(7);
+    let report_retention_days = report_raw.and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+    let failed_report_retention_days = failed_raw
+        .and_then(|v| v.parse::<i64>().ok())
+        .or(legacy)
+        .unwrap_or(365);
+    let system_event_retention_days = event_raw
+        .and_then(|v| v.parse::<i64>().ok())
+        .or(legacy)
+        .unwrap_or(90);
+    (
+        retention_days,
+        report_retention_days,
+        failed_report_retention_days,
+        system_event_retention_days,
+    )
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn retention_fallback_new_settings_unset_uses_legacy(pool: PgPool) {
+    db::set_setting(&pool, "retention_days", "30")
+        .await
+        .unwrap();
+
+    let legacy_raw = db::get_setting(&pool, "retention_days").await.unwrap();
+    let report_raw = db::get_setting(&pool, "report_retention_days")
+        .await
+        .unwrap();
+    let failed_raw = db::get_setting(&pool, "failed_report_retention_days")
+        .await
+        .unwrap();
+    let event_raw = db::get_setting(&pool, "system_event_retention_days")
+        .await
+        .unwrap();
+
+    let (ret, report, failed, events) = compute_retention_fallbacks(
+        legacy_raw.as_deref(),
+        report_raw.as_deref(),
+        failed_raw.as_deref(),
+        event_raw.as_deref(),
+    );
+    assert_eq!(ret, 30);
+    assert_eq!(
+        report, 0,
+        "report_retention_days must NOT fall back to legacy"
+    );
+    assert_eq!(
+        failed, 30,
+        "failed_report_retention_days must fall back to legacy (30)"
+    );
+    assert_eq!(
+        events, 30,
+        "system_event_retention_days must fall back to legacy (30)"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn retention_fallback_new_settings_take_precedence(pool: PgPool) {
+    db::set_setting(&pool, "retention_days", "30")
+        .await
+        .unwrap();
+    db::set_setting(&pool, "report_retention_days", "180")
+        .await
+        .unwrap();
+    db::set_setting(&pool, "failed_report_retention_days", "60")
+        .await
+        .unwrap();
+    db::set_setting(&pool, "system_event_retention_days", "45")
+        .await
+        .unwrap();
+
+    let legacy_raw = db::get_setting(&pool, "retention_days").await.unwrap();
+    let report_raw = db::get_setting(&pool, "report_retention_days")
+        .await
+        .unwrap();
+    let failed_raw = db::get_setting(&pool, "failed_report_retention_days")
+        .await
+        .unwrap();
+    let event_raw = db::get_setting(&pool, "system_event_retention_days")
+        .await
+        .unwrap();
+
+    let (ret, report, failed, events) = compute_retention_fallbacks(
+        legacy_raw.as_deref(),
+        report_raw.as_deref(),
+        failed_raw.as_deref(),
+        event_raw.as_deref(),
+    );
+    assert_eq!(ret, 30);
+    assert_eq!(report, 180, "explicit report_retention_days must be used");
+    assert_eq!(
+        failed, 60,
+        "explicit failed_report_retention_days must be used"
+    );
+    assert_eq!(
+        events, 45,
+        "explicit system_event_retention_days must be used"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn retention_fallback_nothing_set_uses_defaults(pool: PgPool) {
+    let legacy_raw = db::get_setting(&pool, "retention_days").await.unwrap();
+    let report_raw = db::get_setting(&pool, "report_retention_days")
+        .await
+        .unwrap();
+    let failed_raw = db::get_setting(&pool, "failed_report_retention_days")
+        .await
+        .unwrap();
+    let event_raw = db::get_setting(&pool, "system_event_retention_days")
+        .await
+        .unwrap();
+
+    let (ret, report, failed, events) = compute_retention_fallbacks(
+        legacy_raw.as_deref(),
+        report_raw.as_deref(),
+        failed_raw.as_deref(),
+        event_raw.as_deref(),
+    );
+    assert_eq!(ret, 7, "default retention_days must be 7");
+    assert_eq!(
+        report, 0,
+        "default report_retention_days must be 0 (keep forever)"
+    );
+    assert_eq!(
+        failed, 7,
+        "default failed_report_retention_days must fall back to legacy retention_days"
+    );
+    assert_eq!(
+        events, 7,
+        "default system_event_retention_days must fall back to legacy retention_days"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn retention_fallback_new_settings_without_legacy(pool: PgPool) {
+    db::set_setting(&pool, "report_retention_days", "100")
+        .await
+        .unwrap();
+    db::set_setting(&pool, "failed_report_retention_days", "200")
+        .await
+        .unwrap();
+    db::set_setting(&pool, "system_event_retention_days", "300")
+        .await
+        .unwrap();
+
+    let legacy_raw = db::get_setting(&pool, "retention_days").await.unwrap();
+    let report_raw = db::get_setting(&pool, "report_retention_days")
+        .await
+        .unwrap();
+    let failed_raw = db::get_setting(&pool, "failed_report_retention_days")
+        .await
+        .unwrap();
+    let event_raw = db::get_setting(&pool, "system_event_retention_days")
+        .await
+        .unwrap();
+
+    let (ret, report, failed, events) = compute_retention_fallbacks(
+        legacy_raw.as_deref(),
+        report_raw.as_deref(),
+        failed_raw.as_deref(),
+        event_raw.as_deref(),
+    );
+    assert_eq!(ret, 7, "default retention_days must be 7");
+    assert_eq!(report, 100);
+    assert_eq!(failed, 200);
+    assert_eq!(events, 300);
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn audit_filter_by_target_type(pool: PgPool) {
     db::audit::insert_audit_entry(
         &pool,

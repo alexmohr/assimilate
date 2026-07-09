@@ -76,7 +76,7 @@ echo "==> Logging in..."
 login
 
 echo "==> Setting timezone to Europe/Berlin..."
-api PUT /api/system/settings '{"timezone":"Europe/Berlin","retention_days":7}'
+api PUT /api/system/settings '{"timezone":"Europe/Berlin","retention_days":7,"report_retention_days":365,"failed_report_retention_days":365,"system_event_retention_days":90}'
 
 echo "==> Registering hosts for protected, unassigned, never-succeeded, and disabled-only coverage filters..."
 WEB01_TOKEN=$(api POST "/api/agents" '{"hostname":"web-server-01","display_name":"Production Web Server"}' | jq -r '.token')

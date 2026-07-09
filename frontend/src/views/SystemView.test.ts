@@ -35,6 +35,7 @@ vi.mock('../utils/error', () => ({
 import { apiClient } from '../api/client'
 
 const mockGet = vi.mocked(apiClient.get)
+const mockPut = vi.mocked(apiClient.put)
 
 const SSH_KEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA test-key'
 
@@ -45,7 +46,14 @@ function setupSuccessMocks(): void {
     }
     if (url === '/system/settings') {
       return Promise.resolve({
-        data: { timezone: 'Europe/Berlin', retention_days: 30, borg_query_timeout_secs: 600 },
+        data: {
+          timezone: 'Europe/Berlin',
+          retention_days: 30,
+          report_retention_days: 365,
+          failed_report_retention_days: 365,
+          system_event_retention_days: 90,
+          borg_query_timeout_secs: 600,
+        },
       })
     }
     if (url === '/system/version') {
@@ -148,6 +156,51 @@ describe('SystemView', () => {
     expect(input.element.value).toBe('30')
   })
 
+  it('renders Report Retention input', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    expect(wrapper.find('#settings-report-retention').exists()).toBe(true)
+  })
+
+  it('populates report retention from API response', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    const input = wrapper.find<HTMLInputElement>('#settings-report-retention')
+    expect(input.element.value).toBe('365')
+  })
+
+  it('renders Failed Report Retention input', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    expect(wrapper.find('#settings-failed-retention').exists()).toBe(true)
+  })
+
+  it('populates failed report retention from API response', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    const input = wrapper.find<HTMLInputElement>('#settings-failed-retention')
+    expect(input.element.value).toBe('365')
+  })
+
+  it('renders System Event Retention input', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    expect(wrapper.find('#settings-event-retention').exists()).toBe(true)
+  })
+
+  it('populates system event retention from API response', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    const input = wrapper.find<HTMLInputElement>('#settings-event-retention')
+    expect(input.element.value).toBe('90')
+  })
+
   it('renders Borg Timeout input', async () => {
     setupSuccessMocks()
     const wrapper = renderWithPlugins(SystemView)
@@ -191,7 +244,14 @@ describe('SystemView', () => {
       }
       if (url === '/system/settings') {
         return Promise.resolve({
-          data: { timezone: 'UTC', retention_days: 7, borg_query_timeout_secs: 300 },
+          data: {
+            timezone: 'UTC',
+            retention_days: 7,
+            report_retention_days: 0,
+            failed_report_retention_days: 365,
+            system_event_retention_days: 90,
+            borg_query_timeout_secs: 300,
+          },
         })
       }
       if (url === '/system/version') {
@@ -223,5 +283,55 @@ describe('SystemView', () => {
     await regenBtn!.trigger('click')
     await flushPromises()
     expect(document.body.textContent).toContain('Regenerate SSH Key')
+  })
+
+  it('saves new retention values to API', async () => {
+    setupSuccessMocks()
+    mockPut.mockResolvedValue({
+      data: {
+        timezone: 'Europe/Berlin',
+        retention_days: 30,
+        report_retention_days: 180,
+        failed_report_retention_days: 90,
+        system_event_retention_days: 45,
+        borg_query_timeout_secs: 600,
+      },
+    })
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save')!
+    await saveBtn.trigger('click')
+    await flushPromises()
+    expect(mockPut).toHaveBeenCalledWith('/system/settings', {
+      retention_days: 30,
+      report_retention_days: 365,
+      failed_report_retention_days: 365,
+      system_event_retention_days: 90,
+      timezone: 'Europe/Berlin',
+      borg_query_timeout_secs: 600,
+    })
+  })
+
+  it('updates form values from save response', async () => {
+    setupSuccessMocks()
+    mockPut.mockResolvedValue({
+      data: {
+        timezone: 'America/New_York',
+        retention_days: 14,
+        report_retention_days: 0,
+        failed_report_retention_days: 365,
+        system_event_retention_days: 90,
+        borg_query_timeout_secs: 120,
+      },
+    })
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save')!
+    await saveBtn.trigger('click')
+    await flushPromises()
+    const retentionInput = wrapper.find<HTMLInputElement>('#settings-retention')
+    expect(retentionInput.element.value).toBe('14')
+    const reportInput = wrapper.find<HTMLInputElement>('#settings-report-retention')
+    expect(reportInput.element.value).toBe('0')
   })
 })

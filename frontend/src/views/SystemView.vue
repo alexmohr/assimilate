@@ -484,6 +484,7 @@ async function resetSystem(): Promise<void> {
               class="btn btn-primary"
               type="submit"
               :disabled="settingsSaving"
+              @click="saveSettings"
             >
               {{ settingsSaving ? 'Saving...' : 'Save' }}
             </button>

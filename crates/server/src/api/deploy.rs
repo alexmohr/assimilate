@@ -129,7 +129,7 @@ pub async fn query_available_agent_version(binary_dir: &std::path::Path) -> Opti
         (status = 200, description = "Deploy result", body = DeployAgentResponse),
         (status = 400, description = "Validation error"),
         (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden — upgrade agent permission required"),
+        (status = 403, description = "Forbidden -- upgrade agent permission required"),
         (status = 404, description = "Not found"),
         (status = 500, description = "Agent binary not found or internal error"),
     )
@@ -286,7 +286,7 @@ pub struct FetchServiceUnitResponse {
             FetchServiceUnitResponse),
         (status = 400, description = "Validation error"),
         (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden — upgrade agent permission required"),
+        (status = 403, description = "Forbidden -- upgrade agent permission required"),
     )
 )]
 /// Read the existing systemd service unit from a remote host via SSH

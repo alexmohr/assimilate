@@ -299,6 +299,7 @@ pub async fn me(
         (None, false)
     };
     let role = users::get_user_role_string(&state.pool, auth.user_id).await?;
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
 
     Ok(Json(MeResponse {
         id: auth.user_id,
@@ -307,6 +308,7 @@ pub async fn me(
         must_change_password: user.must_change_password,
         session_expires_at,
         remember_me,
+        can_upgrade_agent: effective.can_upgrade_agent,
     }))
 }
 

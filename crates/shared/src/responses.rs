@@ -55,6 +55,8 @@ pub struct MeResponse {
     pub session_expires_at: Option<DateTime<Utc>>,
     /// Whether the session should be remembered beyond the current browser session.
     pub remember_me: bool,
+    /// Whether the user has permission to upgrade agents.
+    pub can_upgrade_agent: bool,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -925,6 +927,8 @@ pub struct RoleResponse {
     pub can_view_all_repos: bool,
     /// Whether the role can manage tunnels.
     pub can_manage_tunnels: bool,
+    /// Whether the role can upgrade agents.
+    pub can_upgrade_agent: bool,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

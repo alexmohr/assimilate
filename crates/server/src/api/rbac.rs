@@ -44,6 +44,7 @@ impl From<db::RoleRow> for RoleResponse {
             can_manage_tags: r.can_manage_tags,
             can_view_all_repos: r.can_view_all_repos,
             can_manage_tunnels: r.can_manage_tunnels,
+            can_upgrade_agent: r.can_upgrade_agent,
         }
     }
 }
@@ -106,6 +107,8 @@ pub struct CreateRoleRequest {
     pub can_view_all_repos: bool,
     /// Permission to manage tunnels.
     pub can_manage_tunnels: bool,
+    /// Permission to upgrade agents.
+    pub can_upgrade_agent: bool,
 }
 
 /// Request payload for updating a role.
@@ -141,6 +144,8 @@ pub struct UpdateRoleRequest {
     pub can_view_all_repos: bool,
     /// Permission to manage tunnels.
     pub can_manage_tunnels: bool,
+    /// Permission to upgrade agents.
+    pub can_upgrade_agent: bool,
 }
 
 /// Request payload for setting a user's role assignments.
@@ -310,6 +315,7 @@ pub async fn create_role(
         can_manage_tags: req.can_manage_tags,
         can_view_all_repos: req.can_view_all_repos,
         can_manage_tunnels: req.can_manage_tunnels,
+        can_upgrade_agent: req.can_upgrade_agent,
     };
     let role: RoleResponse = db::insert_role(&state.pool, &params).await?.into();
     Ok((StatusCode::CREATED, Json(role)))
@@ -346,6 +352,7 @@ pub async fn update_role(
         can_manage_tags: req.can_manage_tags,
         can_view_all_repos: req.can_view_all_repos,
         can_manage_tunnels: req.can_manage_tunnels,
+        can_upgrade_agent: req.can_upgrade_agent,
     };
     let role: RoleResponse = db::update_role(&state.pool, id, &params).await?.into();
     Ok(Json(role))

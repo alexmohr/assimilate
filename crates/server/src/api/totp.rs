@@ -124,7 +124,7 @@ fn generate_totp_secret() -> Vec<u8> {
 /// Verify a TOTP code against the user's stored encrypted secret.
 ///
 /// Returns `Ok(true)` if the code is valid, `Ok(false)` if invalid.
-async fn verify_totp_code(
+fn verify_totp_code(
     state: &AppState,
     encrypted_secret: &[u8],
     code: &str,
@@ -274,7 +274,7 @@ pub async fn totp_verify(
         return Err(ApiError::BadRequest("TOTP not set up".to_string()));
     };
 
-    if !verify_totp_code(&state, encrypted, &req.code).await? {
+    if !verify_totp_code(&state, encrypted, &req.code)? {
         return Err(ApiError::BadRequest(
             "Invalid verification code".to_string(),
         ));
@@ -344,7 +344,7 @@ pub async fn totp_verify_login(
         return Err(ApiError::BadRequest("TOTP not configured".to_string()));
     };
 
-    if !verify_totp_code(&state, encrypted, &req.code).await? {
+    if !verify_totp_code(&state, encrypted, &req.code)? {
         return Err(ApiError::Unauthorized(
             "invalid verification code".to_string(),
         ));

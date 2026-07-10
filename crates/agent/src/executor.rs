@@ -1283,11 +1283,7 @@ async fn run_verify_task(
     }
 }
 
-async fn run_dry_run_task(
-    params: DryRunTaskParams,
-    ctx: FreeTaskContext<'_>,
-    borg: &Borg,
-) {
+async fn run_dry_run_task(params: DryRunTaskParams, ctx: FreeTaskContext<'_>, borg: &Borg) {
     let DryRunTaskParams {
         repo_id,
         mut target,
@@ -1394,11 +1390,7 @@ async fn run_dry_run_task(
     }
 }
 
-async fn run_restore_task(
-    params: RestoreTaskParams,
-    ctx: FreeTaskContext<'_>,
-    borg: &Borg,
-) {
+async fn run_restore_task(params: RestoreTaskParams, ctx: FreeTaskContext<'_>, borg: &Borg) {
     let RestoreTaskParams {
         repo_id,
         mut target,

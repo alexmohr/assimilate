@@ -289,7 +289,8 @@ pub struct FetchServiceUnitResponse {
         (status = 403, description = "Forbidden — upgrade agent permission required"),
     )
 )]
-/// Read the existing systemd service unit from a remote host via SSH (requires `can_upgrade_agent` permission).
+/// Read the existing systemd service unit from a remote host via SSH
+/// (requires `can_upgrade_agent` permission).
 ///
 /// # Errors
 ///

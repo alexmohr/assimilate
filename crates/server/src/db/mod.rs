@@ -5849,8 +5849,8 @@ pub async fn get_effective_permissions(pool: &PgPool, user_id: i64) -> Result<Ro
          can_delete_schedule, BOOL_OR(r.can_delete_own_schedule) AS can_delete_own_schedule, \
          BOOL_OR(r.can_manage_tags) AS can_manage_tags, BOOL_OR(r.can_view_all_repos) AS \
          can_view_all_repos, BOOL_OR(r.can_manage_tunnels) AS can_manage_tunnels, \
-         BOOL_OR(r.can_upgrade_agent) AS can_upgrade_agent FROM roles r \
-         JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = $1",
+         BOOL_OR(r.can_upgrade_agent) AS can_upgrade_agent FROM roles r JOIN user_roles ur ON \
+         ur.role_id = r.id WHERE ur.user_id = $1",
         user_id,
     )
     .fetch_one(pool)

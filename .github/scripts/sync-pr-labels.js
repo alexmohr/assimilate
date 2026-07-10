@@ -3,10 +3,17 @@
 
 // Derives a PR's status label from objective signals (CI conclusion + GitHub's
 // native review decision) instead of relying on an agent or human remembering
-// to apply it by hand. See skills/review/SKILL.md for how agents are expected
-// to interact with these labels.
+// to apply it by hand, and publishes the same verdict as a "PR Merge Gate"
+// check run so it can be made a required status check - merging a PR that
+// isn't `ready to merge` then requires an explicit branch-protection bypass,
+// not just human attentiveness. See skills/review/SKILL.md.
 
 const CI_WORKFLOW_FILE = "ci.yml";
+
+// Name of the check run that enforces the status label as a mergeability
+// gate. Must be added as a required status check in branch protection for
+// it to actually block merging - see skills/review/SKILL.md.
+const GATE_CHECK_NAME = "PR Merge Gate";
 
 const STATUS_LABELS = {
   CI_FAILING: {
@@ -118,6 +125,21 @@ async function needsHumanSignOff(github, owner, repo, prNumber) {
   );
 }
 
+async function createGateCheck(github, owner, repo, headSha, status, summary) {
+  await github.rest.checks.create({
+    owner,
+    repo,
+    name: GATE_CHECK_NAME,
+    head_sha: headSha,
+    status: "completed",
+    conclusion: status.name === STATUS_LABELS.READY_TO_MERGE.name ? "success" : "failure",
+    output: {
+      title: status.name,
+      summary,
+    },
+  });
+}
+
 module.exports = async ({ github, context, core, prNumber }) => {
   const owner = context.repo.owner;
   const repo = context.repo.repo;
@@ -146,18 +168,25 @@ module.exports = async ({ github, context, core, prNumber }) => {
   const ciFailed = ciConclusion !== null && !["success", "skipped", "neutral"].includes(ciConclusion);
 
   let status;
+  let summary;
   if (ciFailed) {
     status = STATUS_LABELS.CI_FAILING;
+    summary = `CI is failing on the latest commit (conclusion: ${ciConclusion}) — cannot be merged until it's green.`;
   } else if (reviewDecision === "CHANGES_REQUESTED") {
     status = STATUS_LABELS.CHANGES_REQUESTED;
+    summary = "A reviewer requested changes — address them and re-request review.";
   } else if (needsHuman) {
     // Even an approved, green PR is capped at "needs review" until a human
     // clears the sign-off gate by removing the label themselves.
     status = STATUS_LABELS.NEEDS_REVIEW;
+    summary =
+      "This PR requires a human sign-off (`needs human review`). Only a human removing that label counts as sign-off.";
   } else if (reviewDecision === "APPROVED" && ciConclusion === "success") {
     status = STATUS_LABELS.READY_TO_MERGE;
+    summary = "CI is green and the PR has been approved — ready to merge.";
   } else {
     status = STATUS_LABELS.NEEDS_REVIEW;
+    summary = "Awaiting an approving review and/or CI completion.";
   }
 
   core.info(
@@ -191,4 +220,6 @@ module.exports = async ({ github, context, core, prNumber }) => {
         if (err.status !== 404) throw err;
       });
   }
+
+  await createGateCheck(github, owner, repo, pr.head.sha, status, summary);
 };

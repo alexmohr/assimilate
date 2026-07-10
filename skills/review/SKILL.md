@@ -56,6 +56,18 @@ this label is present. If your review touches one of the sensitive areas
 above, expect this label and do not treat an agent approval as sufficient to
 merge.
 
+### Merge gate (enforced, not just informational)
+
+The same workflow publishes its verdict as a check run named `PR Merge Gate`
+on the head commit — `success` only when the status is `ready to merge`,
+`failure` otherwise, with a summary explaining why. Labels alone are
+advisory (nothing stops a human from clicking "Merge" on a red-labeled PR);
+`PR Merge Gate` makes the verdict machine-enforceable once it is added as a
+**required status check** in the repo's branch protection settings
+(Settings → Branches → Branch protection rule for `main` → Require status
+checks to pass → add `PR Merge Gate`). That's a one-time, repo-owner-only
+change — agents must not attempt to modify branch protection themselves.
+
 ## Validation checklist
 
 * [ ] Rebase status checked and flagged if stale

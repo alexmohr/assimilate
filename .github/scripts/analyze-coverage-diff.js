@@ -3,14 +3,19 @@
 
 // Deterministic "new/changed code must be covered" + "coverage must not
 // regress" checks, so the review workflow doesn't have to spend a Claude
-// turn re-deriving facts an lcov report already answers. Runs twice, by
-// design: once standalone in coverage-diff-check.yml for fast independent
-// visibility (comment + `coverage failed` label) whenever CI finishes, and
-// once more synchronously inline from pre-review-checks.js right before it
-// decides whether to invoke Claude. Both workflows trigger on the same "CI
-// completed" event with no ordering guarantee between them, so the
-// Claude-gating decision can never trust coverage-diff-check.yml's label as
-// current - it has to compute its own fresh answer. See
+// turn re-deriving facts an lcov report already answers.
+//
+// The pure analyzeDiff() below is called from two places: the default
+// export here (comment + `coverage failed` label side effects, invoked
+// solely by coverage-diff-check.yml) and, read-only, from
+// pre-review-checks.js right before it decides whether to invoke Claude.
+// pre-review-checks.js deliberately does NOT call the default export - both
+// coverage-diff-check.yml and claude-review.yml trigger on the same "CI
+// completed" event with no ordering guarantee, and upsertMarkedComment's
+// read-then-write isn't atomic, so if both posted the comment/label
+// side effects they could race each other into creating two comments for
+// the same finding. Only coverage-diff-check.yml owns those side effects;
+// pre-review-checks.js only needs a fresh ok/findings answer to gate on. See
 // skills/review/SKILL.md for the full reasoning.
 
 const fs = require("fs");

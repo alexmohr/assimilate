@@ -15,15 +15,21 @@
 // result simply hasn't landed yet - denying an automatic review on any
 // pipeline failure only holds if the failure is checked fresh, not read
 // from a label that might still be in flight. So this script calls
-// analyze-coverage-diff.js itself, synchronously, right before deciding -
-// same deterministic check coverage-diff-check.yml runs, just guaranteed
-// current at decision time instead of racing it.
+// analyze-coverage-diff.js's pure analyzeDiff() itself, synchronously,
+// right before deciding - same deterministic check coverage-diff-check.yml
+// runs, just guaranteed current at decision time instead of racing it. It
+// deliberately does NOT call analyze-coverage-diff.js's default export
+// (which posts the PR comment and sets/clears `coverage failed`) - that
+// export runs on the same "CI completed" trigger this script does, and
+// calling it from both places would race two non-atomic
+// read-then-write comment upserts into creating duplicate comments each
+// round. Only coverage-diff-check.yml owns those side effects.
 //
 // Sets the run_claude output the workflow uses to decide whether to invoke
 // claude-code-action.
 
 const syncLabels = require("./sync-pr-labels");
-const analyzeCoverageDiff = require("./analyze-coverage-diff");
+const { analyzeDiff } = require("./analyze-coverage-diff");
 
 module.exports = async ({ github, context, core, prNumber, prLcovPath, baseLcovPath, force }) => {
   const owner = context.repo.owner;
@@ -65,7 +71,7 @@ module.exports = async ({ github, context, core, prNumber, prLcovPath, baseLcovP
     return;
   }
 
-  const coverage = await analyzeCoverageDiff({ github, context, core, prNumber, prLcovPath, baseLcovPath });
+  const coverage = await analyzeDiff({ github, owner, repo, prNumber, prLcovPath, baseLcovPath });
   if (!coverage.ok) {
     core.info(
       `PR #${prNumber}: coverage-diff check failed (${coverage.findings.length} finding(s)) - not running Claude.`,

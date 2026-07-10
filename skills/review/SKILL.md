@@ -132,13 +132,14 @@ bug, not just a theoretical one.
   every new/changed line has test coverage, and that the PR's aggregate line
   coverage isn't lower than the latest `main` baseline (zero tolerance — this
   catches removed/weakened tests even when the source lines they used to
-  cover weren't touched by the diff). It runs in two places:
+  cover weren't touched by the diff). The pure analysis (`analyzeDiff`) runs
+  in two places, but its comment/label side effects run in only one:
   1. `.github/workflows/coverage-diff-check.yml`, standalone, on every CI
-     completion — fast independent visibility (PR comment + `coverage
-     failed` label) even when Claude's gate short-circuits earlier for an
-     unrelated reason (e.g. `duplicate code` already failed) and never
-     reaches this check itself.
-  2. Synchronously inside `pre-review-checks.js`, right before it decides
+     completion — the sole owner of the PR comment and `coverage failed`
+     label, giving fast independent visibility even when Claude's gate
+     short-circuits earlier for an unrelated reason (e.g. `duplicate code`
+     already failed) and never reaches this check itself.
+  2. Read-only, from `pre-review-checks.js`, right before it decides
      whether to invoke Claude — see below for why.
 
 #### Why coverage-diff runs twice
@@ -151,11 +152,19 @@ coverage result simply hadn't landed yet, if that workflow's job happened to
 still be running. Denying an automatic review on *any* pipeline failure only
 holds if the failure is checked fresh at decision time, not read from a label
 that might still be in flight. So `pre-review-checks.js` calls
-`analyze-coverage-diff.js` itself, synchronously, downloading the same
-artifacts and running the exact same check `coverage-diff-check.yml` does -
-just guaranteed current instead of racing it. This is deliberate duplication
-of *execution*, not of *logic* — both call the same function; nothing about
-the check itself is reimplemented twice.
+`analyze-coverage-diff.js`'s pure `analyzeDiff` function itself, synchronously,
+downloading the same artifacts and running the exact same check
+`coverage-diff-check.yml` does - just guaranteed current instead of racing it.
+
+It deliberately calls only the pure function, never the default export that
+posts the comment and sets/clears the label - `coverage-diff-check.yml` and
+`claude-review.yml` race on the same trigger event, and the comment upsert's
+read-then-write (list comments, then create if none match) isn't atomic. Two
+independent callers racing that on the same commit could both see "no
+comment yet" and both create one, producing a duplicate every round instead
+of one comment that gets updated in place. Only `coverage-diff-check.yml`
+ever writes the comment/label; `pre-review-checks.js` only needs a fresh
+answer to gate on, not to publish it a second time.
 
 `duplicate-code-check.yml` doesn't need this because it has no such race: it
 starts on push, well ahead of CI's full run, so it always has time to finish
@@ -192,8 +201,10 @@ the pre-flight checks above have passed:
    this exact commit has already been reviewed — it stops (skip the wasted
    token spend), unless invoked via `/claude-review` (see below), which
    always forces a fresh run.
-4. It runs `analyze-coverage-diff.js` itself and stops if that fails,
-   setting `coverage failed` the same way `coverage-diff-check.yml` would.
+4. It runs `analyze-coverage-diff.js`'s pure check itself and stops if that
+   fails - it does **not** set `coverage failed` itself (only
+   `coverage-diff-check.yml` does, to avoid the duplicate-comment race
+   described above); the label lands independently, shortly after.
 
 **Model:** defaults to `claude-sonnet-5` (overridable repo-wide via the
 `CLAUDE_REVIEW_MODEL` Actions variable). If Claude's review fails outright

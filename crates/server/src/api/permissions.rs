@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+use std::str::FromStr;
+
 use axum::{
     Json,
     extract::{Path, State},
 };
-use std::str::FromStr;
-
 use serde::Deserialize;
-use shared::responses::RepoPermissionResponse;
-use shared::types::Visibility;
+use shared::{responses::RepoPermissionResponse, types::Visibility};
 
 use super::auth::{AuthUser, RequireAdmin};
 use crate::{

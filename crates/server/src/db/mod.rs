@@ -4595,14 +4595,14 @@ pub async fn list_repo_permissions_for_repo(
 }
 
 /// A row from the `system_events` table.
-#[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct SystemEventRow {
     /// Unique identifier.
     pub id: i64,
     /// When the event occurred.
     pub created_at: DateTime<Utc>,
     /// Event type.
-    pub event_type: SystemEventType,
+    pub event_type: String,
     /// Hostname the event relates to, if any.
     pub hostname: Option<String>,
     /// Human-readable event message.
@@ -4635,11 +4635,12 @@ pub async fn insert_system_event(
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_system_events(pool: &PgPool, limit: i64) -> Result<Vec<SystemEventRow>, ApiError> {
-    sqlx::query_as::<_, SystemEventRow>(
+    sqlx::query_as!(
+        SystemEventRow,
         "SELECT id, created_at, event_type, hostname, message FROM system_events ORDER BY \
          created_at DESC LIMIT $1",
+        limit,
     )
-    .bind(limit)
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)

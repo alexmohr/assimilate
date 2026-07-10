@@ -482,7 +482,7 @@ impl FromStr for BackupStatus {
     }
 }
 
-/// Visibility scope of a repository, agent, or schedule — controls whether
+/// Visibility scope of a repository, agent, or schedule - controls whether
 /// the resource is visible only to its owner or shared with all users that
 /// share a group with the owner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, TS, ToSchema, sqlx::Type)]

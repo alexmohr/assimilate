@@ -622,7 +622,7 @@ const browserEntries = computed<DisplayEntry[]>(() => {
       size: Number(e.size),
       mtime: e.mtime,
       mode: e.mode,
-      displayName: e.path.split('/').pop() ?? e.path,
+      displayName: entryName(e),
       isDir: e.type === DIRECTORY_ENTRY_TYPE,
     })),
   ]
@@ -718,7 +718,7 @@ onBeforeUnmount(() => {
 
     <template v-else>
       <div class="browser-header">
-        <span class="browser-title">Files — {{ archiveName }}</span>
+        <span class="browser-title">Files -- {{ archiveName }}</span>
       </div>
 
       <div class="breadcrumb">
@@ -742,7 +742,7 @@ onBeforeUnmount(() => {
         class="state-msg"
       >
         <BaseSpinner size="sm" />
-        Indexing archive contents — this only happens once…
+        Indexing archive contents -- this only happens once...
       </div>
       <div
         v-else-if="contentsError"
@@ -819,7 +819,7 @@ onBeforeUnmount(() => {
             />
           </template>
           <template #body="{ data }">
-            <span class="td-size">{{ data.isDir ? '—' : formatBytes(data.size) }}</span>
+            <span class="td-size">{{ data.isDir ? '-' : formatBytes(data.size) }}</span>
           </template>
         </Column>
         <Column

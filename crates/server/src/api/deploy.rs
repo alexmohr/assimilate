@@ -145,12 +145,7 @@ pub async fn deploy_agent(
     Path(hostname): Path<String>,
     ApiJson(req): ApiJson<DeployAgentRequest>,
 ) -> Result<Json<DeployAgentResponse>, ApiError> {
-    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
-    if !effective.can_upgrade_agent {
-        return Err(ApiError::Forbidden(
-            "upgrade agent permission required".to_string(),
-        ));
-    }
+    require_upgrade_agent(&state.pool, auth.user_id).await?;
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
     helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
     helpers::validate_non_empty(&req.server_url, "server_url")?;
@@ -301,12 +296,7 @@ pub async fn fetch_service_unit(
     Path(_hostname): Path<String>,
     ApiJson(req): ApiJson<FetchServiceUnitRequest>,
 ) -> Result<Json<FetchServiceUnitResponse>, ApiError> {
-    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
-    if !effective.can_upgrade_agent {
-        return Err(ApiError::Forbidden(
-            "upgrade agent permission required".to_string(),
-        ));
-    }
+    require_upgrade_agent(&state.pool, auth.user_id).await?;
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
     helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
 
@@ -338,6 +328,17 @@ fn agent_is_current(
             .zip(agent_version)
             .is_some_and(|(av, dv)| av == dv)
     }
+}
+
+/// Require the calling user to have the `can_upgrade_agent` permission.
+async fn require_upgrade_agent(pool: &sqlx::PgPool, user_id: i64) -> Result<(), ApiError> {
+    let effective = db::get_effective_permissions(pool, user_id).await?;
+    if !effective.can_upgrade_agent {
+        return Err(ApiError::Forbidden(
+            "upgrade agent permission required".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

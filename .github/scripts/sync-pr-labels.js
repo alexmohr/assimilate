@@ -314,3 +314,11 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
 
   await createGateCheck(github, owner, repo, pr.head.sha, status, summary);
 };
+
+// Exported so pre-review-checks.js can (a) invoke this exact sync as its own
+// "is CI green / does this conflict" check instead of re-deriving it, and
+// (b) reuse the PRECHECK_FAILED label definition/helper without duplicating
+// them and risking drift.
+module.exports.STATUS_LABELS = STATUS_LABELS;
+module.exports.REVIEW_VERDICT_LABELS = REVIEW_VERDICT_LABELS;
+module.exports.ensureLabelExists = ensureLabelExists;

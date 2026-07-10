@@ -55,7 +55,11 @@ pub async fn get_index_status(
     .await
     .map_err(ApiError::Database)?;
 
-    row.map(|s: String| s.parse().map_err(|_| ApiError::Internal(format!("invalid index status: {s}")))).transpose()
+    row.map(|s: String| {
+        s.parse()
+            .map_err(|_| ApiError::Internal(format!("invalid index status: {s}")))
+    })
+    .transpose()
 }
 
 /// Rows inserted per statement. Large archives are written in chunks so a single

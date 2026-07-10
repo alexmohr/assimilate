@@ -19,7 +19,7 @@ use shared::{
         ArchiveEntryResponse, ArchiveIndexStatusResponse, ArchiveInfoResponse,
         DeleteArchiveResponse as SharedDeleteArchiveResponse,
     },
-    types::{build_repo_url, IndexStatus, SystemEventType},
+    types::{IndexStatus, SystemEventType, build_repo_url},
 };
 use sqlx::PgPool;
 use tokio::{

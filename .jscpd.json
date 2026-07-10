@@ -1,0 +1,13 @@
+{
+  "ignore": [
+    "**/node_modules/**",
+    "**/target/**",
+    "**/dist/**",
+    "**/.git/**",
+    "**/*.lock",
+    "frontend/src/types/generated/**",
+    ".sqlx/**"
+  ],
+  "minLines": 10,
+  "minTokens": 70
+}

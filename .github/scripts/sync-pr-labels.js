@@ -30,7 +30,7 @@ const STATUS_LABELS = {
     name: "precheck failed",
     color: "d93f0b",
     description:
-      "A deterministic pre-review check failed (coverage or duplication) — set by code, not a reviewer.",
+      "A deterministic pre-review stage failed — purely derived from the `coverage failed` / `duplicate code` labels below, never set directly.",
   },
   NEEDS_REVIEW: {
     name: "needs review",
@@ -53,6 +53,34 @@ const HUMAN_LABEL = {
   name: "needs human review",
   color: "5319e7",
   description: "Requires a human sign-off. Only a human may remove this label.",
+};
+
+// DUPLICATE_CODE_LABEL and COVERAGE_LABEL are each set/cleared solely by
+// their own standalone workflow - duplicate-code-check.yml via
+// analyze-duplication.js, and coverage-diff-check.yml via
+// analyze-coverage-diff.js - two independent deterministic pre-review
+// stages, neither waiting on the other or on the Claude pipeline. Both are
+// deliberately NOT members of STATUS_LABELS: two checks failing at once
+// need to both stay visible, which a single mutually-exclusive status slot
+// can't do, and PRECHECK_FAILED above is purely a derived umbrella computed
+// fresh from these two every sync - never read back as an input itself, so
+// it can't go stale or get self-reinforcing. Each label also owns its own
+// add/remove lifecycle end to end (its workflow sets or clears it on every
+// run based on that run's fresh result) rather than being blindly cleared
+// here on every push - both workflows react to the same "synchronize"/
+// "workflow_run" events this script does, so a blind clear here could race
+// a fresh finding from the other workflow and wipe it.
+const DUPLICATE_CODE_LABEL = {
+  name: "duplicate code",
+  color: "c5def5",
+  description: "jscpd found duplicate code touching this PR's changed files — set by code, not a reviewer.",
+};
+
+const COVERAGE_LABEL = {
+  name: "coverage failed",
+  color: "f9d0c4",
+  description:
+    "The coverage-diff pre-review check failed (new/changed lines uncovered, or aggregate coverage regressed) — set by code, not a reviewer.",
 };
 
 // GitHub rejects an APPROVE review from the PR's own author (422: "Can not
@@ -278,12 +306,17 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
   // GitHub reviews already go stale/pending on their own; these labels don't,
   // so they must be cleared explicitly.
   if (eventAction === "synchronize") {
-    // precheck failed is set by pre-review-checks.js against a specific commit;
-    // like the review-verdict labels, a new push makes it stale.
-    const staleVerdictLabels = [
-      ...Object.values(REVIEW_VERDICT_LABELS).map((l) => l.name),
-      STATUS_LABELS.PRECHECK_FAILED.name,
-    ].filter((name) => existingLabels.includes(name));
+    // claude-approved / claude-changes-requested are set against a specific
+    // commit; a new push makes them stale. precheck failed needs no special
+    // handling here - it's a derived STATUS_LABELS member, so the generic
+    // toAdd/toRemove logic below already drops it the moment neither
+    // coverage failed nor duplicate code is true. coverage failed / duplicate
+    // code themselves are deliberately NOT included here - see the comment
+    // on DUPLICATE_CODE_LABEL/COVERAGE_LABEL above for why they own their
+    // own clearing instead.
+    const staleVerdictLabels = Object.values(REVIEW_VERDICT_LABELS)
+      .map((l) => l.name)
+      .filter((name) => existingLabels.includes(name));
     for (const name of staleVerdictLabels) {
       await github.rest.issues
         .removeLabel({ owner, repo, issue_number: prNumber, name })
@@ -295,7 +328,28 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
   }
 
   const hasHumanLabel = existingLabels.includes(HUMAN_LABEL.name);
-  const hasPrecheckFailed = existingLabels.includes(STATUS_LABELS.PRECHECK_FAILED.name);
+  const hasCoverageFailed = existingLabels.includes(COVERAGE_LABEL.name);
+  const hasDuplicateCode = existingLabels.includes(DUPLICATE_CODE_LABEL.name);
+
+  // Hard guarantee: claude-approved must never survive while a pre-flight
+  // stage is failing, no matter how it got set. The status precedence chain
+  // below already refuses to derive `ready to merge` from it in that case,
+  // but that alone still leaves a misleading label on the PR - e.g. Claude
+  // starts its review while precheck is green, coverage-diff-check.yml or
+  // duplicate-code-check.yml then fails on the same commit before Claude
+  // finishes and approves. Strip it here, unconditionally (not gated on
+  // eventAction), so the very next sync - including the one each of those
+  // two workflows triggers itself right after setting its failure label -
+  // corrects it immediately.
+  if ((hasCoverageFailed || hasDuplicateCode) && existingLabels.includes(REVIEW_VERDICT_LABELS.APPROVED.name)) {
+    await github.rest.issues
+      .removeLabel({ owner, repo, issue_number: prNumber, name: REVIEW_VERDICT_LABELS.APPROVED.name })
+      .catch((err) => {
+        if (err.status !== 404) throw err;
+      });
+    existingLabels = existingLabels.filter((name) => name !== REVIEW_VERDICT_LABELS.APPROVED.name);
+    core.info(`PR #${prNumber}: stripped claude-approved - a pre-flight stage is currently failing.`);
+  }
 
   const [ciConclusion, mergeableState, nativeReviewDecision, autoNeedsHuman] = await Promise.all([
     resolveCiConclusion(github, owner, repo, pr.head.sha),
@@ -317,10 +371,17 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
   } else if (mergeConflict) {
     status = STATUS_LABELS.MERGE_CONFLICT;
     summary = "This PR has real conflicts with the base branch — rebase and resolve them before it can be merged.";
-  } else if (hasPrecheckFailed) {
+  } else if (hasCoverageFailed || hasDuplicateCode) {
+    // Two independent stages can each fail on their own: coverage-diff-check.yml
+    // sets `coverage failed`, duplicate-code-check.yml sets `duplicate code`.
+    // Either one blocks merge, and both stay visible on the PR even though
+    // this status label is the single umbrella shown here - that's why the
+    // summary spells out which one(s) failed.
     status = STATUS_LABELS.PRECHECK_FAILED;
-    summary =
-      "A deterministic pre-review check (coverage or duplication) failed — see the automated pre-flight comment for specifics.";
+    const causes = [];
+    if (hasCoverageFailed) causes.push("coverage-diff");
+    if (hasDuplicateCode) causes.push("duplicate-code");
+    summary = `A deterministic pre-review check failed (${causes.join(" and ")}) — see the automated pre-flight comment(s) for specifics.`;
   } else if (reviewDecision === "CHANGES_REQUESTED") {
     status = STATUS_LABELS.CHANGES_REQUESTED;
     summary = "A reviewer requested changes — address them and re-request review.";
@@ -339,7 +400,7 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
   }
 
   core.info(
-    `PR #${prNumber}: ci=${ciConclusion} mergeable=${mergeableState} precheckFailed=${hasPrecheckFailed} review=${reviewDecision} (native=${nativeReviewDecision}) needsHuman=${needsHuman} -> ${status.name}`,
+    `PR #${prNumber}: ci=${ciConclusion} mergeable=${mergeableState} coverageFailed=${hasCoverageFailed} duplicateCode=${hasDuplicateCode} review=${reviewDecision} (native=${nativeReviewDecision}) needsHuman=${needsHuman} -> ${status.name}`,
   );
 
   const desired = [status.name];
@@ -375,8 +436,12 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
 
 // Exported so pre-review-checks.js can (a) invoke this exact sync as its own
 // "is CI green / does this conflict" check instead of re-deriving it, and
-// (b) reuse the PRECHECK_FAILED label definition/helper without duplicating
-// them and risking drift.
+// (b) reuse the PRECHECK_FAILED (derived umbrella) label without duplicating
+// it and risking drift. DUPLICATE_CODE_LABEL / COVERAGE_LABEL are exported
+// so analyze-duplication.js and analyze-coverage-diff.js can each own their
+// own label's full add/remove lifecycle.
 module.exports.STATUS_LABELS = STATUS_LABELS;
 module.exports.REVIEW_VERDICT_LABELS = REVIEW_VERDICT_LABELS;
+module.exports.DUPLICATE_CODE_LABEL = DUPLICATE_CODE_LABEL;
+module.exports.COVERAGE_LABEL = COVERAGE_LABEL;
 module.exports.ensureLabelExists = ensureLabelExists;

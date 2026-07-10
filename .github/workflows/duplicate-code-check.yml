@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+name: Duplicate Code Check
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  actions: read
+  checks: write
+
+jobs:
+  duplication:
+    name: Detect duplicate code
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout scripts from default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: |
+            .github/scripts
+
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr-src
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run jscpd
+        working-directory: pr-src
+        # jscpd exits non-zero when it finds duplicates by default - that's not
+        # a workflow failure here, analyze-duplication.js decides pass/fail from
+        # the JSON report content, filtered to this PR's changed files. What
+        # counts as ignorable (generated code, lockfiles, ...) lives in the
+        # repo's own .jscpd.json rather than here - edit that file to extend
+        # the ignore list, no workflow change needed.
+        run: |
+          npx --yes jscpd@4 . \
+            --config .jscpd.json \
+            --reporters json \
+            --output ../jscpd-report \
+            --silent || true
+
+      - name: Analyze duplication and update PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const analyze = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/analyze-duplication.js`);
+            await analyze({
+              github,
+              context,
+              core,
+              prNumber: context.payload.pull_request.number,
+              reportPath: `${process.env.GITHUB_WORKSPACE}/jscpd-report/jscpd-report.json`,
+            });

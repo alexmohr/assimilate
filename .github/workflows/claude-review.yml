@@ -88,7 +88,6 @@ jobs:
               pull_number: Number("${{ steps.resolve.outputs.pr_number }}"),
             });
             core.setOutput("sha", pr.head.sha);
-            core.setOutput("repo", pr.head.repo.full_name);
 
       - name: Locate coverage runs
         id: runs
@@ -142,35 +141,6 @@ jobs:
           path: main-coverage
           github-token: ${{ github.token }}
 
-      - name: Checkout PR head (for duplication scan only - never executed)
-        if: steps.head.outputs.sha
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ steps.head.outputs.repo }}
-          ref: ${{ steps.head.outputs.sha }}
-          path: pr-src
-          persist-credentials: false
-
-      - name: Setup Node.js
-        if: steps.head.outputs.sha
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Run jscpd
-        if: steps.head.outputs.sha
-        working-directory: pr-src
-        # jscpd exits non-zero when it finds duplicates by default - that's
-        # not a workflow failure here, analyze-duplication.js decides pass/fail
-        # from the JSON report content, filtered to this PR's changed files.
-        run: |
-          npx --yes jscpd@4 . \
-            --reporters json \
-            --output ../jscpd-report \
-            --ignore "**/node_modules/**,**/target/**,**/dist/**,**/.git/**,frontend/src/types/generated/**,**/*.lock" \
-            --min-lines 10 --min-tokens 70 \
-            --silent || true
-
       - name: Run deterministic pre-flight checks
         id: precheck
         if: steps.head.outputs.sha
@@ -185,7 +155,6 @@ jobs:
               prNumber: Number("${{ steps.resolve.outputs.pr_number }}"),
               prLcovPath: `${process.env.GITHUB_WORKSPACE}/pr-coverage/final.info`,
               baseLcovPath: `${process.env.GITHUB_WORKSPACE}/main-coverage/final.info`,
-              jscpdReportPath: `${process.env.GITHUB_WORKSPACE}/jscpd-report/jscpd-report.json`,
               force: "${{ steps.resolve.outputs.force }}" === "true",
             });
 
@@ -207,9 +176,12 @@ jobs:
 
             Deterministic pre-flight checks (CI status, merge conflicts, coverage-diff,
             duplicate-code detection) have already run and passed - do not re-derive them.
-            Focus your review on correctness, logic duplication beyond what the automated
-            duplication scan already covers, and whether the tests that exist are the right
-            *kind* of test for the change, not raw line coverage.
+            Duplicate-code detection runs in its own standalone workflow
+            (.github/workflows/duplicate-code-check.yml) and posts its own PR comment with
+            the actual duplicated code when it fails - trust that verdict rather than
+            re-scanning for duplication from scratch. Focus your review on correctness,
+            logic duplication beyond what that scan already covers, and whether the tests
+            that exist are the right *kind* of test for the change, not raw line coverage.
 
             Rebase-behind-main and issue-linking findings, if the pre-flight comment has any,
             are informational only - mention them if relevant but don't block on them alone.
@@ -232,4 +204,28 @@ jobs:
                 "This PR still needs review - a human can review it directly on GitHub, or any agent " +
                 "can review it per `skills/review/SKILL.md`. Comment `/claude-review` to retry once " +
                 "the automated path is available again.",
+            });
+
+      # Belt-and-suspenders: re-sync immediately after Claude's turn (not
+      # waiting on whatever trigger fires next). Claude's own review can take
+      # long enough for coverage-diff-check.yml or duplicate-code-check.yml
+      # to fail on this same commit while it's running, and sync-pr-labels.js
+      # unconditionally strips claude-approved whenever a pre-flight stage is
+      # currently failing - see the comment there. This makes that guarantee
+      # immediate rather than dependent on the next unrelated trigger.
+      - name: Re-sync labels after Claude review
+        if: steps.precheck.outputs.run_claude == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sync = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/sync-pr-labels.js`);
+            // No eventAction: this isn't a new push, so the synchronize-only
+            // stale-clear (which would wipe the verdict Claude just set)
+            // must not fire here - only the unconditional
+            // pre-flight-stage-failed guard should apply.
+            await sync({
+              github,
+              context,
+              core,
+              prNumber: Number("${{ steps.resolve.outputs.pr_number }}"),
             });

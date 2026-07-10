@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use serde::Serialize;
+use shared::types::IndexStatus;
 use sqlx::PgPool;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -19,35 +19,6 @@ use crate::{
     borg::Borg,
     error::ApiError,
 };
-
-/// Status of an archive content indexing job.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum IndexStatus {
-    /// Index job not yet started.
-    Pending,
-    /// Indexing is in progress.
-    Indexing,
-    /// Indexing completed successfully.
-    Done,
-    /// Indexing failed.
-    Failed,
-}
-
-impl std::str::FromStr for IndexStatus {
-    type Err = std::convert::Infallible;
-
-    /// Any value other than a recognized status (including an absent DB row,
-    /// which callers represent as an empty string) is treated as `Pending`.
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s {
-            "indexing" => Self::Indexing,
-            "done" => Self::Done,
-            "failed" => Self::Failed,
-            _ => Self::Pending,
-        })
-    }
-}
 
 /// Returns the `archives.id` for the given `(repo_id, archive_name)`, creating the row if absent.
 async fn get_or_create_archive_id(
@@ -84,7 +55,7 @@ pub async fn get_index_status(
     .await
     .map_err(ApiError::Database)?;
 
-    Ok(row.map(|s: String| s.parse().unwrap_or(IndexStatus::Pending)))
+    row.map(|s: String| s.parse().map_err(|_| ApiError::Internal(format!("invalid index status: {s}")))).transpose()
 }
 
 /// Rows inserted per statement. Large archives are written in chunks so a single
@@ -192,7 +163,7 @@ pub async fn ensure_indexed(
     // Another task already claimed it - return current status.
     get_index_status(&pool, repo_id, &archive_name)
         .await
-        .map(|s| s.unwrap_or(IndexStatus::Pending))
+        .map(Option::unwrap_or_default)
 }
 
 /// Archive names in this repository whose content index is already complete.
@@ -733,7 +704,7 @@ pub async fn query_dir(
 
 #[cfg(test)]
 mod tests {
-    use super::IndexStatus;
+    use shared::types::IndexStatus;
 
     #[test]
     fn index_status_parses_known_values() {
@@ -743,9 +714,9 @@ mod tests {
     }
 
     #[test]
-    fn index_status_defaults_to_pending_for_unknown_values() {
-        assert_eq!("".parse(), Ok(IndexStatus::Pending));
-        assert_eq!("bogus".parse(), Ok(IndexStatus::Pending));
+    fn index_status_returns_error_for_unknown_values() {
+        assert!("".parse::<IndexStatus>().is_err());
+        assert!("bogus".parse::<IndexStatus>().is_err());
     }
 
     #[test]

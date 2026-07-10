@@ -88,7 +88,7 @@ async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentRespons
         is_hidden: agent.is_hidden,
         supports_restart,
         owner_id: agent.owner_id,
-        visibility: agent.visibility,
+        visibility: agent.visibility.parse().unwrap_or_default(),
         restart_unavailable_reason,
         last_ssh_user: agent.last_ssh_user,
     }
@@ -359,7 +359,7 @@ pub async fn regenerate_token(
             is_hidden: agent.is_hidden,
             supports_restart: false,
             owner_id: agent.owner_id,
-            visibility: agent.visibility,
+            visibility: agent.visibility.parse().unwrap_or_default(),
             restart_unavailable_reason: None,
             last_ssh_user: agent.last_ssh_user,
         },

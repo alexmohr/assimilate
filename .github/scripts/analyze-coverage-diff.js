@@ -46,6 +46,15 @@ function addedLineNumbers(patch) {
 module.exports = async ({ github, owner, repo, prNumber, prLcovPath, baseLcovPath }) => {
   const findings = [];
 
+  // Either artifact can be legitimately missing: the PR's own CI run may
+  // predate the coverage-final upload (an already-open PR that hasn't been
+  // pushed to since), or main may not have a run with it yet. Don't block
+  // the review pipeline on historical data that can't exist yet - the check
+  // becomes active again once a fresh push produces both artifacts.
+  if (!fs.existsSync(prLcovPath) || !fs.existsSync(baseLcovPath)) {
+    return { ok: true, findings: [] };
+  }
+
   const prLcov = parseLcov(fs.readFileSync(prLcovPath, "utf8"));
   const baseLcov = parseLcov(fs.readFileSync(baseLcovPath, "utf8"));
 

@@ -80,6 +80,8 @@ const REVIEW_VERDICT_LABELS = {
 const SENSITIVE_PATH_PATTERNS = [
   /^\.github\/workflows\//,
   /^\.github\/scripts\//,
+  /^\.pre-commit-config\.ya?ml$/,
+  /^\.devcontainer\//,
   /(^|\/)auth[^/]*\.(rs|ts|vue)$/i,
   /(^|\/)crypto[^/]*\.rs$/i,
   /(^|\/)token[^/]*\.rs$/i,
@@ -91,6 +93,49 @@ const SENSITIVE_PATH_PATTERNS = [
   /^frontend\/package-lock\.json$/,
   /^frontend\/\.npm-audit-allowlist\.json$/,
 ];
+
+// A PR that talks about security in its own title/body, or that closes an
+// issue which itself talks about security (title, body, or a "security"
+// label), gets the same sign-off gate as a sensitive-path change - the
+// judgment call of whether it's actually security-relevant belongs to a
+// human, not a keyword match, so this only widens the net, never narrows it.
+const SECURITY_MENTION_PATTERN = /\bsecurity\b/i;
+const CLOSING_KEYWORD_PATTERN = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
+
+function extractClosingIssueNumbers(text) {
+  if (!text) return [];
+  const numbers = new Set();
+  let match;
+  // Reset lastIndex - this regex has the global flag and is module-level,
+  // so a prior exec() elsewhere could leave it mid-string otherwise.
+  CLOSING_KEYWORD_PATTERN.lastIndex = 0;
+  while ((match = CLOSING_KEYWORD_PATTERN.exec(text)) !== null) {
+    numbers.add(Number(match[1]));
+  }
+  return [...numbers];
+}
+
+async function closesSecurityIssue(github, owner, repo, prBody) {
+  const issueNumbers = extractClosingIssueNumbers(prBody);
+  if (issueNumbers.length === 0) return false;
+
+  const issues = await Promise.all(
+    issueNumbers.map((issue_number) =>
+      github.rest.issues.get({ owner, repo, issue_number }).catch(() => null),
+    ),
+  );
+
+  return issues.some((issue) => {
+    if (!issue) return false; // not a real issue number, or inaccessible - not our call to make
+    const { title, body, labels } = issue.data;
+    if (SECURITY_MENTION_PATTERN.test(title) || SECURITY_MENTION_PATTERN.test(body || "")) {
+      return true;
+    }
+    return (labels || []).some((label) =>
+      SECURITY_MENTION_PATTERN.test((typeof label === "string" ? label : label.name) || ""),
+    );
+  });
+}
 
 // Lines added by the diff that introduce a self-authorized suppression
 // (forbidden by AGENTS.md without explicit human approval). deny.toml
@@ -164,7 +209,7 @@ function resolveEffectiveReviewDecision(nativeDecision, existingLabels) {
   return nativeDecision;
 }
 
-async function needsHumanSignOff(github, owner, repo, prNumber) {
+async function needsHumanSignOff(github, owner, repo, prNumber, pr) {
   const files = await github.paginate(github.rest.pulls.listFiles, {
     owner,
     repo,
@@ -176,11 +221,24 @@ async function needsHumanSignOff(github, owner, repo, prNumber) {
     return true;
   }
 
-  return files.some((f) =>
-    (f.patch || "")
-      .split("\n")
-      .some((line) => SUPPRESSION_LINE_PATTERNS.some((p) => p.test(line))),
-  );
+  if (
+    files.some((f) =>
+      (f.patch || "")
+        .split("\n")
+        .some((line) => SUPPRESSION_LINE_PATTERNS.some((p) => p.test(line))),
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    SECURITY_MENTION_PATTERN.test(pr.title || "") ||
+    SECURITY_MENTION_PATTERN.test(pr.body || "")
+  ) {
+    return true;
+  }
+
+  return closesSecurityIssue(github, owner, repo, pr.body);
 }
 
 async function createGateCheck(github, owner, repo, headSha, status, summary) {
@@ -243,7 +301,7 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
     resolveCiConclusion(github, owner, repo, pr.head.sha),
     resolveMergeableState(github, owner, repo, prNumber, pr.mergeable_state),
     resolveReviewDecision(github, owner, repo, prNumber),
-    hasHumanLabel ? Promise.resolve(false) : needsHumanSignOff(github, owner, repo, prNumber),
+    hasHumanLabel ? Promise.resolve(false) : needsHumanSignOff(github, owner, repo, prNumber, pr),
   ]);
   const reviewDecision = resolveEffectiveReviewDecision(nativeReviewDecision, existingLabels);
   const needsHuman = hasHumanLabel || autoNeedsHuman;

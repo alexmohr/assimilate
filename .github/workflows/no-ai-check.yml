@@ -9,6 +9,7 @@ on:
     types: [opened, synchronize, reopened, edited]
 jobs:
   no-ai-banners:
+    if: github.actor != 'dependabot[bot]'
     name: No AI Banners
     runs-on: ubuntu-latest
     env:

@@ -35,6 +35,13 @@ vi.mock('../components/BaseSpinner.vue', () => ({
   default: { template: '<div class="base-spinner" />' },
 }))
 
+vi.mock('../components/ArchiveFileBrowser.vue', () => ({
+  default: {
+    props: ['repoId', 'archiveName'],
+    template: '<div class="archive-file-browser-stub" />',
+  },
+}))
+
 vi.mock('../utils/cron', () => ({
   cronToHuman: (expr: string): string => `human(${expr})`,
 }))
@@ -752,5 +759,184 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
 
     expect(wrapper.find('.live-log-output').exists()).toBe(true)
     expect(wrapper.text()).toContain('Creating archive server-daily-2026-06-26...')
+  })
+})
+
+describe('ScheduleDetailView - Backups tab', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  function setupBackupWithReports(mockReports: unknown[]): void {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/targets')
+        return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/schedules/1/reports') return Promise.resolve({ data: mockReports })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      return Promise.resolve({ data: [] })
+    })
+  }
+
+  it('shows Backups tab button for backup-type schedule in edit mode', async () => {
+    setupBackupWithReports([])
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    const tabs = wrapper.findAll('.tab-btn')
+    expect(tabs.some((t) => t.text() === 'Backups')).toBe(true)
+  })
+
+  it('does NOT show Backups tab button for check-type schedule', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/2') return Promise.resolve({ data: mockCheckSchedule })
+      if (url === '/schedules/2/targets')
+        return Promise.resolve({
+          data: [{ agent_id: mockCheckSchedule.agent_id, execution_order: 0 }],
+        })
+      if (url === '/schedules/2/sources')
+        return Promise.resolve({ data: { backup_sources: [], backup_sources_per_agent: [] } })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '2' } })
+    await flushPromises()
+
+    const tabs = wrapper.findAll('.tab-btn')
+    expect(tabs.some((t) => t.text() === 'Backups')).toBe(false)
+  })
+
+  it('does NOT show Backups tab button in create mode', async () => {
+    setupCreateMode()
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: 'new' } })
+    await flushPromises()
+
+    const tabs = wrapper.findAll('.tab-btn')
+    expect(tabs.some((t) => t.text() === 'Backups')).toBe(false)
+  })
+
+  it('shows empty state when no reports have archive_name', async () => {
+    setupBackupWithReports([
+      {
+        id: 1,
+        status: 'success',
+        archive_name: null,
+        started_at: '2026-06-01T02:00:00Z',
+        original_size: 100,
+        agent_id: 10,
+      },
+    ])
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    // Click Backups tab to trigger reports load
+    const backupsTab = wrapper.findAll('.tab-btn').find((t) => t.text() === 'Backups')
+    await backupsTab!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('No backup archives found')
+  })
+
+  it('shows archive rows when reports have archive_name', async () => {
+    setupBackupWithReports([
+      {
+        id: 1,
+        status: 'success',
+        archive_name: 'test-archive-2026-06-01',
+        started_at: '2026-06-01T02:00:00Z',
+        original_size: 500,
+        agent_id: 10,
+        hostname: 'web-server-01',
+      },
+      {
+        id: 2,
+        status: 'success',
+        archive_name: null,
+        started_at: '2026-06-01T03:00:00Z',
+        original_size: 200,
+        agent_id: 10,
+        hostname: 'web-server-01',
+      },
+    ])
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    // Click Backups tab to trigger reports load
+    const backupsTab = wrapper.findAll('.tab-btn').find((t) => t.text() === 'Backups')
+    await backupsTab!.trigger('click')
+    await flushPromises()
+
+    // Should show the archive row for the report with archive_name
+    expect(wrapper.text()).toContain('test-archive-2026-06-01')
+    // Should NOT include the report without archive_name
+    expect(wrapper.text()).not.toContain('No backup archives found')
+  })
+
+  it('clicking an archive row selects it and shows file browser', async () => {
+    setupBackupWithReports([
+      {
+        id: 1,
+        status: 'success',
+        archive_name: 'test-archive-2026-06-01',
+        started_at: '2026-06-01T02:00:00Z',
+        original_size: 500,
+        agent_id: 10,
+        hostname: 'web-server-01',
+      },
+    ])
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    // Click Backups tab
+    const backupsTab = wrapper.findAll('.tab-btn').find((t) => t.text() === 'Backups')
+    await backupsTab!.trigger('click')
+    await flushPromises()
+
+    // Click on the archive row
+    const archiveRow = wrapper.find('.archive-row')
+    await archiveRow.trigger('click')
+    await flushPromises()
+
+    // The selected row should have the 'selected' class
+    expect(archiveRow.classes()).toContain('selected')
+    // The ArchiveFileBrowser stub should be rendered
+    expect(wrapper.find('.archive-file-browser-stub').exists()).toBe(true)
+  })
+
+  it('hides save bar on Backups tab', async () => {
+    setupBackupWithReports([
+      {
+        id: 1,
+        status: 'success',
+        archive_name: 'test-archive-2026-06-01',
+        started_at: '2026-06-01T02:00:00Z',
+        original_size: 500,
+        agent_id: 10,
+        hostname: 'web-server-01',
+      },
+    ])
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    // Save bar should be visible on Settings tab
+    expect(wrapper.find('.save-bar').exists()).toBe(true)
+
+    // Click Backups tab
+    const backupsTab = wrapper.findAll('.tab-btn').find((t) => t.text() === 'Backups')
+    await backupsTab!.trigger('click')
+    await flushPromises()
+
+    // Save bar should be hidden on Backups tab
+    expect(wrapper.find('.save-bar').exists()).toBe(false)
   })
 })

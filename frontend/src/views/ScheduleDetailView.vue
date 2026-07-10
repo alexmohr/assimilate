@@ -20,6 +20,7 @@ import FileChangePatternsEditor from '../components/FileChangePatternsEditor.vue
 import CronBuilder from '../components/CronBuilder.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import BackupProgressCard from '../components/BackupProgressCard.vue'
+import ArchiveFileBrowser from '../components/ArchiveFileBrowser.vue'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
@@ -111,11 +112,27 @@ const estimatedRemainingSecs = computed<number | null>(() => {
   return Math.max(0, Math.round(estimatedTotal - backupElapsedSecs.value))
 })
 
-type TabId = 'settings' | 'advanced' | 'logs'
+const selectedBackupReport = ref<ReportRow | null>(null)
+
+const scheduleArchives = computed<ReportRow[]>(() =>
+  reports.value
+    .filter((r) => {
+      if (r.archive_name == null) return false
+      const status = normalizeBackupStatus(r.status)
+      return status === 'success' || status === 'warning'
+    })
+    .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime()),
+)
+
+function selectScheduleArchive(report: ReportRow): void {
+  selectedBackupReport.value = report
+}
+
+type TabId = 'settings' | 'advanced' | 'logs' | 'backups'
 const activeTab = computed<TabId>({
   get() {
     const t = route.query.tab
-    if (t === 'advanced' || t === 'logs') return t
+    if (t === 'advanced' || t === 'logs' || t === 'backups') return t
     return 'settings'
   },
   set(val: TabId) {
@@ -623,7 +640,7 @@ function reportStatusClass(status: string): string {
 
 watch(() => props.id, loadData)
 watch(activeTab, (tab) => {
-  if (tab === 'logs' && !isCreate.value) {
+  if ((tab === 'logs' || tab === 'backups') && !isCreate.value) {
     loadReports().catch(() => undefined)
   }
 })
@@ -717,6 +734,14 @@ watch(activeTab, (tab) => {
           @click="activeTab = 'advanced'"
         >
           Advanced
+        </button>
+        <button
+          v-if="isBackup && !isCreate"
+          class="tab-btn"
+          :class="{ active: activeTab === 'backups' }"
+          @click="activeTab = 'backups'"
+        >
+          Backups
         </button>
         <button
           v-if="!isCreate"
@@ -1479,9 +1504,89 @@ watch(activeTab, (tab) => {
         </div>
       </div>
 
+      <!-- Backups Tab -->
+      <div
+        v-if="activeTab === 'backups'"
+        class="tab-content"
+      >
+        <div
+          v-if="reportsLoading"
+          class="reports-loading"
+        >
+          <BaseSpinner size="sm" />
+        </div>
+        <div
+          v-else-if="reportsError"
+          class="error-banner"
+        >
+          {{ reportsError }}
+        </div>
+        <div
+          v-else-if="scheduleArchives.length === 0"
+          class="empty-state"
+        >
+          No backup archives found for this schedule.
+        </div>
+        <div
+          v-else
+          class="backups-layout"
+        >
+          <!-- Archive list -->
+          <div class="backups-list-panel">
+            <div class="panel-header">
+              <span class="panel-title">Archives</span>
+            </div>
+            <table class="archives-table">
+              <thead>
+                <tr>
+                  <th>Archive</th>
+                  <th>Host</th>
+                  <th>Date</th>
+                  <th>Size</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="r in scheduleArchives"
+                  :key="r.id"
+                  class="archive-row"
+                  :class="{ selected: selectedBackupReport?.id === r.id }"
+                  @click="selectScheduleArchive(r)"
+                >
+                  <td class="cell-archive-name">{{ r.archive_name }}</td>
+                  <td class="cell-host">
+                    {{
+                      agentMap.get(r.agent_id)?.display_name ??
+                      agentMap.get(r.agent_id)?.hostname ??
+                      `#${r.agent_id}`
+                    }}
+                  </td>
+                  <td class="cell-date">{{ formatDateShort(r.started_at) }}</td>
+                  <td class="cell-size">{{ formatBytes(r.original_size) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <!-- File browser -->
+          <div class="backups-browser-panel">
+            <ArchiveFileBrowser
+              v-if="selectedBackupReport"
+              :repo-id="schedule?.repo_id ?? null"
+              :archive-name="selectedBackupReport.archive_name ?? null"
+            />
+            <div
+              v-else
+              class="empty-browser"
+            >
+              <span class="muted">Select an archive to browse its contents.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Save bar -->
       <div
-        v-if="activeTab !== 'logs'"
+        v-if="activeTab !== 'logs' && activeTab !== 'backups'"
         class="save-bar"
       >
         <div
@@ -2341,5 +2446,117 @@ watch(activeTab, (tab) => {
 
 .btn-danger:hover:not(:disabled) {
   background: var(--danger-hover, color-mix(in srgb, var(--danger) 85%, #000));
+}
+
+/* Backups tab layout */
+
+.backups-layout {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+.backups-list-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.backups-list-panel .panel-header {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.backups-list-panel .panel-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.archives-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.archives-table th {
+  text-align: left;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.archives-table td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+  color: var(--text-secondary);
+}
+
+.archives-table tr:last-child td {
+  border-bottom: none;
+}
+
+.archives-table tr {
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.archives-table tr:hover {
+  background: var(--bg-hover);
+}
+
+.archives-table tr.selected td {
+  background: var(--accent-subtle);
+  color: var(--text-primary);
+}
+
+.cell-archive-name {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.cell-host {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.cell-date {
+  white-space: nowrap;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.backups-browser-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  min-height: 300px;
+}
+
+.empty-browser {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+}
+
+.muted {
+  color: var(--text-muted);
 }
 </style>

@@ -34,3 +34,4 @@ The canonical rules are in `AGENTS.md` under "Non-negotiable rules" — always t
 
 * `docs/security.md` — authentication mechanisms (session cookies, API tokens, agent tokens), session security properties
 * `docs/ssh-agent-forwarding.md` — SSH relay architecture, server/agent setup, borg repository authorization, failure modes, troubleshooting
+* `skills/review/SKILL.md` — PRs touching the areas above (or adding a new suppression) are auto-labeled `needs human review` by `.github/workflows/pr-status-labels.yml`; only a human may clear that label

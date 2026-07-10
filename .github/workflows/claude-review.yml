@@ -1,0 +1,229 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+name: Claude PR Review
+on:
+  pull_request_target:
+    types: [labeled]
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  actions: read
+  checks: write
+
+jobs:
+  review:
+    name: Review PR
+    runs-on: ubuntu-latest
+    # Only ever proceed for: the "needs review" label landing, CI finishing on
+    # a PR, or a /claude-review comment from someone with write access (an
+    # open author_association check here is an open invitation to burn quota
+    # on a public repo).
+    if: >-
+      (github.event_name == 'pull_request_target' && github.event.label.name == 'needs review') || (github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[0] != null) || (github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request != null &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+        contains(github.event.comment.body, '/claude-review'))
+    steps:
+      - name: Checkout scripts from default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: |
+            .github/scripts
+
+      - name: Resolve PR and command
+        id: resolve
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let number = null;
+            if (context.eventName === "workflow_run") {
+              const prs = context.payload.workflow_run.pull_requests || [];
+              if (prs.length > 0) number = prs[0].number;
+            } else if (context.eventName === "issue_comment") {
+              number = context.payload.issue.number;
+            } else {
+              number = context.payload.pull_request.number;
+            }
+            core.setOutput("pr_number", number ?? "");
+            core.setOutput("force", context.eventName === "issue_comment" ? "true" : "false");
+
+            const defaultModel = "${{ vars.CLAUDE_REVIEW_MODEL }}" || "claude-sonnet-5";
+            if (context.eventName === "issue_comment") {
+              const parse = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/parse-review-command.js`);
+              await parse({ core, commentBody: context.payload.comment.body, defaultModel });
+            } else {
+              core.setOutput("matched", "true");
+              core.setOutput("model", defaultModel);
+            }
+
+      - name: Report unsupported model
+        if: steps.resolve.outputs.error
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number("${{ steps.resolve.outputs.pr_number }}"),
+              body: "${{ steps.resolve.outputs.error }}",
+            });
+
+      - name: Resolve PR head
+        id: head
+        if: steps.resolve.outputs.pr_number != '' && steps.resolve.outputs.matched == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: Number("${{ steps.resolve.outputs.pr_number }}"),
+            });
+            core.setOutput("sha", pr.head.sha);
+            core.setOutput("repo", pr.head.repo.full_name);
+
+      - name: Locate coverage runs
+        id: runs
+        if: steps.head.outputs.sha
+        uses: actions/github-script@v7
+        with:
+          script: |
+            async function latestRun(extra) {
+              const { data } = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: "ci.yml",
+                ...extra,
+              });
+              return data.workflow_runs.sort(
+                (a, b) => new Date(b.created_at) - new Date(a.created_at),
+              )[0];
+            }
+            const prRun = await latestRun({ head_sha: "${{ steps.head.outputs.sha }}" });
+            const mainRun = await latestRun({
+              branch: context.payload.repository.default_branch,
+              event: "push",
+              status: "success",
+            });
+            if (!prRun) core.setFailed("No CI run found for this PR's head commit.");
+            if (!mainRun) core.setFailed("No successful CI run found on the default branch.");
+            core.setOutput("pr_run_id", prRun ? prRun.id : "");
+            core.setOutput("main_run_id", mainRun ? mainRun.id : "");
+
+      - name: Download PR coverage
+        if: steps.runs.outputs.pr_run_id
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-final
+          run-id: ${{ steps.runs.outputs.pr_run_id }}
+          path: pr-coverage
+          github-token: ${{ github.token }}
+
+      - name: Download main coverage baseline
+        if: steps.runs.outputs.main_run_id
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-final
+          run-id: ${{ steps.runs.outputs.main_run_id }}
+          path: main-coverage
+          github-token: ${{ github.token }}
+
+      - name: Checkout PR head (for duplication scan only - never executed)
+        if: steps.head.outputs.sha
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.head.outputs.repo }}
+          ref: ${{ steps.head.outputs.sha }}
+          path: pr-src
+          persist-credentials: false
+
+      - name: Setup Node.js
+        if: steps.head.outputs.sha
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run jscpd
+        if: steps.head.outputs.sha
+        working-directory: pr-src
+        # jscpd exits non-zero when it finds duplicates by default - that's
+        # not a workflow failure here, analyze-duplication.js decides pass/fail
+        # from the JSON report content, filtered to this PR's changed files.
+        run: |
+          npx --yes jscpd@4 . \
+            --reporters json \
+            --output ../jscpd-report \
+            --ignore "**/node_modules/**,**/target/**,**/dist/**,**/.git/**,frontend/src/types/generated/**,**/*.lock" \
+            --min-lines 10 --min-tokens 70 \
+            --silent || true
+
+      - name: Run deterministic pre-flight checks
+        id: precheck
+        if: steps.head.outputs.sha
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const check = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/pre-review-checks.js`);
+            await check({
+              github,
+              context,
+              core,
+              prNumber: Number("${{ steps.resolve.outputs.pr_number }}"),
+              prLcovPath: `${process.env.GITHUB_WORKSPACE}/pr-coverage/final.info`,
+              baseLcovPath: `${process.env.GITHUB_WORKSPACE}/main-coverage/final.info`,
+              jscpdReportPath: `${process.env.GITHUB_WORKSPACE}/jscpd-report/jscpd-report.json`,
+              force: "${{ steps.resolve.outputs.force }}" === "true",
+            });
+
+      # NOTE: claude-code-action's exact input names (claude_code_oauth_token,
+      # model, direct_prompt) are best-effort from documented usage and were
+      # not independently verified in this session - confirm against the
+      # action's current README on the first live run and adjust if needed.
+      - name: Run Claude review
+        id: claude
+        if: steps.precheck.outputs.run_claude == 'true'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          model: ${{ steps.resolve.outputs.model }}
+          direct_prompt: |
+            Follow skills/review/SKILL.md to review pull request #${{ steps.resolve.outputs.pr_number }}
+            at commit ${{ steps.head.outputs.sha }}.
+
+            Deterministic pre-flight checks (CI status, merge conflicts, coverage-diff,
+            duplicate-code detection) have already run and passed - do not re-derive them.
+            Focus your review on correctness, logic duplication beyond what the automated
+            duplication scan already covers, and whether the tests that exist are the right
+            *kind* of test for the change, not raw line coverage.
+
+            Rebase-behind-main and issue-linking findings, if the pre-flight comment has any,
+            are informational only - mention them if relevant but don't block on them alone.
+
+            Submit your verdict per the account rule in skills/review/SKILL.md: native
+            approve/request-changes if you're reviewing a different account's PR, or the
+            claude-approved/claude-changes-requested labels if reviewing your own account's PR.
+
+      - name: Report unavailable automated review
+        if: steps.precheck.outputs.run_claude == 'true' && steps.claude.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number("${{ steps.resolve.outputs.pr_number }}"),
+              body:
+                "Automated review via Claude was unavailable this run (quota exhausted or an error). " +
+                "This PR still needs review - a human can review it directly on GitHub, or any agent " +
+                "can review it per `skills/review/SKILL.md`. Comment `/claude-review` to retry once " +
+                "the automated path is available again.",
+            });

@@ -286,6 +286,15 @@ jobs:
         with:
           file: final.info
           format: lcov
+      - name: Upload merged coverage artifact
+        # Consumed by .github/scripts/analyze-coverage-diff.js to check new/changed
+        # lines and detect aggregate coverage regressions on PRs. 14-day retention
+        # so a main-branch baseline is available even if main goes quiet for a while.
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-final
+          path: final.info
+          retention-days: 14
 
   e2e:
     name: Playwright E2E

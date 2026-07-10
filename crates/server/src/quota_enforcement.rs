@@ -134,10 +134,10 @@ mod tests {
             background_task_tracker: crate::background_tasks::BackgroundTaskTracker::default(),
             repo_lock: crate::RepoLock::default(),
             import_tasks: crate::ImportTaskRegistry::default(),
-            pending_dryruns: crate::new_pending_map(),
-            pending_restores: crate::new_pending_map(),
-            pending_migrations: crate::new_pending_map(),
-            pending_deletes: crate::new_pending_map(),
+            pending_dryruns: std::sync::Arc::default(),
+            pending_restores: std::sync::Arc::default(),
+            pending_migrations: std::sync::Arc::default(),
+            pending_deletes: std::sync::Arc::default(),
             shutdown_token: tokio_util::sync::CancellationToken::new(),
             client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
             task_registry: shared::task_registry::TaskRegistry::default(),
@@ -210,27 +210,32 @@ mod tests {
             .enabled
     }
 
-    /// Inserts a repo on `host-a` with two schedules (`sched-a`, `sched-b`)
-    /// targeting the same agent. Returns `(repo_id, schedule_a, schedule_b)`.
-    async fn setup_repo_with_two_schedules(pool: &PgPool) -> (i64, i64, i64) {
+    /// Shared test setup: build test state and insert an agent, a repo, and one schedule.
+    async fn setup_one_schedule(pool: &PgPool) -> (AppState, i64, i64) {
+        let state = build_test_state(pool.clone());
+        let agent = db::insert_agent(pool, "host-a", None, "hash", None)
+            .await
+            .unwrap();
+        let repo_id = insert_test_repo(pool, "repo-a", "storage.local").await;
+        let schedule_id = insert_test_schedule(pool, repo_id, agent.id, "sched-a").await;
+        (state, repo_id, schedule_id)
+    }
+
+    /// Shared test setup: build test state and insert an agent, a repo, and two schedules.
+    async fn setup_two_schedules(pool: &PgPool) -> (AppState, i64, i64, i64) {
+        let state = build_test_state(pool.clone());
         let agent = db::insert_agent(pool, "host-a", None, "hash", None)
             .await
             .unwrap();
         let repo_id = insert_test_repo(pool, "repo-a", "storage.local").await;
         let schedule_a = insert_test_schedule(pool, repo_id, agent.id, "sched-a").await;
         let schedule_b = insert_test_schedule(pool, repo_id, agent.id, "sched-b").await;
-        (repo_id, schedule_a, schedule_b)
+        (state, repo_id, schedule_a, schedule_b)
     }
-
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn repo_notify_only_leaves_schedules_enabled(pool: PgPool) {
-        let state = build_test_state(pool.clone());
-        let agent = db::insert_agent(&pool, "host-a", None, "hash", None)
-            .await
-            .unwrap();
-        let repo_id = insert_test_repo(&pool, "repo-a", "storage.local").await;
-        let schedule_id = insert_test_schedule(&pool, repo_id, agent.id, "sched-a").await;
+        let (state, repo_id, schedule_id) = setup_one_schedule(&pool).await;
 
         enforce_repo_quota_action(&state, repo_id, Some(schedule_id), QuotaAction::NotifyOnly)
             .await;
@@ -241,8 +246,7 @@ mod tests {
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn repo_block_backups_disables_every_schedule_for_repo(pool: PgPool) {
-        let state = build_test_state(pool.clone());
-        let (repo_id, schedule_a, schedule_b) = setup_repo_with_two_schedules(&pool).await;
+        let (state, repo_id, schedule_a, schedule_b) = setup_two_schedules(&pool).await;
 
         enforce_repo_quota_action(&state, repo_id, Some(schedule_a), QuotaAction::BlockBackups)
             .await;
@@ -254,8 +258,7 @@ mod tests {
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn repo_disable_schedule_only_disables_triggering_schedule(pool: PgPool) {
-        let state = build_test_state(pool.clone());
-        let (repo_id, schedule_a, schedule_b) = setup_repo_with_two_schedules(&pool).await;
+        let (state, repo_id, schedule_a, schedule_b) = setup_two_schedules(&pool).await;
 
         enforce_repo_quota_action(
             &state,
@@ -272,8 +275,7 @@ mod tests {
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn repo_disable_schedule_without_trigger_falls_back_to_every_schedule(pool: PgPool) {
-        let state = build_test_state(pool.clone());
-        let (repo_id, schedule_a, schedule_b) = setup_repo_with_two_schedules(&pool).await;
+        let (state, repo_id, schedule_a, schedule_b) = setup_two_schedules(&pool).await;
 
         // `triggering_schedule_id: None` mirrors a manual "run now" backup, which has no
         // schedule id.

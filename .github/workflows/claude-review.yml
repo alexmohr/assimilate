@@ -118,8 +118,13 @@ jobs:
             core.setOutput("pr_run_id", prRun ? prRun.id : "");
             core.setOutput("main_run_id", mainRun ? mainRun.id : "");
 
+      # continue-on-error: the artifact legitimately won't exist for a PR/main
+      # run that predates this workflow (or any run before ci.yml gained the
+      # coverage-final upload) - analyze-coverage-diff.js skips the check
+      # gracefully when either file is missing rather than failing the job.
       - name: Download PR coverage
         if: steps.runs.outputs.pr_run_id
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: coverage-final
@@ -129,6 +134,7 @@ jobs:
 
       - name: Download main coverage baseline
         if: steps.runs.outputs.main_run_id
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: coverage-final

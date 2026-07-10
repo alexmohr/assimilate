@@ -211,6 +211,8 @@ watch([successDaysFilter, successRepoFilter], () => {
   fetchSuccessActivity().catch(logger.error)
 })
 
+const hasFindings = computed((): boolean => (overview.value?.findings?.length ?? 0) > 0)
+
 const overdueCount = computed((): number => health.value.filter((h) => h.is_overdue).length)
 
 const successTotal = computed((): number => successActivity.value.length)
@@ -425,7 +427,7 @@ async function fetchOverview(): Promise<void> {
           <span class="stat-value stat-value-sm">
             <template v-if="activeBackups.length > 0">Active</template>
             <template v-else>
-              {{ summary?.next_backup_at ? relativeTime(summary.next_backup_at) : '—' }}
+              {{ summary?.next_backup_at ? relativeTime(summary.next_backup_at) : '\u2014' }}
             </template>
           </span>
         </div>
@@ -503,12 +505,19 @@ async function fetchOverview(): Promise<void> {
         </div>
       </div>
 
-      <div class="attention-row">
+      <div
+        class="attention-row"
+        :class="{ 'attention-row-full': !hasFindings }"
+      >
         <NeedsAttention
+          v-if="hasFindings"
           :findings="overview?.findings ?? []"
           @dismissed="fetchOverview().catch(logger.error)"
         />
-        <div class="attention-sidebar">
+        <div
+          class="attention-sidebar"
+          :class="{ 'attention-sidebar-wide': !hasFindings }"
+        >
           <UpcomingWork
             :operations="overview?.running_operations ?? []"
             :schedules="overview?.upcoming_schedules ?? []"
@@ -638,7 +647,7 @@ async function fetchOverview(): Promise<void> {
               <h2 class="panel-title">Storage Breakdown</h2>
             </div>
             <p class="chart-desc">
-              Current on-disk usage per repository — deduplicated (unique chunks across all
+              Current on-disk usage per repository -- deduplicated (unique chunks across all
               archives).
             </p>
             <div class="ring-container">
@@ -765,6 +774,15 @@ async function fetchOverview(): Promise<void> {
   display: grid;
   grid-template-rows: 1fr 1fr;
   gap: 1.5rem;
+}
+
+.attention-row-full {
+  grid-template-columns: 1fr;
+}
+
+.attention-sidebar-wide {
+  grid-template-rows: none;
+  grid-template-columns: 1fr 1fr;
 }
 
 @media (max-width: 900px) {

@@ -162,6 +162,122 @@ describe('DashboardView', () => {
   })
 })
 
+describe('DashboardView attention panel', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.mocked(apiClient.get).mockImplementation(defaultApiHandler)
+  })
+
+  it('hides NeedsAttention when findings are empty', async () => {
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    expect(wrapper.find('#needs-attention').exists()).toBe(false)
+  })
+
+  it('shows NeedsAttention when findings exist', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({
+          data: {
+            summary: {
+              protected_hosts: 0,
+              eligible_hosts: 0,
+              needs_attention: 1,
+              running_operations: 0,
+              total_storage_bytes: 0,
+            },
+            findings: [
+              {
+                id: 'f1',
+                kind: 'backup_failed',
+                severity: 'critical',
+                reason: 'Backup failed',
+                destination: { kind: 'host', hostname: 'web-01' },
+              },
+            ],
+            protection: {
+              protected_hosts: 0,
+              eligible_hosts: 0,
+              protected_agent_links: [],
+              unassigned_agents: [],
+              never_succeeded_targets: 0,
+              never_succeeded_agents: [],
+              disabled_only_agents: [],
+            },
+            running_operations: [],
+            upcoming_schedules: [],
+            repository_capacity: [],
+          },
+        })
+      }
+      return defaultApiHandler(url)
+    })
+
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    expect(wrapper.find('#needs-attention').exists()).toBe(true)
+  })
+
+  it('applies attention-sidebar-wide class when findings are empty', async () => {
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    const sidebar = wrapper.find('.attention-sidebar')
+    expect(sidebar.classes()).toContain('attention-sidebar-wide')
+  })
+
+  it('does not apply attention-sidebar-wide class when findings exist', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({
+          data: {
+            summary: {
+              protected_hosts: 0,
+              eligible_hosts: 0,
+              needs_attention: 1,
+              running_operations: 0,
+              total_storage_bytes: 0,
+            },
+            findings: [
+              {
+                id: 'f1',
+                kind: 'backup_failed',
+                severity: 'critical',
+                reason: 'Backup failed',
+                destination: { kind: 'host', hostname: 'web-01' },
+              },
+            ],
+            protection: {
+              protected_hosts: 0,
+              eligible_hosts: 0,
+              protected_agent_links: [],
+              unassigned_agents: [],
+              never_succeeded_targets: 0,
+              never_succeeded_agents: [],
+              disabled_only_agents: [],
+            },
+            running_operations: [],
+            upcoming_schedules: [],
+            repository_capacity: [],
+          },
+        })
+      }
+      return defaultApiHandler(url)
+    })
+
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    const sidebar = wrapper.find('.attention-sidebar')
+    expect(sidebar.classes()).not.toContain('attention-sidebar-wide')
+  })
+})
+
 describe('DashboardView success ring', () => {
   beforeEach(() => {
     vi.clearAllMocks()

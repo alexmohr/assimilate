@@ -21,6 +21,17 @@ const STATUS_LABELS = {
     color: "d73a4a",
     description: "CI is red on the latest commit — cannot be merged.",
   },
+  MERGE_CONFLICT: {
+    name: "merge conflict",
+    color: "b60205",
+    description: "PR has real conflicts with the base branch — cannot be merged.",
+  },
+  PRECHECK_FAILED: {
+    name: "precheck failed",
+    color: "d93f0b",
+    description:
+      "A deterministic pre-review check failed (coverage or duplication) — set by code, not a reviewer.",
+  },
   NEEDS_REVIEW: {
     name: "needs review",
     color: "fbca04",
@@ -114,6 +125,17 @@ async function resolveCiConclusion(github, owner, repo, headSha) {
   return latest ? latest.conclusion : null;
 }
 
+// GitHub computes mergeable_state asynchronously and may still report
+// "unknown" right after a push. One short retry (re-fetching the PR) covers
+// most cases; if it's still unknown we don't block on it - the next trigger
+// (another label sync, or CI completion) will re-check with a settled value.
+async function resolveMergeableState(github, owner, repo, prNumber, initialState) {
+  if (initialState !== "unknown") return initialState;
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+  const { data } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+  return data.mergeable_state;
+}
+
 async function resolveReviewDecision(github, owner, repo, prNumber) {
   const result = await github.graphql(
     `query($owner: String!, $repo: String!, $number: Int!) {
@@ -198,9 +220,12 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
   // GitHub reviews already go stale/pending on their own; these labels don't,
   // so they must be cleared explicitly.
   if (eventAction === "synchronize") {
-    const staleVerdictLabels = Object.values(REVIEW_VERDICT_LABELS)
-      .map((l) => l.name)
-      .filter((name) => existingLabels.includes(name));
+    // precheck failed is set by pre-review-checks.js against a specific commit;
+    // like the review-verdict labels, a new push makes it stale.
+    const staleVerdictLabels = [
+      ...Object.values(REVIEW_VERDICT_LABELS).map((l) => l.name),
+      STATUS_LABELS.PRECHECK_FAILED.name,
+    ].filter((name) => existingLabels.includes(name));
     for (const name of staleVerdictLabels) {
       await github.rest.issues
         .removeLabel({ owner, repo, issue_number: prNumber, name })
@@ -212,9 +237,11 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
   }
 
   const hasHumanLabel = existingLabels.includes(HUMAN_LABEL.name);
+  const hasPrecheckFailed = existingLabels.includes(STATUS_LABELS.PRECHECK_FAILED.name);
 
-  const [ciConclusion, nativeReviewDecision, autoNeedsHuman] = await Promise.all([
+  const [ciConclusion, mergeableState, nativeReviewDecision, autoNeedsHuman] = await Promise.all([
     resolveCiConclusion(github, owner, repo, pr.head.sha),
+    resolveMergeableState(github, owner, repo, prNumber, pr.mergeable_state),
     resolveReviewDecision(github, owner, repo, prNumber),
     hasHumanLabel ? Promise.resolve(false) : needsHumanSignOff(github, owner, repo, prNumber),
   ]);
@@ -222,12 +249,20 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
   const needsHuman = hasHumanLabel || autoNeedsHuman;
 
   const ciFailed = ciConclusion !== null && !["success", "skipped", "neutral"].includes(ciConclusion);
+  const mergeConflict = mergeableState === "dirty";
 
   let status;
   let summary;
   if (ciFailed) {
     status = STATUS_LABELS.CI_FAILING;
     summary = `CI is failing on the latest commit (conclusion: ${ciConclusion}) — cannot be merged until it's green.`;
+  } else if (mergeConflict) {
+    status = STATUS_LABELS.MERGE_CONFLICT;
+    summary = "This PR has real conflicts with the base branch — rebase and resolve them before it can be merged.";
+  } else if (hasPrecheckFailed) {
+    status = STATUS_LABELS.PRECHECK_FAILED;
+    summary =
+      "A deterministic pre-review check (coverage or duplication) failed — see the automated pre-flight comment for specifics.";
   } else if (reviewDecision === "CHANGES_REQUESTED") {
     status = STATUS_LABELS.CHANGES_REQUESTED;
     summary = "A reviewer requested changes — address them and re-request review.";
@@ -246,7 +281,7 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
   }
 
   core.info(
-    `PR #${prNumber}: ci=${ciConclusion} review=${reviewDecision} (native=${nativeReviewDecision}) needsHuman=${needsHuman} -> ${status.name}`,
+    `PR #${prNumber}: ci=${ciConclusion} mergeable=${mergeableState} precheckFailed=${hasPrecheckFailed} review=${reviewDecision} (native=${nativeReviewDecision}) needsHuman=${needsHuman} -> ${status.name}`,
   );
 
   const desired = [status.name];

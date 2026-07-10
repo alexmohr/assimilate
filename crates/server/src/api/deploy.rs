@@ -10,7 +10,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use super::{auth::RequireAdmin, helpers};
+use super::{auth::AuthUser, helpers};
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
@@ -129,22 +129,28 @@ pub async fn query_available_agent_version(binary_dir: &std::path::Path) -> Opti
         (status = 200, description = "Deploy result", body = DeployAgentResponse),
         (status = 400, description = "Validation error"),
         (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden"),
+        (status = 403, description = "Forbidden — upgrade agent permission required"),
         (status = 404, description = "Not found"),
         (status = 500, description = "Agent binary not found or internal error"),
     )
 )]
-/// Deploy the agent binary to a host via SSH (admin only).
+/// Deploy the agent binary to a host via SSH (requires `can_upgrade_agent` permission).
 ///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
 pub async fn deploy_agent(
     State(state): State<AppState>,
-    _admin: RequireAdmin,
+    auth: AuthUser,
     Path(hostname): Path<String>,
     ApiJson(req): ApiJson<DeployAgentRequest>,
 ) -> Result<Json<DeployAgentResponse>, ApiError> {
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
+    if !effective.can_upgrade_agent {
+        return Err(ApiError::Forbidden(
+            "upgrade agent permission required".to_string(),
+        ));
+    }
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
     helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
     helpers::validate_non_empty(&req.server_url, "server_url")?;
@@ -280,19 +286,26 @@ pub struct FetchServiceUnitResponse {
             FetchServiceUnitResponse),
         (status = 400, description = "Validation error"),
         (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden"),
+        (status = 403, description = "Forbidden — upgrade agent permission required"),
     )
 )]
-/// Read the existing systemd service unit from a remote host via SSH (admin only).
+/// Read the existing systemd service unit from a remote host via SSH (requires `can_upgrade_agent` permission).
 ///
 /// # Errors
 ///
 /// Returns [`ApiError::BadGateway`] if the upstream operation (e.g. SSH or borg) fails.
 pub async fn fetch_service_unit(
-    _admin: RequireAdmin,
+    State(state): State<AppState>,
+    auth: AuthUser,
     Path(_hostname): Path<String>,
     ApiJson(req): ApiJson<FetchServiceUnitRequest>,
 ) -> Result<Json<FetchServiceUnitResponse>, ApiError> {
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
+    if !effective.can_upgrade_agent {
+        return Err(ApiError::Forbidden(
+            "upgrade agent permission required".to_string(),
+        ));
+    }
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
     helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
 

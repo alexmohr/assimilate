@@ -142,12 +142,14 @@ impl Executor {
                     encryption,
                 } => {
                     self.handle_init_repo(
-                        &repo_path,
-                        &ssh_user,
-                        &ssh_host,
-                        ssh_port,
-                        &passphrase,
-                        encryption,
+                        InitRepoParams {
+                            repo_path: &repo_path,
+                            ssh_user: &ssh_user,
+                            ssh_host: &ssh_host,
+                            ssh_port,
+                            passphrase: &passphrase,
+                            encryption,
+                        },
                         &outbound_tx,
                     )
                     .await;
@@ -168,11 +170,13 @@ impl Executor {
                     request_id,
                 } => {
                     self.handle_restore_files(
-                        repo_id,
-                        archive_name,
-                        paths,
-                        target_path,
-                        request_id,
+                        RestoreFilesParams {
+                            repo_id,
+                            archive_name,
+                            paths,
+                            target_path,
+                            request_id,
+                        },
                         &outbound_tx,
                     )
                     .await;
@@ -400,20 +404,20 @@ impl Executor {
         self.task_registry.register(handle);
     }
 
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "params-struct refactor tracked in #284"
-    )]
     async fn handle_init_repo(
         &self,
-        repo_path: &str,
-        ssh_user: &str,
-        ssh_host: &str,
-        ssh_port: u16,
-        passphrase: &str,
-        encryption: BorgEncryption,
+        params: InitRepoParams<'_>,
         outbound_tx: &mpsc::Sender<AgentToServer>,
     ) {
+        let InitRepoParams {
+            repo_path,
+            ssh_user,
+            ssh_host,
+            ssh_port,
+            passphrase,
+            encryption,
+        } = params;
+
         let hostname = {
             let config_guard = self.current_config.lock().await;
             config_guard
@@ -536,35 +540,39 @@ impl Executor {
             };
 
             run_dry_run_task(
-                repo_id,
-                target,
-                backup_sources,
-                exclude_patterns,
-                &hostname,
-                &server_url,
-                &token,
-                request_id,
+                DryRunTaskParams {
+                    repo_id,
+                    target,
+                    backup_sources,
+                    exclude_patterns,
+                    request_id,
+                },
+                FreeTaskContext {
+                    hostname: &hostname,
+                    server_url: &server_url,
+                    token: &token,
+                    outbound_tx: &outbound,
+                },
                 &borg,
-                &outbound,
             )
             .await;
         });
         self.task_registry.register(handle);
     }
 
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "params-struct refactor tracked in #284"
-    )]
     async fn handle_restore_files(
         &self,
-        repo_id: RepoId,
-        archive_name: String,
-        paths: Vec<String>,
-        target_path: String,
-        request_id: String,
+        params: RestoreFilesParams,
         outbound_tx: &mpsc::Sender<AgentToServer>,
     ) {
+        let RestoreFilesParams {
+            repo_id,
+            archive_name,
+            paths,
+            target_path,
+            request_id,
+        } = params;
+
         let config_guard = self.current_config.lock().await;
         let Some(config) = config_guard.as_ref() else {
             warn!(repo_id = ?repo_id, "no config available for restore");
@@ -614,17 +622,21 @@ impl Executor {
             };
 
             run_restore_task(
-                repo_id,
-                target,
-                archive_name,
-                paths,
-                target_path,
-                &hostname,
-                &server_url,
-                &token,
-                request_id,
+                RestoreTaskParams {
+                    repo_id,
+                    target,
+                    archive_name,
+                    paths,
+                    target_path,
+                    request_id,
+                },
+                FreeTaskContext {
+                    hostname: &hostname,
+                    server_url: &server_url,
+                    token: &token,
+                    outbound_tx: &outbound,
+                },
                 &borg,
-                &outbound,
             )
             .await;
         });
@@ -881,6 +893,47 @@ struct BackupTaskContext {
     server_url: String,
     token: String,
     run_id: Option<String>,
+}
+
+struct InitRepoParams<'a> {
+    repo_path: &'a str,
+    ssh_user: &'a str,
+    ssh_host: &'a str,
+    ssh_port: u16,
+    passphrase: &'a str,
+    encryption: BorgEncryption,
+}
+
+struct RestoreFilesParams {
+    repo_id: RepoId,
+    archive_name: String,
+    paths: Vec<String>,
+    target_path: String,
+    request_id: String,
+}
+
+struct FreeTaskContext<'a> {
+    hostname: &'a str,
+    server_url: &'a str,
+    token: &'a str,
+    outbound_tx: &'a mpsc::Sender<AgentToServer>,
+}
+
+struct DryRunTaskParams {
+    repo_id: RepoId,
+    target: BackupTarget,
+    backup_sources: Vec<String>,
+    exclude_patterns: Vec<String>,
+    request_id: String,
+}
+
+struct RestoreTaskParams {
+    repo_id: RepoId,
+    target: BackupTarget,
+    archive_name: String,
+    paths: Vec<String>,
+    target_path: String,
+    request_id: String,
 }
 
 fn spawn_log_forwarder(
@@ -1230,22 +1283,26 @@ async fn run_verify_task(
     }
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "params-struct refactor tracked in #284"
-)]
 async fn run_dry_run_task(
-    repo_id: RepoId,
-    mut target: BackupTarget,
-    backup_sources: Vec<String>,
-    exclude_patterns: Vec<String>,
-    hostname: &str,
-    server_url: &str,
-    token: &str,
-    request_id: String,
+    params: DryRunTaskParams,
+    ctx: FreeTaskContext<'_>,
     borg: &Borg,
-    outbound_tx: &mpsc::Sender<AgentToServer>,
 ) {
+    let DryRunTaskParams {
+        repo_id,
+        mut target,
+        backup_sources,
+        exclude_patterns,
+        request_id,
+    } = params;
+
+    let FreeTaskContext {
+        hostname,
+        server_url,
+        token,
+        outbound_tx,
+    } = ctx;
+
     let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
 
     let exclude_file = match write_temp_excludes(&exclude_patterns) {
@@ -1337,23 +1394,27 @@ async fn run_dry_run_task(
     }
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "params-struct refactor tracked in #284"
-)]
 async fn run_restore_task(
-    repo_id: RepoId,
-    mut target: BackupTarget,
-    archive_name: String,
-    paths: Vec<String>,
-    target_path: String,
-    hostname: &str,
-    server_url: &str,
-    token: &str,
-    request_id: String,
+    params: RestoreTaskParams,
+    ctx: FreeTaskContext<'_>,
     borg: &Borg,
-    outbound_tx: &mpsc::Sender<AgentToServer>,
 ) {
+    let RestoreTaskParams {
+        repo_id,
+        mut target,
+        archive_name,
+        paths,
+        target_path,
+        request_id,
+    } = params;
+
+    let FreeTaskContext {
+        hostname,
+        server_url,
+        token,
+        outbound_tx,
+    } = ctx;
+
     let _ssh_forward = setup_ssh_forward(&mut target, hostname, server_url, token).await;
 
     let env_vars = build_borg_env(&target);

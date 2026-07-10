@@ -9,7 +9,7 @@ use sqlx::PgPool;
 
 use crate::{
     AppState,
-    db::{self, compression_from_str},
+    db,
     error::ApiError,
 };
 
@@ -273,7 +273,10 @@ async fn build_repo_config(
     let passphrase = shared::crypto::decrypt_passphrase(&repo.passphrase_encrypted, encryption_key)
         .map_err(|e| ApiError::Internal(format!("failed to decrypt passphrase: {e}")))?;
 
-    let compression = compression_from_str(&repo.compression)?;
+    let compression = repo
+        .compression
+        .parse()
+        .map_err(|e| ApiError::Internal(format!("invalid compression: {e}")))?;
 
     let ssh_port = u16::try_from(repo.ssh_port)
         .map_err(|_| ApiError::Internal(format!("ssh_port {} out of u16 range", repo.ssh_port)))?;

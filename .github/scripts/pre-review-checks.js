@@ -5,11 +5,12 @@
 // fresh, code-only recompute of "is CI green / does this conflict" (never
 // re-derived by an LLM - see skills/review/SKILL.md), then run the
 // coverage-diff hard gate before anything spends a Claude turn. The
-// duplicate-code hard gate runs independently in
-// .github/workflows/duplicate-code-check.yml (see analyze-duplication.js) -
-// this script only checks whether that gate already failed on this commit.
-// Sets the run_claude output the workflow uses to decide whether to invoke
-// claude-code-action.
+// duplicate-code hard gate is a separate stage that runs independently in
+// .github/workflows/duplicate-code-check.yml (see analyze-duplication.js);
+// this script checks whether *any* pre-flight stage - coverage-diff here or
+// duplicate-code there - has already failed on this commit before invoking
+// Claude. Sets the run_claude output the workflow uses to decide whether to
+// invoke claude-code-action.
 
 const syncLabels = require("./sync-pr-labels");
 const analyzeCoverageDiff = require("./analyze-coverage-diff");
@@ -81,12 +82,18 @@ module.exports = async ({
     core.setOutput("run_claude", "false");
     return;
   }
-  // Set by .github/workflows/duplicate-code-check.yml when it finds
-  // duplication touching this PR - a forced /claude-review retrigger still
-  // must not bypass this, only "already reviewed this exact commit" is
-  // force-bypassable.
-  if (labels.includes(syncLabels.STATUS_LABELS.PRECHECK_FAILED.name)) {
-    core.info(`PR #${prNumber}: precheck already failed (duplicate-code check) - not running Claude.`);
+  // Two independent pre-flight stages exist: this script runs coverage-diff
+  // below, and .github/workflows/duplicate-code-check.yml runs the
+  // duplicate-code scan on its own trigger (push, not CI/label-driven), so
+  // it may already have failed on this exact commit by the time we get here.
+  // If EITHER stage has already failed, don't bother running (or re-running)
+  // the other - a forced /claude-review retrigger still must not bypass
+  // this, only "already reviewed this exact commit" is force-bypassable.
+  if (
+    labels.includes(syncLabels.STATUS_LABELS.PRECHECK_FAILED.name) ||
+    labels.includes(syncLabels.DUPLICATE_CODE_LABEL.name)
+  ) {
+    core.info(`PR #${prNumber}: a pre-flight stage already failed - not running Claude.`);
     core.setOutput("run_claude", "false");
     return;
   }

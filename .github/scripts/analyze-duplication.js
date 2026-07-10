@@ -4,14 +4,16 @@
 // Standalone duplicate-code gate: reads a jscpd JSON report, keeps only
 // clusters that touch this PR's changed files (repo-wide duplication
 // unrelated to the diff isn't this PR's problem to fix), posts the actual
-// duplicated source as a PR comment, and sets/clears `precheck failed`
-// accordingly. Hard gate: "Logic is never to be duplicated instead of
-// reused" (skills/review/SKILL.md) is a deterministic fact once jscpd has
-// flagged a cluster, not something Claude needs to re-derive. What counts as
-// "generated, ignore it" (`.sqlx/`, generated TS types, lockfiles, ...) is
-// configured in `.jscpd.json` at the repo root, not here - editing that file
-// is how maintainers extend the ignore list without touching this script or
-// the workflow.
+// duplicated source as a PR comment, and sets/clears its own `duplicate
+// code` label accordingly - a separate stage from the coverage-diff
+// `precheck failed` check, deliberately not folded into it (see
+// DUPLICATE_CODE_LABEL in sync-pr-labels.js for why). Hard gate: "Logic is
+// never to be duplicated instead of reused" (skills/review/SKILL.md) is a
+// deterministic fact once jscpd has flagged a cluster, not something Claude
+// needs to re-derive. What counts as "generated, ignore it" (`.sqlx/`,
+// generated TS types, lockfiles, ...) is configured in `.jscpd.json` at the
+// repo root, not here - editing that file is how maintainers extend the
+// ignore list without touching this script or the workflow.
 
 const fs = require("fs");
 const syncLabels = require("./sync-pr-labels");
@@ -121,8 +123,8 @@ module.exports = async ({ github, context, core, prNumber, reportPath }) => {
 
   await upsertComment(github, owner, repo, prNumber, findings);
 
+  const label = syncLabels.DUPLICATE_CODE_LABEL;
   if (!ok) {
-    const label = syncLabels.STATUS_LABELS.PRECHECK_FAILED;
     await syncLabels.ensureLabelExists(github, owner, repo, label);
     await github.rest.issues.addLabels({
       owner,
@@ -132,10 +134,19 @@ module.exports = async ({ github, context, core, prNumber, reportPath }) => {
     });
     core.info(`PR #${prNumber}: duplicate-code check failed (${findings.length} finding(s)).`);
   } else {
+    // This workflow owns the label's full lifecycle (see DUPLICATE_CODE_LABEL
+    // in sync-pr-labels.js) - explicitly clear it here rather than relying on
+    // sync-pr-labels.js's synchronize-triggered clear, since that reacts to
+    // the same push event and could otherwise race a fresh failing result.
+    await github.rest.issues
+      .removeLabel({ owner, repo, issue_number: prNumber, name: label.name })
+      .catch((err) => {
+        if (err.status !== 404) throw err;
+      });
     core.info(`PR #${prNumber}: duplicate-code check passed.`);
   }
 
-  // Recompute status now that "precheck failed" may have changed, so the PR
+  // Recompute status now that "duplicate code" may have changed, so the PR
   // Merge Gate and overall status label reflect it immediately rather than
   // waiting for the next unrelated trigger.
   await syncLabels({ github, context, core, prNumber });

@@ -47,12 +47,13 @@ account authored and reviewed the PR, the workflow instead reads the
 Workflow section above. A real other-account review always takes priority
 over those two labels if both exist. This rerun happens on every push, every
 submitted/dismissed review, every `claude-approved`/`claude-changes-requested`
-label change, every `precheck failed`/`merge conflict` change, and every CI
-completion, so the status label always reflects current reality — **agents
-must never add or remove the status labels themselves** (`needs review`,
-`changes requested`, `ci failing`, `merge conflict`, `precheck failed`,
-`ready to merge`, `needs human review`); only push a fix, submit a review, or
-set the verdict labels per the Workflow section to move them.
+label change, every `precheck failed`/`duplicate code`/`merge conflict`
+change, and every CI completion, so the status label always reflects current
+reality — **agents must never add or remove the status labels themselves**
+(`needs review`, `changes requested`, `ci failing`, `merge conflict`,
+`precheck failed`, `ready to merge`, `needs human review`, `duplicate code`);
+only push a fix, submit a review, or set the verdict labels per the Workflow
+section to move them.
 
 | Label | Meaning | Set when |
 |---|---|---|
@@ -60,9 +61,22 @@ set the verdict labels per the Workflow section to move them.
 | `changes requested` | A reviewer requested changes | GitHub review decision is `CHANGES_REQUESTED` |
 | `ci failing` | Latest commit's CI run did not succeed | `CI` workflow conclusion is not `success` — always wins, and strips `ready to merge` |
 | `merge conflict` | Real conflicts with the base branch | `mergeable_state == "dirty"` — checked continuously (it's a free API field), same precedence tier as `ci failing` |
-| `precheck failed` | A deterministic pre-review check failed | Set by `.github/scripts/pre-review-checks.js` (coverage-diff) or `.github/scripts/analyze-duplication.js` (duplicate-code, via the standalone `.github/workflows/duplicate-code-check.yml`) — never by a reviewer, human or AI. See "Automated pre-flight checks" below |
-| `ready to merge` | Fully clear to merge | CI conclusion is `success` **and** review decision is `APPROVED` **and** no human sign-off is pending |
+| `precheck failed` | The coverage-diff pre-review check failed | Set only by `.github/scripts/pre-review-checks.js` — never by a reviewer, human or AI. See "Automated pre-flight checks" below |
+| `duplicate code` | The duplicate-code-scan pre-review check failed | Set only by `.github/scripts/analyze-duplication.js` via the standalone `.github/workflows/duplicate-code-check.yml` — a separate stage from `precheck failed`, not folded into it. See "Automated pre-flight checks" below |
+| `ready to merge` | Fully clear to merge | CI conclusion is `success` **and** review decision is `APPROVED` **and** no human sign-off is pending **and** neither `precheck failed` nor `duplicate code` is set |
 | `needs human review` | Requires a human's sign-off before merge, regardless of agent review | Auto-applied when: the diff touches security/crypto/auth/SSH-forwarding code, CI/CD workflow files, `.github/scripts/`, `.pre-commit-config.yaml`, `.devcontainer/`, dependency lockfiles, `deny.toml`, or DB migrations; the diff adds a new `#[allow(...)]`/`deny.toml` `ignore` suppression; the PR title or body mentions "security"; or the PR closes an issue whose title, body, or labels mention "security" |
+
+`precheck failed` and `duplicate code` are two independent stages and can
+both be present on the same PR at once — `sync-pr-labels.js` folds either
+one into the same visible `precheck failed` status (with a summary spelling
+out which one(s) actually failed), but doesn't erase the other just because
+one is chosen as "the" status label; both stay attached until each stage's
+own workflow clears it on a fresh push. `duplicate code` in particular owns
+its own add/remove lifecycle end to end in `analyze-duplication.js` rather
+than being cleared by the generic `synchronize` handling that `precheck
+failed` uses, since `duplicate-code-check.yml` reacts to the same push event
+that clearing would run on and a blind clear could otherwise race a fresh
+failing result.
 
 `needs human review` is additive-only: the workflow will add it but will
 **never** remove it — only a human clearing the label counts as sign-off. Even
@@ -104,9 +118,9 @@ check from reporting:
   root — extend that file's `ignore` array to exempt new generated code, no
   workflow change needed. On a hit, the workflow posts a PR comment with the
   actual duplicated source for each cluster (not just file:line ranges) and
-  sets `precheck failed`. Because it's a separate workflow, it isn't
-  re-triggered by `/claude-review` — only a new push re-runs the duplication
-  scan itself.
+  sets its own `duplicate code` label. Because it's a separate workflow, it
+  isn't re-triggered by `/claude-review` — only a new push re-runs the
+  duplication scan itself.
 * **Coverage-diff** — runs inside `.github/workflows/claude-review.yml` via
   `.github/scripts/pre-review-checks.js` → `analyze-coverage-diff.js`: every
   new/changed line must have test coverage, and the PR's aggregate line
@@ -115,13 +129,16 @@ check from reporting:
   to cover weren't touched by the diff). A failure posts its own PR comment
   and sets `precheck failed`.
 
-Either one failing sets `precheck failed`, and Claude is not invoked — fix
-the findings and push (which clears the label and re-runs both checks)
-rather than waiting on a review that mechanically can't happen yet.
-`pre-review-checks.js` checks whether `precheck failed` is *already* set
-(i.e. the duplicate-code workflow already failed on this commit) before
-running the coverage check, so a known-bad commit never reaches Claude
-regardless of which gate caught it first. Rebase-behind-main and
+These are deliberately two separate stages with two separate labels, not one
+check that fails for two reasons — a PR can have duplicate code *and* a
+coverage regression at once, and both need to stay visible rather than one
+failure masking the other. `pre-review-checks.js` checks whether *either*
+stage has already failed on this commit — `precheck failed` or
+`duplicate code` — before running (or re-running) the other, so a known-bad
+commit never reaches Claude regardless of which gate caught it first. Fix
+the findings and push: that clears `precheck failed` (via the generic
+`synchronize` handling) and re-runs the duplication scan (which clears
+`duplicate code` itself once clean). Rebase-behind-main and
 issue-linking-syntax checks also run but are informational only — they don't
 block Claude, they're just handed to it (or posted) as pre-known facts so it
 doesn't have to re-derive them.
@@ -136,13 +153,14 @@ the pre-flight checks above have passed:
 1. It force-reruns the label sync (`sync-pr-labels.js` directly, not a
    re-derived judgment call) — if the result is `ci failing` or
    `merge conflict`, it stops. Nothing to review yet.
-2. If `precheck failed` is already set (from a prior duplicate-code-check run
-   on this commit), it stops — the coverage-diff check isn't even run.
+2. If *either* `precheck failed` or `duplicate code` is already set (the
+   latter from a prior duplicate-code-check.yml run on this commit), it
+   stops — the coverage-diff check isn't even run.
 3. If a `claude-approved`/`claude-changes-requested` label is already present,
    this exact commit has already been reviewed — it stops (skip the wasted
    token spend), unless invoked via `/claude-review` (see below), which
    always forces a fresh run.
-4. Coverage-diff runs and, on failure, sets `precheck failed` the same way.
+4. Coverage-diff runs and, on failure, sets `precheck failed`.
 
 **Model:** defaults to `claude-sonnet-5` (overridable repo-wide via the
 `CLAUDE_REVIEW_MODEL` Actions variable). If Claude's review fails outright

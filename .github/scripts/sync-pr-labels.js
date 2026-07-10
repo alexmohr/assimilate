@@ -29,8 +29,7 @@ const STATUS_LABELS = {
   PRECHECK_FAILED: {
     name: "precheck failed",
     color: "d93f0b",
-    description:
-      "A deterministic pre-review check failed (coverage or duplication) — set by code, not a reviewer.",
+    description: "The coverage-diff pre-review check failed — set by code, not a reviewer.",
   },
   NEEDS_REVIEW: {
     name: "needs review",
@@ -53,6 +52,24 @@ const HUMAN_LABEL = {
   name: "needs human review",
   color: "5319e7",
   description: "Requires a human sign-off. Only a human may remove this label.",
+};
+
+// Set/cleared solely by .github/workflows/duplicate-code-check.yml via
+// analyze-duplication.js - a separate deterministic pre-review stage from
+// precheck failed (coverage-diff), run in its own workflow so a jscpd scan
+// never has to wait on CI or the Claude pipeline. It's deliberately not a
+// member of STATUS_LABELS: two independently-run checks failing at once
+// (coverage-diff and duplication) both need to stay visible, which a single
+// mutually-exclusive status slot can't do. It also owns its own add/remove
+// lifecycle end to end (analyze-duplication.js sets or clears it on every
+// run based on that run's fresh result) rather than being blindly cleared
+// here on every push - that workflow reacts to the same "synchronize" event
+// this script does, so a blind clear here could race a fresh finding from
+// the other workflow and wipe it.
+const DUPLICATE_CODE_LABEL = {
+  name: "duplicate code",
+  color: "c5def5",
+  description: "jscpd found duplicate code touching this PR's changed files — set by code, not a reviewer.",
 };
 
 // GitHub rejects an APPROVE review from the PR's own author (422: "Can not
@@ -279,7 +296,9 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
   // so they must be cleared explicitly.
   if (eventAction === "synchronize") {
     // precheck failed is set by pre-review-checks.js against a specific commit;
-    // like the review-verdict labels, a new push makes it stale.
+    // like the review-verdict labels, a new push makes it stale. duplicate
+    // code is deliberately NOT included here - see the comment on
+    // DUPLICATE_CODE_LABEL above for why it owns its own clearing instead.
     const staleVerdictLabels = [
       ...Object.values(REVIEW_VERDICT_LABELS).map((l) => l.name),
       STATUS_LABELS.PRECHECK_FAILED.name,
@@ -296,6 +315,7 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
 
   const hasHumanLabel = existingLabels.includes(HUMAN_LABEL.name);
   const hasPrecheckFailed = existingLabels.includes(STATUS_LABELS.PRECHECK_FAILED.name);
+  const hasDuplicateCode = existingLabels.includes(DUPLICATE_CODE_LABEL.name);
 
   const [ciConclusion, mergeableState, nativeReviewDecision, autoNeedsHuman] = await Promise.all([
     resolveCiConclusion(github, owner, repo, pr.head.sha),
@@ -317,10 +337,17 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
   } else if (mergeConflict) {
     status = STATUS_LABELS.MERGE_CONFLICT;
     summary = "This PR has real conflicts with the base branch — rebase and resolve them before it can be merged.";
-  } else if (hasPrecheckFailed) {
+  } else if (hasPrecheckFailed || hasDuplicateCode) {
+    // Two independent stages can each fail on their own: coverage-diff sets
+    // precheck failed, the duplicate-code-check workflow sets its own label
+    // (see DUPLICATE_CODE_LABEL). Either one blocks merge, and both stay
+    // visible on the PR even though only one is reflected here as "the"
+    // status - that's why the summary spells out which one(s) failed.
     status = STATUS_LABELS.PRECHECK_FAILED;
-    summary =
-      "A deterministic pre-review check (coverage or duplication) failed — see the automated pre-flight comment for specifics.";
+    const causes = [];
+    if (hasPrecheckFailed) causes.push("coverage-diff");
+    if (hasDuplicateCode) causes.push("duplicate-code");
+    summary = `A deterministic pre-review check failed (${causes.join(" and ")}) — see the automated pre-flight comment(s) for specifics.`;
   } else if (reviewDecision === "CHANGES_REQUESTED") {
     status = STATUS_LABELS.CHANGES_REQUESTED;
     summary = "A reviewer requested changes — address them and re-request review.";
@@ -339,7 +366,7 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
   }
 
   core.info(
-    `PR #${prNumber}: ci=${ciConclusion} mergeable=${mergeableState} precheckFailed=${hasPrecheckFailed} review=${reviewDecision} (native=${nativeReviewDecision}) needsHuman=${needsHuman} -> ${status.name}`,
+    `PR #${prNumber}: ci=${ciConclusion} mergeable=${mergeableState} precheckFailed=${hasPrecheckFailed} duplicateCode=${hasDuplicateCode} review=${reviewDecision} (native=${nativeReviewDecision}) needsHuman=${needsHuman} -> ${status.name}`,
   );
 
   const desired = [status.name];
@@ -376,7 +403,9 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
 // Exported so pre-review-checks.js can (a) invoke this exact sync as its own
 // "is CI green / does this conflict" check instead of re-deriving it, and
 // (b) reuse the PRECHECK_FAILED label definition/helper without duplicating
-// them and risking drift.
+// them and risking drift. DUPLICATE_CODE_LABEL is exported so
+// analyze-duplication.js can own its full add/remove lifecycle.
 module.exports.STATUS_LABELS = STATUS_LABELS;
 module.exports.REVIEW_VERDICT_LABELS = REVIEW_VERDICT_LABELS;
+module.exports.DUPLICATE_CODE_LABEL = DUPLICATE_CODE_LABEL;
 module.exports.ensureLabelExists = ensureLabelExists;

@@ -4,11 +4,11 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRouter, RouterLink } from 'vue-router'
 import { apiClient } from '../api/client'
 import { useWebSocket } from '../composables/useWebSocket'
-import { formatBytes, relativeTime } from '../utils/format'
+import { formatBytes, formatDuration, relativeTime } from '../utils/format'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import BaseSkeleton from '../components/BaseSkeleton.vue'
@@ -95,9 +95,88 @@ interface ActiveBackup {
   hostname: string
   target_name: string
   started_at: number
+  repo_id: number | null
+  schedule_id: number | null
+  schedule_name: string | null
 }
 
 const activeBackups = ref<ActiveBackup[]>([])
+const now = ref(Date.now())
+let elapsedTimer: ReturnType<typeof setInterval> | null = null
+
+function ensureElapsedTimer(): void {
+  if (elapsedTimer !== null) return
+  elapsedTimer = setInterval(() => {
+    now.value = Date.now()
+  }, 1000)
+}
+
+function stopElapsedTimerIfIdle(): void {
+  if (activeBackups.value.length === 0 && elapsedTimer !== null) {
+    clearInterval(elapsedTimer)
+    elapsedTimer = null
+  }
+}
+
+watch(
+  activeBackups,
+  (backups) => {
+    if (backups.length > 0) {
+      ensureElapsedTimer()
+    } else {
+      stopElapsedTimerIfIdle()
+    }
+  },
+  { immediate: true },
+)
+
+onUnmounted(() => {
+  if (elapsedTimer !== null) clearInterval(elapsedTimer)
+})
+
+function elapsedSecsFor(backup: ActiveBackup): number {
+  return Math.max(0, Math.floor((now.value - backup.started_at) / 1000))
+}
+
+const avgDurationSecs = ref<Map<string, number>>(new Map())
+const avgDurationRequested = new Set<string>()
+
+function avgDurationKey(scheduleId: number, repoId: number): string {
+  return `${scheduleId}:${repoId}`
+}
+
+async function fetchAvgDuration(scheduleId: number, repoId: number): Promise<void> {
+  const key = avgDurationKey(scheduleId, repoId)
+  if (avgDurationRequested.has(key)) return
+  avgDurationRequested.add(key)
+  try {
+    const params = new URLSearchParams({
+      schedule_id: String(scheduleId),
+      repo_id: String(repoId),
+      limit: '5',
+    })
+    const response = await apiClient.get<Array<{ status: string; duration_secs: number }>>(
+      `/stats/activity?${params.toString()}`,
+    )
+    const completed = response.data.filter((entry) => {
+      const status = normalizeBackupStatus(entry.status)
+      return status === 'success' || status === 'warning'
+    })
+    if (completed.length === 0) return
+    const avg = completed.reduce((sum, entry) => sum + entry.duration_secs, 0) / completed.length
+    avgDurationSecs.value = new Map(avgDurationSecs.value).set(key, avg)
+  } catch (e: unknown) {
+    logger.error('fetchAvgDuration failed', e)
+  }
+}
+
+function estimatedRemainingFor(backup: ActiveBackup): number | null {
+  if (backup.schedule_id === null || backup.repo_id === null) return null
+  const avg = avgDurationSecs.value.get(avgDurationKey(backup.schedule_id, backup.repo_id))
+  if (avg === undefined) return null
+  const remaining = Math.round(avg - elapsedSecsFor(backup))
+  return Math.max(0, remaining)
+}
 
 const successDaysFilter = ref<number>(30)
 const successRepoFilter = ref<number | undefined>(undefined)
@@ -122,10 +201,14 @@ function mergeActiveBackups(operations: DashboardOperation[]): void {
   activeBackups.value = operations.map((operation) => {
     const key = `${operation.hostname}::${operation.repo_name}`
     const existing = existingByKey.get(key)
+    void fetchAvgDuration(operation.schedule_id, operation.repo_id)
     return {
       hostname: operation.hostname,
       target_name: operation.repo_name,
       started_at: existing?.started_at ?? Date.parse(operation.started_at),
+      repo_id: operation.repo_id,
+      schedule_id: operation.schedule_id,
+      schedule_name: operation.schedule_name,
     }
   })
 }
@@ -186,6 +269,9 @@ onMessage('BackupStarted', (payload) => {
       hostname: payload.hostname,
       target_name: payload.target_name,
       started_at: Date.now(),
+      repo_id: null,
+      schedule_id: null,
+      schedule_name: null,
     })
   }
   fetchAll().catch(logger.error)
@@ -478,9 +564,40 @@ async function fetchOverview(): Promise<void> {
             class="active-backup-item"
           >
             <span class="active-backup-pulse" />
-            <span class="active-backup-host">{{ backup.hostname }}</span>
+            <span
+              v-if="backup.schedule_name"
+              class="active-backup-schedule"
+            >
+              {{ backup.schedule_name }}
+            </span>
+            <RouterLink
+              :to="{ name: 'agent-detail', params: { hostname: backup.hostname } }"
+              class="active-backup-link"
+            >
+              {{ backup.hostname }}
+            </RouterLink>
             <span class="active-backup-sep">&rarr;</span>
-            <span class="active-backup-target">{{ backup.target_name }}</span>
+            <RouterLink
+              v-if="backup.repo_id !== null"
+              :to="{ name: 'repo-detail', params: { id: String(backup.repo_id) } }"
+              class="active-backup-link"
+            >
+              {{ backup.target_name }}
+            </RouterLink>
+            <span
+              v-else
+              class="active-backup-target"
+              >{{ backup.target_name }}</span
+            >
+            <span class="active-backup-time">
+              Running for {{ formatDuration(elapsedSecsFor(backup)) }}
+            </span>
+            <span
+              v-if="estimatedRemainingFor(backup) !== null"
+              class="active-backup-time"
+            >
+              &middot; ~{{ formatDuration(estimatedRemainingFor(backup)!) }} left
+            </span>
           </div>
         </div>
       </section>
@@ -1232,7 +1349,7 @@ async function fetchOverview(): Promise<void> {
 /* Active Backups */
 .active-backups-panel {
   background: var(--bg-card);
-  border: 1px solid var(--accent);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 1.25rem;
 }
@@ -1245,9 +1362,30 @@ async function fetchOverview(): Promise<void> {
 
 .active-backup-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
   font-size: 0.85rem;
+}
+
+.active-backup-schedule {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.active-backup-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.active-backup-link:hover {
+  text-decoration: underline;
+}
+
+.active-backup-time {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  margin-left: auto;
 }
 
 .active-backup-pulse {
@@ -1267,11 +1405,6 @@ async function fetchOverview(): Promise<void> {
   50% {
     opacity: 0.3;
   }
-}
-
-.active-backup-host {
-  font-weight: 600;
-  color: var(--text-primary);
 }
 
 .active-backup-sep {

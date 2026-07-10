@@ -435,4 +435,127 @@ describe('DashboardView success ring', () => {
     expect(wrapper.text()).toContain('server-daily')
     expect(wrapper.text()).toContain('Active')
   })
+
+  it('shows the schedule name and links the host and repo to their detail pages', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({
+          data: {
+            summary: {
+              protected_hosts: 0,
+              eligible_hosts: 0,
+              needs_attention: 0,
+              running_operations: 1,
+              total_storage_bytes: 0,
+            },
+            findings: [],
+            protection: {
+              protected_hosts: 0,
+              eligible_hosts: 0,
+              protected_agent_links: [],
+              unassigned_agents: [],
+              never_succeeded_targets: 0,
+              never_succeeded_agents: [],
+              disabled_only_agents: [],
+            },
+            running_operations: [
+              {
+                report_id: 11,
+                status: 'running',
+                hostname: 'web-server-01',
+                schedule_id: 7,
+                schedule_name: 'daily-web',
+                repo_id: 3,
+                repo_name: 'server-daily',
+                started_at: '2026-06-01T10:00:00Z',
+                destination: { kind: 'schedule', schedule_id: 7 },
+              },
+            ],
+            upcoming_schedules: [],
+            repository_capacity: [],
+          },
+        })
+      }
+      return defaultApiHandler(url)
+    })
+
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('daily-web')
+    expect(wrapper.text()).toMatch(/Running for/)
+
+    const links = wrapper.findAllComponents({ name: 'RouterLinkStub' })
+    const hostLink = links.find(
+      (l) =>
+        (l.props('to') as { name?: string; params?: { hostname?: string } }).name ===
+        'agent-detail',
+    )
+    const repoLink = links.find(
+      (l) => (l.props('to') as { name?: string; params?: { id?: string } }).name === 'repo-detail',
+    )
+    expect(hostLink?.props('to')).toEqual({
+      name: 'agent-detail',
+      params: { hostname: 'web-server-01' },
+    })
+    expect(repoLink?.props('to')).toEqual({ name: 'repo-detail', params: { id: '3' } })
+  })
+
+  it('shows an estimated time remaining once historical duration data is available', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({
+          data: {
+            summary: {
+              protected_hosts: 0,
+              eligible_hosts: 0,
+              needs_attention: 0,
+              running_operations: 1,
+              total_storage_bytes: 0,
+            },
+            findings: [],
+            protection: {
+              protected_hosts: 0,
+              eligible_hosts: 0,
+              protected_agent_links: [],
+              unassigned_agents: [],
+              never_succeeded_targets: 0,
+              never_succeeded_agents: [],
+              disabled_only_agents: [],
+            },
+            running_operations: [
+              {
+                report_id: 11,
+                status: 'running',
+                hostname: 'web-server-01',
+                schedule_id: 7,
+                schedule_name: 'daily-web',
+                repo_id: 3,
+                repo_name: 'server-daily',
+                started_at: new Date().toISOString(),
+                destination: { kind: 'schedule', schedule_id: 7 },
+              },
+            ],
+            upcoming_schedules: [],
+            repository_capacity: [],
+          },
+        })
+      }
+      if (url.startsWith('/stats/activity') && url.includes('schedule_id=7')) {
+        return Promise.resolve({
+          data: [
+            { status: 'success', duration_secs: 300 },
+            { status: 'success', duration_secs: 300 },
+          ],
+        })
+      }
+      return defaultApiHandler(url)
+    })
+
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.text()).toMatch(/left/)
+  })
 })

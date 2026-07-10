@@ -121,6 +121,26 @@ fn generate_totp_secret() -> Vec<u8> {
     secret
 }
 
+/// Verify a TOTP code against the user's stored encrypted secret.
+///
+/// Returns `Ok(true)` if the code is valid, `Ok(false)` if invalid.
+async fn verify_totp_code(
+    state: &AppState,
+    encrypted_secret: &[u8],
+    code: &str,
+) -> Result<bool, ApiError> {
+    let decrypted = shared::crypto::decrypt_passphrase(encrypted_secret, &state.encryption_key)?;
+    let secret = hex::decode(&decrypted)
+        .map_err(|e| ApiError::Internal(format!("failed to decode TOTP secret: {e}")))?;
+
+    let totp = create_totp(&secret)?;
+    let is_valid = totp
+        .check_current(code.trim())
+        .map_err(|_| ApiError::Internal("TOTP check failed".to_string()))?;
+
+    Ok(is_valid)
+}
+
 /// Request payload for TOTP verification during setup.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct TotpVerifyRequest {
@@ -254,16 +274,7 @@ pub async fn totp_verify(
         return Err(ApiError::BadRequest("TOTP not set up".to_string()));
     };
 
-    let decrypted = shared::crypto::decrypt_passphrase(encrypted, &state.encryption_key)?;
-    let secret = hex::decode(&decrypted)
-        .map_err(|e| ApiError::Internal(format!("failed to decode TOTP secret: {e}")))?;
-
-    let totp = create_totp(&secret)?;
-    let is_valid = totp
-        .check_current(req.code.trim())
-        .map_err(|_| ApiError::Internal("TOTP check failed".to_string()))?;
-
-    if !is_valid {
+    if !verify_totp_code(&state, encrypted, &req.code).await? {
         return Err(ApiError::BadRequest(
             "Invalid verification code".to_string(),
         ));
@@ -333,16 +344,7 @@ pub async fn totp_verify_login(
         return Err(ApiError::BadRequest("TOTP not configured".to_string()));
     };
 
-    let decrypted = shared::crypto::decrypt_passphrase(encrypted, &state.encryption_key)?;
-    let secret = hex::decode(&decrypted)
-        .map_err(|e| ApiError::Internal(format!("failed to decode TOTP secret: {e}")))?;
-
-    let totp = create_totp(&secret)?;
-    let is_valid = totp
-        .check_current(req.code.trim())
-        .map_err(|_| ApiError::Internal("TOTP check failed".to_string()))?;
-
-    if !is_valid {
+    if !verify_totp_code(&state, encrypted, &req.code).await? {
         return Err(ApiError::Unauthorized(
             "invalid verification code".to_string(),
         ));

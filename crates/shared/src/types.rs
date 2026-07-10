@@ -440,7 +440,9 @@ impl FromStr for QuotaAction {
 }
 
 /// Overall outcome of a single backup run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema, sqlx::Type)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema, sqlx::Type,
+)]
 #[sqlx(type_name = "TEXT")]
 #[sqlx(rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
@@ -1228,7 +1230,10 @@ mod tests {
     fn visibility_display_roundtrip() {
         assert_eq!(Visibility::Private.to_string(), "private");
         assert_eq!(Visibility::Shared.to_string(), "shared");
-        assert_eq!("private".parse::<Visibility>().unwrap(), Visibility::Private);
+        assert_eq!(
+            "private".parse::<Visibility>().unwrap(),
+            Visibility::Private
+        );
         assert_eq!("shared".parse::<Visibility>().unwrap(), Visibility::Shared);
         assert!("invalid".parse::<Visibility>().is_err());
     }
@@ -1245,7 +1250,10 @@ mod tests {
             (SystemEventType::RepoSync, "repo_sync"),
             (SystemEventType::RepoSyncSlow, "repo_sync_slow"),
             (SystemEventType::RepoSyncFailed, "repo_sync_failed"),
-            (SystemEventType::ArchiveDeleteFailed, "archive_delete_failed"),
+            (
+                SystemEventType::ArchiveDeleteFailed,
+                "archive_delete_failed",
+            ),
             (SystemEventType::SecurityViolation, "security_violation"),
         ];
         for (variant, expected) in variants {
@@ -1260,9 +1268,18 @@ mod tests {
         assert_eq!(FindingSeverity::Critical.to_string(), "critical");
         assert_eq!(FindingSeverity::Warning.to_string(), "warning");
         assert_eq!(FindingSeverity::Info.to_string(), "info");
-        assert_eq!("critical".parse::<FindingSeverity>().unwrap(), FindingSeverity::Critical);
-        assert_eq!("warning".parse::<FindingSeverity>().unwrap(), FindingSeverity::Warning);
-        assert_eq!("info".parse::<FindingSeverity>().unwrap(), FindingSeverity::Info);
+        assert_eq!(
+            "critical".parse::<FindingSeverity>().unwrap(),
+            FindingSeverity::Critical
+        );
+        assert_eq!(
+            "warning".parse::<FindingSeverity>().unwrap(),
+            FindingSeverity::Warning
+        );
+        assert_eq!(
+            "info".parse::<FindingSeverity>().unwrap(),
+            FindingSeverity::Info
+        );
         assert!("bogus".parse::<FindingSeverity>().is_err());
     }
 
@@ -1272,16 +1289,28 @@ mod tests {
         assert_eq!(FindingStatus::Warning.to_string(), "warning");
         assert_eq!(FindingStatus::Failed.to_string(), "failed");
         assert_eq!(FindingStatus::Overdue.to_string(), "overdue");
-        assert_eq!("running".parse::<FindingStatus>().unwrap(), FindingStatus::Running);
-        assert_eq!("warning".parse::<FindingStatus>().unwrap(), FindingStatus::Warning);
+        assert_eq!(
+            "running".parse::<FindingStatus>().unwrap(),
+            FindingStatus::Running
+        );
+        assert_eq!(
+            "warning".parse::<FindingStatus>().unwrap(),
+            FindingStatus::Warning
+        );
         assert!("bogus".parse::<FindingStatus>().is_err());
     }
 
     #[test]
     fn finding_kind_display_roundtrip() {
         assert_eq!(FindingKind::HostUnassigned.to_string(), "host_unassigned");
-        assert_eq!(FindingKind::RepositoryUnscheduled.to_string(), "repository_unscheduled");
-        assert_eq!("backup_failed".parse::<FindingKind>().unwrap(), FindingKind::BackupFailed);
+        assert_eq!(
+            FindingKind::RepositoryUnscheduled.to_string(),
+            "repository_unscheduled"
+        );
+        assert_eq!(
+            "backup_failed".parse::<FindingKind>().unwrap(),
+            FindingKind::BackupFailed
+        );
         assert!("bogus".parse::<FindingKind>().is_err());
     }
 

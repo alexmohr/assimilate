@@ -16,9 +16,7 @@ pub mod tags;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use shared::types::{
-    BackupStatus, ScheduleType, SystemEventType,
-};
+use shared::types::{BackupStatus, ScheduleType, SystemEventType};
 use sqlx::PgPool;
 
 use crate::error::ApiError;
@@ -3554,28 +3552,28 @@ async fn update_backup_report_by_run_id(
          warnings = $11, borg_version = $12, matched = $13, archive_name = $14, borg_command = \
          COALESCE($15, borg_command), started_at = $16 WHERE run_id = $17 AND agent_id = $18 AND \
          status IN ('pending', 'started')",
-         params.schedule_id,
-         params.finished_at,
-         &params.status.to_string(),
-         params.original_size,
-         params.compressed_size,
-         params.deduplicated_size,
-         params.repo_unique_csize,
-         params.files_processed,
-         params.duration_secs,
-         params.error_message.as_deref(),
-         &params.warnings,
-         params.borg_version.as_deref(),
-         params.matched,
-         params.archive_name.as_deref(),
-         params.borg_command.as_deref(),
-         params.started_at,
-         run_id,
-         params.agent_id,
-     )
-     .execute(pool)
-     .await
-     .map_err(ApiError::Database)?;
+        params.schedule_id,
+        params.finished_at,
+        &params.status.to_string(),
+        params.original_size,
+        params.compressed_size,
+        params.deduplicated_size,
+        params.repo_unique_csize,
+        params.files_processed,
+        params.duration_secs,
+        params.error_message.as_deref(),
+        &params.warnings,
+        params.borg_version.as_deref(),
+        params.matched,
+        params.archive_name.as_deref(),
+        params.borg_command.as_deref(),
+        params.started_at,
+        run_id,
+        params.agent_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
     Ok(())
 }
 

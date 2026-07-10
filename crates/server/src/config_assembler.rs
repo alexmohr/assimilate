@@ -7,11 +7,7 @@ use shared::{
 };
 use sqlx::PgPool;
 
-use crate::{
-    AppState,
-    db,
-    error::ApiError,
-};
+use crate::{AppState, db, error::ApiError};
 
 /// # Errors
 ///

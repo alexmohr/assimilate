@@ -243,7 +243,7 @@ impl AppState {
                 }
             }
             Ok(None) => {
-                // Setting not in DB yet — keep the default.
+                // Setting not in DB yet - keep the default.
             }
             Err(e) => {
                 tracing::warn!(error = %e, "failed to load session_idle_timeout_minutes");

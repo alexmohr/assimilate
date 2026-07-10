@@ -189,7 +189,19 @@ posted) as pre-known facts so it doesn't have to re-derive them.
 `.github/workflows/claude-review.yml` reviews a PR automatically once it's
 labeled `needs review` (and again whenever CI finishes, in case the label
 landed while CI was still pending) — but never spends a Claude turn until
-the pre-flight checks above have passed:
+the pre-flight checks above have passed.
+
+The workflow itself has two jobs: a small `gate` job, and the actual `review`
+job it feeds via `needs:`/`if:`. This exists because the `workflow_run: CI
+completed` trigger fires on every push to every open PR, not just ones
+actually waiting on a review — without the gate, the full `review` job
+(checkout, coverage-diff download, potentially Claude) would spin up every
+time regardless. `gate` checks whether the PR currently has the `needs
+review` label for CI-completion events (the label-landing and `/claude-review`
+triggers are already precise, so `gate` passes them through unconditionally)
+and only lets `review` start if so. This is a coarse, cheap filter, not the
+authoritative decision - `review` still does its own full, fresh check once
+it starts:
 
 1. It force-reruns the label sync (`sync-pr-labels.js` directly, not a
    re-derived judgment call) — if the result is `ci failing` or

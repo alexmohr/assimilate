@@ -18,8 +18,8 @@ permissions:
   checks: write
 
 jobs:
-  review:
-    name: Review PR
+  gate:
+    name: Check if a review is actually needed
     runs-on: ubuntu-latest
     # Only ever proceed for: the "needs review" label landing, CI finishing on
     # a PR, or a /claude-review comment from someone with write access (an
@@ -30,6 +30,39 @@ jobs:
         github.event.issue.pull_request != null &&
         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
         contains(github.event.comment.body, '/claude-review'))
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - name: Check whether the heavy review job is worth starting
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // "needs review" landing and /claude-review are already precise
+            // triggers by construction - always proceed for those. "CI
+            // completed" fires on every push to every open PR regardless of
+            // state, though, so without this check the full job below
+            // (checkout, coverage download, possibly Claude) would spin up
+            // on every single one, even PRs nowhere near ready for review.
+            // Gate it on the PR's current "needs review" label instead.
+            if (context.eventName !== "workflow_run") {
+              core.setOutput("should_run", "true");
+              return;
+            }
+            const prNumber = context.payload.workflow_run.pull_requests[0].number;
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+            const needsReview = pr.labels.some((l) => l.name === "needs review");
+            core.setOutput("should_run", needsReview ? "true" : "false");
+
+  review:
+    name: Review PR
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout scripts from default branch
         uses: actions/checkout@v4

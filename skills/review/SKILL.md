@@ -25,7 +25,7 @@ Use when:
 ## Workflow
 
 1. Check whether the PR is rebased on the latest default branch. If not, request changes citing that alone as a finding. If `.github/workflows/claude-review.yml` already ran on this commit, its pre-flight comment already reports rebase status (and issue-linking syntax) — read that instead of re-deriving it; both are informational there, not a hard gate, so use judgment on whether they're worth a finding.
-2. Review the diff for correctness, duplicated logic, and test coverage (unit + e2e for user-facing functions) per the Required rules above. If the automated pipeline already ran, coverage-diff and duplicate-code detection are hard gates enforced *before* you're invoked (see "Automated Claude review" below) — don't re-scan for either from scratch; focus on correctness and whether the tests that exist are the right *kind* of test, not raw coverage.
+2. Review the diff for correctness, duplicated logic, and test coverage (unit + e2e for user-facing functions) per the Required rules above. If the automated pipeline already ran, coverage-diff and duplicate-code detection are hard gates enforced *before* you're invoked (see "Automated pre-flight checks" below) — don't re-scan for either from scratch; focus on correctness and whether the tests that exist are the right *kind* of test, not raw coverage.
 3. Post findings via GitHub's native review tools (inline comments / review body), not as free-form chat replies.
 4. Record the verdict:
    * **Different account than the PR author**: submit the review as **Request changes** if any finding exists, or **Approve** once none remain.
@@ -60,7 +60,7 @@ set the verdict labels per the Workflow section to move them.
 | `changes requested` | A reviewer requested changes | GitHub review decision is `CHANGES_REQUESTED` |
 | `ci failing` | Latest commit's CI run did not succeed | `CI` workflow conclusion is not `success` — always wins, and strips `ready to merge` |
 | `merge conflict` | Real conflicts with the base branch | `mergeable_state == "dirty"` — checked continuously (it's a free API field), same precedence tier as `ci failing` |
-| `precheck failed` | A deterministic pre-review check failed | Set only by `.github/scripts/pre-review-checks.js` (coverage-diff or duplicate-code hard gate) — never by a reviewer, human or AI. See "Automated Claude review" below |
+| `precheck failed` | A deterministic pre-review check failed | Set by `.github/scripts/pre-review-checks.js` (coverage-diff) or `.github/scripts/analyze-duplication.js` (duplicate-code, via the standalone `.github/workflows/duplicate-code-check.yml`) — never by a reviewer, human or AI. See "Automated pre-flight checks" below |
 | `ready to merge` | Fully clear to merge | CI conclusion is `success` **and** review decision is `APPROVED` **and** no human sign-off is pending |
 | `needs human review` | Requires a human's sign-off before merge, regardless of agent review | Auto-applied when: the diff touches security/crypto/auth/SSH-forwarding code, CI/CD workflow files, `.github/scripts/`, `.pre-commit-config.yaml`, `.devcontainer/`, dependency lockfiles, `deny.toml`, or DB migrations; the diff adds a new `#[allow(...)]`/`deny.toml` `ignore` suppression; the PR title or body mentions "security"; or the PR closes an issue whose title, body, or labels mention "security" |
 
@@ -86,34 +86,63 @@ verdict and the PR needs a fresh review — same as GitHub does for native
 reviews via "dismiss stale reviews," which doesn't apply to labels
 automatically.
 
+### Automated pre-flight checks
+
+Two deterministic, code-only gates must pass before any Claude turn is
+spent, each owned by its own script — and, for duplication, its own
+workflow, so a slow or quota-exhausted Claude run never blocks a fast, free
+check from reporting:
+
+* **Duplicate-code scan** — `.github/workflows/duplicate-code-check.yml`
+  runs standalone on every `opened`/`synchronize`/`reopened` event; it
+  doesn't wait for CI or the `needs review` label. It checks out the PR
+  head, runs `jscpd` over the whole tree, and hands the JSON report to
+  `.github/scripts/analyze-duplication.js`, which keeps only clusters that
+  touch this PR's changed files. What counts as "generated, never flag it"
+  (the sqlx offline query cache in `.sqlx/`, generated frontend types,
+  lockfiles, build output, ...) is configured in `.jscpd.json` at the repo
+  root — extend that file's `ignore` array to exempt new generated code, no
+  workflow change needed. On a hit, the workflow posts a PR comment with the
+  actual duplicated source for each cluster (not just file:line ranges) and
+  sets `precheck failed`. Because it's a separate workflow, it isn't
+  re-triggered by `/claude-review` — only a new push re-runs the duplication
+  scan itself.
+* **Coverage-diff** — runs inside `.github/workflows/claude-review.yml` via
+  `.github/scripts/pre-review-checks.js` → `analyze-coverage-diff.js`: every
+  new/changed line must have test coverage, and the PR's aggregate line
+  coverage must not be lower than the latest `main` baseline (zero tolerance
+  — this catches removed/weakened tests even when the source lines they used
+  to cover weren't touched by the diff). A failure posts its own PR comment
+  and sets `precheck failed`.
+
+Either one failing sets `precheck failed`, and Claude is not invoked — fix
+the findings and push (which clears the label and re-runs both checks)
+rather than waiting on a review that mechanically can't happen yet.
+`pre-review-checks.js` checks whether `precheck failed` is *already* set
+(i.e. the duplicate-code workflow already failed on this commit) before
+running the coverage check, so a known-bad commit never reaches Claude
+regardless of which gate caught it first. Rebase-behind-main and
+issue-linking-syntax checks also run but are informational only — they don't
+block Claude, they're just handed to it (or posted) as pre-known facts so it
+doesn't have to re-derive them.
+
 ### Automated Claude review
 
 `.github/workflows/claude-review.yml` reviews a PR automatically once it's
 labeled `needs review` (and again whenever CI finishes, in case the label
 landed while CI was still pending) — but never spends a Claude turn until
-deterministic, code-only checks have passed:
+the pre-flight checks above have passed:
 
 1. It force-reruns the label sync (`sync-pr-labels.js` directly, not a
    re-derived judgment call) — if the result is `ci failing` or
    `merge conflict`, it stops. Nothing to review yet.
-2. If a `claude-approved`/`claude-changes-requested` label is already present,
+2. If `precheck failed` is already set (from a prior duplicate-code-check run
+   on this commit), it stops — the coverage-diff check isn't even run.
+3. If a `claude-approved`/`claude-changes-requested` label is already present,
    this exact commit has already been reviewed — it stops (skip the wasted
    token spend), unless invoked via `/claude-review` (see below), which
    always forces a fresh run.
-3. Coverage-diff: every new/changed line must have test coverage, and the
-   PR's aggregate line coverage must not be lower than the latest `main`
-   baseline (zero tolerance — this catches removed/weakened tests even when
-   the source lines they used to cover weren't touched by the diff).
-4. Duplicate-code scan (`jscpd`), filtered to clusters touching this PR's
-   changed files.
-
-Either (3) or (4) failing sets `precheck failed` with the specific findings
-posted as a PR comment, and Claude is not invoked — fix the findings and push
-(which clears the label and re-triggers review) rather than waiting on a
-review that mechanically can't happen yet. Rebase-behind-main and
-issue-linking-syntax checks also run but are informational only — they don't
-block Claude, they're just handed to it (or posted) as pre-known facts so it
-doesn't have to re-derive them.
+4. Coverage-diff runs and, on failure, sets `precheck failed` the same way.
 
 **Model:** defaults to `claude-sonnet-5` (overridable repo-wide via the
 `CLAUDE_REVIEW_MODEL` Actions variable). If Claude's review fails outright
@@ -124,10 +153,14 @@ above; nothing about `ready to merge` depends on Claude specifically.
 
 **Manual retrigger:** comment `/claude-review` on the PR (requires write
 access — org member/collaborator/owner) to force a fresh review through the
-same pipeline, e.g. after a quota outage or to get a second opinion. Add
-`model=<id>` to use a specific model for that one run instead of the default,
-e.g. `/claude-review model=claude-opus-4-8` for a harder PR. Allowed models:
-`claude-sonnet-5`, `claude-opus-4-8`, `claude-haiku-4-5`.
+claude-review.yml pipeline (label sync, coverage-diff, Claude), e.g. after a
+quota outage or to get a second opinion. Add `model=<id>` to use a specific
+model for that one run instead of the default, e.g.
+`/claude-review model=claude-opus-4-8` for a harder PR. Allowed models:
+`claude-sonnet-5`, `claude-opus-4-8`, `claude-haiku-4-5`. This does **not**
+re-run the duplicate-code scan — that's a separate workflow keyed off pushes,
+not comments; if you need it re-checked without a new commit, that's not
+currently supported.
 
 ### Merge gate (enforced, not just informational)
 

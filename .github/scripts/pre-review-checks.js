@@ -4,15 +4,17 @@
 // Orchestrates the review workflow's deterministic pre-flight: force a
 // fresh, code-only recompute of "is CI green / does this conflict" (never
 // re-derived by an LLM - see skills/review/SKILL.md), then run the
-// coverage-diff and duplication hard gates before anything spends a Claude
-// turn. Sets the run_claude output the workflow uses to decide whether to
-// invoke claude-code-action.
+// coverage-diff hard gate before anything spends a Claude turn. The
+// duplicate-code hard gate runs independently in
+// .github/workflows/duplicate-code-check.yml (see analyze-duplication.js) -
+// this script only checks whether that gate already failed on this commit.
+// Sets the run_claude output the workflow uses to decide whether to invoke
+// claude-code-action.
 
 const syncLabels = require("./sync-pr-labels");
 const analyzeCoverageDiff = require("./analyze-coverage-diff");
-const analyzeDuplication = require("./analyze-duplication");
 
-const MARKER = "<!-- pre-review-checks -->";
+const MARKER = "<!-- pre-review-checks:coverage -->";
 
 async function upsertPrecheckComment(github, owner, repo, prNumber, findings) {
   const comments = await github.paginate(github.rest.issues.listComments, {
@@ -31,15 +33,15 @@ async function upsertPrecheckComment(github, owner, repo, prNumber, findings) {
         owner,
         repo,
         comment_id: existing.id,
-        body: `${MARKER}\nAutomated pre-flight checks passed.`,
+        body: `${MARKER}\nCoverage-diff check passed.`,
       });
     }
     return;
   }
 
   const body =
-    `${MARKER}\n**Automated pre-flight checks failed** - these are deterministic findings ` +
-    "(not from Claude); fix them before a review is worth spending on:\n\n" +
+    `${MARKER}\n**Coverage-diff check failed** - this is a deterministic finding ` +
+    "(not from Claude); fix it before a review is worth spending on:\n\n" +
     findings.map((f) => `- ${f}`).join("\n");
 
   if (existing) {
@@ -56,7 +58,6 @@ module.exports = async ({
   prNumber,
   prLcovPath,
   baseLcovPath,
-  jscpdReportPath,
   force,
 }) => {
   const owner = context.repo.owner;
@@ -80,6 +81,15 @@ module.exports = async ({
     core.setOutput("run_claude", "false");
     return;
   }
+  // Set by .github/workflows/duplicate-code-check.yml when it finds
+  // duplication touching this PR - a forced /claude-review retrigger still
+  // must not bypass this, only "already reviewed this exact commit" is
+  // force-bypassable.
+  if (labels.includes(syncLabels.STATUS_LABELS.PRECHECK_FAILED.name)) {
+    core.info(`PR #${prNumber}: precheck already failed (duplicate-code check) - not running Claude.`);
+    core.setOutput("run_claude", "false");
+    return;
+  }
 
   // claude-approved / claude-changes-requested only exist for the current
   // commit - sync-pr-labels.js clears them on every push - so their
@@ -93,25 +103,11 @@ module.exports = async ({
     return;
   }
 
-  const files = await github.paginate(github.rest.pulls.listFiles, {
-    owner,
-    repo,
-    pull_number: prNumber,
-    per_page: 100,
-  });
+  const coverage = await analyzeCoverageDiff({ github, owner, repo, prNumber, prLcovPath, baseLcovPath });
 
-  const [coverage, duplication] = await Promise.all([
-    analyzeCoverageDiff({ github, owner, repo, prNumber, prLcovPath, baseLcovPath }),
-    analyzeDuplication({
-      reportPath: jscpdReportPath,
-      changedFiles: files.map((f) => f.filename),
-    }),
-  ]);
+  await upsertPrecheckComment(github, owner, repo, prNumber, coverage.findings);
 
-  const findings = [...coverage.findings, ...duplication.findings];
-  await upsertPrecheckComment(github, owner, repo, prNumber, findings);
-
-  if (!coverage.ok || !duplication.ok) {
+  if (!coverage.ok) {
     const label = syncLabels.STATUS_LABELS.PRECHECK_FAILED;
     await syncLabels.ensureLabelExists(github, owner, repo, label);
     await github.rest.issues.addLabels({
@@ -123,7 +119,9 @@ module.exports = async ({
     // Recompute status now that "precheck failed" is set, so the PR Merge
     // Gate and overall status label reflect it immediately.
     await syncLabels({ github, context, core, prNumber });
-    core.info(`PR #${prNumber}: pre-flight checks failed (${findings.length} finding(s)) - not running Claude.`);
+    core.info(
+      `PR #${prNumber}: coverage-diff check failed (${coverage.findings.length} finding(s)) - not running Claude.`,
+    );
     core.setOutput("run_claude", "false");
     return;
   }

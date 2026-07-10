@@ -2,36 +2,36 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 // Deterministic gate for whether a Claude review turn is worth spending.
+// Runs no analysis of its own - coverage-diff-check.yml and
+// duplicate-code-check.yml each own their check entirely (analysis,
+// PR comment, status label, and a GitHub check run on the commit). This
+// script only:
 //
-// duplicate-code-check.yml triggers on push, well before CI's multi-stage
-// run finishes - by the time this script runs (triggered by CI completion),
-// it has always already had time to land its `duplicate code` label, so
-// that label is trusted as-is here, no need to re-run jscpd.
-//
-// coverage-diff-check.yml is different: it triggers on the *same* "CI
-// completed" event this script does, with no ordering guarantee between the
-// two workflows. Trusting its `coverage failed` label here would risk
-// inviting Claude to review (and even approve) a commit whose coverage
-// result simply hasn't landed yet - denying an automatic review on any
-// pipeline failure only holds if the failure is checked fresh, not read
-// from a label that might still be in flight. So this script calls
-// analyze-coverage-diff.js's pure analyzeDiff() itself, synchronously,
-// right before deciding - same deterministic check coverage-diff-check.yml
-// runs, just guaranteed current at decision time instead of racing it. It
-// deliberately does NOT call analyze-coverage-diff.js's default export
-// (which posts the PR comment and sets/clears `coverage failed`) - that
-// export runs on the same "CI completed" trigger this script does, and
-// calling it from both places would race two non-atomic
-// read-then-write comment upserts into creating duplicate comments each
-// round. Only coverage-diff-check.yml owns those side effects.
+// 1. Forces a fresh, code-only label sync (never re-derived by an LLM - see
+//    skills/review/SKILL.md) so "ci failing" / "merge conflict" reflect the
+//    current commit, and exits immediately if either is set - a known-bad
+//    signal that already exists needs no further waiting.
+// 2. Otherwise, waits for both stages' check runs to reach a conclusion
+//    (lib/wait-for-check.js), up to two hours, and decides from their
+//    actual result. Neither stage's workflow is triggered from here, and
+//    neither stage's result is ever read from a label that might still be
+//    in flight - only a check run GitHub itself reports as "completed" is
+//    trusted. This is what fully closes the race that the label-trusting
+//    and inline-re-run approaches both had: coverage-diff-check.yml and
+//    this workflow trigger on the identical "CI completed" event with no
+//    ordering guarantee, so anything short of waiting for an authoritative,
+//    already-finished conclusion could gate Claude on stale or incomplete
+//    data.
 //
 // Sets the run_claude output the workflow uses to decide whether to invoke
 // claude-code-action.
 
 const syncLabels = require("./sync-pr-labels");
-const { analyzeDiff } = require("./analyze-coverage-diff");
+const analyzeCoverageDiff = require("./analyze-coverage-diff");
+const analyzeDuplication = require("./analyze-duplication");
+const { waitForCheckCompletion } = require("./lib/wait-for-check");
 
-module.exports = async ({ github, context, core, prNumber, prLcovPath, baseLcovPath, force }) => {
+module.exports = async ({ github, context, core, prNumber, headSha, force }) => {
   const owner = context.repo.owner;
   const repo = context.repo.repo;
 
@@ -53,11 +53,6 @@ module.exports = async ({ github, context, core, prNumber, prLcovPath, baseLcovP
     core.setOutput("run_claude", "false");
     return;
   }
-  if (labels.includes(syncLabels.DUPLICATE_CODE_LABEL.name)) {
-    core.info(`PR #${prNumber}: duplicate-code check already failed - not running Claude.`);
-    core.setOutput("run_claude", "false");
-    return;
-  }
 
   // claude-approved / claude-changes-requested only exist for the current
   // commit - sync-pr-labels.js clears them on every push - so their
@@ -71,10 +66,33 @@ module.exports = async ({ github, context, core, prNumber, prLcovPath, baseLcovP
     return;
   }
 
-  const coverage = await analyzeDiff({ github, owner, repo, prNumber, prLcovPath, baseLcovPath });
-  if (!coverage.ok) {
+  const [coverage, duplication] = await Promise.all([
+    waitForCheckCompletion(github, core, {
+      owner,
+      repo,
+      ref: headSha,
+      checkName: analyzeCoverageDiff.CHECK_NAME,
+    }),
+    waitForCheckCompletion(github, core, {
+      owner,
+      repo,
+      ref: headSha,
+      checkName: analyzeDuplication.CHECK_NAME,
+    }),
+  ]);
+
+  if (!coverage.completed || !duplication.completed) {
+    core.warning(
+      `PR #${prNumber}: pre-flight checks did not complete within the wait window - not running Claude.`,
+    );
+    core.setOutput("run_claude", "false");
+    return;
+  }
+
+  if (coverage.conclusion !== "success" || duplication.conclusion !== "success") {
     core.info(
-      `PR #${prNumber}: coverage-diff check failed (${coverage.findings.length} finding(s)) - not running Claude.`,
+      `PR #${prNumber}: a pre-flight stage failed (coverage=${coverage.conclusion}, ` +
+        `duplication=${duplication.conclusion}) - not running Claude.`,
     );
     core.setOutput("run_claude", "false");
     return;

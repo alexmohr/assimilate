@@ -62,7 +62,7 @@ labels per the Workflow section to move them.
 | `ci failing` | Latest commit's CI run did not succeed | `CI` workflow conclusion is not `success` — always wins, and strips `ready to merge` |
 | `merge conflict` | Real conflicts with the base branch | `mergeable_state == "dirty"` — checked continuously (it's a free API field), same precedence tier as `ci failing` |
 | `precheck failed` | A deterministic pre-review stage failed | **Purely derived** — `sync-pr-labels.js` computes it fresh every run from `coverage failed` and/or `duplicate code`, never set directly by anything. This is the one label to look at if you just want "did any pre-flight stage fail" without caring which. See "Automated pre-flight checks" below |
-| `coverage failed` | The coverage-diff pre-review stage failed | Set only by `.github/scripts/analyze-coverage-diff.js` — called both from the standalone `.github/workflows/coverage-diff-check.yml` and synchronously from `pre-review-checks.js` inside `claude-review.yml`. See "Automated pre-flight checks" below |
+| `coverage failed` | The coverage-diff pre-review stage failed | Set only by `.github/scripts/analyze-coverage-diff.js` via the standalone `.github/workflows/coverage-diff-check.yml`. See "Automated pre-flight checks" below |
 | `duplicate code` | The duplicate-code-scan pre-review stage failed | Set only by `.github/scripts/analyze-duplication.js` via the standalone `.github/workflows/duplicate-code-check.yml`. See "Automated pre-flight checks" below |
 | `ready to merge` | Fully clear to merge | CI conclusion is `success` **and** review decision is `APPROVED` **and** no human sign-off is pending **and** neither `coverage failed` nor `duplicate code` is set |
 | `needs human review` | Requires a human's sign-off before merge, regardless of agent review | Auto-applied when: the diff touches security/crypto/auth/SSH-forwarding code, CI/CD workflow files, `.github/scripts/`, `.pre-commit-config.yaml`, `.devcontainer/`, dependency lockfiles, `deny.toml`, or DB migrations; the diff adds a new `#[allow(...)]`/`deny.toml` `ignore` suppression; the PR title or body mentions "security"; or the PR closes an issue whose title, body, or labels mention "security" |
@@ -104,13 +104,11 @@ automatically.
 ### Automated pre-flight checks
 
 Two deterministic, code-only gates must pass before any Claude turn is
-spent. Both have a standalone workflow that reports independently of
-Claude's pipeline, but they differ in one important way: whether the
-Claude-gating decision can safely trust that workflow's label, or has to
-compute its own fresh answer. See "Why coverage-diff runs twice" below for
-why that split exists — it's not an oversight, an earlier version of this
-design trusted a label that could still be in flight and that was a real
-bug, not just a theoretical one.
+spent, each entirely owned by its own standalone workflow — analysis, PR
+comment, status label, **and** a GitHub check run on the commit. Neither
+workflow is ever re-triggered or re-run from `claude-review.yml`; it only
+waits for the check run each one publishes. See "How Claude's gate uses
+them" below for why a check run, not a label, is what's waited on.
 
 * **Duplicate-code scan** — `.github/workflows/duplicate-code-check.yml`
   runs standalone on every `opened`/`synchronize`/`reopened` event; it
@@ -122,67 +120,56 @@ bug, not just a theoretical one.
   lockfiles, build output, ...) is configured in `.jscpd.json` at the repo
   root — extend that file's `ignore` array to exempt new generated code, no
   workflow change needed. On a hit, the workflow posts a PR comment with the
-  actual duplicated source for each cluster (not just file:line ranges) and
-  sets its own `duplicate code` label. Because it's a separate workflow, it
+  actual duplicated source for each cluster (not just file:line ranges),
+  sets its own `duplicate code` label, and publishes a "Duplicate Code
+  Check" check run on the commit. Because it's a separate workflow, it
   isn't re-triggered by `/claude-review` — only a new push re-runs the
-  duplication scan itself. It always starts well before CI's multi-stage run
-  finishes, so by the time the Claude-gating check runs (triggered by CI
-  completion), its label is reliably current — safe to trust directly.
-* **Coverage-diff** — `.github/scripts/analyze-coverage-diff.js` checks that
-  every new/changed line has test coverage, and that the PR's aggregate line
-  coverage isn't lower than the latest `main` baseline (zero tolerance — this
-  catches removed/weakened tests even when the source lines they used to
-  cover weren't touched by the diff). The pure analysis (`analyzeDiff`) runs
-  in two places, but its comment/label side effects run in only one:
-  1. `.github/workflows/coverage-diff-check.yml`, standalone, on every CI
-     completion — the sole owner of the PR comment and `coverage failed`
-     label, giving fast independent visibility even when Claude's gate
-     short-circuits earlier for an unrelated reason (e.g. `duplicate code`
-     already failed) and never reaches this check itself.
-  2. Read-only, from `pre-review-checks.js`, right before it decides
-     whether to invoke Claude — see below for why.
+  duplication scan itself.
+* **Coverage-diff** — `.github/workflows/coverage-diff-check.yml` runs
+  standalone on every CI completion (it needs CI's coverage artifact, so it
+  can't run any earlier than that). It locates the PR's own CI run and the
+  latest successful `main` CI run, downloads both `coverage-final` lcov
+  artifacts, and hands them to `.github/scripts/analyze-coverage-diff.js`:
+  every new/changed line must have test coverage, and the PR's aggregate
+  line coverage must not be lower than the `main` baseline (zero tolerance
+  — this catches removed/weakened tests even when the source lines they used
+  to cover weren't touched by the diff). A failure posts its own PR comment,
+  sets its own `coverage failed` label, and publishes a "Coverage Diff
+  Check" check run on the commit, same pattern as duplication above.
 
-#### Why coverage-diff runs twice
+#### How Claude's gate uses them
 
-`coverage-diff-check.yml` and `claude-review.yml` both trigger on the same
-`workflow_run: CI completed` event, with no ordering guarantee between them.
-Trusting `coverage-diff-check.yml`'s label from the Claude-gating check would
-mean Claude could start reviewing — and even approve — a commit whose
-coverage result simply hadn't landed yet, if that workflow's job happened to
-still be running. Denying an automatic review on *any* pipeline failure only
-holds if the failure is checked fresh at decision time, not read from a label
-that might still be in flight. So `pre-review-checks.js` calls
-`analyze-coverage-diff.js`'s pure `analyzeDiff` function itself, synchronously,
-downloading the same artifacts and running the exact same check
-`coverage-diff-check.yml` does - just guaranteed current instead of racing it.
+`pre-review-checks.js` (run from `claude-review.yml`) never runs either
+check itself and never triggers either workflow — it only *waits*, via
+`.github/scripts/lib/wait-for-check.js`, for both check runs
+("Coverage Diff Check", "Duplicate Code Check") to reach `status:
+completed` on the PR's head commit, up to a 2-hour ceiling, then reads
+their `conclusion`. This is deliberate: `coverage-diff-check.yml` and
+`claude-review.yml` both trigger on the same `workflow_run: CI completed`
+event with no ordering guarantee between them, so anything short of waiting
+for an already-finished, authoritative result could gate Claude on stale or
+incomplete data - a label read at the wrong moment could be missing not
+because the check passed, but because it simply hasn't run yet. Earlier
+iterations of this design either re-ran the check inline (which raced the
+standalone workflow's own comment-writing and produced duplicate PR
+comments) or trusted the label directly (which could read stale state);
+waiting for a completed check run removes the race entirely rather than
+narrowing it.
 
-It deliberately calls only the pure function, never the default export that
-posts the comment and sets/clears the label - `coverage-diff-check.yml` and
-`claude-review.yml` race on the same trigger event, and the comment upsert's
-read-then-write (list comments, then create if none match) isn't atomic. Two
-independent callers racing that on the same commit could both see "no
-comment yet" and both create one, producing a duplicate every round instead
-of one comment that gets updated in place. Only `coverage-diff-check.yml`
-ever writes the comment/label; `pre-review-checks.js` only needs a fresh
-answer to gate on, not to publish it a second time.
-
-`duplicate-code-check.yml` doesn't need this because it has no such race: it
-starts on push, well ahead of CI's full run, so it always has time to finish
-before the CI-completion-triggered gate check reads its label.
-
-As extra defense in depth, `sync-pr-labels.js` unconditionally strips
-`claude-approved` whenever `coverage failed` or `duplicate code` is present,
-regardless of how the label got set — covering the far less likely case of
-`duplicate code` itself lagging (an unusually slow checkout/jscpd run) or a
-brand new push landing while Claude's review is still in progress.
-`claude-review.yml` re-syncs labels immediately after Claude's turn so this
-correction doesn't wait on the next unrelated trigger.
+If there's already a known-bad signal — `ci failing` or `merge conflict` —
+`pre-review-checks.js` exits immediately on that, without waiting for
+anything; there's nothing to gain from waiting on the other two stages once
+the PR is already blocked for an unrelated, faster-to-detect reason. If
+neither check completes within the 2-hour wait, it treats that as
+inconclusive and does not invoke Claude either — the same "deny on any
+pipeline failure" bias applies to "we couldn't confirm it passed" as it does
+to "we confirmed it failed."
 
 Fix the findings and push: coverage-diff-check.yml and duplicate-code-check.yml
-each re-run automatically and clear their own label once clean.
-Rebase-behind-main and issue-linking-syntax checks also run but are
-informational only — they don't block Claude, they're just handed to it (or
-posted) as pre-known facts so it doesn't have to re-derive them.
+each re-run automatically, clear their own label, and publish a fresh check
+run once clean. Rebase-behind-main and issue-linking-syntax checks also run
+but are informational only — they don't block Claude, they're just handed
+to it (or posted) as pre-known facts so it doesn't have to re-derive them.
 
 ### Automated Claude review
 
@@ -195,8 +182,8 @@ The workflow itself has two jobs: a small `gate` job, and the actual `review`
 job it feeds via `needs:`/`if:`. This exists because the `workflow_run: CI
 completed` trigger fires on every push to every open PR, not just ones
 actually waiting on a review — without the gate, the full `review` job
-(checkout, coverage-diff download, potentially Claude) would spin up every
-time regardless. `gate` checks whether the PR currently has the `needs
+(checkout, waiting on pre-flight checks, potentially Claude) would spin up
+every time regardless. `gate` checks whether the PR currently has the `needs
 review` label for CI-completion events (the label-landing and `/claude-review`
 triggers are already precise, so `gate` passes them through unconditionally)
 and only lets `review` start if so. This is a coarse, cheap filter, not the
@@ -206,17 +193,13 @@ it starts:
 1. It force-reruns the label sync (`sync-pr-labels.js` directly, not a
    re-derived judgment call) — if the result is `ci failing` or
    `merge conflict`, it stops. Nothing to review yet.
-2. If `duplicate code` is already set, it stops — that label is trusted
-   directly (see "Why coverage-diff runs twice" above for why duplication
-   doesn't need the same care coverage-diff does).
-3. If a `claude-approved`/`claude-changes-requested` label is already present,
+2. If a `claude-approved`/`claude-changes-requested` label is already present,
    this exact commit has already been reviewed — it stops (skip the wasted
    token spend), unless invoked via `/claude-review` (see below), which
    always forces a fresh run.
-4. It runs `analyze-coverage-diff.js`'s pure check itself and stops if that
-   fails - it does **not** set `coverage failed` itself (only
-   `coverage-diff-check.yml` does, to avoid the duplicate-comment race
-   described above); the label lands independently, shortly after.
+3. It waits for both pre-flight check runs to complete (see "How Claude's
+   gate uses them" above) and stops if either failed, or if neither
+   completed within the wait window.
 
 **Model:** defaults to `claude-sonnet-5` (overridable repo-wide via the
 `CLAUDE_REVIEW_MODEL` Actions variable). If Claude's review fails outright
@@ -227,16 +210,15 @@ above; nothing about `ready to merge` depends on Claude specifically.
 
 **Manual retrigger:** comment `/claude-review` on the PR (requires write
 access — org member/collaborator/owner) to force a fresh review through the
-claude-review.yml pipeline (label sync, coverage-diff, Claude), e.g. after a
-quota outage or to get a second opinion. Add `model=<id>` to use a specific
-model for that one run instead of the default, e.g.
-`/claude-review model=claude-opus-4-8` for a harder PR. Allowed models:
-`claude-sonnet-5`, `claude-opus-4-8`, `claude-haiku-4-5`. This re-runs
-coverage-diff (it's synchronous inside claude-review.yml, see above) but
-**not** the standalone `coverage-diff-check.yml` copy, nor
-`duplicate-code-check.yml` — the latter is a separate workflow keyed off
-pushes, not comments; if you need duplication re-checked without a new
-commit, that's not currently supported.
+claude-review.yml pipeline (label sync, waiting on pre-flight checks,
+Claude), e.g. after a quota outage or to get a second opinion. Add
+`model=<id>` to use a specific model for that one run instead of the
+default, e.g. `/claude-review model=claude-opus-4-8` for a harder PR.
+Allowed models: `claude-sonnet-5`, `claude-opus-4-8`, `claude-haiku-4-5`.
+This does **not** re-run `coverage-diff-check.yml` or
+`duplicate-code-check.yml` themselves — it only waits for whatever their
+check runs already say about the current commit; if you need either
+re-checked, that needs a new commit (or, for coverage, a fresh CI run).
 
 ### Merge gate (enforced, not just informational)
 
@@ -249,6 +231,15 @@ advisory (nothing stops a human from clicking "Merge" on a red-labeled PR);
 (Settings → Branches → Branch protection rule for `main` → Require status
 checks to pass → add `PR Merge Gate`). That's a one-time, repo-owner-only
 change — agents must not attempt to modify branch protection themselves.
+
+`coverage-diff-check.yml` and `duplicate-code-check.yml` each publish their
+own check run too ("Coverage Diff Check", "Duplicate Code Check") — these
+exist primarily so `pre-review-checks.js` has something authoritative to
+poll (see "How Claude's gate uses them" above), but they're ordinary check
+runs and could also be added as required status checks the same way
+`PR Merge Gate` is, if the repo owner wants either stage to block merging
+directly rather than only through the derived `precheck failed`/`ready to
+merge` labels.
 
 ## Validation checklist
 

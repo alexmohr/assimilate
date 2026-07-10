@@ -62,5 +62,6 @@ jobs:
               context,
               core,
               prNumber: context.payload.pull_request.number,
+              headSha: context.payload.pull_request.head.sha,
               reportPath: `${process.env.GITHUB_WORKSPACE}/jscpd-report/jscpd-report.json`,
             });

@@ -89,6 +89,7 @@ jobs:
               context,
               core,
               prNumber: Number("${{ steps.runs.outputs.pr_number }}"),
+              headSha: context.payload.workflow_run.head_sha,
               prLcovPath: `${process.env.GITHUB_WORKSPACE}/pr-coverage/final.info`,
               baseLcovPath: `${process.env.GITHUB_WORKSPACE}/main-coverage/final.info`,
             });

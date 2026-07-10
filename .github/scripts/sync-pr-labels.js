@@ -334,13 +334,16 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
   // Hard guarantee: claude-approved must never survive while a pre-flight
   // stage is failing, no matter how it got set. The status precedence chain
   // below already refuses to derive `ready to merge` from it in that case,
-  // but that alone still leaves a misleading label on the PR - e.g. Claude
-  // starts its review while precheck is green, coverage-diff-check.yml or
-  // duplicate-code-check.yml then fails on the same commit before Claude
-  // finishes and approves. Strip it here, unconditionally (not gated on
-  // eventAction), so the very next sync - including the one each of those
-  // two workflows triggers itself right after setting its failure label -
-  // corrects it immediately.
+  // but that alone still leaves a misleading label on the PR. pre-review-
+  // checks.js already waits for both stages' check runs to conclude before
+  // ever invoking Claude, so this isn't the primary defense anymore - it's
+  // for a new push landing on the PR while Claude's review of the previous
+  // commit is still in progress, which starts fresh coverage-diff/
+  // duplicate-code runs that could fail before Claude finishes and
+  // approves. Strip it here, unconditionally (not gated on eventAction), so
+  // the very next sync - including the one each of those two workflows
+  // triggers itself right after setting its failure label - corrects it
+  // immediately.
   if ((hasCoverageFailed || hasDuplicateCode) && existingLabels.includes(REVIEW_VERDICT_LABELS.APPROVED.name)) {
     await github.rest.issues
       .removeLabel({ owner, repo, issue_number: prNumber, name: REVIEW_VERDICT_LABELS.APPROVED.name })
@@ -445,3 +448,7 @@ module.exports.REVIEW_VERDICT_LABELS = REVIEW_VERDICT_LABELS;
 module.exports.DUPLICATE_CODE_LABEL = DUPLICATE_CODE_LABEL;
 module.exports.COVERAGE_LABEL = COVERAGE_LABEL;
 module.exports.ensureLabelExists = ensureLabelExists;
+// Exported so pre-review-checks.js can exclude this workflow's own derived,
+// circular check run (its conclusion depends on the review having already
+// happened) from the "wait for every other check on this commit" gate.
+module.exports.GATE_CHECK_NAME = GATE_CHECK_NAME;

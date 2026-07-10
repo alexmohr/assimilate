@@ -4,22 +4,30 @@
 // Standalone duplicate-code gate: reads a jscpd JSON report, keeps only
 // clusters that touch this PR's changed files (repo-wide duplication
 // unrelated to the diff isn't this PR's problem to fix), posts the actual
-// duplicated source as a PR comment, and sets/clears its own `duplicate
-// code` label accordingly - a separate stage from the coverage-diff
-// `precheck failed` check, deliberately not folded into it (see
-// DUPLICATE_CODE_LABEL in sync-pr-labels.js for why). Hard gate: "Logic is
-// never to be duplicated instead of reused" (skills/review/SKILL.md) is a
-// deterministic fact once jscpd has flagged a cluster, not something Claude
-// needs to re-derive. What counts as "generated, ignore it" (`.sqlx/`,
-// generated TS types, lockfiles, ...) is configured in `.jscpd.json` at the
-// repo root, not here - editing that file is how maintainers extend the
-// ignore list without touching this script or the workflow.
+// duplicated source as a PR comment, sets/clears its own `duplicate code`
+// label, and publishes a "Duplicate Code Check" GitHub check run on the
+// commit - a separate stage from the coverage-diff `precheck failed` check,
+// deliberately not folded into it (see DUPLICATE_CODE_LABEL in
+// sync-pr-labels.js for why). Hard gate: "Logic is never to be duplicated
+// instead of reused" (skills/review/SKILL.md) is a deterministic fact once
+// jscpd has flagged a cluster, not something Claude needs to re-derive.
+// What counts as "generated, ignore it" (`.sqlx/`, generated TS types,
+// lockfiles, ...) is configured in `.jscpd.json` at the repo root, not here
+// - editing that file is how maintainers extend the ignore list without
+// touching this script or the workflow.
+//
+// pre-review-checks.js never re-runs jscpd itself - it waits for every
+// check run on the commit (lib/wait-for-check.js, not specific to this one
+// by name) to reach an authoritative, already-finished conclusion, same as
+// it does for coverage-diff. See skills/review/SKILL.md for the full
+// reasoning.
 
 const fs = require("fs");
 const syncLabels = require("./sync-pr-labels");
 const { upsertMarkedComment } = require("./lib/pr-comment");
 
 const MARKER = "<!-- duplicate-code-check -->";
+const CHECK_NAME = "Duplicate Code Check";
 
 const normalize = (p) => p.replace(/^\.\//, "");
 
@@ -95,7 +103,29 @@ async function upsertComment(github, owner, repo, prNumber, findings) {
   await upsertMarkedComment(github, owner, repo, prNumber, MARKER, body);
 }
 
-module.exports = async ({ github, context, core, prNumber, reportPath }) => {
+async function publishCheckRun(github, owner, repo, headSha, ok, findings) {
+  await github.rest.checks.create({
+    owner,
+    repo,
+    name: CHECK_NAME,
+    head_sha: headSha,
+    status: "completed",
+    conclusion: ok ? "success" : "failure",
+    output: {
+      title: ok ? "No duplicate code found" : "Duplicate code found",
+      summary: ok
+        ? "No duplication touching this PR's changed files."
+        : findings
+            .map(
+              (f) =>
+                `${f.firstFile}:${f.firstStart}-${f.firstEnd} matches ${f.secondFile}:${f.secondStart}-${f.secondEnd}`,
+            )
+            .join("\n"),
+    },
+  });
+}
+
+module.exports = async ({ github, context, core, prNumber, headSha, reportPath }) => {
   const owner = context.repo.owner;
   const repo = context.repo.repo;
 
@@ -110,6 +140,11 @@ module.exports = async ({ github, context, core, prNumber, reportPath }) => {
     reportPath,
     changedFiles: files.map((f) => f.filename),
   });
+
+  // Published first and unconditionally: this is the signal
+  // pre-review-checks.js polls for via lib/wait-for-check.js, so it must
+  // land regardless of what the comment/label steps below do.
+  await publishCheckRun(github, owner, repo, headSha, ok, findings);
 
   await upsertComment(github, owner, repo, prNumber, findings);
 

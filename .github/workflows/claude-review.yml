@@ -18,8 +18,8 @@ permissions:
   checks: write
 
 jobs:
-  review:
-    name: Review PR
+  gate:
+    name: Check if a review is actually needed
     runs-on: ubuntu-latest
     # Only ever proceed for: the "needs review" label landing, CI finishing on
     # a PR, or a /claude-review comment from someone with write access (an
@@ -30,6 +30,43 @@ jobs:
         github.event.issue.pull_request != null &&
         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
         contains(github.event.comment.body, '/claude-review'))
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - name: Check whether the heavy review job is worth starting
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // "needs review" landing and /claude-review are already precise
+            // triggers by construction - always proceed for those. "CI
+            // completed" fires on every push to every open PR regardless of
+            // state, though, so without this check the full job below
+            // (checkout, coverage download, possibly Claude) would spin up
+            // on every single one, even PRs nowhere near ready for review.
+            // Gate it on the PR's current "needs review" label instead.
+            if (context.eventName !== "workflow_run") {
+              core.setOutput("should_run", "true");
+              return;
+            }
+            const prNumber = context.payload.workflow_run.pull_requests[0].number;
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+            const needsReview = pr.labels.some((l) => l.name === "needs review");
+            core.setOutput("should_run", needsReview ? "true" : "false");
+
+  review:
+    name: Review PR
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    # The pre-flight check step below can wait up to 2h for the
+    # coverage-diff/duplicate-code check runs to complete - pad well past
+    # that so the job itself is never what times out.
+    timeout-minutes: 180
     steps:
       - name: Checkout scripts from default branch
         uses: actions/checkout@v4
@@ -89,58 +126,6 @@ jobs:
             });
             core.setOutput("sha", pr.head.sha);
 
-      - name: Locate coverage runs
-        id: runs
-        if: steps.head.outputs.sha
-        uses: actions/github-script@v7
-        with:
-          script: |
-            async function latestRun(extra) {
-              const { data } = await github.rest.actions.listWorkflowRuns({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                workflow_id: "ci.yml",
-                ...extra,
-              });
-              return data.workflow_runs.sort(
-                (a, b) => new Date(b.created_at) - new Date(a.created_at),
-              )[0];
-            }
-            const prRun = await latestRun({ head_sha: "${{ steps.head.outputs.sha }}" });
-            const mainRun = await latestRun({
-              branch: context.payload.repository.default_branch,
-              event: "push",
-              status: "success",
-            });
-            if (!prRun) core.setFailed("No CI run found for this PR's head commit.");
-            if (!mainRun) core.setFailed("No successful CI run found on the default branch.");
-            core.setOutput("pr_run_id", prRun ? prRun.id : "");
-            core.setOutput("main_run_id", mainRun ? mainRun.id : "");
-
-      # continue-on-error: the artifact legitimately won't exist for a PR/main
-      # run that predates this workflow (or any run before ci.yml gained the
-      # coverage-final upload) - analyze-coverage-diff.js skips the check
-      # gracefully when either file is missing rather than failing the job.
-      - name: Download PR coverage
-        if: steps.runs.outputs.pr_run_id
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: coverage-final
-          run-id: ${{ steps.runs.outputs.pr_run_id }}
-          path: pr-coverage
-          github-token: ${{ github.token }}
-
-      - name: Download main coverage baseline
-        if: steps.runs.outputs.main_run_id
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: coverage-final
-          run-id: ${{ steps.runs.outputs.main_run_id }}
-          path: main-coverage
-          github-token: ${{ github.token }}
-
       - name: Run deterministic pre-flight checks
         id: precheck
         if: steps.head.outputs.sha
@@ -153,8 +138,7 @@ jobs:
               context,
               core,
               prNumber: Number("${{ steps.resolve.outputs.pr_number }}"),
-              prLcovPath: `${process.env.GITHUB_WORKSPACE}/pr-coverage/final.info`,
-              baseLcovPath: `${process.env.GITHUB_WORKSPACE}/main-coverage/final.info`,
+              headSha: "${{ steps.head.outputs.sha }}",
               force: "${{ steps.resolve.outputs.force }}" === "true",
             });
 
@@ -176,12 +160,14 @@ jobs:
 
             Deterministic pre-flight checks (CI status, merge conflicts, coverage-diff,
             duplicate-code detection) have already run and passed - do not re-derive them.
-            Duplicate-code detection runs in its own standalone workflow
-            (.github/workflows/duplicate-code-check.yml) and posts its own PR comment with
-            the actual duplicated code when it fails - trust that verdict rather than
-            re-scanning for duplication from scratch. Focus your review on correctness,
-            logic duplication beyond what that scan already covers, and whether the tests
-            that exist are the right *kind* of test for the change, not raw line coverage.
+            Coverage-diff and duplicate-code detection each run in their own standalone
+            workflow (.github/workflows/coverage-diff-check.yml,
+            .github/workflows/duplicate-code-check.yml) and post their own PR comments
+            (the latter with the actual duplicated code) when they fail - trust those
+            verdicts rather than re-scanning for either from scratch. Focus your review on
+            correctness, logic duplication beyond what that scan already covers, and
+            whether the tests that exist are the right *kind* of test for the change, not
+            raw line coverage.
 
             Rebase-behind-main and issue-linking findings, if the pre-flight comment has any,
             are informational only - mention them if relevant but don't block on them alone.
@@ -207,12 +193,15 @@ jobs:
             });
 
       # Belt-and-suspenders: re-sync immediately after Claude's turn (not
-      # waiting on whatever trigger fires next). Claude's own review can take
-      # long enough for coverage-diff-check.yml or duplicate-code-check.yml
-      # to fail on this same commit while it's running, and sync-pr-labels.js
-      # unconditionally strips claude-approved whenever a pre-flight stage is
-      # currently failing - see the comment there. This makes that guarantee
-      # immediate rather than dependent on the next unrelated trigger.
+      # waiting on whatever trigger fires next). pre-review-checks.js already
+      # waited for both pre-flight stages' check runs to conclude before
+      # invoking Claude, so this isn't guarding against those - it's for a
+      # new push landing on this PR while Claude's own review is still in
+      # progress, which starts fresh coverage-diff/duplicate-code runs for
+      # the new commit. sync-pr-labels.js unconditionally strips
+      # claude-approved whenever a pre-flight stage is currently failing -
+      # see the comment there. This makes that guarantee immediate rather
+      # than dependent on the next unrelated trigger.
       - name: Re-sync labels after Claude review
         if: steps.precheck.outputs.run_claude == 'true'
         uses: actions/github-script@v7

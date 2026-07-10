@@ -3,15 +3,19 @@
 
 // Deterministic "new/changed code must be covered" + "coverage must not
 // regress" checks, so the review workflow doesn't have to spend a Claude
-// turn re-deriving facts an lcov report already answers. Runs twice, by
-// design: once standalone in coverage-diff-check.yml for fast independent
-// visibility (comment + `coverage failed` label) whenever CI finishes, and
-// once more synchronously inline from pre-review-checks.js right before it
-// decides whether to invoke Claude. Both workflows trigger on the same "CI
-// completed" event with no ordering guarantee between them, so the
-// Claude-gating decision can never trust coverage-diff-check.yml's label as
-// current - it has to compute its own fresh answer. See
-// skills/review/SKILL.md for the full reasoning.
+// turn re-deriving facts an lcov report already answers.
+//
+// Runs solely in coverage-diff-check.yml, which owns the PR comment, the
+// `coverage failed` label, AND a "Coverage Diff Check" GitHub check run on
+// the commit. claude-review.yml never runs this analysis itself - it
+// can't, since it triggers on the same "CI completed" event this workflow
+// does with no ordering guarantee, so re-running the check inline would
+// either race coverage-diff-check.yml's own writes (the bug that used to
+// duplicate the PR comment) or still be gating on a guess. Instead
+// pre-review-checks.js waits for every check run on the commit
+// (lib/wait-for-check.js, not specific to this one by name) to reach an
+// authoritative, already-finished conclusion. See skills/review/SKILL.md
+// for the full reasoning.
 
 const fs = require("fs");
 const { parseLcov, totals } = require("./lib/lcov");
@@ -19,6 +23,7 @@ const syncLabels = require("./sync-pr-labels");
 const { upsertMarkedComment } = require("./lib/pr-comment");
 
 const MARKER = "<!-- coverage-diff-check -->";
+const CHECK_NAME = "Coverage Diff Check";
 
 // Files where "this line has no coverage" isn't a meaningful finding: the
 // tests themselves, generated code, and e2e specs (exercised through the
@@ -105,11 +110,33 @@ async function analyzeDiff({ github, owner, repo, prNumber, prLcovPath, baseLcov
   return { ok: findings.length === 0, findings };
 }
 
-module.exports = async ({ github, context, core, prNumber, prLcovPath, baseLcovPath }) => {
+async function publishCheckRun(github, owner, repo, headSha, ok, findings) {
+  await github.rest.checks.create({
+    owner,
+    repo,
+    name: CHECK_NAME,
+    head_sha: headSha,
+    status: "completed",
+    conclusion: ok ? "success" : "failure",
+    output: {
+      title: ok ? "Coverage-diff check passed" : "Coverage-diff check failed",
+      summary: ok
+        ? "No new/changed lines are uncovered, and aggregate coverage did not regress."
+        : findings.join("\n"),
+    },
+  });
+}
+
+module.exports = async ({ github, context, core, prNumber, headSha, prLcovPath, baseLcovPath }) => {
   const owner = context.repo.owner;
   const repo = context.repo.repo;
 
   const { ok, findings } = await analyzeDiff({ github, owner, repo, prNumber, prLcovPath, baseLcovPath });
+
+  // Published first and unconditionally: this is the signal
+  // pre-review-checks.js polls for via lib/wait-for-check.js, so it must
+  // land regardless of what the comment/label steps below do.
+  await publishCheckRun(github, owner, repo, headSha, ok, findings);
 
   if (findings.length === 0) {
     // Nothing to say - don't spam an "all good" comment on every clean run.

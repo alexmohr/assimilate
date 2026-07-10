@@ -44,6 +44,26 @@ const HUMAN_LABEL = {
   description: "Requires a human sign-off. Only a human may remove this label.",
 };
 
+// GitHub rejects an APPROVE review from the PR's own author (422: "Can not
+// approve your own pull request"). In this repo the coding agent and the
+// reviewing agent can share one GitHub account, so a real reviewDecision may
+// never be reachable. These labels are the fallback verdict channel: set
+// ONLY by the review workflow itself, never by any other agent, and treated
+// as equivalent to a native review decision when no other-account review
+// exists. See skills/review/SKILL.md.
+const REVIEW_VERDICT_LABELS = {
+  APPROVED: {
+    name: "claude-approved",
+    color: "0e8a16",
+    description: "Claude's review verdict: approved. Set only by the review workflow.",
+  },
+  CHANGES_REQUESTED: {
+    name: "claude-changes-requested",
+    color: "e99695",
+    description: "Claude's review verdict: changes requested. Set only by the review workflow.",
+  },
+};
+
 // Paths where a change requires human sign-off even if an agent reviewed it.
 // Kept in sync with the "Non-negotiable rules" in AGENTS.md and skills/security/SKILL.md.
 const SENSITIVE_PATH_PATTERNS = [
@@ -106,6 +126,22 @@ async function resolveReviewDecision(github, owner, repo, prNumber) {
   return result.repository.pullRequest.reviewDecision;
 }
 
+// A genuine other-account review always wins. Otherwise, fall back to the
+// claude-approved / claude-changes-requested labels (see REVIEW_VERDICT_LABELS)
+// for the same-account case where GitHub can't record a native verdict.
+function resolveEffectiveReviewDecision(nativeDecision, existingLabels) {
+  if (nativeDecision === "APPROVED" || nativeDecision === "CHANGES_REQUESTED") {
+    return nativeDecision;
+  }
+  if (existingLabels.includes(REVIEW_VERDICT_LABELS.CHANGES_REQUESTED.name)) {
+    return "CHANGES_REQUESTED";
+  }
+  if (existingLabels.includes(REVIEW_VERDICT_LABELS.APPROVED.name)) {
+    return "APPROVED";
+  }
+  return nativeDecision;
+}
+
 async function needsHumanSignOff(github, owner, repo, prNumber) {
   const files = await github.paginate(github.rest.pulls.listFiles, {
     owner,
@@ -140,7 +176,7 @@ async function createGateCheck(github, owner, repo, headSha, status, summary) {
   });
 }
 
-module.exports = async ({ github, context, core, prNumber }) => {
+module.exports = async ({ github, context, core, prNumber, eventAction }) => {
   const owner = context.repo.owner;
   const repo = context.repo.repo;
 
@@ -155,14 +191,34 @@ module.exports = async ({ github, context, core, prNumber }) => {
     return;
   }
 
-  const existingLabels = pr.labels.map((l) => l.name);
+  let existingLabels = pr.labels.map((l) => l.name);
+
+  // New commits invalidate any prior verdict recorded via the fallback
+  // labels, mirroring GitHub's own stale-review-dismissal behavior. Native
+  // GitHub reviews already go stale/pending on their own; these labels don't,
+  // so they must be cleared explicitly.
+  if (eventAction === "synchronize") {
+    const staleVerdictLabels = Object.values(REVIEW_VERDICT_LABELS)
+      .map((l) => l.name)
+      .filter((name) => existingLabels.includes(name));
+    for (const name of staleVerdictLabels) {
+      await github.rest.issues
+        .removeLabel({ owner, repo, issue_number: prNumber, name })
+        .catch((err) => {
+          if (err.status !== 404) throw err;
+        });
+    }
+    existingLabels = existingLabels.filter((name) => !staleVerdictLabels.includes(name));
+  }
+
   const hasHumanLabel = existingLabels.includes(HUMAN_LABEL.name);
 
-  const [ciConclusion, reviewDecision, autoNeedsHuman] = await Promise.all([
+  const [ciConclusion, nativeReviewDecision, autoNeedsHuman] = await Promise.all([
     resolveCiConclusion(github, owner, repo, pr.head.sha),
     resolveReviewDecision(github, owner, repo, prNumber),
     hasHumanLabel ? Promise.resolve(false) : needsHumanSignOff(github, owner, repo, prNumber),
   ]);
+  const reviewDecision = resolveEffectiveReviewDecision(nativeReviewDecision, existingLabels);
   const needsHuman = hasHumanLabel || autoNeedsHuman;
 
   const ciFailed = ciConclusion !== null && !["success", "skipped", "neutral"].includes(ciConclusion);
@@ -190,7 +246,7 @@ module.exports = async ({ github, context, core, prNumber }) => {
   }
 
   core.info(
-    `PR #${prNumber}: ci=${ciConclusion} review=${reviewDecision} needsHuman=${needsHuman} -> ${status.name}`,
+    `PR #${prNumber}: ci=${ciConclusion} review=${reviewDecision} (native=${nativeReviewDecision}) needsHuman=${needsHuman} -> ${status.name}`,
   );
 
   const desired = [status.name];

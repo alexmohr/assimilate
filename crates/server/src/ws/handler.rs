@@ -982,26 +982,26 @@ async fn check_repo_quota_after_backup(
     agent_id: i64,
     repo_id: i64,
     schedule_id: Option<i64>,
-    deduplicated_size: i64,
+    repo_total_size: i64,
     repo_name: &str,
 ) {
     let Ok(Some(quota)) = db::quota::get_quota(&state.pool, repo_id).await else {
         return;
     };
-    let quota_status = db::quota::evaluate_quota(&quota, deduplicated_size);
+    let quota_status = db::quota::evaluate_quota(&quota, repo_total_size);
     if matches!(quota_status, db::quota::QuotaStatus::Ok) {
         return;
     }
     tracing::warn!(
         hostname = %hostname,
         repo_id,
-        deduplicated_size,
+        repo_total_size,
         quota_status = quota_status_label(quota_status),
         "repository quota exceeded"
     );
 
     let message = format!(
-        "Repository quota {} for repo {repo_name}: deduplicated size {deduplicated_size} bytes \
+        "Repository quota {} for repo {repo_name}: repository size {repo_total_size} bytes \
          exceeds configured limits",
         quota_status_label(quota_status),
     );
@@ -1030,7 +1030,7 @@ async fn check_server_quota_after_backup(
     agent_id: i64,
     repo_id: i64,
     schedule_id: Option<i64>,
-    deduplicated_size: i64,
+    repo_total_size: i64,
     repo_name: &str,
 ) {
     let Ok(ssh_host) = db::get_repo_ssh_host(&state.pool, repo_id).await else {
@@ -1051,11 +1051,11 @@ async fn check_server_quota_after_backup(
         return;
     };
 
-    // Combine the just-completed backup's fresh `deduplicated_size` with the
+    // Combine the just-completed backup's fresh total repo size with the
     // (possibly stale, since `repo_stats` is only refreshed by a sync/rescan) snapshot
     // for sibling repos on the host, so a breach on an otherwise idle host is caught
     // immediately rather than only after an unrelated rescan.
-    let total_deduplicated_size = siblings_deduplicated_size.saturating_add(deduplicated_size);
+    let total_deduplicated_size = siblings_deduplicated_size.saturating_add(repo_total_size);
     let quota_status = server_quota.status(total_deduplicated_size);
     if matches!(quota_status, db::quota::QuotaStatus::Ok) {
         return;
@@ -1342,7 +1342,7 @@ async fn handle_backup_completed(
 
     let repo_id = report.repo_id.0;
     let schedule_id = report.schedule_id;
-    let deduplicated_size = report.deduplicated_size;
+    let repo_total_size = report.repo_unique_csize;
     let report_status = report.status;
 
     let outcome_success = !matches!(report_status, shared::types::BackupStatus::Failed);
@@ -1389,7 +1389,7 @@ async fn handle_backup_completed(
         agent_id,
         repo_id,
         schedule_id,
-        deduplicated_size,
+        repo_total_size,
         &repo_name,
     )
     .await;
@@ -1399,7 +1399,7 @@ async fn handle_backup_completed(
         agent_id,
         repo_id,
         schedule_id,
-        deduplicated_size,
+        repo_total_size,
         &repo_name,
     )
     .await;
@@ -2260,6 +2260,19 @@ exit 0
     }
 
     fn backup_completed_message(agent_id: i64, repo_id: i64, deduplicated_size: i64) -> String {
+        backup_completed_message_with_sizes(agent_id, repo_id, deduplicated_size, deduplicated_size)
+    }
+
+    /// Like [`backup_completed_message`] but allows setting the per-run
+    /// `deduplicated_size` delta independently from `repo_unique_csize`, the
+    /// repository's total on-disk size - the two are distinct fields and quota
+    /// checks must key off the latter, not the former.
+    fn backup_completed_message_with_sizes(
+        agent_id: i64,
+        repo_id: i64,
+        deduplicated_size: i64,
+        repo_unique_csize: i64,
+    ) -> String {
         let started_at = Utc
             .with_ymd_and_hms(2026, 6, 5, 12, 0, 0)
             .single()
@@ -2277,7 +2290,7 @@ exit 0
             original_size: deduplicated_size,
             compressed_size: deduplicated_size,
             deduplicated_size,
-            repo_unique_csize: deduplicated_size,
+            repo_unique_csize,
             files_processed: 3,
             duration_secs: 300,
             error_message: None,
@@ -2362,6 +2375,94 @@ exit 0
 
         let state = build_test_state(pool.clone());
         let msg = backup_completed_message(agent.id, repo.id, 200);
+        handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
+
+        let updated = crate::db::get_schedule_by_id(&pool, schedule.id)
+            .await
+            .expect("get schedule");
+        assert!(!updated.enabled);
+    }
+
+    /// A daily incremental backup typically adds only a small amount of new
+    /// unique data (`deduplicated_size`), even once the repository's total
+    /// on-disk size (`repo_unique_csize`) has grown past the configured quota.
+    /// The quota check must key off the total, not the incremental delta, or
+    /// a breach is never detected.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn backup_completed_disables_schedule_on_repo_quota_breach_with_small_delta(
+        pool: PgPool,
+    ) {
+        let agent = crate::db::insert_agent(&pool, "agent-1", None, "token-hash", None)
+            .await
+            .expect("insert agent");
+        let passphrase_encrypted = encrypt_passphrase(
+            "test-passphrase",
+            &derive_key(b"handler-test-secret-key").unwrap(),
+        )
+        .expect("encrypt passphrase");
+        let repo = crate::db::insert_repo(
+            &pool,
+            &crate::db::InsertRepoParams {
+                name: "quota-repo-delta",
+                repo_path: "/backups/quota-delta",
+                ssh_user: "backup",
+                ssh_host: "storage-delta.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+            },
+        )
+        .await
+        .expect("insert repo");
+        let schedule = crate::db::insert_schedule(
+            &pool,
+            repo.id,
+            &crate::db::ScheduleParams {
+                name: "quota-schedule-delta",
+                schedule_type: "backup",
+                cron_expression: "0 3 * * *",
+                enabled: true,
+                canary_enabled: false,
+                exclude_patterns_raw: "",
+                file_change_patterns_raw: "",
+                ignore_global_excludes: false,
+                keep_hourly: 24,
+                keep_daily: 7,
+                keep_weekly: 4,
+                keep_monthly: 6,
+                keep_yearly: 1,
+                compact_enabled: true,
+                rate_limit_kbps: None,
+                pre_backup_commands: "",
+                post_backup_commands: "",
+                on_failure: "stop",
+            },
+            None,
+        )
+        .await
+        .expect("insert schedule");
+        crate::db::insert_schedule_targets(&pool, schedule.id, &[(agent.id, 0)])
+            .await
+            .expect("insert schedule targets");
+        db::quota::upsert_quota(
+            &pool,
+            repo.id,
+            Some(50),
+            Some(100),
+            QuotaAction::NotifyOnly,
+            QuotaAction::BlockBackups,
+            true,
+        )
+        .await
+        .expect("upsert quota");
+
+        let state = build_test_state(pool.clone());
+        // Tiny per-run delta (5 bytes) but the repository's total size (200
+        // bytes) is well past the critical threshold (100 bytes).
+        let msg = backup_completed_message_with_sizes(agent.id, repo.id, 5, 200);
         handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
 
         let updated = crate::db::get_schedule_by_id(&pool, schedule.id)

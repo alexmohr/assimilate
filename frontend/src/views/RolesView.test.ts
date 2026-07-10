@@ -33,6 +33,7 @@ interface Role {
   can_manage_tags: boolean
   can_view_all_repos: boolean
   can_manage_tunnels: boolean
+  can_upgrade_agent: boolean
 }
 
 function makeRole(id: number, name: string, isSeeded: boolean, allPerms: boolean): Role {
@@ -52,6 +53,7 @@ function makeRole(id: number, name: string, isSeeded: boolean, allPerms: boolean
     can_manage_tags: allPerms,
     can_view_all_repos: allPerms,
     can_manage_tunnels: allPerms,
+    can_upgrade_agent: allPerms,
   }
 }
 
@@ -106,7 +108,7 @@ describe('RolesView', () => {
 
     const counts = wrapper.findAll('.perm-count')
     expect(counts.length).toBeGreaterThan(0)
-    expect(counts[0].text()).toContain('/12')
+    expect(counts[0].text()).toContain('/13')
   })
 
   it('renders New button', async () => {

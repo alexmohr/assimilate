@@ -819,7 +819,7 @@ watch(
               Adopt
             </button>
             <button
-              v-if="deployButtonLabel(agent) && !isImported(agent)"
+              v-if="deployButtonLabel(agent) && !isImported(agent) && authStore.canUpgradeAgent"
               class="btn btn-sm btn-ghost"
               @click="openDeployDialog(agent)"
             >

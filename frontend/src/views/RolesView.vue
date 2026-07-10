@@ -27,6 +27,7 @@ interface Role {
   can_manage_tags: boolean
   can_view_all_repos: boolean
   can_manage_tunnels: boolean
+  can_upgrade_agent: boolean
 }
 
 type PermissionKey =
@@ -42,6 +43,7 @@ type PermissionKey =
   | 'can_manage_tags'
   | 'can_view_all_repos'
   | 'can_manage_tunnels'
+  | 'can_upgrade_agent'
 
 const PERMISSION_LABELS: { key: PermissionKey; label: string }[] = [
   { key: 'can_create_agent', label: 'Create Agent' },
@@ -56,6 +58,7 @@ const PERMISSION_LABELS: { key: PermissionKey; label: string }[] = [
   { key: 'can_manage_tags', label: 'Manage Tags' },
   { key: 'can_view_all_repos', label: 'View All Repos' },
   { key: 'can_manage_tunnels', label: 'Manage Tunnels' },
+  { key: 'can_upgrade_agent', label: 'Upgrade Agent' },
 ]
 
 const SEEDED_ROLES = new Set(['admin', 'operator', 'viewer'])
@@ -79,6 +82,7 @@ const createForm = ref<{ name: string } & Record<PermissionKey, boolean>>({
   can_manage_tags: false,
   can_view_all_repos: false,
   can_manage_tunnels: false,
+  can_upgrade_agent: false,
 })
 const createError = ref<string | null>(null)
 const createSubmitting = ref(false)
@@ -98,6 +102,7 @@ const editForm = ref<Record<PermissionKey, boolean>>({
   can_manage_tags: false,
   can_view_all_repos: false,
   can_manage_tunnels: false,
+  can_upgrade_agent: false,
 })
 const editError = ref<string | null>(null)
 const editSubmitting = ref(false)
@@ -145,6 +150,7 @@ function openCreate(): void {
     can_manage_tags: false,
     can_view_all_repos: false,
     can_manage_tunnels: false,
+    can_upgrade_agent: false,
   }
   createError.value = null
   showCreateModal.value = true
@@ -172,6 +178,7 @@ async function submitCreate(): Promise<void> {
       can_manage_tags: createForm.value.can_manage_tags,
       can_view_all_repos: createForm.value.can_view_all_repos,
       can_manage_tunnels: createForm.value.can_manage_tunnels,
+      can_upgrade_agent: createForm.value.can_upgrade_agent,
     })
     showCreateModal.value = false
     await fetchRoles()
@@ -197,6 +204,7 @@ function openEdit(role: Role): void {
     can_manage_tags: role.can_manage_tags,
     can_view_all_repos: role.can_view_all_repos,
     can_manage_tunnels: role.can_manage_tunnels,
+    can_upgrade_agent: role.can_upgrade_agent,
   }
   editError.value = null
   showEditModal.value = true

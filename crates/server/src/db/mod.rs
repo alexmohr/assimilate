@@ -5402,6 +5402,8 @@ pub struct RoleRow {
     pub can_view_all_repos: bool,
     /// Permission to manage tunnels.
     pub can_manage_tunnels: bool,
+    /// Permission to upgrade agents.
+    pub can_upgrade_agent: bool,
     /// When the role was created.
     pub created_at: DateTime<Utc>,
 }
@@ -5613,7 +5615,7 @@ pub async fn list_roles(pool: &PgPool) -> Result<Vec<RoleRow>, ApiError> {
         "SELECT id, name, can_create_agent, can_delete_agent, can_delete_own_agent, \
          can_create_repo, can_delete_repo, can_delete_own_repo, can_create_schedule, \
          can_delete_schedule, can_delete_own_schedule, can_manage_tags, can_view_all_repos, \
-         can_manage_tunnels, created_at FROM roles ORDER BY name",
+         can_manage_tunnels, can_upgrade_agent, created_at FROM roles ORDER BY name",
     )
     .fetch_all(pool)
     .await
@@ -5629,7 +5631,7 @@ pub async fn get_role(pool: &PgPool, id: i64) -> Result<Option<RoleRow>, ApiErro
         "SELECT id, name, can_create_agent, can_delete_agent, can_delete_own_agent, \
          can_create_repo, can_delete_repo, can_delete_own_repo, can_create_schedule, \
          can_delete_schedule, can_delete_own_schedule, can_manage_tags, can_view_all_repos, \
-         can_manage_tunnels, created_at FROM roles WHERE id = $1",
+         can_manage_tunnels, can_upgrade_agent, created_at FROM roles WHERE id = $1",
         id,
     )
     .fetch_optional(pool)
@@ -5669,6 +5671,8 @@ pub struct InsertRoleParams<'a> {
     pub can_view_all_repos: bool,
     /// Manage tunnels permission.
     pub can_manage_tunnels: bool,
+    /// Upgrade agents permission.
+    pub can_upgrade_agent: bool,
 }
 
 /// # Errors
@@ -5683,11 +5687,11 @@ pub async fn insert_role(
         "INSERT INTO roles (name, can_create_agent, can_delete_agent, can_delete_own_agent, \
          can_create_repo, can_delete_repo, can_delete_own_repo, can_create_schedule, \
          can_delete_schedule, can_delete_own_schedule, can_manage_tags, can_view_all_repos, \
-         can_manage_tunnels) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) \
-         RETURNING id, name, can_create_agent, can_delete_agent, can_delete_own_agent, \
-         can_create_repo, can_delete_repo, can_delete_own_repo, can_create_schedule, \
-         can_delete_schedule, can_delete_own_schedule, can_manage_tags, can_view_all_repos, \
-         can_manage_tunnels, created_at",
+         can_manage_tunnels, can_upgrade_agent) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, \
+         $11, $12, $13, $14) RETURNING id, name, can_create_agent, can_delete_agent, \
+         can_delete_own_agent, can_create_repo, can_delete_repo, can_delete_own_repo, \
+         can_create_schedule, can_delete_schedule, can_delete_own_schedule, can_manage_tags, \
+         can_view_all_repos, can_manage_tunnels, can_upgrade_agent, created_at",
         params.name,
         params.can_create_agent,
         params.can_delete_agent,
@@ -5701,6 +5705,7 @@ pub async fn insert_role(
         params.can_manage_tags,
         params.can_view_all_repos,
         params.can_manage_tunnels,
+        params.can_upgrade_agent,
     )
     .fetch_one(pool)
     .await
@@ -5723,10 +5728,11 @@ pub async fn update_role(
          can_delete_own_agent = $5, can_create_repo = $6, can_delete_repo = $7, \
          can_delete_own_repo = $8, can_create_schedule = $9, can_delete_schedule = $10, \
          can_delete_own_schedule = $11, can_manage_tags = $12, can_view_all_repos = $13, \
-         can_manage_tunnels = $14 WHERE id = $1 RETURNING id, name, can_create_agent, \
-         can_delete_agent, can_delete_own_agent, can_create_repo, can_delete_repo, \
-         can_delete_own_repo, can_create_schedule, can_delete_schedule, can_delete_own_schedule, \
-         can_manage_tags, can_view_all_repos, can_manage_tunnels, created_at",
+         can_manage_tunnels = $14, can_upgrade_agent = $15 WHERE id = $1 RETURNING id, name, \
+         can_create_agent, can_delete_agent, can_delete_own_agent, can_create_repo, \
+         can_delete_repo, can_delete_own_repo, can_create_schedule, can_delete_schedule, \
+         can_delete_own_schedule, can_manage_tags, can_view_all_repos, can_manage_tunnels, \
+         can_upgrade_agent, created_at",
         id,
         params.name,
         params.can_create_agent,
@@ -5741,6 +5747,7 @@ pub async fn update_role(
         params.can_manage_tags,
         params.can_view_all_repos,
         params.can_manage_tunnels,
+        params.can_upgrade_agent,
     )
     .fetch_one(pool)
     .await
@@ -5776,8 +5783,8 @@ pub async fn list_user_roles(pool: &PgPool, user_id: i64) -> Result<Vec<RoleRow>
         "SELECT r.id, r.name, r.can_create_agent, r.can_delete_agent, r.can_delete_own_agent, \
          r.can_create_repo, r.can_delete_repo, r.can_delete_own_repo, r.can_create_schedule, \
          r.can_delete_schedule, r.can_delete_own_schedule, r.can_manage_tags, \
-         r.can_view_all_repos, r.can_manage_tunnels, r.created_at FROM roles r JOIN user_roles ur \
-         ON ur.role_id = r.id WHERE ur.user_id = $1 ORDER BY r.name",
+         r.can_view_all_repos, r.can_manage_tunnels, r.can_upgrade_agent, r.created_at FROM roles \
+         r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = $1 ORDER BY r.name",
         user_id,
     )
     .fetch_all(pool)
@@ -5829,6 +5836,7 @@ pub async fn get_effective_permissions(pool: &PgPool, user_id: i64) -> Result<Ro
         can_manage_tags: Option<bool>,
         can_view_all_repos: Option<bool>,
         can_manage_tunnels: Option<bool>,
+        can_upgrade_agent: Option<bool>,
     }
 
     let row = sqlx::query_as!(
@@ -5840,7 +5848,8 @@ pub async fn get_effective_permissions(pool: &PgPool, user_id: i64) -> Result<Ro
          BOOL_OR(r.can_create_schedule) AS can_create_schedule, BOOL_OR(r.can_delete_schedule) AS \
          can_delete_schedule, BOOL_OR(r.can_delete_own_schedule) AS can_delete_own_schedule, \
          BOOL_OR(r.can_manage_tags) AS can_manage_tags, BOOL_OR(r.can_view_all_repos) AS \
-         can_view_all_repos, BOOL_OR(r.can_manage_tunnels) AS can_manage_tunnels FROM roles r \
+         can_view_all_repos, BOOL_OR(r.can_manage_tunnels) AS can_manage_tunnels, \
+         BOOL_OR(r.can_upgrade_agent) AS can_upgrade_agent FROM roles r \
          JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = $1",
         user_id,
     )
@@ -5863,6 +5872,7 @@ pub async fn get_effective_permissions(pool: &PgPool, user_id: i64) -> Result<Ro
         can_manage_tags: row.can_manage_tags.unwrap_or(false),
         can_view_all_repos: row.can_view_all_repos.unwrap_or(false),
         can_manage_tunnels: row.can_manage_tunnels.unwrap_or(false),
+        can_upgrade_agent: row.can_upgrade_agent.unwrap_or(false),
         created_at: Utc::now(),
     })
 }

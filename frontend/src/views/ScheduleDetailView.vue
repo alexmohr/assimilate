@@ -1645,9 +1645,9 @@ watch(activeTab, (tab) => {
                   <td class="cell-archive-name">{{ r.archive_name }}</td>
                   <td class="cell-host">
                     {{
-                      agentMap.get(r.agent_id)?.display_name ??
-                      agentMap.get(r.agent_id)?.hostname ??
-                      `#${r.agent_id}`
+                      agentMap.get(r.agent_id ?? 0)?.display_name ??
+                      agentMap.get(r.agent_id ?? 0)?.hostname ??
+                      `#${r.agent_id ?? 0}`
                     }}
                   </td>
                   <td class="cell-date">{{ formatDateShort(r.started_at) }}</td>

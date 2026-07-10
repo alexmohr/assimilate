@@ -448,3 +448,7 @@ module.exports.REVIEW_VERDICT_LABELS = REVIEW_VERDICT_LABELS;
 module.exports.DUPLICATE_CODE_LABEL = DUPLICATE_CODE_LABEL;
 module.exports.COVERAGE_LABEL = COVERAGE_LABEL;
 module.exports.ensureLabelExists = ensureLabelExists;
+// Exported so pre-review-checks.js can exclude this workflow's own derived,
+// circular check run (its conclusion depends on the review having already
+// happened) from the "wait for every other check on this commit" gate.
+module.exports.GATE_CHECK_NAME = GATE_CHECK_NAME;

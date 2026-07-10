@@ -16,10 +16,11 @@
 // - editing that file is how maintainers extend the ignore list without
 // touching this script or the workflow.
 //
-// pre-review-checks.js never re-runs jscpd itself - it polls the check run
-// this module publishes via lib/wait-for-check.js and waits for an
-// authoritative, already-finished conclusion, same as it does for
-// coverage-diff. See skills/review/SKILL.md for the full reasoning.
+// pre-review-checks.js never re-runs jscpd itself - it waits for every
+// check run on the commit (lib/wait-for-check.js, not specific to this one
+// by name) to reach an authoritative, already-finished conclusion, same as
+// it does for coverage-diff. See skills/review/SKILL.md for the full
+// reasoning.
 
 const fs = require("fs");
 const syncLabels = require("./sync-pr-labels");
@@ -177,4 +178,3 @@ module.exports = async ({ github, context, core, prNumber, headSha, reportPath }
 };
 
 module.exports.analyzeReport = analyzeReport;
-module.exports.CHECK_NAME = CHECK_NAME;

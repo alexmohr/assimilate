@@ -12,9 +12,10 @@
 // does with no ordering guarantee, so re-running the check inline would
 // either race coverage-diff-check.yml's own writes (the bug that used to
 // duplicate the PR comment) or still be gating on a guess. Instead
-// pre-review-checks.js polls the check run this module publishes via
-// lib/wait-for-check.js and waits for an authoritative, already-finished
-// conclusion. See skills/review/SKILL.md for the full reasoning.
+// pre-review-checks.js waits for every check run on the commit
+// (lib/wait-for-check.js, not specific to this one by name) to reach an
+// authoritative, already-finished conclusion. See skills/review/SKILL.md
+// for the full reasoning.
 
 const fs = require("fs");
 const { parseLcov, totals } = require("./lib/lcov");
@@ -180,4 +181,3 @@ module.exports = async ({ github, context, core, prNumber, headSha, prLcovPath, 
 };
 
 module.exports.analyzeDiff = analyzeDiff;
-module.exports.CHECK_NAME = CHECK_NAME;

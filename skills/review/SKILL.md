@@ -103,12 +103,13 @@ automatically.
 
 ### Automated pre-flight checks
 
-Two deterministic, code-only gates must pass before any Claude turn is
-spent, each entirely owned by its own standalone workflow — analysis, PR
-comment, status label, **and** a GitHub check run on the commit. Neither
-workflow is ever re-triggered or re-run from `claude-review.yml`; it only
-waits for the check run each one publishes. See "How Claude's gate uses
-them" below for why a check run, not a label, is what's waited on.
+This repo adds two deterministic, code-only pre-flight stages on top of
+`CI` itself, each entirely owned by its own standalone workflow — analysis,
+PR comment, status label, **and** a GitHub check run on the commit. Neither
+workflow is ever re-triggered or re-run from `claude-review.yml`; the
+Claude-gating check (below) waits for check runs, not just these two, to
+know when it's safe to proceed. See "How Claude's gate uses them" below for
+why a check run, not a label, is what's waited on.
 
 * **Duplicate-code scan** — `.github/workflows/duplicate-code-check.yml`
   runs standalone on every `opened`/`synchronize`/`reopened` event; it
@@ -139,31 +140,48 @@ them" below for why a check run, not a label, is what's waited on.
 
 #### How Claude's gate uses them
 
-`pre-review-checks.js` (run from `claude-review.yml`) never runs either
-check itself and never triggers either workflow — it only *waits*, via
-`.github/scripts/lib/wait-for-check.js`, for both check runs
-("Coverage Diff Check", "Duplicate Code Check") to reach `status:
-completed` on the PR's head commit, up to a 2-hour ceiling, then reads
-their `conclusion`. This is deliberate: `coverage-diff-check.yml` and
-`claude-review.yml` both trigger on the same `workflow_run: CI completed`
-event with no ordering guarantee between them, so anything short of waiting
-for an already-finished, authoritative result could gate Claude on stale or
-incomplete data - a label read at the wrong moment could be missing not
-because the check passed, but because it simply hasn't run yet. Earlier
-iterations of this design either re-ran the check inline (which raced the
-standalone workflow's own comment-writing and produced duplicate PR
-comments) or trusted the label directly (which could read stale state);
-waiting for a completed check run removes the race entirely rather than
-narrowing it.
+`pre-review-checks.js` (run from `claude-review.yml`) never runs any
+pre-flight check itself and never triggers any of their workflows — it only
+*waits*, via `.github/scripts/lib/wait-for-check.js`, for **every** check
+run currently on the PR's head commit (not a fixed list of named checks) to
+reach `status: completed`, up to a 2-hour ceiling, then requires all of
+their conclusions to be `success`, `skipped`, or `neutral`. This
+automatically covers "Coverage Diff Check", "Duplicate Code Check", every
+individual `CI` job (rust, frontend, e2e, docs, ...), and anything else
+added to the pipeline later - no change to this script needed when a new
+check is introduced. Two check runs are explicitly excluded from the wait,
+both to avoid nonsensical outcomes rather than to skip real signal:
+
+* `claude-review.yml`'s own two jobs ("Check if a review is actually
+  needed", "Review PR") - the latter is literally the job this script is
+  running inside, so waiting on it would wait forever.
+* `PR Merge Gate` - it's a *derived* check (only `success` once the PR's
+  review decision is `APPROVED`), so at this point, before Claude has
+  reviewed anything, it can never show success yet. Waiting on it would make
+  `run_claude` permanently false.
+
+This is deliberate: `coverage-diff-check.yml` and `claude-review.yml` both
+trigger on the same `workflow_run: CI completed` event with no ordering
+guarantee between them, so anything short of waiting for an already-finished,
+authoritative result could gate Claude on stale or incomplete data - a label
+read at the wrong moment could be missing not because the check passed, but
+because it simply hasn't run yet. Earlier iterations of this design either
+re-ran checks inline (which raced the standalone workflows' own
+comment-writing and produced duplicate PR comments) or trusted specific
+labels directly (which could read stale state, or relied on one stage
+happening to finish before another with no real guarantee); waiting for
+every check run to reach a completed, authoritative conclusion removes the
+race entirely rather than narrowing it, and generalizes to whatever checks
+exist rather than needing to know their names in advance.
 
 If there's already a known-bad signal — `ci failing` or `merge conflict` —
 `pre-review-checks.js` exits immediately on that, without waiting for
-anything; there's nothing to gain from waiting on the other two stages once
-the PR is already blocked for an unrelated, faster-to-detect reason. If
-neither check completes within the 2-hour wait, it treats that as
-inconclusive and does not invoke Claude either — the same "deny on any
-pipeline failure" bias applies to "we couldn't confirm it passed" as it does
-to "we confirmed it failed."
+anything; there's nothing to gain from waiting on the rest once the PR is
+already blocked for an unrelated, faster-to-detect reason. If not everything
+completes within the 2-hour wait, it treats that as inconclusive and does
+not invoke Claude either — the same "deny on any pipeline failure" bias
+applies to "we couldn't confirm it passed" as it does to "we confirmed it
+failed."
 
 Fix the findings and push: coverage-diff-check.yml and duplicate-code-check.yml
 each re-run automatically, clear their own label, and publish a fresh check
@@ -197,9 +215,9 @@ it starts:
    this exact commit has already been reviewed — it stops (skip the wasted
    token spend), unless invoked via `/claude-review` (see below), which
    always forces a fresh run.
-3. It waits for both pre-flight check runs to complete (see "How Claude's
-   gate uses them" above) and stops if either failed, or if neither
-   completed within the wait window.
+3. It waits for every other check run on the commit to complete (see "How
+   Claude's gate uses them" above) and stops if any of them failed, or if
+   they didn't all complete within the wait window.
 
 **Model:** defaults to `claude-sonnet-5` (overridable repo-wide via the
 `CLAUDE_REVIEW_MODEL` Actions variable). If Claude's review fails outright

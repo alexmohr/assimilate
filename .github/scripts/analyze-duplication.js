@@ -17,6 +17,7 @@
 
 const fs = require("fs");
 const syncLabels = require("./sync-pr-labels");
+const { upsertMarkedComment } = require("./lib/pr-comment");
 
 const MARKER = "<!-- duplicate-code-check -->";
 
@@ -70,25 +71,18 @@ function formatFinding(finding, index) {
 }
 
 async function upsertComment(github, owner, repo, prNumber, findings) {
-  const comments = await github.paginate(github.rest.issues.listComments, {
-    owner,
-    repo,
-    issue_number: prNumber,
-    per_page: 100,
-  });
-  const existing = comments.find((c) => c.body.startsWith(MARKER));
-
   if (findings.length === 0) {
     // Nothing to say - don't spam an "all good" comment on every clean run.
     // If a prior failing comment exists, replace it so it doesn't read stale.
-    if (existing) {
-      await github.rest.issues.updateComment({
-        owner,
-        repo,
-        comment_id: existing.id,
-        body: `${MARKER}\nDuplicate-code check passed - no duplication found in changed files.`,
-      });
-    }
+    await upsertMarkedComment(
+      github,
+      owner,
+      repo,
+      prNumber,
+      MARKER,
+      `${MARKER}\nDuplicate-code check passed - no duplication found in changed files.`,
+      { onlyIfExists: true },
+    );
     return;
   }
 
@@ -98,11 +92,7 @@ async function upsertComment(github, owner, repo, prNumber, findings) {
     "spending on:\n\n" +
     findings.map(formatFinding).join("\n\n");
 
-  if (existing) {
-    await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
-  } else {
-    await github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
-  }
+  await upsertMarkedComment(github, owner, repo, prNumber, MARKER, body);
 }
 
 module.exports = async ({ github, context, core, prNumber, reportPath }) => {

@@ -176,13 +176,12 @@ jobs:
 
             Deterministic pre-flight checks (CI status, merge conflicts, coverage-diff,
             duplicate-code detection) have already run and passed - do not re-derive them.
-            The duplicate-code check runs separately in
-            .github/workflows/duplicate-code-check.yml and posts its own PR comment
-            (with the actual duplicated code) when it fails - trust that verdict rather
-            than re-scanning for duplication from scratch. Focus your review on
-            correctness, logic duplication beyond what that scan already covers, and
-            whether the tests that exist are the right *kind* of test for the change,
-            not raw line coverage.
+            Duplicate-code detection runs in its own standalone workflow
+            (.github/workflows/duplicate-code-check.yml) and posts its own PR comment with
+            the actual duplicated code when it fails - trust that verdict rather than
+            re-scanning for duplication from scratch. Focus your review on correctness,
+            logic duplication beyond what that scan already covers, and whether the tests
+            that exist are the right *kind* of test for the change, not raw line coverage.
 
             Rebase-behind-main and issue-linking findings, if the pre-flight comment has any,
             are informational only - mention them if relevant but don't block on them alone.
@@ -205,4 +204,28 @@ jobs:
                 "This PR still needs review - a human can review it directly on GitHub, or any agent " +
                 "can review it per `skills/review/SKILL.md`. Comment `/claude-review` to retry once " +
                 "the automated path is available again.",
+            });
+
+      # Belt-and-suspenders: re-sync immediately after Claude's turn (not
+      # waiting on whatever trigger fires next). Claude's own review can take
+      # long enough for coverage-diff-check.yml or duplicate-code-check.yml
+      # to fail on this same commit while it's running, and sync-pr-labels.js
+      # unconditionally strips claude-approved whenever a pre-flight stage is
+      # currently failing - see the comment there. This makes that guarantee
+      # immediate rather than dependent on the next unrelated trigger.
+      - name: Re-sync labels after Claude review
+        if: steps.precheck.outputs.run_claude == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sync = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/sync-pr-labels.js`);
+            // No eventAction: this isn't a new push, so the synchronize-only
+            // stale-clear (which would wipe the verdict Claude just set)
+            // must not fire here - only the unconditional
+            // pre-flight-stage-failed guard should apply.
+            await sync({
+              github,
+              context,
+              core,
+              prNumber: Number("${{ steps.resolve.outputs.pr_number }}"),
             });

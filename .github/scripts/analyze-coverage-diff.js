@@ -3,11 +3,22 @@
 
 // Deterministic "new/changed code must be covered" + "coverage must not
 // regress" checks, so the review workflow doesn't have to spend a Claude
-// turn re-deriving facts an lcov report already answers. See
-// skills/review/SKILL.md.
+// turn re-deriving facts an lcov report already answers. Runs twice, by
+// design: once standalone in coverage-diff-check.yml for fast independent
+// visibility (comment + `coverage failed` label) whenever CI finishes, and
+// once more synchronously inline from pre-review-checks.js right before it
+// decides whether to invoke Claude. Both workflows trigger on the same "CI
+// completed" event with no ordering guarantee between them, so the
+// Claude-gating decision can never trust coverage-diff-check.yml's label as
+// current - it has to compute its own fresh answer. See
+// skills/review/SKILL.md for the full reasoning.
 
 const fs = require("fs");
 const { parseLcov, totals } = require("./lib/lcov");
+const syncLabels = require("./sync-pr-labels");
+const { upsertMarkedComment } = require("./lib/pr-comment");
+
+const MARKER = "<!-- coverage-diff-check -->";
 
 // Files where "this line has no coverage" isn't a meaningful finding: the
 // tests themselves, generated code, and e2e specs (exercised through the
@@ -43,7 +54,10 @@ function addedLineNumbers(patch) {
   return added;
 }
 
-module.exports = async ({ github, owner, repo, prNumber, prLcovPath, baseLcovPath }) => {
+// Pure report analysis, kept separate from the GitHub orchestration below so
+// it's independently reusable/testable (also used directly by
+// pre-review-checks.js's predecessor logic - see git history).
+async function analyzeDiff({ github, owner, repo, prNumber, prLcovPath, baseLcovPath }) {
   const findings = [];
 
   // Either artifact can be legitimately missing: the PR's own CI run may
@@ -89,4 +103,54 @@ module.exports = async ({ github, owner, repo, prNumber, prLcovPath, baseLcovPat
   }
 
   return { ok: findings.length === 0, findings };
+}
+
+module.exports = async ({ github, context, core, prNumber, prLcovPath, baseLcovPath }) => {
+  const owner = context.repo.owner;
+  const repo = context.repo.repo;
+
+  const { ok, findings } = await analyzeDiff({ github, owner, repo, prNumber, prLcovPath, baseLcovPath });
+
+  if (findings.length === 0) {
+    // Nothing to say - don't spam an "all good" comment on every clean run.
+    // If a prior failing comment exists, replace it so it doesn't read stale.
+    await upsertMarkedComment(github, owner, repo, prNumber, MARKER, `${MARKER}\nCoverage-diff check passed.`, {
+      onlyIfExists: true,
+    });
+  } else {
+    const body =
+      `${MARKER}\n**Coverage-diff check failed** - this is a deterministic finding ` +
+      "(not from Claude); fix it before a review is worth spending on:\n\n" +
+      findings.map((f) => `- ${f}`).join("\n");
+    await upsertMarkedComment(github, owner, repo, prNumber, MARKER, body);
+  }
+
+  const label = syncLabels.COVERAGE_LABEL;
+  if (!ok) {
+    await syncLabels.ensureLabelExists(github, owner, repo, label);
+    await github.rest.issues.addLabels({ owner, repo, issue_number: prNumber, labels: [label.name] });
+    core.info(`PR #${prNumber}: coverage-diff check failed (${findings.length} finding(s)).`);
+  } else {
+    // This workflow owns the label's full lifecycle (see COVERAGE_LABEL in
+    // sync-pr-labels.js) - explicitly clear it here rather than relying on a
+    // generic synchronize-triggered clear, since coverage-diff-check.yml
+    // reacts to the same "workflow_run: CI completed" event
+    // pr-status-labels.yml does, and a blind clear there could otherwise
+    // race a fresh failing result from this workflow.
+    await github.rest.issues
+      .removeLabel({ owner, repo, issue_number: prNumber, name: label.name })
+      .catch((err) => {
+        if (err.status !== 404) throw err;
+      });
+    core.info(`PR #${prNumber}: coverage-diff check passed.`);
+  }
+
+  // Recompute status now that "coverage failed" may have changed, so the PR
+  // Merge Gate and overall status label reflect it immediately rather than
+  // waiting for the next unrelated trigger.
+  await syncLabels({ github, context, core, prNumber });
+
+  return { ok, findings };
 };
+
+module.exports.analyzeDiff = analyzeDiff;

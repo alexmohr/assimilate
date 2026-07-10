@@ -440,7 +440,9 @@ impl FromStr for QuotaAction {
 }
 
 /// Overall outcome of a single backup run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema, sqlx::Type)]
+#[sqlx(type_name = "TEXT")]
+#[sqlx(rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum BackupStatus {
     /// The backup completed with no errors or warnings.
@@ -474,6 +476,313 @@ impl FromStr for BackupStatus {
             "warning" | "Warning" => Ok(Self::Warning),
             "failed" | "Failed" => Ok(Self::Failed),
             other => Err(format!("unknown backup status: {other}")),
+        }
+    }
+}
+
+/// Visibility scope of a repository, agent, or schedule — controls whether
+/// the resource is visible only to its owner or shared with all users that
+/// share a group with the owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, TS, ToSchema, sqlx::Type)]
+#[sqlx(type_name = "TEXT")]
+#[sqlx(rename_all = "lowercase")]
+pub enum Visibility {
+    /// Visible only to the owner and users sharing a group with the owner.
+    #[default]
+    Private,
+    /// Visible to all users.
+    Shared,
+}
+
+impl std::fmt::Display for Visibility {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Private => write!(f, "private"),
+            Self::Shared => write!(f, "shared"),
+        }
+    }
+}
+
+impl FromStr for Visibility {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "private" => Ok(Self::Private),
+            "shared" => Ok(Self::Shared),
+            other => Err(format!("unknown visibility: {other}")),
+        }
+    }
+}
+
+impl From<String> for Visibility {
+    fn from(s: String) -> Self {
+        s.parse().unwrap_or_default()
+    }
+}
+
+impl From<Visibility> for String {
+    fn from(v: Visibility) -> Self {
+        v.to_string()
+    }
+}
+
+impl Serialize for Visibility {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for Visibility {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+/// Well-known system event types recorded in the `system_events` table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TS, ToSchema, sqlx::Type)]
+#[sqlx(type_name = "TEXT")]
+#[sqlx(rename_all = "snake_case")]
+pub enum SystemEventType {
+    /// An agent authentication attempt failed.
+    AuthFailed,
+    /// A periodic repository sync completed.
+    RepoSync,
+    /// A periodic repository sync took longer than the warning threshold.
+    RepoSyncSlow,
+    /// A periodic repository sync failed.
+    RepoSyncFailed,
+    /// An archive deletion operation failed.
+    ArchiveDeleteFailed,
+    /// A security-related violation was detected.
+    SecurityViolation,
+}
+
+impl std::fmt::Display for SystemEventType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AuthFailed => write!(f, "auth_failed"),
+            Self::RepoSync => write!(f, "repo_sync"),
+            Self::RepoSyncSlow => write!(f, "repo_sync_slow"),
+            Self::RepoSyncFailed => write!(f, "repo_sync_failed"),
+            Self::ArchiveDeleteFailed => write!(f, "archive_delete_failed"),
+            Self::SecurityViolation => write!(f, "security_violation"),
+        }
+    }
+}
+
+impl FromStr for SystemEventType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "auth_failed" => Ok(Self::AuthFailed),
+            "repo_sync" => Ok(Self::RepoSync),
+            "repo_sync_slow" => Ok(Self::RepoSyncSlow),
+            "repo_sync_failed" => Ok(Self::RepoSyncFailed),
+            "archive_delete_failed" => Ok(Self::ArchiveDeleteFailed),
+            "security_violation" => Ok(Self::SecurityViolation),
+            other => Err(format!("unknown system event type: {other}")),
+        }
+    }
+}
+
+impl Serialize for SystemEventType {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for SystemEventType {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+/// Severity level of a dashboard finding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum FindingSeverity {
+    /// A critical issue requiring immediate attention.
+    #[default]
+    Critical,
+    /// A warning that should be reviewed.
+    Warning,
+    /// Informational finding.
+    Info,
+}
+
+impl std::fmt::Display for FindingSeverity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Critical => write!(f, "critical"),
+            Self::Warning => write!(f, "warning"),
+            Self::Info => write!(f, "info"),
+        }
+    }
+}
+
+impl FromStr for FindingSeverity {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "critical" => Ok(Self::Critical),
+            "warning" => Ok(Self::Warning),
+            "info" => Ok(Self::Info),
+            other => Err(format!("unknown finding severity: {other}")),
+        }
+    }
+}
+
+/// Status value of a dashboard finding or operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FindingStatus {
+    /// The operation is currently running.
+    Running,
+    /// The finding is a warning (non-fatal but noteworthy).
+    Warning,
+    /// The finding indicates a failure.
+    Failed,
+    /// A scheduled task is overdue.
+    Overdue,
+    /// A schedule target has never succeeded.
+    NeverSucceeded,
+    /// A host is offline and a schedule is due soon.
+    OfflineDueSoon,
+}
+
+impl std::fmt::Display for FindingStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Running => write!(f, "running"),
+            Self::Warning => write!(f, "warning"),
+            Self::Failed => write!(f, "failed"),
+            Self::Overdue => write!(f, "overdue"),
+            Self::NeverSucceeded => write!(f, "never_succeeded"),
+            Self::OfflineDueSoon => write!(f, "offline_due_soon"),
+        }
+    }
+}
+
+impl FromStr for FindingStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "running" => Ok(Self::Running),
+            "warning" => Ok(Self::Warning),
+            "failed" => Ok(Self::Failed),
+            "overdue" => Ok(Self::Overdue),
+            "never_succeeded" => Ok(Self::NeverSucceeded),
+            "offline_due_soon" => Ok(Self::OfflineDueSoon),
+            other => Err(format!("unknown finding status: {other}")),
+        }
+    }
+}
+
+/// Kind/category of a dashboard finding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FindingKind {
+    /// Agent host has no backup schedule assigned.
+    HostUnassigned,
+    /// Repository has no enabled backup schedule.
+    RepositoryUnscheduled,
+    /// Repository storage is at or above its critical quota.
+    RepositoryQuotaCritical,
+    /// Repository storage is at or above its warning quota.
+    RepositoryQuotaWarning,
+    /// Import of a repository failed.
+    RepositoryImportFailed,
+    /// The latest backup failed.
+    BackupFailed,
+    /// Backup completed with warnings.
+    BackupWarning,
+    /// A schedule target's backup is overdue.
+    ScheduleTargetOverdue,
+    /// A schedule target has never succeeded.
+    ScheduleTargetNeverSucceeded,
+    /// A host is offline and a schedule is due soon.
+    HostOfflineDueSoon,
+}
+
+impl std::fmt::Display for FindingKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::HostUnassigned => write!(f, "host_unassigned"),
+            Self::RepositoryUnscheduled => write!(f, "repository_unscheduled"),
+            Self::RepositoryQuotaCritical => write!(f, "repository_quota_critical"),
+            Self::RepositoryQuotaWarning => write!(f, "repository_quota_warning"),
+            Self::RepositoryImportFailed => write!(f, "repository_import_failed"),
+            Self::BackupFailed => write!(f, "backup_failed"),
+            Self::BackupWarning => write!(f, "backup_warning"),
+            Self::ScheduleTargetOverdue => write!(f, "schedule_target_overdue"),
+            Self::ScheduleTargetNeverSucceeded => write!(f, "schedule_target_never_succeeded"),
+            Self::HostOfflineDueSoon => write!(f, "host_offline_due_soon"),
+        }
+    }
+}
+
+impl FromStr for FindingKind {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "host_unassigned" => Ok(Self::HostUnassigned),
+            "repository_unscheduled" => Ok(Self::RepositoryUnscheduled),
+            "repository_quota_critical" => Ok(Self::RepositoryQuotaCritical),
+            "repository_quota_warning" => Ok(Self::RepositoryQuotaWarning),
+            "repository_import_failed" => Ok(Self::RepositoryImportFailed),
+            "backup_failed" => Ok(Self::BackupFailed),
+            "backup_warning" => Ok(Self::BackupWarning),
+            "schedule_target_overdue" => Ok(Self::ScheduleTargetOverdue),
+            "schedule_target_never_succeeded" => Ok(Self::ScheduleTargetNeverSucceeded),
+            "host_offline_due_soon" => Ok(Self::HostOfflineDueSoon),
+            other => Err(format!("unknown finding kind: {other}")),
+        }
+    }
+}
+
+/// Status of an archive indexing job in the content-search index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum IndexStatus {
+    /// Index job not yet started.
+    #[default]
+    Pending,
+    /// Indexing is in progress.
+    Indexing,
+    /// Indexing completed successfully.
+    Done,
+    /// Indexing failed.
+    Failed,
+}
+
+impl std::fmt::Display for IndexStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pending => write!(f, "pending"),
+            Self::Indexing => write!(f, "indexing"),
+            Self::Done => write!(f, "done"),
+            Self::Failed => write!(f, "failed"),
+        }
+    }
+}
+
+impl FromStr for IndexStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "pending" => Ok(Self::Pending),
+            "indexing" => Ok(Self::Indexing),
+            "done" => Ok(Self::Done),
+            "failed" => Ok(Self::Failed),
+            other => Err(format!("unknown index status: {other}")),
         }
     }
 }
@@ -913,5 +1222,81 @@ mod tests {
             build_repo_url("borg", "host.example.com", 2222, "mnt/backup/borg"),
             "ssh://borg@host.example.com:2222/mnt/backup/borg"
         );
+    }
+
+    #[test]
+    fn visibility_display_roundtrip() {
+        assert_eq!(Visibility::Private.to_string(), "private");
+        assert_eq!(Visibility::Shared.to_string(), "shared");
+        assert_eq!("private".parse::<Visibility>().unwrap(), Visibility::Private);
+        assert_eq!("shared".parse::<Visibility>().unwrap(), Visibility::Shared);
+        assert!("invalid".parse::<Visibility>().is_err());
+    }
+
+    #[test]
+    fn visibility_default_is_private() {
+        assert_eq!(Visibility::default(), Visibility::Private);
+    }
+
+    #[test]
+    fn system_event_type_display_roundtrip() {
+        let variants = [
+            (SystemEventType::AuthFailed, "auth_failed"),
+            (SystemEventType::RepoSync, "repo_sync"),
+            (SystemEventType::RepoSyncSlow, "repo_sync_slow"),
+            (SystemEventType::RepoSyncFailed, "repo_sync_failed"),
+            (SystemEventType::ArchiveDeleteFailed, "archive_delete_failed"),
+            (SystemEventType::SecurityViolation, "security_violation"),
+        ];
+        for (variant, expected) in variants {
+            assert_eq!(variant.to_string(), expected);
+            assert_eq!(expected.parse::<SystemEventType>().unwrap(), variant);
+        }
+        assert!("unknown".parse::<SystemEventType>().is_err());
+    }
+
+    #[test]
+    fn finding_severity_display_roundtrip() {
+        assert_eq!(FindingSeverity::Critical.to_string(), "critical");
+        assert_eq!(FindingSeverity::Warning.to_string(), "warning");
+        assert_eq!(FindingSeverity::Info.to_string(), "info");
+        assert_eq!("critical".parse::<FindingSeverity>().unwrap(), FindingSeverity::Critical);
+        assert_eq!("warning".parse::<FindingSeverity>().unwrap(), FindingSeverity::Warning);
+        assert_eq!("info".parse::<FindingSeverity>().unwrap(), FindingSeverity::Info);
+        assert!("bogus".parse::<FindingSeverity>().is_err());
+    }
+
+    #[test]
+    fn finding_status_display_roundtrip() {
+        assert_eq!(FindingStatus::Running.to_string(), "running");
+        assert_eq!(FindingStatus::Warning.to_string(), "warning");
+        assert_eq!(FindingStatus::Failed.to_string(), "failed");
+        assert_eq!(FindingStatus::Overdue.to_string(), "overdue");
+        assert_eq!("running".parse::<FindingStatus>().unwrap(), FindingStatus::Running);
+        assert_eq!("warning".parse::<FindingStatus>().unwrap(), FindingStatus::Warning);
+        assert!("bogus".parse::<FindingStatus>().is_err());
+    }
+
+    #[test]
+    fn finding_kind_display_roundtrip() {
+        assert_eq!(FindingKind::HostUnassigned.to_string(), "host_unassigned");
+        assert_eq!(FindingKind::RepositoryUnscheduled.to_string(), "repository_unscheduled");
+        assert_eq!("backup_failed".parse::<FindingKind>().unwrap(), FindingKind::BackupFailed);
+        assert!("bogus".parse::<FindingKind>().is_err());
+    }
+
+    #[test]
+    fn index_status_display_roundtrip() {
+        assert_eq!(IndexStatus::Pending.to_string(), "pending");
+        assert_eq!(IndexStatus::Indexing.to_string(), "indexing");
+        assert_eq!(IndexStatus::Done.to_string(), "done");
+        assert_eq!(IndexStatus::Failed.to_string(), "failed");
+        assert_eq!("done".parse::<IndexStatus>().unwrap(), IndexStatus::Done);
+        assert!("bogus".parse::<IndexStatus>().is_err());
+    }
+
+    #[test]
+    fn index_status_default_is_pending() {
+        assert_eq!(IndexStatus::default(), IndexStatus::Pending);
     }
 }

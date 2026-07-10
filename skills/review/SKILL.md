@@ -62,14 +62,17 @@ set the verdict labels per the Workflow section to move them.
 | `merge conflict` | Real conflicts with the base branch | `mergeable_state == "dirty"` — checked continuously (it's a free API field), same precedence tier as `ci failing` |
 | `precheck failed` | A deterministic pre-review check failed | Set only by `.github/scripts/pre-review-checks.js` (coverage-diff or duplicate-code hard gate) — never by a reviewer, human or AI. See "Automated Claude review" below |
 | `ready to merge` | Fully clear to merge | CI conclusion is `success` **and** review decision is `APPROVED` **and** no human sign-off is pending |
-| `needs human review` | Requires a human's sign-off before merge, regardless of agent review | Auto-applied when the diff touches security/crypto/auth/SSH-forwarding code, CI/CD workflow files, dependency lockfiles, `deny.toml`, DB migrations, or adds a new `#[allow(...)]`/`deny.toml` `ignore` suppression |
+| `needs human review` | Requires a human's sign-off before merge, regardless of agent review | Auto-applied when: the diff touches security/crypto/auth/SSH-forwarding code, CI/CD workflow files, `.github/scripts/`, `.pre-commit-config.yaml`, `.devcontainer/`, dependency lockfiles, `deny.toml`, or DB migrations; the diff adds a new `#[allow(...)]`/`deny.toml` `ignore` suppression; the PR title or body mentions "security"; or the PR closes an issue whose title, body, or labels mention "security" |
 
 `needs human review` is additive-only: the workflow will add it but will
 **never** remove it — only a human clearing the label counts as sign-off. Even
 a PR that is fully approved and green stays capped at `needs review` while
 this label is present. If your review touches one of the sensitive areas
 above, expect this label and do not treat an agent approval as sufficient to
-merge.
+merge. The "security" text/issue checks are a keyword match, not a judgment
+call — expect occasional false positives (a PR that merely discusses security
+in passing) and treat them as a cheap net that widens the gate, not a
+guarantee that every gated PR is actually security-critical.
 
 ### Same-account review verdict labels
 

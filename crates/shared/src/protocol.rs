@@ -474,6 +474,9 @@ pub enum ServerToUi {
     BackupStarted {
         /// The hostname of the agent running the backup.
         hostname: String,
+        /// The repository being backed up.
+        #[ts(type = "number")]
+        repo_id: i64,
         /// The name of the backup target (repository).
         target_name: String,
         /// The archive name being created, if known.

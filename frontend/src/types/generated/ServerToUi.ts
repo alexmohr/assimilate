@@ -33,6 +33,10 @@ export type ServerToUi =
        */
       hostname: string;
       /**
+       * The repository being backed up.
+       */
+      repo_id: number;
+      /**
        * The name of the backup target (repository).
        */
       target_name: string;

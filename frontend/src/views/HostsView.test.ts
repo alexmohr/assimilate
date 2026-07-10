@@ -104,6 +104,7 @@ async function mountWithAgent(
             never_succeeded_agents: [],
             disabled_only_agents: [],
           },
+          running_operations: [],
         },
       })
     return Promise.resolve({ data: [] })
@@ -130,6 +131,7 @@ describe('HostsView', () => {
               never_succeeded_agents: [{ agent_id: 2, hostname: 'never-succeeded-host' }],
               disabled_only_agents: [],
             },
+            running_operations: [],
           },
         })
       }
@@ -138,6 +140,49 @@ describe('HostsView', () => {
       }
       return Promise.resolve({ data: [] })
     })
+  })
+
+  it('shows the in-progress badge from running_operations on initial load', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: agents })
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({
+          data: {
+            protection: {
+              protected_agent_links: [],
+              unassigned_agents: [],
+              never_succeeded_agents: [],
+              disabled_only_agents: [],
+            },
+            running_operations: [
+              {
+                report_id: 1,
+                status: 'running',
+                hostname: 'protected-host',
+                schedule_id: 5,
+                schedule_name: 'Daily',
+                repo_id: 20,
+                repo_name: 'server-daily',
+                started_at: '2026-06-01T00:00:00Z',
+                destination: { kind: 'activity', report_id: 1 },
+              },
+            ],
+          },
+        })
+      }
+      if (url === '/system/version') {
+        return Promise.resolve({ data: { agent_version: null } })
+      }
+      return Promise.resolve({ data: [] })
+    })
+
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Backing up: server-daily')
   })
 
   it('applies the coverage filter from the route query', async () => {
@@ -189,6 +234,7 @@ describe('HostsView', () => {
               never_succeeded_agents: [],
               disabled_only_agents: [],
             },
+            running_operations: [],
           },
         })
       }

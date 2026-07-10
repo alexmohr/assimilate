@@ -71,6 +71,7 @@ const agents = ref<AgentRow[]>([])
 const showHidden = ref(false)
 const machineScheduleCount = ref<Record<number, number>>({})
 const healthByHost = ref<Record<string, AgentHealth>>({})
+const activeBackupsByHost = ref<Record<string, string[]>>({})
 const loading = ref(false)
 const error = ref<string | null>(null)
 
@@ -354,6 +355,13 @@ async function loadAgents(): Promise<void> {
         overviewRes.data.protection.disabled_only_agents.map((host) => host.agent_id),
       ),
     }
+    const runningMap: Record<string, string[]> = {}
+    overviewRes.data.running_operations.forEach((op) => {
+      const list = runningMap[op.hostname] ?? []
+      if (!list.includes(op.repo_name)) list.push(op.repo_name)
+      runningMap[op.hostname] = list
+    })
+    activeBackupsByHost.value = runningMap
   } catch (e: unknown) {
     if (agents.value.length === 0) {
       error.value = extractError(e)
@@ -470,8 +478,6 @@ const { onMessage, status: wsStatus } = useWebSocket()
 onMessage('AgentConnected', () => loadAgents().catch(logger.error))
 onMessage('AgentDisconnected', () => loadAgents().catch(logger.error))
 onMessage('DataChanged', () => loadAgents().catch(logger.error))
-
-const activeBackupsByHost = ref<Record<string, string[]>>({})
 
 const availableAgentVersion = ref<string | null>(null)
 const serverCommitCount = ref<number | null>(null)

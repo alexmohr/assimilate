@@ -292,6 +292,8 @@ onMounted(fetchAll)
 
 const { onMessage } = useWebSocket()
 onMessage('DataChanged', () => fetchAll().catch(logger.error))
+onMessage('BackupStarted', () => fetchAll().catch(logger.error))
+onMessage('BackupCompleted', () => fetchAll().catch(logger.error))
 </script>
 
 <template>

@@ -544,10 +544,7 @@ function parseArchiveProgress(raw: string): BorgArchiveProgress | null {
 
 onMessage('BackupStarted', (payload) => {
   if (payload.schedule_id != null && payload.schedule_id !== Number(props.id)) return
-  if (
-    payload.schedule_id == null &&
-    !(repo.value != null && payload.target_name === repo.value.name)
-  )
+  if (payload.schedule_id == null && !(repo.value != null && payload.repo_id === repo.value.id))
     return
   backupRunning.value = true
   backupHostname.value = payload.hostname
@@ -565,7 +562,7 @@ onMessage('BackupStarted', (payload) => {
 })
 
 onMessage('BackupCompleted', (payload) => {
-  if (repo.value != null && payload.target_name === repo.value.name) {
+  if (repo.value != null && payload.report.repo_id === repo.value.id) {
     backupRunning.value = false
     backupHostname.value = null
     backupArchiveName.value = null

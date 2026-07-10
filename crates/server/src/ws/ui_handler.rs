@@ -58,6 +58,7 @@ async fn handle_ui_socket(socket: WebSocket, state: AppState) {
     for snap in state.ui_broadcast.current_active_backups() {
         let started = shared::protocol::ServerToUi::BackupStarted {
             hostname: snap.hostname.clone(),
+            repo_id: snap.repo_id,
             target_name: snap.target_name.clone(),
             archive_name: snap.archive_name.clone(),
             schedule_id: snap.schedule_id,

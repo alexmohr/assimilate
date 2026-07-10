@@ -457,6 +457,7 @@ describe('HostDetailView — backup progress', () => {
 
     wsHandlers['BackupStarted']?.({
       hostname: 'test-host',
+      repo_id: 10,
       target_name: 'server-daily',
       archive_name: 'server-daily-2026-07-06',
       schedule_id: 1,
@@ -478,6 +479,7 @@ describe('HostDetailView — backup progress', () => {
 
     wsHandlers['BackupStarted']?.({
       hostname: 'other-host',
+      repo_id: 10,
       target_name: 'server-daily',
       archive_name: null,
       schedule_id: 1,
@@ -497,6 +499,7 @@ describe('HostDetailView — backup progress', () => {
 
     wsHandlers['BackupStarted']?.({
       hostname: 'test-host',
+      repo_id: 10,
       target_name: 'server-daily',
       archive_name: null,
       schedule_id: 1,
@@ -507,7 +510,7 @@ describe('HostDetailView — backup progress', () => {
     wsHandlers['BackupCompleted']?.({
       hostname: 'test-host',
       target_name: 'server-daily',
-      report: { id: 1 },
+      report: { id: 1, repo_id: 10 },
     })
     await nextTick()
 
@@ -524,6 +527,7 @@ describe('HostDetailView — backup progress', () => {
 
     wsHandlers['BackupStarted']?.({
       hostname: 'test-host',
+      repo_id: 10,
       target_name: 'server-daily',
       archive_name: null,
       schedule_id: 1,

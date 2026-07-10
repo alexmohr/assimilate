@@ -929,6 +929,7 @@ async fn handle_backup_started(args: BackupStartedArgs<'_>) {
         });
         state.ui_broadcast.send(ServerToUi::BackupStarted {
             hostname: hostname.to_owned(),
+            repo_id: repo_id.0,
             target_name,
             archive_name,
             schedule_id,

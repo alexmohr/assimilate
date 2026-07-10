@@ -1227,6 +1227,7 @@ async fn broadcast_manual_backup_started(
         });
         state.ui_broadcast.send(ServerToUi::BackupStarted {
             hostname: target.hostname.clone(),
+            repo_id: repo_id.0,
             target_name,
             archive_name: None,
             schedule_id: Some(schedule_id),

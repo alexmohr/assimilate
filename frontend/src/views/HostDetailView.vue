@@ -564,11 +564,12 @@ async function loadTabData(): Promise<void> {
       return status === 'pending' || status === 'started'
     })
     runningReports.forEach((r) => {
-      if (!r.repo_name || activeBackups.value.some((b) => b.targetName === r.repo_name)) return
+      if (!r.repo_name || activeBackups.value.some((b) => b.repoId === r.repo_id)) return
       const startedAt = new Date(r.started_at).getTime()
       activeBackups.value = [
         ...activeBackups.value,
         {
+          repoId: r.repo_id,
           targetName: r.repo_name,
           archiveName: r.archive_name,
           startedAt,
@@ -749,6 +750,7 @@ interface ArchiveProgressData {
 }
 
 interface ActiveBackup {
+  repoId: number
   targetName: string
   archiveName: string | null
   startedAt: number
@@ -796,10 +798,11 @@ function parseArchiveProgress(raw: string): BorgArchiveProgress | null {
 
 onMessage('BackupStarted', (payload) => {
   if (payload.hostname !== props.hostname) return
-  if (activeBackups.value.some((b) => b.targetName === payload.target_name)) return
+  if (activeBackups.value.some((b) => b.repoId === payload.repo_id)) return
   activeBackups.value = [
     ...activeBackups.value,
     {
+      repoId: payload.repo_id,
       targetName: payload.target_name,
       archiveName: payload.archive_name ?? null,
       startedAt: Date.now(),
@@ -813,7 +816,7 @@ onMessage('BackupStarted', (payload) => {
 
 onMessage('BackupCompleted', (payload) => {
   if (payload.hostname === props.hostname) {
-    activeBackups.value = activeBackups.value.filter((b) => b.targetName !== payload.target_name)
+    activeBackups.value = activeBackups.value.filter((b) => b.repoId !== payload.report.repo_id)
     stopElapsedTimerIfIdle()
   }
   loadAgent().catch(logger.error)
@@ -821,9 +824,7 @@ onMessage('BackupCompleted', (payload) => {
 
 onMessage('BackupLog', (payload) => {
   if (payload.hostname !== props.hostname) return
-  const targetName = repos.value.find((r) => r.id === payload.repo_id)?.name
-  if (!targetName) return
-  const backup = activeBackups.value.find((b) => b.targetName === targetName)
+  const backup = activeBackups.value.find((b) => b.repoId === payload.repo_id)
   if (!backup) return
   const progress = parseArchiveProgress(payload.line)
   if (progress !== null) {
@@ -931,7 +932,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
           </dl>
           <BackupProgressCard
             v-for="b in activeBackups"
-            :key="b.targetName"
+            :key="b.repoId"
             :badge="b.targetName"
             :archive-name="b.archiveName"
             :elapsed-secs="b.elapsedSecs"

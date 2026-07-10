@@ -496,6 +496,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
 
     wsHandlers['BackupStarted']?.({
       hostname: 'web-server-01',
+      repo_id: 20,
       target_name: 'server-daily',
       archive_name: 'server-daily-2026-06-26',
       schedule_id: 1,
@@ -513,6 +514,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
 
     wsHandlers['BackupStarted']?.({
       hostname: 'web-server-01',
+      repo_id: 20,
       target_name: 'server-daily',
       archive_name: null,
       schedule_id: 999,
@@ -522,13 +524,14 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
     expect(wrapper.find('.live-log-card').exists()).toBe(false)
   })
 
-  it('BackupStarted with null schedule_id and matching repo name activates progress card', async () => {
+  it('BackupStarted with null schedule_id and matching repo_id activates progress card', async () => {
     setupEditMode()
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
 
     wsHandlers['BackupStarted']?.({
       hostname: 'web-server-01',
+      repo_id: 20,
       target_name: 'server-daily',
       archive_name: null,
       schedule_id: null,
@@ -545,6 +548,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
 
     wsHandlers['BackupStarted']?.({
       hostname: 'web-server-01',
+      repo_id: 20,
       target_name: 'server-daily',
       archive_name: null,
       schedule_id: 1,
@@ -555,6 +559,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
     wsHandlers['BackupCompleted']?.({
       hostname: 'web-server-01',
       target_name: 'server-daily',
+      report: { repo_id: 20 },
       archive_name: null,
       schedule_id: 1,
     })
@@ -570,6 +575,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
 
     wsHandlers['BackupStarted']?.({
       hostname: 'web-server-01',
+      repo_id: 20,
       target_name: 'server-daily',
       archive_name: null,
       schedule_id: 1,
@@ -648,6 +654,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
 
     wsHandlers['BackupStarted']?.({
       hostname: 'web-server-01',
+      repo_id: 20,
       target_name: 'server-daily',
       archive_name: null,
       schedule_id: 1,
@@ -677,6 +684,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
 
     wsHandlers['BackupStarted']?.({
       hostname: 'web-server-01',
+      repo_id: 20,
       target_name: 'server-daily',
       archive_name: null,
       schedule_id: 1,
@@ -707,6 +715,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
 
     wsHandlers['BackupStarted']?.({
       hostname: 'web-server-01',
+      repo_id: 20,
       target_name: 'server-daily',
       archive_name: null,
       schedule_id: 1,
@@ -736,6 +745,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
 
     wsHandlers['BackupStarted']?.({
       hostname: 'web-server-01',
+      repo_id: 20,
       target_name: 'server-daily',
       archive_name: null,
       schedule_id: 1,

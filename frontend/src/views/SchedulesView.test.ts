@@ -12,9 +12,14 @@ vi.mock('../api/client', () => ({
   },
 }))
 
+// Captured WebSocket message handlers - populated during component setup().
+const wsHandlers: Record<string, (payload: unknown) => void> = {}
+
 vi.mock('../composables/useWebSocket', () => ({
-  useWebSocket: (): { onMessage: ReturnType<typeof vi.fn> } => ({
-    onMessage: vi.fn(),
+  useWebSocket: (): { onMessage: (type: string, cb: (p: unknown) => void) => void } => ({
+    onMessage: (type: string, cb: (p: unknown) => void) => {
+      wsHandlers[type] = cb
+    },
   }),
 }))
 
@@ -190,6 +195,7 @@ function setupApiSuccess(): void {
 describe('SchedulesView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    for (const key of Object.keys(wsHandlers)) delete wsHandlers[key]
   })
 
   afterEach(() => {
@@ -379,6 +385,58 @@ describe('SchedulesView', () => {
     expect(buttons.some((b) => b.text() === 'Cancel')).toBe(true)
     // Schedule 1 (running) no longer shows a Run button; schedules 2 and 3 still do.
     expect(buttons.filter((b) => b.text() === 'Run')).toHaveLength(2)
+  })
+
+  it('refetches health and shows Cancel when a BackupStarted event arrives', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Cancel')).toBe(false)
+
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules') return Promise.resolve({ data: mockSchedules })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/stats/health') {
+        return Promise.resolve({
+          data: [{ ...mockHealth[0], last_status: 'started' }, mockHealth[1]],
+        })
+      }
+      return Promise.resolve({ data: [] })
+    })
+    wsHandlers['BackupStarted']?.({ hostname: 'web-server-01', repo_id: 20 })
+    await flushPromises()
+
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Cancel')).toBe(true)
+  })
+
+  it('refetches health when a BackupCompleted event arrives', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules') return Promise.resolve({ data: mockSchedules })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/stats/health') {
+        return Promise.resolve({ data: [{ ...mockHealth[0], last_status: 'started' }] })
+      }
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Cancel')).toBe(true)
+
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules') return Promise.resolve({ data: mockSchedules })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/stats/health') return Promise.resolve({ data: mockHealth })
+      return Promise.resolve({ data: [] })
+    })
+    wsHandlers['BackupCompleted']?.({ hostname: 'web-server-01', report: { repo_id: 20 } })
+    await flushPromises()
+
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Cancel')).toBe(false)
   })
 
   it('calls cancel API on cancel button click for a running schedule', async () => {

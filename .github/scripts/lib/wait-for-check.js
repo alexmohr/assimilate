@@ -21,11 +21,12 @@ async function waitForAllChecks(
   const deadline = Date.now() + timeoutMs;
 
   for (;;) {
-    const runs = await github.paginate(
-      github.rest.checks.listForRef,
-      { owner, repo, ref, per_page: 100 },
-      (response) => response.data.check_runs,
-    );
+    // octokit's paginate() already normalizes the { total_count, check_runs }
+    // envelope down to a plain array, so response.data *is* the check runs -
+    // response.data.check_runs is undefined. Returning that from the mapFn
+    // would make `results.concat(undefined)` push a literal `undefined` into
+    // the accumulated array on every page.
+    const runs = await github.paginate(github.rest.checks.listForRef, { owner, repo, ref, per_page: 100 });
     const relevant = runs.filter((run) => !excludeNames.includes(run.name));
     const pending = relevant.filter((run) => run.status !== "completed");
 

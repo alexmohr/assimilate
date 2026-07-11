@@ -157,6 +157,7 @@ mod tests {
                 compression: "lz4",
                 encryption: "repokey",
                 owner_id: None,
+                sync_schedule: None,
             },
         )
         .await

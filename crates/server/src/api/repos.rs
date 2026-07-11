@@ -304,6 +304,7 @@ pub async fn create_repo(
             compression: &compression,
             encryption: &encryption,
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await?;
@@ -958,6 +959,7 @@ pub async fn init_repo(
             compression: &compression,
             encryption: &encryption,
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await?;

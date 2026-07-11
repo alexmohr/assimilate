@@ -277,39 +277,22 @@ describe('ArchiveFileBrowser', () => {
     expect(() => wrapper.unmount()).not.toThrow()
   })
 
-  it('clicking breadcrumb navigates to path', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({
-      data: {
-        index_status: 'done',
-        entries: [
-          { type: 'd', path: 'subdir', size: 0, mtime: '2026-06-01T12:00:00Z', mode: '755' },
-          { type: '-', path: 'readme.txt', size: 1024, mtime: '2026-06-01T12:00:00Z', mode: '644' },
-        ],
-      },
-    })
+  it('clicking a directory row navigates into it and breadcrumb navigates back', async () => {
+    const wrapper = await mountEntries()
 
-    const wrapper = mount(ArchiveFileBrowser, {
-      props: { repoId: 5, archiveName: 'test-archive' },
-    })
+    const dirRow = wrapper.find('.clickable')
+    expect(dirRow.exists()).toBe(true)
 
+    await dirRow.trigger('click')
     await flushPromises()
     await nextTick()
 
-    // Navigate into subdir first to get more breadcrumbs
-    const dirRow = wrapper.find('.clickable')
-    if (dirRow.exists()) {
-      await dirRow.trigger('click')
-      await flushPromises()
-      await nextTick()
-    }
-
-    // Click the root breadcrumb to navigate back
     const rootCrumb = wrapper.find('.crumb')
-    if (rootCrumb.exists()) {
-      await rootCrumb.trigger('click')
-      await flushPromises()
-      await nextTick()
-    }
+    expect(rootCrumb.exists()).toBe(true)
+
+    await rootCrumb.trigger('click')
+    await flushPromises()
+    await nextTick()
 
     expect(wrapper.find('.breadcrumb').exists()).toBe(true)
   })
@@ -334,7 +317,6 @@ describe('ArchiveFileBrowser', () => {
 
     await flushPromises()
     await nextTick()
-
     const downloadBtn = wrapper.find('button.btn-ghost')
     if (downloadBtn.exists()) {
       await downloadBtn.trigger('click')

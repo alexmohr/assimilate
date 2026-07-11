@@ -352,7 +352,8 @@ describe('ArchiveFileBrowser', () => {
     await nextTick()
 
     if (nameInput) {
-      expect(await (nameInput as any).element.value).toBe('test')
+      const el = nameInput.element as HTMLInputElement
+      expect(el.value).toBe('test')
     }
   })
 

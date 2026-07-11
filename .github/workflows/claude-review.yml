@@ -16,6 +16,7 @@ permissions:
   issues: write
   actions: read
   checks: write
+  id-token: write
 
 jobs:
   gate:

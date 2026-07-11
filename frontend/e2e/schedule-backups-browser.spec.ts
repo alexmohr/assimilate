@@ -3,6 +3,25 @@
 
 import { expect, loginAsAdmin, test } from './fixtures'
 
+async function gotoBackupsTab(page: Awaited<ReturnType<typeof test.info>['page']>): Promise<void> {
+  await loginAsAdmin(page)
+  await page.goto('/schedules/1')
+  await page.waitForLoadState('networkidle')
+  await page.getByRole('button', { name: 'Backups' }).click()
+  await page.waitForTimeout(1000)
+}
+
+async function clickFirstArchiveRow(
+  page: Awaited<ReturnType<typeof test.info>['page']>,
+): Promise<boolean> {
+  const archiveRow = page.locator('.archive-row').first()
+  const rowVisible = await archiveRow.isVisible({ timeout: 5_000 }).catch(() => false)
+  if (!rowVisible) return false
+  await archiveRow.click()
+  await page.waitForTimeout(1000)
+  return true
+}
+
 test.describe('Schedule backups tab - archive browser', () => {
   test('Backups tab is visible on backup-type schedule detail', async ({ page }) => {
     await loginAsAdmin(page)
@@ -20,7 +39,6 @@ test.describe('Schedule backups tab - archive browser', () => {
     // Save bar should be visible initially (Settings tab)
     await expect(page.locator('.save-bar')).toBeVisible()
 
-    // Click Backups tab
     await page.getByRole('button', { name: 'Backups' }).click()
     await page.waitForTimeout(500)
 
@@ -29,13 +47,7 @@ test.describe('Schedule backups tab - archive browser', () => {
   })
 
   test('backups tab shows empty state or archive list', async ({ page }) => {
-    await loginAsAdmin(page)
-    await page.goto('/schedules/1')
-    await page.waitForLoadState('networkidle')
-
-    // Click Backups tab
-    await page.getByRole('button', { name: 'Backups' }).click()
-    await page.waitForTimeout(1000)
+    await gotoBackupsTab(page)
 
     // Either the archives panel title is visible (with data)
     // or the empty state message is shown (no archives yet)
@@ -45,13 +57,7 @@ test.describe('Schedule backups tab - archive browser', () => {
   })
 
   test('backups tab renders split layout structure', async ({ page }) => {
-    await loginAsAdmin(page)
-    await page.goto('/schedules/1')
-    await page.waitForLoadState('networkidle')
-
-    // Click Backups tab
-    await page.getByRole('button', { name: 'Backups' }).click()
-    await page.waitForTimeout(1000)
+    await gotoBackupsTab(page)
 
     // The backups layout should be rendered (either with data or empty)
     const backupsLayout = page.locator('.backups-layout')
@@ -62,25 +68,13 @@ test.describe('Schedule backups tab - archive browser', () => {
   })
 
   test('file browser structure renders when archive is selected', async ({ page }) => {
-    await loginAsAdmin(page)
-    await page.goto('/schedules/1')
-    await page.waitForLoadState('networkidle')
+    await gotoBackupsTab(page)
 
-    // Click Backups tab
-    await page.getByRole('button', { name: 'Backups' }).click()
-    await page.waitForTimeout(1000)
-
-    // Check if there's at least one archive row to click
-    const archiveRow = page.locator('.archive-row').first()
-    const rowVisible = await archiveRow.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!rowVisible) {
-      // No archives available in demo data - skip interactive tests
+    const hasArchive = await clickFirstArchiveRow(page)
+    if (!hasArchive) {
       test.skip()
       return
     }
-
-    await archiveRow.click()
-    await page.waitForTimeout(1000)
 
     // The file browser should show with breadcrumb
     await expect(page.locator('.breadcrumb')).toBeVisible()
@@ -90,25 +84,13 @@ test.describe('Schedule backups tab - archive browser', () => {
   })
 
   test('download buttons present in file browser when archive selected', async ({ page }) => {
-    await loginAsAdmin(page)
-    await page.goto('/schedules/1')
-    await page.waitForLoadState('networkidle')
+    await gotoBackupsTab(page)
 
-    // Click Backups tab
-    await page.getByRole('button', { name: 'Backups' }).click()
-    await page.waitForTimeout(1000)
-
-    // Check if there's at least one archive row to click
-    const archiveRow = page.locator('.archive-row').first()
-    const rowVisible = await archiveRow.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!rowVisible) {
-      // No archives available in demo data - skip interactive tests
+    if (!(await clickFirstArchiveRow(page))) {
       test.skip()
       return
     }
-
-    await archiveRow.click()
-    await page.waitForTimeout(2000)
+    await page.waitForTimeout(1000)
 
     // Check for download buttons in the file browser
     const downloadButton = page.locator('.archive-file-browser button[title*="Download"]').first()
@@ -119,24 +101,12 @@ test.describe('Schedule backups tab - archive browser', () => {
   })
 
   test('breadcrumb navigation updates when navigating directories', async ({ page }) => {
-    await loginAsAdmin(page)
-    await page.goto('/schedules/1')
-    await page.waitForLoadState('networkidle')
+    await gotoBackupsTab(page)
 
-    // Click Backups tab
-    await page.getByRole('button', { name: 'Backups' }).click()
-    await page.waitForTimeout(1000)
-
-    // Check if there's at least one archive row to click
-    const archiveRow = page.locator('.archive-row').first()
-    const rowVisible = await archiveRow.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!rowVisible) {
+    if (!(await clickFirstArchiveRow(page))) {
       test.skip()
       return
     }
-
-    await archiveRow.click()
-    await page.waitForTimeout(1000)
 
     // Breadcrumb should show root
     const breadcrumb = page.locator('.breadcrumb')
@@ -146,14 +116,12 @@ test.describe('Schedule backups tab - archive browser', () => {
     const dirEntry = page.locator('.archive-file-browser tr.clickable').first()
     const dirVisible = await dirEntry.isVisible({ timeout: 5_000 }).catch(() => false)
     if (!dirVisible) {
-      // No directories to navigate into, skip
       test.skip()
       return
     }
 
     await dirEntry.click()
     await page.waitForTimeout(1000)
-    // Breadcrumb should have updated
     await expect(breadcrumb).toBeVisible()
   })
 })

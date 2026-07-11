@@ -62,6 +62,7 @@ interface UseArchiveBrowserReturn {
   restoreEntry: (entry: ContentEntry) => Promise<boolean>
   deleteArchive: (entry: ContentEntry) => Promise<boolean>
   deleteArchiveByName: (archive: ArchiveEntry) => Promise<boolean>
+  stopPolling: () => void
 }
 
 export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn {
@@ -336,5 +337,6 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     restoreEntry,
     deleteArchive,
     deleteArchiveByName,
+    stopPolling,
   }
 }

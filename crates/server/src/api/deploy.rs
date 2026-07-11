@@ -145,7 +145,8 @@ pub async fn deploy_agent(
     Path(hostname): Path<String>,
     ApiJson(req): ApiJson<DeployAgentRequest>,
 ) -> Result<Json<DeployAgentResponse>, ApiError> {
-    require_upgrade_agent(&state.pool, auth.user_id).await?;
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
+    require_upgrade_agent(&effective)?;
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
     helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
     helpers::validate_non_empty(&req.server_url, "server_url")?;
@@ -296,7 +297,8 @@ pub async fn fetch_service_unit(
     Path(_hostname): Path<String>,
     ApiJson(req): ApiJson<FetchServiceUnitRequest>,
 ) -> Result<Json<FetchServiceUnitResponse>, ApiError> {
-    require_upgrade_agent(&state.pool, auth.user_id).await?;
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
+    require_upgrade_agent(&effective)?;
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
     helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
 
@@ -331,8 +333,7 @@ fn agent_is_current(
 }
 
 /// Require the calling user to have the `can_upgrade_agent` permission.
-async fn require_upgrade_agent(pool: &sqlx::PgPool, user_id: i64) -> Result<(), ApiError> {
-    let effective = db::get_effective_permissions(pool, user_id).await?;
+fn require_upgrade_agent(effective: &db::RoleRow) -> Result<(), ApiError> {
     if !effective.can_upgrade_agent {
         return Err(ApiError::Forbidden(
             "upgrade agent permission required".to_string(),
@@ -417,5 +418,58 @@ mod tests {
             Some("1.2.4"),
             Some("1.2.3")
         ));
+    }
+
+    #[test]
+    fn require_upgrade_agent_allows_with_permission() {
+        let row = db::RoleRow {
+            id: 0,
+            name: String::new(),
+            can_create_agent: false,
+            can_delete_agent: false,
+            can_delete_own_agent: false,
+            can_create_repo: false,
+            can_delete_repo: false,
+            can_delete_own_repo: false,
+            can_create_schedule: false,
+            can_delete_schedule: false,
+            can_delete_own_schedule: false,
+            can_manage_tags: false,
+            can_view_all_repos: false,
+            can_manage_tunnels: false,
+            can_upgrade_agent: true,
+            created_at: chrono::Utc::now(),
+        };
+        assert!(require_upgrade_agent(&row).is_ok());
+    }
+
+    #[test]
+    fn require_upgrade_agent_denies_without_permission() {
+        let row = db::RoleRow {
+            id: 0,
+            name: String::new(),
+            can_create_agent: false,
+            can_delete_agent: false,
+            can_delete_own_agent: false,
+            can_create_repo: false,
+            can_delete_repo: false,
+            can_delete_own_repo: false,
+            can_create_schedule: false,
+            can_delete_schedule: false,
+            can_delete_own_schedule: false,
+            can_manage_tags: false,
+            can_view_all_repos: false,
+            can_manage_tunnels: false,
+            can_upgrade_agent: false,
+            created_at: chrono::Utc::now(),
+        };
+        let result = require_upgrade_agent(&row);
+        assert!(result.is_err());
+        match result {
+            Err(ApiError::Forbidden(msg)) => {
+                assert_eq!(msg, "upgrade agent permission required");
+            }
+            _ => panic!("expected Forbidden error"),
+        }
     }
 }

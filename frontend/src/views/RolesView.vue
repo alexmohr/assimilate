@@ -518,7 +518,7 @@ onMounted(fetchRoles)
   max-width: 1200px;
 }
 
-.page-description {
+.roles-page .page-description {
   font-size: 0.875rem;
   line-height: 1.5;
   color: var(--text-secondary);
@@ -526,49 +526,49 @@ onMounted(fetchRoles)
 }
 
 @media (max-width: 768px) {
-  .page-description {
+  .roles-page .page-description {
     display: none;
   }
 }
 
-.header-actions {
+.roles-page .header-actions {
   display: flex;
   gap: 0.5rem;
   margin-left: auto;
 }
 
-.toolbar {
+.roles-page .toolbar {
   display: flex;
   align-items: center;
   gap: 0.75rem;
   margin-bottom: 1.5rem;
 }
 
-.search-input {
+.roles-page .search-input {
   width: 260px;
 }
 
-.state-msg {
+.roles-page .state-msg {
   text-align: center;
   padding: 3rem;
   color: var(--text-muted);
 }
 
-.state-error {
+.roles-page .state-error {
   color: var(--danger);
 }
 
-.matrix-wrap {
+.roles-page .matrix-wrap {
   overflow-x: auto;
 }
 
-.matrix-table {
+.roles-page .matrix-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.8125rem;
 }
 
-.matrix-table th {
+.roles-page .matrix-table th {
   text-align: center;
   padding: 0.5rem 0.35rem;
   font-weight: 600;
@@ -601,14 +601,14 @@ onMounted(fetchRoles)
   min-width: 120px;
 }
 
-.matrix-table td {
+.roles-page .matrix-table td {
   padding: 0.5rem 0.35rem;
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-primary);
   text-align: center;
 }
 
-.matrix-table tr.seeded {
+.roles-page .matrix-table tr.seeded {
   background: var(--bg-hover);
 }
 
@@ -664,7 +664,7 @@ onMounted(fetchRoles)
   justify-content: flex-end;
 }
 
-.modal {
+.roles-page .modal {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -674,36 +674,36 @@ onMounted(fetchRoles)
   box-shadow: var(--shadow-lg);
 }
 
-.modal-wide {
+.roles-page .modal-wide {
   max-width: 550px;
 }
 
-.modal h2 {
+.roles-page .modal h2 {
   font-size: 1.05rem;
   font-weight: 700;
   color: var(--text-primary);
   margin: 0 0 1rem;
 }
 
-.modal-form {
+.roles-page .modal-form {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
 }
 
-.form-group {
+.roles-page .form-group {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
 }
 
-.form-group label {
+.roles-page .form-group label {
   font-size: 0.8125rem;
   font-weight: 500;
   color: var(--text-secondary);
 }
 
-.form-group input {
+.roles-page .form-group input {
   padding: 0.5rem 0.75rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -712,12 +712,12 @@ onMounted(fetchRoles)
   font-size: 0.875rem;
 }
 
-.form-group input:focus {
+.roles-page .form-group input:focus {
   outline: none;
   border-color: var(--accent);
 }
 
-.permissions-grid {
+.roles-page .permissions-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 0.5rem;
@@ -727,7 +727,7 @@ onMounted(fetchRoles)
   background: var(--bg-input);
 }
 
-.perm-checkbox {
+.roles-page .perm-checkbox {
   display: flex;
   align-items: center;
   gap: 0.4rem;
@@ -736,12 +736,12 @@ onMounted(fetchRoles)
   cursor: pointer;
 }
 
-.perm-checkbox input[type='checkbox'] {
+.roles-page .perm-checkbox input[type='checkbox'] {
   accent-color: var(--accent);
   cursor: pointer;
 }
 
-.modal-error {
+.roles-page .modal-error {
   font-size: 0.8125rem;
   color: var(--danger);
   padding: 0.5rem 0.75rem;
@@ -749,14 +749,14 @@ onMounted(fetchRoles)
   border-radius: var(--radius-sm);
 }
 
-.modal-actions {
+.roles-page .modal-actions {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
   margin-top: 0.5rem;
 }
 
-.confirm-text {
+.roles-page .confirm-text {
   color: var(--text-secondary);
   line-height: 1.6;
   font-size: 0.875rem;

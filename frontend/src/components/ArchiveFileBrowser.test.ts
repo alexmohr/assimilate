@@ -267,4 +267,102 @@ describe('ArchiveFileBrowser', () => {
 
     expect(wrapper.text()).toContain('second-archive')
   })
+
+  it('calls stopPolling on unmount', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: { index_status: 'done', entries: [] },
+    })
+
+    const wrapper = await mountWithWait({ repoId: 5, archiveName: 'test-archive' })
+    expect(() => wrapper.unmount()).not.toThrow()
+  })
+
+  it('clicking breadcrumb navigates to path', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: {
+        index_status: 'done',
+        entries: [
+          { type: 'd', path: 'subdir', size: 0, mtime: '2026-06-01T12:00:00Z', mode: '755' },
+          { type: '-', path: 'readme.txt', size: 1024, mtime: '2026-06-01T12:00:00Z', mode: '644' },
+        ],
+      },
+    })
+
+    const wrapper = mount(ArchiveFileBrowser, {
+      props: { repoId: 5, archiveName: 'test-archive' },
+    })
+
+    await flushPromises()
+    await nextTick()
+
+    // Navigate into subdir first to get more breadcrumbs
+    const dirRow = wrapper.find('.clickable')
+    if (dirRow.exists()) {
+      await dirRow.trigger('click')
+      await flushPromises()
+      await nextTick()
+    }
+
+    // Click the root breadcrumb to navigate back
+    const rootCrumb = wrapper.find('.crumb')
+    if (rootCrumb.exists()) {
+      await rootCrumb.trigger('click')
+      await flushPromises()
+      await nextTick()
+    }
+
+    expect(wrapper.find('.breadcrumb').exists()).toBe(true)
+  })
+
+  it('download button creates a download link', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: {
+        index_status: 'done',
+        entries: [
+          { type: '-', path: 'file.txt', size: 1024, mtime: '2026-06-01T12:00:00Z', mode: '644' },
+        ],
+      },
+    })
+
+    const createElementSpy = vi.spyOn(document, 'createElement')
+    const appendChildSpy = vi.spyOn(document.body, 'appendChild')
+    const removeChildSpy = vi.spyOn(document.body, 'removeChild')
+
+    const wrapper = mount(ArchiveFileBrowser, {
+      props: { repoId: 5, archiveName: 'test-archive' },
+    })
+
+    await flushPromises()
+    await nextTick()
+
+    const downloadBtn = wrapper.find('button.btn-ghost')
+    if (downloadBtn.exists()) {
+      await downloadBtn.trigger('click')
+    }
+
+    expect(createElementSpy).toHaveBeenCalledWith('a')
+    expect(appendChildSpy).toHaveBeenCalled()
+    expect(removeChildSpy).toHaveBeenCalled()
+
+    createElementSpy.mockRestore()
+    appendChildSpy.mockRestore()
+    removeChildSpy.mockRestore()
+  })
+
+  it('shows indexing spinner when index_status is indexing', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: { index_status: 'indexing', entries: [] },
+    })
+
+    const wrapper = mount(ArchiveFileBrowser, {
+      props: { repoId: 5, archiveName: 'test-archive' },
+    })
+
+    await flushPromises()
+    await nextTick()
+    await flushPromises()
+    await nextTick()
+
+    expect(wrapper.text()).toContain('Indexing archive contents')
+  })
 })

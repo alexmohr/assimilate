@@ -98,7 +98,7 @@ test.describe('Navigation sidebar', () => {
   test('Schedules link navigates to /schedules', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/')
-    await page.getByRole('link', { name: 'Schedules' }).click()
+    await page.getByRole('link', { name: 'Schedules', exact: true }).click()
     await expect(page).toHaveURL(/\/schedules/)
   })
 

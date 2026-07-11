@@ -386,18 +386,18 @@ onMounted(fetchRoles)
             />
           </div>
           <div class="permissions-grid">
-            <!-- role-create-permissions -->
-            <label
+            <template
               v-for="perm in PERMISSION_LABELS"
               :key="perm.key"
-              class="perm-checkbox"
             >
-              <input
-                v-model="createForm[perm.key]"
-                type="checkbox"
-              />
-              <span>{{ perm.label }}</span>
-            </label>
+              <label class="perm-checkbox">
+                <input
+                  v-model="createForm[perm.key]"
+                  type="checkbox"
+                />
+                <span>{{ perm.label }}</span>
+              </label>
+            </template>
           </div>
           <div
             v-if="createError"
@@ -438,18 +438,18 @@ onMounted(fetchRoles)
           @submit.prevent="submitEdit"
         >
           <div class="permissions-grid">
-            <!-- role-edit-permissions -->
-            <label
+            <template
               v-for="perm in PERMISSION_LABELS"
               :key="perm.key"
-              class="perm-checkbox"
             >
-              <input
-                v-model="editForm[perm.key]"
-                type="checkbox"
-              />
-              <span>{{ perm.label }}</span>
-            </label>
+              <label class="perm-checkbox">
+                <input
+                  v-model="editForm[perm.key]"
+                  type="checkbox"
+                />
+                <span>{{ perm.label }}</span>
+              </label>
+            </template>
           </div>
           <div
             v-if="editError"
@@ -485,10 +485,9 @@ onMounted(fetchRoles)
     >
       <div class="modal">
         <h2>Delete Role</h2>
-        <!-- role-delete-confirm -->
         <p class="confirm-text">
-          Are you sure you want to delete the role <strong>{{ deleteTarget?.name }}</strong
-          >? Users assigned this role will lose its permissions.
+          Deleting role <strong>{{ deleteTarget?.name }}</strong
+          > will permanently remove it. Users assigned this role will lose its permissions.
         </p>
         <div
           v-if="deleteError"
@@ -498,17 +497,17 @@ onMounted(fetchRoles)
         </div>
         <div class="modal-actions">
           <button
-            class="btn btn-ghost"
-            @click="showDeleteModal = false"
-          >
-            Cancel
-          </button>
-          <button
             class="btn btn-danger"
             :disabled="deleteSubmitting"
             @click="confirmDelete"
           >
             {{ deleteSubmitting ? 'Deleting...' : 'Delete' }}
+          </button>
+          <button
+            class="btn btn-ghost"
+            @click="showDeleteModal = false"
+          >
+            Cancel
           </button>
         </div>
       </div>

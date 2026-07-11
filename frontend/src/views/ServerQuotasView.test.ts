@@ -12,12 +12,12 @@ vi.mock('../api/serverQuotas', () => ({
 }))
 
 vi.mock('../utils/format', () => ({
-  formatBytes: (bytes: number): string => `${bytes} B`,
+  formatBytes: (n: number): string => `${n} B`,
 }))
 
 vi.mock('../utils/error', () => ({
-  extractError: (_e: unknown): string => 'API error',
-  extractBlobError: async (_e: unknown): Promise<string> => 'API error',
+  extractError: (): string => 'API error',
+  extractBlobError: async (): Promise<string> => 'API error',
 }))
 
 vi.mock('../components/BaseSpinner.vue', () => ({

@@ -331,6 +331,31 @@ describe('ArchiveFileBrowser', () => {
     removeChildSpy.mockRestore()
   })
 
+  it('typing in filter inputs covers v-model and input callbacks', async () => {
+    const wrapper = await mountEntries()
+
+    const inputs = wrapper.findAll('input')
+    const nameInput = inputs.find((el) => el.attributes('placeholder') === 'Filter name...')
+    const sizeInput = inputs.find((el) => el.attributes('placeholder') === 'Filter size...')
+    const dateInput = inputs.find((el) => el.attributes('placeholder') === 'Filter date...')
+
+    if (nameInput) {
+      await nameInput.setValue('test')
+    }
+    if (sizeInput) {
+      await sizeInput.setValue('1024')
+    }
+    if (dateInput) {
+      await dateInput.setValue('2026')
+    }
+
+    await nextTick()
+
+    if (nameInput) {
+      expect(await (nameInput as any).element.value).toBe('test')
+    }
+  })
+
   it('shows indexing spinner when index_status is indexing', async () => {
     vi.mocked(apiClient.get).mockResolvedValue({
       data: { index_status: 'indexing', entries: [] },

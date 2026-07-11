@@ -20,7 +20,8 @@ use crate::AppState;
 /// Server health check endpoint.
 pub async fn health(State(state): State<AppState>) -> (StatusCode, Json<HealthCheckResponse>) {
     let background_ops_in_flight = state.repo_op_tracker.any_active().await
-        || state.notification_service.in_flight_deliveries() > 0;
+        || state.notification_service.in_flight_deliveries() > 0
+        || state.background_task_tracker.any_active();
 
     (
         StatusCode::OK,

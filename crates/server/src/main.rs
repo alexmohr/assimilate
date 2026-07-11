@@ -196,20 +196,13 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         notification_service,
         completion_bus: server::ws::completion_bus::CompletionBus::new(),
         repo_op_tracker: server::repo_op_tracker::RepoOpTracker::default(),
+        background_task_tracker: server::background_tasks::BackgroundTaskTracker::default(),
         repo_lock: server::RepoLock::default(),
         import_tasks: server::ImportTaskRegistry::default(),
-        pending_dryruns: std::sync::Arc::new(tokio::sync::Mutex::new(
-            std::collections::HashMap::new(),
-        )),
-        pending_restores: std::sync::Arc::new(tokio::sync::Mutex::new(
-            std::collections::HashMap::new(),
-        )),
-        pending_migrations: std::sync::Arc::new(tokio::sync::Mutex::new(
-            std::collections::HashMap::new(),
-        )),
-        pending_deletes: std::sync::Arc::new(tokio::sync::Mutex::new(
-            std::collections::HashMap::new(),
-        )),
+        pending_dryruns: server::new_pending_map(),
+        pending_restores: server::new_pending_map(),
+        pending_migrations: server::new_pending_map(),
+        pending_deletes: server::new_pending_map(),
         shutdown_token,
         client_ip_resolver,
     }
@@ -237,6 +230,7 @@ async fn resume_single_import(
                 &key,
                 repo_id,
                 &broadcast,
+                &state.background_task_tracker,
             )
             .await
             {

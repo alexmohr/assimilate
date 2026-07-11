@@ -943,7 +943,9 @@ fn spawn_post_backup_indexing(state: &AppState, repo_id: i64, archive_name: Stri
     let pool = state.pool.clone();
     let encryption_key = state.encryption_key;
     let repo_lock = state.repo_lock.clone();
+    let task_guard = state.background_task_tracker.begin();
     tokio::spawn(async move {
+        let _task_guard = task_guard;
         match archive_index::ensure_indexed(
             pool,
             encryption_key,
@@ -1146,12 +1148,23 @@ async fn run_post_backup_sync(
     repo_id: i64,
     ui_broadcast: crate::ws::ui_broadcast::UiBroadcast,
     repo_lock: crate::RepoLock,
+    background_task_tracker: crate::background_tasks::BackgroundTaskTracker,
 ) {
+    let _task_guard = background_task_tracker.begin();
     if let Err(e) = db::set_repo_importing(&pool, repo_id, true).await {
         tracing::error!(repo_id, error = %e, "post-backup sync: failed to set importing flag");
         return;
     }
-    match sync_new_archives(&pool, &encryption_key, repo_id, &ui_broadcast, &repo_lock).await {
+    match sync_new_archives(
+        &pool,
+        &encryption_key,
+        repo_id,
+        &ui_broadcast,
+        &repo_lock,
+        &background_task_tracker,
+    )
+    .await
+    {
         Ok((added, removed)) => {
             if let Err(e) = db::update_repo_last_synced(&pool, repo_id).await {
                 tracing::error!(
@@ -1216,6 +1229,7 @@ fn spawn_post_backup_sync(state: &AppState, repo_id: i64) {
         repo_id,
         state.ui_broadcast.clone(),
         state.repo_lock.clone(),
+        state.background_task_tracker.clone(),
     ));
 }
 
@@ -1790,20 +1804,13 @@ mod tests {
             notification_service: crate::notifications::NotificationService::new(pool),
             completion_bus: crate::ws::completion_bus::CompletionBus::new(),
             repo_op_tracker: crate::repo_op_tracker::RepoOpTracker::default(),
+            background_task_tracker: crate::background_tasks::BackgroundTaskTracker::default(),
             repo_lock: crate::RepoLock::default(),
             import_tasks: crate::ImportTaskRegistry::default(),
-            pending_dryruns: std::sync::Arc::new(tokio::sync::Mutex::new(
-                std::collections::HashMap::new(),
-            )),
-            pending_restores: std::sync::Arc::new(tokio::sync::Mutex::new(
-                std::collections::HashMap::new(),
-            )),
-            pending_migrations: std::sync::Arc::new(tokio::sync::Mutex::new(
-                std::collections::HashMap::new(),
-            )),
-            pending_deletes: std::sync::Arc::new(tokio::sync::Mutex::new(
-                std::collections::HashMap::new(),
-            )),
+            pending_dryruns: crate::new_pending_map(),
+            pending_restores: crate::new_pending_map(),
+            pending_migrations: crate::new_pending_map(),
+            pending_deletes: crate::new_pending_map(),
             shutdown_token: tokio_util::sync::CancellationToken::new(),
             client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
         }

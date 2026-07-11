@@ -7,6 +7,8 @@
 pub mod api;
 /// Borg archive content indexing and querying.
 pub mod archive_index;
+/// Tracks fire-and-forget background tasks not covered by other trackers.
+pub mod background_tasks;
 /// Borg subprocess management.
 pub mod borg;
 /// Client IP resolution from request headers.
@@ -56,6 +58,7 @@ use tokio::sync::{Mutex, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    background_tasks::BackgroundTaskTracker,
     client_ip::ClientIpResolver,
     log_buffer::LogBuffer,
     notifications::NotificationService,
@@ -105,6 +108,13 @@ pub type PendingMigrations = Arc<Mutex<HashMap<String, oneshot::Sender<(bool, Op
 
 /// (`success`, `deleted_count`, `error_message`)
 pub type PendingDeletes = Arc<Mutex<HashMap<String, oneshot::Sender<(bool, u32, Option<String>)>>>>;
+
+/// Empty backing map for a `Pending*` one-shot-channel registry
+/// (`PendingDryRuns`, `PendingRestores`, `PendingMigrations`, `PendingDeletes`).
+#[must_use]
+pub fn new_pending_map<T>() -> Arc<Mutex<HashMap<String, T>>> {
+    Arc::new(Mutex::new(HashMap::new()))
+}
 
 /// An in-flight repository import task with cancellation support.
 #[derive(Clone)]
@@ -189,6 +199,9 @@ pub struct AppState {
     pub completion_bus: CompletionBus,
     /// Tracks active/queued repository operations.
     pub repo_op_tracker: RepoOpTracker,
+    /// Tracks fire-and-forget background tasks not covered by other trackers
+    /// (e.g. archive stat enrichment, post-backup sync/indexing).
+    pub background_task_tracker: BackgroundTaskTracker,
     /// Per-repository mutex for serialising borg operations.
     pub repo_lock: RepoLock,
     /// Tracks running repository import tasks.

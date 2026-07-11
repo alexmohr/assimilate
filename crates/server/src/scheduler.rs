@@ -80,6 +80,7 @@ pub async fn run(state: AppState) {
                 &sync_state.ui_broadcast,
                 &sync_state.repo_op_tracker,
                 &sync_state.repo_lock,
+                &sync_state.background_task_tracker,
             )
             .await;
         }
@@ -116,6 +117,7 @@ pub async fn run_repo_sync(
     ui_broadcast: &UiBroadcast,
     repo_op_tracker: &RepoOpTracker,
     repo_lock: &RepoLock,
+    background_task_tracker: &crate::background_tasks::BackgroundTaskTracker,
 ) {
     let repos = match db::list_repos_with_sync_schedule(pool).await {
         Ok(r) => r,
@@ -197,6 +199,7 @@ pub async fn run_repo_sync(
             ui_broadcast: ui_broadcast.clone(),
             repo_op_tracker: repo_op_tracker.clone(),
             repo_lock: repo_lock.clone(),
+            background_task_tracker: background_task_tracker.clone(),
             repo_id: repo.id,
             repo_name: repo.name.clone(),
         };
@@ -210,6 +213,7 @@ struct ScheduledRepoSync {
     ui_broadcast: UiBroadcast,
     repo_op_tracker: RepoOpTracker,
     repo_lock: RepoLock,
+    background_task_tracker: crate::background_tasks::BackgroundTaskTracker,
     repo_id: i64,
     repo_name: String,
 }
@@ -221,61 +225,37 @@ async fn run_scheduled_repo_sync(task: ScheduledRepoSync) {
         ui_broadcast,
         repo_op_tracker,
         repo_lock,
+        background_task_tracker,
         repo_id,
         repo_name,
     } = task;
 
     let _repo_guard = repo_lock.acquire(repo_id).await;
     let start = std::time::Instant::now();
-    let sync_result = sync_existing_archives(&pool, &encryption_key, repo_id, &ui_broadcast).await;
+    let sync_result = sync_existing_archives(
+        &pool,
+        &encryption_key,
+        repo_id,
+        &ui_broadcast,
+        &background_task_tracker,
+    )
+    .await;
 
     repo_op_tracker.clear(repo_id).await;
     ui_broadcast.send(ServerToUi::RepoOpChanged { repo_id, op: None });
 
     match sync_result {
         Ok((added, removed)) => {
-            let elapsed = start.elapsed();
-            let duration_secs = elapsed.as_secs();
-
-            if let Err(e) = db::update_repo_last_synced(&pool, repo_id).await {
-                tracing::error!(repo_id, error = %e, "failed to update last_synced_at");
-            }
-            if let Err(e) =
-                db::update_repo_last_op(&pool, repo_id, "server_sync", Utc::now(), "server").await
-            {
-                tracing::error!(repo_id, error = %e, "failed to update last_op after sync");
-            }
-
-            if let Err(e) = db::set_repo_importing(&pool, repo_id, false).await {
-                tracing::error!(repo_id, error = %e, "failed to clear importing flag after sync");
-            }
-            if let Err(e) = db::set_repo_import_error(&pool, repo_id, None).await {
-                tracing::error!(repo_id, error = %e, "failed to clear import_error after sync");
-            }
-            crate::api::repos::clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
-            ui_broadcast.send(ServerToUi::DataChanged);
-
-            if added > 0 || removed > 0 {
-                let msg = format!(
-                    "periodic sync for '{repo_name}': added {added}, removed {removed} archives \
-                     in {duration_secs}s",
-                );
-                tracing::info!("{msg}");
-                if let Err(e) = db::insert_system_event(&pool, "repo_sync", None, &msg).await {
-                    tracing::error!(error = %e, "failed to log sync event");
-                }
-            }
-
-            if elapsed > SYNC_WARN_DURATION {
-                let msg = format!(
-                    "periodic sync for '{repo_name}' took {duration_secs}s (exceeds {}s threshold)",
-                    SYNC_WARN_DURATION.as_secs()
-                );
-                tracing::error!("{msg}");
-                if let Err(e) = db::insert_system_event(&pool, "repo_sync_slow", None, &msg).await {
-                    tracing::error!(error = %e, "failed to log slow sync event");
-                }
-            }
+            handle_scheduled_sync_success(
+                &pool,
+                &ui_broadcast,
+                repo_id,
+                &repo_name,
+                start.elapsed(),
+                added,
+                removed,
+            )
+            .await;
         }
         Err(crate::error::ApiError::NotFound(ref reason)) => {
             tracing::warn!(
@@ -311,6 +291,61 @@ async fn run_scheduled_repo_sync(task: ScheduledRepoSync) {
             }
             crate::api::repos::clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
             ui_broadcast.send(ServerToUi::DataChanged);
+        }
+    }
+}
+
+/// Handles bookkeeping and logging after a scheduled sync completed
+/// successfully: clears importing/error state and records a system event for
+/// content changes or a slow-sync warning.
+async fn handle_scheduled_sync_success(
+    pool: &PgPool,
+    ui_broadcast: &UiBroadcast,
+    repo_id: i64,
+    repo_name: &str,
+    elapsed: std::time::Duration,
+    added: u64,
+    removed: u64,
+) {
+    let duration_secs = elapsed.as_secs();
+
+    if let Err(e) = db::update_repo_last_synced(pool, repo_id).await {
+        tracing::error!(repo_id, error = %e, "failed to update last_synced_at");
+    }
+    if let Err(e) =
+        db::update_repo_last_op(pool, repo_id, "server_sync", Utc::now(), "server").await
+    {
+        tracing::error!(repo_id, error = %e, "failed to update last_op after sync");
+    }
+
+    if let Err(e) = db::set_repo_importing(pool, repo_id, false).await {
+        tracing::error!(repo_id, error = %e, "failed to clear importing flag after sync");
+    }
+    if let Err(e) = db::set_repo_import_error(pool, repo_id, None).await {
+        tracing::error!(repo_id, error = %e, "failed to clear import_error after sync");
+    }
+    crate::api::repos::clear_import_progress_state(pool, ui_broadcast, repo_id).await;
+    ui_broadcast.send(ServerToUi::DataChanged);
+
+    if added > 0 || removed > 0 {
+        let msg = format!(
+            "periodic sync for '{repo_name}': added {added}, removed {removed} archives in \
+             {duration_secs}s",
+        );
+        tracing::info!("{msg}");
+        if let Err(e) = db::insert_system_event(pool, "repo_sync", None, &msg).await {
+            tracing::error!(error = %e, "failed to log sync event");
+        }
+    }
+
+    if elapsed > SYNC_WARN_DURATION {
+        let msg = format!(
+            "periodic sync for '{repo_name}' took {duration_secs}s (exceeds {}s threshold)",
+            SYNC_WARN_DURATION.as_secs()
+        );
+        tracing::error!("{msg}");
+        if let Err(e) = db::insert_system_event(pool, "repo_sync_slow", None, &msg).await {
+            tracing::error!(error = %e, "failed to log slow sync event");
         }
     }
 }
@@ -1057,9 +1092,15 @@ esac
         .await
         .unwrap();
 
-        sync_existing_archives(&pool, &encryption_key, repo.id, &UiBroadcast::new())
-            .await
-            .expect("sync_existing_archives failed");
+        sync_existing_archives(
+            &pool,
+            &encryption_key,
+            repo.id,
+            &UiBroadcast::new(),
+            &crate::background_tasks::BackgroundTaskTracker::default(),
+        )
+        .await
+        .expect("sync_existing_archives failed");
 
         let stale_count = sqlx::query_scalar!(
             "SELECT COUNT(*)::BIGINT FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",

@@ -10,12 +10,10 @@ import { formatBytes } from '../utils/format'
 import { extractError } from '../utils/error'
 import { actionLabel, bytesToGb, gbToBytes } from '../utils/quota'
 import { useAsyncAction } from '../composables/useAsyncAction'
-import { useMobile } from '../composables/useMobile'
+
 import BaseSpinner from '../components/BaseSpinner.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import type { QuotaAction, ServerQuotaResponse } from '../types/generated'
-
-const { isMobile } = useMobile()
 
 function statusFor(quota: ServerQuotaResponse): 'ok' | 'warning' | 'critical' {
   if (!quota.configured || !quota.enabled) return 'ok'
@@ -144,7 +142,7 @@ onMounted(loadQuotas)
     </div>
 
     <div
-      v-else-if="isMobile"
+      v-else
       class="quota-card-list"
     >
       <div
@@ -217,80 +215,6 @@ onMounted(loadQuotas)
           </button>
         </div>
       </div>
-    </div>
-
-    <div
-      v-else
-      class="table-wrap"
-    >
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>SSH Host</th>
-            <th>Repos</th>
-            <th>Usage</th>
-            <th>Warning</th>
-            <th>Critical</th>
-            <th>Status</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="quota in quotas"
-            :key="quota.ssh_host"
-          >
-            <td class="name-cell">{{ quota.ssh_host }}</td>
-            <td>{{ quota.repo_count }}</td>
-            <td>{{ formatBytes(quota.total_deduplicated_size) }}</td>
-            <td>
-              <template v-if="quota.configured && quota.warn_bytes !== null">
-                {{ formatBytes(quota.warn_bytes) }} &middot; {{ actionLabel(quota.warn_action) }}
-              </template>
-              <span
-                v-else
-                class="muted"
-                >Not set</span
-              >
-            </td>
-            <td>
-              <template v-if="quota.configured && quota.critical_bytes !== null">
-                {{ formatBytes(quota.critical_bytes) }} &middot;
-                {{ actionLabel(quota.critical_action) }}
-              </template>
-              <span
-                v-else
-                class="muted"
-                >Not set</span
-              >
-            </td>
-            <td>
-              <span
-                class="status-badge"
-                :class="`badge-${statusFor(quota)}`"
-              >
-                {{ statusLabel(quota) }}
-              </span>
-            </td>
-            <td class="actions-cell">
-              <button
-                class="btn btn-sm btn-ghost"
-                @click="startEdit(quota)"
-              >
-                {{ quota.configured ? 'Edit' : 'Configure' }}
-              </button>
-              <button
-                v-if="quota.configured"
-                class="btn btn-sm btn-ghost btn-danger-text"
-                :disabled="deleteLoading === quota.ssh_host"
-                @click="removeQuota(quota)"
-              >
-                Remove
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
     </div>
 
     <div
@@ -400,12 +324,6 @@ onMounted(loadQuotas)
   color: var(--danger);
 }
 
-.table-wrap {
-  overflow-x: auto;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-}
-
 .quota-card-list {
   display: flex;
   flex-direction: column;
@@ -490,38 +408,8 @@ onMounted(loadQuotas)
   gap: 0.375rem;
 }
 
-.data-table {
-  width: 100%;
-  min-width: 640px;
-  border-collapse: collapse;
-  font-size: 0.875rem;
-}
-
-.data-table th {
-  text-align: left;
-  padding: 0.625rem 0.75rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border);
-}
-
-.data-table td {
-  padding: 0.625rem 0.75rem;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-primary);
-}
-
-.name-cell {
-  font-weight: 600;
-}
-
 .muted {
   color: var(--text-muted);
-}
-
-.actions-cell {
-  display: flex;
-  gap: 0.375rem;
 }
 
 .status-badge {
@@ -558,44 +446,44 @@ onMounted(loadQuotas)
 }
 
 .modal h2 {
-  font-size: 1.05rem;
-  font-weight: 700;
   color: var(--text-primary);
   margin: 0 0 1rem;
+  font-weight: 700;
+  font-size: 1.05rem;
 }
 
 .modal-form {
+  gap: 0.75rem;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
 }
 
 .form-group {
+  gap: 0.25rem;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
 }
 
 .form-group label {
-  font-size: 0.8125rem;
   font-weight: 500;
   color: var(--text-secondary);
+  font-size: 0.8125rem;
 }
 
 .form-group input,
 .form-group select {
+  color: var(--text-primary);
+  font-size: 0.875rem;
   padding: 0.5rem 0.75rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-input);
-  color: var(--text-primary);
-  font-size: 0.875rem;
 }
 
 .form-group input:focus,
 .form-group select:focus {
-  outline: none;
   border-color: var(--accent);
+  outline: none;
 }
 
 .toggle-row {
@@ -605,11 +493,11 @@ onMounted(loadQuotas)
 }
 
 .modal-error {
-  font-size: 0.8125rem;
+  border-radius: var(--radius-sm);
   color: var(--danger);
+  font-size: 0.8125rem;
   padding: 0.5rem 0.75rem;
   background: var(--danger-subtle);
-  border-radius: var(--radius-sm);
 }
 
 .modal-actions {

@@ -69,20 +69,13 @@ fn build_test_state(pool: PgPool) -> server::AppState {
         tunnel_manager,
         log_buffer: server::log_buffer::LogBuffer::default(),
         notification_service: server::notifications::NotificationService::new(pool),
-        pending_dryruns: std::sync::Arc::new(tokio::sync::Mutex::new(
-            std::collections::HashMap::new(),
-        )),
-        pending_restores: std::sync::Arc::new(tokio::sync::Mutex::new(
-            std::collections::HashMap::new(),
-        )),
-        pending_migrations: std::sync::Arc::new(tokio::sync::Mutex::new(
-            std::collections::HashMap::new(),
-        )),
-        pending_deletes: std::sync::Arc::new(tokio::sync::Mutex::new(
-            std::collections::HashMap::new(),
-        )),
+        pending_dryruns: server::new_pending_map(),
+        pending_restores: server::new_pending_map(),
+        pending_migrations: server::new_pending_map(),
+        pending_deletes: server::new_pending_map(),
         completion_bus: server::ws::completion_bus::CompletionBus::new(),
         repo_op_tracker: server::repo_op_tracker::RepoOpTracker::default(),
+        background_task_tracker: server::background_tasks::BackgroundTaskTracker::default(),
         repo_lock: server::RepoLock::default(),
         import_tasks: server::ImportTaskRegistry::default(),
         shutdown_token: tokio_util::sync::CancellationToken::new(),
@@ -2640,6 +2633,7 @@ async fn test_scheduler_dispatches_repo_syncs_concurrently() {
         &ui_broadcast,
         &repo_op_tracker,
         &repo_lock,
+        &server::background_tasks::BackgroundTaskTracker::default(),
     )
     .await;
     let dispatch_elapsed = started.elapsed();

@@ -413,6 +413,7 @@ async fn run_initial_import_task(task: InitialImportTask) {
                 &encryption_key,
                 repo_id,
                 &ui_broadcast,
+                &task_state.background_task_tracker,
             )
             .await {
                 Ok(_) => {
@@ -2293,6 +2294,7 @@ async fn import_and_persist_archives(
     timeout: Duration,
     to_import: &[&serde_json::Value],
     importing_msg: &str,
+    background_task_tracker: &crate::background_tasks::BackgroundTaskTracker,
 ) -> Result<ImportOutcome, ApiError> {
     let total = to_import.len();
     publish_import_progress(
@@ -2352,6 +2354,7 @@ async fn import_and_persist_archives(
         env.clone(),
         repo_id,
         archive_names.clone(),
+        background_task_tracker.clone(),
     );
 
     Ok(ImportOutcome {
@@ -2366,6 +2369,7 @@ async fn sync_archives(
     repo_id: i64,
     ui_broadcast: &UiBroadcast,
     mode: SyncMode<'_>,
+    background_task_tracker: &crate::background_tasks::BackgroundTaskTracker,
 ) -> Result<(u64, u64), ApiError> {
     let (borg_repo, env) = super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
     let timeout = get_borg_timeout(pool).await;
@@ -2423,6 +2427,7 @@ async fn sync_archives(
         timeout,
         &to_import,
         &importing_msg,
+        background_task_tracker,
     )
     .await?;
 
@@ -2480,6 +2485,7 @@ pub async fn sync_existing_archives(
     encryption_key: &[u8; 32],
     repo_id: i64,
     ui_broadcast: &UiBroadcast,
+    background_task_tracker: &crate::background_tasks::BackgroundTaskTracker,
 ) -> Result<(u64, u64), ApiError> {
     sync_archives(
         pool,
@@ -2487,6 +2493,7 @@ pub async fn sync_existing_archives(
         repo_id,
         ui_broadcast,
         SyncMode::Existing,
+        background_task_tracker,
     )
     .await
 }
@@ -2500,6 +2507,7 @@ pub async fn sync_new_archives(
     repo_id: i64,
     ui_broadcast: &UiBroadcast,
     repo_lock: &RepoLock,
+    background_task_tracker: &crate::background_tasks::BackgroundTaskTracker,
 ) -> Result<(u64, u64), ApiError> {
     sync_archives(
         pool,
@@ -2507,6 +2515,7 @@ pub async fn sync_new_archives(
         repo_id,
         ui_broadcast,
         SyncMode::New { repo_lock },
+        background_task_tracker,
     )
     .await
 }
@@ -2517,8 +2526,10 @@ fn enrich_archive_stats_background(
     env: std::collections::HashMap<String, String>,
     repo_id: i64,
     archive_names: Vec<String>,
+    background_task_tracker: crate::background_tasks::BackgroundTaskTracker,
 ) {
     tokio::spawn(async move {
+        let _task_guard = background_task_tracker.begin();
         // Immutable archives that already have stats never change, so only query
         // borg for the ones still missing them.
         let needing = match db::list_archive_names_needing_stats(&pool, repo_id).await {
@@ -3120,8 +3131,14 @@ async fn run_repo_sync_task(task: RepoSyncTask) {
                 }
             }
 
-            let result =
-                sync_existing_archives(&pool, &encryption_key, repo_id, &ui_broadcast).await;
+            let result = sync_existing_archives(
+                &pool,
+                &encryption_key,
+                repo_id,
+                &ui_broadcast,
+                &task_state.background_task_tracker,
+            )
+            .await;
             let elapsed = start.elapsed();
 
             let (imported, removed) = match result {

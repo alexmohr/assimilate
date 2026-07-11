@@ -118,7 +118,36 @@ describe('ServerQuotasView', () => {
     )
   })
 
-  it('removes a configured quota', async () => {
+  it('cancels edit and resets the form', async () => {
+    mockList.mockResolvedValue([configuredQuota])
+    const wrapper = renderWithPlugins(ServerQuotasView)
+    await flushPromises()
+
+    await wrapper.find('button.btn-ghost').trigger('click')
+    await nextTick()
+    expect(wrapper.find('.overlay').exists()).toBe(true)
+
+    await wrapper.find('.overlay').trigger('click.self')
+    await nextTick()
+    expect(wrapper.find('.overlay').exists()).toBe(false)
+  })
+
+  it('shows an error when saving a quota fails', async () => {
+    mockList.mockResolvedValue([unconfiguredQuota])
+    mockUpsert.mockRejectedValue(new Error('save failed'))
+    const wrapper = renderWithPlugins(ServerQuotasView)
+    await flushPromises()
+
+    await wrapper.find('button.btn-ghost').trigger('click')
+    await nextTick()
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('API error')
+  })
+
+  it('removes a configured quota and reloads', async () => {
     mockList.mockResolvedValue([configuredQuota])
     mockDelete.mockResolvedValue(undefined)
     const wrapper = renderWithPlugins(ServerQuotasView)
@@ -128,6 +157,7 @@ describe('ServerQuotasView', () => {
     await flushPromises()
 
     expect(mockDelete).toHaveBeenCalledWith('backup.example.com')
+    expect(mockList).toHaveBeenCalledTimes(2)
   })
 
   it('renders quota entries as cards', async () => {

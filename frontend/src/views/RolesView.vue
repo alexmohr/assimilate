@@ -486,8 +486,8 @@ onMounted(fetchRoles)
       <div class="modal">
         <h2>Delete Role</h2>
         <p class="confirm-text">
-          Deleting role <strong>{{ deleteTarget?.name }}</strong
-          > will permanently remove it. Users assigned this role will lose its permissions.
+          Deleting role <strong>{{ deleteTarget?.name }}</strong> will permanently remove it. Users
+          assigned this role will lose its permissions.
         </p>
         <div
           v-if="deleteError"

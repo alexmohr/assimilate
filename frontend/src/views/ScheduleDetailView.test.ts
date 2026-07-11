@@ -977,14 +977,23 @@ describe('ScheduleDetailView - Backups tab', () => {
       {
         id: 1,
         status: 'success',
-        archive_name: 'test-archive-2026-06-01',
-        started_at: '2026-06-01T02:00:00Z',
+        archive_name: 'test-archive-2026-06-02',
+        started_at: '2026-06-02T02:00:00Z',
         original_size: 500,
         agent_id: 10,
         hostname: 'web-server-01',
       },
       {
         id: 2,
+        status: 'success',
+        archive_name: 'test-archive-2026-06-01',
+        started_at: '2026-06-01T02:00:00Z',
+        original_size: 400,
+        agent_id: 10,
+        hostname: 'web-server-01',
+      },
+      {
+        id: 3,
         status: 'success',
         archive_name: null,
         started_at: '2026-06-01T03:00:00Z',
@@ -1001,10 +1010,16 @@ describe('ScheduleDetailView - Backups tab', () => {
     await backupsTab!.trigger('click')
     await flushPromises()
 
-    // Should show the archive row for the report with archive_name
-    expect(wrapper.text()).toContain('test-archive-2026-06-01')
+    // Should show the archive rows sorted newest-first
+    const texts = wrapper.text()
+    expect(texts).toContain('test-archive-2026-06-02')
+    expect(texts).toContain('test-archive-2026-06-01')
+    // Should appear in sort order (newest first)
+    expect(texts.indexOf('test-archive-2026-06-02')).toBeLessThan(
+      texts.indexOf('test-archive-2026-06-01'),
+    )
     // Should NOT include the report without archive_name
-    expect(wrapper.text()).not.toContain('No backup archives found')
+    expect(texts).not.toContain('No backup archives found')
   })
 
   it('clicking an archive row selects it and shows file browser', async () => {

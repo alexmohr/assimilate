@@ -464,30 +464,10 @@ import { FilterMatchMode } from '@primevue/core/api'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import { Folder, File, Download } from '@lucide/vue'
-import { apiClient } from '../api/client'
 import { formatBytes, formatDate } from '../utils/format'
-import { extractError } from '../utils/error'
 import BaseSpinner from './BaseSpinner.vue'
-import type { ContentsResponse, ContentEntryResponse } from '../types/generated'
-
-const DIRECTORY_ENTRY_TYPE = 'd'
-const ROOT_PATH = '/'
-const CURRENT_DIR_MARKER = '.'
-const PARENT_DIR_MARKER = '..'
-
-type ArchiveIndexStatus = 'pending' | 'indexing' | 'done' | 'failed'
-
-function normalizeIndexStatus(status: string): ArchiveIndexStatus {
-  if (status === 'done') return 'done'
-  if (status === 'failed') return 'failed'
-  if (status === 'indexing') return 'indexing'
-  return 'pending'
-}
-
-interface BreadcrumbSegment {
-  label: string
-  path: string
-}
+import { useArchiveBrowser } from '../composables/useArchiveBrowser'
+import type { ArchiveEntryResponse } from '../types/generated'
 
 interface DisplayEntry {
   type: string
@@ -504,60 +484,16 @@ const props = defineProps<{
   archiveName: string | null
 }>()
 
-const currentPath = ref(ROOT_PATH)
-const contents = ref<ContentEntryResponse[]>([])
-const contentsLoading = ref(false)
-const contentsError = ref<string | null>(null)
-const indexing = ref(false)
+const repoIdRef = computed(() => props.repoId ?? 0)
+const browser = useArchiveBrowser(repoIdRef)
 
-let pollTimer: ReturnType<typeof setInterval> | null = null
-
-function stopPolling(): void {
-  if (pollTimer !== null) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
-}
-
-function startPolling(archiveName: string, pendingPath: string): void {
-  if (props.repoId === null) return
-  stopPolling()
-  pollTimer = setInterval(async () => {
-    if (props.repoId === null) return
-    try {
-      const res = await apiClient.get<{ status: string; error?: string }>(
-        `/repos/${props.repoId}/archives/${encodeURIComponent(archiveName)}/index-status`,
-      )
-      const status = normalizeIndexStatus(res.data.status)
-      if (status === 'done') {
-        stopPolling()
-        indexing.value = false
-        await loadContents(pendingPath)
-      } else if (status === 'failed') {
-        stopPolling()
-        indexing.value = false
-        contentsError.value = res.data.error ?? 'Archive indexing failed'
-      }
-    } catch (e: unknown) {
-      stopPolling()
-      indexing.value = false
-      contentsError.value = extractError(e)
-    }
-  }, 2000)
-}
-
-const breadcrumbs = computed<BreadcrumbSegment[]>(() => {
-  const path = currentPath.value
-  if (path === ROOT_PATH) return [{ label: '/', path: ROOT_PATH }]
-  const parts = path.replace(/^\//, '').split('/')
-  const segments: BreadcrumbSegment[] = [{ label: '~', path: '/' }]
-  let accumulated = ''
-  for (const part of parts) {
-    accumulated += `/${part}`
-    segments.push({ label: part, path: accumulated })
-  }
-  return segments
-})
+const breadcrumbs = browser.breadcrumbs
+const contents = browser.contents
+const contentsLoading = browser.contentsLoading
+const contentsError = browser.contentsError
+const indexing = browser.indexing
+const navigateTo = browser.navigateTo
+const downloadEntry = browser.downloadEntry
 
 const browserFilters = ref({
   displayName: { value: '', matchMode: FilterMatchMode.CONTAINS },
@@ -565,145 +501,62 @@ const browserFilters = ref({
   mtime: { value: '', matchMode: FilterMatchMode.CONTAINS },
 })
 
-const browserEntries = computed<DisplayEntry[]>(() => {
-  const currentDir = currentPath.value.replace(/^\//, '')
-  const dirList = contents.value
-    .filter((e) => e.type === DIRECTORY_ENTRY_TYPE && e.path !== currentDir)
-    .sort((a, b) => a.path.localeCompare(b.path))
-  const fileList = contents.value
-    .filter((e) => e.type !== DIRECTORY_ENTRY_TYPE)
-    .sort((a, b) => a.path.localeCompare(b.path))
+const browserEntries = computed<DisplayEntry[]>(() => [
+  ...browser.dirs.value.map((d) => ({
+    type: d.type,
+    path: d.path,
+    size: Number(d.size),
+    mtime: d.mtime,
+    mode: d.mode,
+    displayName: d.displayName,
+    isDir: true,
+  })),
+  ...browser.files.value.map((f) => ({
+    type: f.type,
+    path: f.path,
+    size: Number(f.size),
+    mtime: f.mtime,
+    mode: f.mode,
+    displayName: browser.entryName(f),
+    isDir: false,
+  })),
+])
 
-  const entries: DisplayEntry[] = []
-
-  const currentEntry = contents.value.find(
-    (e) => e.type === DIRECTORY_ENTRY_TYPE && e.path === currentDir,
-  )
-  if (currentEntry) {
-    entries.push({
-      type: currentEntry.type,
-      path: currentEntry.path,
-      size: Number(currentEntry.size),
-      mtime: currentEntry.mtime,
-      mode: currentEntry.mode,
-      displayName: '.',
-      isDir: true,
-    })
-  } else if (currentPath.value === ROOT_PATH) {
-    entries.push({
-      type: 'd',
-      path: '',
-      size: 0,
-      mtime: '',
-      mode: '',
-      displayName: '.',
-      isDir: true,
-    })
-  }
-
-  if (currentPath.value !== ROOT_PATH) {
-    const parentPath = currentPath.value.replace(/\/[^/]+$/, '') || '/'
-    entries.push({
-      type: 'd',
-      path: parentPath,
-      size: 0,
-      mtime: '',
-      mode: '',
-      displayName: '..',
-      isDir: true,
-    })
-  }
-
-  return [
-    ...entries,
-    ...[...dirList, ...fileList].map((e) => ({
-      type: e.type,
-      path: e.path,
-      size: Number(e.size),
-      mtime: e.mtime,
-      mode: e.mode,
-      displayName: entryName(e),
-      isDir: e.type === DIRECTORY_ENTRY_TYPE,
-    })),
-  ]
-})
-
-async function loadContents(path: string): Promise<void> {
-  if (props.repoId === null || props.archiveName === null) return
-  contentsLoading.value = true
-  contentsError.value = null
-  const normalizedPath = path === ROOT_PATH ? ROOT_PATH : `/${path.replace(/^\//, '')}`
-  currentPath.value = normalizedPath
-  try {
-    const apiPath = normalizedPath === ROOT_PATH ? undefined : normalizedPath.replace(/^\//, '')
-    const res = await apiClient.get<ContentsResponse>(
-      `/repos/${props.repoId}/archives/${encodeURIComponent(props.archiveName)}/contents`,
-      { params: apiPath ? { path: apiPath } : {} },
-    )
-    const { index_status, entries } = res.data
-    const status = normalizeIndexStatus(index_status)
-    if (status === 'done' || status === 'failed') {
-      indexing.value = false
-      contents.value = entries.filter(
-        (e) => e.path !== CURRENT_DIR_MARKER && e.path !== PARENT_DIR_MARKER,
-      )
-    } else {
-      indexing.value = true
-      contents.value = []
-      startPolling(props.archiveName, path)
-    }
-  } catch (e: unknown) {
-    contentsError.value = extractError(e)
-  } finally {
-    contentsLoading.value = false
-  }
-}
-
-function navigateTo(path: string): void {
-  loadContents(path)
-}
-
-function entryName(entry: ContentEntryResponse): string {
-  return entry.path.split('/').pop() ?? entry.path
-}
-
-function downloadEntry(entry: ContentEntryResponse): void {
-  if (props.repoId === null || props.archiveName === null) return
-  const archiveName = encodeURIComponent(props.archiveName)
-  const encodedPath = encodeURIComponent(entry.path)
-  const isDir = entry.type === DIRECTORY_ENTRY_TYPE
-  const url = isDir
-    ? `/api/repos/${props.repoId}/archives/${archiveName}/export?path=${encodedPath}`
-    : `/api/repos/${props.repoId}/archives/${archiveName}/extract?path=${encodedPath}`
-  const a = document.createElement('a')
-  a.href = url
-  a.download = isDir ? `${entryName(entry)}.tar.lz4` : entryName(entry)
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
+function setArchive(name: string): void {
+  browser.selectedArchive.value = {
+    name,
+    start: '',
+    hostname: '',
+    comment: '',
+    original_size: 0,
+    deduplicated_size: 0,
+    matched: null,
+    agent_hostname: null,
+  } as ArchiveEntryResponse
+  browser.loadContents('/')
 }
 
 function reset(): void {
-  stopPolling()
-  indexing.value = false
-  currentPath.value = ROOT_PATH
-  contents.value = []
-  contentsError.value = null
-  contentsLoading.value = false
+  browser.stopPolling()
+  browser.selectedArchive.value = null
+  browser.currentPath.value = '/'
+  browser.contents.value = []
+  browser.contentsError.value = null
+  browser.indexing.value = false
+  browser.contentsLoading.value = false
 }
 
 watch(
   () => props.archiveName,
-  (newName) => {
+  (name) => {
     reset()
-    if (newName) {
-      loadContents(ROOT_PATH)
-    }
+    if (name) setArchive(name)
   },
+  { immediate: true },
 )
 
 onBeforeUnmount(() => {
-  stopPolling()
+  browser.stopPolling()
 })
 </script>
 

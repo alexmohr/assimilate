@@ -36,10 +36,14 @@ const { waitForAllChecks } = require("./lib/wait-for-check");
 //   workflow's own jobs (the gate job that already ran, and the job this
 //   script is running inside right now) - waiting on the latter would wait
 //   on itself forever.
-// - GATE_CHECK_NAME ("PR Merge Gate") is derived FROM the review outcome
-//   (it's only "success" once the PR is reviewDecision APPROVED), so at
-//   this point - before Claude has reviewed anything - it can never show
-//   success yet. Waiting on it would make run_claude permanently false.
+// - GATE_CHECK_NAME ("PR Merge Gate") is a derived, point-in-time check:
+//   this script's own syncLabels() call above republishes it right before
+//   the wait starts, so the fresh run only reflects the deterministic gates
+//   (CI, coverage-diff, duplicate-code, ...) as of that instant - almost
+//   certainly still pending, since those checks haven't necessarily
+//   finished yet. Every sync publishes a brand-new check run rather than
+//   updating one in place, so this snapshot never changes to "success" on
+//   its own. Waiting on it would make run_claude permanently false.
 const SELF_CHECK_NAMES = ["Check if a review is actually needed", "Review PR", syncLabels.GATE_CHECK_NAME];
 
 module.exports = async ({ github, context, core, prNumber, headSha, force }) => {

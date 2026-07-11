@@ -332,18 +332,19 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
   const hasDuplicateCode = existingLabels.includes(DUPLICATE_CODE_LABEL.name);
 
   // Hard guarantee: claude-approved must never survive while a pre-flight
-  // stage is failing, no matter how it got set. The status precedence chain
-  // below already refuses to derive `ready to merge` from it in that case,
-  // but that alone still leaves a misleading label on the PR. pre-review-
-  // checks.js already waits for both stages' check runs to conclude before
-  // ever invoking Claude, so this isn't the primary defense anymore - it's
-  // for a new push landing on the PR while Claude's review of the previous
-  // commit is still in progress, which starts fresh coverage-diff/
-  // duplicate-code runs that could fail before Claude finishes and
-  // approves. Strip it here, unconditionally (not gated on eventAction), so
-  // the very next sync - including the one each of those two workflows
-  // triggers itself right after setting its failure label - corrects it
-  // immediately.
+  // stage is failing, no matter how it got set. `ready to merge` no longer
+  // depends on any review verdict (see the status precedence chain below),
+  // so this is purely about not leaving a misleading label on the PR - a
+  // human glancing at labels shouldn't see "approved" next to a currently
+  // failing precheck. pre-review-checks.js already waits for both stages'
+  // check runs to conclude before ever invoking Claude, so this isn't the
+  // primary defense anymore - it's for a new push landing on the PR while
+  // Claude's review of the previous commit is still in progress, which
+  // starts fresh coverage-diff/duplicate-code runs that could fail before
+  // Claude finishes and approves. Strip it here, unconditionally (not gated
+  // on eventAction), so the very next sync - including the one each of those
+  // two workflows triggers itself right after setting its failure label -
+  // corrects it immediately.
   if ((hasCoverageFailed || hasDuplicateCode) && existingLabels.includes(REVIEW_VERDICT_LABELS.APPROVED.name)) {
     await github.rest.issues
       .removeLabel({ owner, repo, issue_number: prNumber, name: REVIEW_VERDICT_LABELS.APPROVED.name })
@@ -389,17 +390,23 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
     status = STATUS_LABELS.CHANGES_REQUESTED;
     summary = "A reviewer requested changes — address them and re-request review.";
   } else if (needsHuman) {
-    // Even an approved, green PR is capped at "needs review" until a human
-    // clears the sign-off gate by removing the label themselves.
+    // Even a green PR is capped at "needs review" until a human clears the
+    // sign-off gate by removing the label themselves.
     status = STATUS_LABELS.NEEDS_REVIEW;
     summary =
       "This PR requires a human sign-off (`needs human review`). Only a human removing that label counts as sign-off.";
-  } else if (reviewDecision === "APPROVED" && ciConclusion === "success") {
+  } else if (ciConclusion === "success") {
+    // An approving review is not required: waiting on approval when CI
+    // hasn't even confirmed the commit builds/passes is a contradiction
+    // (nobody should approve a red build), and the deterministic gates above
+    // (CI, merge conflicts, coverage/duplication, an active changes-requested
+    // verdict, sensitive-path sign-off) already cover the cases that matter.
+    // See skills/review/SKILL.md.
     status = STATUS_LABELS.READY_TO_MERGE;
-    summary = "CI is green and the PR has been approved — ready to merge.";
+    summary = "CI is green — ready to merge.";
   } else {
     status = STATUS_LABELS.NEEDS_REVIEW;
-    summary = "Awaiting an approving review and/or CI completion.";
+    summary = "Awaiting CI completion.";
   }
 
   core.info(

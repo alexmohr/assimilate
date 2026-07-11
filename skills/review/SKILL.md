@@ -64,8 +64,18 @@ labels per the Workflow section to move them.
 | `precheck failed` | A deterministic pre-review stage failed | **Purely derived** — `sync-pr-labels.js` computes it fresh every run from `coverage failed` and/or `duplicate code`, never set directly by anything. This is the one label to look at if you just want "did any pre-flight stage fail" without caring which. See "Automated pre-flight checks" below |
 | `coverage failed` | The coverage-diff pre-review stage failed | Set only by `.github/scripts/analyze-coverage-diff.js` via the standalone `.github/workflows/coverage-diff-check.yml`. See "Automated pre-flight checks" below |
 | `duplicate code` | The duplicate-code-scan pre-review stage failed | Set only by `.github/scripts/analyze-duplication.js` via the standalone `.github/workflows/duplicate-code-check.yml`. See "Automated pre-flight checks" below |
-| `ready to merge` | Fully clear to merge | CI conclusion is `success` **and** review decision is `APPROVED` **and** no human sign-off is pending **and** neither `coverage failed` nor `duplicate code` is set |
+| `ready to merge` | Fully clear to merge | CI conclusion is `success` **and** no human sign-off is pending **and** neither `coverage failed` nor `duplicate code` is set **and** the review decision is not `CHANGES_REQUESTED`. An approving review is *not* required — see note below the table |
 | `needs human review` | Requires a human's sign-off before merge, regardless of agent review | Auto-applied when: the diff touches security/crypto/auth/SSH-forwarding code, CI/CD workflow files, `.github/scripts/`, `.pre-commit-config.yaml`, `.devcontainer/`, dependency lockfiles, `deny.toml`, or DB migrations; the diff adds a new `#[allow(...)]`/`deny.toml` `ignore` suppression; the PR title or body mentions "security"; or the PR closes an issue whose title, body, or labels mention "security" |
+
+`ready to merge` does not require an approving review. Waiting on an
+approval when CI hasn't even confirmed the commit builds/passes is a
+contradiction — nobody should approve a red build — so the deterministic
+gates (CI, merge conflicts, coverage/duplication, an active
+`CHANGES_REQUESTED` verdict, sensitive-path sign-off) are what actually
+matter; the absence of an approval by itself is not a blocker. A review is
+still worth doing and still worth requesting via the normal flow (Workflow
+section above) — an explicit `changes requested` verdict still blocks the
+gate the same as any other failing precheck.
 
 `coverage failed` and `duplicate code` are two independent stages and can
 both be present on a PR at once — neither erases the other. Each owns its
@@ -155,9 +165,14 @@ both to avoid nonsensical outcomes rather than to skip real signal:
 * `claude-review.yml`'s own two jobs ("Check if a review is actually
   needed", "Review PR") - the latter is literally the job this script is
   running inside, so waiting on it would wait forever.
-* `PR Merge Gate` - it's a *derived* check (only `success` once the PR's
-  review decision is `APPROVED`), so at this point, before Claude has
-  reviewed anything, it can never show success yet. Waiting on it would make
+* `PR Merge Gate` - it's a *derived*, point-in-time check: `pre-review-
+  checks.js` force-syncs labels (and republishes this exact check run) right
+  before it starts waiting, so the freshly-created run already reflects
+  whatever the deterministic gates (coverage-diff, duplicate-code, CI) look
+  like *at that instant* - almost certainly still pending or failing, since
+  those other checks haven't necessarily finished yet. Every sync publishes
+  a brand-new check run rather than updating one in place, so this snapshot
+  never changes to `success` on its own; waiting on it would make
   `run_claude` permanently false.
 
 This is deliberate: `coverage-diff-check.yml` and `claude-review.yml` both

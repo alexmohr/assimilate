@@ -386,6 +386,7 @@ onMounted(fetchRoles)
             />
           </div>
           <div class="permissions-grid">
+            <!-- role-create-permissions -->
             <label
               v-for="perm in PERMISSION_LABELS"
               :key="perm.key"
@@ -437,6 +438,7 @@ onMounted(fetchRoles)
           @submit.prevent="submitEdit"
         >
           <div class="permissions-grid">
+            <!-- role-edit-permissions -->
             <label
               v-for="perm in PERMISSION_LABELS"
               :key="perm.key"
@@ -483,6 +485,7 @@ onMounted(fetchRoles)
     >
       <div class="modal">
         <h2>Delete Role</h2>
+        <!-- role-delete-confirm -->
         <p class="confirm-text">
           Are you sure you want to delete the role <strong>{{ deleteTarget?.name }}</strong
           >? Users assigned this role will lose its permissions.

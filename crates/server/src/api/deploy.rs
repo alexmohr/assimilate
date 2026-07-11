@@ -423,22 +423,8 @@ mod tests {
     #[test]
     fn require_upgrade_agent_allows_with_permission() {
         let row = db::RoleRow {
-            id: 0,
-            name: String::new(),
-            can_create_agent: false,
-            can_delete_agent: false,
-            can_delete_own_agent: false,
-            can_create_repo: false,
-            can_delete_repo: false,
-            can_delete_own_repo: false,
-            can_create_schedule: false,
-            can_delete_schedule: false,
-            can_delete_own_schedule: false,
-            can_manage_tags: false,
-            can_view_all_repos: false,
-            can_manage_tunnels: false,
             can_upgrade_agent: true,
-            created_at: chrono::Utc::now(),
+            ..make_empty_role()
         };
         assert!(require_upgrade_agent(&row).is_ok());
     }
@@ -446,6 +432,21 @@ mod tests {
     #[test]
     fn require_upgrade_agent_denies_without_permission() {
         let row = db::RoleRow {
+            can_upgrade_agent: false,
+            ..make_empty_role()
+        };
+        let result = require_upgrade_agent(&row);
+        assert!(result.is_err());
+        match result {
+            Err(ApiError::Forbidden(msg)) => {
+                assert_eq!(msg, "upgrade agent permission required");
+            }
+            _ => panic!("expected Forbidden error"),
+        }
+    }
+
+    fn make_empty_role() -> db::RoleRow {
+        db::RoleRow {
             id: 0,
             name: String::new(),
             can_create_agent: false,
@@ -462,14 +463,6 @@ mod tests {
             can_manage_tunnels: false,
             can_upgrade_agent: false,
             created_at: chrono::Utc::now(),
-        };
-        let result = require_upgrade_agent(&row);
-        assert!(result.is_err());
-        match result {
-            Err(ApiError::Forbidden(msg)) => {
-                assert_eq!(msg, "upgrade agent permission required");
-            }
-            _ => panic!("expected Forbidden error"),
         }
     }
 }

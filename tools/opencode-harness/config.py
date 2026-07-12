@@ -47,7 +47,7 @@ class Config:
             repo_dir=repo_dir,
             base_branch=os.environ.get("HARNESS_BASE_BRANCH", "main"),
             poll_interval_seconds=_int("HARNESS_POLL_INTERVAL", 180),
-            opencode_model=os.environ.get("HARNESS_OPENCODE_MODEL") or None,
+            opencode_model=None,
             opencode_timeout_seconds=_int("HARNESS_OPENCODE_TIMEOUT", 1800),
             max_local_validation_attempts=_int("HARNESS_MAX_LOCAL_ATTEMPTS", 3),
             max_stuck_cycles=_int("HARNESS_MAX_STUCK_CYCLES", 3),
@@ -68,7 +68,7 @@ class Config:
         """One-line dump of every resolved setting, logged at startup so a
         misconfigured env var (e.g. set on its own line without `export`,
         so it never reached this process) is visible immediately instead of
-        only showing up three log lines later as an unexplained default."""
+        only showing up as an unexplained default several log lines later."""
         model = self.opencode_model or "(opencode default)"
         return (
             f"repo={self.repo} repo_dir={self.repo_dir} base_branch={self.base_branch} "

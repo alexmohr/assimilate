@@ -343,7 +343,7 @@ def main() -> int:
     parser.add_argument(
         "--model",
         default=None,
-        help="opencode model, e.g. deepseek/deepseek-v4-flash (overrides HARNESS_OPENCODE_MODEL)",
+        help="opencode model, e.g. deepseek/deepseek-v4-flash (defaults to opencode's own default)",
     )
     args = parser.parse_args()
 

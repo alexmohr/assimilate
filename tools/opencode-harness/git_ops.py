@@ -35,12 +35,39 @@ def fetch(cwd: Path, ref: str) -> None:
     _run(cwd, ["fetch", "origin", ref])
 
 
+_STALE_LOCK_NAMES = ("index.lock", "HEAD.lock", "MERGE_HEAD.lock", "shallow.lock")
+
+
+def _clear_stale_locks(cwd: Path) -> None:
+    """Removes leftover git lock files from a subprocess killed mid-operation.
+
+    opencode runs under a hard timeout and gets SIGKILL'd if it overruns -
+    if that happens while it (or a tool it invoked, e.g. a pre-commit hook)
+    was mid-write to the index, the lock file it held never gets released.
+    Every subsequent git command in this checkout then fails with "Unable to
+    create '.git/index.lock': File exists" forever, since nothing is left
+    alive to remove it. This is the harness's own recovery point for that -
+    called before the first git command of a fresh checkout, where it's safe
+    to assume no concurrent git process of ours is actually running.
+    """
+    git_dir = cwd / ".git"
+    for name in _STALE_LOCK_NAMES:
+        lock = git_dir / name
+        if lock.exists():
+            log.warning("removing stale git lock file: %s", lock)
+            lock.unlink()
+    for lock in git_dir.glob("refs/**/*.lock"):
+        log.warning("removing stale git lock file: %s", lock)
+        lock.unlink()
+
+
 def checkout_branch_at_remote(cwd: Path, branch: str) -> None:
     """Get a clean local checkout of `branch` matching origin exactly.
 
     Hard-resets rather than merging so a prior crashed/aborted harness run
     never leaves stale local edits in the way of a fresh attempt.
     """
+    _clear_stale_locks(cwd)
     fetch(cwd, branch)
     _run(cwd, ["checkout", "-B", branch, f"origin/{branch}"])
     _run(cwd, ["reset", "--hard", f"origin/{branch}"])
@@ -48,6 +75,7 @@ def checkout_branch_at_remote(cwd: Path, branch: str) -> None:
 
 
 def checkout_new_branch_from_base(cwd: Path, branch: str, base: str) -> None:
+    _clear_stale_locks(cwd)
     fetch(cwd, base)
     _run(cwd, ["checkout", "-B", branch, f"origin/{base}"])
     _run(cwd, ["clean", "-fdx", "--exclude=.state.json"])

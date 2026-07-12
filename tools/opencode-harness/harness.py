@@ -229,60 +229,59 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
     return True
 
 
+def _check_and_fix_pr(cfg: Config, state: HarnessState, number: int) -> bool | None:
+    """Checks one PR and fixes it if actionable.
+
+    Returns True if a fix was pushed, False if there was nothing actionable
+    on it right now, or None if it should be skipped entirely (merged,
+    closed, ignored, or still stuck with no new commits).
+    """
+    detail = gh.get_pr(cfg.repo, number)
+
+    if cfg.ignore_label in detail.labels:
+        return None
+    if detail.state == "MERGED":
+        state.clear_pr(number)
+        log.info("PR #%d merged", number)
+        return None
+    if detail.state == "CLOSED":
+        state.clear_pr(number)
+        log.info("PR #%d closed without merging, skipping", number)
+        return None
+
+    if cfg.stuck_label in detail.labels:
+        head_sha = gh.get_pr_head_sha(cfg.repo, number)
+        recorded = state.pr_attempts.get(str(number))
+        if recorded is not None and recorded.last_head_sha == head_sha:
+            log.info("PR #%d still stuck (no new commits), skipping", number)
+            return None
+        log.info("PR #%d has new commits since being marked stuck; clearing and retrying", number)
+        gh.remove_label(cfg.repo, number, cfg.stuck_label)
+
+    if not detail.needs_fix:
+        log.info("PR #%d: nothing actionable (labels=%s)", number, detail.labels)
+        return False
+
+    return handle_pr_fix(cfg, state, detail)
+
+
 def process_prs(cfg: Config, state: HarnessState, prs: list[PrSummary]) -> bool:
     """Handles at most one actionable PR. Returns True if a fix was pushed."""
     for summary in prs:
-        if cfg.ignore_label in summary.labels:
-            continue
-
-        detail = gh.get_pr(cfg.repo, summary.number)
-
-        if detail.state == "MERGED":
-            state.clear_pr(summary.number)
-            log.info("PR #%d merged", summary.number)
-            continue
-        if detail.state == "CLOSED":
-            state.clear_pr(summary.number)
-            log.info("PR #%d closed without merging, skipping", summary.number)
-            continue
-
-        if cfg.stuck_label in detail.labels:
-            head_sha = gh.get_pr_head_sha(cfg.repo, summary.number)
-            recorded = state.pr_attempts.get(str(summary.number))
-            if recorded is not None and recorded.last_head_sha == head_sha:
-                log.info("PR #%d still stuck (no new commits), skipping", summary.number)
-                continue
-            log.info(
-                "PR #%d has new commits since being marked stuck; clearing and retrying",
-                summary.number,
-            )
-            gh.remove_label(cfg.repo, summary.number, cfg.stuck_label)
-
-        if not detail.needs_fix:
-            log.info("PR #%d: nothing actionable (labels=%s)", summary.number, detail.labels)
-            continue
-
-        return handle_pr_fix(cfg, state, detail)
-
+        result = _check_and_fix_pr(cfg, state, summary.number)
+        if result:
+            return True
     return False
 
 
-def process_issues(cfg: Config, state: HarnessState) -> bool:
-    """Implements the newest actionable open issue. Returns True if a PR was opened."""
-    issues = gh.list_open_issues(cfg.repo)
-    candidates = [
-        i
-        for i in issues
-        if cfg.ignore_label not in i["labels"] and cfg.stuck_label not in i["labels"]
-    ]
-    if not candidates:
-        log.info("no open PRs and no actionable open issues; idle this cycle")
-        return False
+def process_single_pr(cfg: Config, state: HarnessState, number: int) -> bool:
+    """Handles a specific PR (--pr N) regardless of auto-selection order."""
+    return bool(_check_and_fix_pr(cfg, state, number))
 
-    issue = candidates[0]
+
+def _implement_issue(cfg: Config, state: HarnessState, issue: dict) -> bool:
+    """Implements `issue` on a new branch and opens a PR. Returns True on success."""
     number = issue["number"]
-    log.info("no open PRs; picking up newest open issue #%d: %s", number, issue["title"])
-
     if cfg.dry_run:
         log.info("[dry-run] would implement issue #%d now", number)
         return False
@@ -320,9 +319,41 @@ def process_issues(cfg: Config, state: HarnessState) -> bool:
     return True
 
 
+def process_issues(cfg: Config, state: HarnessState) -> bool:
+    """Implements the newest actionable open issue. Returns True if a PR was opened."""
+    issues = gh.list_open_issues(cfg.repo)
+    candidates = [
+        i
+        for i in issues
+        if cfg.ignore_label not in i["labels"] and cfg.stuck_label not in i["labels"]
+    ]
+    if not candidates:
+        log.info("no open PRs and no actionable open issues; idle this cycle")
+        return False
+
+    issue = candidates[0]
+    log.info("no open PRs; picking up newest open issue #%d: %s", issue["number"], issue["title"])
+    return _implement_issue(cfg, state, issue)
+
+
+def process_single_issue(cfg: Config, state: HarnessState, number: int) -> bool:
+    """Implements a specific issue (--issue N) regardless of auto-selection."""
+    issue = gh.get_issue(cfg.repo, number)
+    if issue.get("state") == "CLOSED":
+        log.info("issue #%d is already closed, nothing to do", number)
+        return False
+    log.info("targeting issue #%d: %s", number, issue["title"])
+    return _implement_issue(cfg, state, issue)
+
+
 def run_once(cfg: Config, state: HarnessState) -> bool:
     """Runs a single cycle. Returns True if it solved a problem (pushed a PR
     fix, or implemented an issue into a new PR) - see --max-solved."""
+    if cfg.target_pr is not None:
+        return process_single_pr(cfg, state, cfg.target_pr)
+    if cfg.target_issue is not None:
+        return process_single_issue(cfg, state, cfg.target_issue)
+
     prs = gh.list_open_prs(cfg.repo)
     if prs:
         did_work = process_prs(cfg, state, prs)
@@ -361,7 +392,23 @@ def main() -> int:
             "issue implemented into a new PR) - also settable via HARNESS_MAX_SOLVED"
         ),
     )
+    parser.add_argument(
+        "--pr",
+        type=int,
+        default=None,
+        metavar="N",
+        help="work only on PR N instead of auto-selecting - mutually exclusive with --issue",
+    )
+    parser.add_argument(
+        "--issue",
+        type=int,
+        default=None,
+        metavar="N",
+        help="implement only issue N instead of auto-selecting - mutually exclusive with --pr",
+    )
     args = parser.parse_args()
+    if args.pr is not None and args.issue is not None:
+        parser.error("--pr and --issue are mutually exclusive")
 
     cfg = Config.from_env()
     overrides: dict[str, object] = {}
@@ -373,6 +420,10 @@ def main() -> int:
         overrides["opencode_model"] = args.model
     if args.max_solved is not None:
         overrides["max_solved"] = args.max_solved
+    if args.pr is not None:
+        overrides["target_pr"] = args.pr
+    if args.issue is not None:
+        overrides["target_issue"] = args.issue
     if overrides:
         cfg = Config(**{**cfg.__dict__, **overrides})
 

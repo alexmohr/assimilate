@@ -13,9 +13,11 @@ which is exactly the silence this exists to remove.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import select
+import signal
 import subprocess
 import time
 from collections.abc import Callable
@@ -47,7 +49,14 @@ def run_streaming(
     only suitable for callers that treat output as human-readable log text,
     not ones that parse stdout programmatically.
     """
-    proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    # start_new_session puts the child in its own process group so a timeout
+    # kill can take out every process it spawned (e.g. opencode's bash tool
+    # calling pre-commit/git), not just the top-level one - killing only the
+    # parent leaves grandchildren running orphaned, still holding locks or
+    # writing files, which then breaks every subsequent command in this repo.
+    proc = subprocess.Popen(
+        cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True
+    )
     assert proc.stdout is not None
     fd = proc.stdout.fileno()
 
@@ -72,7 +81,8 @@ def run_streaming(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             timed_out = True
-            proc.kill()
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
             break
         ready, _, _ = select.select([fd], [], [], min(_HEARTBEAT_INTERVAL_SECONDS, remaining))
         if ready:

@@ -312,6 +312,13 @@ def list_open_issues(repo: str) -> list[dict[str, Any]]:
     return raw
 
 
+def get_issue(repo: str, number: int) -> dict[str, Any]:
+    fields = "number,title,body,state,labels"
+    raw = _run_json(["gh", "issue", "view", str(number), "--repo", repo, "--json", fields])
+    raw["labels"] = [label_name(lbl) for lbl in raw.get("labels", [])]
+    return raw
+
+
 def create_pr(repo: str, branch: str, base: str, title: str, body: str) -> str:
     out = _run(
         [

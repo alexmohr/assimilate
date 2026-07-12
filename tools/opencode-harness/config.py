@@ -37,6 +37,8 @@ class Config:
     max_local_validation_attempts: int
     max_stuck_cycles: int
     max_solved: int | None
+    target_pr: int | None
+    target_issue: int | None
     stuck_label: str
     ignore_label: str
     state_file: Path
@@ -54,10 +56,12 @@ class Config:
             base_branch=os.environ.get("HARNESS_BASE_BRANCH", "main"),
             poll_interval_seconds=_int("HARNESS_POLL_INTERVAL", 180),
             opencode_model=None,
-            opencode_timeout_seconds=_int("HARNESS_OPENCODE_TIMEOUT", 1800),
+            opencode_timeout_seconds=_int("HARNESS_OPENCODE_TIMEOUT", 14400),
             max_local_validation_attempts=_int("HARNESS_MAX_LOCAL_ATTEMPTS", 3),
             max_stuck_cycles=_int("HARNESS_MAX_STUCK_CYCLES", 3),
             max_solved=_optional_int("HARNESS_MAX_SOLVED"),
+            target_pr=None,
+            target_issue=None,
             stuck_label=os.environ.get("HARNESS_STUCK_LABEL", "opencode-harness-stuck"),
             ignore_label=os.environ.get("HARNESS_IGNORE_LABEL", "opencode-harness-ignore"),
             state_file=Path(
@@ -78,9 +82,14 @@ class Config:
         only showing up as an unexplained default several log lines later."""
         model = self.opencode_model or "(opencode default)"
         max_solved = self.max_solved if self.max_solved is not None else "unlimited"
+        target = "auto"
+        if self.target_pr is not None:
+            target = f"pr #{self.target_pr}"
+        elif self.target_issue is not None:
+            target = f"issue #{self.target_issue}"
         return (
             f"repo={self.repo} repo_dir={self.repo_dir} base_branch={self.base_branch} "
-            f"poll_interval={self.poll_interval_seconds}s model={model} "
+            f"poll_interval={self.poll_interval_seconds}s model={model} target={target} "
             f"opencode_timeout={self.opencode_timeout_seconds}s "
             f"max_local_attempts={self.max_local_validation_attempts} "
             f"max_stuck_cycles={self.max_stuck_cycles} max_solved={max_solved} "

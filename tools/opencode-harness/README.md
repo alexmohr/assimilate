@@ -89,7 +89,7 @@ are actually configured and working before pointing `--model` at one.
 | `HARNESS_REPO_DIR` | `.` | Path to the local clone the harness operates on |
 | `HARNESS_BASE_BRANCH` | `main` | Base branch for rebases and new issue branches |
 | `HARNESS_POLL_INTERVAL` | `180` | Seconds between cycles |
-| `HARNESS_OPENCODE_TIMEOUT` | `1800` | Seconds before an opencode invocation is killed |
+| `HARNESS_OPENCODE_TIMEOUT` | `14400` (4h) | Seconds before an opencode invocation is killed. Killing the whole process group, not just opencode itself, so nothing it spawned (e.g. a `pre-commit`/`cargo` call from its bash tool) is left running orphaned |
 | `HARNESS_MAX_LOCAL_ATTEMPTS` | `3` | Retries against local validation before giving up *this cycle* |
 | `HARNESS_MAX_STUCK_CYCLES` | `3` | Cycles the same problem may survive before the PR/issue is marked stuck |
 | `HARNESS_STUCK_LABEL` | `opencode-harness-stuck` | Harness-owned label, unrelated to the repo's status labels |
@@ -99,6 +99,13 @@ are actually configured and working before pointing `--model` at one.
 | `HARNESS_DRY_RUN` | `0` | `1` to log intended actions without invoking opencode or pushing |
 | `HARNESS_ONCE` | `0` | `1` to run a single cycle and exit (also `--once`) |
 | `HARNESS_MAX_SOLVED` | (unlimited) | Stop after successfully solving N problems - a PR fix pushed, or an issue implemented into a new PR (also `--max-solved N`). A cycle that finds nothing actionable doesn't count against this |
+
+`--pr N` and `--issue N` are CLI-only, like `--model` - point the harness at
+one specific PR or issue instead of letting it auto-select. Mutually
+exclusive with each other. `--pr N` keeps the normal fix-and-validate loop
+but always targets PR N (still respects `--once`/`--max-solved`/stuck
+tracking); `--issue N` implements that one issue and opens a PR for it,
+ignoring the "newest open issue" auto-pick entirely.
 
 ## Running it
 
@@ -112,6 +119,10 @@ python3 tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash
 
 # supervised: stop after 5 solved problems instead of running forever
 python3 tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash --max-solved 5
+
+# targeted: only work on a specific PR or issue instead of auto-selecting
+python3 tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash --pr 334
+python3 tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash --issue 231
 ```
 
 ### systemd (recommended for unattended, restart-surviving operation)

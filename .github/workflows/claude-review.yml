@@ -183,21 +183,65 @@ jobs:
             approve/request-changes if you're reviewing a different account's PR, or the
             claude-approved/claude-changes-requested labels if reviewing your own account's PR.
 
-      - name: Report unavailable automated review
-        if: steps.precheck.outputs.run_claude == 'true' && steps.claude.outcome == 'failure'
+      # Owns the full lifecycle of the "claude review failed" label and its
+      # marker comment (mirrors how analyze-duplication.js/analyze-coverage-
+      # diff.js each own their label): sets/refreshes both when this attempt
+      # errored, clears/updates both the moment a later attempt succeeds.
+      # upsertMarkedComment (shared with those two scripts) edits the same
+      # comment in place across retries instead of piling up a new one per
+      # failed attempt - see .github/scripts/lib/pr-comment.js.
+      - name: Sync claude-review-failed signal
+        if: steps.precheck.outputs.run_claude == 'true'
         uses: actions/github-script@v7
         with:
           script: |
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: Number("${{ steps.resolve.outputs.pr_number }}"),
-              body:
-                "Automated review via Claude was unavailable this run (quota exhausted or an error). " +
-                "This PR still needs review - a human can review it directly on GitHub, or any agent " +
-                "can review it per `skills/review/SKILL.md`. Comment `/claude-review` to retry once " +
-                "the automated path is available again.",
-            });
+            const { upsertMarkedComment } = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/lib/pr-comment.js`);
+            const sync = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/sync-pr-labels.js`);
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const prNumber = Number("${{ steps.resolve.outputs.pr_number }}");
+            const MARKER = "<!-- claude-review-unavailable -->";
+            const failed = "${{ steps.claude.outcome }}" === "failure";
+
+            if (failed) {
+              await sync.ensureLabelExists(github, owner, repo, sync.CLAUDE_REVIEW_FAILED_LABEL);
+              await github.rest.issues.addLabels({
+                owner,
+                repo,
+                issue_number: prNumber,
+                labels: [sync.CLAUDE_REVIEW_FAILED_LABEL.name],
+              });
+              await upsertMarkedComment(
+                github,
+                owner,
+                repo,
+                prNumber,
+                MARKER,
+                `${MARKER}\n` +
+                  "Automated review via Claude was unavailable this run (quota exhausted or an error). " +
+                  "This PR still needs review - a human can review it directly on GitHub, or any agent " +
+                  "can review it per `skills/review/SKILL.md`. Comment `/claude-review` to retry once " +
+                  "the automated path is available again.",
+              );
+            } else {
+              await github.rest.issues
+                .removeLabel({ owner, repo, issue_number: prNumber, name: sync.CLAUDE_REVIEW_FAILED_LABEL.name })
+                .catch((err) => {
+                  if (err.status !== 404) throw err;
+                });
+              // onlyIfExists: don't create a brand-new comment on a clean
+              // first-try success - only resolve one left behind by an
+              // earlier failed attempt.
+              await upsertMarkedComment(
+                github,
+                owner,
+                repo,
+                prNumber,
+                MARKER,
+                `${MARKER}\nA retried automated review completed - see the review below.`,
+                { onlyIfExists: true },
+              );
+            }
 
       # Belt-and-suspenders: re-sync immediately after Claude's turn (not
       # waiting on whatever trigger fires next). pre-review-checks.js already

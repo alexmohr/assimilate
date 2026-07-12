@@ -340,22 +340,26 @@ def main() -> int:
         action="store_true",
         help="log what would happen without invoking opencode or pushing",
     )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="opencode model, e.g. deepseek/deepseek-v4-flash (overrides HARNESS_OPENCODE_MODEL)",
+    )
     args = parser.parse_args()
 
     cfg = Config.from_env()
+    overrides: dict[str, object] = {}
     if args.once:
-        cfg = Config(**{**cfg.__dict__, "once": True})
+        overrides["once"] = True
     if args.dry_run:
-        cfg = Config(**{**cfg.__dict__, "dry_run": True})
+        overrides["dry_run"] = True
+    if args.model:
+        overrides["opencode_model"] = args.model
+    if overrides:
+        cfg = Config(**{**cfg.__dict__, **overrides})
 
     setup_logging(cfg.log_file)
-    log.info(
-        "opencode-harness starting: repo=%s repo_dir=%s poll=%ss dry_run=%s",
-        cfg.repo,
-        cfg.repo_dir,
-        cfg.poll_interval_seconds,
-        cfg.dry_run,
-    )
+    log.info("opencode-harness starting: %s", cfg.summary())
 
     state = HarnessState.load(cfg.state_file)
 

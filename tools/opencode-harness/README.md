@@ -75,7 +75,7 @@ All via environment variables (see `config.py` for defaults):
 | `HARNESS_REPO_DIR` | `.` | Path to the local clone the harness operates on |
 | `HARNESS_BASE_BRANCH` | `main` | Base branch for rebases and new issue branches |
 | `HARNESS_POLL_INTERVAL` | `180` | Seconds between cycles |
-| `HARNESS_OPENCODE_MODEL` | (opencode's default) | `provider/model`, e.g. a cheap model |
+| `HARNESS_OPENCODE_MODEL` | (opencode's default) | `provider/model`, e.g. `deepseek/deepseek-v4-flash`. Also settable via `--model`, which takes priority - useful since a forgotten `export` on this env var silently falls back to opencode's default with no error. The startup log line always prints the resolved value, so check that first if a run doesn't seem to be using the model you expected |
 | `HARNESS_OPENCODE_TIMEOUT` | `1800` | Seconds before an opencode invocation is killed |
 | `HARNESS_MAX_LOCAL_ATTEMPTS` | `3` | Retries against local validation before giving up *this cycle* |
 | `HARNESS_MAX_STUCK_CYCLES` | `3` | Cycles the same problem may survive before the PR/issue is marked stuck |

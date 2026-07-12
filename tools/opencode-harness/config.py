@@ -63,3 +63,17 @@ class Config:
             dry_run=_bool("HARNESS_DRY_RUN", False),
             once=_bool("HARNESS_ONCE", False),
         )
+
+    def summary(self) -> str:
+        """One-line dump of every resolved setting, logged at startup so a
+        misconfigured env var (e.g. set on its own line without `export`,
+        so it never reached this process) is visible immediately instead of
+        only showing up three log lines later as an unexplained default."""
+        model = self.opencode_model or "(opencode default)"
+        return (
+            f"repo={self.repo} repo_dir={self.repo_dir} base_branch={self.base_branch} "
+            f"poll_interval={self.poll_interval_seconds}s model={model} "
+            f"opencode_timeout={self.opencode_timeout_seconds}s "
+            f"max_local_attempts={self.max_local_validation_attempts} "
+            f"max_stuck_cycles={self.max_stuck_cycles} dry_run={self.dry_run} once={self.once}"
+        )

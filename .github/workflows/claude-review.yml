@@ -176,12 +176,20 @@ jobs:
       # what that restriction blocks, no matter how this workflow is
       # configured - every attempt silently failed.
       #
-      # allowedTools grants Bash access to exactly two gh subcommands (not
-      # blanket Bash) so Claude can submit the verdict itself: `gh pr review`
-      # for the native review path, `gh pr edit` for the label-fallback path.
-      # GH_TOKEN below is required for gh to authenticate - it isn't set
-      # automatically just because github_token was passed to the action
-      # above (that only covers the action's own git/API calls, not
+      # allowedTools grants Bash access to a specific set of gh/git
+      # subcommands (not blanket Bash): `gh pr review`/`gh pr edit` so Claude
+      # can submit the verdict itself (native review / label fallback), plus
+      # `gh pr diff`, `gh pr view`, `git log`, `git diff`, `git show` so it
+      # can actually see what changed - none of the action's built-in tools
+      # (src/mcp/*.ts) fetch a PR diff at all. The first live run with only
+      # the two verdict commands allowed burned all 32 turns and 16 more
+      # permission denials with no way to read the diff, then posted a
+      # literal "gh pr review 351 --comment --body \"test\"" as its one
+      # successful call before giving up - an exploratory sanity check, not
+      # a real review (it never even used --approve/--request-changes as
+      # instructed). GH_TOKEN below is required for gh to authenticate - it
+      # isn't set automatically just because github_token was passed to the
+      # action above (that only covers the action's own git/API calls, not
       # Claude-invoked Bash's environment).
       - name: Run Claude review
         id: claude
@@ -195,10 +203,16 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           claude_args: |
             --model ${{ steps.resolve.outputs.model }}
-            --allowedTools "Bash(gh pr review:*),Bash(gh pr edit:*)"
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh pr review:*),Bash(gh pr edit:*)"
           prompt: |
             Follow skills/review/SKILL.md to review pull request #${{ steps.resolve.outputs.pr_number }}
             at commit ${{ steps.head.outputs.sha }}.
+
+            Start by running `gh pr diff ${{ steps.resolve.outputs.pr_number }}` to see the
+            full diff, and `gh pr view ${{ steps.resolve.outputs.pr_number }} --json title,body`
+            for context - `git log`/`git diff`/`git show` are also available if you need more
+            history. Read enough of the actual diff to form a real opinion before doing
+            anything else; do not submit a verdict without having read it.
 
             Deterministic pre-flight checks (CI status, merge conflicts, coverage-diff,
             duplicate-code detection) have already run and passed - do not re-derive them.
@@ -223,6 +237,12 @@ jobs:
             - Your own account's PR: `gh pr edit ${{ steps.resolve.outputs.pr_number }} --add-label "claude-approved"`
               or `--add-label "claude-changes-requested"` (and remove whichever of the two was
               previously set with `--remove-label`).
+
+            Call `gh pr review`/`gh pr edit` exactly once, at the very end, with your real,
+            final, complete verdict and body - never as a test/dry-run to check the command
+            works, and never with a placeholder body. If you run out of turns or budget before
+            finishing your analysis, it is better to submit nothing than to submit a token or
+            incomplete verdict.
 
       # Owns the full lifecycle of the "claude review failed" label and its
       # marker comment (mirrors how analyze-duplication.js/analyze-coverage-

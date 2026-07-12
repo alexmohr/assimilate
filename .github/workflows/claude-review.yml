@@ -161,16 +161,41 @@ jobs:
       # direct_prompt to `prompt`, and model selection now goes through
       # `claude_args` (raw Claude Code CLI flags) instead of a top-level
       # `model` input.
+      #
+      # Once the prompt actually ran (above fixed), a live run still produced
+      # no review at all - the result JSON showed permission_denials_count: 15
+      # despite 27 real turns. The action's own built-in MCP tools
+      # (src/mcp/*.ts: get_ci_status, update_claude_comment,
+      # create_inline_comment, file-ops) deliberately do NOT include review-
+      # verdict submission or label management - the action's docs say so
+      # explicitly ("Claude cannot submit formal GitHub PR reviews... cannot
+      # approve pull requests"), and create_inline_comment's own source
+      # comment confirms it's scoped down "so that Claude can't accidentally
+      # approve a PR". skills/review/SKILL.md's native-review-API and
+      # claude-approved/claude-changes-requested instructions are exactly
+      # what that restriction blocks, no matter how this workflow is
+      # configured - every attempt silently failed.
+      #
+      # allowedTools grants Bash access to exactly two gh subcommands (not
+      # blanket Bash) so Claude can submit the verdict itself: `gh pr review`
+      # for the native review path, `gh pr edit` for the label-fallback path.
+      # GH_TOKEN below is required for gh to authenticate - it isn't set
+      # automatically just because github_token was passed to the action
+      # above (that only covers the action's own git/API calls, not
+      # Claude-invoked Bash's environment).
       - name: Run Claude review
         id: claude
         if: steps.precheck.outputs.run_claude == 'true'
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           claude_args: |
             --model ${{ steps.resolve.outputs.model }}
+            --allowedTools "Bash(gh pr review:*),Bash(gh pr edit:*)"
           prompt: |
             Follow skills/review/SKILL.md to review pull request #${{ steps.resolve.outputs.pr_number }}
             at commit ${{ steps.head.outputs.sha }}.
@@ -189,9 +214,15 @@ jobs:
             Rebase-behind-main and issue-linking findings, if the pre-flight comment has any,
             are informational only - mention them if relevant but don't block on them alone.
 
-            Submit your verdict per the account rule in skills/review/SKILL.md: native
-            approve/request-changes if you're reviewing a different account's PR, or the
-            claude-approved/claude-changes-requested labels if reviewing your own account's PR.
+            Post line-specific findings with your create_inline_comment tool as you go.
+
+            Submit your verdict per the account rule in skills/review/SKILL.md, using the gh
+            CLI (already authenticated) since you have no built-in review/label tool:
+            - Different account's PR: `gh pr review ${{ steps.resolve.outputs.pr_number }} --approve --body "..."`
+              or `gh pr review ${{ steps.resolve.outputs.pr_number }} --request-changes --body "..."`.
+            - Your own account's PR: `gh pr edit ${{ steps.resolve.outputs.pr_number }} --add-label "claude-approved"`
+              or `--add-label "claude-changes-requested"` (and remove whichever of the two was
+              previously set with `--remove-label`).
 
       # Owns the full lifecycle of the "claude review failed" label and its
       # marker comment (mirrors how analyze-duplication.js/analyze-coverage-

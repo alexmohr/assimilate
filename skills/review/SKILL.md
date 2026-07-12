@@ -235,16 +235,23 @@ it starts:
    they didn't all complete within the wait window.
 
 **Tool access:** `anthropics/claude-code-action@v1`'s own built-in MCP tools
-deliberately don't include review-verdict submission or label management —
-only CI-status lookups, a single tracked comment, file edits, and
-`create_inline_comment` (itself explicitly scoped down so Claude can't use
-it to approve a PR). Submitting the actual verdict per the account rule
-above therefore goes through `gh` instead: `claude_args` in
-`claude-review.yml` grants `Bash(gh pr review:*)` and `Bash(gh pr edit:*)`
-specifically (not blanket Bash access), and a `GH_TOKEN` env var on that
-step authenticates it. The prompt tells Claude to use `gh pr
-review --approve|--request-changes` for the native path and `gh pr edit
---add-label|--remove-label` for the same-account label path.
+deliberately don't include review-verdict submission, label management, or
+fetching a PR's diff — only CI-status lookups, a single tracked comment,
+file edits, and `create_inline_comment` (itself explicitly scoped down so
+Claude can't use it to approve a PR). Everything else goes through `gh`
+instead: `claude_args` in `claude-review.yml` grants Bash access to a
+specific set of subcommands (not blanket Bash access) — `gh pr diff`/`gh pr
+view`/`git log`/`git diff`/`git show` to actually see the change, `gh pr
+review`/`gh pr edit` for the verdict, `gh pr merge` to merge a clean
+approval — and a `GH_TOKEN` env var on that step authenticates `gh`. The
+prompt tells Claude to start with `gh pr diff`/`gh pr view` before forming
+an opinion, to use `gh pr review --approve|--request-changes` for the
+native verdict path and `gh pr edit --add-label|--remove-label` for the
+same-account label path, and — only for a clean approval with no `needs
+human review` label — to merge with `gh pr merge --squash --delete-branch`
+itself rather than leaving it for a human to click. It's told explicitly
+never to submit a placeholder/test verdict and never to retry a failed
+merge.
 
 **Model:** defaults to `claude-sonnet-5` (overridable repo-wide via the
 `CLAUDE_REVIEW_MODEL` Actions variable). If Claude's review fails outright

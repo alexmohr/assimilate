@@ -19,6 +19,7 @@ import json
 import logging
 import re
 import subprocess
+import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -268,14 +269,19 @@ def get_bot_comments(
 
 
 def add_label(repo: str, number: int, label: str) -> None:
-    _run(["gh", "pr", "edit", str(number), "--repo", repo, "--add-label", label])
+    # Deliberately `gh api` (REST), not `gh pr edit --add-label`: the latter's
+    # underlying GraphQL query fetches the PR's projectCards field, which
+    # GitHub has deprecated/removed, so it fails outright on repos that hit
+    # that field regardless of the label mutation itself.
+    _run(["gh", "api", f"repos/{repo}/issues/{number}/labels", "-f", f"labels[]={label}"])
 
 
 def remove_label(repo: str, number: int, label: str) -> None:
+    encoded = urllib.parse.quote(label, safe="")
     try:
-        _run(["gh", "pr", "edit", str(number), "--repo", repo, "--remove-label", label])
+        _run(["gh", "api", "--method", "DELETE", f"repos/{repo}/issues/{number}/labels/{encoded}"])
     except GhError as exc:
-        if "not found" not in str(exc).lower() and "does not have" not in str(exc).lower():
+        if "not found" not in str(exc).lower() and "404" not in str(exc):
             raise
 
 

@@ -234,6 +234,18 @@ it starts:
    Claude's gate uses them" above) and stops if any of them failed, or if
    they didn't all complete within the wait window.
 
+**Tool access:** `anthropics/claude-code-action@v1`'s own built-in MCP tools
+deliberately don't include review-verdict submission or label management —
+only CI-status lookups, a single tracked comment, file edits, and
+`create_inline_comment` (itself explicitly scoped down so Claude can't use
+it to approve a PR). Submitting the actual verdict per the account rule
+above therefore goes through `gh` instead: `claude_args` in
+`claude-review.yml` grants `Bash(gh pr review:*)` and `Bash(gh pr edit:*)`
+specifically (not blanket Bash access), and a `GH_TOKEN` env var on that
+step authenticates it. The prompt tells Claude to use `gh pr
+review --approve|--request-changes` for the native path and `gh pr edit
+--add-label|--remove-label` for the same-account label path.
+
 **Model:** defaults to `claude-sonnet-5` (overridable repo-wide via the
 `CLAUDE_REVIEW_MODEL` Actions variable). If Claude's review fails outright
 (quota exhausted, action error), the workflow posts a plain comment instead

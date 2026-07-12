@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { ref, computed, type Ref, type ComputedRef } from 'vue'
+import { FilterMatchMode } from '@primevue/core/api'
 import { apiClient } from '../api/client'
 import { extractError } from '../utils/error'
 import type {
@@ -39,6 +40,16 @@ export interface DirDisplayEntry extends ContentEntry {
   displayName: string
 }
 
+export interface DisplayEntry {
+  type: string
+  path: string
+  size: number
+  mtime: string
+  mode: string
+  displayName: string
+  isDir: boolean
+}
+
 interface UseArchiveBrowserReturn {
   archives: Ref<ArchiveEntry[]>
   archivesLoading: Ref<boolean>
@@ -63,6 +74,12 @@ interface UseArchiveBrowserReturn {
   deleteArchive: (entry: ContentEntry) => Promise<boolean>
   deleteArchiveByName: (archive: ArchiveEntry) => Promise<boolean>
   stopPolling: () => void
+  browserFilters: Ref<{
+    displayName: { value: string; matchMode: string }
+    size: { value: string; matchMode: string }
+    mtime: { value: string; matchMode: string }
+  }>
+  browserEntries: ComputedRef<DisplayEntry[]>
 }
 
 export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn {
@@ -176,6 +193,33 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
       })
       .sort((a, b) => a.path.localeCompare(b.path))
   })
+
+  const browserFilters = ref({
+    displayName: { value: '', matchMode: FilterMatchMode.CONTAINS },
+    size: { value: '', matchMode: FilterMatchMode.CONTAINS },
+    mtime: { value: '', matchMode: FilterMatchMode.CONTAINS },
+  })
+
+  const browserEntries = computed<DisplayEntry[]>(() => [
+    ...dirs.value.map((d) => ({
+      type: d.type,
+      path: d.path,
+      size: Number(d.size),
+      mtime: d.mtime,
+      mode: d.mode,
+      displayName: d.displayName,
+      isDir: true,
+    })),
+    ...files.value.map((f) => ({
+      type: f.type,
+      path: f.path,
+      size: Number(f.size),
+      mtime: f.mtime,
+      mode: f.mode,
+      displayName: entryName(f),
+      isDir: false,
+    })),
+  ])
 
   async function loadArchives(): Promise<void> {
     archivesLoading.value = true
@@ -328,6 +372,8 @@ export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn 
     breadcrumbs,
     dirs,
     files,
+    browserFilters,
+    browserEntries,
     loadArchives,
     selectArchive,
     loadContents,

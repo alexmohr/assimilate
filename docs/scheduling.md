@@ -33,6 +33,12 @@ Each schedule card shows the repository or schedule name, agent count, execution
 
 Overdue is evaluated per host: a schedule can show Overdue even while its own next/last run times look on track, if one of its target hosts hasn't completed a backup within its cron interval plus a 30-minute grace period. Hover the Overdue chip to see which target host(s) are behind and when each last reported a backup; if a host's agent is currently disconnected, the tooltip also notes that ("Agent offline (last seen ...)") so you can tell at a glance whether the host is overdue because it's offline or because something else went wrong.
 
+### Backups Tab
+
+For backup-type schedules, the schedule detail view includes a **Backups** tab. This tab lists all archives produced by the schedule, derived from successful and warning backup reports. Select an archive in the left panel to browse its file contents, navigate directories via breadcrumbs, and download individual files or directories — all without leaving the schedule view.
+
+The Backups tab is only visible for backup-type schedules that have been saved (not in create mode).
+
 ![Schedule Detail](assets/screenshots/schedule-detail.png)
 
 On the schedule detail page, each target under **Schedule Info** shows an **Overdue** badge and a **Retry** button when it's behind. Retry re-runs the backup for just that host, without re-running the other targets in the schedule.

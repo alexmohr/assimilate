@@ -81,7 +81,14 @@ def run_rust_checks(cwd: Path, timeout: int = 1800) -> list[ValidationResult]:
 
 def run_frontend_checks(cwd: Path, timeout: int = 1800) -> list[ValidationResult]:
     frontend_dir = cwd / "frontend"
-    steps = [
+    steps = []
+    # node_modules/ is preserved across cycles (see git_ops._CLEAN_EXCLUDES)
+    # so this only actually installs on the first cycle that touches
+    # frontend/ - without it, every cycle would fail outright the moment
+    # npm/eslint/vite don't exist yet.
+    if not (frontend_dir / "node_modules").exists():
+        steps.append(["npm", "ci"])
+    steps += [
         ["npm", "run", "format:check"],
         ["npm", "run", "lint"],
         ["npm", "run", "build"],

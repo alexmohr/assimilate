@@ -61,6 +61,23 @@ def _clear_stale_locks(cwd: Path) -> None:
         lock.unlink()
 
 
+# -x makes `git clean` remove gitignored files too (needed to wipe stale
+# generated/build files a previous branch might have left behind) - but
+# target/, node_modules/, and Vite's cache are also gitignored, and wiping
+# them on every single checkout forces a full cargo rebuild and npm reinstall
+# from scratch every cycle. Excluding them preserves incremental compilation
+# and installed packages across cycles; they're safe to keep since cargo and
+# npm are both content-addressed against the current lockfiles/sources, not
+# branch-specific state that could go stale in a way a rebuild wouldn't catch.
+_CLEAN_EXCLUDES = [
+    "--exclude=.state.json",
+    "--exclude=target/",
+    "--exclude=node_modules/",
+    "--exclude=frontend/node_modules/",
+    "--exclude=.vite/",
+]
+
+
 def checkout_branch_at_remote(cwd: Path, branch: str) -> None:
     """Get a clean local checkout of `branch` matching origin exactly.
 
@@ -71,14 +88,14 @@ def checkout_branch_at_remote(cwd: Path, branch: str) -> None:
     fetch(cwd, branch)
     _run(cwd, ["checkout", "-B", branch, f"origin/{branch}"])
     _run(cwd, ["reset", "--hard", f"origin/{branch}"])
-    _run(cwd, ["clean", "-fdx", "--exclude=.state.json"])
+    _run(cwd, ["clean", "-fdx", *_CLEAN_EXCLUDES])
 
 
 def checkout_new_branch_from_base(cwd: Path, branch: str, base: str) -> None:
     _clear_stale_locks(cwd)
     fetch(cwd, base)
     _run(cwd, ["checkout", "-B", branch, f"origin/{base}"])
-    _run(cwd, ["clean", "-fdx", "--exclude=.state.json"])
+    _run(cwd, ["clean", "-fdx", *_CLEAN_EXCLUDES])
 
 
 def rebase_onto(cwd: Path, base: str) -> tuple[bool, str]:

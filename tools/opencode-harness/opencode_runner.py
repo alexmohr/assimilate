@@ -39,9 +39,9 @@ NEVER_COMMIT_INSTRUCTION = (
     "commands, commit, and push on your behalf."
 )
 
-_SNIPPET_KEYS = ("text", "message", "content", "summary")
 _HEARTBEAT_INTERVAL_SECONDS = 20
 _READ_CHUNK_SIZE = 65536
+_MAX_SNIPPET_CHARS = 500
 
 
 @dataclass
@@ -50,25 +50,67 @@ class OpencodeResult:
     output: str
 
 
-def _summarize_event(line: str) -> str:
+def _truncate(text: str, limit: int = _MAX_SNIPPET_CHARS) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
+def _format_event(line: str) -> str | None:
+    """Formats one `opencode run --format json` event for logging.
+
+    Returns None to suppress an event entirely (e.g. step_start, or a
+    step_finish that isn't the final one) - these are pure bookkeeping with
+    no assistant-visible content, and printing them is exactly the raw-JSON
+    noise this exists to avoid. Falls back to a truncated raw dump for any
+    event shape not accounted for below, since this schema is not an
+    officially documented, stability-guaranteed contract.
+    """
     try:
         event = json.loads(line)
     except json.JSONDecodeError:
-        return line[:500]
+        return line[:_MAX_SNIPPET_CHARS]
     if not isinstance(event, dict):
-        return str(event)[:500]
-    kind = event.get("type") or event.get("event") or ""
-    for key in _SNIPPET_KEYS:
-        value = event.get(key)
-        if isinstance(value, str) and value.strip():
-            snippet = " ".join(value.split())
-            if len(snippet) > 400:
-                snippet = snippet[:400] + "..."
-            return f"{kind}: {snippet}" if kind else snippet
-    tool = event.get("tool") or event.get("name")
-    if tool:
-        return f"{kind or 'tool'}: {tool}"
-    return json.dumps(event)[:400]
+        return str(event)[:_MAX_SNIPPET_CHARS]
+
+    kind = event.get("type")
+    part = event.get("part") or {}
+
+    if kind == "step_start":
+        return None
+
+    if kind == "text":
+        text = part.get("text") or ""
+        return _truncate(text) if text.strip() else None
+
+    if kind == "tool_use":
+        tool = part.get("tool", "?")
+        state = part.get("state") or {}
+        status = state.get("status")
+        title = state.get("title") or ""
+        if status == "completed":
+            return f"tool: {tool}" + (f" - {_truncate(title, 200)}" if title else "")
+        if status == "error":
+            output = _truncate(str(state.get("output") or ""), 300)
+            return f"tool: {tool} FAILED" + (f" - {output}" if output else "")
+        return None  # still running/pending: nothing to report yet
+
+    if kind == "step_finish":
+        if part.get("reason") != "stop":
+            return None  # just continuing to another step
+        tokens = part.get("tokens") or {}
+        cost = part.get("cost")
+        cost_str = f"${cost:.4f}" if isinstance(cost, (int, float)) else "?"
+        return (
+            f"step finished: cost={cost_str} tokens(in={tokens.get('input', '?')}, "
+            f"out={tokens.get('output', '?')}, reasoning={tokens.get('reasoning', '?')})"
+        )
+
+    if kind == "error":
+        error = event.get("error") or {}
+        message = (error.get("data") or {}).get("message", "")
+        return f"ERROR: {error.get('name', 'unknown')}: {message}"
+
+    return json.dumps(event)[:_MAX_SNIPPET_CHARS]
 
 
 def _log_complete_lines(buf: bytes) -> bytes:
@@ -76,8 +118,11 @@ def _log_complete_lines(buf: bytes) -> bytes:
     while b"\n" in buf:
         raw_line, buf = buf.split(b"\n", 1)
         text = raw_line.decode("utf-8", errors="replace").strip()
-        if text:
-            log.info("opencode: %s", _summarize_event(text))
+        if not text:
+            continue
+        formatted = _format_event(text)
+        if formatted:
+            log.info("opencode: %s", formatted)
     return buf
 
 
@@ -122,7 +167,9 @@ def run_opencode(prompt: str, cwd: Path, model: str | None, timeout_seconds: int
     if buf:
         text = buf.decode("utf-8", errors="replace").strip()
         if text:
-            log.info("opencode: %s", _summarize_event(text))
+            formatted = _format_event(text)
+            if formatted:
+                log.info("opencode: %s", formatted)
         chunks.append(buf)
 
     output = b"".join(chunks).decode("utf-8", errors="replace")

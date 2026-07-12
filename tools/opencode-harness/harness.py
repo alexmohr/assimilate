@@ -275,7 +275,19 @@ def process_prs(cfg: Config, state: HarnessState, prs: list[PrSummary]) -> bool:
 
 
 def process_single_pr(cfg: Config, state: HarnessState, number: int) -> bool:
-    """Handles a specific PR (--pr N) regardless of auto-selection order."""
+    """Handles a specific PR (--pr N) regardless of auto-selection order.
+
+    Explicitly targeting a PR overrides the stuck-cycle backoff: in the
+    auto-scan path, "stuck with no new commits" means leave it alone until a
+    human does something, but running --pr N *is* a human doing something -
+    that's the whole point of targeting it, so it shouldn't keep waiting for
+    a commit that will never come from an unattended scan.
+    """
+    detail = gh.get_pr(cfg.repo, number)
+    if cfg.stuck_label in detail.labels:
+        log.info("PR #%d: clearing stuck label - explicitly targeted via --pr", number)
+        gh.remove_label(cfg.repo, number, cfg.stuck_label)
+        state.clear_pr(number)
     return bool(_check_and_fix_pr(cfg, state, number))
 
 

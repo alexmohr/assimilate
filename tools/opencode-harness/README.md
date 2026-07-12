@@ -98,6 +98,7 @@ are actually configured and working before pointing `--model` at one.
 | `HARNESS_LOG_FILE` | (none, stdout only) | Optional path to also log to a file |
 | `HARNESS_DRY_RUN` | `0` | `1` to log intended actions without invoking opencode or pushing |
 | `HARNESS_ONCE` | `0` | `1` to run a single cycle and exit (also `--once`) |
+| `HARNESS_MAX_SOLVED` | (unlimited) | Stop after successfully solving N problems - a PR fix pushed, or an issue implemented into a new PR (also `--max-solved N`). A cycle that finds nothing actionable doesn't count against this |
 
 ## Running it
 
@@ -108,6 +109,9 @@ HARNESS_DRY_RUN=1 python3 tools/opencode-harness/harness.py --once
 # the real thing, as a long-running process
 HARNESS_REPO_DIR=/path/to/disposable/clone \
 python3 tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash
+
+# supervised: stop after 5 solved problems instead of running forever
+python3 tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash --max-solved 5
 ```
 
 ### systemd (recommended for unattended, restart-surviving operation)

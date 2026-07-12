@@ -170,7 +170,9 @@ def _mark_stuck(cfg: Config, pr: PrDetail, reason: str) -> None:
     log.warning("PR #%d marked stuck: %s", pr.number, reason)
 
 
-def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> None:
+def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
+    """Attempts to fix `pr`. Returns True only if a fix was actually pushed -
+    this is what "solved problems" counts for --max-solved."""
     log.info(
         "PR #%d needs a fix: ci_failing=%s merge_conflict=%s coverage_failed=%s "
         "duplicate_code=%s changes_requested=%s",
@@ -195,7 +197,7 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> None:
     attempts = state.record_attempt(pr.number, fingerprint, head_sha)
     if attempts > cfg.max_stuck_cycles:
         _mark_stuck(cfg, pr, f"the same problem has persisted across {attempts - 1} attempts")
-        return
+        return False
 
     if cfg.dry_run:
         log.info(
@@ -204,30 +206,31 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> None:
             attempts,
             cfg.max_stuck_cycles,
         )
-        return
+        return False
 
     git_ops.checkout_branch_at_remote(cfg.repo_dir, pr.head_ref_name)
 
     if pr.merge_conflict and not _resolve_conflicts(cfg):
         _mark_stuck(cfg, pr, "could not resolve merge conflicts")
-        return
+        return False
 
     prompt = prompts.build_pr_fix_prompt(pr, ci_logs, review_comments, precheck_notes)
     ok, message = run_fix_and_validate(cfg, prompt)
     if not ok:
         log.warning("PR #%d: did not converge this cycle (%s)", pr.number, message)
-        return
+        return False
 
     committed = git_ops.commit(cfg.repo_dir, _commit_message_for(pr, cfg))
     if not committed:
         log.warning("PR #%d: opencode made no net changes; nothing to push", pr.number)
-        return
+        return False
     git_ops.push(cfg.repo_dir, pr.head_ref_name, force_with_lease=pr.merge_conflict)
     log.info("PR #%d: pushed a fix, letting CI/review automation re-evaluate", pr.number)
+    return True
 
 
 def process_prs(cfg: Config, state: HarnessState, prs: list[PrSummary]) -> bool:
-    """Handles at most one actionable PR. Returns True if it did so."""
+    """Handles at most one actionable PR. Returns True if a fix was pushed."""
     for summary in prs:
         if cfg.ignore_label in summary.labels:
             continue
@@ -259,13 +262,13 @@ def process_prs(cfg: Config, state: HarnessState, prs: list[PrSummary]) -> bool:
             log.info("PR #%d: nothing actionable (labels=%s)", summary.number, detail.labels)
             continue
 
-        handle_pr_fix(cfg, state, detail)
-        return True
+        return handle_pr_fix(cfg, state, detail)
 
     return False
 
 
-def process_issues(cfg: Config, state: HarnessState) -> None:
+def process_issues(cfg: Config, state: HarnessState) -> bool:
+    """Implements the newest actionable open issue. Returns True if a PR was opened."""
     issues = gh.list_open_issues(cfg.repo)
     candidates = [
         i
@@ -274,7 +277,7 @@ def process_issues(cfg: Config, state: HarnessState) -> None:
     ]
     if not candidates:
         log.info("no open PRs and no actionable open issues; idle this cycle")
-        return
+        return False
 
     issue = candidates[0]
     number = issue["number"]
@@ -282,7 +285,7 @@ def process_issues(cfg: Config, state: HarnessState) -> None:
 
     if cfg.dry_run:
         log.info("[dry-run] would implement issue #%d now", number)
-        return
+        return False
 
     branch = f"opencode/issue-{number}"
     git_ops.checkout_new_branch_from_base(cfg.repo_dir, branch, cfg.base_branch)
@@ -299,12 +302,12 @@ def process_issues(cfg: Config, state: HarnessState) -> None:
             issue=True,
         )
         log.warning("issue #%d: did not converge (%s)", number, message)
-        return
+        return False
 
     committed = git_ops.commit(cfg.repo_dir, f"fix: {_sanitize_subject(issue['title'])}")
     if not committed:
         log.warning("issue #%d: opencode made no changes", number)
-        return
+        return False
     git_ops.push(cfg.repo_dir, branch, force_with_lease=True)
     pr_url = gh.create_pr(
         cfg.repo,
@@ -314,16 +317,19 @@ def process_issues(cfg: Config, state: HarnessState) -> None:
         f"Closes #{number}\n\nImplemented automatically by opencode-harness.",
     )
     log.info("issue #%d: opened %s", number, pr_url)
+    return True
 
 
-def run_once(cfg: Config, state: HarnessState) -> None:
+def run_once(cfg: Config, state: HarnessState) -> bool:
+    """Runs a single cycle. Returns True if it solved a problem (pushed a PR
+    fix, or implemented an issue into a new PR) - see --max-solved."""
     prs = gh.list_open_prs(cfg.repo)
     if prs:
         did_work = process_prs(cfg, state, prs)
         if not did_work:
             log.info("%d open PR(s), none actionable right now", len(prs))
-        return
-    process_issues(cfg, state)
+        return did_work
+    return process_issues(cfg, state)
 
 
 def main() -> int:
@@ -345,6 +351,16 @@ def main() -> int:
         default=None,
         help="opencode model, e.g. deepseek/deepseek-v4-flash (defaults to opencode's own default)",
     )
+    parser.add_argument(
+        "--max-solved",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "stop after successfully solving N problems (a PR fix pushed, or an "
+            "issue implemented into a new PR) - also settable via HARNESS_MAX_SOLVED"
+        ),
+    )
     args = parser.parse_args()
 
     cfg = Config.from_env()
@@ -355,6 +371,8 @@ def main() -> int:
         overrides["dry_run"] = True
     if args.model:
         overrides["opencode_model"] = args.model
+    if args.max_solved is not None:
+        overrides["max_solved"] = args.max_solved
     if overrides:
         cfg = Config(**{**cfg.__dict__, **overrides})
 
@@ -362,10 +380,15 @@ def main() -> int:
     log.info("opencode-harness starting: %s", cfg.summary())
 
     state = HarnessState.load(cfg.state_file)
+    solved_count = 0
 
     while True:
         try:
-            run_once(cfg, state)
+            if run_once(cfg, state):
+                solved_count += 1
+                if cfg.max_solved is not None and solved_count >= cfg.max_solved:
+                    log.info("solved %d problem(s), reached --max-solved; stopping", solved_count)
+                    return 0
         except Exception:
             log.exception("unhandled error during cycle; will retry next cycle")
 

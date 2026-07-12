@@ -120,7 +120,7 @@ pub struct CreateRoleRequest {
 }
 
 /// Request payload for updating a role. Shares the same shape as
-/// [`CreateRoleRequest`] — both are flattened around [`RolePermissionFields`].
+/// [`CreateRoleRequest`] - both are flattened around [`RolePermissionFields`].
 pub type UpdateRoleRequest = CreateRoleRequest;
 
 /// Request payload for setting a user's role assignments.

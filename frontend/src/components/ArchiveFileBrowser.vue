@@ -459,25 +459,14 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount } from 'vue'
-import { FilterMatchMode } from '@primevue/core/api'
+import { computed, watch, onBeforeUnmount } from 'vue'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import { Folder, File, Download } from '@lucide/vue'
 import { formatBytes, formatDate } from '../utils/format'
 import BaseSpinner from './BaseSpinner.vue'
-import { useArchiveBrowser } from '../composables/useArchiveBrowser'
+import { useArchiveBrowser, type DisplayEntry } from '../composables/useArchiveBrowser'
 import type { ArchiveEntryResponse } from '../types/generated'
-
-interface DisplayEntry {
-  type: string
-  path: string
-  size: number
-  mtime: string
-  mode: string
-  displayName: string
-  isDir: boolean
-}
 
 const props = defineProps<{
   repoId: number | null
@@ -494,63 +483,24 @@ const contentsError = browser.contentsError
 const indexing = browser.indexing
 const navigateTo = browser.navigateTo
 const downloadEntry = browser.downloadEntry
-
-const browserFilters = ref({
-  displayName: { value: '', matchMode: FilterMatchMode.CONTAINS },
-  size: { value: '', matchMode: FilterMatchMode.CONTAINS },
-  mtime: { value: '', matchMode: FilterMatchMode.CONTAINS },
-})
-
-const browserEntries = computed<DisplayEntry[]>(() => [
-  ...browser.dirs.value.map((d) => ({
-    type: d.type,
-    path: d.path,
-    size: Number(d.size),
-    mtime: d.mtime,
-    mode: d.mode,
-    displayName: d.displayName,
-    isDir: true,
-  })),
-  ...browser.files.value.map((f) => ({
-    type: f.type,
-    path: f.path,
-    size: Number(f.size),
-    mtime: f.mtime,
-    mode: f.mode,
-    displayName: browser.entryName(f),
-    isDir: false,
-  })),
-])
-
-function setArchive(name: string): void {
-  browser.selectedArchive.value = {
-    name,
-    start: '',
-    hostname: '',
-    comment: '',
-    original_size: 0,
-    deduplicated_size: 0,
-    matched: null,
-    agent_hostname: null,
-  } as ArchiveEntryResponse
-  browser.loadContents('/')
-}
-
-function reset(): void {
-  browser.stopPolling()
-  browser.selectedArchive.value = null
-  browser.currentPath.value = '/'
-  browser.contents.value = []
-  browser.contentsError.value = null
-  browser.indexing.value = false
-  browser.contentsLoading.value = false
-}
+const browserFilters = browser.browserFilters
+const browserEntries = browser.browserEntries
 
 watch(
   () => props.archiveName,
-  (name) => {
-    reset()
-    if (name) setArchive(name)
+  async (name) => {
+    if (name) {
+      await browser.selectArchive({
+        name,
+        start: '',
+        hostname: '',
+        comment: '',
+        original_size: 0,
+        deduplicated_size: 0,
+        matched: null,
+        agent_hostname: null,
+      } as ArchiveEntryResponse)
+    }
   },
   { immediate: true },
 )

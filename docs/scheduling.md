@@ -31,6 +31,12 @@ The Schedules list page shows all configured backup schedules with:
 
 Each schedule card shows the repository or schedule name, the agents included in the schedule, agent count, execution mode (Parallel/Sequential), health status, enabled state, schedule type, cron description, next run time, last run time, and a **Run** button for manual triggering.
 
+### Backups Tab
+
+For backup-type schedules, the schedule detail view includes a **Backups** tab. This tab lists all archives produced by the schedule, derived from successful and warning backup reports. Select an archive in the left panel to browse its file contents, navigate directories via breadcrumbs, and download individual files or directories — all without leaving the schedule view.
+
+The Backups tab is only visible for backup-type schedules that have been saved (not in create mode).
+
 ![Schedule Detail](assets/screenshots/schedule-detail.png)
 
 ## Cron Expression Builder

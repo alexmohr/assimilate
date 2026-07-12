@@ -141,12 +141,18 @@ why a check run, not a label, is what's waited on.
   can't run any earlier than that). It locates the PR's own CI run and the
   latest successful `main` CI run, downloads both `coverage-final` lcov
   artifacts, and hands them to `.github/scripts/analyze-coverage-diff.js`:
-  every new/changed line must have test coverage, and the PR's aggregate
-  line coverage must not be lower than the `main` baseline (zero tolerance
-  — this catches removed/weakened tests even when the source lines they used
-  to cover weren't touched by the diff). A failure posts its own PR comment,
-  sets its own `coverage failed` label, and publishes a "Coverage Diff
-  Check" check run on the commit, same pattern as duplication above.
+  every new/changed line must have test coverage, and — if the diff touches
+  any `crates/**/*.rs` or `frontend/src/**` file, the only paths either
+  coverage tool produces line-hit data for — the PR's aggregate line
+  coverage must not be lower than the `main` baseline (zero tolerance; this
+  catches removed/weakened tests even when the source lines they used to
+  cover weren't touched by the diff). A PR that touches neither is skipping
+  the aggregate check entirely rather than gating on noise: with no
+  instrumented file in the diff, a percentage delta can't be anything the
+  PR introduced, only run-to-run measurement drift between two CI runs. A
+  failure posts its own PR comment, sets its own `coverage failed` label,
+  and publishes a "Coverage Diff Check" check run on the commit, same
+  pattern as duplication above.
 
 #### How Claude's gate uses them
 

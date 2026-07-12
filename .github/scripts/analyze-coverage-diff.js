@@ -36,6 +36,18 @@ const EXCLUDED_PATHS = [
   /_test\.rs$/,
 ];
 
+// Path prefixes `cargo llvm-cov` / `npm run test:coverage` actually produce
+// line-hit data for (see ci.yml's coverage steps). Deliberately broader than
+// EXCLUDED_PATHS above: a test file living under one of these prefixes still
+// contributes to the aggregate percentage, so deleting or weakening it is
+// exactly the kind of regression the aggregate check exists to catch even
+// though its own lines are exempt from the per-line "new code must be
+// covered" check. A diff outside these prefixes (docs, lockfiles, workflow
+// YAML, this very script, ...) cannot move either tool's line count, so an
+// aggregate delta on such a diff is measurement noise between two CI runs,
+// not something the PR could fix.
+const INSTRUMENTED_PATH = /^crates\/.*\.rs$|^frontend\/src\//;
+
 function addedLineNumbers(patch) {
   const added = [];
   if (!patch) return added;
@@ -77,22 +89,26 @@ async function analyzeDiff({ github, owner, repo, prNumber, prLcovPath, baseLcov
   const prLcov = parseLcov(fs.readFileSync(prLcovPath, "utf8"));
   const baseLcov = parseLcov(fs.readFileSync(baseLcovPath, "utf8"));
 
-  const prTotals = totals(prLcov);
-  const baseTotals = totals(baseLcov);
-  if (prTotals.percent < baseTotals.percent) {
-    findings.push(
-      `Aggregate line coverage decreased from ${baseTotals.percent.toFixed(2)}% (main) to ` +
-        `${prTotals.percent.toFixed(2)}% (this PR) - check for removed or weakened tests, ` +
-        "even if no specific uncovered line is flagged below.",
-    );
-  }
-
   const files = await github.paginate(github.rest.pulls.listFiles, {
     owner,
     repo,
     pull_number: prNumber,
     per_page: 100,
   });
+
+  // See INSTRUMENTED_PATH above: only trust the aggregate percentage when
+  // the diff could actually have moved it.
+  if (files.some((f) => INSTRUMENTED_PATH.test(f.filename))) {
+    const prTotals = totals(prLcov);
+    const baseTotals = totals(baseLcov);
+    if (prTotals.percent < baseTotals.percent) {
+      findings.push(
+        `Aggregate line coverage decreased from ${baseTotals.percent.toFixed(2)}% (main) to ` +
+          `${prTotals.percent.toFixed(2)}% (this PR) - check for removed or weakened tests, ` +
+          "even if no specific uncovered line is flagged below.",
+      );
+    }
+  }
 
   for (const file of files) {
     if (EXCLUDED_PATHS.some((p) => p.test(file.filename))) continue;

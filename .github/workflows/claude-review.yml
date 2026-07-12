@@ -152,6 +152,15 @@ jobs:
       # Unauthorized - Invalid OIDC token". Passing github_token here makes
       # the action use the workflow's own GITHUB_TOKEN (already scoped via
       # the permissions: block above) and skip that exchange entirely.
+      #
+      # `model` and `direct_prompt` are NOT valid inputs on the current
+      # claude-code-action@v1 (verified against a live run: the action logged
+      # "Unexpected input(s) 'model', 'direct_prompt'", silently ignored
+      # both, saw no prompt at all, and exited as a clean no-op - "success"
+      # with zero review output, no trigger matched). The action renamed
+      # direct_prompt to `prompt`, and model selection now goes through
+      # `claude_args` (raw Claude Code CLI flags) instead of a top-level
+      # `model` input.
       - name: Run Claude review
         id: claude
         if: steps.precheck.outputs.run_claude == 'true'
@@ -160,8 +169,9 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          model: ${{ steps.resolve.outputs.model }}
-          direct_prompt: |
+          claude_args: |
+            --model ${{ steps.resolve.outputs.model }}
+          prompt: |
             Follow skills/review/SKILL.md to review pull request #${{ steps.resolve.outputs.pr_number }}
             at commit ${{ steps.head.outputs.sha }}.
 
@@ -262,10 +272,14 @@ jobs:
             // No eventAction: this isn't a new push, so the synchronize-only
             // stale-clear (which would wipe the verdict Claude just set)
             // must not fire here - only the unconditional
-            // pre-flight-stage-failed guard should apply.
+            // pre-flight-stage-failed guard should apply. selfCheckNames
+            // excludes this exact job (still "in progress" - it's the one
+            // calling this) from sync-pr-labels.js's own ready-to-merge
+            // completeness check, so it isn't mistaken for a stalled check.
             await sync({
               github,
               context,
               core,
               prNumber: Number("${{ steps.resolve.outputs.pr_number }}"),
+              selfCheckNames: ["Check if a review is actually needed", "Review PR"],
             });

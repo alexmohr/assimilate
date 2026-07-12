@@ -21,11 +21,17 @@ jobs:
     name: Sync PR status labels
     runs-on: ubuntu-latest
     # labeled/unlabeled only matters for the claude-approved / claude-changes-requested
-    # review-verdict labels (see sync-pr-labels.js) - otherwise every status label this
-    # workflow itself adds/removes would re-trigger it.
+    # review-verdict labels and needs human review (see sync-pr-labels.js) -
+    # otherwise every status label this workflow itself adds/removes would
+    # re-trigger it. needs human review specifically must be in this list: a
+    # human removing it is the only sign-off mechanism
+    # (humanSignOffStillStands() in sync-pr-labels.js), and without an
+    # immediate re-sync here that removal sits invisible - reflected nowhere
+    # - until some unrelated trigger happens to fire next, which may be
+    # never on an otherwise-idle PR.
     if: >-
       (github.event_name != 'workflow_run' || github.event.workflow_run.pull_requests[0] != null) && (github.event.action != 'labeled' && github.event.action != 'unlabeled' ||
-       contains(fromJSON('["claude-approved","claude-changes-requested"]'), github.event.label.name))
+       contains(fromJSON('["claude-approved","claude-changes-requested","needs human review"]'), github.event.label.name))
     steps:
       - name: Checkout scripts from default branch
         uses: actions/checkout@v4
@@ -52,10 +58,15 @@ jobs:
         with:
           script: |
             const sync = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/sync-pr-labels.js`);
+            // selfCheckNames excludes this exact job (still "in progress" -
+            // it's the one calling this) from sync-pr-labels.js's own
+            // ready-to-merge completeness check, so it isn't mistaken for a
+            // stalled check.
             await sync({
               github,
               context,
               core,
               prNumber: Number("${{ steps.pr.outputs.number }}"),
               eventAction: context.payload.action,
+              selfCheckNames: ["Sync PR status labels"],
             });

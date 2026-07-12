@@ -177,7 +177,9 @@ describe('RolesView', () => {
     expect(wrapper.text()).toContain('Delete Role')
 
     // Click Cancel to close the modal
-    const cancelButton = wrapper.findAll('.modal-actions button').find((b) => b.text().includes('Cancel'))
+    const cancelButton = wrapper
+      .findAll('.modal-actions button')
+      .find((b) => b.text().includes('Cancel'))
     expect(cancelButton).toBeDefined()
     await cancelButton!.trigger('click')
 

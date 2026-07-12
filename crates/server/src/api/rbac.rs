@@ -74,15 +74,13 @@ pub struct SetGroupMembersRequest {
     pub user_ids: Vec<i64>,
 }
 
-/// Request payload for creating a new role.
+/// Shared permission fields used in role create/update payloads.
 #[derive(Debug, Deserialize)]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
 )]
-pub struct CreateRoleRequest {
-    /// Role name.
-    pub name: String,
+pub struct RolePermissionFields {
     /// Permission to create agents.
     pub can_create_agent: bool,
     /// Permission to delete any agent.
@@ -111,42 +109,19 @@ pub struct CreateRoleRequest {
     pub can_upgrade_agent: bool,
 }
 
-/// Request payload for updating a role.
+/// Request payload for creating a new role.
 #[derive(Debug, Deserialize)]
-#[allow(
-    clippy::struct_excessive_bools,
-    reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
-)]
-pub struct UpdateRoleRequest {
-    /// Updated role name.
+pub struct CreateRoleRequest {
+    /// Role name.
     pub name: String,
-    /// Permission to create agents.
-    pub can_create_agent: bool,
-    /// Permission to delete any agent.
-    pub can_delete_agent: bool,
-    /// Permission to delete own agents.
-    pub can_delete_own_agent: bool,
-    /// Permission to create repositories.
-    pub can_create_repo: bool,
-    /// Permission to delete any repository.
-    pub can_delete_repo: bool,
-    /// Permission to delete own repositories.
-    pub can_delete_own_repo: bool,
-    /// Permission to create schedules.
-    pub can_create_schedule: bool,
-    /// Permission to delete any schedule.
-    pub can_delete_schedule: bool,
-    /// Permission to delete own schedules.
-    pub can_delete_own_schedule: bool,
-    /// Permission to manage tags.
-    pub can_manage_tags: bool,
-    /// Permission to view all repositories.
-    pub can_view_all_repos: bool,
-    /// Permission to manage tunnels.
-    pub can_manage_tunnels: bool,
-    /// Permission to upgrade agents.
-    pub can_upgrade_agent: bool,
+    /// Role permissions (flattened so they appear at the same JSON level as `name`).
+    #[serde(flatten)]
+    pub perms: RolePermissionFields,
 }
+
+/// Request payload for updating a role. Shares the same shape as
+/// [`CreateRoleRequest`] — both are flattened around [`RolePermissionFields`].
+pub type UpdateRoleRequest = CreateRoleRequest;
 
 /// Request payload for setting a user's role assignments.
 #[derive(Debug, Deserialize)]
@@ -290,33 +265,47 @@ pub async fn list_roles(
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if the request is invalid.
-pub async fn create_role(
-    State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
-    ApiJson(req): ApiJson<CreateRoleRequest>,
-) -> Result<(StatusCode, Json<RoleResponse>), ApiError> {
-    let name = req.name.trim();
+/// Validate role name and build an [`InsertRoleParams`] from a request with
+/// [`RolePermissionFields`].
+fn build_role_params<'a>(
+    name: &'a str,
+    perms: &'a RolePermissionFields,
+) -> Result<db::InsertRoleParams<'a>, ApiError> {
+    let name = name.trim();
     if name.is_empty() {
         return Err(ApiError::BadRequest(
             "role name must not be empty".to_string(),
         ));
     }
-    let params = db::InsertRoleParams {
+    Ok(db::InsertRoleParams {
         name,
-        can_create_agent: req.can_create_agent,
-        can_delete_agent: req.can_delete_agent,
-        can_delete_own_agent: req.can_delete_own_agent,
-        can_create_repo: req.can_create_repo,
-        can_delete_repo: req.can_delete_repo,
-        can_delete_own_repo: req.can_delete_own_repo,
-        can_create_schedule: req.can_create_schedule,
-        can_delete_schedule: req.can_delete_schedule,
-        can_delete_own_schedule: req.can_delete_own_schedule,
-        can_manage_tags: req.can_manage_tags,
-        can_view_all_repos: req.can_view_all_repos,
-        can_manage_tunnels: req.can_manage_tunnels,
-        can_upgrade_agent: req.can_upgrade_agent,
-    };
+        can_create_agent: perms.can_create_agent,
+        can_delete_agent: perms.can_delete_agent,
+        can_delete_own_agent: perms.can_delete_own_agent,
+        can_create_repo: perms.can_create_repo,
+        can_delete_repo: perms.can_delete_repo,
+        can_delete_own_repo: perms.can_delete_own_repo,
+        can_create_schedule: perms.can_create_schedule,
+        can_delete_schedule: perms.can_delete_schedule,
+        can_delete_own_schedule: perms.can_delete_own_schedule,
+        can_manage_tags: perms.can_manage_tags,
+        can_view_all_repos: perms.can_view_all_repos,
+        can_manage_tunnels: perms.can_manage_tunnels,
+        can_upgrade_agent: perms.can_upgrade_agent,
+    })
+}
+
+/// Create a new role (admin only).
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the request is invalid.
+pub async fn create_role(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    ApiJson(req): ApiJson<CreateRoleRequest>,
+) -> Result<(StatusCode, Json<RoleResponse>), ApiError> {
+    let params = build_role_params(&req.name, &req.perms)?;
     let role: RoleResponse = db::insert_role(&state.pool, &params).await?.into();
     Ok((StatusCode::CREATED, Json(role)))
 }
@@ -332,28 +321,7 @@ pub async fn update_role(
     Path(id): Path<i64>,
     ApiJson(req): ApiJson<UpdateRoleRequest>,
 ) -> Result<Json<RoleResponse>, ApiError> {
-    let name = req.name.trim();
-    if name.is_empty() {
-        return Err(ApiError::BadRequest(
-            "role name must not be empty".to_string(),
-        ));
-    }
-    let params = db::InsertRoleParams {
-        name,
-        can_create_agent: req.can_create_agent,
-        can_delete_agent: req.can_delete_agent,
-        can_delete_own_agent: req.can_delete_own_agent,
-        can_create_repo: req.can_create_repo,
-        can_delete_repo: req.can_delete_repo,
-        can_delete_own_repo: req.can_delete_own_repo,
-        can_create_schedule: req.can_create_schedule,
-        can_delete_schedule: req.can_delete_schedule,
-        can_delete_own_schedule: req.can_delete_own_schedule,
-        can_manage_tags: req.can_manage_tags,
-        can_view_all_repos: req.can_view_all_repos,
-        can_manage_tunnels: req.can_manage_tunnels,
-        can_upgrade_agent: req.can_upgrade_agent,
-    };
+    let params = build_role_params(&req.name, &req.perms)?;
     let role: RoleResponse = db::update_role(&state.pool, id, &params).await?.into();
     Ok(Json(role))
 }
@@ -457,4 +425,57 @@ pub async fn get_effective_permissions(
         .await?
         .into();
     Ok(Json(perms))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_role_request_includes_can_upgrade_agent() {
+        let json = serde_json::json!({
+            "name": "custom-role",
+            "can_create_agent": true,
+            "can_delete_agent": false,
+            "can_delete_own_agent": true,
+            "can_create_repo": false,
+            "can_delete_repo": true,
+            "can_delete_own_repo": false,
+            "can_create_schedule": true,
+            "can_delete_schedule": false,
+            "can_delete_own_schedule": true,
+            "can_manage_tags": false,
+            "can_view_all_repos": true,
+            "can_manage_tunnels": false,
+            "can_upgrade_agent": true
+        });
+        let req: CreateRoleRequest = serde_json::from_value(json).unwrap();
+        assert!(req.perms.can_upgrade_agent);
+        assert_eq!(req.name, "custom-role");
+        assert!(req.perms.can_create_agent);
+    }
+
+    #[test]
+    fn update_role_request_includes_can_upgrade_agent() {
+        let json = serde_json::json!({
+            "name": "updated-role",
+            "can_create_agent": false,
+            "can_delete_agent": true,
+            "can_delete_own_agent": false,
+            "can_create_repo": true,
+            "can_delete_repo": false,
+            "can_delete_own_repo": true,
+            "can_create_schedule": false,
+            "can_delete_schedule": true,
+            "can_delete_own_schedule": false,
+            "can_manage_tags": true,
+            "can_view_all_repos": false,
+            "can_manage_tunnels": true,
+            "can_upgrade_agent": true
+        });
+        let req: UpdateRoleRequest = serde_json::from_value(json).unwrap();
+        assert!(req.perms.can_upgrade_agent);
+        assert_eq!(req.name, "updated-role");
+        assert!(!req.perms.can_create_agent);
+    }
 }

@@ -270,7 +270,7 @@ onMounted(fetchRoles)
       configuring schedules. Unlike groups, roles do not control access to specific repositories.
     </p>
 
-    <div class="toolbar">
+    <div class="page-toolbar">
       <input
         v-model="filterText"
         class="input search-input"
@@ -284,13 +284,13 @@ onMounted(fetchRoles)
     />
     <div
       v-else-if="error"
-      class="state-msg state-error"
+      class="status-msg state-err"
     >
       {{ error }}
     </div>
     <div
       v-else-if="roles.length === 0"
-      class="state-msg"
+      class="status-msg"
     >
       No roles configured yet.
     </div>
@@ -370,26 +370,30 @@ onMounted(fetchRoles)
       class="overlay"
       @click.self="showCreateModal = false"
     >
-      <div class="modal modal-wide">
-        <h2>Create Role</h2>
+      <div class="modal-body modal-body-wide">
+        <h2 class="modal-title">Create Role</h2>
         <form
-          class="modal-form"
+          class="modal-body-inner"
           @submit.prevent="submitCreate"
         >
-          <div class="form-group">
-            <label for="create-role-name">Name <span class="required">*</span></label>
+          <div class="modal-field">
+            <label
+              class="modal-field-label"
+              for="create-role-name"
+            >Name <span class="required">*</span></label>
             <input
               id="create-role-name"
               v-model="createForm.name"
               type="text"
+              class="modal-field-input"
               required
             />
           </div>
-          <div class="permissions-grid">
+          <div class="perm-grid">
             <label
               v-for="perm in PERMISSION_LABELS"
               :key="perm.key"
-              class="perm-checkbox"
+              class="perm-item"
             >
               <input
                 v-model="createForm[perm.key]"
@@ -400,24 +404,24 @@ onMounted(fetchRoles)
           </div>
           <div
             v-if="createError"
-            class="modal-error"
+            class="modal-err"
           >
             {{ createError }}
           </div>
-          <div class="modal-actions">
-            <button
-              type="button"
-              class="btn btn-ghost"
-              @click="showCreateModal = false"
-            >
-              Cancel
-            </button>
+          <div class="modal-btns">
             <button
               type="submit"
               class="btn btn-primary"
               :disabled="createSubmitting || !createForm.name.trim()"
             >
               {{ createSubmitting ? 'Creating...' : 'Create' }}
+            </button>
+            <button
+              type="button"
+              class="btn btn-ghost"
+              @click="showCreateModal = false"
+            >
+              Cancel
             </button>
           </div>
         </form>
@@ -430,17 +434,17 @@ onMounted(fetchRoles)
       class="overlay"
       @click.self="showEditModal = false"
     >
-      <div class="modal modal-wide">
-        <h2>Edit Role &mdash; {{ editTarget?.name }}</h2>
+      <div class="modal-body modal-body-wide">
+        <h2 class="modal-title">Edit Role &mdash; {{ editTarget?.name }}</h2>
         <form
-          class="modal-form"
+          class="modal-body-inner"
           @submit.prevent="submitEdit"
         >
-          <div class="permissions-grid">
+          <div class="perm-grid">
             <label
               v-for="perm in PERMISSION_LABELS"
               :key="perm.key"
-              class="perm-checkbox"
+              class="perm-item"
             >
               <input
                 v-model="editForm[perm.key]"
@@ -451,11 +455,11 @@ onMounted(fetchRoles)
           </div>
           <div
             v-if="editError"
-            class="modal-error"
+            class="modal-err"
           >
             {{ editError }}
           </div>
-          <div class="modal-actions">
+          <div class="modal-btns">
             <button
               type="button"
               class="btn btn-ghost"
@@ -481,19 +485,19 @@ onMounted(fetchRoles)
       class="overlay"
       @click.self="showDeleteModal = false"
     >
-      <div class="modal">
-        <h2>Delete Role</h2>
+      <div class="modal-body">
+        <h2 class="modal-title">Delete Role</h2>
         <p class="confirm-text">
           Are you sure you want to delete the role <strong>{{ deleteTarget?.name }}</strong
           >? Users assigned this role will lose its permissions.
         </p>
         <div
           v-if="deleteError"
-          class="modal-error"
+          class="modal-err"
         >
           {{ deleteError }}
         </div>
-        <div class="modal-actions">
+        <div class="modal-btns">
           <button
             class="btn btn-ghost"
             @click="showDeleteModal = false"
@@ -516,18 +520,14 @@ onMounted(fetchRoles)
 <style scoped>
 .roles-page {
   max-width: 1200px;
-}
-
-.page-description {
-  font-size: 0.875rem;
-  line-height: 1.5;
-  color: var(--text-secondary);
-  margin-bottom: 1rem;
-}
-
-@media (max-width: 768px) {
   .page-description {
-    display: none;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+    @media (max-width: 768px) {
+      display: none;
+    }
   }
 }
 
@@ -537,7 +537,7 @@ onMounted(fetchRoles)
   margin-left: auto;
 }
 
-.toolbar {
+.page-toolbar {
   display: flex;
   align-items: center;
   gap: 0.75rem;
@@ -548,13 +548,13 @@ onMounted(fetchRoles)
   width: 260px;
 }
 
-.state-msg {
+.status-msg {
   text-align: center;
   padding: 3rem;
   color: var(--text-muted);
 }
 
-.state-error {
+.state-err {
   color: var(--danger);
 }
 
@@ -664,7 +664,7 @@ onMounted(fetchRoles)
   justify-content: flex-end;
 }
 
-.modal {
+.modal-body {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -674,36 +674,36 @@ onMounted(fetchRoles)
   box-shadow: var(--shadow-lg);
 }
 
-.modal-wide {
+.modal-body-wide {
   max-width: 550px;
 }
 
-.modal h2 {
+.modal-title {
   font-size: 1.05rem;
   font-weight: 700;
   color: var(--text-primary);
   margin: 0 0 1rem;
 }
 
-.modal-form {
+.modal-body-inner {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
 }
 
-.form-group {
+.modal-field {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
 }
 
-.form-group label {
+.modal-field-label {
   font-size: 0.8125rem;
   font-weight: 500;
   color: var(--text-secondary);
 }
 
-.form-group input {
+.modal-field-input {
   padding: 0.5rem 0.75rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -712,12 +712,12 @@ onMounted(fetchRoles)
   font-size: 0.875rem;
 }
 
-.form-group input:focus {
+.modal-field-input:focus {
   outline: none;
   border-color: var(--accent);
 }
 
-.permissions-grid {
+.perm-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 0.5rem;
@@ -727,21 +727,21 @@ onMounted(fetchRoles)
   background: var(--bg-input);
 }
 
-.perm-checkbox {
+.perm-item {
   display: flex;
   align-items: center;
   gap: 0.4rem;
   font-size: 0.8rem;
-  color: var(--text-primary);
   cursor: pointer;
+  color: var(--text-primary);
 }
 
-.perm-checkbox input[type='checkbox'] {
+.perm-item input {
   accent-color: var(--accent);
   cursor: pointer;
 }
 
-.modal-error {
+.modal-err {
   font-size: 0.8125rem;
   color: var(--danger);
   padding: 0.5rem 0.75rem;
@@ -749,7 +749,7 @@ onMounted(fetchRoles)
   border-radius: var(--radius-sm);
 }
 
-.modal-actions {
+.modal-btns {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
@@ -757,9 +757,9 @@ onMounted(fetchRoles)
 }
 
 .confirm-text {
-  color: var(--text-secondary);
   line-height: 1.6;
   font-size: 0.875rem;
+  color: var(--text-secondary);
   margin-bottom: 0.5rem;
 }
 </style>

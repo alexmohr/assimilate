@@ -74,6 +74,15 @@ opencode's default with no error. The startup log line always prints the
 fully-resolved config (including the model actually in effect), so check
 that first if a run doesn't seem to be using the model you expected.
 
+The same model can be reachable through more than one provider prefix -
+e.g. `deepseek/deepseek-v4-flash` routes directly to DeepSeek's own API
+(needs your own DeepSeek API key configured in opencode), while
+`opencode-go/deepseek-v4-flash` routes through opencode's own hosted
+gateway. Using the wrong one for how you've authenticated opencode surfaces
+as an opaque `UnknownError: Unexpected server error` from opencode itself,
+not as a harness bug. Run `opencode models` to see which provider prefixes
+are actually configured and working before pointing `--model` at one.
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `HARNESS_REPO` | `alexmohr/assimilate` | `owner/repo` |
@@ -98,7 +107,7 @@ HARNESS_DRY_RUN=1 python3 tools/opencode-harness/harness.py --once
 
 # the real thing, as a long-running process
 HARNESS_REPO_DIR=/path/to/disposable/clone \
-python3 tools/opencode-harness/harness.py --model deepseek/deepseek-v4-flash
+python3 tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash
 ```
 
 ### systemd (recommended for unattended, restart-surviving operation)
@@ -109,7 +118,7 @@ Description=opencode-harness for alexmohr/assimilate
 
 [Service]
 Environment=HARNESS_REPO_DIR=/home/you/assimilate-harness-clone
-ExecStart=/usr/bin/python3 /home/you/assimilate-harness-clone/tools/opencode-harness/harness.py --model deepseek/deepseek-v4-flash
+ExecStart=/usr/bin/python3 /home/you/assimilate-harness-clone/tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash
 Restart=on-failure
 RestartSec=30
 

@@ -256,6 +256,66 @@ describe('DashboardView attention panel', () => {
     const dashPlaceholder = wrapper.text()
     expect(dashPlaceholder).toContain('\u2014')
   })
+
+  it('applies attention-row-full class when findings are empty', async () => {
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    const row = wrapper.find('.attention-row')
+    expect(row.classes()).toContain('attention-row-full')
+  })
+
+  it('removes attention-row-full class when findings exist', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({ data: overviewWithFindings() })
+      }
+      return defaultApiHandler(url)
+    })
+
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    const row = wrapper.find('.attention-row')
+    expect(row.classes()).not.toContain('attention-row-full')
+  })
+
+  it('hides NeedsAttention after dismiss when fetchOverview returns empty findings', async () => {
+    const getSpy = vi.mocked(apiClient.get)
+    getSpy.mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({ data: overviewWithFindings() })
+      }
+      return defaultApiHandler(url)
+    })
+
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    expect(wrapper.find('#needs-attention').exists()).toBe(true)
+
+    // On next fetchOverview, return findings with no results
+    getSpy.mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({
+          data: { ...overviewWithFindings(), findings: [] },
+        })
+      }
+      return defaultApiHandler(url)
+    })
+
+    const needsAttWrapper = wrapper.findComponent({ name: 'NeedsAttention' })
+    expect(needsAttWrapper.exists()).toBe(true)
+    needsAttWrapper.vm.$emit('dismissed')
+    await flushPromises()
+
+    // After dismiss and fetchOverview with empty findings, NeedsAttention should hide
+    expect(wrapper.find('#needs-attention').exists()).toBe(false)
+
+    // The attention row should now be full width
+    const row = wrapper.find('.attention-row')
+    expect(row.classes()).toContain('attention-row-full')
+  })
 })
 
 describe('DashboardView success ring', () => {

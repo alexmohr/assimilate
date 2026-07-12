@@ -171,14 +171,18 @@ module.exports = async ({ github, context, core, prNumber, headSha, reportPath }
     core.info(`PR #${prNumber}: duplicate-code check passed.`);
   }
 
-  // Recompute status now that "duplicate code" may have changed, so the
-  // overall status label reflects it immediately rather than waiting for the
-  // next unrelated trigger. selfCheckNames excludes this exact job (still
-  // "in progress" - it's the one calling this) from sync-pr-labels.js's own
-  // ready-to-merge completeness check, so a genuinely-finished PR isn't kept
-  // waiting just because this job hasn't technically completed the instant
-  // it asks.
-  await syncLabels({ github, context, core, prNumber, selfCheckNames: ["Detect duplicate code"] });
+  // Deliberately NOT calling the full syncLabels() here (it used to, for
+  // "immediate" freshness before sync-pr-labels.js's ready-to-merge
+  // completeness check existed): that call republished the shared "PR Merge
+  // Gate" check from within this workflow's own check suite, which is why
+  // it showed up confusingly grouped as "Duplicate Code Check / PR Merge
+  // Gate" - a snapshot from a single stage, not the actual gate. The
+  // completeness check (see sync-pr-labels.js) already reads the
+  // DUPLICATE_CODE_LABEL set/cleared just above directly, from whichever
+  // trigger runs it next (CI completing, Claude's review finishing, ...),
+  // so ready-to-merge can never be granted prematurely either way - this
+  // was never load-bearing for correctness, only for how soon the umbrella
+  // "precheck failed" status label catches up.
 };
 
 module.exports.analyzeReport = analyzeReport;

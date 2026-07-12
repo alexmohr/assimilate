@@ -83,6 +83,23 @@ const COVERAGE_LABEL = {
     "The coverage-diff pre-review check failed (new/changed lines uncovered, or aggregate coverage regressed) — set by code, not a reviewer.",
 };
 
+// Set/cleared solely by claude-review.yml itself, mirroring the
+// DUPLICATE_CODE_LABEL/COVERAGE_LABEL pattern above: owns its own full
+// add/remove lifecycle (set when the "Run Claude review" step errors out -
+// auth, quota, action failure, anything short of producing a verdict; cleared
+// the moment a subsequent attempt succeeds), rather than being touched by the
+// generic synchronize-triggered clear in this file. A review attempt that
+// failed to run is a materially different state from "no review happened
+// yet" (which `ready to merge` already tolerates by design - see
+// skills/review/SKILL.md) - this label exists so that difference actually
+// blocks the gate instead of silently falling through to a green PR.
+const CLAUDE_REVIEW_FAILED_LABEL = {
+  name: "claude review failed",
+  color: "e99695",
+  description:
+    "The last automated Claude review attempt errored (auth/quota/action failure) instead of producing a verdict — set only by claude-review.yml.",
+};
+
 // GitHub rejects an APPROVE review from the PR's own author (422: "Can not
 // approve your own pull request"). In this repo the coding agent and the
 // reviewing agent can share one GitHub account, so a real reviewDecision may
@@ -330,6 +347,7 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
   const hasHumanLabel = existingLabels.includes(HUMAN_LABEL.name);
   const hasCoverageFailed = existingLabels.includes(COVERAGE_LABEL.name);
   const hasDuplicateCode = existingLabels.includes(DUPLICATE_CODE_LABEL.name);
+  const hasClaudeReviewFailed = existingLabels.includes(CLAUDE_REVIEW_FAILED_LABEL.name);
 
   // Hard guarantee: claude-approved must never survive while a pre-flight
   // stage is failing, no matter how it got set. `ready to merge` no longer
@@ -395,6 +413,14 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
     status = STATUS_LABELS.NEEDS_REVIEW;
     summary =
       "This PR requires a human sign-off (`needs human review`). Only a human removing that label counts as sign-off.";
+  } else if (hasClaudeReviewFailed) {
+    // Distinct from "no review yet" (which ready-to-merge tolerates by
+    // design): a review was attempted and errored out without producing a
+    // verdict, so treat it like any other outstanding blocker rather than
+    // silently falling through to ready-to-merge.
+    status = STATUS_LABELS.NEEDS_REVIEW;
+    summary =
+      "The last automated Claude review attempt failed to run (see the PR comment) — retry with `/claude-review` or get a manual review before this can be marked ready to merge.";
   } else if (ciConclusion === "success") {
     // An approving review is not required: waiting on approval when CI
     // hasn't even confirmed the commit builds/passes is a contradiction
@@ -410,7 +436,7 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
   }
 
   core.info(
-    `PR #${prNumber}: ci=${ciConclusion} mergeable=${mergeableState} coverageFailed=${hasCoverageFailed} duplicateCode=${hasDuplicateCode} review=${reviewDecision} (native=${nativeReviewDecision}) needsHuman=${needsHuman} -> ${status.name}`,
+    `PR #${prNumber}: ci=${ciConclusion} mergeable=${mergeableState} coverageFailed=${hasCoverageFailed} duplicateCode=${hasDuplicateCode} claudeReviewFailed=${hasClaudeReviewFailed} review=${reviewDecision} (native=${nativeReviewDecision}) needsHuman=${needsHuman} -> ${status.name}`,
   );
 
   const desired = [status.name];
@@ -454,6 +480,7 @@ module.exports.STATUS_LABELS = STATUS_LABELS;
 module.exports.REVIEW_VERDICT_LABELS = REVIEW_VERDICT_LABELS;
 module.exports.DUPLICATE_CODE_LABEL = DUPLICATE_CODE_LABEL;
 module.exports.COVERAGE_LABEL = COVERAGE_LABEL;
+module.exports.CLAUDE_REVIEW_FAILED_LABEL = CLAUDE_REVIEW_FAILED_LABEL;
 module.exports.ensureLabelExists = ensureLabelExists;
 // Exported so pre-review-checks.js can exclude this workflow's own derived,
 // circular check run (its conclusion depends on the review having already

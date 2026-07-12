@@ -61,6 +61,7 @@ const mockRoles: Role[] = [
   makeRole(1, 'admin', true, true),
   makeRole(2, 'operator', true, false),
   makeRole(3, 'viewer', true, false),
+  makeRole(4, 'custom', false, false),
 ]
 
 const mockApiGet = apiClient.get as ReturnType<typeof vi.fn>
@@ -130,5 +131,56 @@ describe('RolesView', () => {
     const no = wrapper.findAll('.perm-no')
     expect(yes.length).toBeGreaterThan(0)
     expect(no.length).toBeGreaterThan(0)
+  })
+
+  it('opens create modal with permission checkboxes', async () => {
+    const wrapper = renderWithPlugins(RolesView)
+
+    await flushPromises()
+
+    const newButton = wrapper.findAll('button').find((b) => b.text().includes('New'))
+    expect(newButton).toBeDefined()
+    await newButton!.trigger('click')
+
+    expect(wrapper.find('.overlay').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Create Role')
+    expect(wrapper.text()).toContain('Upgrade Agent')
+  })
+
+  it('opens edit modal with permission checkboxes', async () => {
+    const wrapper = renderWithPlugins(RolesView)
+
+    await flushPromises()
+
+    const editButton = wrapper.findAll('button').find((b) => b.text().includes('Edit'))
+    expect(editButton).toBeDefined()
+    await editButton!.trigger('click')
+
+    expect(wrapper.find('.overlay').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Edit Role')
+    expect(wrapper.text()).toContain('Upgrade Agent')
+  })
+
+  it('opens delete modal on non-seeded role and cancels', async () => {
+    const wrapper = renderWithPlugins(RolesView)
+
+    await flushPromises()
+
+    // The non-seeded "custom" role (4th role) has an enabled delete button
+    const deleteButtons = wrapper.findAll('.btn-danger-text')
+    const lastDelete = deleteButtons[deleteButtons.length - 1]
+    expect(lastDelete.attributes('disabled')).toBeUndefined()
+
+    await lastDelete.trigger('click')
+
+    expect(wrapper.find('.overlay').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Delete Role')
+
+    // Click Cancel to close the modal
+    const cancelButton = wrapper.findAll('.modal-actions button').find((b) => b.text().includes('Cancel'))
+    expect(cancelButton).toBeDefined()
+    await cancelButton!.trigger('click')
+
+    expect(wrapper.text()).not.toContain('Delete Role')
   })
 })

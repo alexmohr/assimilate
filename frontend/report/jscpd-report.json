@@ -1,0 +1,5829 @@
+{
+  "statistics": {
+    "detectionDate": "2026-07-12T13:40:23.486Z",
+    "formats": {
+      "typescript": {
+        "sources": {
+          "src/views/UsersView.test.ts": {
+            "lines": 164,
+            "tokens": 1571,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/TunnelsView.vue": {
+            "lines": 252,
+            "tokens": 2319,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/TunnelsView.test.ts": {
+            "lines": 162,
+            "tokens": 1365,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/TokensView.vue": {
+            "lines": 89,
+            "tokens": 778,
+            "sources": 1,
+            "clones": 2,
+            "duplicatedLines": 33,
+            "duplicatedTokens": 321,
+            "percentage": 37.08,
+            "percentageTokens": 41.26,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/TokensView.test.ts": {
+            "lines": 120,
+            "tokens": 1011,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/SystemView.test.ts": {
+            "lines": 336,
+            "tokens": 2929,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ServerQuotasView.vue": {
+            "lines": 108,
+            "tokens": 1069,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ServerQuotasView.test.ts": {
+            "lines": 162,
+            "tokens": 1464,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 12,
+            "duplicatedTokens": 117,
+            "percentage": 7.41,
+            "percentageTokens": 7.99,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/SchedulesView.vue": {
+            "lines": 287,
+            "tokens": 3023,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/SchedulesView.test.ts": {
+            "lines": 422,
+            "tokens": 3898,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ScheduleDetailView.test.ts": {
+            "lines": 755,
+            "tokens": 7515,
+            "sources": 1,
+            "clones": 12,
+            "duplicatedLines": 170,
+            "duplicatedTokens": 1656,
+            "percentage": 22.52,
+            "percentageTokens": 22.04,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/RolesView.vue": {
+            "lines": 234,
+            "tokens": 2106,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/RolesView.test.ts": {
+            "lines": 131,
+            "tokens": 1065,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ReposView.test.ts": {
+            "lines": 363,
+            "tokens": 3465,
+            "sources": 1,
+            "clones": 5,
+            "duplicatedLines": 63,
+            "duplicatedTokens": 815,
+            "percentage": 17.36,
+            "percentageTokens": 23.52,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/RepoDetailView.test.ts": {
+            "lines": 630,
+            "tokens": 6351,
+            "sources": 1,
+            "clones": 9,
+            "duplicatedLines": 111,
+            "duplicatedTokens": 1165,
+            "percentage": 17.62,
+            "percentageTokens": 18.34,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ProfileView.vue": {
+            "lines": 133,
+            "tokens": 1161,
+            "sources": 1,
+            "clones": 2,
+            "duplicatedLines": 33,
+            "duplicatedTokens": 321,
+            "percentage": 24.81,
+            "percentageTokens": 27.65,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ProfileView.test.ts": {
+            "lines": 102,
+            "tokens": 894,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/NotificationsView.test.ts": {
+            "lines": 233,
+            "tokens": 2152,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/NotFoundView.vue": {
+            "lines": 6,
+            "tokens": 43,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/MachinesView.vue": {
+            "lines": 6,
+            "tokens": 53,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/LoginView.vue": {
+            "lines": 26,
+            "tokens": 300,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/LoginView.test.ts": {
+            "lines": 68,
+            "tokens": 703,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 11,
+            "duplicatedTokens": 128,
+            "percentage": 16.18,
+            "percentageTokens": 18.21,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/HostsView.test.ts": {
+            "lines": 279,
+            "tokens": 2625,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/HostDetailView.test.ts": {
+            "lines": 644,
+            "tokens": 6440,
+            "sources": 1,
+            "clones": 4,
+            "duplicatedLines": 54,
+            "duplicatedTokens": 574,
+            "percentage": 8.39,
+            "percentageTokens": 8.91,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/GroupsView.vue": {
+            "lines": 216,
+            "tokens": 2159,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/GroupsView.test.ts": {
+            "lines": 133,
+            "tokens": 1259,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ExcludesView.vue": {
+            "lines": 29,
+            "tokens": 313,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ExcludesView.test.ts": {
+            "lines": 87,
+            "tokens": 902,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ErrorView.vue": {
+            "lines": 37,
+            "tokens": 337,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ErrorView.test.ts": {
+            "lines": 73,
+            "tokens": 733,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/DashboardView.test.ts": {
+            "lines": 389,
+            "tokens": 3559,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ChangePasswordView.vue": {
+            "lines": 28,
+            "tokens": 286,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ChangePasswordView.test.ts": {
+            "lines": 86,
+            "tokens": 861,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 11,
+            "duplicatedTokens": 128,
+            "percentage": 12.79,
+            "percentageTokens": 14.87,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/AuditLogView.vue": {
+            "lines": 298,
+            "tokens": 1809,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/AuditLogView.test.ts": {
+            "lines": 306,
+            "tokens": 2949,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 17,
+            "duplicatedTokens": 157,
+            "percentage": 5.56,
+            "percentageTokens": 5.32,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ArchivesView.test.ts": {
+            "lines": 186,
+            "tokens": 1813,
+            "sources": 1,
+            "clones": 2,
+            "duplicatedLines": 22,
+            "duplicatedTokens": 270,
+            "percentage": 11.83,
+            "percentageTokens": 14.89,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ActivityLogView.test.ts": {
+            "lines": 663,
+            "tokens": 6150,
+            "sources": 1,
+            "clones": 5,
+            "duplicatedLines": 65,
+            "duplicatedTokens": 711,
+            "percentage": 9.8,
+            "percentageTokens": 11.56,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/utils/validation.ts": {
+            "lines": 18,
+            "tokens": 151,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/utils/storage.ts": {
+            "lines": 17,
+            "tokens": 152,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/utils/quota.ts": {
+            "lines": 24,
+            "tokens": 175,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/utils/logger.ts": {
+            "lines": 9,
+            "tokens": 61,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/utils/format.ts": {
+            "lines": 62,
+            "tokens": 794,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/utils/format.test.ts": {
+            "lines": 45,
+            "tokens": 405,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/utils/fileChangePatterns.ts": {
+            "lines": 49,
+            "tokens": 418,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/utils/fileChangePatterns.test.ts": {
+            "lines": 61,
+            "tokens": 552,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/utils/errorDetails.ts": {
+            "lines": 37,
+            "tokens": 204,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/utils/errorDetails.test.ts": {
+            "lines": 42,
+            "tokens": 309,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/utils/error.ts": {
+            "lines": 89,
+            "tokens": 892,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/utils/error.test.ts": {
+            "lines": 234,
+            "tokens": 2039,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/utils/cron.ts": {
+            "lines": 64,
+            "tokens": 790,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/utils/backupStatus.ts": {
+            "lines": 26,
+            "tokens": 156,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/types/tunnel.ts": {
+            "lines": 31,
+            "tokens": 196,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/types/schedule.ts": {
+            "lines": 14,
+            "tokens": 116,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/types/repo.ts": {
+            "lines": 13,
+            "tokens": 76,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/types/notifications.ts": {
+            "lines": 91,
+            "tokens": 573,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/types/dashboard.ts": {
+            "lines": 88,
+            "tokens": 580,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/test-utils/index.ts": {
+            "lines": 128,
+            "tokens": 1119,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/styles/contrast.test.ts": {
+            "lines": 237,
+            "tokens": 2245,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/stores/ui.ts": {
+            "lines": 38,
+            "tokens": 273,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/stores/auth.ts": {
+            "lines": 114,
+            "tokens": 1071,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/router/index.ts": {
+            "lines": 142,
+            "tokens": 1336,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/layouts/AppLayout.vue": {
+            "lines": 124,
+            "tokens": 1077,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/composables/useWebSocket.ts": {
+            "lines": 132,
+            "tokens": 1219,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/composables/useToast.ts": {
+            "lines": 51,
+            "tokens": 497,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/composables/useTimezone.ts": {
+            "lines": 41,
+            "tokens": 374,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/composables/useTheme.ts": {
+            "lines": 99,
+            "tokens": 852,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/composables/useMobile.ts": {
+            "lines": 52,
+            "tokens": 467,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/composables/useEscapeKey.ts": {
+            "lines": 27,
+            "tokens": 202,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/composables/useClipboard.ts": {
+            "lines": 22,
+            "tokens": 177,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/composables/useBackendStatus.ts": {
+            "lines": 122,
+            "tokens": 894,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/composables/useAsyncAction.ts": {
+            "lines": 37,
+            "tokens": 290,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/composables/useAsyncAction.test.ts": {
+            "lines": 62,
+            "tokens": 552,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/composables/useArchiveBrowser.ts": {
+            "lines": 339,
+            "tokens": 3509,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/composables/useArchiveBrowser.test.ts": {
+            "lines": 144,
+            "tokens": 1239,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/UpcomingWork.vue": {
+            "lines": 7,
+            "tokens": 65,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/TrendsChart.vue": {
+            "lines": 273,
+            "tokens": 2393,
+            "sources": 1,
+            "clones": 5,
+            "duplicatedLines": 123,
+            "duplicatedTokens": 1014,
+            "percentage": 45.05,
+            "percentageTokens": 42.37,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/TrendsChart.test.ts": {
+            "lines": 82,
+            "tokens": 773,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 15,
+            "duplicatedTokens": 114,
+            "percentage": 18.29,
+            "percentageTokens": 14.75,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/ToggleSwitch.vue": {
+            "lines": 8,
+            "tokens": 48,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/ToggleSwitch.test.ts": {
+            "lines": 51,
+            "tokens": 620,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/ToastContainer.vue": {
+            "lines": 12,
+            "tokens": 125,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/ToastContainer.test.ts": {
+            "lines": 73,
+            "tokens": 768,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/TimezoneSelect.vue": {
+            "lines": 120,
+            "tokens": 1046,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/TimezoneSelect.test.ts": {
+            "lines": 89,
+            "tokens": 945,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/StorageTrendWidget.vue": {
+            "lines": 190,
+            "tokens": 1723,
+            "sources": 1,
+            "clones": 5,
+            "duplicatedLines": 115,
+            "duplicatedTokens": 992,
+            "percentage": 60.53,
+            "percentageTokens": 57.57,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/StorageTrendWidget.test.ts": {
+            "lines": 88,
+            "tokens": 808,
+            "sources": 1,
+            "clones": 3,
+            "duplicatedLines": 40,
+            "duplicatedTokens": 389,
+            "percentage": 45.45,
+            "percentageTokens": 48.14,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/SshKeyDeployPanel.vue": {
+            "lines": 52,
+            "tokens": 551,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/SshKeyDeployPanel.test.ts": {
+            "lines": 123,
+            "tokens": 1316,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/RestoreWizard.vue": {
+            "lines": 137,
+            "tokens": 1181,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/RestoreWizard.test.ts": {
+            "lines": 303,
+            "tokens": 2984,
+            "sources": 1,
+            "clones": 7,
+            "duplicatedLines": 172,
+            "duplicatedTokens": 1551,
+            "percentage": 56.77,
+            "percentageTokens": 51.98,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/RepositoryCapacity.vue": {
+            "lines": 4,
+            "tokens": 56,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/RepoHealthWidget.vue": {
+            "lines": 27,
+            "tokens": 308,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/RepoHealthWidget.test.ts": {
+            "lines": 94,
+            "tokens": 810,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/RecentActivityWidget.vue": {
+            "lines": 79,
+            "tokens": 720,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/RecentActivityWidget.test.ts": {
+            "lines": 149,
+            "tokens": 1203,
+            "sources": 1,
+            "clones": 3,
+            "duplicatedLines": 40,
+            "duplicatedTokens": 433,
+            "percentage": 26.85,
+            "percentageTokens": 35.99,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/QuotaPanel.vue": {
+            "lines": 135,
+            "tokens": 1359,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/QuotaPanel.test.ts": {
+            "lines": 201,
+            "tokens": 1866,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 12,
+            "duplicatedTokens": 117,
+            "percentage": 5.97,
+            "percentageTokens": 6.27,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/ProtectionCoverage.vue": {
+            "lines": 3,
+            "tokens": 42,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/NextScheduledWidget.vue": {
+            "lines": 97,
+            "tokens": 966,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/NextScheduledWidget.test.ts": {
+            "lines": 68,
+            "tokens": 604,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 20,
+            "duplicatedTokens": 219,
+            "percentage": 29.41,
+            "percentageTokens": 36.26,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/NeedsAttention.vue": {
+            "lines": 40,
+            "tokens": 455,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/MergeAgentDialog.vue": {
+            "lines": 48,
+            "tokens": 451,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/MergeAgentDialog.test.ts": {
+            "lines": 101,
+            "tokens": 1088,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/FileSearch.vue": {
+            "lines": 79,
+            "tokens": 758,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/FileSearch.test.ts": {
+            "lines": 180,
+            "tokens": 1735,
+            "sources": 1,
+            "clones": 2,
+            "duplicatedLines": 43,
+            "duplicatedTokens": 391,
+            "percentage": 23.89,
+            "percentageTokens": 22.54,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/FileChangePatternsEditor.vue": {
+            "lines": 50,
+            "tokens": 360,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/FileChangePatternsEditor.test.ts": {
+            "lines": 68,
+            "tokens": 800,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/EmptyState.vue": {
+            "lines": 13,
+            "tokens": 73,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/EmptyState.test.ts": {
+            "lines": 52,
+            "tokens": 571,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/DashboardOperations.test.ts": {
+            "lines": 200,
+            "tokens": 1926,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/CronBuilder.vue": {
+            "lines": 313,
+            "tokens": 3352,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/CronBuilder.test.ts": {
+            "lines": 107,
+            "tokens": 1097,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/CardError.vue": {
+            "lines": 8,
+            "tokens": 56,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BaseSpinner.vue": {
+            "lines": 8,
+            "tokens": 58,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BaseSpinner.test.ts": {
+            "lines": 46,
+            "tokens": 486,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BaseSkeleton.vue": {
+            "lines": 12,
+            "tokens": 90,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BaseSkeleton.test.ts": {
+            "lines": 42,
+            "tokens": 494,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BaseModal.vue": {
+            "lines": 76,
+            "tokens": 642,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BaseModal.test.ts": {
+            "lines": 83,
+            "tokens": 841,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BaseHostLink.vue": {
+            "lines": 2,
+            "tokens": 13,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BackupStatsWidget.vue": {
+            "lines": 71,
+            "tokens": 808,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BackupStatsWidget.test.ts": {
+            "lines": 126,
+            "tokens": 1009,
+            "sources": 1,
+            "clones": 4,
+            "duplicatedLines": 61,
+            "duplicatedTokens": 535,
+            "percentage": 48.41,
+            "percentageTokens": 53.02,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BackupProgressCard.vue": {
+            "lines": 18,
+            "tokens": 130,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BackupCalendar.vue": {
+            "lines": 207,
+            "tokens": 2088,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BackupCalendar.test.ts": {
+            "lines": 63,
+            "tokens": 592,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BackendUnreachable.vue": {
+            "lines": 3,
+            "tokens": 46,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/ArchiveDiff.vue": {
+            "lines": 61,
+            "tokens": 489,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/ArchiveDiff.test.ts": {
+            "lines": 166,
+            "tokens": 1583,
+            "sources": 1,
+            "clones": 5,
+            "duplicatedLines": 67,
+            "duplicatedTokens": 678,
+            "percentage": 40.36,
+            "percentageTokens": 42.83,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/AgentDeployDialog.vue": {
+            "lines": 139,
+            "tokens": 1135,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/AgentDeployDialog.test.ts": {
+            "lines": 137,
+            "tokens": 1344,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/api/tunnels.ts": {
+            "lines": 55,
+            "tokens": 518,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/api/tunnels.test.ts": {
+            "lines": 110,
+            "tokens": 807,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 24,
+            "duplicatedTokens": 192,
+            "percentage": 21.82,
+            "percentageTokens": 23.79,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/api/serverQuotas.ts": {
+            "lines": 32,
+            "tokens": 244,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/api/notifications.ts": {
+            "lines": 104,
+            "tokens": 916,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/api/notifications.test.ts": {
+            "lines": 227,
+            "tokens": 1694,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 24,
+            "duplicatedTokens": 192,
+            "percentage": 10.57,
+            "percentageTokens": 11.33,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/api/client.ts": {
+            "lines": 18,
+            "tokens": 142,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/api/client.test.ts": {
+            "lines": 79,
+            "tokens": 705,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/sw.test.ts": {
+            "lines": 50,
+            "tokens": 397,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/primevue-pt.ts": {
+            "lines": 114,
+            "tokens": 724,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/main.ts": {
+            "lines": 19,
+            "tokens": 158,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/App.vue": {
+            "lines": 38,
+            "tokens": 347,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/upgrade-button.spec.ts": {
+            "lines": 189,
+            "tokens": 1633,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/system-settings.spec.ts": {
+            "lines": 116,
+            "tokens": 1090,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/storage-trends.spec.ts": {
+            "lines": 68,
+            "tokens": 802,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/smoke.spec.ts": {
+            "lines": 102,
+            "tokens": 1142,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/settings.spec.ts": {
+            "lines": 59,
+            "tokens": 660,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/server-quotas.spec.ts": {
+            "lines": 95,
+            "tokens": 978,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/schedules.spec.ts": {
+            "lines": 140,
+            "tokens": 1374,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/repos.spec.ts": {
+            "lines": 73,
+            "tokens": 681,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/repo-sync-api.spec.ts": {
+            "lines": 85,
+            "tokens": 942,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/repo-schedules.spec.ts": {
+            "lines": 20,
+            "tokens": 185,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/repo-archives-group-by-host.spec.ts": {
+            "lines": 23,
+            "tokens": 212,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/repo-archive-filter.spec.ts": {
+            "lines": 93,
+            "tokens": 854,
+            "sources": 1,
+            "clones": 2,
+            "duplicatedLines": 22,
+            "duplicatedTokens": 208,
+            "percentage": 23.66,
+            "percentageTokens": 24.36,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/rbac.spec.ts": {
+            "lines": 49,
+            "tokens": 365,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/push-notifications.spec.ts": {
+            "lines": 27,
+            "tokens": 252,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/login-role.spec.ts": {
+            "lines": 112,
+            "tokens": 1323,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/import.spec.ts": {
+            "lines": 451,
+            "tokens": 4829,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/hosts.spec.ts": {
+            "lines": 93,
+            "tokens": 927,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/fixtures.ts": {
+            "lines": 99,
+            "tokens": 971,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/dashboard-widgets.spec.ts": {
+            "lines": 89,
+            "tokens": 988,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/blob-download-error.spec.ts": {
+            "lines": 84,
+            "tokens": 714,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/backup-progress.spec.ts": {
+            "lines": 548,
+            "tokens": 5229,
+            "sources": 1,
+            "clones": 2,
+            "duplicatedLines": 26,
+            "duplicatedTokens": 282,
+            "percentage": 4.74,
+            "percentageTokens": 5.39,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/backup-lifecycle.spec.ts": {
+            "lines": 201,
+            "tokens": 2149,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/archive-browsing.spec.ts": {
+            "lines": 152,
+            "tokens": 1506,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/agent-default-file-change-patterns.spec.ts": {
+            "lines": 123,
+            "tokens": 1206,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/admin.spec.ts": {
+            "lines": 65,
+            "tokens": 700,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "e2e/activity-warnings.spec.ts": {
+            "lines": 94,
+            "tokens": 829,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "vite.config.ts": {
+            "lines": 42,
+            "tokens": 286,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "playwright.config.ts": {
+            "lines": 35,
+            "tokens": 324,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          }
+        },
+        "total": {
+          "lines": 20325,
+          "tokens": 191115,
+          "sources": 168,
+          "clones": 44,
+          "duplicatedLines": 703,
+          "duplicatedTokens": 6835,
+          "percentage": 3.46,
+          "percentageTokens": 3.58,
+          "newDuplicatedLines": 0,
+          "newClones": 0
+        }
+      },
+      "css": {
+        "sources": {
+          "src/views/TunnelsView.vue": {
+            "lines": 172,
+            "tokens": 929,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/TokensView.vue": {
+            "lines": 131,
+            "tokens": 810,
+            "sources": 1,
+            "clones": 3,
+            "duplicatedLines": 90,
+            "duplicatedTokens": 501,
+            "percentage": 68.7,
+            "percentageTokens": 61.85,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ServerQuotasView.vue": {
+            "lines": 238,
+            "tokens": 1348,
+            "sources": 1,
+            "clones": 3,
+            "duplicatedLines": 90,
+            "duplicatedTokens": 487,
+            "percentage": 37.82,
+            "percentageTokens": 36.13,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/SchedulesView.vue": {
+            "lines": 270,
+            "tokens": 1597,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/RolesView.vue": {
+            "lines": 247,
+            "tokens": 1398,
+            "sources": 1,
+            "clones": 3,
+            "duplicatedLines": 108,
+            "duplicatedTokens": 577,
+            "percentage": 43.72,
+            "percentageTokens": 41.27,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ProfileView.vue": {
+            "lines": 270,
+            "tokens": 1606,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/NotFoundView.vue": {
+            "lines": 55,
+            "tokens": 366,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 22,
+            "duplicatedTokens": 157,
+            "percentage": 40,
+            "percentageTokens": 42.9,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/LoginView.vue": {
+            "lines": 118,
+            "tokens": 712,
+            "sources": 1,
+            "clones": 3,
+            "duplicatedLines": 95,
+            "duplicatedTokens": 570,
+            "percentage": 80.51,
+            "percentageTokens": 80.06,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/GroupsView.vue": {
+            "lines": 207,
+            "tokens": 1182,
+            "sources": 1,
+            "clones": 5,
+            "duplicatedLines": 144,
+            "duplicatedTokens": 791,
+            "percentage": 69.57,
+            "percentageTokens": 66.92,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ExcludesView.vue": {
+            "lines": 177,
+            "tokens": 1101,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ErrorView.vue": {
+            "lines": 69,
+            "tokens": 451,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 22,
+            "duplicatedTokens": 157,
+            "percentage": 31.88,
+            "percentageTokens": 34.81,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ChangePasswordView.vue": {
+            "lines": 105,
+            "tokens": 643,
+            "sources": 1,
+            "clones": 3,
+            "duplicatedLines": 95,
+            "duplicatedTokens": 570,
+            "percentage": 90.48,
+            "percentageTokens": 88.65,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/AuditLogView.vue": {
+            "lines": 190,
+            "tokens": 1129,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/layouts/AppLayout.vue": {
+            "lines": 511,
+            "tokens": 2874,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/UpcomingWork.vue": {
+            "lines": 56,
+            "tokens": 346,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/TrendsChart.vue": {
+            "lines": 110,
+            "tokens": 662,
+            "sources": 1,
+            "clones": 3,
+            "duplicatedLines": 91,
+            "duplicatedTokens": 552,
+            "percentage": 82.73,
+            "percentageTokens": 83.38,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/ToggleSwitch.vue": {
+            "lines": 53,
+            "tokens": 325,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/ToastContainer.vue": {
+            "lines": 112,
+            "tokens": 647,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/TimezoneSelect.vue": {
+            "lines": 42,
+            "tokens": 277,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/StorageTrendWidget.vue": {
+            "lines": 110,
+            "tokens": 662,
+            "sources": 1,
+            "clones": 4,
+            "duplicatedLines": 147,
+            "duplicatedTokens": 895,
+            "percentage": 133.64,
+            "percentageTokens": 135.2,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/SshKeyDeployPanel.vue": {
+            "lines": 60,
+            "tokens": 296,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/RestoreWizard.vue": {
+            "lines": 157,
+            "tokens": 968,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/RepositoryCapacity.vue": {
+            "lines": 62,
+            "tokens": 346,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/RepoHealthWidget.vue": {
+            "lines": 123,
+            "tokens": 777,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 22,
+            "duplicatedTokens": 144,
+            "percentage": 17.89,
+            "percentageTokens": 18.53,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/RecentActivityWidget.vue": {
+            "lines": 133,
+            "tokens": 846,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/QuotaPanel.vue": {
+            "lines": 295,
+            "tokens": 1807,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/ProtectionCoverage.vue": {
+            "lines": 78,
+            "tokens": 407,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/NextScheduledWidget.vue": {
+            "lines": 74,
+            "tokens": 440,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 22,
+            "duplicatedTokens": 144,
+            "percentage": 29.73,
+            "percentageTokens": 32.73,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/NeedsAttention.vue": {
+            "lines": 133,
+            "tokens": 749,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/MergeAgentDialog.vue": {
+            "lines": 17,
+            "tokens": 96,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/FileSearch.vue": {
+            "lines": 126,
+            "tokens": 737,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/FileChangePatternsEditor.vue": {
+            "lines": 41,
+            "tokens": 237,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/EmptyState.vue": {
+            "lines": 31,
+            "tokens": 177,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/CronBuilder.vue": {
+            "lines": 243,
+            "tokens": 1495,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/CardError.vue": {
+            "lines": 41,
+            "tokens": 266,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BaseSpinner.vue": {
+            "lines": 36,
+            "tokens": 184,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BaseSkeleton.vue": {
+            "lines": 74,
+            "tokens": 220,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BaseModal.vue": {
+            "lines": 100,
+            "tokens": 567,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BackupStatsWidget.vue": {
+            "lines": 133,
+            "tokens": 767,
+            "sources": 1,
+            "clones": 1,
+            "duplicatedLines": 56,
+            "duplicatedTokens": 343,
+            "percentage": 42.11,
+            "percentageTokens": 44.72,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BackupProgressCard.vue": {
+            "lines": 112,
+            "tokens": 663,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BackupCalendar.vue": {
+            "lines": 401,
+            "tokens": 1858,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BackendUnreachable.vue": {
+            "lines": 74,
+            "tokens": 472,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/ArchiveDiff.vue": {
+            "lines": 112,
+            "tokens": 671,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/AgentDeployDialog.vue": {
+            "lines": 108,
+            "tokens": 628,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/style.css": {
+            "lines": 434,
+            "tokens": 2989,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "public/icon.svg": {
+            "lines": 2,
+            "tokens": 16,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          }
+        },
+        "total": {
+          "lines": 6443,
+          "tokens": 37744,
+          "sources": 46,
+          "clones": 16,
+          "duplicatedLines": 502,
+          "duplicatedTokens": 2944,
+          "percentage": 7.79,
+          "percentageTokens": 7.8,
+          "newDuplicatedLines": 0,
+          "newClones": 0
+        }
+      },
+      "markup": {
+        "sources": {
+          "src/views/TunnelsView.vue": {
+            "lines": 392,
+            "tokens": 2566,
+            "sources": 1,
+            "clones": 2,
+            "duplicatedLines": 22,
+            "duplicatedTokens": 174,
+            "percentage": 5.61,
+            "percentageTokens": 6.78,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/TokensView.vue": {
+            "lines": 132,
+            "tokens": 815,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ServerQuotasView.vue": {
+            "lines": 140,
+            "tokens": 540,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/SchedulesView.vue": {
+            "lines": 101,
+            "tokens": 840,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/RolesView.vue": {
+            "lines": 260,
+            "tokens": 1633,
+            "sources": 1,
+            "clones": 3,
+            "duplicatedLines": 70,
+            "duplicatedTokens": 371,
+            "percentage": 26.92,
+            "percentageTokens": 22.72,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ProfileView.vue": {
+            "lines": 253,
+            "tokens": 1575,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/NotFoundView.vue": {
+            "lines": 12,
+            "tokens": 128,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/MachinesView.vue": {
+            "lines": 0,
+            "tokens": 6,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/LoginView.vue": {
+            "lines": 68,
+            "tokens": 414,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/GroupsView.vue": {
+            "lines": 306,
+            "tokens": 1907,
+            "sources": 1,
+            "clones": 3,
+            "duplicatedLines": 70,
+            "duplicatedTokens": 371,
+            "percentage": 22.88,
+            "percentageTokens": 19.45,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ExcludesView.vue": {
+            "lines": 123,
+            "tokens": 985,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ErrorView.vue": {
+            "lines": 28,
+            "tokens": 180,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/ChangePasswordView.vue": {
+            "lines": 73,
+            "tokens": 466,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/views/AuditLogView.vue": {
+            "lines": 172,
+            "tokens": 874,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/layouts/AppLayout.vue": {
+            "lines": 121,
+            "tokens": 569,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/UpcomingWork.vue": {
+            "lines": 34,
+            "tokens": 268,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/TrendsChart.vue": {
+            "lines": 97,
+            "tokens": 646,
+            "sources": 1,
+            "clones": 3,
+            "duplicatedLines": 82,
+            "duplicatedTokens": 450,
+            "percentage": 84.54,
+            "percentageTokens": 69.66,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/ToggleSwitch.vue": {
+            "lines": 22,
+            "tokens": 124,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/ToastContainer.vue": {
+            "lines": 31,
+            "tokens": 180,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/TimezoneSelect.vue": {
+            "lines": 42,
+            "tokens": 196,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/StorageTrendWidget.vue": {
+            "lines": 88,
+            "tokens": 555,
+            "sources": 1,
+            "clones": 3,
+            "duplicatedLines": 78,
+            "duplicatedTokens": 466,
+            "percentage": 88.64,
+            "percentageTokens": 83.96,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/SshKeyDeployPanel.vue": {
+            "lines": 64,
+            "tokens": 303,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/RestoreWizard.vue": {
+            "lines": 183,
+            "tokens": 856,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/RepositoryCapacity.vue": {
+            "lines": 30,
+            "tokens": 195,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/RepoHealthWidget.vue": {
+            "lines": 43,
+            "tokens": 284,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/RecentActivityWidget.vue": {
+            "lines": 44,
+            "tokens": 323,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/QuotaPanel.vue": {
+            "lines": 154,
+            "tokens": 1098,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/ProtectionCoverage.vue": {
+            "lines": 50,
+            "tokens": 357,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/NextScheduledWidget.vue": {
+            "lines": 32,
+            "tokens": 228,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/NeedsAttention.vue": {
+            "lines": 42,
+            "tokens": 251,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/MergeAgentDialog.vue": {
+            "lines": 84,
+            "tokens": 596,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/FileSearch.vue": {
+            "lines": 145,
+            "tokens": 745,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/FileChangePatternsEditor.vue": {
+            "lines": 43,
+            "tokens": 355,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/EmptyState.vue": {
+            "lines": 26,
+            "tokens": 155,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/CronBuilder.vue": {
+            "lines": 161,
+            "tokens": 604,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/CardError.vue": {
+            "lines": 17,
+            "tokens": 112,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BaseSpinner.vue": {
+            "lines": 33,
+            "tokens": 168,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BaseSkeleton.vue": {
+            "lines": 13,
+            "tokens": 85,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BaseModal.vue": {
+            "lines": 48,
+            "tokens": 290,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BaseHostLink.vue": {
+            "lines": 2,
+            "tokens": 20,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BackupStatsWidget.vue": {
+            "lines": 101,
+            "tokens": 598,
+            "sources": 1,
+            "clones": 2,
+            "duplicatedLines": 40,
+            "duplicatedTokens": 214,
+            "percentage": 39.6,
+            "percentageTokens": 35.79,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BackupProgressCard.vue": {
+            "lines": 50,
+            "tokens": 456,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BackupCalendar.vue": {
+            "lines": 168,
+            "tokens": 584,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/BackendUnreachable.vue": {
+            "lines": 24,
+            "tokens": 181,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/ArchiveDiff.vue": {
+            "lines": 141,
+            "tokens": 760,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/components/AgentDeployDialog.vue": {
+            "lines": 172,
+            "tokens": 1432,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "src/App.vue": {
+            "lines": 2,
+            "tokens": 28,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "public/icon.svg": {
+            "lines": 58,
+            "tokens": 512,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "index.html": {
+            "lines": 58,
+            "tokens": 322,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          }
+        },
+        "total": {
+          "lines": 4483,
+          "tokens": 27365,
+          "sources": 49,
+          "clones": 8,
+          "duplicatedLines": 181,
+          "duplicatedTokens": 1023,
+          "percentage": 4.04,
+          "percentageTokens": 3.74,
+          "newDuplicatedLines": 0,
+          "newClones": 0
+        }
+      },
+      "javascript": {
+        "sources": {
+          "public/sw.js": {
+            "lines": 69,
+            "tokens": 734,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "eslint-rules/no-string-literal-control-flow.js": {
+            "lines": 171,
+            "tokens": 1160,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "index.html": {
+            "lines": 19,
+            "tokens": 139,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "eslint.config.js": {
+            "lines": 99,
+            "tokens": 599,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          }
+        },
+        "total": {
+          "lines": 358,
+          "tokens": 2632,
+          "sources": 4,
+          "clones": 0,
+          "duplicatedLines": 0,
+          "duplicatedTokens": 0,
+          "percentage": 0,
+          "percentageTokens": 0,
+          "newDuplicatedLines": 0,
+          "newClones": 0
+        }
+      },
+      "json": {
+        "sources": {
+          "public/manifest.json": {
+            "lines": 28,
+            "tokens": 161,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "tsconfig.node.json": {
+            "lines": 23,
+            "tokens": 146,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "tsconfig.app.json": {
+            "lines": 14,
+            "tokens": 96,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          },
+          "package.json": {
+            "lines": 65,
+            "tokens": 429,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          }
+        },
+        "total": {
+          "lines": 130,
+          "tokens": 832,
+          "sources": 4,
+          "clones": 0,
+          "duplicatedLines": 0,
+          "duplicatedTokens": 0,
+          "percentage": 0,
+          "percentageTokens": 0,
+          "newDuplicatedLines": 0,
+          "newClones": 0
+        }
+      },
+      "markdown": {
+        "sources": {
+          "README.md": {
+            "lines": 9,
+            "tokens": 91,
+            "sources": 1,
+            "clones": 0,
+            "duplicatedLines": 0,
+            "duplicatedTokens": 0,
+            "percentage": 0,
+            "percentageTokens": 0,
+            "newDuplicatedLines": 0,
+            "newClones": 0
+          }
+        },
+        "total": {
+          "lines": 9,
+          "tokens": 91,
+          "sources": 1,
+          "clones": 0,
+          "duplicatedLines": 0,
+          "duplicatedTokens": 0,
+          "percentage": 0,
+          "percentageTokens": 0,
+          "newDuplicatedLines": 0,
+          "newClones": 0
+        }
+      }
+    },
+    "total": {
+      "lines": 31748,
+      "tokens": 259779,
+      "sources": 272,
+      "clones": 68,
+      "duplicatedLines": 1386,
+      "duplicatedTokens": 10802,
+      "percentage": 4.37,
+      "percentageTokens": 4.16,
+      "newDuplicatedLines": 0,
+      "newClones": 0
+    }
+  },
+  "duplicates": [
+    {
+      "format": "markup",
+      "lines": 12,
+      "fragment": "ss=\"mono\">{{ tunnel.ssh_host }}</td>\n            <td class=\"mono\">{{ tunnel.ssh_user }}</td>\n            <td class=\"mono\">{{ tunnel.ssh_port }}</td>\n            <td class=\"mono\">{{ tunnel.tunnel_port }}</td>\n            <td>\n              <div\n                class=\"status-cell\"\n                :class=\"{ 'status-cell-error': statusErrorMessage(tunnel.status) }\"\n               ",
+      "tokens": 87,
+      "firstFile": {
+        "name": "src/views/TunnelsView.vue",
+        "start": 523,
+        "end": 534,
+        "startLoc": {
+          "line": 523,
+          "column": 52,
+          "position": 4077
+        },
+        "endLoc": {
+          "line": 534,
+          "column": 53,
+          "position": 4164
+        }
+      },
+      "secondFile": {
+        "name": "src/views/TunnelsView.vue",
+        "start": 428,
+        "end": 439,
+        "startLoc": {
+          "line": 428,
+          "column": 51,
+          "position": 3431
+        },
+        "endLoc": {
+          "line": 439,
+          "column": 52,
+          "position": 3518
+        }
+      }
+    },
+    {
+      "format": "css",
+      "lines": 31,
+      "fragment": "    const updated = await upsertServerQuota(editingHost.value, {\n      warn_bytes: gbToBytes(editForm.warn_gb),\n      critical_bytes: gbToBytes(editForm.critical_gb),\n      warn_action: editForm.warn_action,\n      critical_action: editForm.critical_action,\n      enabled: editForm.enabled,\n    })\n    const index = quotas.value.findIndex((q) => q.ssh_host === updated.ssh_host)\n    if (index !== -1) quotas.value[ind",
+      "tokens": 151,
+      "firstFile": {
+        "name": "src/views/ServerQuotasView.vue",
+        "start": 556,
+        "end": 586,
+        "startLoc": {
+          "line": 556,
+          "column": 17,
+          "position": 2595
+        },
+        "endLoc": {
+          "line": 586,
+          "column": 1,
+          "position": 2746
+        }
+      },
+      "secondFile": {
+        "name": "src/views/TokensView.vue",
+        "start": 344,
+        "end": 373,
+        "startLoc": {
+          "line": 344,
+          "column": 17,
+          "position": 2075
+        },
+        "endLoc": {
+          "line": 373,
+          "column": 19,
+          "position": 2226
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 11,
+      "fragment": ", async () => {\n    setupEditMode()\n    mockApiClient.put.mockResolvedValue({ data: mockSchedule })\n    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })\n    await flushPromises()\n\n    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save Changes')\n    await saveBtn!.trigger('click')\n    await flushPromises()\n\n    expect(wrapper",
+      "tokens": 125,
+      "firstFile": {
+        "name": "src/views/ScheduleDetailView.test.ts",
+        "start": 277,
+        "end": 287,
+        "startLoc": {
+          "line": 277,
+          "column": 56,
+          "position": 2774
+        },
+        "endLoc": {
+          "line": 287,
+          "column": 19,
+          "position": 2899
+        }
+      },
+      "secondFile": {
+        "name": "src/views/ScheduleDetailView.test.ts",
+        "start": 256,
+        "end": 266,
+        "startLoc": {
+          "line": 256,
+          "column": 25,
+          "position": 2530
+        },
+        "endLoc": {
+          "line": 266,
+          "column": 25,
+          "position": 2655
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 13,
+      "fragment": ", async () => {\n    mockApiClient.get.mockImplementation((url: string) => {\n      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })\n      if (url === '/schedules/1/targets')\n        return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })\n      if (url === '/schedules/1/sources')\n        return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_host: [] } })\n      if (url === '/schedules/1/reports')\n        return Promise.resolve({\n          data: [\n            {\n              id: 1,\n              status: 'started',",
+      "tokens": 186,
+      "firstFile": {
+        "name": "src/views/ScheduleDetailView.test.ts",
+        "start": 597,
+        "end": 609,
+        "startLoc": {
+          "line": 597,
+          "column": 64,
+          "position": 6133
+        },
+        "endLoc": {
+          "line": 609,
+          "column": 33,
+          "position": 6319
+        }
+      },
+      "secondFile": {
+        "name": "src/views/ScheduleDetailView.test.ts",
+        "start": 372,
+        "end": 380,
+        "startLoc": {
+          "line": 372,
+          "column": 90,
+          "position": 3822
+        },
+        "endLoc": {
+          "line": 380,
+          "column": 69,
+          "position": 4004
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 16,
+      "fragment": ", async () => {\n    setupEditMode()\n    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })\n    await flushPromises()\n\n    wsHandlers['BackupStarted']?.({\n      hostname: 'web-server-01',\n      target_name: 'server-daily',\n      archive_name: null,\n      schedule_id: 1,\n    })\n    await nextTick()\n\n    wsHandlers['BackupLog']?.({\n      hostname: 'web-server-01',\n      schedule_id: 999",
+      "tokens": 124,
+      "firstFile": {
+        "name": "src/views/ScheduleDetailView.test.ts",
+        "start": 644,
+        "end": 659,
+        "startLoc": {
+          "line": 644,
+          "column": 65,
+          "position": 6653
+        },
+        "endLoc": {
+          "line": 659,
+          "column": 23,
+          "position": 6777
+        }
+      },
+      "secondFile": {
+        "name": "src/views/ScheduleDetailView.test.ts",
+        "start": 566,
+        "end": 581,
+        "startLoc": {
+          "line": 566,
+          "column": 91,
+          "position": 5885
+        },
+        "endLoc": {
+          "line": 581,
+          "column": 21,
+          "position": 6009
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 16,
+      "fragment": ", async () => {\n    setupEditMode()\n    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })\n    await flushPromises()\n\n    wsHandlers['BackupStarted']?.({\n      hostname: 'web-server-01',\n      target_name: 'server-daily',\n      archive_name: null,\n      schedule_id: 1,\n    })\n    await nextTick()\n\n    wsHandlers['BackupLog']?.({\n      hostname: 'web-server-01',\n      schedule_id: null",
+      "tokens": 124,
+      "firstFile": {
+        "name": "src/views/ScheduleDetailView.test.ts",
+        "start": 673,
+        "end": 688,
+        "startLoc": {
+          "line": 673,
+          "column": 77,
+          "position": 6871
+        },
+        "endLoc": {
+          "line": 688,
+          "column": 24,
+          "position": 6995
+        }
+      },
+      "secondFile": {
+        "name": "src/views/ScheduleDetailView.test.ts",
+        "start": 566,
+        "end": 581,
+        "startLoc": {
+          "line": 566,
+          "column": 91,
+          "position": 5885
+        },
+        "endLoc": {
+          "line": 581,
+          "column": 21,
+          "position": 6009
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 17,
+      "fragment": ", async () => {\n    setupEditMode()\n    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })\n    await flushPromises()\n\n    wsHandlers['BackupStarted']?.({\n      hostname: 'web-server-01',\n      target_name: 'server-daily',\n      archive_name: null,\n      schedule_id: 1,\n    })\n    await nextTick()\n\n    wsHandlers['BackupLog']?.({\n      hostname: 'web-server-01',\n      schedule_id: null,\n      repo_id: 999",
+      "tokens": 131,
+      "firstFile": {
+        "name": "src/views/ScheduleDetailView.test.ts",
+        "start": 703,
+        "end": 719,
+        "startLoc": {
+          "line": 703,
+          "column": 82,
+          "position": 7104
+        },
+        "endLoc": {
+          "line": 719,
+          "column": 19,
+          "position": 7235
+        }
+      },
+      "secondFile": {
+        "name": "src/views/ScheduleDetailView.test.ts",
+        "start": 566,
+        "end": 689,
+        "startLoc": {
+          "line": 566,
+          "column": 91,
+          "position": 5885
+        },
+        "endLoc": {
+          "line": 689,
+          "column": 18,
+          "position": 7002
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 18,
+      "fragment": ", async () => {\n    setupEditMode()\n    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })\n    await flushPromises()\n\n    wsHandlers['BackupStarted']?.({\n      hostname: 'web-server-01',\n      target_name: 'server-daily',\n      archive_name: null,\n      schedule_id: 1,\n    })\n    await nextTick()\n\n    wsHandlers['BackupLog']?.({\n      hostname: 'web-server-01',\n      schedule_id: 1,\n      repo_id: 20,\n      line: 'Creating archive server-daily-2026-06-26...'",
+      "tokens": 138,
+      "firstFile": {
+        "name": "src/views/ScheduleDetailView.test.ts",
+        "start": 732,
+        "end": 749,
+        "startLoc": {
+          "line": 732,
+          "column": 65,
+          "position": 7322
+        },
+        "endLoc": {
+          "line": 749,
+          "column": 58,
+          "position": 7460
+        }
+      },
+      "secondFile": {
+        "name": "src/views/ScheduleDetailView.test.ts",
+        "start": 566,
+        "end": 583,
+        "startLoc": {
+          "line": 566,
+          "column": 91,
+          "position": 5885
+        },
+        "endLoc": {
+          "line": 583,
+          "column": 17,
+          "position": 6023
+        }
+      }
+    },
+    {
+      "format": "css",
+      "lines": 43,
+      "fragment": "false,\n  can_delete_schedule: false,\n  can_delete_own_schedule: false,\n  can_manage_tags: false,\n  can_view_all_repos: false,\n  can_manage_tunnels: false,\n})\nconst createError = ref<string | null>(null)\nconst createSubmitting = ref(false)\n\nconst showEditModal = ref(false)\nconst editTarget = ref<Role | null>(null)\nconst editForm = ref<Record<PermissionKey, boolean>>({\n  can_create_agent: false,\n  can_delete_agent: false,\n  can_delete_own_agent: false,\n  can_create_repo: false,\n  can_delete_repo: false,\n  can_delete_own_repo: false,\n  can_create_schedule: false,\n  can_delete_schedule: false,\n  can_delete_own_schedule: false,\n  can_manage_tags: false,\n  ca",
+      "tokens": 236,
+      "firstFile": {
+        "name": "src/views/RolesView.vue",
+        "start": 670,
+        "end": 712,
+        "startLoc": {
+          "line": 670,
+          "column": 19,
+          "position": 4620
+        },
+        "endLoc": {
+          "line": 712,
+          "column": 18,
+          "position": 4856
+        }
+      },
+      "secondFile": {
+        "name": "src/views/TokensView.vue",
+        "start": 345,
+        "end": 387,
+        "startLoc": {
+          "line": 345,
+          "column": 31,
+          "position": 2086
+        },
+        "endLoc": {
+          "line": 387,
+          "column": 13,
+          "position": 2322
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 13,
+      "fragment": ",\n    }\n    vi.mocked(apiClient.get).mockImplementation((url: string) => {\n      if (url === '/repos/stats') return Promise.resolve({ data: [importingRepo] })\n      if (url === '/repo-tags') return Promise.resolve({ data: [] })\n      return Promise.resolve({ data: [] })\n    })\n    const wrapper = renderWithPlugins(ReposView, {\n      storeState: { auth: { user: { role: 'viewer' } } },\n    })\n    await flushPromises()\n\n    expect(wrapper.text()).toContain('Importing 42/100'",
+      "tokens": 173,
+      "firstFile": {
+        "name": "src/views/ReposView.test.ts",
+        "start": 299,
+        "end": 311,
+        "startLoc": {
+          "line": 299,
+          "column": 24,
+          "position": 2723
+        },
+        "endLoc": {
+          "line": 311,
+          "column": 56,
+          "position": 2896
+        }
+      },
+      "secondFile": {
+        "name": "src/views/ReposView.test.ts",
+        "start": 275,
+        "end": 287,
+        "startLoc": {
+          "line": 275,
+          "column": 22,
+          "position": 2463
+        },
+        "endLoc": {
+          "line": 287,
+          "column": 50,
+          "position": 2636
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 14,
+      "fragment": ",\n      import_status_message: 'Indexing archive contents…',\n    }\n    vi.mocked(apiClient.get).mockImplementation((url: string) => {\n      if (url === '/repos/stats') return Promise.resolve({ data: [indexingRepo] })\n      if (url === '/repo-tags') return Promise.resolve({ data: [] })\n      return Promise.resolve({ data: [] })\n    })\n    const wrapper = renderWithPlugins(ReposView, {\n      storeState: { auth: { user: { role: 'viewer' } } },\n    })\n    await flushPromises()\n\n    expect(wrapper.text()).toContain('Indexing 10/50'",
+      "tokens": 180,
+      "firstFile": {
+        "name": "src/views/ReposView.test.ts",
+        "start": 348,
+        "end": 361,
+        "startLoc": {
+          "line": 348,
+          "column": 23,
+          "position": 3260
+        },
+        "endLoc": {
+          "line": 361,
+          "column": 54,
+          "position": 3440
+        }
+      },
+      "secondFile": {
+        "name": "src/views/ReposView.test.ts",
+        "start": 322,
+        "end": 287,
+        "startLoc": {
+          "line": 322,
+          "column": 22,
+          "position": 2976
+        },
+        "endLoc": {
+          "line": 287,
+          "column": 50,
+          "position": 2636
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 14,
+      "fragment": "vi.mock('../api/client', () => ({\n  apiClient: {\n    get: vi.fn(),\n    post: vi.fn(),\n    put: vi.fn(),\n    delete: vi.fn(),\n  },\n}))\n\nvi.mock('../composables/useEscapeKey', () => ({\n  useEscapeKey: vi.fn(),\n}))\n\nvi.mock('../composables/useClipboard'",
+      "tokens": 109,
+      "firstFile": {
+        "name": "src/views/RepoDetailView.test.ts",
+        "start": 29,
+        "end": 42,
+        "startLoc": {
+          "line": 29,
+          "column": 1,
+          "position": 214
+        },
+        "endLoc": {
+          "line": 42,
+          "column": 38,
+          "position": 323
+        }
+      },
+      "secondFile": {
+        "name": "src/views/ReposView.test.ts",
+        "start": 14,
+        "end": 27,
+        "startLoc": {
+          "line": 14,
+          "column": 1,
+          "position": 102
+        },
+        "endLoc": {
+          "line": 27,
+          "column": 35,
+          "position": 211
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 14,
+      "fragment": "setupApiSuccess()\n\n    const wrapper = renderWithPlugins(RepoDetailView, {\n      props: { id: '1' },\n      storeState: { auth: { user: { role: 'admin' } } },\n    })\n    await flushPromises()\n\n    const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')\n    expect(archivesTab).toBeDefined()\n    await archivesTab!.trigger('click')\n    await flushPromises()\n\n    const",
+      "tokens": 136,
+      "firstFile": {
+        "name": "src/views/RepoDetailView.test.ts",
+        "start": 337,
+        "end": 350,
+        "startLoc": {
+          "line": 337,
+          "column": 5,
+          "position": 3275
+        },
+        "endLoc": {
+          "line": 350,
+          "column": 10,
+          "position": 3411
+        }
+      },
+      "secondFile": {
+        "name": "src/views/RepoDetailView.test.ts",
+        "start": 308,
+        "end": 320,
+        "startLoc": {
+          "line": 308,
+          "column": 5,
+          "position": 3015
+        },
+        "endLoc": {
+          "line": 320,
+          "column": 11,
+          "position": 3150
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 14,
+      "fragment": ")\n\n    const wrapper = renderWithPlugins(RepoDetailView, {\n      props: { id: '1' },\n      storeState: { auth: { user: { role: 'admin' } } },\n    })\n    await flushPromises()\n\n    const syncBtn = wrapper.findAll('button').find((b) => b.text() === 'Full Resync')\n    expect(syncBtn).toBeDefined()\n    await syncBtn!.trigger('click')\n    await flushPromises()\n\n    // Loading clears even on failure",
+      "tokens": 134,
+      "firstFile": {
+        "name": "src/views/RepoDetailView.test.ts",
+        "start": 419,
+        "end": 432,
+        "startLoc": {
+          "line": 419,
+          "column": 80,
+          "position": 4206
+        },
+        "endLoc": {
+          "line": 432,
+          "column": 38,
+          "position": 4340
+        }
+      },
+      "secondFile": {
+        "name": "src/views/RepoDetailView.test.ts",
+        "start": 397,
+        "end": 410,
+        "startLoc": {
+          "line": 397,
+          "column": 74,
+          "position": 3940
+        },
+        "endLoc": {
+          "line": 410,
+          "column": 75,
+          "position": 4074
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 14,
+      "fragment": ", async () => {\n      const wrapper = renderWithPlugins(RepoDetailView, {\n        props: { id: '1' },\n        storeState: { auth: { user: { role: 'admin' } } },\n      })\n      await flushPromises()\n\n      // Navigate to archives tab with the archive filter\n      await wrapper.vm.$router.replace({\n        query: { tab: 'archives', archive: archiveA.name },\n      })\n      await flushPromises()\n\n      expect(wrapper.find",
+      "tokens": 134,
+      "firstFile": {
+        "name": "src/views/RepoDetailView.test.ts",
+        "start": 539,
+        "end": 552,
+        "startLoc": {
+          "line": 539,
+          "column": 63,
+          "position": 5453
+        },
+        "endLoc": {
+          "line": 552,
+          "column": 26,
+          "position": 5587
+        }
+      },
+      "secondFile": {
+        "name": "src/views/RepoDetailView.test.ts",
+        "start": 520,
+        "end": 533,
+        "startLoc": {
+          "line": 520,
+          "column": 72,
+          "position": 5266
+        },
+        "endLoc": {
+          "line": 533,
+          "column": 29,
+          "position": 5400
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 11,
+      "fragment": ", async () => {\n      const wrapper = renderWithPlugins(RepoDetailView, {\n        props: { id: '1' },\n        storeState: { auth: { user: { role: 'admin' } } },\n      })\n      await flushPromises()\n\n      await wrapper.vm.$router.replace({ query: { archive: archiveA.name } })\n      await flushPromises()\n\n      expect(wrapper.vm.hasArchiveFilter",
+      "tokens": 124,
+      "firstFile": {
+        "name": "src/views/RepoDetailView.test.ts",
+        "start": 611,
+        "end": 621,
+        "startLoc": {
+          "line": 611,
+          "column": 55,
+          "position": 6146
+        },
+        "endLoc": {
+          "line": 621,
+          "column": 41,
+          "position": 6270
+        }
+      },
+      "secondFile": {
+        "name": "src/views/RepoDetailView.test.ts",
+        "start": 506,
+        "end": 516,
+        "startLoc": {
+          "line": 506,
+          "column": 97,
+          "position": 5108
+        },
+        "endLoc": {
+          "line": 516,
+          "column": 42,
+          "position": 5232
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 12,
+      "fragment": "rdSuccess = ref('')\nconst passwordSubmitting = ref(false)\n\nconst tokens = ref<ApiToken[]>([])\nconst tokensLoading = ref(true)\nconst showCreateModal = ref(false)\nconst createName = ref('')\nconst createError = ref('')\nconst createSubmitting = ref(false)\nconst newTokenPlaintext = ref('')\nconst { copied: tokenCopied, copy: copyToClipboard } = useClipboard()\nconst showDeleteMo",
+      "tokens": 126,
+      "firstFile": {
+        "name": "src/views/ProfileView.vue",
+        "start": 40,
+        "end": 51,
+        "startLoc": {
+          "line": 40,
+          "column": 21,
+          "position": 315
+        },
+        "endLoc": {
+          "line": 51,
+          "column": 13,
+          "position": 441
+        }
+      },
+      "secondFile": {
+        "name": "src/views/TokensView.vue",
+        "start": 25,
+        "end": 39,
+        "startLoc": {
+          "line": 25,
+          "column": 15,
+          "position": 163
+        },
+        "endLoc": {
+          "line": 39,
+          "column": 6,
+          "position": 292
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 23,
+      "fragment": "Error.value = ''\n  newTokenPlaintext.value = ''\n  showCreateModal.value = true\n}\n\nasync function submitCreateToken(): Promise<void> {\n  createError.value = ''\n  createSubmitting.value = true\n  try {\n    const res = await apiClient.post<{ token: ApiToken; plaintext: string }>('/tokens', {\n      name: createName.value,\n    })\n    newTokenPlaintext.value = res.data.plaintext\n    await fetchTokens()\n  } catch (e: unknown) {\n    createError.value = extractError(e, 'Failed to create token')\n  } finally {\n    createSubmitting.value = false\n  }\n}\n\nfunction closeCreateModal(): void {\n  sh",
+      "tokens": 195,
+      "firstFile": {
+        "name": "src/views/ProfileView.vue",
+        "start": 97,
+        "end": 119,
+        "startLoc": {
+          "line": 97,
+          "column": 33,
+          "position": 806
+        },
+        "endLoc": {
+          "line": 119,
+          "column": 25,
+          "position": 1001
+        }
+      },
+      "secondFile": {
+        "name": "src/views/TokensView.vue",
+        "start": 56,
+        "end": 78,
+        "startLoc": {
+          "line": 56,
+          "column": 28,
+          "position": 440
+        },
+        "endLoc": {
+          "line": 78,
+          "column": 20,
+          "position": 635
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 12,
+      "fragment": ", async () => {\n    setupApi([], [{ id: 10, name: 'server-daily' }])\n    const wrapper = renderWithPlugins(HostDetailView, {\n      props: { hostname: 'test-host' },\n      storeState: { auth: { user: { role: 'admin' } } },\n    })\n    await flushPromises()\n\n    wsHandlers['BackupStarted']?.({\n      hostname: 'test-host',\n      target_name: 'server-daily',\n      archive_name: null",
+      "tokens": 132,
+      "firstFile": {
+        "name": "src/views/HostDetailView.test.ts",
+        "start": 490,
+        "end": 501,
+        "startLoc": {
+          "line": 490,
+          "column": 47,
+          "position": 4910
+        },
+        "endLoc": {
+          "line": 501,
+          "column": 25,
+          "position": 5042
+        }
+      },
+      "secondFile": {
+        "name": "src/views/HostDetailView.test.ts",
+        "start": 450,
+        "end": 461,
+        "startLoc": {
+          "line": 450,
+          "column": 69,
+          "position": 4514
+        },
+        "endLoc": {
+          "line": 461,
+          "column": 46,
+          "position": 4646
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 17,
+      "fragment": ", async () => {\n    setupApi([], [{ id: 10, name: 'server-daily' }])\n    const wrapper = renderWithPlugins(HostDetailView, {\n      props: { hostname: 'test-host' },\n      storeState: { auth: { user: { role: 'admin' } } },\n    })\n    await flushPromises()\n\n    wsHandlers['BackupStarted']?.({\n      hostname: 'test-host',\n      target_name: 'server-daily',\n      archive_name: null,\n      schedule_id: 1,\n    })\n    await nextTick()\n\n    wsHandlers",
+      "tokens": 155,
+      "firstFile": {
+        "name": "src/views/HostDetailView.test.ts",
+        "start": 517,
+        "end": 533,
+        "startLoc": {
+          "line": 517,
+          "column": 70,
+          "position": 5163
+        },
+        "endLoc": {
+          "line": 533,
+          "column": 15,
+          "position": 5318
+        }
+      },
+      "secondFile": {
+        "name": "src/views/HostDetailView.test.ts",
+        "start": 450,
+        "end": 505,
+        "startLoc": {
+          "line": 450,
+          "column": 69,
+          "position": 4514
+        },
+        "endLoc": {
+          "line": 505,
+          "column": 11,
+          "position": 5064
+        }
+      }
+    },
+    {
+      "format": "css",
+      "lines": 44,
+      "fragment": "ache-2.0\nSPDX-FileCopyrightText: 2026 Alexander Mohr\n-->\n\n<script setup lang=\"ts\">\nimport { ref, computed, onMounted } from 'vue'\nimport { apiClient } from '../api/client'\nimport { extractError } from '../utils/error'\nimport { logger } from '../utils/logger'\nimport { useAsyncAction } from '../composables/useAsyncAction'\nimport { Plus, Trash2 } from '@lucide/vue'\nimport BaseSpinner from '../components/BaseSpinner.vue'\n\ninterface Group {\n  id: number\n  name: string\n  description: string | null\n  created_at: string\n}\n\ninterface UserRow {\n  i",
+      "tokens": 206,
+      "firstFile": {
+        "name": "src/views/GroupsView.vue",
+        "start": 538,
+        "end": 581,
+        "startLoc": {
+          "line": 538,
+          "column": 17,
+          "position": 4083
+        },
+        "endLoc": {
+          "line": 581,
+          "column": 12,
+          "position": 4289
+        }
+      },
+      "secondFile": {
+        "name": "src/views/RolesView.vue",
+        "start": 510,
+        "end": 553,
+        "startLoc": {
+          "line": 510,
+          "column": 18,
+          "position": 3756
+        },
+        "endLoc": {
+          "line": 553,
+          "column": 13,
+          "position": 3962
+        }
+      }
+    },
+    {
+      "format": "css",
+      "lines": 24,
+      "fragment": "name: string\n  role: string\n}\n\ninterface GroupMember {\n  user_id: number\n}\n\nconst groups = ref<Group[]>([])\nconst allUsers = ref<UserRow[]>([])\nconst { loading, error, run } = useAsyncAction('Failed to load groups')\nloading.value = true\n\nconst showCreateModal = ref(false)\nconst createForm = ref({ name: '', description: '' })\nconst createError = ref<string | null>(null)\nconst createSubmitting",
+      "tokens": 134,
+      "firstFile": {
+        "name": "src/views/GroupsView.vue",
+        "start": 582,
+        "end": 605,
+        "startLoc": {
+          "line": 582,
+          "column": 14,
+          "position": 4298
+        },
+        "endLoc": {
+          "line": 605,
+          "column": 11,
+          "position": 4432
+        }
+      },
+      "secondFile": {
+        "name": "src/views/ServerQuotasView.vue",
+        "start": 495,
+        "end": 518,
+        "startLoc": {
+          "line": 495,
+          "column": 19,
+          "position": 2225
+        },
+        "endLoc": {
+          "line": 518,
+          "column": 7,
+          "position": 2359
+        }
+      }
+    },
+    {
+      "format": "css",
+      "lines": 38,
+      "fragment": "embersError = ref<string | null>(null)\n\nconst memberCounts = ref<Record<number, number>>({})\n\nconst filterText = ref('')\n\nconst filteredGroups = computed((): Group[] => {\n  if (!filterText.value.trim()) return groups.value\n  const q = filterText.value.toLowerCase()\n  return groups.value.filter(\n    (g) => g.name.toLowerCase().includes(q) || (g.description?.toLowerCase().includes(q) ?? false),\n  )\n})\n\nasync function fetchGroups(): Promise<void> {\n  await run(async () => {\n    const res = await apiClient.get<Group[]>('/groups')\n    groups.value = res.data\n    const counts: Record<number, number> ",
+      "tokens": 202,
+      "firstFile": {
+        "name": "src/views/GroupsView.vue",
+        "start": 643,
+        "end": 680,
+        "startLoc": {
+          "line": 643,
+          "column": 19,
+          "position": 4657
+        },
+        "endLoc": {
+          "line": 680,
+          "column": 13,
+          "position": 4859
+        }
+      },
+      "secondFile": {
+        "name": "src/views/ServerQuotasView.vue",
+        "start": 564,
+        "end": 601,
+        "startLoc": {
+          "line": 564,
+          "column": 13,
+          "position": 2646
+        },
+        "endLoc": {
+          "line": 601,
+          "column": 12,
+          "position": 2848
+        }
+      }
+    },
+    {
+      "format": "css",
+      "lines": 19,
+      "fragment": "')\n    groups.value = res.data\n    const counts: Record<number, number> = {}\n    await Promise.all(\n      res.data.map(async (g) => {\n        try {\n          const membersRes = await apiClient.get<GroupMember[]>(`/groups/${g.id}/members`)\n          counts[g.id] = membersRes.data.length\n        } catch (e: unknown) {\n       ",
+      "tokens": 114,
+      "firstFile": {
+        "name": "src/views/GroupsView.vue",
+        "start": 675,
+        "end": 693,
+        "startLoc": {
+          "line": 675,
+          "column": 19,
+          "position": 4835
+        },
+        "endLoc": {
+          "line": 693,
+          "column": 2,
+          "position": 4949
+        }
+      },
+      "secondFile": {
+        "name": "src/views/TokensView.vue",
+        "start": 382,
+        "end": 400,
+        "startLoc": {
+          "line": 382,
+          "column": 18,
+          "position": 2298
+        },
+        "endLoc": {
+          "line": 400,
+          "column": 2,
+          "position": 2412
+        }
+      }
+    },
+    {
+      "format": "css",
+      "lines": 24,
+      "fragment": "<number, number> = {}\n    await Promise.all(\n      res.data.map(async (g) => {\n        try {\n          const membersRes = await apiClient.get<GroupMember[]>(`/groups/${g.id}/members`)\n          counts[g.id] = membersRes.data.length\n        } catch (e: unknown) {\n          logger.error(`fetchGroups: failed to load members for group ${g.id}`, e)\n          counts[g.id] = 0\n        }\n      ",
+      "tokens": 135,
+      "firstFile": {
+        "name": "src/views/GroupsView.vue",
+        "start": 677,
+        "end": 700,
+        "startLoc": {
+          "line": 677,
+          "column": 30,
+          "position": 4854
+        },
+        "endLoc": {
+          "line": 700,
+          "column": 2,
+          "position": 4989
+        }
+      },
+      "secondFile": {
+        "name": "src/views/RolesView.vue",
+        "start": 733,
+        "end": 756,
+        "startLoc": {
+          "line": 733,
+          "column": 18,
+          "position": 5010
+        },
+        "endLoc": {
+          "line": 756,
+          "column": 2,
+          "position": 5145
+        }
+      }
+    },
+    {
+      "format": "markup",
+      "lines": 28,
+      "fragment": "oups', {\n      name: createForm.value.name.trim(),\n      description: createForm.value.description.trim() || null,\n    })\n    showCreateModal.value = false\n    await fetchGroups()\n  } catch (e: unknown) {\n    createError.value = extractError(e, 'Failed to create group')\n  } finally {\n    createSubmitting.value = false\n  }\n}\n\nfunction openEdit(group: Group): void {\n  editTarget.value = group\n  editForm.value = { name: group.name, description: group.description ?? '' }\n  editError.value = null\n  showEditModal.value = true\n}\n\nasync function submitEdit(): Promise<void> {\n  if (!editTarget.value) return\n  if (!editForm.value.name.trim()) {\n    editError.value = 'Name is required'\n    return\n  }\n  editSubmitti",
+      "tokens": 143,
+      "firstFile": {
+        "name": "src/views/GroupsView.vue",
+        "start": 352,
+        "end": 379,
+        "startLoc": {
+          "line": 352,
+          "column": 11,
+          "position": 2984
+        },
+        "endLoc": {
+          "line": 379,
+          "column": 30,
+          "position": 3127
+        }
+      },
+      "secondFile": {
+        "name": "src/views/RolesView.vue",
+        "start": 392,
+        "end": 419,
+        "startLoc": {
+          "line": 392,
+          "column": 11,
+          "position": 3070
+        },
+        "endLoc": {
+          "line": 419,
+          "column": 29,
+          "position": 3213
+        }
+      }
+    },
+    {
+      "format": "markup",
+      "lines": 19,
+      "fragment": "\n  } catch (e: unknown) {\n    deleteError.value = extractError(e, 'Failed to delete group')\n  } finally {\n    deleteSubmitting.value = false\n  }\n}\n\nasync function openMembers(group: Group): Promise<void> {\n  membersTarget.value = group\n  membersLoading.value = true\n  membersError.value = null\n  memberUserIds.value = []\n  showMembersModal.value = true\n  try {\n    const res = await apiClient.get<GroupMember[]>(`/groups/${group.id}/members`)\n    memberUserIds.value = res.data.map((m) => m.user_id)\n  } catch (e: ",
+      "tokens": 96,
+      "firstFile": {
+        "name": "src/views/GroupsView.vue",
+        "start": 408,
+        "end": 426,
+        "startLoc": {
+          "line": 408,
+          "column": 11,
+          "position": 3321
+        },
+        "endLoc": {
+          "line": 426,
+          "column": 65,
+          "position": 3417
+        }
+      },
+      "secondFile": {
+        "name": "src/views/RolesView.vue",
+        "start": 443,
+        "end": 461,
+        "startLoc": {
+          "line": 443,
+          "column": 11,
+          "position": 3359
+        },
+        "endLoc": {
+          "line": 461,
+          "column": 40,
+          "position": 3455
+        }
+      }
+    },
+    {
+      "format": "markup",
+      "lines": 26,
+      "fragment": "value = null\n  try {\n    await apiClient.put(`/groups/${membersTarget.value.id}/members`, {\n      user_ids: memberUserIds.value,\n    })\n    showMembersModal.value = false\n    await fetchGroups()\n  } catch (e: unknown) {\n    membersError.value = extractError(e, 'Failed to save members')\n  } finally {\n    membersSubmitting.value = false\n  }\n}\n\nonMounted(async () => {\n  await Promise.all([fetchGroups(), fetchUsers()])\n})\n</script>\n\n<template>\n  <div class=\"groups-page\">\n    <div class=\"page-header\">\n      <h1 class=\"page-title\">Groups</h1>\n      <div class=\"header-actions\">\n        <button\n         ",
+      "tokens": 132,
+      "firstFile": {
+        "name": "src/views/GroupsView.vue",
+        "start": 446,
+        "end": 471,
+        "startLoc": {
+          "line": 446,
+          "column": 9,
+          "position": 3567
+        },
+        "endLoc": {
+          "line": 471,
+          "column": 27,
+          "position": 3699
+        }
+      },
+      "secondFile": {
+        "name": "src/views/RolesView.vue",
+        "start": 481,
+        "end": 505,
+        "startLoc": {
+          "line": 481,
+          "column": 9,
+          "position": 3611
+        },
+        "endLoc": {
+          "line": 505,
+          "column": 5,
+          "position": 3742
+        }
+      }
+    },
+    {
+      "format": "css",
+      "lines": 23,
+      "fragment": "!--\nSPDX-License-Identifier: Apache-2.0\nSPDX-FileCopyrightText: 2026 Alexander Mohr\n-->\n\n<script setup lang=\"ts\">\nimport { computed } from 'vue'\nimport { useRoute, useRouter } from 'vue-router'\nimport CardError from '../components/CardError.vue'\nimport { consumeErrorDetails } from '../utils/errorDetails'\n\nconst route = useRoute()\nconst router = useRouter()\n\nconst statusCode = route.query.code ?? '500'\nconst message = route.query.mes",
+      "tokens": 157,
+      "firstFile": {
+        "name": "src/views/ErrorView.vue",
+        "start": 80,
+        "end": 102,
+        "startLoc": {
+          "line": 80,
+          "column": 1,
+          "position": 525
+        },
+        "endLoc": {
+          "line": 102,
+          "column": 22,
+          "position": 682
+        }
+      },
+      "secondFile": {
+        "name": "src/views/NotFoundView.vue",
+        "start": 33,
+        "end": 55,
+        "startLoc": {
+          "line": 33,
+          "column": 1,
+          "position": 179
+        },
+        "endLoc": {
+          "line": 55,
+          "column": 22,
+          "position": 336
+        }
+      }
+    },
+    {
+      "format": "css",
+      "lines": 29,
+      "fragment": "!--\nSPDX-License-Identifier: Apache-2.0\nSPDX-FileCopyrightText: 2026 Alexander Mohr\n-->\n\n<script setup lang=\"ts\">\nimport { ref } from 'vue'\nimport { useRoute, useRouter } from 'vue-router'\nimport { useAuthStore } from '../stores/auth'\nimport { validatePassword } from '../utils/validation'\nimport { useAsyncAction } from '../composables/useAsyncAction'\nconst authStore = useAuthStore()\nconst route = useRoute()\nconst router = useRouter()\n\nconst newPassword = ref('')\nconst confirmPassword = ref('",
+      "tokens": 178,
+      "firstFile": {
+        "name": "src/views/ChangePasswordView.vue",
+        "start": 116,
+        "end": 144,
+        "startLoc": {
+          "line": 116,
+          "column": 1,
+          "position": 760
+        },
+        "endLoc": {
+          "line": 144,
+          "column": 8,
+          "position": 938
+        }
+      },
+      "secondFile": {
+        "name": "src/views/LoginView.vue",
+        "start": 109,
+        "end": 137,
+        "startLoc": {
+          "line": 109,
+          "column": 1,
+          "position": 722
+        },
+        "endLoc": {
+          "line": 137,
+          "column": 16,
+          "position": 900
+        }
+      }
+    },
+    {
+      "format": "css",
+      "lines": 38,
+      "fragment": "value)\n  if (validationError) {\n    error.value = validationError\n    return\n  }\n\n  await run(async () => {\n    await authStore.changePassword(newPassword.value)\n    const next =\n      typeof route.query.next === 'string' && route.query.next.startsWith('/')\n        ? route.query.next\n        : '/'\n    router.push(next)\n  })\n}\n</script>\n\n<template>\n  <div class=\"login-page\">\n    <div class=\"login-card\">\n      <div class=\"login-header\">\n        <svg\n          class=\"login-icon\"\n          viewBox=\"0 0 24 24\"\n          fill=\"none\"\n          stroke=\"currentColor\"\n          stroke-width=\"2\"\n   ",
+      "tokens": 209,
+      "firstFile": {
+        "name": "src/views/ChangePasswordView.vue",
+        "start": 157,
+        "end": 194,
+        "startLoc": {
+          "line": 157,
+          "column": 21,
+          "position": 1016
+        },
+        "endLoc": {
+          "line": 194,
+          "column": 13,
+          "position": 1225
+        }
+      },
+      "secondFile": {
+        "name": "src/views/LoginView.vue",
+        "start": 143,
+        "end": 180,
+        "startLoc": {
+          "line": 143,
+          "column": 29,
+          "position": 937
+        },
+        "endLoc": {
+          "line": 180,
+          "column": 13,
+          "position": 1146
+        }
+      }
+    },
+    {
+      "format": "css",
+      "lines": 31,
+      "fragment": "oke-width=\"2\"\n          stroke-linecap=\"round\"\n          stroke-linejoin=\"round\"\n          width=\"32\"\n          height=\"32\"\n        >\n          <rect\n            x=\"3\"\n            y=\"11\"\n            width=\"18\"\n            height=\"11\"\n            rx=\"2\"\n            ry=\"2\"\n          />\n          <path d=\"M7 11V7a5 5 0 0 1 10 0v4\" />\n        </svg>\n        <h1 class=\"login-title\">Change Password</h1>\n        <p class=\"login-subtitle\">You must change your password before continuing.</p>\n      </div>\n\n      <form\n        class=\"login",
+      "tokens": 183,
+      "firstFile": {
+        "name": "src/views/ChangePasswordView.vue",
+        "start": 191,
+        "end": 221,
+        "startLoc": {
+          "line": 191,
+          "column": 30,
+          "position": 1220
+        },
+        "endLoc": {
+          "line": 221,
+          "column": 2,
+          "position": 1403
+        }
+      },
+      "secondFile": {
+        "name": "src/views/LoginView.vue",
+        "start": 197,
+        "end": 227,
+        "startLoc": {
+          "line": 197,
+          "column": 20,
+          "position": 1251
+        },
+        "endLoc": {
+          "line": 227,
+          "column": 2,
+          "position": 1434
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 12,
+      "fragment": "import { useAuthStore } from '../stores/auth'\n\nvi.mock('vue-router', async (importOriginal) => {\n  const actual: Record<string, unknown> = await importOriginal()\n  return {\n    ...actual,\n    useRouter: vi.fn(() => ({ push: vi.fn() })),\n    useRoute: vi.fn(() => ({ query: {} })),\n  }\n})\n\ndescribe('ChangePasswordView'",
+      "tokens": 128,
+      "firstFile": {
+        "name": "src/views/ChangePasswordView.test.ts",
+        "start": 7,
+        "end": 18,
+        "startLoc": {
+          "line": 7,
+          "column": 1,
+          "position": 49
+        },
+        "endLoc": {
+          "line": 18,
+          "column": 30,
+          "position": 177
+        }
+      },
+      "secondFile": {
+        "name": "src/views/LoginView.test.ts",
+        "start": 7,
+        "end": 18,
+        "startLoc": {
+          "line": 7,
+          "column": 1,
+          "position": 49
+        },
+        "endLoc": {
+          "line": 18,
+          "column": 21,
+          "position": 177
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 12,
+      "fragment": ", async () => {\n    mockGet.mockImplementation((url: string) => {\n      if (url === '/repos') return Promise.resolve({ data: REPOS })\n      if (url.includes('/archives')) return Promise.resolve({ data: ARCHIVES })\n      return Promise.resolve({ data: [] })\n    })\n\n    const wrapper = mountView()\n    await flushPromises()\n    await pickFirstRepo(wrapper)\n\n    expect(mockGet",
+      "tokens": 135,
+      "firstFile": {
+        "name": "src/views/ArchivesView.test.ts",
+        "start": 166,
+        "end": 177,
+        "startLoc": {
+          "line": 166,
+          "column": 46,
+          "position": 1572
+        },
+        "endLoc": {
+          "line": 177,
+          "column": 19,
+          "position": 1707
+        }
+      },
+      "secondFile": {
+        "name": "src/views/ArchivesView.test.ts",
+        "start": 139,
+        "end": 150,
+        "startLoc": {
+          "line": 139,
+          "column": 86,
+          "position": 1283
+        },
+        "endLoc": {
+          "line": 150,
+          "column": 19,
+          "position": 1418
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 18,
+      "fragment": "// SPDX-License-Identifier: Apache-2.0\n// SPDX-FileCopyrightText: 2026 Alexander Mohr\n\nimport { describe, it, expect, vi, beforeEach } from 'vitest'\nimport { mount, flushPromises } from '@vue/test-utils'\nimport { createPinia } from 'pinia'\nimport { createRouter, createMemoryHistory } from 'vue-router'\n\nvi.mock('../composables/useTimezone', () => ({\n  useTimezone: vi.fn(),\n  getConfiguredTimezone: vi.fn().mockReturnValue(undefined),\n}))\n\nvi.mock('../api/client', () => ({\n  apiClient: { get: vi.fn() },\n}))\n\nconst",
+      "tokens": 157,
+      "firstFile": {
+        "name": "src/views/ActivityLogView.test.ts",
+        "start": 1,
+        "end": 18,
+        "startLoc": {
+          "line": 1,
+          "column": 1,
+          "position": 0
+        },
+        "endLoc": {
+          "line": 18,
+          "column": 6,
+          "position": 157
+        }
+      },
+      "secondFile": {
+        "name": "src/views/AuditLogView.test.ts",
+        "start": 1,
+        "end": 18,
+        "startLoc": {
+          "line": 1,
+          "column": 1,
+          "position": 0
+        },
+        "endLoc": {
+          "line": 18,
+          "column": 7,
+          "position": 157
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 12,
+      "fragment": ", async () => {\n      mockGet.mockImplementation((url: string) => {\n        if (url === '/agents') return Promise.resolve({ data: [] })\n        if (url === '/stats/activity') return Promise.resolve({ data: [] })\n        if (url === '/stats/system-events') return Promise.resolve({ data: [] })\n        return Promise.resolve({ data: [] })\n      })\n\n      const wrapper = mountView()\n      await flushPromises()\n\n      expect(wrapper.find('.table-wrap'",
+      "tokens": 160,
+      "firstFile": {
+        "name": "src/views/ActivityLogView.test.ts",
+        "start": 267,
+        "end": 278,
+        "startLoc": {
+          "line": 267,
+          "column": 55,
+          "position": 2306
+        },
+        "endLoc": {
+          "line": 278,
+          "column": 40,
+          "position": 2466
+        }
+      },
+      "secondFile": {
+        "name": "src/views/ActivityLogView.test.ts",
+        "start": 252,
+        "end": 263,
+        "startLoc": {
+          "line": 252,
+          "column": 61,
+          "position": 2104
+        },
+        "endLoc": {
+          "line": 263,
+          "column": 41,
+          "position": 2264
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 14,
+      "fragment": ", async () => {\n      setupDefaultMocks()\n      const wrapper = mountView()\n      await flushPromises()\n\n      const warningRows = wrapper\n        .findAll('tr.log-row')\n        .filter(\n          (r) =>\n            r.find('.badge-warning').exists() &&\n            r.find('.cell-host').text() === 'web-server-01' &&\n            r.find('.cell-target').text().startsWith('/var/www'),\n        )\n      await",
+      "tokens": 117,
+      "firstFile": {
+        "name": "src/views/ActivityLogView.test.ts",
+        "start": 365,
+        "end": 378,
+        "startLoc": {
+          "line": 365,
+          "column": 90,
+          "position": 3214
+        },
+        "endLoc": {
+          "line": 378,
+          "column": 12,
+          "position": 3331
+        }
+      },
+      "secondFile": {
+        "name": "src/views/ActivityLogView.test.ts",
+        "start": 341,
+        "end": 354,
+        "startLoc": {
+          "line": 341,
+          "column": 70,
+          "position": 2995
+        },
+        "endLoc": {
+          "line": 354,
+          "column": 13,
+          "position": 3112
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 28,
+      "fragment": "ion: {\n      intersect: false,\n      mode: 'index' as const,\n    },\n    plugins: {\n      legend: { display: false },\n      tooltip: {\n        callbacks: {\n          label: (context: TooltipItem<'line'>): string => {\n            return `${context.dataset.label ?? ''}: ${formatBytes(context.parsed.y ?? 0)}`\n          },\n        },\n      },\n    },\n    scales: {\n      x: {\n        grid: { display: false },\n        ticks: { color: textMuted, font: { size: 10 } },\n      },\n      y: {\n        grace: '10%',\n        grid: { color: border },\n        ticks: {\n          color: textMuted,\n          font: { size: 10 },\n          callback: (valu",
+      "tokens": 245,
+      "firstFile": {
+        "name": "src/components/TrendsChart.vue",
+        "start": 189,
+        "end": 216,
+        "startLoc": {
+          "line": 189,
+          "column": 32,
+          "position": 1501
+        },
+        "endLoc": {
+          "line": 216,
+          "column": 21,
+          "position": 1746
+        }
+      },
+      "secondFile": {
+        "name": "src/components/TrendsChart.vue",
+        "start": 150,
+        "end": 177,
+        "startLoc": {
+          "line": 150,
+          "column": 7,
+          "position": 1148
+        },
+        "endLoc": {
+          "line": 177,
+          "column": 19,
+          "position": 1393
+        }
+      }
+    },
+    {
+      "format": "css",
+      "lines": 25,
+      "fragment": "!--\nSPDX-License-Identifier: Apache-2.0\nSPDX-FileCopyrightText: 2026 Alexander Mohr\n-->\n\n<script setup lang=\"ts\">\nimport { ref, computed, onMounted, watch, onBeforeUnmount } from 'vue'\nimport { Line } from 'vue-chartjs'\nimport {\n  Chart as ChartJS,\n  CategoryScale,\n  LinearScale,\n  PointElement,\n  LineElement,\n  Title,\n  Tooltip,\n  Legend,\n  Filler,\n} from 'chart.js'\nimport type { TooltipItem } from 'chart.js'\ni",
+      "tokens": 147,
+      "firstFile": {
+        "name": "src/components/StorageTrendWidget.vue",
+        "start": 293,
+        "end": 317,
+        "startLoc": {
+          "line": 293,
+          "column": 1,
+          "position": 2286
+        },
+        "endLoc": {
+          "line": 317,
+          "column": 10,
+          "position": 2433
+        }
+      },
+      "secondFile": {
+        "name": "src/components/TrendsChart.vue",
+        "start": 385,
+        "end": 409,
+        "startLoc": {
+          "line": 385,
+          "column": 1,
+          "position": 3047
+        },
+        "endLoc": {
+          "line": 409,
+          "column": 17,
+          "position": 3194
+        }
+      }
+    },
+    {
+      "format": "css",
+      "lines": 45,
+      "fragment": "tils/format'\nimport { logger } from '../utils/logger'\nimport type { Repo } from '../types/repo'\n\nChartJS.register(\n  CategoryScale,\n  LinearScale,\n  PointElement,\n  LineElement,\n  Title,\n  Tooltip,\n  Legend,\n  Filler,\n)\n\ninterface TrendEntry {\n  date: string\n  original_size: number\n  compressed_size: number\n  deduplicated_size: number | null\n}\n\nconst props = defineProps<{ repos: Repo[] }>()\n\nfunction cssVar(name: string): string {\n  return getComputedStyle(document.documentElement).getPropertyValue(name).trim()\n}\n\nconst themeGeneration = ref(0)\nlet themeObserver: MutationObserver | null = null\n\nonMounted(() => {\n  themeObserver = new MutationObserver(() => {\n    themeGeneration.value++\n  })\n  themeObserver.observe(document.documentElement, {\n    attributes: true,\n    attributeFilter: ['class'],\n  })\n})\n\nonBeforeU",
+      "tokens": 282,
+      "firstFile": {
+        "name": "src/components/StorageTrendWidget.vue",
+        "start": 323,
+        "end": 367,
+        "startLoc": {
+          "line": 323,
+          "column": 14,
+          "position": 2463
+        },
+        "endLoc": {
+          "line": 367,
+          "column": 11,
+          "position": 2745
+        }
+      },
+      "secondFile": {
+        "name": "src/components/TrendsChart.vue",
+        "start": 415,
+        "end": 459,
+        "startLoc": {
+          "line": 415,
+          "column": 15,
+          "position": 3224
+        },
+        "endLoc": {
+          "line": 459,
+          "column": 12,
+          "position": 3506
+        }
+      }
+    },
+    {
+      "format": "css",
+      "lines": 24,
+      "fragment": "= ref(true)\n\nasync function fetchTrends(): Promise<void> {\n  loading.value = true\n  try {\n    const params = new URLSearchParams({ days: String(selectedDays.value) })\n    if (selectedRepoId.value !== undefined) {\n      params.set('repo_id', String(selectedRepoId.value))\n    }\n    const response = await apiClient.get<TrendEntry[]>(`/stats/sto",
+      "tokens": 123,
+      "firstFile": {
+        "name": "src/components/StorageTrendWidget.vue",
+        "start": 380,
+        "end": 403,
+        "startLoc": {
+          "line": 380,
+          "column": 12,
+          "position": 2825
+        },
+        "endLoc": {
+          "line": 403,
+          "column": 2,
+          "position": 2948
+        }
+      },
+      "secondFile": {
+        "name": "src/components/TrendsChart.vue",
+        "start": 459,
+        "end": 482,
+        "startLoc": {
+          "line": 459,
+          "column": 12,
+          "position": 3507
+        },
+        "endLoc": {
+          "line": 482,
+          "column": 2,
+          "position": 3630
+        }
+      }
+    },
+    {
+      "format": "markup",
+      "lines": 45,
+      "fragment": "tjs'\nimport {\n  Chart as ChartJS,\n  CategoryScale,\n  LinearScale,\n  PointElement,\n  LineElement,\n  Title,\n  Tooltip,\n  Legend,\n  Filler,\n} from 'chart.js'\nimport type { TooltipItem } from 'chart.js'\nimport { apiClient } from '../api/client'\nimport { formatBytes } from '../utils/format'\nimport { logger } from '../utils/logger'\nimport type { Repo } from '../types/repo'\n\nChartJS.register(\n  CategoryScale,\n  LinearScale,\n  PointElement,\n  LineElement,\n  Title,\n  Tooltip,\n  Legend,\n  Filler,\n)\n\ninterface TrendEntry {\n  date: string\n  original_size: number\n  compressed_size: number\n  deduplicated_size: number | null\n}\n\nconst props = defineProps<{ repos: Repo[] }>()\n\nfunction cssVar(name: string): string {\n  return getComputedStyle(document.documentElement).getPropertyValue(name).trim()\n}\n\nconst themeGeneration = ref(0)\nlet themeObserver: MutationObserver | null = null\n\nonMounted(() => {\n  themeObserver = new MutationObserver(() => {\n    themeGeneration.value++\n  })\n  themeObserver.observe(document.documentElement, {\n    attributes: true,\n    attributeFilter: ['class'],\n  })\n})\n\nonBeforeUnmount(() => {\n  themeObserver?.dis",
+      "tokens": 228,
+      "firstFile": {
+        "name": "src/components/StorageTrendWidget.vue",
+        "start": 207,
+        "end": 251,
+        "startLoc": {
+          "line": 207,
+          "column": 30,
+          "position": 1791
+        },
+        "endLoc": {
+          "line": 251,
+          "column": 17,
+          "position": 2019
+        }
+      },
+      "secondFile": {
+        "name": "src/components/TrendsChart.vue",
+        "start": 290,
+        "end": 334,
+        "startLoc": {
+          "line": 290,
+          "column": 31,
+          "position": 2465
+        },
+        "endLoc": {
+          "line": 334,
+          "column": 11,
+          "position": 2693
+        }
+      }
+    },
+    {
+      "format": "markup",
+      "lines": 17,
+      "fragment": "'repo_id', String(selectedRepoId.value))\n    }\n    const response = await apiClient.get<TrendEntry[]>(`/stats/storage-trends?${params.toString()}`)\n    entries.value = response.data\n  } finally {\n    loading.value = false\n  }\n}\n\nonMounted(() => {\n  fetchTrends().catch(logger.error)\n})\n\nwatch([selectedDays, selectedRepoId], () => {\n  fetchTrends().catch(logger.error)\n})\n\nconst combinedSizeData = computed(() => ({\n  labels: entries.value.map((t) => t.date.slice(5)),\n  datasets: [\n    {\n      l",
+      "tokens": 123,
+      "firstFile": {
+        "name": "src/components/StorageTrendWidget.vue",
+        "start": 268,
+        "end": 284,
+        "startLoc": {
+          "line": 268,
+          "column": 24,
+          "position": 2137
+        },
+        "endLoc": {
+          "line": 284,
+          "column": 42,
+          "position": 2260
+        }
+      },
+      "secondFile": {
+        "name": "src/components/TrendsChart.vue",
+        "start": 351,
+        "end": 367,
+        "startLoc": {
+          "line": 351,
+          "column": 24,
+          "position": 2831
+        },
+        "endLoc": {
+          "line": 367,
+          "column": 35,
+          "position": 2954
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 35,
+      "fragment": "SPDX-FileCopyrightText: 2026 Alexander Mohr\n-->\n\n<script setup lang=\"ts\">\nimport { ref, computed, onMounted, watch, onBeforeUnmount } from 'vue'\nimport { Line } from 'vue-chartjs'\nimport {\n  Chart as ChartJS,\n  CategoryScale,\n  LinearScale,\n  PointElement,\n  LineElement,\n  Title,\n  Tooltip,\n  Legend,\n  Filler,\n} from 'chart.js'\nimport type { TooltipItem } from 'chart.js'\nimport { apiClient } from '../api/client'\nimport { formatBytes } from '../utils/format'\nimport { logger } from '../utils/logger'\nimport type { Repo } from '../types/repo'\n\nChartJS.register(\n  CategoryScale,\n  LinearScale,\n  PointElement,\n  LineElement,\n  Title,\n  Tooltip,\n  Legend,\n  Filler,\n)\n\nint",
+      "tokens": 207,
+      "firstFile": {
+        "name": "src/components/StorageTrendWidget.vue",
+        "start": 7,
+        "end": 41,
+        "startLoc": {
+          "line": 7,
+          "column": 41,
+          "position": 15
+        },
+        "endLoc": {
+          "line": 41,
+          "column": 30,
+          "position": 222
+        }
+      },
+      "secondFile": {
+        "name": "src/components/TrendsChart.vue",
+        "start": 7,
+        "end": 42,
+        "startLoc": {
+          "line": 7,
+          "column": 41,
+          "position": 15
+        },
+        "endLoc": {
+          "line": 42,
+          "column": 14,
+          "position": 223
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 26,
+      "fragment": " TrendEntry {\n  date: string\n  original_size: number\n  compressed_size: number\n  deduplicated_size: number | null\n}\n\nconst props = defineProps<{ repos: Repo[] }>()\n\nfunction cssVar(name: string): string {\n  return getComputedStyle(document.documentElement).getPropertyValue(name).trim()\n}\n\nconst themeGeneration = ref(0)\nlet themeObserver: MutationObserver | null = null\n\nonMounted(() => {\n  themeObserver = new MutationObserver(() => {\n    themeGeneration.value++\n  })\n  themeObserver.observe(document.documentElement, {\n    attributes: true,\n   ",
+      "tokens": 184,
+      "firstFile": {
+        "name": "src/components/StorageTrendWidget.vue",
+        "start": 42,
+        "end": 67,
+        "startLoc": {
+          "line": 42,
+          "column": 1,
+          "position": 226
+        },
+        "endLoc": {
+          "line": 67,
+          "column": 19,
+          "position": 410
+        }
+      },
+      "secondFile": {
+        "name": "src/components/TrendsChart.vue",
+        "start": 45,
+        "end": 72,
+        "startLoc": {
+          "line": 45,
+          "column": 1,
+          "position": 240
+        },
+        "endLoc": {
+          "line": 72,
+          "column": 21,
+          "position": 425
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 11,
+      "fragment": "\n})\n\nconst selectedDays = ref<number>(30)\nconst selectedRepoId = ref<number | undefined>(undefined)\nconst entries = ref<TrendEntry[]>([])\nconst loading = ref(true)\n\nasync function fetchTrends(): Promise<void> {\n  loading.value = true\n  try {\n    const params = new URLSearchParams({ days: String(selectedDays.value) })\n    if (selectedRepoId.value !== undefined) {\n      params.set('repo_id', ",
+      "tokens": 133,
+      "firstFile": {
+        "name": "src/components/StorageTrendWidget.vue",
+        "start": 69,
+        "end": 79,
+        "startLoc": {
+          "line": 69,
+          "column": 15,
+          "position": 444
+        },
+        "endLoc": {
+          "line": 79,
+          "column": 79,
+          "position": 577
+        }
+      },
+      "secondFile": {
+        "name": "src/components/TrendsChart.vue",
+        "start": 74,
+        "end": 84,
+        "startLoc": {
+          "line": 74,
+          "column": 14,
+          "position": 459
+        },
+        "endLoc": {
+          "line": 84,
+          "column": 71,
+          "position": 592
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 24,
+      "fragment": "lse,\n    interaction: { intersect: false, mode: 'index' as const },\n    plugins: {\n      legend: { display: false },\n      tooltip: {\n        callbacks: {\n          label: (context: TooltipItem<'line'>): string =>\n            `${context.dataset.label ?? ''}: ${formatBytes(context.parsed.y ?? 0)}`,\n        },\n      },\n    },\n    scales: {\n      x: { grid: { display: false }, ticks: { color: textMuted, font: { size: 10 } } },\n      y: {\n        grace: '10%',\n        grid: { color: border },\n        ticks: {\n          color: textMuted,\n          font: { size: 10 },\n          callback",
+      "tokens": 234,
+      "firstFile": {
+        "name": "src/components/StorageTrendWidget.vue",
+        "start": 174,
+        "end": 197,
+        "startLoc": {
+          "line": 174,
+          "column": 32,
+          "position": 1467
+        },
+        "endLoc": {
+          "line": 197,
+          "column": 14,
+          "position": 1701
+        }
+      },
+      "secondFile": {
+        "name": "src/components/StorageTrendWidget.vue",
+        "start": 142,
+        "end": 165,
+        "startLoc": {
+          "line": 142,
+          "column": 7,
+          "position": 1129
+        },
+        "endLoc": {
+          "line": 165,
+          "column": 26,
+          "position": 1363
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 16,
+      "fragment": "},\n}))\n\nvi.mock('chart.js', () => ({\n  Chart: { register: vi.fn() },\n  CategoryScale: {},\n  LinearScale: {},\n  PointElement: {},\n  LineElement: {},\n  Title: {},\n  Tooltip: {},\n  Legend: {},\n  Filler: {},\n}))\n\nvi.mock('../utils/format'",
+      "tokens": 114,
+      "firstFile": {
+        "name": "src/components/StorageTrendWidget.test.ts",
+        "start": 17,
+        "end": 32,
+        "startLoc": {
+          "line": 17,
+          "column": 34,
+          "position": 141
+        },
+        "endLoc": {
+          "line": 32,
+          "column": 26,
+          "position": 255
+        }
+      },
+      "secondFile": {
+        "name": "src/components/TrendsChart.test.ts",
+        "start": 9,
+        "end": 24,
+        "startLoc": {
+          "line": 9,
+          "column": 59,
+          "position": 76
+        },
+        "endLoc": {
+          "line": 24,
+          "column": 24,
+          "position": 190
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 23,
+      "fragment": "const wrapper = mountWizard()\n\n    await wrapper.find('.step-content select').setValue(ARCHIVES[0].name)\n    await wrapper\n      .findAll('button')\n      .find((b) => b.text() === 'Next')!\n      .trigger('click')\n    await wrapper.vm.$nextTick()\n\n    await wrapper.find('textarea').setValue('/etc/nginx/nginx.conf')\n    await wrapper\n      .findAll('button')\n      .find((b) => b.text() === 'Next')!\n      .trigger('click')\n    await wrapper.vm.$nextTick()\n\n    await wrapper\n      .findAll('button')\n      .find((b) => b.text() === 'Next')!\n      .trigger('click')\n    await wrapper.vm.$nextTick()\n\n    await",
+      "tokens": 206,
+      "firstFile": {
+        "name": "src/components/RestoreWizard.test.ts",
+        "start": 188,
+        "end": 210,
+        "startLoc": {
+          "line": 188,
+          "column": 5,
+          "position": 1824
+        },
+        "endLoc": {
+          "line": 210,
+          "column": 10,
+          "position": 2030
+        }
+      },
+      "secondFile": {
+        "name": "src/components/RestoreWizard.test.ts",
+        "start": 152,
+        "end": 174,
+        "startLoc": {
+          "line": 152,
+          "column": 5,
+          "position": 1456
+        },
+        "endLoc": {
+          "line": 174,
+          "column": 11,
+          "position": 1662
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 29,
+      "fragment": ")\n\n    const wrapper = mountWizard()\n\n    await wrapper.find('.step-content select').setValue(ARCHIVES[0].name)\n    await wrapper\n      .findAll('button')\n      .find((b) => b.text() === 'Next')!\n      .trigger('click')\n    await wrapper.vm.$nextTick()\n\n    await wrapper.find('textarea').setValue('/etc/nginx/nginx.conf')\n    await wrapper\n      .findAll('button')\n      .find((b) => b.text() === 'Next')!\n      .trigger('click')\n    await wrapper.vm.$nextTick()\n\n    await wrapper\n      .findAll('button')\n      .find((b) => b.text() === 'Next')!\n      .trigger('click')\n    await wrapper.vm.$nextTick()\n\n    await wrapper.find('button.btn-primary').trigger('click')\n    await wrapper.vm.$nextTick()\n    await wrapper.vm.$nextTick()\n\n    expect(wrapper",
+      "tokens": 250,
+      "firstFile": {
+        "name": "src/components/RestoreWizard.test.ts",
+        "start": 223,
+        "end": 251,
+        "startLoc": {
+          "line": 223,
+          "column": 59,
+          "position": 2168
+        },
+        "endLoc": {
+          "line": 251,
+          "column": 19,
+          "position": 2418
+        }
+      },
+      "secondFile": {
+        "name": "src/components/RestoreWizard.test.ts",
+        "start": 186,
+        "end": 214,
+        "startLoc": {
+          "line": 186,
+          "column": 40,
+          "position": 1820
+        },
+        "endLoc": {
+          "line": 214,
+          "column": 20,
+          "position": 2070
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 28,
+      "fragment": ")\n\n    const wrapper = mountWizard()\n\n    await wrapper.find('.step-content select').setValue(ARCHIVES[0].name)\n    await wrapper\n      .findAll('button')\n      .find((b) => b.text() === 'Next')!\n      .trigger('click')\n    await wrapper.vm.$nextTick()\n\n    await wrapper.find('textarea').setValue('/etc/nginx/nginx.conf')\n    await wrapper\n      .findAll('button')\n      .find((b) => b.text() === 'Next')!\n      .trigger('click')\n    await wrapper.vm.$nextTick()\n\n    await wrapper\n      .findAll('button')\n      .find((b) => b.text() === 'Next')!\n      .trigger('click')\n    await wrapper.vm.$nextTick()\n\n    await wrapper.find('button.btn-primary').trigger('click')\n    await wrapper.vm.$nextTick()\n\n    const",
+      "tokens": 237,
+      "firstFile": {
+        "name": "src/components/RestoreWizard.test.ts",
+        "start": 264,
+        "end": 291,
+        "startLoc": {
+          "line": 264,
+          "column": 5,
+          "position": 2566
+        },
+        "endLoc": {
+          "line": 291,
+          "column": 10,
+          "position": 2803
+        }
+      },
+      "secondFile": {
+        "name": "src/components/RestoreWizard.test.ts",
+        "start": 186,
+        "end": 212,
+        "startLoc": {
+          "line": 186,
+          "column": 40,
+          "position": 1820
+        },
+        "endLoc": {
+          "line": 212,
+          "column": 10,
+          "position": 2056
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 11,
+      "fragment": ",\n  formatDuration: (n: number): string => `${n}s`,\n}))\n\nvi.mock('../utils/logger', () => ({\n  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },\n}))\n\nconst mockGet = vi.mocked(apiClient.get)\n\ndescribe('RecentActivityWidget'",
+      "tokens": 106,
+      "firstFile": {
+        "name": "src/components/RecentActivityWidget.test.ts",
+        "start": 18,
+        "end": 28,
+        "startLoc": {
+          "line": 18,
+          "column": 50,
+          "position": 174
+        },
+        "endLoc": {
+          "line": 28,
+          "column": 32,
+          "position": 280
+        }
+      },
+      "secondFile": {
+        "name": "src/components/StorageTrendWidget.test.ts",
+        "start": 34,
+        "end": 44,
+        "startLoc": {
+          "line": 34,
+          "column": 41,
+          "position": 306
+        },
+        "endLoc": {
+          "line": 44,
+          "column": 30,
+          "position": 412
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 13,
+      "fragment": ",\n}))\n\nvi.mock('../utils/format', () => ({\n  formatBytes: (bytes: number): string => `${bytes} B`,\n}))\n\nvi.mock('../utils/error', () => ({\n  extractError: (_e: unknown): string => 'API error',\n  extractBlobError: async (_e: unknown): Promise<string> => 'API error',\n}))\n\nvi.mock('./ToggleSwitch.vue'",
+      "tokens": 117,
+      "firstFile": {
+        "name": "src/components/QuotaPanel.test.ts",
+        "start": 15,
+        "end": 27,
+        "startLoc": {
+          "line": 15,
+          "column": 4,
+          "position": 131
+        },
+        "endLoc": {
+          "line": 27,
+          "column": 29,
+          "position": 248
+        }
+      },
+      "secondFile": {
+        "name": "src/views/ServerQuotasView.test.ts",
+        "start": 16,
+        "end": 28,
+        "startLoc": {
+          "line": 16,
+          "column": 47,
+          "position": 155
+        },
+        "endLoc": {
+          "line": 28,
+          "column": 40,
+          "position": 272
+        }
+      }
+    },
+    {
+      "format": "css",
+      "lines": 23,
+      "fragment": "!--\nSPDX-License-Identifier: Apache-2.0\nSPDX-FileCopyrightText: 2026 Alexander Mohr\n-->\n\n<script setup lang=\"ts\">\nimport { ref, onMounted, onUnmounted } from 'vue'\nimport { useRouter } from 'vue-router'\nimport { apiClient } from '../api/client'\nimport { relativeTime } from '../utils/format'\nimport { logger } from '../utils/logger'\n\ninterface CalendarEvent {\n  type: string\n  status: string\n  repo",
+      "tokens": 144,
+      "firstFile": {
+        "name": "src/components/NextScheduledWidget.vue",
+        "start": 144,
+        "end": 166,
+        "startLoc": {
+          "line": 144,
+          "column": 1,
+          "position": 1202
+        },
+        "endLoc": {
+          "line": 166,
+          "column": 16,
+          "position": 1346
+        }
+      },
+      "secondFile": {
+        "name": "src/components/RepoHealthWidget.vue",
+        "start": 85,
+        "end": 107,
+        "startLoc": {
+          "line": 85,
+          "column": 1,
+          "position": 600
+        },
+        "endLoc": {
+          "line": 107,
+          "column": 13,
+          "position": 744
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 21,
+      "fragment": "import { apiClient } from '../api/client'\n\nvi.mock('../api/client', () => ({\n  apiClient: {\n    get: vi.fn(),\n  },\n}))\n\nvi.mock('../utils/format', () => ({\n  formatBytes: (n: number): string => `${n}B`,\n  relativeTime: (s: string): string => `rel:${s}`,\n  formatDuration: (n: number): string => `${n}s`,\n}))\n\nvi.mock('../utils/logger', () => ({\n  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },\n}))\n\nconst mockGet = vi.mocked(apiClient.get)\n\ndescribe('NextScheduledWidget'",
+      "tokens": 219,
+      "firstFile": {
+        "name": "src/components/NextScheduledWidget.test.ts",
+        "start": 8,
+        "end": 28,
+        "startLoc": {
+          "line": 8,
+          "column": 1,
+          "position": 61
+        },
+        "endLoc": {
+          "line": 28,
+          "column": 31,
+          "position": 280
+        }
+      },
+      "secondFile": {
+        "name": "src/components/RecentActivityWidget.test.ts",
+        "start": 8,
+        "end": 44,
+        "startLoc": {
+          "line": 8,
+          "column": 1,
+          "position": 61
+        },
+        "endLoc": {
+          "line": 44,
+          "column": 30,
+          "position": 412
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 19,
+      "fragment": "vi.mock('../api/client', () => ({\n  apiClient: {\n    get: vi.fn(),\n    post: vi.fn(),\n  },\n}))\n\nvi.mock('../utils/error', () => ({\n  extractError: (e: unknown): string => {\n    if (e instanceof Error) return e.message\n    return 'Unknown error'\n  },\n  extractBlobError: async (e: unknown): Promise<string> => {\n    if (e instanceof Error) return e.message\n    return 'Unknown error'\n  },\n}))\n\nvi",
+      "tokens": 165,
+      "firstFile": {
+        "name": "src/components/FileSearch.test.ts",
+        "start": 7,
+        "end": 25,
+        "startLoc": {
+          "line": 7,
+          "column": 1,
+          "position": 47
+        },
+        "endLoc": {
+          "line": 25,
+          "column": 3,
+          "position": 212
+        }
+      },
+      "secondFile": {
+        "name": "src/components/RestoreWizard.test.ts",
+        "start": 8,
+        "end": 26,
+        "startLoc": {
+          "line": 8,
+          "column": 1,
+          "position": 55
+        },
+        "endLoc": {
+          "line": 26,
+          "column": 7,
+          "position": 220
+        }
+      }
+    },
+    {
+      "format": "css",
+      "lines": 57,
+      "fragment": "utils/backupStatus'\nimport type { Repo } from '../types/repo'\n\ninterface ActivityEntry {\n  id: number\n  hostname: string\n  target_name: string\n  started_at: string\n  finished_at: string\n  status: string\n  duration_secs: number\n}\n\nconst props = defineProps<{ repos: Repo[] }>()\nconst router = useRouter()\n\nconst selectedDays = ref<number>(30)\nconst selectedRepoId = ref<number | undefined>(undefined)\nconst entries = ref<ActivityEntry[]>([])\nconst loading = ref(true)\n\nasync function fetchStats(): Promise<void> {\n  loading.value = true\n  try {\n    const params = new URLSearchParams({ days: String(selectedDays.value) })\n    if (selectedRepoId.value !== undefined) {\n      params.set('repo_id', String(selectedRepoId.value))\n    }\n    const response = await apiClient.get<ActivityEntry[]>(`/stats/activity?${params.toString()}`)\n    entries.value = response.data\n  } finally {\n    loading.value = false\n  }\n}\n\nonMounted(() => {\n  fetchStats().catch(logger.error)\n})\n\nwatch([select",
+      "tokens": 343,
+      "firstFile": {
+        "name": "src/components/BackupStatsWidget.vue",
+        "start": 207,
+        "end": 263,
+        "startLoc": {
+          "line": 207,
+          "column": 12,
+          "position": 1549
+        },
+        "endLoc": {
+          "line": 263,
+          "column": 15,
+          "position": 1892
+        }
+      },
+      "secondFile": {
+        "name": "src/components/StorageTrendWidget.vue",
+        "start": 314,
+        "end": 370,
+        "startLoc": {
+          "line": 314,
+          "column": 22,
+          "position": 2428
+        },
+        "endLoc": {
+          "line": 370,
+          "column": 13,
+          "position": 2771
+        }
+      }
+    },
+    {
+      "format": "markup",
+      "lines": 19,
+      "fragment": "tup lang=\"ts\">\nimport { ref, computed, onMounted, watch } from 'vue'\nimport { useRouter } from 'vue-router'\nimport { apiClient } from '../api/client'\nimport { formatDuration } from '../utils/format'\nimport { logger } from '../utils/logger'\nimport { normalizeBackupStatus } from '../utils/backupStatus'\nimport type { Repo } from '../types/repo'\n\ninterface ActivityEntry {\n  id: number\n  hostname: string\n  target_name: string\n  started_at: string\n  finished_at: string\n  status: string\n  duration_secs: number",
+      "tokens": 115,
+      "firstFile": {
+        "name": "src/components/BackupStatsWidget.vue",
+        "start": 84,
+        "end": 102,
+        "startLoc": {
+          "line": 84,
+          "column": 43,
+          "position": 847
+        },
+        "endLoc": {
+          "line": 102,
+          "column": 51,
+          "position": 962
+        }
+      },
+      "secondFile": {
+        "name": "src/components/StorageTrendWidget.vue",
+        "start": 203,
+        "end": 221,
+        "startLoc": {
+          "line": 203,
+          "column": 44,
+          "position": 1762
+        },
+        "endLoc": {
+          "line": 221,
+          "column": 52,
+          "position": 1877
+        }
+      }
+    },
+    {
+      "format": "markup",
+      "lines": 23,
+      "fragment": "selectedDays = ref<number>(30)\nconst selectedRepoId = ref<number | undefined>(undefined)\nconst entries = ref<ActivityEntry[]>([])\nconst loading = ref(true)\n\nasync function fetchStats(): Promise<void> {\n  loading.value = true\n  try {\n    const params = new URLSearchParams({ days: String(selectedDays.value) })\n    if (selectedRepoId.value !== undefined) {\n      params.set('repo_id', String(selectedRepoId.value))\n    }\n    const response = await apiClient.get<ActivityEntry[]>(`/stats/activity?${params.toString()}`)\n    entries.value = response.data\n  } finally {\n    loading.v",
+      "tokens": 99,
+      "firstFile": {
+        "name": "src/components/BackupStatsWidget.vue",
+        "start": 106,
+        "end": 128,
+        "startLoc": {
+          "line": 106,
+          "column": 19,
+          "position": 979
+        },
+        "endLoc": {
+          "line": 128,
+          "column": 11,
+          "position": 1078
+        }
+      },
+      "secondFile": {
+        "name": "src/components/TrendsChart.vue",
+        "start": 301,
+        "end": 323,
+        "startLoc": {
+          "line": 301,
+          "column": 33,
+          "position": 2536
+        },
+        "endLoc": {
+          "line": 323,
+          "column": 12,
+          "position": 2635
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 11,
+      "fragment": "import { apiClient } from '../api/client'\n\nvi.mock('../api/client', () => ({\n  apiClient: {\n    get: vi.fn(),\n  },\n}))\n\nvi.mock('../utils/format', () => ({\n  formatBytes: (n: number): string => `${n}B`,\n  relativeTime: (s: string): string => s",
+      "tokens": 108,
+      "firstFile": {
+        "name": "src/components/BackupStatsWidget.test.ts",
+        "start": 8,
+        "end": 18,
+        "startLoc": {
+          "line": 8,
+          "column": 1,
+          "position": 61
+        },
+        "endLoc": {
+          "line": 18,
+          "column": 41,
+          "position": 169
+        }
+      },
+      "secondFile": {
+        "name": "src/components/RecentActivityWidget.test.ts",
+        "start": 8,
+        "end": 18,
+        "startLoc": {
+          "line": 8,
+          "column": 1,
+          "position": 61
+        },
+        "endLoc": {
+          "line": 18,
+          "column": 45,
+          "position": 169
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 16,
+      "fragment": "},\n}))\n\nvi.mock('../utils/format', () => ({\n  formatBytes: (n: number): string => `${n}B`,\n  relativeTime: (s: string): string => s,\n  formatDuration: (n: number): string => `${n}s`,\n}))\n\nvi.mock('../utils/logger', () => ({\n  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },\n}))\n\nconst mockGet = vi.mocked(apiClient.get)\n\ndescribe('BackupStatsWidget'",
+      "tokens": 169,
+      "firstFile": {
+        "name": "src/components/BackupStatsWidget.test.ts",
+        "start": 13,
+        "end": 28,
+        "startLoc": {
+          "line": 13,
+          "column": 3,
+          "position": 107
+        },
+        "endLoc": {
+          "line": 28,
+          "column": 29,
+          "position": 276
+        }
+      },
+      "secondFile": {
+        "name": "src/components/StorageTrendWidget.test.ts",
+        "start": 29,
+        "end": 44,
+        "startLoc": {
+          "line": 29,
+          "column": 12,
+          "position": 243
+        },
+        "endLoc": {
+          "line": 44,
+          "column": 30,
+          "position": 412
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 19,
+      "fragment": ",\n          duration_secs: 10,\n        },\n        {\n          id: 3,\n          hostname: 'h3',\n          target_name: 't3',\n          started_at: '',\n          finished_at: '',\n          status: 'failed',\n          duration_secs: 10,\n        },\n      ],\n    })\n    const wrapper = renderWithPlugins(BackupStatsWidget, {\n      props: { repos: [] },\n    })\n    await flushPromises()\n    expect(wrapper.text()).toContain('2'",
+      "tokens": 129,
+      "firstFile": {
+        "name": "src/components/BackupStatsWidget.test.ts",
+        "start": 98,
+        "end": 116,
+        "startLoc": {
+          "line": 98,
+          "column": 27,
+          "position": 781
+        },
+        "endLoc": {
+          "line": 116,
+          "column": 41,
+          "position": 910
+        }
+      },
+      "secondFile": {
+        "name": "src/components/BackupStatsWidget.test.ts",
+        "start": 59,
+        "end": 77,
+        "startLoc": {
+          "line": 59,
+          "column": 28,
+          "position": 517
+        },
+        "endLoc": {
+          "line": 77,
+          "column": 43,
+          "position": 646
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 26,
+      "fragment": "// SPDX-License-Identifier: Apache-2.0\n// SPDX-FileCopyrightText: 2026 Alexander Mohr\n\nimport { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'\nimport { mount } from '@vue/test-utils'\n\nvi.mock('../api/client', () => ({\n  apiClient: {\n    get: vi.fn(),\n    post: vi.fn(),\n  },\n}))\n\nvi.mock('../utils/error', () => ({\n  extractError: (e: unknown): string => {\n    if (e instanceof Error) return e.message\n    return 'Unknown error'\n  },\n  extractBlobError: async (e: unknown): Promise<string> => {\n    if (e instanceof Error) return e.message\n    return 'Unknown error'\n  },\n}))\n\nimport { apiClient } from '../api/client'\nimport ArchiveDiff",
+      "tokens": 226,
+      "firstFile": {
+        "name": "src/components/ArchiveDiff.test.ts",
+        "start": 1,
+        "end": 26,
+        "startLoc": {
+          "line": 1,
+          "column": 1,
+          "position": 0
+        },
+        "endLoc": {
+          "line": 26,
+          "column": 19,
+          "position": 226
+        }
+      },
+      "secondFile": {
+        "name": "src/components/FileSearch.test.ts",
+        "start": 1,
+        "end": 27,
+        "startLoc": {
+          "line": 1,
+          "column": 1,
+          "position": 0
+        },
+        "endLoc": {
+          "line": 27,
+          "column": 21,
+          "position": 234
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 12,
+      "fragment": "},\n    })\n\n    const wrapper = mountDiff()\n    const selects = wrapper.findAll('select')\n    await selects[0].setValue(ARCHIVES[0].name)\n    await selects[1].setValue(ARCHIVES[1].name)\n    await wrapper.find('button.compare-btn').trigger('click')\n    await wrapper.vm.$nextTick()\n    await wrapper.vm.$nextTick()\n\n    expect(wrapper.text()).toContain('No differences found between the two archives.'",
+      "tokens": 119,
+      "firstFile": {
+        "name": "src/components/ArchiveDiff.test.ts",
+        "start": 135,
+        "end": 146,
+        "startLoc": {
+          "line": 135,
+          "column": 52,
+          "position": 1253
+        },
+        "endLoc": {
+          "line": 146,
+          "column": 86,
+          "position": 1372
+        }
+      },
+      "secondFile": {
+        "name": "src/components/ArchiveDiff.test.ts",
+        "start": 114,
+        "end": 125,
+        "startLoc": {
+          "line": 114,
+          "column": 7,
+          "position": 1003
+        },
+        "endLoc": {
+          "line": 125,
+          "column": 59,
+          "position": 1122
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 11,
+      "fragment": ")\n\n    const wrapper = mountDiff()\n    const selects = wrapper.findAll('select')\n    await selects[0].setValue(ARCHIVES[0].name)\n    await selects[1].setValue(ARCHIVES[1].name)\n    await wrapper.find('button.compare-btn').trigger('click')\n    await wrapper.vm.$nextTick()\n    await wrapper.vm.$nextTick()\n\n    expect(wrapper.find",
+      "tokens": 107,
+      "firstFile": {
+        "name": "src/components/ArchiveDiff.test.ts",
+        "start": 150,
+        "end": 160,
+        "startLoc": {
+          "line": 150,
+          "column": 56,
+          "position": 1406
+        },
+        "endLoc": {
+          "line": 160,
+          "column": 24,
+          "position": 1513
+        }
+      },
+      "secondFile": {
+        "name": "src/components/ArchiveDiff.test.ts",
+        "start": 115,
+        "end": 125,
+        "startLoc": {
+          "line": 115,
+          "column": 6,
+          "position": 1008
+        },
+        "endLoc": {
+          "line": 125,
+          "column": 24,
+          "position": 1115
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 25,
+      "fragment": "// SPDX-License-Identifier: Apache-2.0\n// SPDX-FileCopyrightText: 2026 Alexander Mohr\n\nimport { beforeEach, describe, expect, it, vi } from 'vitest'\n\ntype MockedApiClient = {\n  get: ReturnType<typeof vi.fn>\n  post: ReturnType<typeof vi.fn>\n  put: ReturnType<typeof vi.fn>\n  delete: ReturnType<typeof vi.fn>\n}\n\nconst apiClient = vi.hoisted<MockedApiClient>(() => ({\n  get: vi.fn(),\n  post: vi.fn(),\n  put: vi.fn(),\n  delete: vi.fn(),\n}))\n\nvi.mock('./client', () => ({\n  apiClient,\n}))\n\nimport {\n  createChannel",
+      "tokens": 192,
+      "firstFile": {
+        "name": "src/api/notifications.test.ts",
+        "start": 1,
+        "end": 25,
+        "startLoc": {
+          "line": 1,
+          "column": 1,
+          "position": 0
+        },
+        "endLoc": {
+          "line": 25,
+          "column": 16,
+          "position": 192
+        }
+      },
+      "secondFile": {
+        "name": "src/api/tunnels.test.ts",
+        "start": 1,
+        "end": 25,
+        "startLoc": {
+          "line": 1,
+          "column": 1,
+          "position": 0
+        },
+        "endLoc": {
+          "line": 25,
+          "column": 15,
+          "position": 192
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 12,
+      "fragment": "}) => {\n    await loginAsAdmin(page)\n\n    // Navigate to repos list and click server-daily to get its ID\n    await page.goto('/repos')\n    await page.getByText('server-daily').click()\n    await page.waitForURL(/\\/repos\\/\\d+/)\n    const repoUrl = page.url()\n    const repoId = new URL(repoUrl).pathname.match(/\\/repos\\/(\\d+)/)?.[1]\n    expect(repoId).toBeTruthy()\n\n    // Go to the Archives tab to see archive names and get the total count",
+      "tokens": 104,
+      "firstFile": {
+        "name": "e2e/repo-archive-filter.spec.ts",
+        "start": 46,
+        "end": 57,
+        "startLoc": {
+          "line": 46,
+          "column": 92,
+          "position": 399
+        },
+        "endLoc": {
+          "line": 57,
+          "column": 75,
+          "position": 503
+        }
+      },
+      "secondFile": {
+        "name": "e2e/repo-archive-filter.spec.ts",
+        "start": 9,
+        "end": 20,
+        "startLoc": {
+          "line": 9,
+          "column": 3,
+          "position": 54
+        },
+        "endLoc": {
+          "line": 20,
+          "column": 51,
+          "position": 158
+        }
+      }
+    },
+    {
+      "format": "typescript",
+      "lines": 14,
+      "fragment": ", () => {\n  let ws: WebSocketRoute | null = null\n\n  test.beforeEach(async ({ page }) => {\n    ws = null\n    let resolveWs!: (w: WebSocketRoute) => void\n    const wsReady = new Promise<WebSocketRoute>((resolve) => {\n      resolveWs = resolve\n    })\n    await page.routeWebSocket('**/ws/ui', (route) => {\n      ws = route\n      resolveWs(route)\n    })\n    await mockActivityLogApis",
+      "tokens": 141,
+      "firstFile": {
+        "name": "e2e/backup-progress.spec.ts",
+        "start": 473,
+        "end": 486,
+        "startLoc": {
+          "line": 473,
+          "column": 47,
+          "position": 4431
+        },
+        "endLoc": {
+          "line": 486,
+          "column": 30,
+          "position": 4572
+        }
+      },
+      "secondFile": {
+        "name": "e2e/backup-progress.spec.ts",
+        "start": 109,
+        "end": 124,
+        "startLoc": {
+          "line": 109,
+          "column": 37,
+          "position": 962
+        },
+        "endLoc": {
+          "line": 124,
+          "column": 33,
+          "position": 1105
+        }
+      }
+    }
+  ]
+}

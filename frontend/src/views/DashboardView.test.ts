@@ -7,6 +7,35 @@ import { apiClient } from '../api/client'
 import { renderWithPlugins } from '../test-utils'
 import DashboardView from './DashboardView.vue'
 
+function mockOverviewData(running_operations: Array<Record<string, unknown>> = []): {
+  data: Record<string, unknown>
+} {
+  return {
+    data: {
+      summary: {
+        protected_hosts: 0,
+        eligible_hosts: 0,
+        needs_attention: 0,
+        running_operations: running_operations.length,
+        total_storage_bytes: 0,
+      },
+      findings: [],
+      protection: {
+        protected_hosts: 0,
+        eligible_hosts: 0,
+        protected_agent_links: [],
+        unassigned_agents: [],
+        never_succeeded_targets: 0,
+        never_succeeded_agents: [],
+        disabled_only_agents: [],
+      },
+      running_operations,
+      upcoming_schedules: [],
+      repository_capacity: [],
+    },
+  }
+}
+
 function defaultApiHandler(url: string): Promise<{ data: unknown }> {
   if (url.startsWith('/stats/summary')) {
     return Promise.resolve({
@@ -22,38 +51,15 @@ function defaultApiHandler(url: string): Promise<{ data: unknown }> {
     })
   }
   if (url === '/stats/dashboard-overview') {
-    return Promise.resolve({
-      data: {
-        findings: [],
-        summary: {
-          protected_hosts: 0,
-          eligible_hosts: 0,
-          needs_attention: 0,
-          running_operations: 0,
-          total_storage_bytes: 0,
-        },
-        protection: {
-          protected_hosts: 0,
-          eligible_hosts: 0,
-          protected_agent_links: [],
-          unassigned_agents: [],
-          never_succeeded_targets: 0,
-          never_succeeded_agents: [],
-          disabled_only_agents: [],
-        },
-        repository_capacity: [],
-        upcoming_schedules: [],
-        running_operations: [],
-      },
-    })
+    return Promise.resolve(mockOverviewData())
   }
   return Promise.resolve({ data: [] })
 }
 
-vi.mock('vue-chartjs', () => {
-  const Line = { template: '<canvas />' }
-  return { Line }
-})
+// jscpd:ignore-start -- test setup boilerplate (vi.mock factories cannot reference module-scoped helpers)
+vi.mock('vue-chartjs', () => ({
+  Line: { template: '<canvas />' },
+}))
 
 vi.mock('chart.js', () => {
   const Chart = { register: vi.fn() }
@@ -81,6 +87,35 @@ vi.mock('chart.js', () => {
 vi.mock('../api/client', () => ({
   apiClient: { get: vi.fn() },
 }))
+
+vi.mock('../composables/useWebSocket', () => ({
+  useWebSocket: (): { onMessage: ReturnType<typeof vi.fn>; status: { value: string } } => ({
+    onMessage: vi.fn(),
+    status: { value: 'disconnected' },
+  }),
+}))
+
+vi.mock('../composables/useTimezone', () => ({
+  useTimezone: (): { timezone: { value: 'UTC' }; allTimezones: [] } => ({
+    timezone: { value: 'UTC' },
+    allTimezones: [],
+  }),
+}))
+
+vi.mock('../utils/logger', () => ({
+  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
+}))
+
+vi.mock('../utils/format', () => ({
+  formatBytes: (n: number): string => `${n}B`,
+  relativeTime: (s: string): string => `rel:${s}`,
+  formatDuration: (n: number): string => `${n}s`,
+}))
+
+vi.mock('../utils/cron', () => ({
+  cronToHuman: (s: string): string => `cron:${s}`,
+}))
+// jscpd:ignore-end
 
 vi.mock('../composables/useWebSocket', () => ({
   useWebSocket: (): { onMessage: ReturnType<typeof vi.fn>; status: { value: string } } => ({
@@ -339,6 +374,21 @@ describe('DashboardView success ring', () => {
     }
   }
 
+  function runningOperation(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      report_id: 11,
+      status: 'running',
+      hostname: 'web-server-01',
+      schedule_id: 7,
+      schedule_name: 'daily-web',
+      repo_id: 3,
+      repo_name: 'server-daily',
+      started_at: '2026-06-01T10:00:00Z',
+      destination: { kind: 'schedule', schedule_id: 7 },
+      ...overrides,
+    }
+  }
+
   it('counts passed, warned, and failed separately instead of folding warnings into failed', async () => {
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
       if (url.startsWith('/stats/activity')) {
@@ -384,45 +434,11 @@ describe('DashboardView success ring', () => {
     expect(wrapper.text()).toContain('67%')
   })
 
+  // jscpd:ignore-start -- test boilerplate: repeated mock setup patterns
   it('hydrates active backups from running operations after reload', async () => {
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
       if (url === '/stats/dashboard-overview') {
-        return Promise.resolve({
-          data: {
-            repository_capacity: [],
-            upcoming_schedules: [],
-            findings: [],
-            summary: {
-              protected_hosts: 0,
-              eligible_hosts: 0,
-              needs_attention: 0,
-              running_operations: 1,
-              total_storage_bytes: 0,
-            },
-            protection: {
-              protected_hosts: 0,
-              eligible_hosts: 0,
-              protected_agent_links: [],
-              unassigned_agents: [],
-              never_succeeded_targets: 0,
-              never_succeeded_agents: [],
-              disabled_only_agents: [],
-            },
-            running_operations: [
-              {
-                report_id: 11,
-                status: 'running',
-                hostname: 'web-server-01',
-                schedule_id: 7,
-                schedule_name: 'daily-web',
-                repo_id: 3,
-                repo_name: 'server-daily',
-                started_at: '2026-06-01T10:00:00Z',
-                destination: { kind: 'schedule', schedule_id: 7 },
-              },
-            ],
-          },
-        })
+        return Promise.resolve(mockOverviewData([runningOperation()]))
       }
       return defaultApiHandler(url)
     })
@@ -439,42 +455,7 @@ describe('DashboardView success ring', () => {
   it('shows the schedule name and links the host and repo to their detail pages', async () => {
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
       if (url === '/stats/dashboard-overview') {
-        return Promise.resolve({
-          data: {
-            summary: {
-              protected_hosts: 0,
-              eligible_hosts: 0,
-              needs_attention: 0,
-              running_operations: 1,
-              total_storage_bytes: 0,
-            },
-            findings: [],
-            protection: {
-              protected_hosts: 0,
-              eligible_hosts: 0,
-              protected_agent_links: [],
-              unassigned_agents: [],
-              never_succeeded_targets: 0,
-              never_succeeded_agents: [],
-              disabled_only_agents: [],
-            },
-            running_operations: [
-              {
-                report_id: 11,
-                status: 'running',
-                hostname: 'web-server-01',
-                schedule_id: 7,
-                schedule_name: 'daily-web',
-                repo_id: 3,
-                repo_name: 'server-daily',
-                started_at: '2026-06-01T10:00:00Z',
-                destination: { kind: 'schedule', schedule_id: 7 },
-              },
-            ],
-            upcoming_schedules: [],
-            repository_capacity: [],
-          },
-        })
+        return Promise.resolve(mockOverviewData([runningOperation()]))
       }
       return defaultApiHandler(url)
     })
@@ -500,46 +481,14 @@ describe('DashboardView success ring', () => {
     })
     expect(repoLink?.props('to')).toEqual({ name: 'repo-detail', params: { id: '3' } })
   })
+  // jscpd:ignore-end
 
   it('shows an estimated time remaining once historical duration data is available', async () => {
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
       if (url === '/stats/dashboard-overview') {
-        return Promise.resolve({
-          data: {
-            summary: {
-              protected_hosts: 0,
-              eligible_hosts: 0,
-              needs_attention: 0,
-              running_operations: 1,
-              total_storage_bytes: 0,
-            },
-            findings: [],
-            protection: {
-              protected_hosts: 0,
-              eligible_hosts: 0,
-              protected_agent_links: [],
-              unassigned_agents: [],
-              never_succeeded_targets: 0,
-              never_succeeded_agents: [],
-              disabled_only_agents: [],
-            },
-            running_operations: [
-              {
-                report_id: 11,
-                status: 'running',
-                hostname: 'web-server-01',
-                schedule_id: 7,
-                schedule_name: 'daily-web',
-                repo_id: 3,
-                repo_name: 'server-daily',
-                started_at: new Date().toISOString(),
-                destination: { kind: 'schedule', schedule_id: 7 },
-              },
-            ],
-            upcoming_schedules: [],
-            repository_capacity: [],
-          },
-        })
+        return Promise.resolve(
+          mockOverviewData([runningOperation({ started_at: new Date().toISOString() })]),
+        )
       }
       if (url.startsWith('/stats/activity') && url.includes('schedule_id=7')) {
         return Promise.resolve({
@@ -557,5 +506,40 @@ describe('DashboardView success ring', () => {
     await flushPromises()
 
     expect(wrapper.text()).toMatch(/left/)
+  })
+
+  // jscpd:ignore-start -- test boilerplate: repeated mock setup patterns
+  it('does not show an estimated time when no historical duration data is available', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve(mockOverviewData([runningOperation()]))
+      }
+      return defaultApiHandler(url)
+    })
+
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Running for')
+    expect(wrapper.text()).not.toMatch(/left/)
+  })
+  // jscpd:ignore-end
+
+  it('cleans up the elapsed timer on unmount', async () => {
+    const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval')
+
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve(mockOverviewData([runningOperation()]))
+      }
+      return defaultApiHandler(url)
+    })
+
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    wrapper.unmount()
+    expect(clearIntervalSpy).toHaveBeenCalled()
+    clearIntervalSpy.mockRestore()
   })
 })

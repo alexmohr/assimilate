@@ -327,19 +327,31 @@ async function humanSignOffStillStands(github, owner, repo, prNumber, headSha) {
   return new Date(latest.created_at) > commitDate;
 }
 
-async function createGateCheck(github, owner, repo, headSha, status, summary) {
-  await github.rest.checks.create({
+// `pending` distinguishes "still waiting to hear back" (CI hasn't finished,
+// or some other check hasn't finished) from "genuinely blocked" (ci failing,
+// merge conflict, changes requested, a precheck actually failed, ...). Only
+// the latter should ever conclude "failure" - publishing a hard failure
+// while nothing has actually gone wrong yet is indistinguishable from a
+// real block to anything watching this check (including a human glancing at
+// the PR), which is exactly the confusion this parameter exists to remove.
+async function createGateCheck(github, owner, repo, headSha, status, summary, pending) {
+  const payload = {
     owner,
     repo,
     name: GATE_CHECK_NAME,
     head_sha: headSha,
-    status: "completed",
-    conclusion: status.name === STATUS_LABELS.READY_TO_MERGE.name ? "success" : "failure",
     output: {
       title: status.name,
       summary,
     },
-  });
+  };
+  if (pending) {
+    payload.status = "in_progress";
+  } else {
+    payload.status = "completed";
+    payload.conclusion = status.name === STATUS_LABELS.READY_TO_MERGE.name ? "success" : "failure";
+  }
+  await github.rest.checks.create(payload);
 }
 
 module.exports = async ({ github, context, core, prNumber, eventAction, selfCheckNames = [] }) => {
@@ -431,6 +443,9 @@ module.exports = async ({ github, context, core, prNumber, eventAction, selfChec
 
   let status;
   let summary;
+  // True only for "still waiting to hear back" outcomes below - see the
+  // createGateCheck comment for why this matters.
+  let pending = false;
   if (ciFailed) {
     status = STATUS_LABELS.CI_FAILING;
     summary = `CI is failing on the latest commit (conclusion: ${ciConclusion}) — cannot be merged until it's green.`;
@@ -503,10 +518,12 @@ module.exports = async ({ github, context, core, prNumber, eventAction, selfChec
     } else {
       status = STATUS_LABELS.NEEDS_REVIEW;
       summary = `CI is green, but still waiting on: ${completeness.pending.join(", ")}.`;
+      pending = true;
     }
   } else {
     status = STATUS_LABELS.NEEDS_REVIEW;
     summary = "Awaiting CI completion.";
+    pending = true;
   }
 
   core.info(
@@ -541,7 +558,7 @@ module.exports = async ({ github, context, core, prNumber, eventAction, selfChec
       });
   }
 
-  await createGateCheck(github, owner, repo, pr.head.sha, status, summary);
+  await createGateCheck(github, owner, repo, pr.head.sha, status, summary, pending);
 };
 
 // Exported so pre-review-checks.js can (a) invoke this exact sync as its own

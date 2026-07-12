@@ -428,7 +428,9 @@ async fn handle_scheduled_sync_success(success: ScheduledSyncSuccess<'_>) {
             SYNC_WARN_DURATION.as_secs()
         );
         tracing::error!("{msg}");
-        if let Err(e) = db::insert_system_event(pool, SystemEventType::RepoSyncSlow, None, &msg).await {
+        if let Err(e) =
+            db::insert_system_event(pool, SystemEventType::RepoSyncSlow, None, &msg).await
+        {
             tracing::error!(error = %e, "failed to log slow sync event");
         }
     }
@@ -451,18 +453,28 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
     let report_days = db::get_setting(pool, "report_retention_days")
         .await?
         .and_then(|v| {
-            v.parse::<i64>().inspect_err(|e| {
-                tracing::warn!(value = %v, error = %e, "failed to parse report_retention_days setting");
-            }).ok()
+            v.parse::<i64>()
+                .inspect_err(|e| {
+                    tracing::warn!(
+                        value = %v, error = %e,
+                        "failed to parse report_retention_days setting"
+                    );
+                })
+                .ok()
         })
         .unwrap_or(0);
 
     let failed_days = db::get_setting(pool, "failed_report_retention_days")
         .await?
         .and_then(|v| {
-            v.parse::<i64>().inspect_err(|e| {
-                tracing::warn!(value = %v, error = %e, "failed to parse failed_report_retention_days setting");
-            }).ok()
+            v.parse::<i64>()
+                .inspect_err(|e| {
+                    tracing::warn!(
+                        value = %v, error = %e,
+                        "failed to parse failed_report_retention_days setting"
+                    );
+                })
+                .ok()
         })
         .or(legacy_retention)
         .unwrap_or(365);
@@ -470,9 +482,14 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
     let event_days = db::get_setting(pool, "system_event_retention_days")
         .await?
         .and_then(|v| {
-            v.parse::<i64>().inspect_err(|e| {
-                tracing::warn!(value = %v, error = %e, "failed to parse system_event_retention_days setting");
-            }).ok()
+            v.parse::<i64>()
+                .inspect_err(|e| {
+                    tracing::warn!(
+                        value = %v, error = %e,
+                        "failed to parse system_event_retention_days setting"
+                    );
+                })
+                .ok()
         })
         .or(legacy_retention)
         .unwrap_or(90);

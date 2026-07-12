@@ -10,12 +10,18 @@ unattended operation possible at all; it also means opencode can run
 arbitrary shell commands on this machine without a human in the loop. See
 README.md's Safety section before pointing this at anything but a disposable
 checkout.
+
+Output is streamed and logged line by line as opencode runs (rather than
+captured silently until it exits) - a 30-minute call with no visibility into
+whether it's stuck or working is not an acceptable operator experience.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,11 +34,34 @@ NEVER_COMMIT_INSTRUCTION = (
     "commands, commit, and push on your behalf."
 )
 
+_SNIPPET_KEYS = ("text", "message", "content", "summary")
+
 
 @dataclass
 class OpencodeResult:
     ok: bool
     output: str
+
+
+def _summarize_event(line: str) -> str:
+    try:
+        event = json.loads(line)
+    except json.JSONDecodeError:
+        return line[:500]
+    if not isinstance(event, dict):
+        return str(event)[:500]
+    kind = event.get("type") or event.get("event") or ""
+    for key in _SNIPPET_KEYS:
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            snippet = " ".join(value.split())
+            if len(snippet) > 400:
+                snippet = snippet[:400] + "..."
+            return f"{kind}: {snippet}" if kind else snippet
+    tool = event.get("tool") or event.get("name")
+    if tool:
+        return f"{kind or 'tool'}: {tool}"
+    return json.dumps(event)[:400]
 
 
 def run_opencode(prompt: str, cwd: Path, model: str | None, timeout_seconds: int) -> OpencodeResult:
@@ -42,14 +71,31 @@ def run_opencode(prompt: str, cwd: Path, model: str | None, timeout_seconds: int
     cmd.append(prompt + NEVER_COMMIT_INSTRUCTION)
 
     log.info("invoking opencode (model=%s, timeout=%ss)", model or "default", timeout_seconds)
-    try:
-        proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout_seconds)
-    except subprocess.TimeoutExpired as exc:
-        return OpencodeResult(
-            ok=False, output=f"opencode timed out after {timeout_seconds}s: {exc}"
-        )
+    proc = subprocess.Popen(
+        cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
+    )
 
-    output = proc.stdout + ("\n" + proc.stderr if proc.stderr else "")
+    timed_out = threading.Event()
+    timer = threading.Timer(timeout_seconds, lambda: (timed_out.set(), proc.kill()))
+    timer.start()
+
+    output_lines: list[str] = []
+    try:
+        assert proc.stdout is not None
+        for raw_line in proc.stdout:
+            output_lines.append(raw_line)
+            line = raw_line.rstrip("\n")
+            if line:
+                log.info("opencode: %s", _summarize_event(line))
+    finally:
+        timer.cancel()
+    proc.wait()
+
+    output = "".join(output_lines)
+    if timed_out.is_set():
+        message = f"opencode timed out after {timeout_seconds}s and was killed:\n{output}"
+        return OpencodeResult(ok=False, output=message)
     if proc.returncode != 0:
         return OpencodeResult(ok=False, output=f"opencode exited {proc.returncode}:\n{output}")
+    log.info("opencode run finished (exit 0)")
     return OpencodeResult(ok=True, output=output)

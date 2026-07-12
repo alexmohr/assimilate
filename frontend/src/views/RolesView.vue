@@ -380,7 +380,8 @@ onMounted(fetchRoles)
             <label
               class="modal-field-label"
               for="create-role-name"
-            >Name <span class="required">*</span></label>
+              >Name <span class="required">*</span></label
+            >
             <input
               id="create-role-name"
               v-model="createForm.name"

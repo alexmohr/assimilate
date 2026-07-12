@@ -232,9 +232,13 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
 def _check_and_fix_pr(cfg: Config, state: HarnessState, number: int) -> bool | None:
     """Checks one PR and fixes it if actionable.
 
-    Returns True if a fix was pushed, False if there was nothing actionable
-    on it right now, or None if it should be skipped entirely (merged,
-    closed, ignored, or still stuck with no new commits).
+    Returns None if there was nothing to attempt - merged, closed, ignored,
+    still stuck with no new commits, or simply not actionable right now -
+    all of which mean "keep scanning for a different PR." Otherwise returns
+    handle_pr_fix's own True/False: an attempt was actually made (checkout,
+    opencode, validate, push), so the caller must stop here regardless of
+    whether it succeeded, rather than moving on to try another PR in the
+    same cycle.
     """
     detail = gh.get_pr(cfg.repo, number)
 
@@ -260,7 +264,7 @@ def _check_and_fix_pr(cfg: Config, state: HarnessState, number: int) -> bool | N
 
     if not detail.needs_fix:
         log.info("PR #%d: nothing actionable (labels=%s)", number, detail.labels)
-        return False
+        return None
 
     return handle_pr_fix(cfg, state, detail)
 
@@ -269,8 +273,9 @@ def process_prs(cfg: Config, state: HarnessState, prs: list[PrSummary]) -> bool:
     """Handles at most one actionable PR. Returns True if a fix was pushed."""
     for summary in prs:
         result = _check_and_fix_pr(cfg, state, summary.number)
-        if result:
-            return True
+        if result is None:
+            continue  # nothing to attempt here, keep scanning
+        return result  # an attempt was made - stop here regardless of outcome
     return False
 
 

@@ -101,12 +101,16 @@ def run_streaming(
 
     proc.wait()
     if buf:
+        # buf's bytes are already in chunks (each os.read() result is
+        # appended there in full, unflushed tail included) - it's only
+        # tracked separately to know where the last incomplete line starts.
+        # Re-appending it here would duplicate those trailing bytes in
+        # `output` whenever the process's last write didn't end in "\n".
         text = buf.decode("utf-8", errors="replace").strip()
         if text:
             formatted = format_line(text) if format_line else text
             if formatted:
                 log.info("%s: %s", label, formatted)
-        chunks.append(buf)
 
     output = b"".join(chunks).decode("utf-8", errors="replace")
     return StreamResult(

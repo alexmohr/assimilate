@@ -52,7 +52,8 @@ def _run(cwd: Path, args: list[str], timeout: int) -> ValidationResult:
     step = " ".join(args)
     result = procstream.run_streaming(args, cwd, timeout, log, step)
     if result.timed_out:
-        return ValidationResult(ok=False, step=step, output=f"timed out after {timeout}s")
+        output = f"timed out after {timeout}s:\n{result.output}"
+        return ValidationResult(ok=False, step=step, output=output)
     return ValidationResult(ok=result.returncode == 0, step=step, output=result.output)
 
 

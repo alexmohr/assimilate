@@ -172,10 +172,14 @@ module.exports = async ({ github, context, core, prNumber, headSha, prLcovPath, 
     core.info(`PR #${prNumber}: coverage-diff check passed.`);
   }
 
-  // Recompute status now that "coverage failed" may have changed, so the PR
-  // Merge Gate and overall status label reflect it immediately rather than
-  // waiting for the next unrelated trigger.
-  await syncLabels({ github, context, core, prNumber });
+  // Recompute status now that "coverage failed" may have changed, so the
+  // overall status label reflects it immediately rather than waiting for the
+  // next unrelated trigger. selfCheckNames excludes this exact job (still
+  // "in progress" - it's the one calling this) from sync-pr-labels.js's own
+  // ready-to-merge completeness check, so a genuinely-finished PR isn't kept
+  // waiting just because this job hasn't technically completed the instant
+  // it asks.
+  await syncLabels({ github, context, core, prNumber, selfCheckNames: ["Check coverage diff"] });
 
   return { ok, findings };
 };

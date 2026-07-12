@@ -52,10 +52,15 @@ jobs:
         with:
           script: |
             const sync = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/sync-pr-labels.js`);
+            // selfCheckNames excludes this exact job (still "in progress" -
+            // it's the one calling this) from sync-pr-labels.js's own
+            // ready-to-merge completeness check, so it isn't mistaken for a
+            // stalled check.
             await sync({
               github,
               context,
               core,
               prNumber: Number("${{ steps.pr.outputs.number }}"),
               eventAction: context.payload.action,
+              selfCheckNames: ["Sync PR status labels"],
             });

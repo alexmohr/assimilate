@@ -52,8 +52,17 @@ module.exports = async ({ github, context, core, prNumber, headSha, force }) => 
 
   // Force a fresh, code-only label sync before deciding anything -
   // guarantees "ci failing" / "merge conflict" reflect the current commit
-  // even if the general-purpose sync workflow hasn't run yet.
-  await syncLabels({ github, context, core, prNumber });
+  // even if the general-purpose sync workflow hasn't run yet. selfCheckNames
+  // excludes this exact job (still "in progress" - it's the one calling
+  // this) from sync-pr-labels.js's own ready-to-merge completeness check, so
+  // it isn't mistaken for a stalled check.
+  await syncLabels({
+    github,
+    context,
+    core,
+    prNumber,
+    selfCheckNames: ["Check if a review is actually needed", "Review PR"],
+  });
 
   const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
   const labels = pr.labels.map((l) => l.name);

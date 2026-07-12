@@ -171,10 +171,14 @@ module.exports = async ({ github, context, core, prNumber, headSha, reportPath }
     core.info(`PR #${prNumber}: duplicate-code check passed.`);
   }
 
-  // Recompute status now that "duplicate code" may have changed, so the PR
-  // Merge Gate and overall status label reflect it immediately rather than
-  // waiting for the next unrelated trigger.
-  await syncLabels({ github, context, core, prNumber });
+  // Recompute status now that "duplicate code" may have changed, so the
+  // overall status label reflects it immediately rather than waiting for the
+  // next unrelated trigger. selfCheckNames excludes this exact job (still
+  // "in progress" - it's the one calling this) from sync-pr-labels.js's own
+  // ready-to-merge completeness check, so a genuinely-finished PR isn't kept
+  // waiting just because this job hasn't technically completed the instant
+  // it asks.
+  await syncLabels({ github, context, core, prNumber, selfCheckNames: ["Detect duplicate code"] });
 };
 
 module.exports.analyzeReport = analyzeReport;

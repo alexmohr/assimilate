@@ -8,6 +8,8 @@
 // isn't `ready to merge` then requires an explicit branch-protection bypass,
 // not just human attentiveness. See skills/review/SKILL.md.
 
+const { waitForAllChecks } = require("./lib/wait-for-check");
+
 const CI_WORKFLOW_FILE = "ci.yml";
 
 // Name of the check run that enforces the status label as a mergeability
@@ -286,6 +288,45 @@ async function needsHumanSignOff(github, owner, repo, prNumber, pr) {
   return closesSecurityIssue(github, owner, repo, pr.body);
 }
 
+// Whether a human's removal of `needs human review` still stands for the
+// PR's current head commit. Nothing in this codebase ever calls removeLabel
+// on HUMAN_LABEL (grep it - only ever added, in the toAdd loop below), so
+// any "unlabeled" event in its history is a human's own sign-off action via
+// the GitHub UI, not something this automation did. Without this check,
+// needsHumanSignOff() above would simply re-derive "true" from the same
+// unchanged file patterns on the very next sync and the label would
+// reappear immediately - the additive-only, human-clears-it-only contract
+// documented in skills/review/SKILL.md would be pure documentation with no
+// code behind it.
+//
+// Scoped to the current commit the same way claude-approved/claude-changes-
+// requested are (see the eventAction === "synchronize" handling above): a
+// sign-off is only honored if it happened after the current head commit was
+// pushed, so a new commit re-opens the question instead of carrying forward
+// an approval of different code. Approximates "when was this commit pushed"
+// with the commit's own authored/committed date, which can be inaccurate
+// for a rebased/cherry-picked commit - a reasonable trade-off given GitHub
+// exposes no direct "push timestamp" for an arbitrary SHA.
+async function humanSignOffStillStands(github, owner, repo, prNumber, headSha) {
+  const events = await github.paginate(github.rest.issues.listEvents, {
+    owner,
+    repo,
+    issue_number: prNumber,
+    per_page: 100,
+  });
+  const labelEvents = events.filter(
+    (e) => (e.event === "labeled" || e.event === "unlabeled") && e.label && e.label.name === HUMAN_LABEL.name,
+  );
+  if (labelEvents.length === 0) return false;
+
+  const latest = labelEvents[labelEvents.length - 1];
+  if (latest.event !== "unlabeled") return false; // most recent action re-added it
+
+  const { data: commit } = await github.rest.repos.getCommit({ owner, repo, ref: headSha });
+  const commitDate = new Date(commit.commit.committer?.date || commit.commit.author.date);
+  return new Date(latest.created_at) > commitDate;
+}
+
 async function createGateCheck(github, owner, repo, headSha, status, summary) {
   await github.rest.checks.create({
     owner,
@@ -301,7 +342,7 @@ async function createGateCheck(github, owner, repo, headSha, status, summary) {
   });
 }
 
-module.exports = async ({ github, context, core, prNumber, eventAction }) => {
+module.exports = async ({ github, context, core, prNumber, eventAction, selfCheckNames = [] }) => {
   const owner = context.repo.owner;
   const repo = context.repo.repo;
 
@@ -373,14 +414,17 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
     core.info(`PR #${prNumber}: stripped claude-approved - a pre-flight stage is currently failing.`);
   }
 
-  const [ciConclusion, mergeableState, nativeReviewDecision, autoNeedsHuman] = await Promise.all([
+  const [ciConclusion, mergeableState, nativeReviewDecision, autoNeedsHuman, signOffStillStands] = await Promise.all([
     resolveCiConclusion(github, owner, repo, pr.head.sha),
     resolveMergeableState(github, owner, repo, prNumber, pr.mergeable_state),
     resolveReviewDecision(github, owner, repo, prNumber),
     hasHumanLabel ? Promise.resolve(false) : needsHumanSignOff(github, owner, repo, prNumber, pr),
+    hasHumanLabel ? Promise.resolve(false) : humanSignOffStillStands(github, owner, repo, prNumber, pr.head.sha),
   ]);
   const reviewDecision = resolveEffectiveReviewDecision(nativeReviewDecision, existingLabels);
-  const needsHuman = hasHumanLabel || autoNeedsHuman;
+  // A human's own removal of the label overrides re-derivation from the
+  // same unchanged file patterns - see humanSignOffStillStands() above.
+  const needsHuman = hasHumanLabel || (autoNeedsHuman && !signOffStillStands);
 
   const ciFailed = ciConclusion !== null && !["success", "skipped", "neutral"].includes(ciConclusion);
   const mergeConflict = mergeableState === "dirty";
@@ -428,8 +472,38 @@ module.exports = async ({ github, context, core, prNumber, eventAction }) => {
     // (CI, merge conflicts, coverage/duplication, an active changes-requested
     // verdict, sensitive-path sign-off) already cover the cases that matter.
     // See skills/review/SKILL.md.
-    status = STATUS_LABELS.READY_TO_MERGE;
-    summary = "CI is green — ready to merge.";
+    //
+    // But CI green alone doesn't mean *every* stage has actually run yet -
+    // hasCoverageFailed/hasDuplicateCode/hasClaudeReviewFailed above are only
+    // ever set on *failure*; their absence is ambiguous between "passed" and
+    // "hasn't finished yet", and coverage-diff-check.yml/duplicate-code-
+    // check.yml/claude-review.yml all fire off the same CI-completion event
+    // with no ordering guarantee between them (see skills/review/SKILL.md).
+    // A single-shot (non-polling: timeoutMs 0) look at every other check run
+    // on this commit closes that gap - if anything relevant is still
+    // in-flight, fall back to NEEDS_REVIEW instead of asserting ready-to-
+    // merge prematurely. selfCheckNames lets the calling workflow exclude
+    // its own currently-running job (always still "in progress" at the
+    // moment it's the one calling this) so it isn't mistaken for a stalled
+    // check - see the call sites in claude-review.yml, duplicate-code-
+    // check.yml, coverage-diff-check.yml, and pr-status-labels.yml.
+    const completeness = await waitForAllChecks(github, core, {
+      owner,
+      repo,
+      ref: pr.head.sha,
+      excludeNames: [...selfCheckNames, GATE_CHECK_NAME],
+      timeoutMs: 0,
+    });
+    if (completeness.completed && completeness.ok) {
+      status = STATUS_LABELS.READY_TO_MERGE;
+      summary = "CI is green — ready to merge.";
+    } else if (completeness.completed) {
+      status = STATUS_LABELS.NEEDS_REVIEW;
+      summary = `CI is green, but another check is failing: ${completeness.failed.join(", ")}.`;
+    } else {
+      status = STATUS_LABELS.NEEDS_REVIEW;
+      summary = `CI is green, but still waiting on: ${completeness.pending.join(", ")}.`;
+    }
   } else {
     status = STATUS_LABELS.NEEDS_REVIEW;
     summary = "Awaiting CI completion.";

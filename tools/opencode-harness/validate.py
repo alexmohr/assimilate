@@ -13,14 +13,20 @@ Deliberately NOT run here: cargo dylint, the db-integration/e2e/coverage CI
 jobs. Those need Docker/Postgres and are CI's job, not a per-cycle local
 gate's - see the harness's own CI-failure-log-driven retry loop for that
 tier instead.
+
+Each command is streamed via procstream.run_streaming rather than captured
+silently until it exits - pre-commit (installing hook environments on a
+first run) and cargo test/clippy in particular can run for minutes, and
+without this a working-but-slow validation pass looks identical to a hang.
 """
 
 from __future__ import annotations
 
 import logging
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+import procstream
 
 log = logging.getLogger("harness.validate")
 
@@ -44,12 +50,10 @@ class ValidationResult:
 
 def _run(cwd: Path, args: list[str], timeout: int) -> ValidationResult:
     step = " ".join(args)
-    try:
-        proc = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
-        return ValidationResult(ok=False, step=step, output=f"timed out after {timeout}s: {exc}")
-    output = proc.stdout + ("\n" + proc.stderr if proc.stderr else "")
-    return ValidationResult(ok=proc.returncode == 0, step=step, output=output)
+    result = procstream.run_streaming(args, cwd, timeout, log, step)
+    if result.timed_out:
+        return ValidationResult(ok=False, step=step, output=f"timed out after {timeout}s")
+    return ValidationResult(ok=result.returncode == 0, step=step, output=result.output)
 
 
 def run_precommit(cwd: Path, timeout: int = 900) -> ValidationResult:

@@ -11,24 +11,18 @@ arbitrary shell commands on this machine without a human in the loop. See
 README.md's Safety section before pointing this at anything but a disposable
 checkout.
 
-Output is logged as it arrives rather than captured silently until opencode
-exits. A plain line-buffered read isn't enough on its own: opencode can go
-quiet for a long stretch (thinking, running a slow tool call) with no line
-to log, which looks identical to a hang. The read loop below polls with a
-timeout instead of blocking indefinitely, so it can log a heartbeat during
-those quiet stretches instead of going silent.
+Output is logged as it arrives via procstream.run_streaming rather than
+captured silently until opencode exits - see that module's docstring for why.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
-import select
-import subprocess
-import time
 from dataclasses import dataclass
 from pathlib import Path
+
+import procstream
 
 log = logging.getLogger("harness.opencode")
 
@@ -39,8 +33,6 @@ NEVER_COMMIT_INSTRUCTION = (
     "commands, commit, and push on your behalf."
 )
 
-_HEARTBEAT_INTERVAL_SECONDS = 20
-_READ_CHUNK_SIZE = 65536
 _MAX_SNIPPET_CHARS = 500
 
 
@@ -113,19 +105,6 @@ def _format_event(line: str) -> str | None:
     return json.dumps(event)[:_MAX_SNIPPET_CHARS]
 
 
-def _log_complete_lines(buf: bytes) -> bytes:
-    """Logs every complete line in `buf`, returning the trailing partial line."""
-    while b"\n" in buf:
-        raw_line, buf = buf.split(b"\n", 1)
-        text = raw_line.decode("utf-8", errors="replace").strip()
-        if not text:
-            continue
-        formatted = _format_event(text)
-        if formatted:
-            log.info("opencode: %s", formatted)
-    return buf
-
-
 def run_opencode(prompt: str, cwd: Path, model: str | None, timeout_seconds: int) -> OpencodeResult:
     cmd = ["opencode", "run", "--dir", str(cwd), "--format", "json", "--auto"]
     if model:
@@ -133,50 +112,15 @@ def run_opencode(prompt: str, cwd: Path, model: str | None, timeout_seconds: int
     cmd.append(prompt + NEVER_COMMIT_INSTRUCTION)
 
     log.info("invoking opencode (model=%s, timeout=%ss)", model or "default", timeout_seconds)
-    proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    assert proc.stdout is not None
-    fd = proc.stdout.fileno()
+    result = procstream.run_streaming(
+        cmd, cwd, timeout_seconds, log, "opencode", format_line=_format_event
+    )
 
-    deadline = time.monotonic() + timeout_seconds
-    last_activity = time.monotonic()
-    buf = b""
-    chunks: list[bytes] = []
-    timed_out = False
-
-    while True:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            timed_out = True
-            proc.kill()
-            break
-        ready, _, _ = select.select([fd], [], [], min(_HEARTBEAT_INTERVAL_SECONDS, remaining))
-        if ready:
-            chunk = os.read(fd, _READ_CHUNK_SIZE)
-            if not chunk:
-                break  # EOF: opencode closed its stdout, nothing more will arrive
-            chunks.append(chunk)
-            buf = _log_complete_lines(buf + chunk)
-            last_activity = time.monotonic()
-        else:
-            log.info(
-                "opencode: still running (%ds since last output)",
-                int(time.monotonic() - last_activity),
-            )
-
-    proc.wait()
-    if buf:
-        text = buf.decode("utf-8", errors="replace").strip()
-        if text:
-            formatted = _format_event(text)
-            if formatted:
-                log.info("opencode: %s", formatted)
-        chunks.append(buf)
-
-    output = b"".join(chunks).decode("utf-8", errors="replace")
-    if timed_out:
-        message = f"opencode timed out after {timeout_seconds}s and was killed:\n{output}"
+    if result.timed_out:
+        message = f"opencode timed out after {timeout_seconds}s and was killed:\n{result.output}"
         return OpencodeResult(ok=False, output=message)
-    if proc.returncode != 0:
-        return OpencodeResult(ok=False, output=f"opencode exited {proc.returncode}:\n{output}")
+    if result.returncode != 0:
+        message = f"opencode exited {result.returncode}:\n{result.output}"
+        return OpencodeResult(ok=False, output=message)
     log.info("opencode run finished (exit 0)")
-    return OpencodeResult(ok=True, output=output)
+    return OpencodeResult(ok=True, output=result.output)

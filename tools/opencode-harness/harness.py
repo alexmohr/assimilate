@@ -448,6 +448,13 @@ def main() -> int:
     log.info("opencode-harness starting: %s", cfg.summary())
 
     state = HarnessState.load(cfg.state_file)
+    if cfg.target_pr is not None and str(cfg.target_pr) in state.pr_attempts:
+        log.info(
+            "--pr %d: clearing %d prior attempt(s) from a previous run before starting",
+            cfg.target_pr,
+            state.pr_attempts[str(cfg.target_pr)].attempts,
+        )
+        state.clear_pr(cfg.target_pr)
     solved_count = 0
 
     while True:

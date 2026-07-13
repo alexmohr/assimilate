@@ -8,13 +8,19 @@ Priority order, checked every poll cycle:
 
 1. Work the oldest open pull request that currently has something fixable
    (`ci failing`, `merge conflict`, `precheck failed`, or `changes requested`
-   - see gh.py). Fetch the concrete failure content (CI logs, review
-   comments, coverage/duplicate-code bot comments) in plain Python, hand it
-   to opencode as a fix prompt, then run this repo's own validation commands
-   (pre-commit, and the exact skills/rust and skills/frontend checklists)
-   before committing and pushing. Never touch the repo's own status labels -
-   .github/workflows/pr-status-labels.yml owns those end to end and
-   re-evaluates them automatically on every push.
+   - see gh.py). CI results are always discovered and reacted to by this
+   harness's own Python, never by opencode - opencode only ever sees
+   already-gathered log text handed to it in a prompt, it never queries CI
+   itself. If CI is failing on nothing but the deterministic `pre-commit`
+   check, fix it directly (re-run pre-commit locally, which autofixes, then
+   commit/push) without spending an opencode call at all - see
+   `_try_mechanical_ci_fix`. Otherwise fetch the concrete failure content (CI
+   logs, review comments, coverage/duplicate-code bot comments) in plain
+   Python, hand it to opencode as a fix prompt, then run this repo's own
+   validation commands (pre-commit, and the exact skills/rust and
+   skills/frontend checklists) before committing and pushing. Never touch
+   the repo's own status labels - .github/workflows/pr-status-labels.yml
+   owns those end to end and re-evaluates them automatically on every push.
 2. If a PR keeps hitting the same problem after several push attempts, stop
    touching it (`opencode-harness-stuck` label + a comment) rather than
    burning cycles or pushing something worse.
@@ -108,6 +114,19 @@ def run_fix_and_validate(cfg: Config, prompt: str) -> tuple[bool, str]:
             return False, "opencode made no changes"
         changed = git_ops.changed_files(cfg.repo_dir)
         validation = validate.run_all(cfg.repo_dir, changed)
+        if not validation.ok:
+            # pre-commit's hooks and cargo fmt rewrite files in place as their
+            # actual fix, even on the run that reports failure (that's the
+            # point of an auto-fixing hook) - so a first failure here has
+            # often already fixed itself on disk. Re-run once, deterministically,
+            # before spending a whole opencode call on something a formatter
+            # already solved.
+            log.info(
+                "validation step '%s' failed; retrying validation once before involving "
+                "opencode, in case an auto-fixing hook just fixed it on disk",
+                validation.step,
+            )
+            validation = validate.run_all(cfg.repo_dir, git_ops.changed_files(cfg.repo_dir))
         if validation.ok:
             return True, "validated"
         log.info(
@@ -120,6 +139,42 @@ def run_fix_and_validate(cfg: Config, prompt: str) -> tuple[bool, str]:
             current_prompt, validation.step, validation.output
         )
     return False, f"validation still failing after {cfg.max_local_validation_attempts} attempts"
+
+
+# CI checks the harness can resolve deterministically, without opencode:
+# pre-commit's own hooks (ruff --fix, cargo +nightly fmt, trailing-whitespace,
+# end-of-file-fixer, ...) rewrite files in place as their actual fix. A
+# failing `pre-commit` check on a harness-authored commit almost always means
+# the harness's local gate and CI's pre-commit environment drifted (a hook
+# cache difference, `uv run` bootstrapping hook envs fresh, etc.), not a
+# logic problem that needs judgment - so it's handled here directly, keeping
+# opencode's cost/time/attempt budget reserved for problems that actually
+# need it.
+_MECHANICAL_CI_CHECKS = {"pre-commit"}
+
+
+def _try_mechanical_ci_fix(cfg: Config, pr: PrDetail) -> bool:
+    """Runs the repo's own pre-commit locally and pushes the result if that's
+    enough to fix it. Returns False (without pushing anything) if pre-commit
+    still fails after autofixing, or if it already passes locally with
+    nothing to fix (a stale/flaky CI result) - both fall back to the normal
+    opencode-driven flow.
+    """
+    if cfg.dry_run:
+        log.info("[dry-run] would attempt a mechanical pre-commit fix for PR #%d", pr.number)
+        return False
+    result = validate.run_precommit(cfg.repo_dir)
+    if not result.ok:
+        log.info("PR #%d: pre-commit still fails locally after autofixing", pr.number)
+        return False
+    if not git_ops.has_uncommitted_changes(cfg.repo_dir):
+        log.info("PR #%d: pre-commit already passes locally; CI failure looks stale", pr.number)
+        return False
+    if not git_ops.commit(cfg.repo_dir, "fix: apply pre-commit auto-fixes"):
+        return False
+    git_ops.push(cfg.repo_dir, pr.head_ref_name)
+    log.info("PR #%d: pushed a pre-commit autofix without invoking opencode", pr.number)
+    return True
 
 
 def _resolve_conflicts(cfg: Config) -> bool:
@@ -236,6 +291,7 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
         pr.changes_requested,
     )
 
+    failing_checks = gh.get_failing_check_names(cfg.repo, pr.number) if pr.ci_failing else []
     ci_logs = gh.get_failing_check_logs(cfg.repo, pr.number) if pr.ci_failing else None
     review_comments = gh.get_review_comments(cfg.repo, pr.number) if pr.changes_requested else None
     precheck_notes = (
@@ -279,6 +335,15 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
     if pr.merge_conflict and not _resolve_conflicts(cfg):
         _mark_stuck(cfg, pr, "could not resolve merge conflicts")
         return False
+
+    if failing_checks and set(failing_checks) <= _MECHANICAL_CI_CHECKS:
+        if _try_mechanical_ci_fix(cfg, pr):
+            return True
+        log.info(
+            "PR #%d: mechanical fix for %s didn't resolve it, falling back to opencode",
+            pr.number,
+            failing_checks,
+        )
 
     prompt = prompts.build_pr_fix_prompt(pr, ci_logs, review_comments, precheck_notes)
     ok, message = run_fix_and_validate(cfg, prompt)

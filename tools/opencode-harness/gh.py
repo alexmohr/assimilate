@@ -188,8 +188,8 @@ def get_pr_head_sha(repo: str, number: int) -> str:
     return commits[-1]["oid"] if commits else ""
 
 
-def get_failing_check_logs(repo: str, number: int, max_chars: int = 12000) -> str:
-    """Best-effort: find failed check runs on the PR and pull their failed-step logs."""
+def get_failing_checks(repo: str, number: int) -> list[dict[str, Any]]:
+    """Failed/errored/cancelled check runs on the PR (name, state, link)."""
     checks = _run_json(
         [
             "gh",
@@ -203,11 +203,18 @@ def get_failing_check_logs(repo: str, number: int, max_chars: int = 12000) -> st
             "--fail-fast",
         ]
     )
+    return [c for c in checks if c.get("state") in ("FAILURE", "ERROR", "CANCELLED")]
+
+
+def get_failing_check_names(repo: str, number: int) -> list[str]:
+    return [c["name"] for c in get_failing_checks(repo, number)]
+
+
+def get_failing_check_logs(repo: str, number: int, max_chars: int = 12000) -> str:
+    """Best-effort: find failed check runs on the PR and pull their failed-step logs."""
     logs: list[str] = []
     seen_runs: set[str] = set()
-    for check in checks:
-        if check.get("state") not in ("FAILURE", "ERROR", "CANCELLED"):
-            continue
+    for check in get_failing_checks(repo, number):
         link = check.get("link") or ""
         m = RUN_ID_RE.search(link)
         if not m:

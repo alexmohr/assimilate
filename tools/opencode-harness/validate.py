@@ -12,7 +12,11 @@ Python, every single time, regardless of what the model did or didn't do.
 Deliberately NOT run here: cargo dylint, the db-integration/e2e/coverage CI
 jobs. Those need Docker/Postgres and are CI's job, not a per-cycle local
 gate's - see the harness's own CI-failure-log-driven retry loop for that
-tier instead.
+tier instead. This is why `cargo test` below is scoped to `--lib --bins`,
+same as CI's own required Rust job: crates/server/tests/db_queries.rs and
+integration.rs use `#[sqlx::test]` with no `#[ignore]` fallback, so a bare
+`cargo test --workspace` fails almost every one of those tests outright in
+this DB-less checkout, regardless of what changed.
 
 Each command is streamed via procstream.run_streaming rather than captured
 silently until it exits - pre-commit (installing hook environments on a
@@ -67,7 +71,17 @@ def run_rust_checks(cwd: Path, timeout: int = 1800) -> list[ValidationResult]:
     steps = [
         RUST_FMT_ARGS,
         ["cargo", "+nightly", "clippy", "--workspace", "--", "-D", "warnings"],
-        ["cargo", "test", "--workspace"],
+        # --lib --bins only: crates/server/tests/{db_queries,integration}.rs
+        # use #[sqlx::test], which unconditionally needs a live Postgres
+        # with DATABASE_URL set - no #[ignore] gate gets applied to skip it
+        # otherwise, so every one of the ~200 tests in there fails outright
+        # in this disposable, DB-less checkout regardless of what changed.
+        # CI's own required "Rust" job scopes its `cargo test` the same way
+        # and runs the DB-backed suite as a separate job with its own
+        # Postgres service instead - this local gate has no DB, so it
+        # defers to that CI job for this tier rather than reporting a false
+        # "still broken" no matter what opencode does.
+        ["cargo", "test", "--workspace", "--lib", "--bins"],
         ["cargo", "deny", "check"],
     ]
     results = []

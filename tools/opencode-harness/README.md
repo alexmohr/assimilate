@@ -23,20 +23,33 @@ asked to edit files.
    labels — the harness reads them, it never sets or clears them itself
    (see [`skills/review/SKILL.md`](../../skills/review/SKILL.md): *"agents
    must never add or remove the status labels themselves"*).
-2. For that PR, fetch the concrete diagnostic content in Python — the
+2. CI is always discovered and reacted to by the harness's own Python, never
+   by opencode — opencode never queries CI itself, it only ever sees
+   log text the harness already fetched, handed to it in a prompt. If the
+   *only* thing CI is failing on is the deterministic `pre-commit` check,
+   the harness fixes it directly — re-runs `pre-commit` locally (its hooks
+   autofix in place: `ruff --fix`, `cargo +nightly fmt`,
+   trailing-whitespace, etc.) and pushes the result — without spending an
+   opencode call at all. This is also why the local validation gate in step
+   3 below retries itself once before ever falling back to opencode: an
+   auto-fixing hook has often already fixed the disk state by the time it
+   reports failure.
+3. Otherwise, fetch the concrete diagnostic content in Python — the
    failing CI job's log via `gh run view --log-failed`, the actual review
    comments, or the coverage-diff/duplicate-code bot's PR comment — and hand
    it to opencode as a fix prompt. opencode edits files only; it is
-   explicitly told not to commit or push.
-3. Run this repo's own validation gate before ever pushing:
-   `uv run pre-commit run --all-files`, then — if the change touches
-   Rust/frontend code — the exact commands from
-   [`skills/rust/SKILL.md`](../../skills/rust/SKILL.md) and
+   explicitly told not to commit or push. Then run this repo's own
+   validation gate before ever pushing: `uv run pre-commit run --all-files`,
+   then — if the change touches Rust/frontend code — the exact commands
+   from [`skills/rust/SKILL.md`](../../skills/rust/SKILL.md) and
    [`skills/frontend/SKILL.md`](../../skills/frontend/SKILL.md)'s validation
-   checklists. If any step fails, its exact output is fed back to opencode
-   and it retries (up to `HARNESS_MAX_LOCAL_ATTEMPTS`). Only once everything
-   passes does the harness itself `git commit` (with a conventional-commits
-   message it generates) and `git push`.
+   checklists (`cargo test` is scoped to `--lib --bins`; the
+   `#[sqlx::test]`-based DB integration suite needs a live Postgres this
+   local gate doesn't have, and is CI's job instead). If any step fails,
+   its exact output is fed back to opencode and it retries (up to
+   `HARNESS_MAX_LOCAL_ATTEMPTS`). Only once everything passes does the
+   harness itself `git commit` (with a conventional-commits message it
+   generates) and `git push`.
 4. From there the repo's own automation takes back over: CI runs,
    `pr-status-labels.yml` re-syncs labels, `claude-review.yml` reviews and —
    if it's a clean approval with no `needs human review` label — merges it.

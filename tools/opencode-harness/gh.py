@@ -217,28 +217,38 @@ def get_failing_check_names(repo: str, number: int) -> list[str]:
 
 
 def get_failing_check_logs(repo: str, number: int, max_chars: int = 12000) -> str:
-    """Best-effort: find failed check runs on the PR and pull their failed-step logs."""
-    logs: list[str] = []
+    """Best-effort: find failed check runs on the PR and pull their failed-step logs.
+
+    Each run's log is truncated to its own fair share of `max_chars` before
+    concatenating - not the combined string's tail as a whole. A single
+    verbose failing job (e.g. cargo-deny dumping its entire resolved
+    dependency tree before the actual advisory line) can otherwise consume
+    the whole budget and silently push every other failing check's log out
+    of what opencode ever sees, even though that other check might be the
+    one with the actually actionable content.
+    """
     seen_runs: set[str] = set()
+    runs: list[tuple[str, str]] = []
     for check in get_failing_checks(repo, number):
-        link = check.get("link") or ""
-        m = RUN_ID_RE.search(link)
-        if not m:
+        m = RUN_ID_RE.search(check.get("link") or "")
+        if not m or m.group(1) in seen_runs:
             continue
-        run_id = m.group(1)
-        if run_id in seen_runs:
-            continue
-        seen_runs.add(run_id)
+        seen_runs.add(m.group(1))
+        runs.append((check.get("name") or "?", m.group(1)))
+
+    per_run_budget = max(max_chars // max(len(runs), 1), 2000)
+    logs: list[str] = []
+    for name, run_id in runs:
         try:
             out = _run(["gh", "run", "view", run_id, "--repo", repo, "--log-failed"], timeout=180)
         except GhError as exc:
             out = f"(could not fetch log for run {run_id}: {exc})"
-        logs.append(f"=== {check.get('name')} (run {run_id}) ===\n{out}")
-    combined = "\n\n".join(logs)
-    if len(combined) > max_chars:
-        combined = combined[-max_chars:]
-        combined = "...(truncated)...\n" + combined
-    return combined or "(no failed check logs could be retrieved; inspect `gh pr checks` manually)"
+        if len(out) > per_run_budget:
+            out = "...(truncated)...\n" + out[-per_run_budget:]
+        logs.append(f"=== {name} (run {run_id}) ===\n{out}")
+    return "\n\n".join(logs) or (
+        "(no failed check logs could be retrieved; inspect `gh pr checks` manually)"
+    )
 
 
 def get_review_comments(repo: str, number: int, max_chars: int = 8000) -> str:

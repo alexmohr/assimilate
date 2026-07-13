@@ -1747,6 +1747,17 @@ pub async fn update_repo_ssh_host_key(
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
+pub async fn get_repo_ssh_host_key(pool: &PgPool, name: &str) -> Result<Option<String>, ApiError> {
+    let row = sqlx::query_scalar!("SELECT ssh_host_key FROM repos WHERE name = $1", name,)
+        .fetch_optional(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    Ok(row.flatten())
+}
+
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_global_excludes_raw(pool: &PgPool) -> Result<String, ApiError> {
     let row: Option<String> =
         sqlx::query_scalar!("SELECT raw_text FROM excludes_global_config LIMIT 1")

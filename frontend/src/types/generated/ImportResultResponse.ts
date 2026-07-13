@@ -17,6 +17,14 @@ export type ImportResultResponse = {
    */
   schedules_created: number;
   /**
+   * Number of repositories created during import.
+   */
+  repos_created: number;
+  /**
+   * Number of repositories updated during import.
+   */
+  repos_updated: number;
+  /**
    * Warning messages.
    */
   warnings: Array<string>;

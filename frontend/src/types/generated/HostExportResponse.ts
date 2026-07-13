@@ -29,6 +29,10 @@ export type HostExportResponse = {
    */
   default_post_backup_commands: string;
   /**
+   * Default file change detection patterns.
+   */
+  default_file_change_patterns_raw: string;
+  /**
    * Hostname pattern aliases.
    */
   hostname_patterns: Array<string>;

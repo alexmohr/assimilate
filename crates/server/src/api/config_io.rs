@@ -4,8 +4,14 @@
 use std::collections::{HashMap, HashSet};
 
 use axum::{Json, extract::State};
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use chrono::Utc;
+use shared::crypto::{decrypt_passphrase, encrypt_passphrase};
+// Re-exported for openapi.rs etc.
+pub use shared::responses::{
+    ConfigExportResponse as ConfigExport, HostExportResponse as HostExport,
+    ImportResultResponse as ImportResult, RepoExportResponse as RepoExport,
+    ScheduleExportResponse as ScheduleExport, ScheduleTargetExportResponse as ScheduleTargetExport,
+};
 
 use super::auth::RequireAdmin;
 use crate::{
@@ -15,124 +21,6 @@ use crate::{
 };
 
 const EXPORT_VERSION: u32 = 1;
-
-/// Exported host (agent) data for config import/export.
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
-pub struct HostExport {
-    /// Agent hostname.
-    pub hostname: String,
-    /// Optional display name.
-    pub display_name: Option<String>,
-    /// Default backup source paths.
-    pub default_backup_paths: Vec<String>,
-    /// Default exclude patterns.
-    pub default_exclude_patterns: Vec<String>,
-    /// Default pre-backup commands (JSON-encoded).
-    pub default_pre_backup_commands: String,
-    /// Default post-backup commands (JSON-encoded).
-    pub default_post_backup_commands: String,
-    /// Default file change detection patterns.
-    #[serde(default)]
-    pub default_file_change_patterns_raw: String,
-    /// Hostname pattern globs for archive matching.
-    pub hostname_patterns: Vec<String>,
-}
-
-/// Exported per-target overrides for a schedule.
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
-pub struct ScheduleTargetExport {
-    /// Target agent hostname.
-    pub hostname: String,
-    /// Execution order among targets.
-    pub execution_order: i32,
-    /// Per-agent backup source paths.
-    pub backup_sources: Vec<String>,
-    /// Per-agent exclude patterns.
-    pub exclude_patterns: String,
-    /// Per-agent file change patterns.
-    #[serde(default)]
-    pub file_change_patterns: String,
-}
-
-/// Exported schedule data for config import/export.
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
-#[allow(
-    clippy::struct_excessive_bools,
-    reason = "independent flags mirroring the API/DB contract, not mutually-exclusive states"
-)]
-pub struct ScheduleExport {
-    /// Schedule display name.
-    pub name: String,
-    /// Schedule type (backup, check, verify).
-    pub schedule_type: String,
-    /// Cron expression.
-    pub cron_expression: String,
-    /// Whether the schedule is enabled.
-    pub enabled: bool,
-    /// Whether canary backups are enabled.
-    pub canary_enabled: bool,
-    /// Execution mode (e.g. sequential).
-    pub execution_mode: String,
-    /// Behaviour on backup failure.
-    pub on_failure: String,
-    /// Raw exclude pattern text.
-    pub exclude_patterns_raw: String,
-    /// Raw file change pattern text.
-    #[serde(default)]
-    pub file_change_patterns_raw: String,
-    /// Whether global excludes are ignored.
-    pub ignore_global_excludes: bool,
-    /// Hourly retention count.
-    pub keep_hourly: i32,
-    /// Daily retention count.
-    pub keep_daily: i32,
-    /// Weekly retention count.
-    pub keep_weekly: i32,
-    /// Monthly retention count.
-    pub keep_monthly: i32,
-    /// Yearly retention count.
-    pub keep_yearly: i32,
-    /// Whether compaction is enabled.
-    pub compact_enabled: bool,
-    /// Rate limit in KB/s.
-    pub rate_limit_kbps: Option<i32>,
-    /// Pre-backup commands.
-    pub pre_backup_commands: Vec<String>,
-    /// Post-backup commands.
-    pub post_backup_commands: Vec<String>,
-    /// Repository name this schedule targets.
-    pub repo_name: Option<String>,
-    /// Schedule-level backup source paths.
-    pub backup_sources: Vec<String>,
-    /// Per-target overrides.
-    pub targets: Vec<ScheduleTargetExport>,
-}
-
-/// Top-level config export payload wrapping hosts and schedules.
-#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
-pub struct ConfigExport {
-    /// Export format version.
-    pub version: u32,
-    /// Timestamp when the export was created.
-    pub exported_at: DateTime<Utc>,
-    /// Exported host configurations.
-    pub hosts: Vec<HostExport>,
-    /// Exported schedule configurations.
-    pub schedules: Vec<ScheduleExport>,
-}
-
-/// Result summary after importing config from a JSON export.
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct ImportResult {
-    /// Number of new agent hosts created.
-    pub hosts_created: u32,
-    /// Number of existing agent hosts updated.
-    pub hosts_updated: u32,
-    /// Number of schedules created.
-    pub schedules_created: u32,
-    /// Warnings encountered during import.
-    pub warnings: Vec<String>,
-}
 
 #[utoipa::path(
     get,
@@ -189,11 +77,59 @@ pub async fn export_config(
         );
     }
 
+    // Export repositories with passphrases, quotas, and tags
+    let mut repo_exports = Vec::new();
+    for repo in &repos {
+        let encrypted_passphrase = db::get_repo_passphrase(&state.pool, repo.id).await?;
+        let passphrase = decrypt_passphrase(&encrypted_passphrase, &state.encryption_key)?;
+
+        let quota = db::quota::get_quota(&state.pool, repo.id)
+            .await
+            .unwrap_or(None);
+        let tags = db::list_tags_for_repo(&state.pool, repo.id)
+            .await?
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+
+        repo_exports.push(RepoExport {
+            name: repo.name.clone(),
+            repo_path: repo.repo_path.clone(),
+            ssh_user: repo.ssh_user.clone(),
+            ssh_host: repo.ssh_host.clone(),
+            ssh_port: repo.ssh_port,
+            passphrase,
+            compression: repo.compression.clone(),
+            encryption: repo.encryption.clone(),
+            enabled: repo.enabled,
+            sync_schedule: repo.sync_schedule.clone(),
+            ssh_host_key: None,
+            quota_warn_bytes: quota.as_ref().and_then(|q| q.warn_bytes),
+            quota_critical_bytes: quota.as_ref().and_then(|q| q.critical_bytes),
+            quota_warn_action: quota
+                .as_ref()
+                .map_or(String::new(), |q| q.warn_action.clone()),
+            quota_critical_action: quota
+                .as_ref()
+                .map_or(String::new(), |q| q.critical_action.clone()),
+            tags,
+        });
+    }
+
+    // Query SSH host keys for all repos
+    for repo_export in &mut repo_exports {
+        if let Ok(Some(host_key)) = db::get_repo_ssh_host_key(&state.pool, &repo_export.name).await
+        {
+            repo_export.ssh_host_key = Some(host_key);
+        }
+    }
+
     Ok(Json(ConfigExport {
         version: EXPORT_VERSION,
         exported_at: Utc::now(),
         hosts,
         schedules,
+        repos: repo_exports,
     }))
 }
 
@@ -260,12 +196,12 @@ async fn build_schedule_export(
 
     Ok(ScheduleExport {
         name: sched.name.clone(),
-        schedule_type: sched.schedule_type.clone(),
+        schedule_type: sched.schedule_type.parse().unwrap_or_default(),
         cron_expression: sched.cron_expression.clone(),
         enabled: sched.enabled,
         canary_enabled: sched.canary_enabled,
-        execution_mode: sched.execution_mode.clone(),
-        on_failure: sched.on_failure.clone(),
+        execution_mode: sched.execution_mode.parse().unwrap_or_default(),
+        on_failure: sched.on_failure.parse().unwrap_or_default(),
         exclude_patterns_raw: sched.exclude_patterns_raw.clone(),
         file_change_patterns_raw: sched.file_change_patterns_raw.clone(),
         ignore_global_excludes: sched.ignore_global_excludes,
@@ -318,9 +254,89 @@ pub async fn import_config(
         hosts_created: 0,
         hosts_updated: 0,
         schedules_created: 0,
+        repos_created: 0,
+        repos_updated: 0,
         warnings: Vec::new(),
     };
 
+    // Phase 1: Import repositories (before schedules, which reference them by name)
+    let existing_repos = db::list_all_repos(&state.pool).await?;
+    let mut repo_name_to_id: HashMap<&str, i64> = existing_repos
+        .iter()
+        .map(|r| (r.name.as_str(), r.id))
+        .collect();
+
+    for repo_export in &payload.repos {
+        let passphrase_encrypted =
+            encrypt_passphrase(&repo_export.passphrase, &state.encryption_key)?;
+
+        if let Some(&existing_id) = repo_name_to_id.get(repo_export.name.as_str()) {
+            // Update existing repo -- skip passphrase change
+            db::update_repo(
+                &state.pool,
+                &db::UpdateRepoParams {
+                    repo_id: existing_id,
+                    name: &repo_export.name,
+                    repo_path: &repo_export.repo_path,
+                    ssh_user: &repo_export.ssh_user,
+                    ssh_host: &repo_export.ssh_host,
+                    ssh_port: repo_export.ssh_port,
+                    compression: &repo_export.compression,
+                    encryption: &repo_export.encryption,
+                    enabled: repo_export.enabled,
+                    sync_schedule: repo_export.sync_schedule.as_deref(),
+                },
+            )
+            .await?;
+
+            // Update SSH host key if provided
+            if let Some(host_key) = &repo_export.ssh_host_key {
+                db::update_repo_ssh_host_key(&state.pool, existing_id, host_key).await?;
+            }
+
+            // Upsert quota
+            upsert_repo_quota(&state.pool, existing_id, repo_export).await?;
+
+            // Sync tags
+            sync_repo_tags(&state.pool, existing_id, &repo_export.tags).await?;
+
+            result.repos_updated = result.repos_updated.saturating_add(1);
+        } else {
+            // Create new repo
+            let new_repo = db::insert_repo(
+                &state.pool,
+                &db::InsertRepoParams {
+                    name: &repo_export.name,
+                    repo_path: &repo_export.repo_path,
+                    ssh_user: &repo_export.ssh_user,
+                    ssh_host: &repo_export.ssh_host,
+                    ssh_port: repo_export.ssh_port,
+                    passphrase_encrypted: &passphrase_encrypted,
+                    compression: &repo_export.compression,
+                    encryption: &repo_export.encryption,
+                    owner_id: None,
+                    sync_schedule: repo_export.sync_schedule.as_deref().map(Some),
+                },
+            )
+            .await?;
+
+            // Set SSH host key if provided
+            if let Some(host_key) = &repo_export.ssh_host_key {
+                db::update_repo_ssh_host_key(&state.pool, new_repo.id, host_key).await?;
+            }
+
+            // Upsert quota
+            upsert_repo_quota(&state.pool, new_repo.id, repo_export).await?;
+
+            // Sync tags
+            sync_repo_tags(&state.pool, new_repo.id, &repo_export.tags).await?;
+
+            repo_name_to_id.insert(repo_export.name.as_str(), new_repo.id);
+            result.repos_created = result.repos_created.saturating_add(1);
+        }
+    }
+
+    // Phase 2: Import hosts
     let existing_agents = db::list_agents(&state.pool, true).await?;
     let mut hostname_to_id: HashMap<String, i64> = existing_agents
         .iter()
@@ -331,6 +347,7 @@ pub async fn import_config(
         import_host(&state.pool, host, &mut hostname_to_id, &mut result).await?;
     }
 
+    // Phase 3: Import schedules (repo_name_to_id now includes newly created repos)
     let repos = db::list_all_repos(&state.pool).await?;
     let repo_name_to_id: HashMap<&str, i64> =
         repos.iter().map(|r| (r.name.as_str(), r.id)).collect();
@@ -347,6 +364,43 @@ pub async fn import_config(
     }
 
     Ok(Json(result))
+}
+
+async fn upsert_repo_quota(
+    pool: &sqlx::PgPool,
+    repo_id: i64,
+    repo_export: &RepoExport,
+) -> Result<(), ApiError> {
+    let warn_action = if repo_export.quota_warn_action.is_empty() {
+        shared::types::QuotaAction::default()
+    } else {
+        repo_export
+            .quota_warn_action
+            .parse()
+            .map_err(|e| ApiError::BadRequest(format!("invalid quota_warn_action: {e}")))?
+    };
+    let critical_action = if repo_export.quota_critical_action.is_empty() {
+        shared::types::QuotaAction::default()
+    } else {
+        repo_export
+            .quota_critical_action
+            .parse()
+            .map_err(|e| ApiError::BadRequest(format!("invalid quota_critical_action: {e}")))?
+    };
+
+    db::quota::upsert_quota(
+        pool,
+        repo_id,
+        repo_export.quota_warn_bytes,
+        repo_export.quota_critical_bytes,
+        warn_action,
+        critical_action,
+        true,
+    )
+    .await
+    .map_err(ApiError::Database)?;
+
+    Ok(())
 }
 
 async fn import_host(
@@ -444,9 +498,12 @@ async fn import_schedule(
     let post_cmds_json =
         serde_json::to_string(&sched.post_backup_commands).unwrap_or_else(|_| "[]".to_owned());
 
+    let schedule_type_str = sched.schedule_type.to_string();
+    let on_failure_str = sched.on_failure.to_string();
+
     let params = ScheduleParams {
         name: &sched.name,
-        schedule_type: &sched.schedule_type,
+        schedule_type: &schedule_type_str,
         cron_expression: &sched.cron_expression,
         enabled: sched.enabled,
         canary_enabled: sched.canary_enabled,
@@ -462,7 +519,7 @@ async fn import_schedule(
         rate_limit_kbps: sched.rate_limit_kbps,
         pre_backup_commands: &pre_cmds_json,
         post_backup_commands: &post_cmds_json,
-        on_failure: &sched.on_failure,
+        on_failure: &on_failure_str,
     };
 
     let new_sched = db::insert_schedule(pool, repo_id, &params, None).await?;
@@ -552,4 +609,62 @@ async fn insert_schedule_target_overrides(
         }
     }
     Ok(())
+}
+
+/// Look up a tag by name in the given scope, creating it if it does not exist.
+async fn get_or_create_tag(
+    pool: &sqlx::PgPool,
+    name: &str,
+    scope: &str,
+) -> Result<db::TagRow, ApiError> {
+    let existing = sqlx::query_as!(
+        db::TagRow,
+        "SELECT id, name, color, scope FROM tags WHERE name = $1 AND scope = $2",
+        name,
+        scope,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    if let Some(tag) = existing {
+        return Ok(tag);
+    }
+
+    let color = tag_color_from_name(name);
+    db::insert_tag(pool, name, &color, scope).await
+}
+
+fn tag_color_from_name(name: &str) -> String {
+    const PALETTE: [&str; 12] = [
+        "#3B82F6", "#EF4444", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899", "#06B6D4", "#84CC16",
+        "#F97316", "#6366F1", "#14B8A6", "#E11D48",
+    ];
+    let hash: u64 = name.bytes().fold(0u64, |acc, b| {
+        acc.wrapping_mul(31).wrapping_add(u64::from(b))
+    });
+    let palette_len = PALETTE.len();
+    let remainder = hash
+        .checked_rem(u64::try_from(palette_len).unwrap_or(12))
+        .unwrap_or(0);
+    let idx = usize::try_from(remainder).unwrap_or(0);
+    PALETTE.get(idx).unwrap_or(&"#6366F1").to_string()
+}
+
+/// Sync tags for a repo: set tags by name (creating tags as needed).
+async fn sync_repo_tags(
+    pool: &sqlx::PgPool,
+    repo_id: i64,
+    tag_names: &[String],
+) -> Result<(), ApiError> {
+    if tag_names.is_empty() {
+        return Ok(());
+    }
+
+    let mut tag_ids = Vec::new();
+    for name in tag_names {
+        let tag = get_or_create_tag(pool, name, "repo").await?;
+        tag_ids.push(tag.id);
+    }
+    db::set_repo_tags(pool, repo_id, &tag_ids).await
 }

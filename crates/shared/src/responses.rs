@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
@@ -1802,7 +1802,50 @@ pub struct LogEntryResponse {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// Response containing repo export.
+pub struct RepoExportResponse {
+    /// Name of the repository.
+    pub name: String,
+    /// Path to the repository on the remote host.
+    pub repo_path: String,
+    /// SSH user for connecting to the repository host.
+    pub ssh_user: String,
+    /// SSH host for connecting to the repository host.
+    pub ssh_host: String,
+    /// SSH port for connecting to the repository host.
+    pub ssh_port: i32,
+    /// Decrypted passphrase for the repository.
+    pub passphrase: String,
+    /// Compression algorithm.
+    pub compression: String,
+    /// Encryption algorithm.
+    pub encryption: String,
+    /// Whether the repository is enabled.
+    pub enabled: bool,
+    /// Sync schedule for the repository.
+    pub sync_schedule: Option<String>,
+    /// SSH host key fingerprint.
+    pub ssh_host_key: Option<String>,
+    /// Warning quota threshold in bytes.
+    #[serde(default)]
+    pub quota_warn_bytes: Option<i64>,
+    /// Critical quota threshold in bytes.
+    #[serde(default)]
+    pub quota_critical_bytes: Option<i64>,
+    /// Action when warning threshold is exceeded.
+    #[serde(default)]
+    pub quota_warn_action: String,
+    /// Action when critical threshold is exceeded.
+    #[serde(default)]
+    pub quota_critical_action: String,
+    /// Tags associated with the repository.
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 /// Response containing config export.
 pub struct ConfigExportResponse {
@@ -1814,9 +1857,12 @@ pub struct ConfigExportResponse {
     pub hosts: Vec<HostExportResponse>,
     /// List of schedules.
     pub schedules: Vec<ScheduleExportResponse>,
+    /// Exported repositories.
+    #[serde(default)]
+    pub repos: Vec<RepoExportResponse>,
 }
 
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 /// Response containing host export.
 pub struct HostExportResponse {
@@ -1832,11 +1878,31 @@ pub struct HostExportResponse {
     pub default_pre_backup_commands: String,
     /// Default commands to run after backups.
     pub default_post_backup_commands: String,
+    /// Default file change detection patterns.
+    #[serde(default)]
+    pub default_file_change_patterns_raw: String,
     /// Hostname pattern aliases.
     pub hostname_patterns: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// Response containing schedule target export.
+pub struct ScheduleTargetExportResponse {
+    /// Hostname of the target machine.
+    pub hostname: String,
+    /// Execution order for the target.
+    pub execution_order: i32,
+    /// Backup source paths for the target.
+    pub backup_sources: Vec<String>,
+    /// Exclude patterns for the target.
+    pub exclude_patterns: String,
+    /// File change detection patterns.
+    #[serde(default)]
+    pub file_change_patterns: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 #[allow(
     clippy::struct_excessive_bools,
@@ -1884,17 +1950,15 @@ pub struct ScheduleExportResponse {
     /// Rate limit in kilobytes per second.
     pub rate_limit_kbps: Option<i32>,
     /// Commands to run before the backup.
-    pub pre_backup_commands: String,
+    pub pre_backup_commands: Vec<String>,
     /// Commands to run after the backup.
-    pub post_backup_commands: String,
+    pub post_backup_commands: Vec<String>,
     /// Backup source paths.
     pub backup_sources: Vec<String>,
-    /// Hostnames targeted by this schedule.
-    pub target_hostnames: Vec<String>,
+    /// Per-target overrides.
+    pub targets: Vec<ScheduleTargetExportResponse>,
     /// Name of the repository.
-    pub repo_name: String,
-    /// List of tags.
-    pub tags: Vec<String>,
+    pub repo_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -1907,6 +1971,10 @@ pub struct ImportResultResponse {
     pub hosts_updated: u32,
     /// Number of schedules created during import.
     pub schedules_created: u32,
+    /// Number of repositories created during import.
+    pub repos_created: u32,
+    /// Number of repositories updated during import.
+    pub repos_updated: u32,
     /// Warning messages.
     pub warnings: Vec<String>,
 }

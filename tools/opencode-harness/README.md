@@ -46,8 +46,13 @@ asked to edit files.
    review comments, etc.) survives `HARNESS_MAX_STUCK_CYCLES` push attempts,
    the harness stops touching that PR: it adds its own
    `opencode-harness-stuck` label (distinct from the repo's status labels)
-   and posts a comment explaining what it tried. A human pushing a new
-   commit, or removing that label, makes the harness pick it back up.
+   and posts a comment with the actual diagnostic content (the failing log
+   tail, or the review comments) explaining what it tried. If the recurring
+   problem is unresolved review feedback with CI/merge/pre-flight otherwise
+   clean, it also adds `opencode-harness-question` - a signal that this
+   likely needs a maintainer's decision (e.g. a policy call raised in
+   review), not another code fix. A human pushing a new commit, or removing
+   the label(s), makes the harness pick it back up.
 6. **Only once there are zero open PRs at all**, it picks the newest open
    issue, implements it on a new `opencode/issue-<n>` branch using the same
    fix-and-validate loop, and opens a PR — which flows back into step 1 on
@@ -93,6 +98,7 @@ are actually configured and working before pointing `--model` at one.
 | `HARNESS_MAX_LOCAL_ATTEMPTS` | `3` | Retries against local validation before giving up *this cycle* |
 | `HARNESS_MAX_STUCK_CYCLES` | `3` | Cycles the same problem may survive before the PR/issue is marked stuck |
 | `HARNESS_STUCK_LABEL` | `opencode-harness-stuck` | Harness-owned label, unrelated to the repo's status labels |
+| `HARNESS_QUESTION_LABEL` | `opencode-harness-question` | Added alongside the stuck label when the recurring blocker looks like it needs a maintainer's decision rather than another fix attempt |
 | `HARNESS_IGNORE_LABEL` | `opencode-harness-ignore` | Add this to a PR/issue by hand to have the harness skip it entirely |
 | `HARNESS_STATE_FILE` | `tools/opencode-harness/.state.json` | Persisted attempt-tracking state (survives restarts) |
 | `HARNESS_LOG_FILE` | (none, stdout only) | Optional path to also log to a file |

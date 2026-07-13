@@ -181,20 +181,45 @@ def _problem_summary(
     return "\n\n".join(parts) if parts else "(no diagnostic content was available)"
 
 
-def _mark_stuck(cfg: Config, pr: PrDetail, reason: str, details: str | None = None) -> None:
+def _mark_stuck(
+    cfg: Config, pr: PrDetail, reason: str, details: str | None = None, question: bool = False
+) -> None:
+    """Stops the harness retrying `pr` and posts why.
+
+    `question` marks the harness's other signal, separate from the plain
+    circuit breaker: a review thread keeps requesting changes across every
+    retry with no CI/merge-conflict failure alongside it usually means the
+    reviewer raised something opencode has no way to resolve by editing
+    code - a product/policy call only a human can make (e.g. "is storing
+    this value in plaintext acceptable at all"), not a bug to keep
+    hammering at. `stuck_label` still applies either way so the harness
+    stops burning cycles on it; `question_label` is the extra, more
+    specific flag so a human scanning labels can tell "needs a decision"
+    apart from "needs a better fix" at a glance.
+    """
     if cfg.dry_run:
         log.info("[dry-run] would mark PR #%d stuck: %s", pr.number, reason)
         return
     gh.add_label(cfg.repo, pr.number, cfg.stuck_label)
-    body = (
-        f"opencode-harness: giving up on this PR for now - {reason}. "
-        f"Marked `{cfg.stuck_label}`; push a new commit or remove the label "
-        "to have the harness retry."
-    )
+    if question:
+        gh.add_label(cfg.repo, pr.number, cfg.question_label)
+        body = (
+            f"opencode-harness: pausing on this PR - {reason}, and it looks like this needs a "
+            f"decision from a maintainer rather than another code fix. Marked "
+            f"`{cfg.stuck_label}` and `{cfg.question_label}`; please reply with a decision on "
+            "the open review thread, then push a new commit or remove the labels to have the "
+            "harness retry."
+        )
+    else:
+        body = (
+            f"opencode-harness: giving up on this PR for now - {reason}. "
+            f"Marked `{cfg.stuck_label}`; push a new commit or remove the label "
+            "to have the harness retry."
+        )
     if details:
         body += f"\n\n---\n\n{details}"
     gh.comment(cfg.repo, pr.number, body)
-    log.warning("PR #%d marked stuck: %s", pr.number, reason)
+    log.warning("PR #%d marked stuck: %s (question=%s)", pr.number, reason, question)
 
 
 def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
@@ -224,8 +249,19 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
     attempts = state.record_attempt(pr.number, fingerprint, head_sha)
     if attempts > cfg.max_stuck_cycles:
         details = _problem_summary(pr, ci_logs, review_comments, precheck_notes)
+        # Only review feedback recurring, with CI/merge/pre-flight all clean,
+        # means every retry produced a change that still didn't satisfy the
+        # reviewer - the likeliest explanation is a substantive question
+        # opencode can't answer by editing code, not a bug it keeps missing.
+        is_question = pr.changes_requested and not (
+            pr.ci_failing or pr.merge_conflict or pr.coverage_failed or pr.duplicate_code
+        )
         _mark_stuck(
-            cfg, pr, f"the same problem has persisted across {attempts - 1} attempts", details
+            cfg,
+            pr,
+            f"the same problem has persisted across {attempts - 1} attempts",
+            details,
+            question=is_question,
         )
         return False
 
@@ -291,6 +327,8 @@ def _check_and_fix_pr(cfg: Config, state: HarnessState, number: int) -> bool | N
             return None
         log.info("PR #%d has new commits since being marked stuck; clearing and retrying", number)
         gh.remove_label(cfg.repo, number, cfg.stuck_label)
+        if cfg.question_label in detail.labels:
+            gh.remove_label(cfg.repo, number, cfg.question_label)
 
     if not detail.needs_fix:
         log.info("PR #%d: nothing actionable (labels=%s)", number, detail.labels)
@@ -323,6 +361,9 @@ def process_single_pr(cfg: Config, state: HarnessState, number: int) -> bool:
         log.info("PR #%d: clearing stuck label - explicitly targeted via --pr", number)
         gh.remove_label(cfg.repo, number, cfg.stuck_label)
         state.clear_pr(number)
+    if cfg.question_label in detail.labels:
+        log.info("PR #%d: clearing question label - explicitly targeted via --pr", number)
+        gh.remove_label(cfg.repo, number, cfg.question_label)
     return bool(_check_and_fix_pr(cfg, state, number))
 
 

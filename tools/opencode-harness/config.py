@@ -40,6 +40,7 @@ class Config:
     target_pr: int | None
     target_issue: int | None
     stuck_label: str
+    question_label: str
     ignore_label: str
     state_file: Path
     log_file: Path | None
@@ -63,6 +64,7 @@ class Config:
             target_pr=None,
             target_issue=None,
             stuck_label=os.environ.get("HARNESS_STUCK_LABEL", "opencode-harness-stuck"),
+            question_label=os.environ.get("HARNESS_QUESTION_LABEL", "opencode-harness-question"),
             ignore_label=os.environ.get("HARNESS_IGNORE_LABEL", "opencode-harness-ignore"),
             state_file=Path(
                 os.environ.get(
@@ -93,5 +95,6 @@ class Config:
             f"opencode_timeout={self.opencode_timeout_seconds}s "
             f"max_local_attempts={self.max_local_validation_attempts} "
             f"max_stuck_cycles={self.max_stuck_cycles} max_solved={max_solved} "
+            f"stuck_label={self.stuck_label} question_label={self.question_label} "
             f"dry_run={self.dry_run} once={self.once}"
         )

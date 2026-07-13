@@ -336,7 +336,13 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
         _mark_stuck(cfg, pr, "could not resolve merge conflicts")
         return False
 
-    if failing_checks and set(failing_checks) <= _MECHANICAL_CI_CHECKS:
+    # Only take the mechanical shortcut when CI is the *only* outstanding
+    # problem - if review feedback or a coverage/duplicate-code precheck is
+    # also unresolved, a trivial "fix: apply pre-commit auto-fixes" push
+    # would get counted as "solved" (see handle_pr_fix's return contract)
+    # while the actual review feedback never reaches opencode this cycle.
+    only_ci_outstanding = not (pr.changes_requested or pr.coverage_failed or pr.duplicate_code)
+    if only_ci_outstanding and failing_checks and set(failing_checks) <= _MECHANICAL_CI_CHECKS:
         if _try_mechanical_ci_fix(cfg, pr):
             return True
         log.info(
@@ -403,12 +409,26 @@ def _check_and_fix_pr(cfg: Config, state: HarnessState, number: int) -> bool | N
 
 
 def process_prs(cfg: Config, state: HarnessState, prs: list[PrSummary]) -> bool:
-    """Handles at most one actionable PR. Returns True if a fix was pushed."""
+    """Handles at most one actionable PR. Returns True if a fix was pushed.
+
+    Logs here, not in the caller: `_check_and_fix_pr`'s return changed
+    meaning from "an attempt was made" to "a fix was actually pushed", so a
+    caller that only sees this function's bool return can no longer tell
+    "nothing was actionable" apart from "something was actionable, attempted,
+    and didn't converge" - only this loop still has that distinction.
+    """
     for summary in prs:
         result = _check_and_fix_pr(cfg, state, summary.number)
         if result is None:
             continue  # nothing to attempt here, keep scanning
+        if not result:
+            log.info(
+                "%d open PR(s); attempted PR #%d, did not converge this cycle",
+                len(prs),
+                summary.number,
+            )
         return result  # an attempt was made - stop here regardless of outcome
+    log.info("%d open PR(s), none actionable right now", len(prs))
     return False
 
 
@@ -506,10 +526,7 @@ def run_once(cfg: Config, state: HarnessState) -> bool:
 
     prs = gh.list_open_prs(cfg.repo)
     if prs:
-        did_work = process_prs(cfg, state, prs)
-        if not did_work:
-            log.info("%d open PR(s), none actionable right now", len(prs))
-        return did_work
+        return process_prs(cfg, state, prs)
     return process_issues(cfg, state)
 
 

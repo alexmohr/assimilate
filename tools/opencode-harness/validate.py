@@ -26,6 +26,7 @@ without this a working-but-slow validation pass looks identical to a hang.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +34,8 @@ from pathlib import Path
 import procstream
 
 log = logging.getLogger("harness.validate")
+
+_LOCKFILE_HASH_MARKER = ".harness-lockfile-hash"
 
 RUST_FMT_ARGS = [
     "cargo",
@@ -93,15 +96,38 @@ def run_rust_checks(cwd: Path, timeout: int = 1800) -> list[ValidationResult]:
     return results
 
 
+def _lockfile_hash(frontend_dir: Path) -> str | None:
+    lockfile = frontend_dir / "package-lock.json"
+    return hashlib.sha256(lockfile.read_bytes()).hexdigest() if lockfile.exists() else None
+
+
+def _npm_ci_needed(frontend_dir: Path) -> bool:
+    """node_modules/ is preserved across cycles (see git_ops._CLEAN_EXCLUDES)
+    to avoid a full reinstall every single time - but the harness works many
+    different PRs/branches in the same HARNESS_REPO_DIR checkout in
+    sequence, and "does node_modules exist" doesn't mean "matches the
+    package-lock.json of whichever branch is checked out right now". Unlike
+    cargo, `npm run lint`/`build`/`test` never reconcile node_modules
+    against the lockfile themselves - only `npm ci`/`install` do - so a
+    stale install from a previous PR's dependencies would otherwise produce
+    spurious failures with nothing to do with the PR actually being fixed.
+    Reinstall whenever the lockfile's content differs from the one last
+    installed, tracked via a hash marker inside node_modules/ itself (so it
+    is wiped together with node_modules/ if that's ever cleaned out).
+    """
+    node_modules = frontend_dir / "node_modules"
+    if not node_modules.exists():
+        return True
+    marker = node_modules / _LOCKFILE_HASH_MARKER
+    if not marker.exists():
+        return True
+    return marker.read_text().strip() != (_lockfile_hash(frontend_dir) or "")
+
+
 def run_frontend_checks(cwd: Path, timeout: int = 1800) -> list[ValidationResult]:
     frontend_dir = cwd / "frontend"
-    steps = []
-    # node_modules/ is preserved across cycles (see git_ops._CLEAN_EXCLUDES)
-    # so this only actually installs on the first cycle that touches
-    # frontend/ - without it, every cycle would fail outright the moment
-    # npm/eslint/vite don't exist yet.
-    if not (frontend_dir / "node_modules").exists():
-        steps.append(["npm", "ci"])
+    npm_ci_needed = _npm_ci_needed(frontend_dir)
+    steps = [["npm", "ci"]] if npm_ci_needed else []
     steps += [
         ["npm", "run", "format:check"],
         ["npm", "run", "lint"],
@@ -114,6 +140,10 @@ def run_frontend_checks(cwd: Path, timeout: int = 1800) -> list[ValidationResult
         results.append(result)
         if not result.ok:
             break
+    if npm_ci_needed and results and results[0].ok:
+        lockfile_hash = _lockfile_hash(frontend_dir)
+        if lockfile_hash is not None:
+            (frontend_dir / "node_modules" / _LOCKFILE_HASH_MARKER).write_text(lockfile_hash)
     return results
 
 

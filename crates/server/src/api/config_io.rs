@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use axum::{Json, extract::State};
 use chrono::Utc;
-use shared::crypto::{decrypt_passphrase, encrypt_passphrase};
+use shared::crypto::encrypt_passphrase;
 // Re-exported for openapi.rs etc.
 pub use shared::responses::{
     ConfigExportResponse as ConfigExport, HostExportResponse as HostExport,
@@ -77,12 +77,11 @@ pub async fn export_config(
         );
     }
 
-    // Export repositories with passphrases, quotas, and tags
+    // Export repositories with quotas, and tags (passphrases are NOT exported
+    // for security - they are encrypted at rest with a server-specific key
+    // and must be re-set on the target server after import).
     let mut repo_exports = Vec::new();
     for repo in &repos {
-        let encrypted_passphrase = db::get_repo_passphrase(&state.pool, repo.id).await?;
-        let passphrase = decrypt_passphrase(&encrypted_passphrase, &state.encryption_key)?;
-
         let quota = db::quota::get_quota(&state.pool, repo.id)
             .await
             .unwrap_or(None);
@@ -98,7 +97,7 @@ pub async fn export_config(
             ssh_user: repo.ssh_user.clone(),
             ssh_host: repo.ssh_host.clone(),
             ssh_port: repo.ssh_port,
-            passphrase,
+            passphrase: String::new(),
             compression: repo.compression.clone(),
             encryption: repo.encryption.clone(),
             enabled: repo.enabled,
@@ -260,81 +259,13 @@ pub async fn import_config(
     };
 
     // Phase 1: Import repositories (before schedules, which reference them by name)
-    let existing_repos = db::list_all_repos(&state.pool).await?;
-    let mut repo_name_to_id: HashMap<&str, i64> = existing_repos
-        .iter()
-        .map(|r| (r.name.as_str(), r.id))
-        .collect();
-
-    for repo_export in &payload.repos {
-        let passphrase_encrypted =
-            encrypt_passphrase(&repo_export.passphrase, &state.encryption_key)?;
-
-        if let Some(&existing_id) = repo_name_to_id.get(repo_export.name.as_str()) {
-            // Update existing repo -- skip passphrase change
-            db::update_repo(
-                &state.pool,
-                &db::UpdateRepoParams {
-                    repo_id: existing_id,
-                    name: &repo_export.name,
-                    repo_path: &repo_export.repo_path,
-                    ssh_user: &repo_export.ssh_user,
-                    ssh_host: &repo_export.ssh_host,
-                    ssh_port: repo_export.ssh_port,
-                    compression: &repo_export.compression,
-                    encryption: &repo_export.encryption,
-                    enabled: repo_export.enabled,
-                    sync_schedule: repo_export.sync_schedule.as_deref(),
-                },
-            )
-            .await?;
-
-            // Update SSH host key if provided
-            if let Some(host_key) = &repo_export.ssh_host_key {
-                db::update_repo_ssh_host_key(&state.pool, existing_id, host_key).await?;
-            }
-
-            // Upsert quota
-            upsert_repo_quota(&state.pool, existing_id, repo_export).await?;
-
-            // Sync tags
-            sync_repo_tags(&state.pool, existing_id, &repo_export.tags).await?;
-
-            result.repos_updated = result.repos_updated.saturating_add(1);
-        } else {
-            // Create new repo
-            let new_repo = db::insert_repo(
-                &state.pool,
-                &db::InsertRepoParams {
-                    name: &repo_export.name,
-                    repo_path: &repo_export.repo_path,
-                    ssh_user: &repo_export.ssh_user,
-                    ssh_host: &repo_export.ssh_host,
-                    ssh_port: repo_export.ssh_port,
-                    passphrase_encrypted: &passphrase_encrypted,
-                    compression: &repo_export.compression,
-                    encryption: &repo_export.encryption,
-                    owner_id: None,
-                    sync_schedule: repo_export.sync_schedule.as_deref().map(Some),
-                },
-            )
-            .await?;
-
-            // Set SSH host key if provided
-            if let Some(host_key) = &repo_export.ssh_host_key {
-                db::update_repo_ssh_host_key(&state.pool, new_repo.id, host_key).await?;
-            }
-
-            // Upsert quota
-            upsert_repo_quota(&state.pool, new_repo.id, repo_export).await?;
-
-            // Sync tags
-            sync_repo_tags(&state.pool, new_repo.id, &repo_export.tags).await?;
-
-            repo_name_to_id.insert(repo_export.name.as_str(), new_repo.id);
-            result.repos_created = result.repos_created.saturating_add(1);
-        }
-    }
+    import_repos(
+        &state.pool,
+        &payload.repos,
+        &state.encryption_key,
+        &mut result,
+    )
+    .await?;
 
     // Phase 2: Import hosts
     let existing_agents = db::list_agents(&state.pool, true).await?;
@@ -364,6 +295,99 @@ pub async fn import_config(
     }
 
     Ok(Json(result))
+}
+
+/// Import all repos from the export payload, creating or updating as needed.
+async fn import_repos(
+    pool: &sqlx::PgPool,
+    repos: &[RepoExport],
+    encryption_key: &[u8; 32],
+    result: &mut ImportResult,
+) -> Result<HashMap<String, i64>, ApiError> {
+    let existing_repos = db::list_all_repos(pool).await?;
+    let mut repo_name_to_id: HashMap<String, i64> = existing_repos
+        .iter()
+        .map(|r| (r.name.clone(), r.id))
+        .collect();
+
+    for repo_export in repos {
+        if repo_export.passphrase.is_empty() {
+            result.warnings.push(format!(
+                "repo {:?}: no passphrase in export (passphrases are not exported for security); \
+                 the passphrase must be set manually after import",
+                repo_export.name,
+            ));
+        }
+
+        let passphrase_encrypted = encrypt_passphrase(&repo_export.passphrase, encryption_key)?;
+
+        if let Some(&existing_id) = repo_name_to_id.get(&repo_export.name) {
+            // Update existing repo -- skip passphrase change
+            db::update_repo(
+                pool,
+                &db::UpdateRepoParams {
+                    repo_id: existing_id,
+                    name: &repo_export.name,
+                    repo_path: &repo_export.repo_path,
+                    ssh_user: &repo_export.ssh_user,
+                    ssh_host: &repo_export.ssh_host,
+                    ssh_port: repo_export.ssh_port,
+                    compression: &repo_export.compression,
+                    encryption: &repo_export.encryption,
+                    enabled: repo_export.enabled,
+                    sync_schedule: repo_export.sync_schedule.as_deref(),
+                },
+            )
+            .await?;
+
+            // Update SSH host key if provided
+            if let Some(host_key) = &repo_export.ssh_host_key {
+                db::update_repo_ssh_host_key(pool, existing_id, host_key).await?;
+            }
+
+            // Upsert quota
+            upsert_repo_quota(pool, existing_id, repo_export).await?;
+
+            // Sync tags
+            sync_repo_tags(pool, existing_id, &repo_export.tags).await?;
+
+            result.repos_updated = result.repos_updated.saturating_add(1);
+        } else {
+            // Create new repo
+            let new_repo = db::insert_repo(
+                pool,
+                &db::InsertRepoParams {
+                    name: &repo_export.name,
+                    repo_path: &repo_export.repo_path,
+                    ssh_user: &repo_export.ssh_user,
+                    ssh_host: &repo_export.ssh_host,
+                    ssh_port: repo_export.ssh_port,
+                    passphrase_encrypted: &passphrase_encrypted,
+                    compression: &repo_export.compression,
+                    encryption: &repo_export.encryption,
+                    owner_id: None,
+                    sync_schedule: repo_export.sync_schedule.as_deref().map(Some),
+                },
+            )
+            .await?;
+
+            // Set SSH host key if provided
+            if let Some(host_key) = &repo_export.ssh_host_key {
+                db::update_repo_ssh_host_key(pool, new_repo.id, host_key).await?;
+            }
+
+            // Upsert quota
+            upsert_repo_quota(pool, new_repo.id, repo_export).await?;
+
+            // Sync tags
+            sync_repo_tags(pool, new_repo.id, &repo_export.tags).await?;
+
+            repo_name_to_id.insert(repo_export.name.clone(), new_repo.id);
+            result.repos_created = result.repos_created.saturating_add(1);
+        }
+    }
+
+    Ok(repo_name_to_id)
 }
 
 async fn upsert_repo_quota(

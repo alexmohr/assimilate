@@ -188,22 +188,28 @@ def get_pr_head_sha(repo: str, number: int) -> str:
     return commits[-1]["oid"] if commits else ""
 
 
+_FAILING_CHECK_CONCLUSIONS = {"failure", "cancelled", "timed_out", "action_required"}
+
+
 def get_failing_checks(repo: str, number: int) -> list[dict[str, Any]]:
-    """Failed/errored/cancelled check runs on the PR (name, state, link)."""
-    checks = _run_json(
-        [
-            "gh",
-            "pr",
-            "checks",
-            str(number),
-            "--repo",
-            repo,
-            "--json",
-            "name,state,link",
-            "--fail-fast",
-        ]
-    )
-    return [c for c in checks if c.get("state") in ("FAILURE", "ERROR", "CANCELLED")]
+    """Failed/errored/cancelled check runs on the PR's head commit (name, link).
+
+    Deliberately `gh api` (the REST check-runs endpoint) rather than
+    `gh pr checks --json`: the latter's `--json` flag doesn't exist on older
+    `gh` versions at all ("unknown flag: --json"), which isn't something
+    this harness can assume is unavailable on whatever machine runs it - the
+    same reasoning as add_label/remove_label using `gh api` instead of
+    `gh pr edit` elsewhere in this file.
+    """
+    head_sha = get_pr_head_sha(repo, number)
+    if not head_sha:
+        return []
+    data = _run_json(["gh", "api", f"repos/{repo}/commits/{head_sha}/check-runs?per_page=100"])
+    return [
+        {"name": c["name"], "link": c.get("details_url") or c.get("html_url") or ""}
+        for c in data.get("check_runs", [])
+        if c.get("status") == "completed" and c.get("conclusion") in _FAILING_CHECK_CONCLUSIONS
+    ]
 
 
 def get_failing_check_names(repo: str, number: int) -> list[str]:

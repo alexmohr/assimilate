@@ -155,18 +155,45 @@ def _commit_message_for(pr: PrDetail, cfg: Config) -> str:
     return "fix: address outstanding PR feedback"
 
 
-def _mark_stuck(cfg: Config, pr: PrDetail, reason: str) -> None:
+def _problem_summary(
+    pr: PrDetail,
+    ci_logs: str | None,
+    review_comments: str | None,
+    precheck_notes: str | None,
+    max_chars: int = 600,
+) -> str:
+    """Renders what's actually blocking `pr` for the stuck-PR comment.
+
+    "the same problem has persisted across 3 attempts" says nothing about
+    what that problem actually was - a human reading the comment has to go
+    dig through CI/review UI themselves to find out. This puts the same
+    diagnostic content the harness fed to opencode directly in the comment.
+    """
+    parts = []
+    if pr.ci_failing and ci_logs:
+        parts.append(f"**CI failing** - end of the failing log:\n```\n{ci_logs[-max_chars:]}\n```")
+    if pr.merge_conflict:
+        parts.append("**Merge conflict** with the base branch.")
+    if (pr.coverage_failed or pr.duplicate_code) and precheck_notes:
+        parts.append(f"**Pre-flight check failed:**\n{precheck_notes[:max_chars]}")
+    if pr.changes_requested and review_comments:
+        parts.append(f"**Review comments requesting changes:**\n{review_comments[:max_chars]}")
+    return "\n\n".join(parts) if parts else "(no diagnostic content was available)"
+
+
+def _mark_stuck(cfg: Config, pr: PrDetail, reason: str, details: str | None = None) -> None:
     if cfg.dry_run:
         log.info("[dry-run] would mark PR #%d stuck: %s", pr.number, reason)
         return
     gh.add_label(cfg.repo, pr.number, cfg.stuck_label)
-    gh.comment(
-        cfg.repo,
-        pr.number,
+    body = (
         f"opencode-harness: giving up on this PR for now - {reason}. "
         f"Marked `{cfg.stuck_label}`; push a new commit or remove the label "
-        "to have the harness retry.",
+        "to have the harness retry."
     )
+    if details:
+        body += f"\n\n---\n\n{details}"
+    gh.comment(cfg.repo, pr.number, body)
     log.warning("PR #%d marked stuck: %s", pr.number, reason)
 
 
@@ -196,7 +223,10 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
     head_sha = gh.get_pr_head_sha(cfg.repo, pr.number)
     attempts = state.record_attempt(pr.number, fingerprint, head_sha)
     if attempts > cfg.max_stuck_cycles:
-        _mark_stuck(cfg, pr, f"the same problem has persisted across {attempts - 1} attempts")
+        details = _problem_summary(pr, ci_logs, review_comments, precheck_notes)
+        _mark_stuck(
+            cfg, pr, f"the same problem has persisted across {attempts - 1} attempts", details
+        )
         return False
 
     if cfg.dry_run:

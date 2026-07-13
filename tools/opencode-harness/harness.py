@@ -350,20 +350,17 @@ def process_prs(cfg: Config, state: HarnessState, prs: list[PrSummary]) -> bool:
 def process_single_pr(cfg: Config, state: HarnessState, number: int) -> bool:
     """Handles a specific PR (--pr N) regardless of auto-selection order.
 
-    Explicitly targeting a PR overrides the stuck-cycle backoff: in the
-    auto-scan path, "stuck with no new commits" means leave it alone until a
-    human does something, but running --pr N *is* a human doing something -
-    that's the whole point of targeting it, so it shouldn't keep waiting for
-    a commit that will never come from an unattended scan.
+    The one-time override of the stuck-cycle backoff for an explicitly
+    targeted PR happens once, in main(), before the poll loop starts - not
+    here. This function runs once per poll cycle for as long as the process
+    keeps running (every cycle when not --once), so if it re-cleared the
+    stuck label on every call, a long-running `--pr N` process would never
+    let the circuit breaker hold: mark stuck, immediately clear+retry next
+    cycle, mark stuck again, forever - repeatedly burning opencode attempts
+    and reposting the same give-up comment. Delegating to the same
+    `_check_and_fix_pr` the auto-scan path uses means a still-stuck PR with
+    no new commits is correctly skipped after that first override.
     """
-    detail = gh.get_pr(cfg.repo, number)
-    if cfg.stuck_label in detail.labels:
-        log.info("PR #%d: clearing stuck label - explicitly targeted via --pr", number)
-        gh.remove_label(cfg.repo, number, cfg.stuck_label)
-        state.clear_pr(number)
-    if cfg.question_label in detail.labels:
-        log.info("PR #%d: clearing question label - explicitly targeted via --pr", number)
-        gh.remove_label(cfg.repo, number, cfg.question_label)
     return bool(_check_and_fix_pr(cfg, state, number))
 
 
@@ -526,6 +523,24 @@ def main() -> int:
             state.pr_attempts[str(cfg.target_pr)].attempts,
         )
         state.clear_pr(cfg.target_pr)
+    if cfg.target_pr is not None and not cfg.dry_run:
+        # Explicitly targeting a PR overrides the stuck-cycle backoff, but only
+        # once, here, before the loop starts - a human running --pr N is
+        # choosing to retry right now, which isn't the same as "retry forever
+        # on every poll cycle for as long as this process happens to keep
+        # running". Doing this clear inside the per-cycle code path instead
+        # (process_single_pr, prior to this fix) meant a long-running --pr
+        # process could never let a stuck mark hold: it re-cleared the label
+        # and state on every single cycle, immediately retried, hit the same
+        # unresolvable problem again, and re-posted the same give-up comment
+        # every few hours - see the fixed function's docstring.
+        detail = gh.get_pr(cfg.repo, cfg.target_pr)
+        if cfg.stuck_label in detail.labels:
+            log.info("--pr %d: clearing stuck label before starting", cfg.target_pr)
+            gh.remove_label(cfg.repo, cfg.target_pr, cfg.stuck_label)
+        if cfg.question_label in detail.labels:
+            log.info("--pr %d: clearing question label before starting", cfg.target_pr)
+            gh.remove_label(cfg.repo, cfg.target_pr, cfg.question_label)
     solved_count = 0
 
     while True:

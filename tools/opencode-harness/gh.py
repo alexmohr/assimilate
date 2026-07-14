@@ -26,6 +26,7 @@ from typing import Any
 log = logging.getLogger("harness.gh")
 
 RUN_ID_RE = re.compile(r"/actions/runs/(\d+)")
+JOB_ID_RE = re.compile(r"/job/(\d+)")
 
 STATUS_LABEL_NAMES = {
     "needs review",
@@ -227,24 +228,43 @@ def get_failing_check_logs(repo: str, number: int, max_chars: int = 12000) -> st
     of what opencode ever sees, even though that other check might be the
     one with the actually actionable content.
     """
-    seen_runs: set[str] = set()
-    runs: list[tuple[str, str]] = []
+    seen_jobs: set[str] = set()
+    jobs: list[tuple[str, str, str | None]] = []  # (name, run_id, job_id)
     for check in get_failing_checks(repo, number):
-        m = RUN_ID_RE.search(check.get("link") or "")
-        if not m or m.group(1) in seen_runs:
+        link = check.get("link") or ""
+        run_m = RUN_ID_RE.search(link)
+        if not run_m:
             continue
-        seen_runs.add(m.group(1))
-        runs.append((check.get("name") or "?", m.group(1)))
+        job_m = JOB_ID_RE.search(link)
+        dedupe_key = job_m.group(1) if job_m else run_m.group(1)
+        if dedupe_key in seen_jobs:
+            continue
+        seen_jobs.add(dedupe_key)
+        jobs.append((check.get("name") or "?", run_m.group(1), job_m.group(1) if job_m else None))
 
-    per_run_budget = max(max_chars // max(len(runs), 1), 2000)
+    per_job_budget = max(max_chars // max(len(jobs), 1), 2000)
     logs: list[str] = []
-    for name, run_id in runs:
+    for name, run_id, job_id in jobs:
+        # Prefer --job <job_id>: it scopes gh's log fetch to exactly this
+        # check, whereas a bare run_id makes gh aggregate every job in the
+        # run and filter, which has been observed to come back with an
+        # empty log for a specific failing job on a run with many parallel
+        # jobs (this repo's CI has ~20). A run-wide, unscoped fetch also
+        # means one huge job's failed-step output can dominate what `gh`
+        # returns before it ever gets to a smaller, more relevant one.
+        cmd = (
+            ["gh", "run", "view", "--job", job_id, "--repo", repo, "--log-failed"]
+            if job_id
+            else ["gh", "run", "view", run_id, "--repo", repo, "--log-failed"]
+        )
         try:
-            out = _run(["gh", "run", "view", run_id, "--repo", repo, "--log-failed"], timeout=180)
+            out = _run(cmd, timeout=180)
         except GhError as exc:
             out = f"(could not fetch log for run {run_id}: {exc})"
-        if len(out) > per_run_budget:
-            out = "...(truncated)...\n" + out[-per_run_budget:]
+        if not out.strip():
+            out = "(no failed-step log content returned for this check; inspect it on GitHub directly)"
+        if len(out) > per_job_budget:
+            out = "...(truncated)...\n" + out[-per_job_budget:]
         logs.append(f"=== {name} (run {run_id}) ===\n{out}")
     return "\n\n".join(logs) or (
         "(no failed check logs could be retrieved; inspect `gh pr checks` manually)"

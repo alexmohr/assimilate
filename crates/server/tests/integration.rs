@@ -2354,7 +2354,7 @@ async fn test_export_then_import_repo_roundtrip(pool: sqlx::PgPool) {
     .bind(repo_id)
     .bind(1_000_000_000i64)
     .bind(2_000_000_000i64)
-    .bind("notify")
+    .bind("notify_only")
     .bind("block_backups")
     .execute(&pool)
     .await
@@ -2404,7 +2404,7 @@ async fn test_export_then_import_repo_roundtrip(pool: sqlx::PgPool) {
     );
     assert_eq!(repo["quota_warn_bytes"], 1_000_000_000);
     assert_eq!(repo["quota_critical_bytes"], 2_000_000_000);
-    assert_eq!(repo["quota_warn_action"], "notify");
+    assert_eq!(repo["quota_warn_action"], "notify_only");
     assert_eq!(repo["quota_critical_action"], "block_backups");
     assert!(
         repo["tags"]
@@ -2486,7 +2486,7 @@ async fn test_export_then_import_repo_roundtrip(pool: sqlx::PgPool) {
     .unwrap();
     assert_eq!(warn_bytes, Some(1_000_000_000));
     assert_eq!(critical_bytes, Some(2_000_000_000));
-    assert_eq!(warn_action, "notify");
+    assert_eq!(warn_action, "notify_only");
     assert_eq!(critical_action, "block_backups");
 
     // Check tags (scope must be 'repo', not 'global')
@@ -2577,8 +2577,8 @@ async fn test_import_repo_updates_existing(pool: sqlx::PgPool) {
     .bind(repo_id)
     .bind(500_000_000i64)
     .bind(1_000_000_000i64)
-    .bind("notify")
-    .bind("notify")
+    .bind("notify_only")
+    .bind("notify_only")
     .execute(&pool)
     .await
     .unwrap();
@@ -2603,7 +2603,7 @@ async fn test_import_repo_updates_existing(pool: sqlx::PgPool) {
                 "ssh_host_key": "new-host-key-ssh-ed25519",
                 "quota_warn_bytes": 2_000_000_000,
                 "quota_critical_bytes": 2_000_000_000,
-                "quota_warn_action": "warn",
+                "quota_warn_action": "notify_only",
                 "quota_critical_action": "block_backups",
                 "tags": ["updated-tag"]
             }
@@ -2674,7 +2674,7 @@ async fn test_import_repo_updates_existing(pool: sqlx::PgPool) {
     .unwrap();
     assert_eq!(warn_bytes, Some(2_000_000_000));
     assert_eq!(critical_bytes, Some(2_000_000_000));
-    assert_eq!(warn_action, "warn");
+    assert_eq!(warn_action, "notify_only");
     assert_eq!(critical_action, "block_backups");
 
     // Verify tags were synced (old tag replaced by new one)

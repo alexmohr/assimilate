@@ -52,6 +52,67 @@ Open **System → Database Storage** to inspect PostgreSQL disk allocation. The 
 
 The total includes PostgreSQL system catalogs and database overhead. The **Other PostgreSQL storage** row accounts for allocation not owned by an application table. Deleted rows remain reusable inside PostgreSQL and do not necessarily reduce the database files on disk.
 
+## Config Export / Import
+
+The server provides `GET /api/config/export` and `POST /api/config/import` endpoints
+for portable JSON snapshots of the server configuration. This is useful for
+migrating between servers or creating backups of the configuration.
+
+### Exported Entities
+
+| Entity | Included | Notes |
+|--------|----------|-------|
+| **Hosts** | Connection details, display name, default backup paths, exclude patterns, pre/post-backup commands, file change patterns, hostname patterns | Agent authentication tokens are **not** exported; imported hosts receive a placeholder token. |
+| **Schedules** | Name, cron expression, enabled state, retention settings, backup sources, targets, exclude patterns, per-agent overrides | Only schedules with at least one valid target are imported. |
+| **Repositories** | SSH connection details, compression, encryption mode, enabled state, sync schedule, SSH host key, quota (warn/critical thresholds and actions), tags | **Passphrases are never exported** (see below). |
+
+### Repository Passphrase Handling
+
+Repository passphrases are encrypted at rest with a server-specific AES-256-GCM
+key and are **never included** in the export. After importing a config containing
+repositories, each repo's passphrase must be set manually before the scheduler
+can sync with it:
+
+1. Navigate to **Repositories** in the UI.
+2. Open each imported repository's detail page.
+3. Set the passphrase using the repository edit form.
+
+Until a passphrase is set, the imported repository is marked as **importing** and
+the scheduler will skip it.
+
+### Sync Schedule Preservation
+
+A repository's sync schedule (the cron expression for automatic repository
+synchronisation) is exported verbatim. When the exported value is `null`
+(no schedule configured), the import preserves that — the repository will
+not have an automatic sync schedule. This differs from creating a new
+repository through the UI, which uses a system default schedule.
+
+Importing a config onto an existing repository with the same name updates the
+sync schedule to match the export, including clearing it if the export has
+`null`.
+
+### Usage
+
+```bash
+# Export current config
+curl -s -X GET http://localhost:8080/api/config/export \
+  -H "cookie: session=<admin-session>" | jq . > config.json
+
+# Import a config (destructive merge — creates and updates entities)
+curl -s -X POST http://localhost:8080/api/config/import \
+  -H "cookie: session=<admin-session>" \
+  -H "content-type: application/json" \
+  -d @config.json
+```
+
+The import is additive and idempotent:
+
+- Entities matching by name are **updated** in place.
+- New entities are **created**.
+- No entities are **deleted** (the import never removes existing hosts,
+  schedules, or repositories not present in the payload).
+
 ## Schedule Configuration
 
 Each schedule is associated with a repository and controls when and how backups run. Managed via the [Scheduling](scheduling.md) UI or the `/api/schedules` endpoint.

@@ -2324,7 +2324,8 @@ async fn test_export_then_import_repo_roundtrip(pool: sqlx::PgPool) {
         shared::crypto::encrypt_passphrase("borg-pass", &encryption_key).unwrap();
     let repo_id: i64 = sqlx::query_scalar(
         "INSERT INTO repos (name, repo_path, ssh_user, ssh_host, ssh_port, passphrase_encrypted, \
-         compression, encryption) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+         compression, encryption, sync_schedule) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL) \
+         RETURNING id",
     )
     .bind("roundtrip-repo")
     .bind("/backups/roundtrip")
@@ -2421,6 +2422,12 @@ async fn test_export_then_import_repo_roundtrip(pool: sqlx::PgPool) {
     // Passphrase must never be exported
     assert!(repo.get("passphrase").is_none());
 
+    // Repo was created without a sync schedule; the export must preserve that
+    assert!(
+        repo.get("sync_schedule").and_then(|v| v.as_str()).is_none(),
+        "sync_schedule must be null in the export when the repo has none"
+    );
+
     // Wipe the repo
     sqlx::query("DELETE FROM repo_tags WHERE repo_id = $1")
         .bind(repo_id)
@@ -2506,6 +2513,18 @@ async fn test_export_then_import_repo_roundtrip(pool: sqlx::PgPool) {
     assert_eq!(
         tag_rows.get(1).unwrap(),
         &("production".to_string(), "repo".to_string())
+    );
+
+    // Repo was created without a sync schedule; re-import must preserve null
+    let imported_sync_schedule: Option<String> =
+        sqlx::query_scalar("SELECT sync_schedule FROM repos WHERE id = $1")
+            .bind(new_repo_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        imported_sync_schedule.is_none(),
+        "re-imported repo must have null sync_schedule (not DB default)"
     );
 
     // The imported repo should be marked as importing (placeholder passphrase)
@@ -2687,6 +2706,85 @@ async fn test_import_repo_updates_existing(pool: sqlx::PgPool) {
     .await
     .unwrap();
     assert_eq!(tag_names, vec!["updated-tag"]);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_import_repo_clears_sync_schedule(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+
+    // Create a repo WITH a sync schedule
+    let encryption_key: [u8; 32] =
+        shared::crypto::derive_key(b"test-secret-key-for-integration").unwrap();
+    let passphrase_encrypted =
+        shared::crypto::encrypt_passphrase("borg-pass", &encryption_key).unwrap();
+    let repo_id: i64 = sqlx::query_scalar(
+        "INSERT INTO repos (name, repo_path, ssh_user, ssh_host, ssh_port, passphrase_encrypted, \
+         compression, encryption, sync_schedule) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+         RETURNING id",
+    )
+    .bind("clear-schedule-repo")
+    .bind("/backups/scheduled")
+    .bind("borg")
+    .bind("old-host")
+    .bind(22i32)
+    .bind(&passphrase_encrypted)
+    .bind("lz4")
+    .bind("repokey")
+    .bind("0 0,12 * * *")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Import a config that matches the same repo name with sync_schedule: null
+    let payload = json!({
+        "version": 1,
+        "exported_at": "2026-06-01T00:00:00Z",
+        "hosts": [],
+        "schedules": [],
+        "repos": [
+            {
+                "name": "clear-schedule-repo",
+                "repo_path": "/backups/scheduled",
+                "ssh_user": "borg",
+                "ssh_host": "old-host",
+                "ssh_port": 22,
+                "compression": "lz4",
+                "encryption": "repokey",
+                "enabled": true,
+                "sync_schedule": null
+            }
+        ]
+    });
+
+    let mut app = build_test_app(pool.clone());
+    let resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/config/import", Some(payload)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("repos_updated").unwrap(), 1);
+
+    // Verify the repo still exists (single row)
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM repos WHERE name = 'clear-schedule-repo'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 1);
+
+    // Verify sync_schedule was cleared to NULL
+    let sync_schedule: Option<String> =
+        sqlx::query_scalar("SELECT sync_schedule FROM repos WHERE id = $1")
+            .bind(repo_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        sync_schedule.is_none(),
+        "importing with null sync_schedule must clear the existing schedule"
+    );
 }
 
 // -- admin-only enforcement on agent-mutating endpoints --

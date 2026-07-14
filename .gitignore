@@ -28,6 +28,9 @@ docs_html/
 # oh my opencode
 .sisyphus
 
+# opencode-harness internal state (never committed)
+tools/opencode-harness/.state.json
+
 # Git worktrees
 .worktrees/
 

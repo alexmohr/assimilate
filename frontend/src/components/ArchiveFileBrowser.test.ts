@@ -34,6 +34,27 @@ describe('ArchiveFileBrowser', () => {
     return wrapper
   }
 
+  async function mountWithEntries(
+    props: { repoId: number; archiveName: string } = { repoId: 5, archiveName: 'test-archive' },
+  ) {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: {
+        index_status: 'done',
+        entries: [
+          { type: 'd', path: 'subdir', size: 0, mtime: '2026-06-01T12:00:00Z', mode: '755' },
+          { type: '-', path: 'readme.txt', size: 1024, mtime: '2026-06-01T12:00:00Z', mode: '644' },
+        ],
+      },
+    })
+
+    const wrapper = mount(ArchiveFileBrowser, { props })
+    await flushPromises()
+    await nextTick()
+    await flushPromises()
+    await nextTick()
+    return wrapper
+  }
+
   it('renders empty state when archiveName is null', () => {
     const wrapper = mount(ArchiveFileBrowser, {
       props: { repoId: null, archiveName: null },
@@ -79,22 +100,7 @@ describe('ArchiveFileBrowser', () => {
   })
 
   it('shows breadcrumb, directories, and files when API returns entries', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({
-      data: {
-        index_status: 'done',
-        entries: [
-          { type: 'd', path: 'subdir', size: 0, mtime: '2026-06-01T12:00:00Z', mode: '755' },
-          { type: '-', path: 'readme.txt', size: 1024, mtime: '2026-06-01T12:00:00Z', mode: '644' },
-        ],
-      },
-    })
-
-    const wrapper = mount(ArchiveFileBrowser, {
-      props: { repoId: 5, archiveName: 'test-archive' },
-    })
-
-    await flushPromises()
-    await nextTick()
+    const wrapper = await mountWithEntries()
 
     expect(wrapper.find('.browser-title').exists()).toBe(true)
     expect(wrapper.text()).toContain('test-archive')
@@ -106,22 +112,7 @@ describe('ArchiveFileBrowser', () => {
   })
 
   it('clicking breadcrumb button triggers navigateTo', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({
-      data: {
-        index_status: 'done',
-        entries: [
-          { type: 'd', path: 'subdir', size: 0, mtime: '2026-06-01T12:00:00Z', mode: '755' },
-          { type: '-', path: 'readme.txt', size: 1024, mtime: '2026-06-01T12:00:00Z', mode: '644' },
-        ],
-      },
-    })
-
-    const wrapper = mount(ArchiveFileBrowser, {
-      props: { repoId: 5, archiveName: 'test-archive' },
-    })
-
-    await flushPromises()
-    await nextTick()
+    const wrapper = await mountWithEntries()
 
     // Click a breadcrumb
     const crumb = wrapper.find('.crumb')
@@ -135,22 +126,7 @@ describe('ArchiveFileBrowser', () => {
   })
 
   it('clicking a directory row triggers navigateTo', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({
-      data: {
-        index_status: 'done',
-        entries: [
-          { type: 'd', path: 'subdir', size: 0, mtime: '2026-06-01T12:00:00Z', mode: '755' },
-          { type: '-', path: 'readme.txt', size: 1024, mtime: '2026-06-01T12:00:00Z', mode: '644' },
-        ],
-      },
-    })
-
-    const wrapper = mount(ArchiveFileBrowser, {
-      props: { repoId: 5, archiveName: 'test-archive' },
-    })
-
-    await flushPromises()
-    await nextTick()
+    const wrapper = await mountWithEntries()
 
     const clickableRow = wrapper.find('tr.clickable')
     if (clickableRow.exists()) {
@@ -163,22 +139,7 @@ describe('ArchiveFileBrowser', () => {
   })
 
   it('download button renders in action column', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({
-      data: {
-        index_status: 'done',
-        entries: [
-          { type: 'd', path: 'subdir', size: 0, mtime: '2026-06-01T12:00:00Z', mode: '755' },
-          { type: '-', path: 'readme.txt', size: 1024, mtime: '2026-06-01T12:00:00Z', mode: '644' },
-        ],
-      },
-    })
-
-    const wrapper = mount(ArchiveFileBrowser, {
-      props: { repoId: 5, archiveName: 'test-archive' },
-    })
-
-    await flushPromises()
-    await nextTick()
+    const wrapper = await mountWithEntries()
 
     const downloadBtn = wrapper.find('.btn-ghost')
     if (downloadBtn.exists()) {
@@ -191,22 +152,7 @@ describe('ArchiveFileBrowser', () => {
   })
 
   it('renders filter inputs and handles interaction', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({
-      data: {
-        index_status: 'done',
-        entries: [
-          { type: 'd', path: 'subdir', size: 0, mtime: '2026-06-01T12:00:00Z', mode: '755' },
-          { type: '-', path: 'readme.txt', size: 1024, mtime: '2026-06-01T12:00:00Z', mode: '644' },
-        ],
-      },
-    })
-
-    const wrapper = mount(ArchiveFileBrowser, {
-      props: { repoId: 5, archiveName: 'test-archive' },
-    })
-
-    await flushPromises()
-    await nextTick()
+    const wrapper = await mountWithEntries()
 
     expect(wrapper.find('.data-table').exists()).toBe(true)
     const filterInputs = wrapper.findAll('.filter-input')
@@ -218,22 +164,7 @@ describe('ArchiveFileBrowser', () => {
   })
 
   it('calls stopPolling on unmount', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({
-      data: {
-        index_status: 'done',
-        entries: [
-          { type: 'd', path: 'subdir', size: 0, mtime: '2026-06-01T12:00:00Z', mode: '755' },
-          { type: '-', path: 'readme.txt', size: 1024, mtime: '2026-06-01T12:00:00Z', mode: '644' },
-        ],
-      },
-    })
-
-    const wrapper = mount(ArchiveFileBrowser, {
-      props: { repoId: 5, archiveName: 'test-archive' },
-    })
-
-    await flushPromises()
-    await nextTick()
+    const wrapper = await mountWithEntries()
 
     wrapper.unmount()
   })

@@ -863,6 +863,7 @@ pub async fn list_contents(
                 repo_id,
                 archive_name.clone(),
                 state.repo_lock.clone(),
+                &state.background_task_tracker,
             )
             .await?;
             return Ok(Json(ContentsResponse {

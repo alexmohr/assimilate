@@ -2440,6 +2440,7 @@ async fn sync_archives(
             repo_id,
             &archive_names,
             repo_lock,
+            background_task_tracker,
             "incremental sync",
         )
         .await;
@@ -2712,6 +2713,7 @@ async fn queue_archive_indexing(
     repo_id: i64,
     archive_names: &[String],
     repo_lock: &RepoLock,
+    background_task_tracker: &crate::background_tasks::BackgroundTaskTracker,
     sync_kind: &str,
 ) {
     join_all(archive_names.iter().map(|archive_name| {
@@ -2724,6 +2726,7 @@ async fn queue_archive_indexing(
                 repo_id,
                 archive_name.clone(),
                 repo_lock,
+                background_task_tracker,
             )
             .await
             {

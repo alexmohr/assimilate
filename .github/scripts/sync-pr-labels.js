@@ -240,6 +240,39 @@ async function resolveReviewDecision(github, owner, repo, prNumber) {
   return result.repository.pullRequest.reviewDecision;
 }
 
+// GitHub's reviewDecision does NOT go stale on its own for a
+// CHANGES_REQUESTED verdict the way the code comment at this function's call
+// site once assumed - that assumption only holds for APPROVED (and even then
+// only with "dismiss stale approvals" branch protection enabled). A reviewer
+// who requested changes on an old commit keeps blocking forever unless they
+// personally submit a new review, even after every finding they raised has
+// been fixed in a later commit they've never looked at. Returns true only if
+// at least one of the CHANGES_REQUESTED reviews behind the current decision
+// was actually submitted against the PR's current head commit - i.e. a real
+// reviewer has seen this exact code and still wants changes, as opposed to
+// an old review of a commit that's since moved on.
+async function changesRequestedIsCurrent(github, owner, repo, prNumber, headSha) {
+  const reviews = await github.paginate(github.rest.pulls.listReviews, {
+    owner,
+    repo,
+    pull_number: prNumber,
+    per_page: 100,
+  });
+  // Latest review per user, mirroring how GitHub itself computes
+  // reviewDecision (only each reviewer's most recent submission counts).
+  const latestByUser = new Map();
+  for (const r of reviews) {
+    if (!r.user) continue;
+    const existing = latestByUser.get(r.user.login);
+    if (!existing || new Date(r.submitted_at) > new Date(existing.submitted_at)) {
+      latestByUser.set(r.user.login, r);
+    }
+  }
+  return [...latestByUser.values()].some(
+    (r) => r.state === "CHANGES_REQUESTED" && r.commit_id === headSha,
+  );
+}
+
 // A genuine other-account review always wins. Otherwise, fall back to the
 // claude-approved / claude-changes-requested labels (see REVIEW_VERDICT_LABELS)
 // for the same-account case where GitHub can't record a native verdict.
@@ -448,9 +481,24 @@ module.exports = async ({ github, context, core, prNumber, eventAction, selfChec
     if (hasCoverageFailed) causes.push("coverage-diff");
     if (hasDuplicateCode) causes.push("duplicate-code");
     summary = `A deterministic pre-review check failed (${causes.join(" and ")}) — see the automated pre-flight comment(s) for specifics.`;
-  } else if (reviewDecision === "CHANGES_REQUESTED") {
+  } else if (
+    reviewDecision === "CHANGES_REQUESTED" &&
+    // Only the native (other-account) path needs this check - the
+    // claude-changes-requested fallback label already goes stale on its own
+    // via the eventAction === "synchronize" handling above.
+    (nativeReviewDecision !== "CHANGES_REQUESTED" ||
+      (await changesRequestedIsCurrent(github, owner, repo, prNumber, pr.head.sha)))
+  ) {
     status = STATUS_LABELS.CHANGES_REQUESTED;
     summary = "A reviewer requested changes — address them and re-request review.";
+  } else if (reviewDecision === "CHANGES_REQUESTED") {
+    // A real CHANGES_REQUESTED verdict exists, but every such review is
+    // against an older commit - none of them have seen the code as it
+    // stands now, so this shouldn't block forever waiting on a re-review
+    // that may never come. Treat it as needing a fresh look instead.
+    status = STATUS_LABELS.NEEDS_REVIEW;
+    summary =
+      "A reviewer requested changes on an earlier commit, but new commits have landed since - re-review needed.";
   } else if (needsHuman) {
     // Even a green PR is capped at "needs review" until a human clears the
     // sign-off gate by removing the label themselves.

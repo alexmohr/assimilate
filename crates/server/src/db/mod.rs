@@ -1006,7 +1006,8 @@ pub struct UpdateRepoParams<'a> {
     /// Whether the repository is enabled.
     pub enabled: bool,
     /// New sync schedule cron expression.
-    pub sync_schedule: Option<&'a str>,
+    /// `None` = keep existing value; `Some(None)` = disable; `Some(Some(s))` = set to `s`.
+    pub sync_schedule: Option<Option<&'a str>>,
 }
 
 /// # Errors
@@ -1390,6 +1391,33 @@ pub async fn update_repo(
     pool: &PgPool,
     params: &UpdateRepoParams<'_>,
 ) -> Result<RepoRow, ApiError> {
+    let Some(sync_schedule) = params.sync_schedule else {
+        return sqlx::query_as!(
+            RepoRow,
+            "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = \
+             $6, compression = $7, encryption = $8, enabled = $9 WHERE id = $1 RETURNING id, \
+             name, repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, enabled, \
+             owner_id, visibility, sync_schedule",
+            params.repo_id,
+            params.name,
+            params.repo_path,
+            params.ssh_user,
+            params.ssh_host,
+            params.ssh_port,
+            params.compression,
+            params.encryption,
+            params.enabled,
+        )
+        .fetch_one(pool)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => {
+                ApiError::NotFound(format!("repo {} not found", params.repo_id))
+            }
+            other => ApiError::Database(other),
+        });
+    };
+
     sqlx::query_as!(
         RepoRow,
         "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = $6, \
@@ -1405,7 +1433,7 @@ pub async fn update_repo(
         params.compression,
         params.encryption,
         params.enabled,
-        params.sync_schedule,
+        sync_schedule,
     )
     .fetch_one(pool)
     .await
@@ -1433,31 +1461,59 @@ pub async fn update_repo_and_set_relocation_pending(
 ) -> Result<RepoRow, ApiError> {
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
 
-    let repo = sqlx::query_as!(
-        RepoRow,
-        "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = $6, \
-         compression = $7, encryption = $8, enabled = $9, sync_schedule = $10, relocation_pending \
-         = true WHERE id = $1 RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, \
-         compression, encryption, enabled, owner_id, visibility, sync_schedule",
-        params.repo_id,
-        params.name,
-        params.repo_path,
-        params.ssh_user,
-        params.ssh_host,
-        params.ssh_port,
-        params.compression,
-        params.encryption,
-        params.enabled,
-        params.sync_schedule,
-    )
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(|e| match e {
-        sqlx::Error::RowNotFound => {
-            ApiError::NotFound(format!("repo {} not found", params.repo_id))
-        }
-        other => ApiError::Database(other),
-    })?;
+    let repo = if let Some(sync_schedule) = params.sync_schedule {
+        sqlx::query_as!(
+            RepoRow,
+            "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = \
+             $6, compression = $7, encryption = $8, enabled = $9, sync_schedule = $10, \
+             relocation_pending = true WHERE id = $1 RETURNING id, name, repo_path, ssh_user, \
+             ssh_host, ssh_port, compression, encryption, enabled, owner_id, visibility, \
+             sync_schedule",
+            params.repo_id,
+            params.name,
+            params.repo_path,
+            params.ssh_user,
+            params.ssh_host,
+            params.ssh_port,
+            params.compression,
+            params.encryption,
+            params.enabled,
+            sync_schedule,
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => {
+                ApiError::NotFound(format!("repo {} not found", params.repo_id))
+            }
+            other => ApiError::Database(other),
+        })?
+    } else {
+        sqlx::query_as!(
+            RepoRow,
+            "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = \
+             $6, compression = $7, encryption = $8, enabled = $9, relocation_pending = true WHERE \
+             id = $1 RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, \
+             encryption, enabled, owner_id, visibility, sync_schedule",
+            params.repo_id,
+            params.name,
+            params.repo_path,
+            params.ssh_user,
+            params.ssh_host,
+            params.ssh_port,
+            params.compression,
+            params.encryption,
+            params.enabled,
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => {
+                ApiError::NotFound(format!("repo {} not found", params.repo_id))
+            }
+            other => ApiError::Database(other),
+        })?
+    };
 
     sqlx::query!(
         "INSERT INTO repo_relocation_pending_hosts (repo_id, hostname) SELECT $1, a.hostname FROM \

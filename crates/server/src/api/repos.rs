@@ -566,7 +566,6 @@ pub async fn update_repo(
         .encryption
         .map_or_else(|| "repokey-blake2".to_string(), |e| e.to_string());
 
-    let sync_schedule = req.sync_schedule.unwrap_or(existing.sync_schedule);
     let name = req.name.unwrap_or(existing.name);
     let ssh_port = req.ssh_port.unwrap_or(22);
 
@@ -580,7 +579,7 @@ pub async fn update_repo(
         compression: &compression,
         encryption: &encryption,
         enabled: req.enabled.unwrap_or(true),
-        sync_schedule: sync_schedule.as_deref(),
+        sync_schedule: req.sync_schedule.as_ref().map(|v| v.as_deref()),
     };
 
     let repo = if location_changed {

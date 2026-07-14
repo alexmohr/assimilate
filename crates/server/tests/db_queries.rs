@@ -4476,7 +4476,7 @@ async fn repo_sync_schedule_update(pool: PgPool) {
             compression: "lz4",
             encryption: "repokey",
             enabled: true,
-            sync_schedule: Some("0 */6 * * *"),
+            sync_schedule: Some(Some("0 */6 * * *")),
         },
     )
     .await
@@ -4501,13 +4501,39 @@ async fn repo_sync_schedule_disable(pool: PgPool) {
             compression: "lz4",
             encryption: "repokey",
             enabled: true,
-            sync_schedule: None,
+            sync_schedule: Some(None),
         },
     )
     .await
     .unwrap();
 
     assert!(updated.sync_schedule.is_none());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_sync_schedule_unchanged(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    // After an update that doesn't touch sync_schedule, it must retain the DB default.
+    let updated = db::update_repo(
+        &pool,
+        &UpdateRepoParams {
+            repo_id: repo.id,
+            name: "test-repo",
+            repo_path: "/backups/test",
+            ssh_user: "backup",
+            ssh_host: "storage.local",
+            ssh_port: 22,
+            compression: "lz4",
+            encryption: "repokey",
+            enabled: true,
+            sync_schedule: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(updated.sync_schedule.as_deref(), Some("0 0,12 * * *"));
 }
 
 #[sqlx::test(migrations = "./migrations")]

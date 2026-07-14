@@ -379,11 +379,7 @@ describe('SystemView', () => {
       expect((importBtn.element as HTMLButtonElement).disabled).toBe(true)
     })
 
-    it('calls API and shows result on successful import', async () => {
-      setupSuccessMocks()
-      mockPost.mockResolvedValue({ data: MOCK_IMPORT_RESULT })
-      const wrapper = renderWithPlugins(SystemView)
-      await flushPromises()
+    async function selectAndImport(wrapper: VueWrapper): Promise<void> {
       await selectFile(
         wrapper,
         JSON.stringify({ version: 1, hosts: [], schedules: [], repos: [] }),
@@ -391,6 +387,14 @@ describe('SystemView', () => {
       )
       const importBtn = wrapper.findAll('button').find((b) => b.text() === 'Import')!
       await importBtn.trigger('click')
+    }
+
+    it('calls API and shows result on successful import', async () => {
+      setupSuccessMocks()
+      mockPost.mockResolvedValue({ data: MOCK_IMPORT_RESULT })
+      const wrapper = renderWithPlugins(SystemView)
+      await flushPromises()
+      await selectAndImport(wrapper)
       await flushPromises()
       expect(mockPost).toHaveBeenCalledWith('/config/import', {
         version: 1,
@@ -408,13 +412,7 @@ describe('SystemView', () => {
       mockPost.mockRejectedValue(new Error('Network error'))
       const wrapper = renderWithPlugins(SystemView)
       await flushPromises()
-      await selectFile(
-        wrapper,
-        JSON.stringify({ version: 1, hosts: [], schedules: [], repos: [] }),
-        'cfg.json',
-      )
-      const importBtn = wrapper.findAll('button').find((b) => b.text() === 'Import')!
-      await importBtn.trigger('click')
+      await selectAndImport(wrapper)
       await flushPromises()
       expect(wrapper.text()).toContain('Import failed')
     })

@@ -2249,6 +2249,70 @@ async fn test_export_then_import_roundtrip(pool: sqlx::PgPool) {
     assert_eq!(paths, vec!["/etc"]);
 }
 
+#[sqlx::test(migrations = "./migrations")]
+async fn test_import_config_repo_with_tags(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let payload = json!({
+        "version": 1,
+        "exported_at": "2026-06-01T00:00:00Z",
+        "hosts": [],
+        "schedules": [],
+        "repos": [
+            {
+                "name": "tagged-repo",
+                "repo_path": "/backups/tagged",
+                "ssh_user": "borg",
+                "ssh_host": "remote",
+                "ssh_port": 22,
+                "compression": "lz4",
+                "encryption": "repokey",
+                "enabled": true,
+                "sync_schedule": "0 0,12 * * *",
+                "quota_warn_bytes": null,
+                "quota_critical_bytes": null,
+                "quota_warn_action": "",
+                "quota_critical_action": "",
+                "tags": ["critical", "production"]
+            }
+        ]
+    });
+
+    let resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/config/import", Some(payload)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("repos_created").unwrap(), 1);
+
+    let repo_id: i64 = sqlx::query_scalar("SELECT id FROM repos WHERE name = 'tagged-repo'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let tag_rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT t.name, t.scope FROM tags t JOIN repo_tags rt ON rt.tag_id = t.id WHERE \
+         rt.repo_id = $1 ORDER BY t.name",
+    )
+    .bind(repo_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(tag_rows.len(), 2);
+    assert_eq!(
+        tag_rows.first().unwrap(),
+        &("critical".to_string(), "repo".to_string())
+    );
+    assert_eq!(
+        tag_rows.get(1).unwrap(),
+        &("production".to_string(), "repo".to_string())
+    );
+}
+
 // -- admin-only enforcement on agent-mutating endpoints --
 
 const NON_ADMIN_SESSION_ID: &str = "non-admin-session-id-000000000000000";

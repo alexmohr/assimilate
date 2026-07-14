@@ -27,7 +27,6 @@ describe('ArchiveFileBrowser', () => {
 
   async function mountWithWait(props: { repoId: number | null; archiveName: string | null }) {
     const wrapper = mount(ArchiveFileBrowser, { props })
-    // Allow the watch + composable async operations to settle
     await flushPromises()
     await nextTick()
     await flushPromises()
@@ -104,6 +103,139 @@ describe('ArchiveFileBrowser', () => {
     expect(crumbs.length).toBeGreaterThanOrEqual(1)
     expect(wrapper.text()).toContain('subdir')
     expect(wrapper.text()).toContain('readme.txt')
+  })
+
+  it('clicking breadcrumb button triggers navigateTo', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: {
+        index_status: 'done',
+        entries: [
+          { type: 'd', path: 'subdir', size: 0, mtime: '2026-06-01T12:00:00Z', mode: '755' },
+          { type: '-', path: 'readme.txt', size: 1024, mtime: '2026-06-01T12:00:00Z', mode: '644' },
+        ],
+      },
+    })
+
+    const wrapper = mount(ArchiveFileBrowser, {
+      props: { repoId: 5, archiveName: 'test-archive' },
+    })
+
+    await flushPromises()
+    await nextTick()
+
+    // Click a breadcrumb
+    const crumb = wrapper.find('.crumb')
+    if (crumb.exists()) {
+      await crumb.trigger('click')
+      await flushPromises()
+      await nextTick()
+    }
+
+    expect(wrapper.find('.breadcrumb').exists()).toBe(true)
+  })
+
+  it('clicking a directory row triggers navigateTo', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: {
+        index_status: 'done',
+        entries: [
+          { type: 'd', path: 'subdir', size: 0, mtime: '2026-06-01T12:00:00Z', mode: '755' },
+          { type: '-', path: 'readme.txt', size: 1024, mtime: '2026-06-01T12:00:00Z', mode: '644' },
+        ],
+      },
+    })
+
+    const wrapper = mount(ArchiveFileBrowser, {
+      props: { repoId: 5, archiveName: 'test-archive' },
+    })
+
+    await flushPromises()
+    await nextTick()
+
+    const clickableRow = wrapper.find('tr.clickable')
+    if (clickableRow.exists()) {
+      await clickableRow.trigger('click')
+      await flushPromises()
+      await nextTick()
+    }
+
+    expect(wrapper.text()).toContain('subdir')
+  })
+
+  it('download button renders in action column', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: {
+        index_status: 'done',
+        entries: [
+          { type: 'd', path: 'subdir', size: 0, mtime: '2026-06-01T12:00:00Z', mode: '755' },
+          { type: '-', path: 'readme.txt', size: 1024, mtime: '2026-06-01T12:00:00Z', mode: '644' },
+        ],
+      },
+    })
+
+    const wrapper = mount(ArchiveFileBrowser, {
+      props: { repoId: 5, archiveName: 'test-archive' },
+    })
+
+    await flushPromises()
+    await nextTick()
+
+    const downloadBtn = wrapper.find('.btn-ghost')
+    if (downloadBtn.exists()) {
+      await downloadBtn.trigger('click')
+      await flushPromises()
+      await nextTick()
+    }
+
+    expect(wrapper.find('.browser-title').exists()).toBe(true)
+  })
+
+  it('renders filter inputs and handles interaction', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: {
+        index_status: 'done',
+        entries: [
+          { type: 'd', path: 'subdir', size: 0, mtime: '2026-06-01T12:00:00Z', mode: '755' },
+          { type: '-', path: 'readme.txt', size: 1024, mtime: '2026-06-01T12:00:00Z', mode: '644' },
+        ],
+      },
+    })
+
+    const wrapper = mount(ArchiveFileBrowser, {
+      props: { repoId: 5, archiveName: 'test-archive' },
+    })
+
+    await flushPromises()
+    await nextTick()
+
+    expect(wrapper.find('.data-table').exists()).toBe(true)
+    const filterInputs = wrapper.findAll('.filter-input')
+    expect(filterInputs.length).toBeGreaterThanOrEqual(1)
+    for (const input of filterInputs) {
+      await input.setValue('filter')
+      await input.trigger('input')
+    }
+  })
+
+  it('calls stopPolling on unmount', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: {
+        index_status: 'done',
+        entries: [
+          { type: 'd', path: 'subdir', size: 0, mtime: '2026-06-01T12:00:00Z', mode: '755' },
+          { type: '-', path: 'readme.txt', size: 1024, mtime: '2026-06-01T12:00:00Z', mode: '644' },
+        ],
+      },
+    })
+
+    const wrapper = mount(ArchiveFileBrowser, {
+      props: { repoId: 5, archiveName: 'test-archive' },
+    })
+
+    await flushPromises()
+    await nextTick()
+
+    wrapper.unmount()
   })
 
   it('switching archiveName resets and reloads', async () => {

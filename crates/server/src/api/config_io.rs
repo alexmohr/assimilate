@@ -363,7 +363,7 @@ async fn import_repos(
                     compression: &repo_export.compression,
                     encryption: &repo_export.encryption,
                     owner_id: None,
-                    sync_schedule: Some(repo_export.sync_schedule.as_deref()),
+                    sync_schedule: repo_export.sync_schedule.as_ref().map(|s| Some(s.as_str())),
                 },
             )
             .await?;

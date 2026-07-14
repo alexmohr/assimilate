@@ -7037,3 +7037,24 @@ async fn validate_agent_repo_rejects_and_logs_security_event(pool: PgPool) {
             .contains("rogue-agent")
     );
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_tags_use_repo_scope(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    let tag = db::insert_tag(&pool, "critical", "#EF4444", "repo")
+        .await
+        .unwrap();
+    assert_eq!(tag.name, "critical");
+    assert_eq!(tag.scope, "repo");
+
+    db::set_repo_tags(&pool, repo.id, &[tag.id]).await.unwrap();
+
+    let tags = db::list_tags_for_repo(&pool, repo.id).await.unwrap();
+    assert_eq!(tags.len(), 1);
+    assert_eq!(tags.first().unwrap().name, "critical");
+    assert_eq!(tags.first().unwrap().scope, "repo");
+
+    let all_repo_tags = db::list_tags(&pool, "repo").await.unwrap();
+    assert!(all_repo_tags.iter().any(|t| t.name == "critical"));
+}

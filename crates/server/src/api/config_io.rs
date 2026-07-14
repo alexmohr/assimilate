@@ -97,7 +97,6 @@ pub async fn export_config(
             ssh_user: repo.ssh_user.clone(),
             ssh_host: repo.ssh_host.clone(),
             ssh_port: repo.ssh_port,
-            passphrase: String::new(),
             compression: repo.compression.clone(),
             encryption: repo.encryption.clone(),
             enabled: repo.enabled,
@@ -311,15 +310,13 @@ async fn import_repos(
         .collect();
 
     for repo_export in repos {
-        if repo_export.passphrase.is_empty() {
-            result.warnings.push(format!(
-                "repo {:?}: no passphrase in export (passphrases are not exported for security); \
-                 the passphrase must be set manually after import",
-                repo_export.name,
-            ));
-        }
+        result.warnings.push(format!(
+            "repo {:?}: passphrase must be set manually after import (passphrases are not \
+             exported for security)",
+            repo_export.name,
+        ));
 
-        let passphrase_encrypted = encrypt_passphrase(&repo_export.passphrase, encryption_key)?;
+        let passphrase_encrypted = encrypt_passphrase("", encryption_key)?;
 
         if let Some(&existing_id) = repo_name_to_id.get(&repo_export.name) {
             // Update existing repo -- skip passphrase change

@@ -2,6 +2,10 @@
 
 /**
  * Response containing repo export.
+ *
+ * Passphrases are never exported - they are encrypted at rest with a
+ * server-specific key and must be set manually on the target server
+ * after import.
  */
 export type RepoExportResponse = {
   /**
@@ -24,10 +28,6 @@ export type RepoExportResponse = {
    * SSH port for connecting to the repository host.
    */
   ssh_port: number;
-  /**
-   * Decrypted passphrase for the repository.
-   */
-  passphrase: string;
   /**
    * Compression algorithm.
    */

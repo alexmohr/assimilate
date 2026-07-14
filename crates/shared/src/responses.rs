@@ -1805,6 +1805,10 @@ pub struct LogEntryResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 /// Response containing repo export.
+///
+/// Passphrases are never exported - they are encrypted at rest with a
+/// server-specific key and must be set manually on the target server
+/// after import.
 pub struct RepoExportResponse {
     /// Name of the repository.
     pub name: String,
@@ -1816,8 +1820,6 @@ pub struct RepoExportResponse {
     pub ssh_host: String,
     /// SSH port for connecting to the repository host.
     pub ssh_port: i32,
-    /// Decrypted passphrase for the repository.
-    pub passphrase: String,
     /// Compression algorithm.
     pub compression: String,
     /// Encryption algorithm.

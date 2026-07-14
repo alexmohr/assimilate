@@ -8,10 +8,15 @@ Priority order, checked every poll cycle:
 
 1. Work the oldest open pull request that currently has something fixable
    (`ci failing`, `merge conflict`, `precheck failed`, or `changes requested`
-   - see gh.py). CI results are always discovered and reacted to by this
-   harness's own Python, never by opencode - opencode only ever sees
-   already-gathered log text handed to it in a prompt, it never queries CI
-   itself. If CI is failing on nothing but the deterministic `pre-commit`
+   - see gh.py). Always rebase onto the base branch first, whether or not
+   `merge conflict` is set - a PR can be plainly behind base with no
+   conflict yet still be carrying a problem base has already fixed (e.g. a
+   since-patched dependency), which only an actual rebase picks up; asks
+   opencode to resolve real conflicts if the rebase doesn't apply cleanly
+   (see `_resolve_conflicts`). CI results are always discovered and reacted
+   to by this harness's own Python, never by opencode - opencode only ever
+   sees already-gathered log text handed to it in a prompt, it never queries
+   CI itself. If CI is failing on nothing but the deterministic `pre-commit`
    check, fix it directly (re-run pre-commit locally, which autofixes, then
    commit/push) without spending an opencode call at all - see
    `_try_mechanical_ci_fix`. Otherwise fetch the concrete failure content (CI
@@ -172,12 +177,27 @@ def _try_mechanical_ci_fix(cfg: Config, pr: PrDetail) -> bool:
         return False
     if not git_ops.commit(cfg.repo_dir, "fix: apply pre-commit auto-fixes"):
         return False
-    git_ops.push(cfg.repo_dir, pr.head_ref_name)
+    # force_with_lease unconditionally: handle_pr_fix always rebases onto
+    # base before reaching here (see _resolve_conflicts), which rewrites
+    # history the instant the branch was actually behind - a plain push
+    # would be rejected as non-fast-forward in that case. Harmless when the
+    # branch was already current, since nothing was rewritten.
+    git_ops.push(cfg.repo_dir, pr.head_ref_name, force_with_lease=True)
     log.info("PR #%d: pushed a pre-commit autofix without invoking opencode", pr.number)
     return True
 
 
 def _resolve_conflicts(cfg: Config) -> bool:
+    """Rebases the current checkout onto `cfg.base_branch`, asking opencode to
+    resolve real conflicts if the rebase doesn't apply cleanly.
+
+    Called unconditionally on every PR the harness works, not just ones with
+    the `merge conflict` label - a PR can be plainly behind base (no
+    conflict, GitHub reports it as mergeable) yet still be carrying a
+    problem base has already fixed (e.g. a since-patched dependency), which
+    only actually rebasing picks up. When the branch is already current,
+    `git rebase` is a no-op, so this is always safe to call.
+    """
     ok, status = git_ops.rebase_onto(cfg.repo_dir, cfg.base_branch)
     if ok:
         return True
@@ -332,7 +352,7 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
 
     git_ops.checkout_branch_at_remote(cfg.repo_dir, pr.head_ref_name)
 
-    if pr.merge_conflict and not _resolve_conflicts(cfg):
+    if not _resolve_conflicts(cfg):
         _mark_stuck(cfg, pr, "could not resolve merge conflicts")
         return False
 
@@ -361,7 +381,12 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
     if not committed:
         log.warning("PR #%d: opencode made no net changes; nothing to push", pr.number)
         return False
-    git_ops.push(cfg.repo_dir, pr.head_ref_name, force_with_lease=pr.merge_conflict)
+    # force_with_lease unconditionally, not just pr.merge_conflict: the
+    # rebase-onto-base above now always runs, so history may have been
+    # rewritten even when GitHub never flagged a conflict (a plain "behind
+    # base" branch rebases cleanly with no label at all). A plain push
+    # would be rejected as non-fast-forward in that case.
+    git_ops.push(cfg.repo_dir, pr.head_ref_name, force_with_lease=True)
     log.info("PR #%d: pushed a fix, letting CI/review automation re-evaluate", pr.number)
     return True
 

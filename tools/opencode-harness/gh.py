@@ -262,7 +262,7 @@ def get_failing_check_logs(repo: str, number: int, max_chars: int = 12000) -> st
         except GhError as exc:
             out = f"(could not fetch log for run {run_id}: {exc})"
         if not out.strip():
-            out = "(no failed-step log content returned for this check; inspect it on GitHub directly)"
+            out = "(no failed-step log content returned for this check; inspect it on GitHub)"
         if len(out) > per_job_budget:
             out = "...(truncated)...\n" + out[-per_job_budget:]
         logs.append(f"=== {name} (run {run_id}) ===\n{out}")

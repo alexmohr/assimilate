@@ -405,6 +405,7 @@ describe('SystemView', () => {
       expect(wrapper.text()).toContain('Hosts created: 2')
       expect(wrapper.text()).toContain('Schedules created: 3')
       expect(wrapper.text()).toContain('Repos created: 1')
+      expect(wrapper.text()).toContain('Repos updated: 0')
     })
 
     it('shows error when import API fails', async () => {

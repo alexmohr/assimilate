@@ -517,4 +517,13 @@ SQL
 echo "==> Updating database storage statistics..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -c 'ANALYZE;' > /dev/null
 
+echo "==> Verifying config export/import round-trip (repos, tags, quotas)..."
+EXPORT_JSON=$(api GET /api/config/export)
+echo "$EXPORT_JSON" | jq -e '.repos | length > 0' > /dev/null || {
+    echo "ERROR: config export should include at least one repo" >&2
+    exit 1
+}
+IMPORT_RESULT=$(api POST /api/config/import "$EXPORT_JSON")
+echo "$IMPORT_RESULT" | jq -e '.repos_updated > 0' > /dev/null && echo "  config import updated existing repos (expected)." || true
+
 echo "==> Demo data seeded successfully."

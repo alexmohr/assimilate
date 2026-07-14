@@ -96,21 +96,53 @@ def _fingerprint(
     return hashlib.sha256("\x00".join(parts).encode()).hexdigest()
 
 
+def _failure_signature(step: str, output: str) -> str:
+    return hashlib.sha256(f"{step}\x00{output}".encode()).hexdigest()
+
+
+# Absolute ceiling on local attempts regardless of whether each one is making
+# progress - without this, a chain of distinct-but-never-converging failures
+# would retry forever, burning unbounded opencode calls/time on one cycle.
+_MAX_LOCAL_ATTEMPTS_HARD_CAP_MULTIPLIER = 3
+
+
 def run_fix_and_validate(cfg: Config, prompt: str) -> tuple[bool, str]:
     """Runs opencode, then this repo's own validation commands, retrying with
-    the concrete failure fed back in - never trusting the model's say-so."""
+    the concrete failure fed back in - never trusting the model's say-so.
+
+    An attempt whose failure differs from the previous one counts as
+    progress (fix bug A, reveal distinct bug B) and doesn't count against
+    `max_local_validation_attempts` - only a failure that repeats *identically*
+    does. Without this, a chain of real, distinct bugs revealed one at a time
+    would exhaust the attempt budget and push nothing, and the next cycle's
+    cross-cycle circuit breaker (see harness.py's stuck-cycle tracking) would
+    then see "the same problem" persisting externally (nothing was pushed, so
+    CI's own failure never changed) even though opencode kept finding and
+    fixing genuinely new issues locally, just never enough of them in one go
+    to land a pushable state. A hard cap (independent of whether progress is
+    being made) still bounds worst-case cost/time.
+    """
     current_prompt = prompt
-    for attempt in range(1, cfg.max_local_validation_attempts + 1):
+    attempt = 0
+    no_progress_streak = 0
+    last_failure_sig: str | None = None
+    hard_cap = cfg.max_local_validation_attempts * _MAX_LOCAL_ATTEMPTS_HARD_CAP_MULTIPLIER
+    while True:
+        attempt += 1
         result = opencode_runner.run_opencode(
             current_prompt, cfg.repo_dir, cfg.opencode_model, cfg.opencode_timeout_seconds
         )
         if not result.ok:
+            no_progress_streak += 1
             log.info(
-                "opencode run failed (attempt %d/%d): %s",
+                "opencode run failed (attempt %d, %d/%d with no progress): %s",
                 attempt,
+                no_progress_streak,
                 cfg.max_local_validation_attempts,
                 result.output[:500],
             )
+            if no_progress_streak >= cfg.max_local_validation_attempts or attempt >= hard_cap:
+                return False, f"opencode run failing, no progress after {attempt} attempts"
             current_prompt = prompts.build_retry_prompt(
                 current_prompt, "opencode run", result.output
             )
@@ -134,16 +166,24 @@ def run_fix_and_validate(cfg: Config, prompt: str) -> tuple[bool, str]:
             validation = validate.run_all(cfg.repo_dir, git_ops.changed_files(cfg.repo_dir))
         if validation.ok:
             return True, "validated"
+
+        failure_sig = _failure_signature(validation.step, validation.output)
+        made_progress = failure_sig != last_failure_sig
+        last_failure_sig = failure_sig
+        no_progress_streak = 0 if made_progress else no_progress_streak + 1
         log.info(
-            "validation step '%s' failed (attempt %d/%d)",
+            "validation step '%s' failed (attempt %d, %s, %d/%d with no progress)",
             validation.step,
             attempt,
+            "new failure" if made_progress else "same failure repeated",
+            no_progress_streak,
             cfg.max_local_validation_attempts,
         )
+        if no_progress_streak >= cfg.max_local_validation_attempts or attempt >= hard_cap:
+            return False, f"validation still failing after {attempt} attempts"
         current_prompt = prompts.build_retry_prompt(
             current_prompt, validation.step, validation.output
         )
-    return False, f"validation still failing after {cfg.max_local_validation_attempts} attempts"
 
 
 # CI checks the harness can resolve deterministically, without opencode:

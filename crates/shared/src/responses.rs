@@ -1934,6 +1934,7 @@ pub struct ScheduleExportResponse {
     /// Raw exclude patterns.
     pub exclude_patterns_raw: String,
     /// Raw file change detection patterns.
+    #[serde(default)]
     pub file_change_patterns_raw: String,
     /// Whether global exclude patterns are ignored.
     pub ignore_global_excludes: bool,

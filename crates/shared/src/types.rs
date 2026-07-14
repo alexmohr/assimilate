@@ -348,6 +348,7 @@ pub enum ScheduleType {
 pub enum ExecutionMode {
     /// Schedules run one at a time, never overlapping.
     #[default]
+    #[serde(alias = "parallel")]
     Sequential,
 }
 

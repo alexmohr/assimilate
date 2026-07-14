@@ -22,8 +22,14 @@ clean (since `cargo test --workspace --lib --bins` never touches those
 files), push, and only find out several minutes later via a full CI
 round-trip that its "fix" broke an integration test, burning through
 HARNESS_MAX_STUCK_CYCLES on slow, unverifiable guesses instead of fast local
-iteration. When no DB is reachable, this falls back to `--lib --bins` only
-and defers to CI for that tier, same as before.
+iteration. If no DB is already reachable, this tries to start one itself via
+`docker run` (matching this repo's own CI Postgres service exactly - image,
+credentials, port) rather than requiring the operator to have set one up by
+hand - see _ensure_docker_postgres_running. The container is left running
+across cycles (like frontend/node_modules - see git_ops._CLEAN_EXCLUDES) so
+this only actually costs a cold start once. If Docker isn't installed, or
+starting it fails for any reason, this falls back to `--lib --bins` only and
+defers to CI for that tier, same as before any of this existed.
 
 Each command is streamed via procstream.run_streaming rather than captured
 silently until it exits - pre-commit (installing hook environments on a
@@ -36,6 +42,9 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import shutil
+import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -48,6 +57,8 @@ _LOCKFILE_HASH_MARKER = ".harness-lockfile-hash"
 # credential, just the fixed local dev/CI Postgres this repo's tests assume
 # (see crates/server/tests/db_queries.rs's own module docs).
 _DEFAULT_DATABASE_URL = "postgres://borg:borg_secret@localhost:5432/borg"
+_DOCKER_CONTAINER_NAME = "opencode-harness-postgres"
+_DOCKER_STARTUP_TIMEOUT_SECONDS = 60
 
 RUST_FMT_ARGS = [
     "cargo",
@@ -90,20 +101,95 @@ def _db_env() -> dict[str, str]:
     return env
 
 
-def _db_reachable(cwd: Path) -> bool:
-    """Best-effort probe: true if a Postgres is reachable at DATABASE_URL and
-    this repo's migrations apply cleanly against it - the same DB this
-    repo's CI spins up for its Database Integration Tests / Nightly Tests
-    jobs. `cargo sqlx migrate run` is idempotent (a no-op against a DB
-    that's already current), so this is safe and cheap to call every cycle.
-    """
-    result = _run(
+def _migrations_apply(cwd: Path) -> bool:
+    return _run(
         cwd,
         ["cargo", "sqlx", "migrate", "run", "--source", "crates/server/migrations"],
-        timeout=60,
+        timeout=30,
         env=_db_env(),
+    ).ok
+
+
+def _ensure_docker_postgres_running() -> bool:
+    """Starts (or reuses, across cycles) a local Postgres container matching
+    this repo's own CI service exactly - image, credentials, port - so a
+    reachable DB doesn't have to be something the operator set up by hand
+    for opencode's local DB-backed test runs to work at all.
+
+    Best-effort and silent on failure: if Docker isn't installed, or
+    something else entirely already owns port 5432, this just returns False
+    and _db_reachable falls back to skipping the DB-backed suite, same as
+    if this didn't exist. Left running (not stopped/removed) after use, same
+    reasoning as frontend/node_modules in git_ops._CLEAN_EXCLUDES - so only
+    the first cycle that needs it pays the container cold-start cost.
+    """
+    if shutil.which("docker") is None:
+        return False
+    try:
+        inspect = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", _DOCKER_CONTAINER_NAME],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if inspect.returncode == 0:
+            if inspect.stdout.strip() == "true":
+                return True
+            started = subprocess.run(
+                ["docker", "start", _DOCKER_CONTAINER_NAME],
+                capture_output=True,
+                timeout=30,
+            )
+            return started.returncode == 0
+        run = subprocess.run(
+            [
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                _DOCKER_CONTAINER_NAME,
+                "-e",
+                "POSTGRES_DB=borg",
+                "-e",
+                "POSTGRES_USER=borg",
+                "-e",
+                "POSTGRES_PASSWORD=borg_secret",
+                "-p",
+                "5432:5432",
+                "postgres:latest",
+            ],
+            capture_output=True,
+            timeout=60,
+        )
+        return run.returncode == 0
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        log.warning("could not start local Postgres via docker: %s", exc)
+        return False
+
+
+def _db_reachable(cwd: Path) -> bool:
+    """Best-effort: true if a Postgres is reachable at DATABASE_URL and this
+    repo's migrations apply cleanly against it - the same DB this repo's CI
+    spins up for its Database Integration Tests / Nightly Tests jobs.
+    Attempts to start one itself via Docker if nothing answers yet, then
+    polls until migrations succeed or _DOCKER_STARTUP_TIMEOUT_SECONDS
+    elapses. `cargo sqlx migrate run` is idempotent (a no-op against a DB
+    that's already current), so this is safe and cheap to call every cycle.
+    """
+    if _migrations_apply(cwd):
+        return True
+    if not _ensure_docker_postgres_running():
+        return False
+    deadline = time.monotonic() + _DOCKER_STARTUP_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if _migrations_apply(cwd):
+            return True
+        time.sleep(2)
+    log.warning(
+        "started a local Postgres container but migrations didn't succeed within %ss",
+        _DOCKER_STARTUP_TIMEOUT_SECONDS,
     )
-    return result.ok
+    return False
 
 
 def run_rust_checks(cwd: Path, timeout: int = 1800) -> list[ValidationResult]:

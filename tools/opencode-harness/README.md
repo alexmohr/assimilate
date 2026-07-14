@@ -89,13 +89,16 @@ asked to edit files.
 * A local clone of `alexmohr/assimilate` that this process can freely
   `checkout`/`reset --hard`/`clean -fdx` in. **Use a disposable clone, not
   your working checkout** — see Safety below.
-* Optional but strongly recommended: a Postgres reachable at `DATABASE_URL`
-  (`cargo install sqlx-cli --locked --no-default-features --features
-  postgres`, then e.g. `docker compose up -d postgres`, matching this repo's
-  own CI service). Without it, the harness can't run this repo's
-  `#[sqlx::test]`-based integration suite locally at all - only CI will ever
-  catch a regression there, several minutes and a full push later instead of
-  within opencode's own local retry loop.
+* Optional but strongly recommended: `cargo install sqlx-cli --locked
+  --no-default-features --features postgres`, and `docker` on `PATH`. If no
+  Postgres is already reachable at `DATABASE_URL`, the harness starts one
+  itself (`docker run`, matching this repo's own CI service exactly - image,
+  credentials, port 5432) rather than requiring you to set one up by hand,
+  and leaves it running across cycles. Without `sqlx-cli`/`docker`, the
+  harness can't run this repo's `#[sqlx::test]`-based integration suite
+  locally at all - only CI will ever catch a regression there, several
+  minutes and a full push later instead of within opencode's own local
+  retry loop.
 
 ## Configuration
 
@@ -200,3 +203,8 @@ WantedBy=default.target
 * `HARNESS_IGNORE_LABEL` (`opencode-harness-ignore` by default) is your
   manual override: add it to any PR or issue you want the harness to leave
   alone entirely.
+* If Docker is on `PATH` and no Postgres is already reachable, the harness
+  will start one itself (a container named `opencode-harness-postgres`,
+  bound to host port 5432) to run the DB-backed test suite locally - see
+  Requirements above. It reuses/restarts that same container across cycles
+  rather than tearing it down, and never touches any other container.

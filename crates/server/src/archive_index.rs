@@ -15,6 +15,7 @@ use crate::{
     api::archives::{
         ContentEntry, LOCK_WAIT_SECS, classify_borg_error, get_repo_env, normalize_path,
     },
+    background_tasks::BackgroundTaskTracker,
     borg::Borg,
     error::ApiError,
 };
@@ -145,6 +146,7 @@ pub async fn ensure_indexed(
     repo_id: i64,
     archive_name: String,
     repo_lock: RepoLock,
+    background_task_tracker: &BackgroundTaskTracker,
 ) -> Result<IndexStatus, ApiError> {
     let archive_id = get_or_create_archive_id(&pool, repo_id, &archive_name).await?;
 
@@ -161,7 +163,9 @@ pub async fn ensure_indexed(
         // We claimed the job - spawn background indexing.
         let pool_bg = pool.clone();
         let archive_name_bg = archive_name.clone();
+        let task_guard = background_task_tracker.begin();
         tokio::spawn(async move {
+            let _task_guard = task_guard;
             if let Err(e) = run_indexing(
                 &pool_bg,
                 &encryption_key,

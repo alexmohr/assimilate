@@ -482,7 +482,9 @@ fn dispatch_quota_breach_notification(
         archive_name: None,
     };
     let service = state.notification_service.clone();
+    let task_guard = state.background_task_tracker.begin();
     tokio::spawn(async move {
+        let _task_guard = task_guard;
         if let Err(e) = notifications::dispatch(&service, quota_event).await {
             tracing::error!(error = %e, "notification dispatch failed");
         }
@@ -943,6 +945,7 @@ fn spawn_post_backup_indexing(state: &AppState, repo_id: i64, archive_name: Stri
     let pool = state.pool.clone();
     let encryption_key = state.encryption_key;
     let repo_lock = state.repo_lock.clone();
+    let background_task_tracker = state.background_task_tracker.clone();
     let task_guard = state.background_task_tracker.begin();
     tokio::spawn(async move {
         let _task_guard = task_guard;
@@ -952,6 +955,7 @@ fn spawn_post_backup_indexing(state: &AppState, repo_id: i64, archive_name: Stri
             repo_id,
             archive_name.clone(),
             repo_lock,
+            &background_task_tracker,
         )
         .await
         {
@@ -1132,7 +1136,9 @@ async fn dispatch_backup_completion_notification(
         archive_name,
     };
     let service = state.notification_service.clone();
+    let task_guard = state.background_task_tracker.begin();
     tokio::spawn(async move {
+        let _task_guard = task_guard;
         if let Err(e) = notifications::dispatch(&service, event).await {
             tracing::error!(error = %e, "notification dispatch failed");
         }
@@ -1540,7 +1546,9 @@ async fn handle_check_completed(args: CheckCompletedArgs<'_>) {
         archive_name: None,
     };
     let service = state.notification_service.clone();
+    let task_guard = state.background_task_tracker.begin();
     tokio::spawn(async move {
+        let _task_guard = task_guard;
         if let Err(e) = notifications::dispatch(&service, event).await {
             tracing::error!(error = %e, "notification dispatch failed");
         }
@@ -2031,6 +2039,24 @@ exit 0
         })
         .await
         .expect("timed out waiting for archive indexing");
+
+        wait_for_background_tasks(&state.background_task_tracker).await;
+    }
+
+    /// Waits for every tracked fire-and-forget background task (notification
+    /// dispatch, post-backup indexing, ...) spawned by the call under test to
+    /// finish, so the test doesn't return - and tear down its `#[sqlx::test]`
+    /// runtime - while one is still mid-flight. Otherwise whether such a
+    /// task's remaining lines execute before the runtime drops is a
+    /// scheduling race.
+    async fn wait_for_background_tasks(tracker: &crate::background_tasks::BackgroundTaskTracker) {
+        timeout(Duration::from_secs(5), async {
+            while tracker.any_active() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("timed out waiting for background tasks to finish");
     }
 
     /// Create a test agent+repo+schedule triple linked via `schedule_targets`.
@@ -2375,6 +2401,8 @@ exit 0
             .await
             .expect("get schedule");
         assert!(!updated.enabled);
+
+        wait_for_background_tasks(&state.background_task_tracker).await;
     }
 
     #[ignore = "requires DATABASE_URL"]
@@ -2500,5 +2528,7 @@ exit 0
             .await
             .expect("get schedule");
         assert!(!updated.enabled);
+
+        wait_for_background_tasks(&state.background_task_tracker).await;
     }
 }

@@ -867,9 +867,9 @@ fn spawn_log_forwarder(
     repo_id: RepoId,
     schedule_id: Option<i64>,
     outbound_tx: mpsc::Sender<AgentToServer>,
-) -> mpsc::Sender<String> {
+) -> (mpsc::Sender<String>, tokio::task::JoinHandle<()>) {
     let (log_tx, mut log_rx) = mpsc::channel::<String>(256);
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         while let Some(line) = log_rx.recv().await {
             let msg = AgentToServer::BackupLog {
                 repo_id,
@@ -881,7 +881,7 @@ fn spawn_log_forwarder(
             }
         }
     });
-    log_tx
+    (log_tx, handle)
 }
 
 async fn run_backup_task(
@@ -925,7 +925,7 @@ async fn run_backup_task(
         None
     };
 
-    let log_tx = spawn_log_forwarder(repo_id, schedule_id, outbound_tx.clone());
+    let (log_tx, log_forwarder) = spawn_log_forwarder(repo_id, schedule_id, outbound_tx.clone());
     let (report, canary_result) = match engine
         .run_backup(&target, canary.as_ref(), Some(log_tx))
         .await
@@ -964,6 +964,10 @@ async fn run_backup_task(
             )
         }
     };
+
+    if let Err(e) = log_forwarder.await {
+        tracing::debug!(error = %e, "log forwarder task panicked");
+    }
 
     let msg = AgentToServer::BackupCompleted { report };
     if let Err(e) = outbound_tx.send(msg).await {

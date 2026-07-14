@@ -11,17 +11,14 @@ vi.mock('../composables/useTimezone', () => ({
 import { renderWithPlugins } from '../test-utils'
 import ReposView from './ReposView.vue'
 
-vi.mock('../api/client', () => ({
-  apiClient: {
-    get: vi.fn(),
-    post: vi.fn(),
-    put: vi.fn(),
-    delete: vi.fn(),
-  },
-}))
+vi.mock('../api/client')
 
-vi.mock('../composables/useEscapeKey', () => ({
-  useEscapeKey: vi.fn(),
+vi.mock('../composables/useEscapeKey')
+
+vi.mock('../composables/useWebSocket', () => ({
+  useWebSocket: (): { onMessage: ReturnType<typeof vi.fn> } => ({
+    onMessage: vi.fn(),
+  }),
 }))
 
 vi.mock('../composables/useMobile', () => ({
@@ -176,11 +173,7 @@ describe('ReposView', () => {
   })
 
   it('shows empty state when no repositories exist', async () => {
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/repos/stats') return Promise.resolve({ data: [] })
-      if (url === '/repo-tags') return Promise.resolve({ data: [] })
-      return Promise.resolve({ data: [] })
-    })
+    setupApiSuccess([])
     const wrapper = renderWithPlugins(ReposView, {
       storeState: { auth: { user: { role: 'admin' } } },
     })
@@ -274,11 +267,7 @@ describe('ReposView', () => {
       importing: true,
       import_total: 0,
     }
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/repos/stats') return Promise.resolve({ data: [importingRepo] })
-      if (url === '/repo-tags') return Promise.resolve({ data: [] })
-      return Promise.resolve({ data: [] })
-    })
+    setupApiSuccess([importingRepo])
     const wrapper = renderWithPlugins(ReposView, {
       storeState: { auth: { user: { role: 'viewer' } } },
     })
@@ -298,11 +287,7 @@ describe('ReposView', () => {
       import_progress: 42,
       import_total: 100,
     }
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/repos/stats') return Promise.resolve({ data: [importingRepo] })
-      if (url === '/repo-tags') return Promise.resolve({ data: [] })
-      return Promise.resolve({ data: [] })
-    })
+    setupApiSuccess([importingRepo])
     const wrapper = renderWithPlugins(ReposView, {
       storeState: { auth: { user: { role: 'viewer' } } },
     })
@@ -322,11 +307,7 @@ describe('ReposView', () => {
       import_total: 0,
       import_status_message: 'Indexing archive contents…',
     }
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/repos/stats') return Promise.resolve({ data: [indexingRepo] })
-      if (url === '/repo-tags') return Promise.resolve({ data: [] })
-      return Promise.resolve({ data: [] })
-    })
+    setupApiSuccess([indexingRepo])
     const wrapper = renderWithPlugins(ReposView, {
       storeState: { auth: { user: { role: 'viewer' } } },
     })
@@ -348,11 +329,7 @@ describe('ReposView', () => {
       import_total: 50,
       import_status_message: 'Indexing archive contents…',
     }
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/repos/stats') return Promise.resolve({ data: [indexingRepo] })
-      if (url === '/repo-tags') return Promise.resolve({ data: [] })
-      return Promise.resolve({ data: [] })
-    })
+    setupApiSuccess([indexingRepo])
     const wrapper = renderWithPlugins(ReposView, {
       storeState: { auth: { user: { role: 'viewer' } } },
     })

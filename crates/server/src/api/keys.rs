@@ -221,6 +221,11 @@ pub async fn change_passphrase(
 
     db::update_repo_passphrase(&state.pool, repo_id, &encrypted).await?;
 
+    // A real passphrase means the repo is ready for scheduled sync - clear the
+    // importing guard that was set (e.g. by config import) to prevent sync with
+    // a placeholder passphrase.
+    let _ = db::set_repo_importing(&state.pool, repo_id, false).await;
+
     insert_audit_entry(
         &state.pool,
         &NewAuditEntry {

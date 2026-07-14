@@ -8,6 +8,6 @@
     "frontend/src/types/generated/**",
     ".sqlx/**"
   ],
-  "minLines": 15,
+  "minLines": 10,
   "minTokens": 70
 }

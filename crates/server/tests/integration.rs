@@ -2313,6 +2313,384 @@ async fn test_import_config_repo_with_tags(pool: sqlx::PgPool) {
     );
 }
 
+#[sqlx::test(migrations = "./migrations")]
+async fn test_export_then_import_repo_roundtrip(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+
+    // Create a repo with all the trimmings: quota, SSH host key, tags.
+    let encryption_key: [u8; 32] =
+        shared::crypto::derive_key(b"test-secret-key-for-integration").unwrap();
+    let passphrase_encrypted =
+        shared::crypto::encrypt_passphrase("borg-pass", &encryption_key).unwrap();
+    let repo_id: i64 = sqlx::query_scalar(
+        "INSERT INTO repos (name, repo_path, ssh_user, ssh_host, ssh_port, passphrase_encrypted, \
+         compression, encryption) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+    )
+    .bind("roundtrip-repo")
+    .bind("/backups/roundtrip")
+    .bind("borg")
+    .bind("remote-host")
+    .bind(2222i32)
+    .bind(&passphrase_encrypted)
+    .bind("lz4")
+    .bind("repokey")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Insert SSH host key
+    sqlx::query("INSERT INTO repo_ssh_host_keys (repo_name, host_key) VALUES ($1, $2)")
+        .bind("roundtrip-repo")
+        .bind("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Insert quota
+    sqlx::query(
+        "INSERT INTO repo_quotas (repo_id, warn_bytes, critical_bytes, warn_action, \
+         critical_action, enabled, updated_at) VALUES ($1, $2, $3, $4, $5, true, NOW())",
+    )
+    .bind(repo_id)
+    .bind(1_000_000_000i64)
+    .bind(2_000_000_000i64)
+    .bind("notify")
+    .bind("block_backups")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Create tags and associate them with the repo
+    let tag1_id: i64 = sqlx::query_scalar(
+        "INSERT INTO tags (name, color, scope) VALUES ('critical', '#EF4444', 'repo') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let tag2_id: i64 = sqlx::query_scalar(
+        "INSERT INTO tags (name, color, scope) VALUES ('production', '#3B82F6', 'repo') RETURNING \
+         id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO repo_tags (repo_id, tag_id) VALUES ($1, $2)")
+        .bind(repo_id)
+        .bind(tag1_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO repo_tags (repo_id, tag_id) VALUES ($1, $2)")
+        .bind(repo_id)
+        .bind(tag2_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Export config
+    let mut app = build_test_app(pool.clone());
+    let resp = oneshot(&mut app, get_request("/api/config/export")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let export = body_json(resp).await;
+
+    // The export must contain one repo
+    let repos = export.get("repos").and_then(|v| v.as_array()).unwrap();
+    assert_eq!(repos.len(), 1);
+    let repo = repos.first().unwrap();
+    assert_eq!(repo["name"], "roundtrip-repo");
+    assert_eq!(
+        repo["ssh_host_key"],
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI..."
+    );
+    assert_eq!(repo["quota_warn_bytes"], 1_000_000_000);
+    assert_eq!(repo["quota_critical_bytes"], 2_000_000_000);
+    assert_eq!(repo["quota_warn_action"], "notify");
+    assert_eq!(repo["quota_critical_action"], "block_backups");
+    assert!(
+        repo["tags"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("critical"))
+    );
+    assert!(
+        repo["tags"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("production"))
+    );
+    // Passphrase must never be exported
+    assert!(repo.get("passphrase").is_none());
+
+    // Wipe the repo
+    sqlx::query("DELETE FROM repo_tags WHERE repo_id = $1")
+        .bind(repo_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM tags")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM repo_quotas WHERE repo_id = $1")
+        .bind(repo_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM repo_ssh_host_keys WHERE repo_name = 'roundtrip-repo'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM repos WHERE id = $1")
+        .bind(repo_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Re-import the same export
+    let resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/config/import", Some(export)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("repos_created").unwrap(), 1);
+
+    // Verify the repo was restored
+    let new_repo_id: i64 = sqlx::query_scalar("SELECT id FROM repos WHERE name = 'roundtrip-repo'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // Check SSH host key
+    let host_key: String = sqlx::query_scalar(
+        "SELECT host_key FROM repo_ssh_host_keys WHERE repo_name = 'roundtrip-repo'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(host_key, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...");
+
+    // Check quota
+    let (warn_bytes, critical_bytes, warn_action, critical_action): (
+        Option<i64>,
+        Option<i64>,
+        String,
+        String,
+    ) = sqlx::query_as(
+        "SELECT warn_bytes, critical_bytes, warn_action, critical_action FROM repo_quotas WHERE \
+         repo_id = $1",
+    )
+    .bind(new_repo_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(warn_bytes, Some(1_000_000_000));
+    assert_eq!(critical_bytes, Some(2_000_000_000));
+    assert_eq!(warn_action, "notify");
+    assert_eq!(critical_action, "block_backups");
+
+    // Check tags (scope must be 'repo', not 'global')
+    let tag_rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT t.name, t.scope FROM tags t JOIN repo_tags rt ON rt.tag_id = t.id WHERE \
+         rt.repo_id = $1 ORDER BY t.name",
+    )
+    .bind(new_repo_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(tag_rows.len(), 2);
+    assert_eq!(
+        tag_rows.first().unwrap(),
+        &("critical".to_string(), "repo".to_string())
+    );
+    assert_eq!(
+        tag_rows.get(1).unwrap(),
+        &("production".to_string(), "repo".to_string())
+    );
+
+    // The imported repo should be marked as importing (placeholder passphrase)
+    let importing: bool =
+        sqlx::query_scalar("SELECT importing FROM repo_import_state WHERE repo_id = $1")
+            .bind(new_repo_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap()
+            .unwrap_or(false);
+    assert!(
+        importing,
+        "imported repo must be guarded against scheduler sync"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_import_repo_updates_existing(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+
+    // Start with a repo
+    let encryption_key: [u8; 32] =
+        shared::crypto::derive_key(b"test-secret-key-for-integration").unwrap();
+    let passphrase_encrypted =
+        shared::crypto::encrypt_passphrase("original-pass", &encryption_key).unwrap();
+    let repo_id: i64 = sqlx::query_scalar(
+        "INSERT INTO repos (name, repo_path, ssh_user, ssh_host, ssh_port, passphrase_encrypted, \
+         compression, encryption) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+    )
+    .bind("update-repo")
+    .bind("/backups/original")
+    .bind("borg")
+    .bind("old-host")
+    .bind(22i32)
+    .bind(&passphrase_encrypted)
+    .bind("lz4")
+    .bind("repokey")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Give it a tag so we can verify update-side tag sync
+    let tag_id: i64 = sqlx::query_scalar(
+        "INSERT INTO tags (name, color, scope) VALUES ('legacy', '#888888', 'repo') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO repo_tags (repo_id, tag_id) VALUES ($1, $2)")
+        .bind(repo_id)
+        .bind(tag_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Give it an SSH host key
+    sqlx::query("INSERT INTO repo_ssh_host_keys (repo_name, host_key) VALUES ($1, $2)")
+        .bind("update-repo")
+        .bind("old-host-key")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Give it a quota
+    sqlx::query(
+        "INSERT INTO repo_quotas (repo_id, warn_bytes, critical_bytes, warn_action, \
+         critical_action, enabled, updated_at) VALUES ($1, $2, $3, $4, $5, true, NOW())",
+    )
+    .bind(repo_id)
+    .bind(500_000_000i64)
+    .bind(1_000_000_000i64)
+    .bind("notify")
+    .bind("notify")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Import a config that matches the same repo name but with different settings
+    let payload = json!({
+        "version": 1,
+        "exported_at": "2026-06-01T00:00:00Z",
+        "hosts": [],
+        "schedules": [],
+        "repos": [
+            {
+                "name": "update-repo",
+                "repo_path": "/backups/updated",
+                "ssh_user": "borg",
+                "ssh_host": "new-host",
+                "ssh_port": 2222,
+                "compression": "zstd",
+                "encryption": "repokey",
+                "enabled": true,
+                "sync_schedule": "0 */6 * * *",
+                "ssh_host_key": "new-host-key-ssh-ed25519",
+                "quota_warn_bytes": 2_000_000_000,
+                "quota_critical_bytes": 2_000_000_000,
+                "quota_warn_action": "warn",
+                "quota_critical_action": "block_backups",
+                "tags": ["updated-tag"]
+            }
+        ]
+    });
+
+    let mut app = build_test_app(pool.clone());
+    let resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/config/import", Some(payload)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("repos_updated").unwrap(), 1);
+    assert_eq!(body.get("repos_created").unwrap(), 0);
+
+    // Verify the repo was updated, not duplicated
+    let repo_ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM repos WHERE name = 'update-repo'")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(repo_ids.len(), 1);
+    let updated_id = *repo_ids.first().unwrap();
+    assert_eq!(updated_id, repo_id);
+
+    // Verify updated fields
+    let (repo_path, ssh_host, ssh_port, compression, sync_schedule): (
+        String,
+        String,
+        i32,
+        String,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT repo_path, ssh_host, ssh_port, compression, sync_schedule FROM repos WHERE id = $1",
+    )
+    .bind(updated_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(repo_path, "/backups/updated");
+    assert_eq!(ssh_host, "new-host");
+    assert_eq!(ssh_port, 2222);
+    assert_eq!(compression, "zstd");
+    assert_eq!(sync_schedule.as_deref(), Some("0 */6 * * *"));
+
+    // Verify SSH host key was updated
+    let host_key: String = sqlx::query_scalar(
+        "SELECT host_key FROM repo_ssh_host_keys WHERE repo_name = 'update-repo'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(host_key, "new-host-key-ssh-ed25519");
+
+    // Verify quota was upserted
+    let (warn_bytes, critical_bytes, warn_action, critical_action): (
+        Option<i64>,
+        Option<i64>,
+        String,
+        String,
+    ) = sqlx::query_as(
+        "SELECT warn_bytes, critical_bytes, warn_action, critical_action FROM repo_quotas WHERE \
+         repo_id = $1",
+    )
+    .bind(updated_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(warn_bytes, Some(2_000_000_000));
+    assert_eq!(critical_bytes, Some(2_000_000_000));
+    assert_eq!(warn_action, "warn");
+    assert_eq!(critical_action, "block_backups");
+
+    // Verify tags were synced (old tag replaced by new one)
+    let tag_names: Vec<String> = sqlx::query_scalar(
+        "SELECT t.name FROM tags t JOIN repo_tags rt ON rt.tag_id = t.id WHERE rt.repo_id = $1 \
+         ORDER BY t.name",
+    )
+    .bind(updated_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(tag_names, vec!["updated-tag"]);
+}
+
 // -- admin-only enforcement on agent-mutating endpoints --
 
 const NON_ADMIN_SESSION_ID: &str = "non-admin-session-id-000000000000000";

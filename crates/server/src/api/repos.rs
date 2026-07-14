@@ -3671,10 +3671,16 @@ pub async fn reset_import(
     _admin: RequireAdmin,
     Path(repo_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    db::get_repo_with_stats(&state.pool, repo_id).await?;
+    let repo = db::get_repo_with_stats(&state.pool, repo_id).await?;
     let cancelled = state.import_tasks.cancel(repo_id).await;
     if cancelled {
-        info!(repo_id, "cancelled active import task");
+        info!(repo_id, repo_name = %repo.name, "repo sync cancelled");
+        let msg = format!("repo sync cancelled for '{}'", repo.name);
+        if let Err(e) =
+            db::insert_system_event(&state.pool, "repo_sync_cancelled", None, &msg).await
+        {
+            tracing::error!(repo_id, error = %e, "failed to log sync cancelled event");
+        }
     }
     db::set_repo_importing(&state.pool, repo_id, false).await?;
     db::set_repo_import_error(&state.pool, repo_id, None).await?;

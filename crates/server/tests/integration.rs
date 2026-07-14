@@ -2339,7 +2339,7 @@ async fn test_export_then_import_repo_roundtrip(pool: sqlx::PgPool) {
     .unwrap();
 
     // Insert SSH host key
-    sqlx::query("INSERT INTO repo_ssh_host_keys (repo_name, host_key) VALUES ($1, $2)")
+    sqlx::query("UPDATE repos SET ssh_host_key = $2 WHERE name = $1")
         .bind("roundtrip-repo")
         .bind("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...")
         .execute(&pool)
@@ -2436,7 +2436,7 @@ async fn test_export_then_import_repo_roundtrip(pool: sqlx::PgPool) {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("DELETE FROM repo_ssh_host_keys WHERE repo_name = 'roundtrip-repo'")
+    sqlx::query("UPDATE repos SET ssh_host_key = NULL WHERE name = 'roundtrip-repo'")
         .execute(&pool)
         .await
         .unwrap();
@@ -2463,12 +2463,11 @@ async fn test_export_then_import_repo_roundtrip(pool: sqlx::PgPool) {
         .unwrap();
 
     // Check SSH host key
-    let host_key: String = sqlx::query_scalar(
-        "SELECT host_key FROM repo_ssh_host_keys WHERE repo_name = 'roundtrip-repo'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let host_key: String =
+        sqlx::query_scalar("SELECT ssh_host_key FROM repos WHERE name = 'roundtrip-repo'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(host_key, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...");
 
     // Check quota
@@ -2563,7 +2562,7 @@ async fn test_import_repo_updates_existing(pool: sqlx::PgPool) {
         .unwrap();
 
     // Give it an SSH host key
-    sqlx::query("INSERT INTO repo_ssh_host_keys (repo_name, host_key) VALUES ($1, $2)")
+    sqlx::query("UPDATE repos SET ssh_host_key = $2 WHERE name = $1")
         .bind("update-repo")
         .bind("old-host-key")
         .execute(&pool)
@@ -2652,12 +2651,11 @@ async fn test_import_repo_updates_existing(pool: sqlx::PgPool) {
     assert_eq!(sync_schedule.as_deref(), Some("0 */6 * * *"));
 
     // Verify SSH host key was updated
-    let host_key: String = sqlx::query_scalar(
-        "SELECT host_key FROM repo_ssh_host_keys WHERE repo_name = 'update-repo'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let host_key: String =
+        sqlx::query_scalar("SELECT ssh_host_key FROM repos WHERE name = 'update-repo'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(host_key, "new-host-key-ssh-ed25519");
 
     // Verify quota was upserted

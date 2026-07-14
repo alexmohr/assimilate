@@ -43,9 +43,16 @@ asked to edit files.
    then — if the change touches Rust/frontend code — the exact commands
    from [`skills/rust/SKILL.md`](../../skills/rust/SKILL.md) and
    [`skills/frontend/SKILL.md`](../../skills/frontend/SKILL.md)'s validation
-   checklists (`cargo test` is scoped to `--lib --bins`; the
-   `#[sqlx::test]`-based DB integration suite needs a live Postgres this
-   local gate doesn't have, and is CI's job instead). If any step fails,
+   checklists. `cargo test` always runs `--lib --bins`; if a Postgres is
+   also reachable at `DATABASE_URL` (default
+   `postgres://borg:borg_secret@localhost:5432/borg`, same as this repo's
+   own CI), it additionally runs the full `#[sqlx::test]`-based suite in
+   `crates/server/tests/{db_queries,integration}.rs` — the same tests CI's
+   "Database Integration Tests"/"Nightly Tests" jobs run. Without a
+   reachable DB this step is skipped and only CI can catch a regression
+   there; with one, opencode gets the same fast local feedback loop CI has,
+   instead of finding out several minutes later via a full push+CI
+   round-trip that its fix broke an integration test. If any step fails,
    its exact output is fed back to opencode and it retries (up to
    `HARNESS_MAX_LOCAL_ATTEMPTS`). Only once everything passes does the
    harness itself `git commit` (with a conventional-commits message it
@@ -82,6 +89,13 @@ asked to edit files.
 * A local clone of `alexmohr/assimilate` that this process can freely
   `checkout`/`reset --hard`/`clean -fdx` in. **Use a disposable clone, not
   your working checkout** — see Safety below.
+* Optional but strongly recommended: a Postgres reachable at `DATABASE_URL`
+  (`cargo install sqlx-cli --locked --no-default-features --features
+  postgres`, then e.g. `docker compose up -d postgres`, matching this repo's
+  own CI service). Without it, the harness can't run this repo's
+  `#[sqlx::test]`-based integration suite locally at all - only CI will ever
+  catch a regression there, several minutes and a full push later instead of
+  within opencode's own local retry loop.
 
 ## Configuration
 

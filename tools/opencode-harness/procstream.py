@@ -42,12 +42,16 @@ def run_streaming(
     log: logging.Logger,
     label: str,
     format_line: Callable[[str], str | None] | None = None,
+    env: dict[str, str] | None = None,
 ) -> StreamResult:
     """Runs `cmd`, logging each output line (via `format_line` if given, else
     verbatim) as it arrives, plus a heartbeat every ~20s of silence. `label`
     identifies the command in heartbeat/log lines. Combines stdout+stderr -
     only suitable for callers that treat output as human-readable log text,
-    not ones that parse stdout programmatically.
+    not ones that parse stdout programmatically. `env` replaces the child's
+    environment entirely if given (None inherits this process's environment,
+    same as subprocess's own default) - callers that only need to add/override
+    one variable should pass `{**os.environ, "VAR": value}`.
     """
     # start_new_session puts the child in its own process group so a timeout
     # kill can take out every process it spawned (e.g. opencode's bash tool
@@ -55,7 +59,12 @@ def run_streaming(
     # parent leaves grandchildren running orphaned, still holding locks or
     # writing files, which then breaks every subsequent command in this repo.
     proc = subprocess.Popen(
-        cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True
+        cmd,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+        env=env,
     )
     assert proc.stdout is not None
     fd = proc.stdout.fileno()

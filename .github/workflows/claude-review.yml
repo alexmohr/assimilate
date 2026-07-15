@@ -3,7 +3,7 @@
 name: Claude PR Review
 on:
   pull_request_target:
-    types: [labeled]
+    types: [labeled, synchronize]
   workflow_run:
     workflows: ["CI"]
     types: [completed]
@@ -22,12 +22,23 @@ jobs:
   gate:
     name: Check if a review is actually needed
     runs-on: ubuntu-latest
-    # Only ever proceed for: the "needs review" label landing, CI finishing on
-    # a PR, or a /claude-review comment from someone with write access (an
-    # open author_association check here is an open invitation to burn quota
-    # on a public repo).
+    # Only ever proceed for: the "needs review" label landing, a non-draft
+    # push to an existing PR, CI finishing on a PR, or a /claude-review
+    # comment from someone with write access (an open author_association
+    # check here is an open invitation to burn quota on a public repo).
+    #
+    # workflow_run (CI completing) is kept as a defense-in-depth backup, but
+    # has proven unreliable in practice for this repo's own same-repo PR
+    # branches - observed to never fire even once across dozens of
+    # `pull_request`-triggered CI completions on a real PR. pull_request_target's
+    # own `synchronize` action is a first-party GitHub event tied directly to
+    # the push itself rather than a second-order "did another workflow
+    # complete" signal, so it's the primary path for re-reviewing after new
+    # commits land; draft is checked straight from the event payload here
+    # (no extra API call, always fresh) to avoid spinning up the heavier job
+    # below for a PR nobody's asked to look at yet.
     if: >-
-      (github.event_name == 'pull_request_target' && github.event.label.name == 'needs review') || (github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[0] != null) || (github.event_name == 'issue_comment' &&
+      (github.event_name == 'pull_request_target' && github.event.action == 'labeled' && github.event.label.name == 'needs review') || (github.event_name == 'pull_request_target' && github.event.action == 'synchronize' && !github.event.pull_request.draft) || (github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[0] != null) || (github.event_name == 'issue_comment' &&
         github.event.issue.pull_request != null &&
         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
         contains(github.event.comment.body, '/claude-review'))
@@ -39,13 +50,18 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            // "needs review" landing and /claude-review are already precise
-            // triggers by construction - always proceed for those. "CI
-            // completed" fires on every push to every open PR regardless of
-            // state, though, so without this check the full job below
-            // (checkout, coverage download, possibly Claude) would spin up
-            // on every single one, even PRs nowhere near ready for review.
-            // Gate it on the PR's current "needs review" label instead.
+            // "needs review" landing, a non-draft synchronize push, and
+            // /claude-review are already precise/fresh triggers by
+            // construction - always proceed for those; the review job's own
+            // pre-review-checks.js does the real gating (CI/merge-conflict
+            // labels, then waiting for every other check to actually pass)
+            // once it starts. "CI completed" (workflow_run) fires on every
+            // push to every open PR regardless of state and carries no
+            // draft/action info of its own to filter on, so - unlike the
+            // others - gate it on the PR's current "needs review" label to
+            // avoid spinning up the full job below (checkout, coverage
+            // download, possibly Claude) on PRs nowhere near ready for
+            // review.
             if (context.eventName !== "workflow_run") {
               core.setOutput("should_run", "true");
               return;

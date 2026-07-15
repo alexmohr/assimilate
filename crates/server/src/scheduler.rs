@@ -891,11 +891,14 @@ async fn await_target_completion(
 
 #[cfg(test)]
 mod tests {
-    use std::{os::unix::fs::PermissionsExt, sync::OnceLock};
+    use std::{os::unix::fs::PermissionsExt, sync::OnceLock, time::Duration};
 
     use chrono::TimeZone;
     use tempfile::TempDir;
-    use tokio::sync::{Mutex, mpsc};
+    use tokio::{
+        sync::{Mutex, mpsc},
+        time::timeout,
+    };
 
     use super::*;
     use crate::{
@@ -1092,15 +1095,30 @@ esac
         .await
         .unwrap();
 
+        let background_task_tracker = crate::background_tasks::BackgroundTaskTracker::default();
         sync_existing_archives(
             &pool,
             &encryption_key,
             repo.id,
             &UiBroadcast::new(),
-            &crate::background_tasks::BackgroundTaskTracker::default(),
+            &background_task_tracker,
         )
         .await
         .expect("sync_existing_archives failed");
+
+        // sync_existing_archives fires archive-stat enrichment in the background
+        // (enrich_archive_stats_background) rather than awaiting it, so the assertions
+        // below would otherwise race that task's completion - whether it finishes before
+        // this test function returns and tears down its tokio runtime is a scheduling
+        // coincidence, which is exactly what produces non-deterministic coverage on the
+        // functions it calls (parse_archive_stats, enrich_single_archive_stats, ...).
+        timeout(Duration::from_secs(5), async {
+            while background_task_tracker.any_active() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("timed out waiting for background tasks to finish");
 
         let stale_count = sqlx::query_scalar!(
             "SELECT COUNT(*)::BIGINT FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",

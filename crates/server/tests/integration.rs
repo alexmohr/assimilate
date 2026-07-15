@@ -226,6 +226,21 @@ fn build_test_app(pool: PgPool) -> Router {
         .with_state(state)
 }
 
+/// Like [`build_test_app`], but also hands back the [`server::AppState`] so a test
+/// can wait on `background_task_tracker.any_active()` after a request that fires a
+/// fire-and-forget background task (e.g. archive-stat enrichment after a sync).
+#[cfg(test)]
+fn build_test_app_with_state(pool: PgPool) -> (Router, server::AppState) {
+    let state = build_test_state(pool);
+
+    let router = Router::new()
+        .merge(test_app_core_routes())
+        .merge(test_app_repo_routes())
+        .merge(test_app_stats_and_notification_routes())
+        .with_state(state.clone());
+    (router, state)
+}
+
 #[cfg(test)]
 async fn setup_pool() -> PgPool {
     let database_url =
@@ -495,6 +510,25 @@ async fn wait_for_import_completion(pool: &PgPool, repo_id: i64) {
     })
     .await
     .expect("import did not complete within 30 seconds");
+}
+
+/// Waits for every tracked fire-and-forget background task (e.g. archive-stat
+/// enrichment after a sync) to finish. `wait_for_import_completion` only polls the
+/// `importing` flag, which clears once the synchronous part of a sync/import returns -
+/// before background-only follow-up work like `enrich_archive_stats_background` is
+/// necessarily done. Without this, whether that follow-up work's lines execute before
+/// the test's tokio runtime tears down is a scheduling race.
+#[cfg(test)]
+async fn wait_for_background_tasks(tracker: &server::background_tasks::BackgroundTaskTracker) {
+    use tokio::time::{Duration, timeout};
+
+    timeout(Duration::from_secs(5), async {
+        while tracker.any_active() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for background tasks to finish");
 }
 
 #[cfg(test)]
@@ -1363,7 +1397,7 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
     )
     .await;
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, display_name, agent_token_hash) VALUES ($1, $2, $3) \
          RETURNING id",
@@ -1404,6 +1438,8 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
     .await
     .unwrap();
     assert_eq!(file_rows, 2);
+
+    wait_for_background_tasks(&state.background_task_tracker).await;
 }
 
 #[tokio::test]
@@ -2714,7 +2750,7 @@ async fn test_sync_fetches_missing_hostname_via_borg_info() {
     let (_borg_dir, _borg_guard) =
         install_fake_borg(list_json, info_all_json, info_repo_json, "", "").await;
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let repo_id = insert_test_repo(&pool, "hostname-format-repo").await;
 
     let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
@@ -2761,6 +2797,8 @@ async fn test_sync_fetches_missing_hostname_via_borg_info() {
         token_hash, "imported:no-auth",
         "placeholder agent should carry the imported sentinel token"
     );
+
+    wait_for_background_tasks(&state.background_task_tracker).await;
 }
 
 /// Regression test: borg list exits 0 but outputs unparseable text.

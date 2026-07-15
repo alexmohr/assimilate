@@ -502,6 +502,32 @@ def _check_and_fix_pr(cfg: Config, state: HarnessState, number: int) -> bool | N
         log.info("PR #%d closed without merging, skipping", number)
         return None
 
+    if detail.needs_human_review:
+        # `needs human review` is the repo's own sticky sign-off gate (see
+        # HUMAN_LABEL/humanSignOffStillStands in sync-pr-labels.js) - only a
+        # human removing it counts as clearing it. Whoever requested changes
+        # keeps that verdict in GitHub's own reviewDecision until they
+        # personally submit a new review or dismiss it; pushing more commits
+        # can't make that refresh. Checked before the stuck-label-clearing
+        # logic below so a harness-authored commit (which changes head_sha)
+        # can't quietly un-stick a PR that's actually still waiting on a
+        # human - without this it would look "stuck" again a few attempts
+        # later, chasing the exact same already-addressed review content.
+        if cfg.stuck_label not in detail.labels:
+            _mark_stuck(
+                cfg,
+                detail,
+                "this PR carries the repo's own `needs human review` label",
+                "GitHub's reviewDecision for whoever requested changes stays in effect until "
+                "they personally submit a new review or dismiss it - pushing more commits can't "
+                "change that. Please resolve the outstanding review thread and remove `needs "
+                "human review` yourself to have the harness retry.",
+                question=True,
+            )
+        else:
+            log.info("PR #%d: still needs human review, skipping", number)
+        return None
+
     if cfg.stuck_label in detail.labels:
         head_sha = gh.get_pr_head_sha(cfg.repo, number)
         recorded = state.pr_attempts.get(str(number))

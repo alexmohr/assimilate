@@ -72,7 +72,15 @@ asked to edit files.
    clean, it also adds `opencode-harness-question` - a signal that this
    likely needs a maintainer's decision (e.g. a policy call raised in
    review), not another code fix. A human pushing a new commit, or removing
-   the label(s), makes the harness pick it back up.
+   the label(s), makes the harness pick it back up. A PR carrying the
+   repo's own `needs human review` label (see `sync-pr-labels.js`) skips
+   this whole cycle-and-retry process entirely: that label only clears when
+   a human removes it, and whoever requested changes keeps that verdict in
+   GitHub's own `reviewDecision` until they personally submit a new review
+   or dismiss it - no amount of pushed commits makes that refresh. The
+   harness marks it `opencode-harness-stuck` + `opencode-harness-question`
+   immediately (no retries burned) and leaves it alone until the label is
+   gone.
 6. **Only once there are zero open PRs at all**, it picks the newest open
    issue, implements it on a new `opencode/issue-<n>` branch using the same
    fix-and-validate loop, and opens a PR — which flows back into step 1 on

@@ -113,8 +113,8 @@ describe('ArchiveFileBrowser', () => {
 
   it('clicking breadcrumb button triggers navigateTo', async () => {
     const wrapper = await mountWithEntries()
+    const callCountBefore = vi.mocked(apiClient.get).mock.calls.length
 
-    // Click a breadcrumb
     const crumb = wrapper.find('.crumb')
     if (crumb.exists()) {
       await crumb.trigger('click')
@@ -122,33 +122,37 @@ describe('ArchiveFileBrowser', () => {
       await nextTick()
     }
 
-    expect(wrapper.find('.breadcrumb').exists()).toBe(true)
+    expect(vi.mocked(apiClient.get).mock.calls.length).toBeGreaterThan(callCountBefore)
   })
 
-  it('clicking a directory row triggers navigateTo', async () => {
+  it('renders directory rows as clickable', async () => {
     const wrapper = await mountWithEntries()
 
-    const clickableRow = wrapper.find('tr.clickable')
-    if (clickableRow.exists()) {
-      await clickableRow.trigger('click')
-      await flushPromises()
-      await nextTick()
-    }
-
-    expect(wrapper.text()).toContain('subdir')
+    const clickableRows = wrapper.findAll('tr.clickable')
+    // Directory entries (., subdir) get clickable class; readme.txt does not
+    expect(clickableRows.length).toBe(2)
+    // Verify the subdir row is among the clickable rows
+    const subdirRow = clickableRows.find((r) => r.text().includes('subdir'))
+    expect(subdirRow).toBeTruthy()
   })
 
   it('download button renders in action column', async () => {
     const wrapper = await mountWithEntries()
 
+    const createElementSpy = vi.spyOn(document, 'createElement')
     const downloadBtn = wrapper.find('.btn-ghost')
+    expect(downloadBtn.exists()).toBe(true)
+
     if (downloadBtn.exists()) {
       await downloadBtn.trigger('click')
       await flushPromises()
       await nextTick()
     }
 
-    expect(wrapper.find('.browser-title').exists()).toBe(true)
+    // downloadEntry creates an anchor element
+    const anchorCalls = createElementSpy.mock.calls.filter(([tag]) => tag === 'a')
+    expect(anchorCalls.length).toBe(1)
+    createElementSpy.mockRestore()
   })
 
   it('renders filter inputs and handles interaction', async () => {

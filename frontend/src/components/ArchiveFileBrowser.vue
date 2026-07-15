@@ -6,13 +6,12 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { FilterMatchMode } from '@primevue/core/api'
+import { formatBytes, formatDate } from '../utils/format'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import { Folder, File, Download } from '@lucide/vue'
-import { formatBytes, formatDate } from '../utils/format'
 import BaseSpinner from './BaseSpinner.vue'
 import { useArchiveBrowser } from '../composables/useArchiveBrowser'
-import type { ArchiveEntryResponse } from '../types/generated'
 
 interface DisplayEntry {
   type: string
@@ -22,6 +21,8 @@ interface DisplayEntry {
   mode: string
   displayName: string
   isDir: boolean
+  displaySize: string
+  displayMtime: string
 }
 
 const props = defineProps<{
@@ -42,8 +43,8 @@ const downloadEntry = browser.downloadEntry
 
 const browserFilters = ref({
   displayName: { value: '', matchMode: FilterMatchMode.CONTAINS },
-  size: { value: '', matchMode: FilterMatchMode.CONTAINS },
-  mtime: { value: '', matchMode: FilterMatchMode.CONTAINS },
+  displaySize: { value: '', matchMode: FilterMatchMode.CONTAINS },
+  displayMtime: { value: '', matchMode: FilterMatchMode.CONTAINS },
 })
 
 const browserEntries = computed<DisplayEntry[]>(() => [
@@ -55,6 +56,8 @@ const browserEntries = computed<DisplayEntry[]>(() => [
     mode: d.mode,
     displayName: d.displayName,
     isDir: true,
+    displaySize: '',
+    displayMtime: '',
   })),
   ...browser.files.value.map((f) => ({
     type: f.type,
@@ -64,6 +67,8 @@ const browserEntries = computed<DisplayEntry[]>(() => [
     mode: f.mode,
     displayName: browser.entryName(f),
     isDir: false,
+    displaySize: formatBytes(Number(f.size)),
+    displayMtime: formatDate(f.mtime),
   })),
 ])
 
@@ -77,7 +82,7 @@ function setArchive(name: string): void {
     deduplicated_size: 0,
     matched: null,
     agent_hostname: null,
-  } as ArchiveEntryResponse
+  }
   browser.loadContents('/')
 }
 
@@ -201,7 +206,7 @@ onBeforeUnmount(() => {
           </template>
         </Column>
         <Column
-          field="size"
+          field="displaySize"
           header="Size"
           :sortable="true"
           :show-filter-menu="false"
@@ -217,11 +222,11 @@ onBeforeUnmount(() => {
             />
           </template>
           <template #body="{ data }">
-            <span class="td-size">{{ data.isDir ? '-' : formatBytes(data.size) }}</span>
+            <span class="td-size">{{ data.isDir ? '-' : data.displaySize }}</span>
           </template>
         </Column>
         <Column
-          field="mtime"
+          field="displayMtime"
           header="Modified"
           :sortable="true"
           :show-filter-menu="false"
@@ -237,7 +242,7 @@ onBeforeUnmount(() => {
             />
           </template>
           <template #body="{ data }">
-            <span class="td-date">{{ formatDate(data.mtime) }}</span>
+            <span class="td-date">{{ data.displayMtime }}</span>
           </template>
         </Column>
         <Column

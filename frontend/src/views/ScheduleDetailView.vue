@@ -638,7 +638,13 @@ function reportStatusClass(status: string): string {
   }
 }
 
-watch(() => props.id, loadData)
+watch(
+  () => props.id,
+  () => {
+    selectedBackupReport.value = null
+    loadData()
+  },
+)
 watch(activeTab, (tab) => {
   if ((tab === 'logs' || tab === 'backups') && !isCreate.value) {
     loadReports().catch(() => undefined)

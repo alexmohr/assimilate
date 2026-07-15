@@ -310,12 +310,6 @@ async fn import_repos(
         .collect();
 
     for repo_export in repos {
-        result.warnings.push(format!(
-            "repo {:?}: passphrase must be set manually after import (passphrases are not \
-             exported for security)",
-            repo_export.name,
-        ));
-
         let passphrase_encrypted = encrypt_passphrase("", encryption_key)?;
 
         if let Some(&existing_id) = repo_name_to_id.get(&repo_export.name) {
@@ -344,13 +338,19 @@ async fn import_repos(
             }
 
             // Upsert quota
-            upsert_repo_quota(pool, existing_id, repo_export).await?;
+            upsert_repo_quota(pool, existing_id, repo_export, result).await;
 
             // Sync tags
             sync_repo_tags(pool, existing_id, &repo_export.tags).await?;
 
             result.repos_updated = result.repos_updated.saturating_add(1);
         } else {
+            result.warnings.push(format!(
+                "repo {:?}: passphrase must be set manually after import (passphrases are not \
+                 exported for security)",
+                repo_export.name,
+            ));
+
             // Create new repo
             let new_repo = db::insert_repo(
                 pool,
@@ -375,7 +375,7 @@ async fn import_repos(
             }
 
             // Upsert quota
-            upsert_repo_quota(pool, new_repo.id, repo_export).await?;
+            upsert_repo_quota(pool, new_repo.id, repo_export, result).await;
 
             // Mark as importing to prevent the scheduler from attempting
             // sync with the placeholder (empty) passphrase.
@@ -396,25 +396,38 @@ async fn upsert_repo_quota(
     pool: &sqlx::PgPool,
     repo_id: i64,
     repo_export: &RepoExport,
-) -> Result<(), ApiError> {
+    result: &mut ImportResult,
+) {
     let warn_action = if repo_export.quota_warn_action.is_empty() {
         shared::types::QuotaAction::default()
     } else {
-        repo_export
-            .quota_warn_action
-            .parse()
-            .map_err(|e| ApiError::BadRequest(format!("invalid quota_warn_action: {e}")))?
+        match repo_export.quota_warn_action.parse() {
+            Ok(a) => a,
+            Err(e) => {
+                result.warnings.push(format!(
+                    "repo {:?}: invalid quota_warn_action {:?}, falling back to default: {e}",
+                    repo_export.name, repo_export.quota_warn_action,
+                ));
+                shared::types::QuotaAction::default()
+            }
+        }
     };
     let critical_action = if repo_export.quota_critical_action.is_empty() {
         shared::types::QuotaAction::default()
     } else {
-        repo_export
-            .quota_critical_action
-            .parse()
-            .map_err(|e| ApiError::BadRequest(format!("invalid quota_critical_action: {e}")))?
+        match repo_export.quota_critical_action.parse() {
+            Ok(a) => a,
+            Err(e) => {
+                result.warnings.push(format!(
+                    "repo {:?}: invalid quota_critical_action {:?}, falling back to default: {e}",
+                    repo_export.name, repo_export.quota_critical_action,
+                ));
+                shared::types::QuotaAction::default()
+            }
+        }
     };
 
-    db::quota::upsert_quota(
+    if let Err(e) = db::quota::upsert_quota(
         pool,
         repo_id,
         repo_export.quota_warn_bytes,
@@ -424,9 +437,12 @@ async fn upsert_repo_quota(
         true,
     )
     .await
-    .map_err(ApiError::Database)?;
-
-    Ok(())
+    {
+        result.warnings.push(format!(
+            "repo {:?}: failed to upsert quota: {e}",
+            repo_export.name,
+        ));
+    }
 }
 
 async fn import_host(

@@ -270,6 +270,47 @@ def _commit_message_for(pr: PrDetail, cfg: Config) -> str:
     return "fix: address outstanding PR feedback"
 
 
+_DECISION_NEEDED_PHRASES = (
+    "needs a decision",
+    "needs a human decision",
+    "needs a maintainer",
+    "needs your decision",
+    "human decision",
+    "human sign-off",
+    "explicit sign-off",
+    "requires a human",
+    "policy-level",
+    "policy call",
+    "policy decision",
+)
+
+
+def _looks_like_policy_question(review_comments: str | None) -> bool:
+    """Best-effort: true if the review text itself is asking for a human
+    judgment call, rather than just reporting an ordinary fixable bug.
+
+    "changes_requested is the only thing outstanding" is the *normal* state
+    partway through any multi-round review - most of the time it just means
+    there's real, actionable feedback opencode hasn't landed a fix for yet
+    in cfg.max_stuck_cycles tries, not that there's nothing left a code
+    change could resolve. Treating every such case as "needs a maintainer's
+    decision" produces false positives (observed on PR #323: a quota-parse
+    error that aborts an import inconsistently with the rest of the
+    codebase, and a UI filter/display mismatch - both concrete, fixable
+    bugs, both mislabeled this way). Only the review text itself can
+    actually distinguish "this is a values/policy call" from "this is a
+    bug report" - the language a reviewer uses when explicitly asking for a
+    decision (see the passphrase-export precedent this PR itself hit
+    earlier: "policy-level security concern that needs a human decision")
+    is the closest cheap signal available without full comprehension of the
+    review's content.
+    """
+    if not review_comments:
+        return False
+    lowered = review_comments.lower()
+    return any(phrase in lowered for phrase in _DECISION_NEEDED_PHRASES)
+
+
 def _problem_summary(
     pr: PrDetail,
     ci_logs: str | None,
@@ -366,11 +407,15 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
     if attempts > cfg.max_stuck_cycles:
         details = _problem_summary(pr, ci_logs, review_comments, precheck_notes)
         # Only review feedback recurring, with CI/merge/pre-flight all clean,
-        # means every retry produced a change that still didn't satisfy the
-        # reviewer - the likeliest explanation is a substantive question
-        # opencode can't answer by editing code, not a bug it keeps missing.
-        is_question = pr.changes_requested and not (
-            pr.ci_failing or pr.merge_conflict or pr.coverage_failed or pr.duplicate_code
+        # AND the review itself reading like an explicit request for a human
+        # judgment call (see _looks_like_policy_question) - otherwise this is
+        # just ordinary, actionable review feedback opencode failed to land
+        # a fix for, which is the normal state mid-review, not a sign
+        # there's nothing left a code change could resolve.
+        is_question = (
+            pr.changes_requested
+            and not (pr.ci_failing or pr.merge_conflict or pr.coverage_failed or pr.duplicate_code)
+            and _looks_like_policy_question(review_comments)
         )
         _mark_stuck(
             cfg,

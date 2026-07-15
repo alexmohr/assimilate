@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use chrono::Utc;
 use shared::protocol::{ActiveRepoOp, RepoOpKind};
@@ -11,6 +17,15 @@ use tokio::sync::RwLock;
 struct RepoOpState {
     active: Option<ActiveRepoOp>,
     queued: u32,
+    /// Identifies which [`RepoOpGuard::set_guarded`] call last claimed `active`,
+    /// so a guard's deferred clear (see `RepoOpGuard`) can tell whether it's
+    /// still clearing its own operation or a later one that reused this
+    /// `repo_id` after the guard's operation already finished. Only ever
+    /// compared for equality - a plain `u64` counter that survives the map
+    /// entry being removed and recreated would work too, but a per-tracker
+    /// monotonic token sidesteps having to reason about whether it could ever
+    /// wrap back to a value a still-live guard remembers.
+    token: u64,
 }
 
 /// Tracks the operation currently running against each repository, plus how many
@@ -19,6 +34,7 @@ struct RepoOpState {
 #[derive(Clone, Default)]
 pub struct RepoOpTracker {
     state: Arc<RwLock<HashMap<i64, RepoOpState>>>,
+    next_token: Arc<AtomicU64>,
 }
 
 impl RepoOpTracker {
@@ -130,38 +146,83 @@ impl RepoOpTracker {
         repo_ids
     }
 
-    /// Returns a guard that clears this repo's entry when dropped, including
-    /// during panic unwind. A task that calls [`Self::set`] and then panics
-    /// before reaching its own [`Self::clear`] would otherwise leave a
-    /// permanently "active" entry behind - which wedges `/api/health`'s
-    /// `background_ops_in_flight` forever and defeats the e2e teardown's
-    /// drain wait (every subsequent poll sees this repo as busy, even though
-    /// nothing is actually running). `Drop` can't await, so the guard's
-    /// cleanup runs as a spawned task rather than inline; callers on the
-    /// normal-completion path should still call [`Self::clear`] directly so
-    /// the entry is gone by the time they return, instead of racing the
-    /// spawned task.
+    /// Like [`Self::set`], but returns a guard that clears this repo's entry
+    /// when dropped, including during panic unwind. A task that calls this
+    /// and then panics before reaching its own [`RepoOpGuard::clear_now`]
+    /// would otherwise leave a permanently "active" entry behind - which
+    /// wedges `/api/health`'s `background_ops_in_flight` forever and defeats
+    /// the e2e teardown's drain wait (every subsequent poll sees this repo as
+    /// busy, even though nothing is actually running).
+    ///
+    /// `Drop` can't await, so the guard's cleanup runs as a spawned task
+    /// rather than inline; call [`RepoOpGuard::clear_now`] on the
+    /// normal-completion path so the entry is gone by the time you return,
+    /// instead of racing the spawned task. Both paths only ever clear the
+    /// exact operation this guard was created for: if something else has
+    /// since called `set`/`begin`/`set_guarded` again for the same `repo_id`
+    /// (e.g. this operation's own explicit clear already ran, and a
+    /// different operation claimed the slot before this guard got dropped),
+    /// the stale clear is a no-op instead of wiping out the new operation's
+    /// state.
     #[must_use]
-    pub fn guard(&self, repo_id: i64) -> RepoOpGuard {
+    pub async fn set_guarded(&self, repo_id: i64, kind: RepoOpKind, actor: String) -> RepoOpGuard {
+        let token = self.next_token.fetch_add(1, Ordering::SeqCst);
+        let mut map = self.state.write().await;
+        let state = map.entry(repo_id).or_default();
+        state.token = token;
+        state.active = Some(ActiveRepoOp {
+            kind,
+            actor,
+            started_at: Utc::now(),
+            queued: state.queued,
+        });
         RepoOpGuard {
             tracker: self.clone(),
             repo_id,
+            token,
+        }
+    }
+
+    /// Clears `repo_id`'s entry only if it's still the one identified by
+    /// `token` - see [`Self::set_guarded`].
+    async fn clear_if_token(&self, repo_id: i64, token: u64) {
+        let mut map = self.state.write().await;
+        if let Some(state) = map.get_mut(&repo_id) {
+            if state.token != token {
+                return;
+            }
+            state.active = None;
+            if state.queued == 0 {
+                map.remove(&repo_id);
+            }
         }
     }
 }
 
-/// See [`RepoOpTracker::guard`].
+/// See [`RepoOpTracker::set_guarded`].
 pub struct RepoOpGuard {
     tracker: RepoOpTracker,
     repo_id: i64,
+    token: u64,
+}
+
+impl RepoOpGuard {
+    /// Clears this operation's entry immediately, awaiting the clear instead
+    /// of leaving it to the guard's deferred `Drop` cleanup. Safe to call even
+    /// if a later operation has already reclaimed this `repo_id` - only clears
+    /// if the entry still matches this guard's token.
+    pub async fn clear_now(&self) {
+        self.tracker.clear_if_token(self.repo_id, self.token).await;
+    }
 }
 
 impl Drop for RepoOpGuard {
     fn drop(&mut self) {
         let tracker = self.tracker.clone();
         let repo_id = self.repo_id;
+        let token = self.token;
         tokio::spawn(async move {
-            tracker.clear(repo_id).await;
+            tracker.clear_if_token(repo_id, token).await;
         });
     }
 }
@@ -253,11 +314,9 @@ mod tests {
     #[tokio::test]
     async fn guard_clears_entry_when_dropped_without_an_explicit_clear() {
         let tracker = RepoOpTracker::default();
-        tracker
-            .set(1, RepoOpKind::AgentBackup, "some-host".to_owned())
+        let guard = tracker
+            .set_guarded(1, RepoOpKind::AgentBackup, "some-host".to_owned())
             .await;
-
-        let guard = tracker.guard(1);
         assert!(tracker.any_active().await);
 
         drop(guard);
@@ -265,17 +324,53 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn guard_cleanup_is_a_harmless_no_op_after_an_explicit_clear() {
+    async fn guard_cleanup_is_a_harmless_no_op_after_clear_now() {
         let tracker = RepoOpTracker::default();
-        tracker
-            .set(1, RepoOpKind::AgentBackup, "some-host".to_owned())
+        let guard = tracker
+            .set_guarded(1, RepoOpKind::AgentBackup, "some-host".to_owned())
             .await;
 
-        let guard = tracker.guard(1);
-        tracker.clear(1).await;
+        guard.clear_now().await;
         assert!(tracker.get(1).await.is_none());
 
         drop(guard);
+        wait_until_cleared(&tracker, 1).await;
+    }
+
+    /// The exact race a review on this PR flagged: a guard's deferred `Drop`
+    /// cleanup must not clobber a *different*, later operation that reused the
+    /// same `repo_id` after this guard's own operation already cleared itself.
+    #[tokio::test]
+    async fn guard_drop_does_not_clobber_a_newer_operation_on_the_same_repo() {
+        let tracker = RepoOpTracker::default();
+        let first = tracker
+            .set_guarded(1, RepoOpKind::ServerSync, "server".to_owned())
+            .await;
+        first.clear_now().await;
+        assert!(tracker.get(1).await.is_none());
+
+        // A different operation claims the same repo_id before the old guard
+        // gets dropped - e.g. a manual break-lock racing a scheduled sync's
+        // task teardown.
+        let second = tracker
+            .set_guarded(1, RepoOpKind::BreakLock, "admin".to_owned())
+            .await;
+        assert_eq!(
+            tracker.get(1).await.map(|op| op.kind),
+            Some(RepoOpKind::BreakLock)
+        );
+
+        // The first guard's deferred cleanup must not wipe out the second
+        // operation's still-active entry.
+        drop(first);
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert_eq!(
+            tracker.get(1).await.map(|op| op.kind),
+            Some(RepoOpKind::BreakLock),
+            "a stale guard's deferred clear wiped out a newer operation's entry"
+        );
+
+        drop(second);
         wait_until_cleared(&tracker, 1).await;
     }
 }

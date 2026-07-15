@@ -181,8 +181,15 @@ pub async fn run_repo_sync(
             continue;
         }
 
-        repo_op_tracker
-            .set(
+        // set_guarded's returned guard is held for the task's lifetime so a panic
+        // inside sync_existing_archives still clears this repo's entry (via
+        // spawned cleanup, since Drop can't await) instead of leaving it
+        // permanently "active" - see RepoOpGuard. The guard only ever clears the
+        // exact operation it was created for, so it can't clobber a later
+        // operation that reuses this repo_id after this one's own clear_now()
+        // already ran.
+        let op_clear_guard = repo_op_tracker
+            .set_guarded(
                 repo.id,
                 shared::protocol::RepoOpKind::ServerSync,
                 "server".to_owned(),
@@ -197,11 +204,7 @@ pub async fn run_repo_sync(
             pool: pool.clone(),
             encryption_key: *encryption_key,
             ui_broadcast: ui_broadcast.clone(),
-            repo_op_tracker: repo_op_tracker.clone(),
-            // Held for the task's lifetime so a panic inside sync_existing_archives
-            // still clears this repo's entry (via spawned cleanup, since Drop can't
-            // await) instead of leaving it permanently "active" - see RepoOpGuard.
-            _op_clear_guard: repo_op_tracker.guard(repo.id),
+            op_clear_guard,
             repo_lock: repo_lock.clone(),
             background_task_tracker: background_task_tracker.clone(),
             repo_id: repo.id,
@@ -215,8 +218,7 @@ struct ScheduledRepoSync {
     pool: PgPool,
     encryption_key: [u8; 32],
     ui_broadcast: UiBroadcast,
-    repo_op_tracker: RepoOpTracker,
-    _op_clear_guard: crate::repo_op_tracker::RepoOpGuard,
+    op_clear_guard: crate::repo_op_tracker::RepoOpGuard,
     repo_lock: RepoLock,
     background_task_tracker: crate::background_tasks::BackgroundTaskTracker,
     repo_id: i64,
@@ -228,8 +230,7 @@ async fn run_scheduled_repo_sync(task: ScheduledRepoSync) {
         pool,
         encryption_key,
         ui_broadcast,
-        repo_op_tracker,
-        _op_clear_guard,
+        op_clear_guard,
         repo_lock,
         background_task_tracker,
         repo_id,
@@ -247,7 +248,7 @@ async fn run_scheduled_repo_sync(task: ScheduledRepoSync) {
     )
     .await;
 
-    repo_op_tracker.clear(repo_id).await;
+    op_clear_guard.clear_now().await;
     ui_broadcast.send(ServerToUi::RepoOpChanged { repo_id, op: None });
 
     match sync_result {

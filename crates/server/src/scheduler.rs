@@ -895,10 +895,7 @@ mod tests {
 
     use chrono::TimeZone;
     use tempfile::TempDir;
-    use tokio::{
-        sync::{Mutex, mpsc},
-        time::timeout,
-    };
+    use tokio::sync::{Mutex, mpsc};
 
     use super::*;
     use crate::{
@@ -1112,13 +1109,12 @@ esac
         // this test function returns and tears down its tokio runtime is a scheduling
         // coincidence, which is exactly what produces non-deterministic coverage on the
         // functions it calls (parse_archive_stats, enrich_single_archive_stats, ...).
-        timeout(Duration::from_secs(5), async {
-            while background_task_tracker.any_active() {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("timed out waiting for background tasks to finish");
+        assert!(
+            background_task_tracker
+                .wait_until_idle(Duration::from_secs(5))
+                .await,
+            "timed out waiting for background tasks to finish"
+        );
 
         let stale_count = sqlx::query_scalar!(
             "SELECT COUNT(*)::BIGINT FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",

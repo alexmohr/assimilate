@@ -2354,7 +2354,7 @@ async fn import_and_persist_archives(
         env.clone(),
         repo_id,
         archive_names.clone(),
-        background_task_tracker.clone(),
+        background_task_tracker,
     );
 
     Ok(ImportOutcome {
@@ -2527,10 +2527,16 @@ fn enrich_archive_stats_background(
     env: std::collections::HashMap<String, String>,
     repo_id: i64,
     archive_names: Vec<String>,
-    background_task_tracker: crate::background_tasks::BackgroundTaskTracker,
+    background_task_tracker: &crate::background_tasks::BackgroundTaskTracker,
 ) {
+    // Guard is claimed synchronously, before the task is spawned - any_active()
+    // must read true the instant this function returns, not merely once the
+    // scheduler gets around to polling the new task for the first time (which
+    // depends on incidental yield points elsewhere in the caller, not on any
+    // synchronization guarantee).
+    let task_guard = background_task_tracker.begin();
     tokio::spawn(async move {
-        let _task_guard = background_task_tracker.begin();
+        let _task_guard = task_guard;
         // Immutable archives that already have stats never change, so only query
         // borg for the ones still missing them.
         let needing = match db::list_archive_names_needing_stats(&pool, repo_id).await {

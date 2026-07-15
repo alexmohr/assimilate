@@ -512,25 +512,6 @@ async fn wait_for_import_completion(pool: &PgPool, repo_id: i64) {
     .expect("import did not complete within 30 seconds");
 }
 
-/// Waits for every tracked fire-and-forget background task (e.g. archive-stat
-/// enrichment after a sync) to finish. `wait_for_import_completion` only polls the
-/// `importing` flag, which clears once the synchronous part of a sync/import returns -
-/// before background-only follow-up work like `enrich_archive_stats_background` is
-/// necessarily done. Without this, whether that follow-up work's lines execute before
-/// the test's tokio runtime tears down is a scheduling race.
-#[cfg(test)]
-async fn wait_for_background_tasks(tracker: &server::background_tasks::BackgroundTaskTracker) {
-    use tokio::time::{Duration, timeout};
-
-    timeout(Duration::from_secs(5), async {
-        while tracker.any_active() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("timed out waiting for background tasks to finish");
-}
-
 #[cfg(test)]
 async fn clean_tables(pool: &PgPool) {
     sqlx::query("DELETE FROM backup_reports")
@@ -1439,7 +1420,13 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
     .unwrap();
     assert_eq!(file_rows, 2);
 
-    wait_for_background_tasks(&state.background_task_tracker).await;
+    assert!(
+        state
+            .background_task_tracker
+            .wait_until_idle(std::time::Duration::from_secs(5))
+            .await,
+        "timed out waiting for background tasks to finish"
+    );
 }
 
 #[tokio::test]
@@ -2798,7 +2785,13 @@ async fn test_sync_fetches_missing_hostname_via_borg_info() {
         "placeholder agent should carry the imported sentinel token"
     );
 
-    wait_for_background_tasks(&state.background_task_tracker).await;
+    assert!(
+        state
+            .background_task_tracker
+            .wait_until_idle(std::time::Duration::from_secs(5))
+            .await,
+        "timed out waiting for background tasks to finish"
+    );
 }
 
 /// Regression test: borg list exits 0 but outputs unparseable text.

@@ -198,6 +198,10 @@ pub async fn run_repo_sync(
             encryption_key: *encryption_key,
             ui_broadcast: ui_broadcast.clone(),
             repo_op_tracker: repo_op_tracker.clone(),
+            // Held for the task's lifetime so a panic inside sync_existing_archives
+            // still clears this repo's entry (via spawned cleanup, since Drop can't
+            // await) instead of leaving it permanently "active" - see RepoOpGuard.
+            _op_clear_guard: repo_op_tracker.guard(repo.id),
             repo_lock: repo_lock.clone(),
             background_task_tracker: background_task_tracker.clone(),
             repo_id: repo.id,
@@ -212,6 +216,7 @@ struct ScheduledRepoSync {
     encryption_key: [u8; 32],
     ui_broadcast: UiBroadcast,
     repo_op_tracker: RepoOpTracker,
+    _op_clear_guard: crate::repo_op_tracker::RepoOpGuard,
     repo_lock: RepoLock,
     background_task_tracker: crate::background_tasks::BackgroundTaskTracker,
     repo_id: i64,
@@ -224,6 +229,7 @@ async fn run_scheduled_repo_sync(task: ScheduledRepoSync) {
         encryption_key,
         ui_broadcast,
         repo_op_tracker,
+        _op_clear_guard,
         repo_lock,
         background_task_tracker,
         repo_id,

@@ -129,6 +129,41 @@ impl RepoOpTracker {
         map.clear();
         repo_ids
     }
+
+    /// Returns a guard that clears this repo's entry when dropped, including
+    /// during panic unwind. A task that calls [`Self::set`] and then panics
+    /// before reaching its own [`Self::clear`] would otherwise leave a
+    /// permanently "active" entry behind - which wedges `/api/health`'s
+    /// `background_ops_in_flight` forever and defeats the e2e teardown's
+    /// drain wait (every subsequent poll sees this repo as busy, even though
+    /// nothing is actually running). `Drop` can't await, so the guard's
+    /// cleanup runs as a spawned task rather than inline; callers on the
+    /// normal-completion path should still call [`Self::clear`] directly so
+    /// the entry is gone by the time they return, instead of racing the
+    /// spawned task.
+    #[must_use]
+    pub fn guard(&self, repo_id: i64) -> RepoOpGuard {
+        RepoOpGuard {
+            tracker: self.clone(),
+            repo_id,
+        }
+    }
+}
+
+/// See [`RepoOpTracker::guard`].
+pub struct RepoOpGuard {
+    tracker: RepoOpTracker,
+    repo_id: i64,
+}
+
+impl Drop for RepoOpGuard {
+    fn drop(&mut self) {
+        let tracker = self.tracker.clone();
+        let repo_id = self.repo_id;
+        tokio::spawn(async move {
+            tracker.clear(repo_id).await;
+        });
+    }
 }
 
 #[cfg(test)]
@@ -201,5 +236,46 @@ mod tests {
 
         tracker.dequeue(2).await;
         assert!(!tracker.any_active().await);
+    }
+
+    /// The guard's cleanup runs as a spawned task (`Drop` can't await), so
+    /// tests observe it by polling instead of asserting immediately after drop.
+    async fn wait_until_cleared(tracker: &RepoOpTracker, repo_id: i64) {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while tracker.get(repo_id).await.is_some() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("guard's spawned cleanup never cleared the entry");
+    }
+
+    #[tokio::test]
+    async fn guard_clears_entry_when_dropped_without_an_explicit_clear() {
+        let tracker = RepoOpTracker::default();
+        tracker
+            .set(1, RepoOpKind::AgentBackup, "some-host".to_owned())
+            .await;
+
+        let guard = tracker.guard(1);
+        assert!(tracker.any_active().await);
+
+        drop(guard);
+        wait_until_cleared(&tracker, 1).await;
+    }
+
+    #[tokio::test]
+    async fn guard_cleanup_is_a_harmless_no_op_after_an_explicit_clear() {
+        let tracker = RepoOpTracker::default();
+        tracker
+            .set(1, RepoOpKind::AgentBackup, "some-host".to_owned())
+            .await;
+
+        let guard = tracker.guard(1);
+        tracker.clear(1).await;
+        assert!(tracker.get(1).await.is_none());
+
+        drop(guard);
+        wait_until_cleared(&tracker, 1).await;
     }
 }

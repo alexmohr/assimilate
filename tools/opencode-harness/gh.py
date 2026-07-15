@@ -266,9 +266,20 @@ def get_failing_check_logs(repo: str, number: int, max_chars: int = 12000) -> st
         if len(out) > per_job_budget:
             out = "...(truncated)...\n" + out[-per_job_budget:]
         logs.append(f"=== {name} (run {run_id}) ===\n{out}")
-    return "\n\n".join(logs) or (
+    combined = "\n\n".join(logs) or (
         "(no failed check logs could be retrieved; inspect `gh pr checks` manually)"
     )
+    # The per-job budget above has a 2000-char floor so a handful of failing
+    # jobs each still get something readable - but that floor overrides the
+    # "fair share" division once more than max_chars // 2000 jobs fail at
+    # once, so the joined total can run well past max_chars with nothing to
+    # cap it. Backstop on the combined string too, same as the pre-refactor
+    # single-string version did, so the worst case (many jobs failing at
+    # once - exactly when this text feeds the fix prompt/fingerprint most)
+    # can't silently blow the documented size guarantee.
+    if len(combined) > max_chars:
+        combined = "...(truncated)...\n" + combined[-max_chars:]
+    return combined
 
 
 def get_review_comments(repo: str, number: int, max_chars: int = 8000) -> str:

@@ -34,9 +34,13 @@ jobs:
     # own `synchronize` action is a first-party GitHub event tied directly to
     # the push itself rather than a second-order "did another workflow
     # complete" signal, so it's the primary path for re-reviewing after new
-    # commits land; draft is checked straight from the event payload here
-    # (no extra API call, always fresh) to avoid spinning up the heavier job
-    # below for a PR nobody's asked to look at yet.
+    # commits land. draft is checked straight from the event payload here
+    # (no extra API call, always fresh) purely to avoid spinning up the
+    # heavier job below for a PR nobody's asked to look at yet - the actual
+    # trust gate (has a maintainer opted this PR into review at all) is
+    # deliberately NOT decided here, since synchronize fires on every push
+    # an external PR author fully controls themselves; see the "check"
+    # step below, which re-derives it from the PR's current labels instead.
     if: >-
       (github.event_name == 'pull_request_target' && github.event.action == 'labeled' && github.event.label.name == 'needs review') || (github.event_name == 'pull_request_target' && github.event.action == 'synchronize' && !github.event.pull_request.draft) || (github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[0] != null) || (github.event_name == 'issue_comment' &&
         github.event.issue.pull_request != null &&
@@ -50,30 +54,45 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            // "needs review" landing, a non-draft synchronize push, and
-            // /claude-review are already precise/fresh triggers by
-            // construction - always proceed for those; the review job's own
-            // pre-review-checks.js does the real gating (CI/merge-conflict
-            // labels, then waiting for every other check to actually pass)
-            // once it starts. "CI completed" (workflow_run) fires on every
-            // push to every open PR regardless of state and carries no
-            // draft/action info of its own to filter on, so - unlike the
-            // others - gate it on the PR's current "needs review" label to
-            // avoid spinning up the full job below (checkout, coverage
-            // download, possibly Claude) on PRs nowhere near ready for
-            // review.
-            if (context.eventName !== "workflow_run") {
+            // "needs review" landing and /claude-review are already
+            // precise/trusted triggers by construction (the former requires
+            // a maintainer to have added the label; the latter requires
+            // write access) - always proceed for those; the review job's
+            // own pre-review-checks.js does the real CI/merge-conflict
+            // gating once it starts. "CI completed" (workflow_run) and a
+            // plain push (synchronize) both fire on every push to every
+            // open PR regardless of state - and, unlike the other two,
+            // entirely within an external contributor's own control on a
+            // public repo, with no maintainer approval needed for either
+            // one. Gate both of those on the PR *already* carrying a label
+            // that means a maintainer opted this PR into automated review
+            // at some point (the initial "needs review" landing, or a
+            // verdict from an earlier round) - without this, synchronize
+            // alone would let any external PR author re-trigger a job with
+            // write-scoped GITHUB_TOKEN and the real Claude OAuth secret
+            // just by pushing a second commit, reopening exactly the
+            // quota-griefing risk this gate exists to prevent.
+            if (context.eventName !== "workflow_run" && context.eventName !== "pull_request_target") {
               core.setOutput("should_run", "true");
               return;
             }
-            const prNumber = context.payload.workflow_run.pull_requests[0].number;
+            if (context.eventName === "pull_request_target" && context.payload.action === "labeled") {
+              core.setOutput("should_run", "true");
+              return;
+            }
+            const prNumber =
+              context.eventName === "workflow_run"
+                ? context.payload.workflow_run.pull_requests[0].number
+                : context.payload.pull_request.number;
             const { data: pr } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: prNumber,
             });
-            const needsReview = pr.labels.some((l) => l.name === "needs review");
-            core.setOutput("should_run", needsReview ? "true" : "false");
+            const alreadyOptedIn = pr.labels.some((l) =>
+              ["needs review", "claude-approved", "claude-changes-requested"].includes(l.name),
+            );
+            core.setOutput("should_run", alreadyOptedIn ? "true" : "false");
 
   review:
     name: Review PR

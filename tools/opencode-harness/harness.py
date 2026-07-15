@@ -210,6 +210,16 @@ def _try_mechanical_ci_fix(cfg: Config, pr: PrDetail) -> bool:
         return False
     result = validate.run_precommit(cfg.repo_dir)
     if not result.ok:
+        # pre-commit's own autofixing hooks (ruff --fix, cargo +nightly fmt,
+        # trailing-whitespace, ...) rewrite files in place as their actual
+        # fix, even on the run that reports failure - that's simply how an
+        # auto-fixing hook works, the same reason run_fix_and_validate
+        # retries once below before ever involving opencode. Without this
+        # retry, the very first run always looks like "still fails" even
+        # when it just fixed everything, so this function could never
+        # actually push anything.
+        result = validate.run_precommit(cfg.repo_dir)
+    if not result.ok:
         log.info("PR #%d: pre-commit still fails locally after autofixing", pr.number)
         git_ops.discard_uncommitted_changes(cfg.repo_dir)
         return False

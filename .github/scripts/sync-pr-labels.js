@@ -17,6 +17,11 @@ const CI_WORKFLOW_FILE = "ci.yml";
 // it to actually block merging - see skills/review/SKILL.md.
 const GATE_CHECK_NAME = "PR Merge Gate";
 
+// Job names from coverage-diff-check.yml / duplicate-code-check.yml - see
+// labelReflectsCurrentCommit below for why these matter.
+const COVERAGE_DIFF_CHECK_NAME = "Check coverage diff";
+const DUPLICATE_CODE_CHECK_NAME = "Detect duplicate code";
+
 const STATUS_LABELS = {
   CI_FAILING: {
     name: "ci failing",
@@ -189,6 +194,32 @@ async function closesSecurityIssue(github, owner, repo, prBody) {
 // `ignore` entries are already covered by SENSITIVE_PATH_PATTERNS above,
 // since any edit to that file matches on path alone.
 const SUPPRESSION_LINE_PATTERNS = [/^\+\s*#!?\[allow\(/];
+
+// coverage-diff-check.yml and duplicate-code-check.yml each own their own
+// label's full add/remove lifecycle (see the comment on
+// DUPLICATE_CODE_LABEL/COVERAGE_LABEL above) - neither clears it on a new
+// push, only their own next run does. coverage-diff-check.yml's next run
+// doesn't even start until the *new* commit's CI finishes (it triggers on
+// workflow_run: CI completed), which can be 20+ minutes away. A push landing
+// on the PR runs this script almost immediately, long before that - so
+// trusting the label at face value right then would treat "hasn't been
+// assessed for this commit yet" the same as "failed this commit", exactly
+// the misleading red X this gate exists to avoid. Only treat the label as
+// blocking once a check run with this name has actually completed for the
+// current head commit (any conclusion - completion is what matters here,
+// not pass/fail); otherwise it's stale, carried over from a prior commit,
+// and the ordinary CI/other-checks pending logic below already handles
+// "still waiting on this check" correctly once it registers.
+async function labelReflectsCurrentCommit(github, owner, repo, headSha, checkName) {
+  const runs = await github.paginate(github.rest.checks.listForRef, {
+    owner,
+    repo,
+    ref: headSha,
+    check_name: checkName,
+    per_page: 100,
+  });
+  return runs.some((run) => run.status === "completed");
+}
 
 async function ensureLabelExists(github, owner, repo, label) {
   try {
@@ -471,17 +502,35 @@ module.exports = async ({ github, context, core, prNumber, eventAction, selfChec
     core.info(`PR #${prNumber}: stripped claude-approved - a pre-flight stage is currently failing.`);
   }
 
-  const [ciConclusion, mergeableState, nativeReviewDecision, autoNeedsHuman, signOffStillStands] = await Promise.all([
+  const [
+    ciConclusion,
+    mergeableState,
+    nativeReviewDecision,
+    autoNeedsHuman,
+    signOffStillStands,
+    coverageLabelCurrent,
+    duplicateLabelCurrent,
+  ] = await Promise.all([
     resolveCiConclusion(github, owner, repo, pr.head.sha),
     resolveMergeableState(github, owner, repo, prNumber, pr.mergeable_state),
     resolveReviewDecision(github, owner, repo, prNumber),
     hasHumanLabel ? Promise.resolve(false) : needsHumanSignOff(github, owner, repo, prNumber, pr),
     hasHumanLabel ? Promise.resolve(false) : humanSignOffStillStands(github, owner, repo, prNumber, pr.head.sha),
+    hasCoverageFailed
+      ? labelReflectsCurrentCommit(github, owner, repo, pr.head.sha, COVERAGE_DIFF_CHECK_NAME)
+      : Promise.resolve(false),
+    hasDuplicateCode
+      ? labelReflectsCurrentCommit(github, owner, repo, pr.head.sha, DUPLICATE_CODE_CHECK_NAME)
+      : Promise.resolve(false),
   ]);
   const reviewDecision = resolveEffectiveReviewDecision(nativeReviewDecision, existingLabels);
   // A human's own removal of the label overrides re-derivation from the
   // same unchanged file patterns - see humanSignOffStillStands() above.
   const needsHuman = hasHumanLabel || (autoNeedsHuman && !signOffStillStands);
+  // Only a label backed by a completed check run on *this* commit counts as
+  // an actual failure of this commit - see labelReflectsCurrentCommit above.
+  const coverageFailedForThisCommit = hasCoverageFailed && coverageLabelCurrent;
+  const duplicateCodeForThisCommit = hasDuplicateCode && duplicateLabelCurrent;
 
   const ciFailed = ciConclusion !== null && !["success", "skipped", "neutral"].includes(ciConclusion);
   const mergeConflict = mergeableState === "dirty";
@@ -496,16 +545,19 @@ module.exports = async ({ github, context, core, prNumber, eventAction, selfChec
   } else if (mergeConflict) {
     status = STATUS_LABELS.MERGE_CONFLICT;
     summary = "This PR has real conflicts with the base branch — rebase and resolve them before it can be merged.";
-  } else if (hasCoverageFailed || hasDuplicateCode) {
+  } else if (coverageFailedForThisCommit || duplicateCodeForThisCommit) {
     // Two independent stages can each fail on their own: coverage-diff-check.yml
     // sets `coverage failed`, duplicate-code-check.yml sets `duplicate code`.
     // Either one blocks merge, and both stay visible on the PR even though
     // this status label is the single umbrella shown here - that's why the
-    // summary spells out which one(s) failed.
+    // summary spells out which one(s) failed. Gated on *ForThisCommit, not
+    // the raw has*/label read, so a label stale from a prior commit (that
+    // commit's own check hasn't re-run yet) can't masquerade as a failure of
+    // the current one - see labelReflectsCurrentCommit.
     status = STATUS_LABELS.PRECHECK_FAILED;
     const causes = [];
-    if (hasCoverageFailed) causes.push("coverage-diff");
-    if (hasDuplicateCode) causes.push("duplicate-code");
+    if (coverageFailedForThisCommit) causes.push("coverage-diff");
+    if (duplicateCodeForThisCommit) causes.push("duplicate-code");
     summary = `A deterministic pre-review check failed (${causes.join(" and ")}) — see the automated pre-flight comment(s) for specifics.`;
   } else if (
     reviewDecision === "CHANGES_REQUESTED" &&

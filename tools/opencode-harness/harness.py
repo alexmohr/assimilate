@@ -211,6 +211,7 @@ def _try_mechanical_ci_fix(cfg: Config, pr: PrDetail) -> bool:
     result = validate.run_precommit(cfg.repo_dir)
     if not result.ok:
         log.info("PR #%d: pre-commit still fails locally after autofixing", pr.number)
+        git_ops.discard_uncommitted_changes(cfg.repo_dir)
         return False
     if not git_ops.has_uncommitted_changes(cfg.repo_dir):
         log.info("PR #%d: pre-commit already passes locally; CI failure looks stale", pr.number)
@@ -460,6 +461,7 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
     ok, message = run_fix_and_validate(cfg, prompt)
     if not ok:
         log.warning("PR #%d: did not converge this cycle (%s)", pr.number, message)
+        git_ops.discard_uncommitted_changes(cfg.repo_dir)
         return False
 
     committed = git_ops.commit(cfg.repo_dir, _commit_message_for(pr, cfg))
@@ -581,6 +583,7 @@ def _implement_issue(cfg: Config, state: HarnessState, issue: dict) -> bool:
             issue=True,
         )
         log.warning("issue #%d: did not converge (%s)", number, message)
+        git_ops.discard_uncommitted_changes(cfg.repo_dir)
         return False
 
     committed = git_ops.commit(cfg.repo_dir, f"fix: {_sanitize_subject(issue['title'])}")

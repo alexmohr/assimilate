@@ -98,6 +98,18 @@ def checkout_new_branch_from_base(cwd: Path, branch: str, base: str) -> None:
     _run(cwd, ["clean", "-fdx", *_CLEAN_EXCLUDES])
 
 
+def discard_uncommitted_changes(cwd: Path) -> None:
+    """Wipes any uncommitted edits left behind by a fix attempt that didn't
+    converge (opencode never commits its own changes, so a validation
+    failure otherwise leaves them sitting in the working tree until some
+    unrelated future checkout happens to clean them up). Resets whatever
+    branch is currently checked out in place - doesn't fetch or switch
+    branches.
+    """
+    _run(cwd, ["reset", "--hard", "HEAD"])
+    _run(cwd, ["clean", "-fdx", *_CLEAN_EXCLUDES])
+
+
 def rebase_onto(cwd: Path, base: str) -> tuple[bool, str]:
     """Attempt a rebase onto origin/<base>. Returns (clean, conflict_status_text)."""
     fetch(cwd, base)

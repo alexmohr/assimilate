@@ -2040,13 +2040,10 @@ exit 0
         .await
         .expect("timed out waiting for archive indexing");
 
-        assert!(
-            state
-                .background_task_tracker
-                .wait_until_idle(Duration::from_secs(5))
-                .await,
-            "timed out waiting for background tasks to finish"
-        );
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
     }
 
     /// Create a test agent+repo+schedule triple linked via `schedule_targets`.
@@ -2392,13 +2389,10 @@ exit 0
             .expect("get schedule");
         assert!(!updated.enabled);
 
-        assert!(
-            state
-                .background_task_tracker
-                .wait_until_idle(Duration::from_secs(5))
-                .await,
-            "timed out waiting for background tasks to finish"
-        );
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
     }
 
     #[ignore = "requires DATABASE_URL"]
@@ -2525,12 +2519,9 @@ exit 0
             .expect("get schedule");
         assert!(!updated.enabled);
 
-        assert!(
-            state
-                .background_task_tracker
-                .wait_until_idle(Duration::from_secs(5))
-                .await,
-            "timed out waiting for background tasks to finish"
-        );
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
     }
 }

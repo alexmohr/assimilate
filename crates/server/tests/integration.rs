@@ -217,13 +217,7 @@ fn test_app_stats_and_notification_routes() -> Router<server::AppState> {
 
 #[cfg(test)]
 fn build_test_app(pool: PgPool) -> Router {
-    let state = build_test_state(pool);
-
-    Router::new()
-        .merge(test_app_core_routes())
-        .merge(test_app_repo_routes())
-        .merge(test_app_stats_and_notification_routes())
-        .with_state(state)
+    build_test_app_with_state(pool).0
 }
 
 /// Like [`build_test_app`], but also hands back the [`server::AppState`] so a test
@@ -1420,13 +1414,10 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
     .unwrap();
     assert_eq!(file_rows, 2);
 
-    assert!(
-        state
-            .background_task_tracker
-            .wait_until_idle(std::time::Duration::from_secs(5))
-            .await,
-        "timed out waiting for background tasks to finish"
-    );
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(5))
+        .await;
 }
 
 #[tokio::test]
@@ -2785,13 +2776,10 @@ async fn test_sync_fetches_missing_hostname_via_borg_info() {
         "placeholder agent should carry the imported sentinel token"
     );
 
-    assert!(
-        state
-            .background_task_tracker
-            .wait_until_idle(std::time::Duration::from_secs(5))
-            .await,
-        "timed out waiting for background tasks to finish"
-    );
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(5))
+        .await;
 }
 
 /// Regression test: borg list exits 0 but outputs unparseable text.

@@ -62,6 +62,20 @@ impl BackgroundTaskTracker {
         .await
         .is_ok()
     }
+
+    /// Test-oriented convenience over [`Self::wait_until_idle`]: panics with a
+    /// descriptive message if the tracker doesn't go idle in time, instead of
+    /// every call site writing out its own `assert!`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the tracker is still active after `timeout_duration`.
+    pub async fn assert_idle(&self, timeout_duration: Duration) {
+        assert!(
+            self.wait_until_idle(timeout_duration).await,
+            "timed out waiting for background tasks to finish"
+        );
+    }
 }
 
 #[cfg(test)]

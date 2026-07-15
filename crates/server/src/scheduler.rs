@@ -1109,12 +1109,9 @@ esac
         // this test function returns and tears down its tokio runtime is a scheduling
         // coincidence, which is exactly what produces non-deterministic coverage on the
         // functions it calls (parse_archive_stats, enrich_single_archive_stats, ...).
-        assert!(
-            background_task_tracker
-                .wait_until_idle(Duration::from_secs(5))
-                .await,
-            "timed out waiting for background tasks to finish"
-        );
+        background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
 
         let stale_count = sqlx::query_scalar!(
             "SELECT COUNT(*)::BIGINT FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",

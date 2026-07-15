@@ -272,14 +272,43 @@ def get_failing_check_logs(repo: str, number: int, max_chars: int = 12000) -> st
 
 
 def get_review_comments(repo: str, number: int, max_chars: int = 8000) -> str:
-    """Inline review comments plus top-level review bodies requesting changes."""
+    """Inline review comments plus top-level bodies from each reviewer's
+    *latest* review requesting changes - not every CHANGES_REQUESTED review
+    ever left on the PR.
+
+    Mirrors GitHub's own reviewDecision computation (only the most recent
+    review per reviewer counts - see sync-pr-labels.js's
+    changesRequestedIsCurrent, which fixes the same staleness problem on the
+    label-sync side). Without this, a review from days ago whose findings
+    were already fixed in later rounds keeps getting concatenated in here
+    forever - which both wastes opencode's attention re-litigating solved
+    problems and, worse, kept tripping harness.py's "this needs a human
+    policy decision" heuristic on old language (e.g. "needs a human
+    decision") from a concern that was resolved rounds ago.
+    """
     reviews = _run_json(["gh", "api", f"repos/{repo}/pulls/{number}/reviews"])
     inline = _run_json(["gh", "api", f"repos/{repo}/pulls/{number}/comments"])
-    parts: list[str] = []
+
+    latest_by_user: dict[str, dict[str, Any]] = {}
     for r in reviews:
+        login = (r.get("user") or {}).get("login")
+        if not login:
+            continue
+        existing = latest_by_user.get(login)
+        if existing is None or r.get("submitted_at", "") > existing.get("submitted_at", ""):
+            latest_by_user[login] = r
+
+    current_review_ids = {
+        r["id"] for r in latest_by_user.values() if r.get("state") == "CHANGES_REQUESTED"
+    }
+
+    parts: list[str] = []
+    for r in latest_by_user.values():
         if r.get("state") == "CHANGES_REQUESTED" and (r.get("body") or "").strip():
             parts.append(f"[review by {r.get('user', {}).get('login')}] {r['body']}")
     for c in inline:
+        if c.get("pull_request_review_id") not in current_review_ids:
+            continue
         if (c.get("body") or "").strip():
             path = c.get("path", "?")
             line = c.get("line") or c.get("original_line") or "?"

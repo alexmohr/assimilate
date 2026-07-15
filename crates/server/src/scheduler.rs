@@ -1142,6 +1142,103 @@ esac
         assert_eq!(fresh_count, 1);
     }
 
+    /// Exercises `run_repo_sync` end-to-end (not just the `sync_existing_archives`
+    /// call it eventually makes) so the due-sync-check loop, the `RepoOpTracker`
+    /// guard construction, and `run_scheduled_repo_sync`'s bookkeeping are all
+    /// covered by something other than a direct call to the inner sync function.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn run_repo_sync_triggers_due_scheduled_sync_and_clears_repo_op(pool: sqlx::PgPool) {
+        let _borg_lock = borg_binary_lock().await;
+        let empty_list_json = r#"{"archives":[]}"#;
+        let info_repo_json = r#"{
+  "cache": {
+    "stats": {
+      "total_size": 0,
+      "total_csize": 0,
+      "unique_csize": 0,
+      "total_chunks": 0,
+      "unique_chunks": 0
+    }
+  }
+}"#;
+        let (_borg_dir, _borg_guard) =
+            install_fake_borg(empty_list_json, empty_list_json, info_repo_json).await;
+        let encryption_key =
+            shared::crypto::derive_key(b"test-secret-key-for-scheduled-sync").unwrap();
+        let passphrase_encrypted =
+            shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
+        let repo = db::insert_repo(
+            &pool,
+            &InsertRepoParams {
+                name: "scheduled-sync-test-repo",
+                repo_path: "/backup/scheduled-sync-test",
+                ssh_user: "borg",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Every-minute cron with no prior sync (repo.last_synced_at is NULL) is
+        // immediately due, so run_repo_sync must pick this repo up on this tick.
+        sqlx::query!(
+            "UPDATE repos SET sync_schedule = $2 WHERE id = $1",
+            repo.id,
+            "* * * * *",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let ui_broadcast = UiBroadcast::new();
+        let repo_op_tracker = RepoOpTracker::default();
+        let repo_lock = RepoLock::default();
+        let background_task_tracker = crate::background_tasks::BackgroundTaskTracker::default();
+
+        run_repo_sync(
+            &pool,
+            &encryption_key,
+            &ui_broadcast,
+            &repo_op_tracker,
+            &repo_lock,
+            &background_task_tracker,
+        )
+        .await;
+
+        // run_repo_sync only starts run_scheduled_repo_sync in the background;
+        // wait for it (and anything it in turn kicks off) to actually finish
+        // before asserting on its effects.
+        background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while repo_op_tracker.any_active().await {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("repo_op_tracker never cleared the scheduled sync's entry");
+
+        let last_synced_at = sqlx::query_scalar!(
+            "SELECT last_synced_at FROM repo_stats WHERE repo_id = $1",
+            repo.id,
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap()
+        .flatten();
+        assert!(
+            last_synced_at.is_some(),
+            "run_repo_sync should have run the due sync and recorded last_synced_at"
+        );
+    }
+
     // tick() integration tests
     // Run with:
     //   DATABASE_URL=postgres://borg:borg_secret@localhost:5432/borg \

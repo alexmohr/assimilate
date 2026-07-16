@@ -350,6 +350,117 @@ struct InitialImportTask {
     bg_passphrase: String,
 }
 
+/// Arguments for [`run_initial_import_work`], bundled (rather than passed
+/// individually) to stay under clippy's argument-count limit.
+struct InitialImportWork<'a> {
+    pool: &'a PgPool,
+    encryption_key: [u8; 32],
+    ui_broadcast: &'a UiBroadcast,
+    state_repo_lock: RepoLock,
+    task_state: &'a AppState,
+    repo_id: i64,
+    task_id: u64,
+    need_borg_info: bool,
+    bg_repo_url: &'a str,
+    bg_passphrase: &'a str,
+}
+
+/// The actual sync work `run_initial_import_task` races against
+/// cancellation: deferred encryption detection (if `borg info` couldn't be
+/// reached synchronously during creation), the initial archive sync, and
+/// content indexing. Split out so the outer task stays under clippy's
+/// function-length limit.
+async fn run_initial_import_work(work: InitialImportWork<'_>) {
+    let InitialImportWork {
+        pool,
+        encryption_key,
+        ui_broadcast,
+        state_repo_lock,
+        task_state,
+        repo_id,
+        task_id,
+        need_borg_info,
+        bg_repo_url,
+        bg_passphrase,
+    } = work;
+
+    // Detect encryption before syncing rather than concurrently: both borg
+    // info and the sync's borg list contend for the same repository lock, so
+    // running them in parallel would force the list into the lock-retry path.
+    if need_borg_info {
+        let timeout = get_borg_timeout(pool).await;
+        match run_borg_info_with_retry(bg_repo_url, bg_passphrase, timeout).await {
+            Ok(info) => {
+                if let Err(e) =
+                    db::update_repo_encryption(pool, repo_id, &info.encryption.to_string()).await
+                {
+                    warn!(
+                        repo_id,
+                        error = %e,
+                        "failed to update encryption after deferred borg info"
+                    );
+                }
+            }
+            Err(e) => {
+                warn!(
+                    repo_id,
+                    error = %e,
+                    "deferred borg info failed, continuing to archive sync"
+                );
+            }
+        }
+    }
+
+    let _import_lock = state_repo_lock.acquire(repo_id).await;
+    let sync_ok = match sync_existing_archives(
+        pool,
+        &encryption_key,
+        repo_id,
+        ui_broadcast,
+        &task_state.background_task_tracker,
+    )
+    .await
+    {
+        Ok(_) => {
+            if let Err(e) = db::update_repo_last_synced(pool, repo_id).await {
+                warn!(
+                    repo_id,
+                    error = %e,
+                    "failed to set last_synced_at after initial import"
+                );
+            }
+            true
+        }
+        Err(e) => {
+            warn!(repo_id, error = %e, "failed to sync existing archives on import");
+            if task_state.import_tasks.is_current(repo_id, task_id).await {
+                let _ = db::set_repo_import_error(pool, repo_id, Some(&format!("{e}"))).await;
+            }
+            false
+        }
+    };
+
+    if sync_ok && task_state.import_tasks.is_current(repo_id, task_id).await {
+        index_archives_with_progress(
+            pool.clone(),
+            encryption_key,
+            repo_id,
+            ui_broadcast.clone(),
+            state_repo_lock,
+            false,
+        )
+        .await;
+    }
+
+    if task_state.import_tasks.is_current(repo_id, task_id).await {
+        if let Err(e) = db::set_repo_importing(pool, repo_id, false).await {
+            warn!(repo_id, error = %e, "failed to clear importing flag");
+        }
+        clear_import_progress_state(pool, ui_broadcast, repo_id).await;
+        ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
+    }
+}
+
 /// Runs the background work kicked off when a repository is first created:
 /// deferred encryption detection (if `borg info` couldn't be reached
 /// synchronously during creation), the initial archive sync, and content
@@ -369,98 +480,33 @@ async fn run_initial_import_task(task: InitialImportTask) {
         bg_passphrase,
     } = task;
 
-    set_server_sync_op(&task_state, repo_id).await;
+    let op_clear_guard = set_server_sync_op(&task_state, repo_id).await;
     tokio::select! {
         () = cancel.cancelled() => {
             info!(repo_id, "initial import cancelled");
         }
-        () = async {
-            // Detect encryption before syncing rather than concurrently: both borg
-            // info and the sync's borg list contend for the same repository lock, so
-            // running them in parallel would force the list into the lock-retry path.
-            if need_borg_info {
-                let timeout = get_borg_timeout(&pool).await;
-                match run_borg_info_with_retry(&bg_repo_url, &bg_passphrase, timeout).await {
-                    Ok(info) => {
-                        if let Err(e) =
-                            db::update_repo_encryption(
-                                &pool,
-                                repo_id,
-                                &info.encryption.to_string(),
-                            )
-                            .await
-                        {
-                            warn!(
-                                repo_id,
-                                error = %e,
-                                "failed to update encryption after deferred borg info"
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        warn!(
-                            repo_id,
-                            error = %e,
-                            "deferred borg info failed, continuing to archive sync"
-                        );
-                    }
-                }
-            }
-
-            let _import_lock = state_repo_lock.acquire(repo_id).await;
-            let sync_ok = match sync_existing_archives(
-                &pool,
-                &encryption_key,
-                repo_id,
-                &ui_broadcast,
-                &task_state.background_task_tracker,
-            )
-            .await {
-                Ok(_) => {
-                    if let Err(e) = db::update_repo_last_synced(&pool, repo_id).await {
-                        warn!(
-                            repo_id,
-                            error = %e,
-                            "failed to set last_synced_at after initial import"
-                        );
-                    }
-                    true
-                }
-                Err(e) => {
-                    warn!(repo_id, error = %e, "failed to sync existing archives on import");
-                    if task_state.import_tasks.is_current(repo_id, task_id).await {
-                        let _ =
-                            db::set_repo_import_error(&pool, repo_id, Some(&format!("{e}")))
-                                .await;
-                    }
-                    false
-                }
-            };
-
-            if sync_ok && task_state.import_tasks.is_current(repo_id, task_id).await {
-                index_archives_with_progress(
-                    pool.clone(),
-                    encryption_key,
-                    repo_id,
-                    ui_broadcast.clone(),
-                    state_repo_lock,
-                    false,
-                )
-                .await;
-            }
-
-            if task_state.import_tasks.is_current(repo_id, task_id).await {
-                if let Err(e) = db::set_repo_importing(&pool, repo_id, false).await {
-                    warn!(repo_id, error = %e, "failed to clear importing flag");
-                }
-                clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
-                ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
-            }
-        } => {}
+        () = run_initial_import_work(InitialImportWork {
+            pool: &pool,
+            encryption_key,
+            ui_broadcast: &ui_broadcast,
+            state_repo_lock,
+            task_state: &task_state,
+            repo_id,
+            task_id,
+            need_borg_info,
+            bg_repo_url: &bg_repo_url,
+            bg_passphrase: &bg_passphrase,
+        }) => {}
     }
 
-    task_state.import_tasks.finish(repo_id, task_id).await;
-    clear_server_sync_op(&task_state, repo_id).await;
+    finish_server_sync_task(
+        &task_state.import_tasks,
+        &ui_broadcast,
+        repo_id,
+        task_id,
+        op_clear_guard,
+    )
+    .await;
 }
 
 #[utoipa::path(
@@ -2074,11 +2120,22 @@ pub async fn clear_import_progress_state(pool: &PgPool, ui_broadcast: &UiBroadca
     let _ = db::set_import_status_message(pool, repo_id, None).await;
 }
 
-/// Mark a repository as being synced by the server.
-pub async fn set_server_sync_op(state: &AppState, repo_id: i64) {
-    state
+/// Mark a repository as being synced by the server, returning a guard that
+/// clears the marker when dropped (including on panic), so a cancelled or
+/// panicking task doesn't leave the entry permanently "active". Callers must
+/// clear via the guard (`clear_now`), not [`clear_server_sync_op`]: the
+/// guard's token-checked clear can't clobber a *different* `ServerSync` op
+/// that's since claimed the same `repo_id` (e.g. a scheduled sync started
+/// after this manual one was cancelled before ever acquiring `repo_lock`),
+/// whereas an unconditional plain clear could.
+#[must_use]
+pub async fn set_server_sync_op(
+    state: &AppState,
+    repo_id: i64,
+) -> crate::repo_op_tracker::RepoOpGuard {
+    let guard = state
         .repo_op_tracker
-        .set(
+        .set_guarded(
             repo_id,
             shared::protocol::RepoOpKind::ServerSync,
             "server".to_owned(),
@@ -2090,10 +2147,32 @@ pub async fn set_server_sync_op(state: &AppState, repo_id: i64) {
             repo_id,
             op: state.repo_op_tracker.get(repo_id).await,
         });
+    guard
 }
 
-/// Clear the server-sync operation marker for a repository.
-pub async fn clear_server_sync_op(state: &AppState, repo_id: i64) {
+/// Shared tail for every task that claimed [`set_server_sync_op`]'s guard:
+/// marks the import task finished, clears the guard's own entry (a no-op if
+/// a different operation already reclaimed this `repo_id`), and broadcasts
+/// the cleared state to the UI.
+pub async fn finish_server_sync_task(
+    import_tasks: &crate::ImportTaskRegistry,
+    ui_broadcast: &UiBroadcast,
+    repo_id: i64,
+    task_id: u64,
+    op_clear_guard: crate::repo_op_tracker::RepoOpGuard,
+) {
+    import_tasks.finish(repo_id, task_id).await;
+    op_clear_guard.clear_now().await;
+    ui_broadcast.send(shared::protocol::ServerToUi::RepoOpChanged { repo_id, op: None });
+}
+
+/// Forcibly clear the server-sync operation marker for a repository,
+/// regardless of which operation currently holds it. Only for
+/// [`reset_import`]'s "unstick a stuck import" recovery path, which is
+/// meant to override whatever's there - anything holding its own
+/// [`set_server_sync_op`] guard should clear via `clear_now` instead so it
+/// only ever clears its own operation.
+async fn clear_server_sync_op(state: &AppState, repo_id: i64) {
     state.repo_op_tracker.clear(repo_id).await;
     state
         .ui_broadcast
@@ -3098,6 +3177,116 @@ struct RepoSyncTask {
     operation_label: &'static str,
 }
 
+/// Arguments for [`run_repo_sync_work`], bundled (rather than passed
+/// individually) to stay under clippy's argument-count limit.
+struct RepoSyncWork<'a> {
+    task_state: &'a AppState,
+    pool: &'a PgPool,
+    encryption_key: [u8; 32],
+    ui_broadcast: &'a UiBroadcast,
+    repo_lock: RepoLock,
+    repo_id: i64,
+    repo_name: &'a str,
+    build_index: bool,
+    task_id: u64,
+    reset_first: bool,
+    operation_label: &'static str,
+}
+
+/// The actual sync work `run_repo_sync_task` races against cancellation.
+/// Split out so the outer task stays under clippy's function-length limit.
+async fn run_repo_sync_work(work: RepoSyncWork<'_>) {
+    let RepoSyncWork {
+        task_state,
+        pool,
+        encryption_key,
+        ui_broadcast,
+        repo_lock,
+        repo_id,
+        repo_name,
+        build_index,
+        task_id,
+        reset_first,
+        operation_label,
+    } = work;
+
+    let _sync_guard = repo_lock.acquire(repo_id).await;
+    let start = std::time::Instant::now();
+
+    if reset_first {
+        let reset_ok =
+            reset_repo_archive_data_before_sync(task_state, pool, ui_broadcast, repo_id, task_id)
+                .await;
+        if !reset_ok {
+            return;
+        }
+    }
+
+    let result = sync_existing_archives(
+        pool,
+        &encryption_key,
+        repo_id,
+        ui_broadcast,
+        &task_state.background_task_tracker,
+    )
+    .await;
+    let elapsed = start.elapsed();
+
+    let (imported, removed) = match result {
+        Ok(counts) => {
+            let _ = db::update_repo_last_synced(pool, repo_id).await;
+            counts
+        }
+        Err(e) => {
+            handle_repo_sync_failure(
+                task_state,
+                pool,
+                ui_broadcast,
+                repo_id,
+                repo_name,
+                operation_label,
+                task_id,
+                elapsed,
+                &e,
+            )
+            .await;
+            return;
+        }
+    };
+
+    log_repo_sync_completion(
+        pool,
+        repo_id,
+        repo_name,
+        operation_label,
+        imported,
+        removed,
+        elapsed,
+    )
+    .await;
+
+    if !task_state.import_tasks.is_current(repo_id, task_id).await {
+        return;
+    }
+
+    let _ = db::set_repo_import_error(pool, repo_id, None).await;
+    if build_index {
+        index_archives_with_progress(
+            pool.clone(),
+            encryption_key,
+            repo_id,
+            ui_broadcast.clone(),
+            repo_lock,
+            true,
+        )
+        .await;
+    }
+
+    let _ = db::set_repo_importing(pool, repo_id, false).await;
+    clear_import_progress_state(pool, ui_broadcast, repo_id).await;
+    ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
+}
+
 /// Shared background task body for both `sync_repo` and `reset_and_sync_repo`;
 /// the only behavioral difference is whether archive metadata is wiped first.
 async fn run_repo_sync_task(task: RepoSyncTask) {
@@ -3116,98 +3305,35 @@ async fn run_repo_sync_task(task: RepoSyncTask) {
         operation_label,
     } = task;
 
-    set_server_sync_op(&task_state, repo_id).await;
+    let op_clear_guard = set_server_sync_op(&task_state, repo_id).await;
 
     tokio::select! {
         () = cancel.cancelled() => {
             info!(repo_id, "{operation_label} cancelled");
         }
-        () = async {
-            let _sync_guard = repo_lock.acquire(repo_id).await;
-            let start = std::time::Instant::now();
-
-            if reset_first {
-                let reset_ok = reset_repo_archive_data_before_sync(
-                    &task_state,
-                    &pool,
-                    &ui_broadcast,
-                    repo_id,
-                    task_id,
-                )
-                .await;
-                if !reset_ok {
-                    return;
-                }
-            }
-
-            let result = sync_existing_archives(
-                &pool,
-                &encryption_key,
-                repo_id,
-                &ui_broadcast,
-                &task_state.background_task_tracker,
-            )
-            .await;
-            let elapsed = start.elapsed();
-
-            let (imported, removed) = match result {
-                Ok(counts) => {
-                    let _ = db::update_repo_last_synced(&pool, repo_id).await;
-                    counts
-                }
-                Err(e) => {
-                    handle_repo_sync_failure(
-                        &task_state,
-                        &pool,
-                        &ui_broadcast,
-                        repo_id,
-                        &repo_name,
-                        operation_label,
-                        task_id,
-                        elapsed,
-                        &e,
-                    )
-                    .await;
-                    return;
-                }
-            };
-
-            log_repo_sync_completion(
-                &pool,
-                repo_id,
-                &repo_name,
-                operation_label,
-                imported,
-                removed,
-                elapsed,
-            )
-            .await;
-
-            if !task_state.import_tasks.is_current(repo_id, task_id).await {
-                return;
-            }
-
-            let _ = db::set_repo_import_error(&pool, repo_id, None).await;
-            if build_index {
-                index_archives_with_progress(
-                    pool.clone(),
-                    encryption_key,
-                    repo_id,
-                    ui_broadcast.clone(),
-                    repo_lock,
-                    true,
-                )
-                .await;
-            }
-
-            let _ = db::set_repo_importing(&pool, repo_id, false).await;
-            clear_import_progress_state(&pool, &ui_broadcast, repo_id).await;
-            ui_broadcast.send(shared::protocol::ServerToUi::DataChanged);
-        } => {}
+        () = run_repo_sync_work(RepoSyncWork {
+            task_state: &task_state,
+            pool: &pool,
+            encryption_key,
+            ui_broadcast: &ui_broadcast,
+            repo_lock,
+            repo_id,
+            repo_name: &repo_name,
+            build_index,
+            task_id,
+            reset_first,
+            operation_label,
+        }) => {}
     }
 
-    task_state.import_tasks.finish(repo_id, task_id).await;
-    clear_server_sync_op(&task_state, repo_id).await;
+    finish_server_sync_task(
+        &task_state.import_tasks,
+        &ui_broadcast,
+        repo_id,
+        task_id,
+        op_clear_guard,
+    )
+    .await;
 }
 
 /// Wipes existing archive metadata for a `reset-and-sync` before the

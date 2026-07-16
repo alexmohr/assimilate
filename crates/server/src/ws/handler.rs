@@ -2040,23 +2040,10 @@ exit 0
         .await
         .expect("timed out waiting for archive indexing");
 
-        wait_for_background_tasks(&state.background_task_tracker).await;
-    }
-
-    /// Waits for every tracked fire-and-forget background task (notification
-    /// dispatch, post-backup indexing, ...) spawned by the call under test to
-    /// finish, so the test doesn't return - and tear down its `#[sqlx::test]`
-    /// runtime - while one is still mid-flight. Otherwise whether such a
-    /// task's remaining lines execute before the runtime drops is a
-    /// scheduling race.
-    async fn wait_for_background_tasks(tracker: &crate::background_tasks::BackgroundTaskTracker) {
-        timeout(Duration::from_secs(5), async {
-            while tracker.any_active() {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("timed out waiting for background tasks to finish");
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
     }
 
     /// Create a test agent+repo+schedule triple linked via `schedule_targets`.
@@ -2402,7 +2389,10 @@ exit 0
             .expect("get schedule");
         assert!(!updated.enabled);
 
-        wait_for_background_tasks(&state.background_task_tracker).await;
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
     }
 
     #[ignore = "requires DATABASE_URL"]
@@ -2529,6 +2519,9 @@ exit 0
             .expect("get schedule");
         assert!(!updated.enabled);
 
-        wait_for_background_tasks(&state.background_task_tracker).await;
+        state
+            .background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
     }
 }

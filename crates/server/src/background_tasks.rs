@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
 };
 
 /// Tracks fire-and-forget background tasks (spawned via `tokio::spawn` outside
@@ -44,6 +47,35 @@ impl BackgroundTaskTracker {
     pub fn any_active(&self) -> bool {
         self.in_flight.load(Ordering::SeqCst) > 0
     }
+
+    /// Polls `any_active()` until it clears or `timeout_duration` elapses.
+    /// Lets a test synchronize with a tracked background task's completion
+    /// instead of guessing how long a fixed sleep needs to be, so the test's
+    /// own tokio runtime doesn't tear down while the task is still in flight.
+    /// Returns `true` if the tracker went idle, `false` on timeout.
+    pub async fn wait_until_idle(&self, timeout_duration: Duration) -> bool {
+        tokio::time::timeout(timeout_duration, async {
+            while self.any_active() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_ok()
+    }
+
+    /// Test-oriented convenience over [`Self::wait_until_idle`]: panics with a
+    /// descriptive message if the tracker doesn't go idle in time, instead of
+    /// every call site writing out its own `assert!`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the tracker is still active after `timeout_duration`.
+    pub async fn assert_idle(&self, timeout_duration: Duration) {
+        assert!(
+            self.wait_until_idle(timeout_duration).await,
+            "timed out waiting for background tasks to finish"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -64,5 +96,27 @@ mod tests {
         assert!(tracker.any_active(), "second guard is still outstanding");
         drop(guard2);
         assert!(!tracker.any_active());
+    }
+
+    #[tokio::test]
+    async fn wait_until_idle_returns_true_once_the_guard_drops() {
+        let tracker = BackgroundTaskTracker::default();
+        let guard = tracker.begin();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            drop(guard);
+        });
+
+        assert!(tracker.wait_until_idle(Duration::from_secs(5)).await);
+        assert!(!tracker.any_active());
+    }
+
+    #[tokio::test]
+    async fn wait_until_idle_returns_false_on_timeout_while_still_active() {
+        let tracker = BackgroundTaskTracker::default();
+        let _guard = tracker.begin();
+
+        assert!(!tracker.wait_until_idle(Duration::from_millis(20)).await);
+        assert!(tracker.any_active(), "guard was never dropped");
     }
 }

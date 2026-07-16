@@ -181,8 +181,15 @@ pub async fn run_repo_sync(
             continue;
         }
 
-        repo_op_tracker
-            .set(
+        // set_guarded's returned guard is held for the task's lifetime so a panic
+        // inside sync_existing_archives still clears this repo's entry (via
+        // spawned cleanup, since Drop can't await) instead of leaving it
+        // permanently "active" - see RepoOpGuard. The guard only ever clears the
+        // exact operation it was created for, so it can't clobber a later
+        // operation that reuses this repo_id after this one's own clear_now()
+        // already ran.
+        let op_clear_guard = repo_op_tracker
+            .set_guarded(
                 repo.id,
                 shared::protocol::RepoOpKind::ServerSync,
                 "server".to_owned(),
@@ -197,7 +204,7 @@ pub async fn run_repo_sync(
             pool: pool.clone(),
             encryption_key: *encryption_key,
             ui_broadcast: ui_broadcast.clone(),
-            repo_op_tracker: repo_op_tracker.clone(),
+            op_clear_guard,
             repo_lock: repo_lock.clone(),
             background_task_tracker: background_task_tracker.clone(),
             repo_id: repo.id,
@@ -211,7 +218,7 @@ struct ScheduledRepoSync {
     pool: PgPool,
     encryption_key: [u8; 32],
     ui_broadcast: UiBroadcast,
-    repo_op_tracker: RepoOpTracker,
+    op_clear_guard: crate::repo_op_tracker::RepoOpGuard,
     repo_lock: RepoLock,
     background_task_tracker: crate::background_tasks::BackgroundTaskTracker,
     repo_id: i64,
@@ -223,7 +230,7 @@ async fn run_scheduled_repo_sync(task: ScheduledRepoSync) {
         pool,
         encryption_key,
         ui_broadcast,
-        repo_op_tracker,
+        op_clear_guard,
         repo_lock,
         background_task_tracker,
         repo_id,
@@ -241,7 +248,7 @@ async fn run_scheduled_repo_sync(task: ScheduledRepoSync) {
     )
     .await;
 
-    repo_op_tracker.clear(repo_id).await;
+    op_clear_guard.clear_now().await;
     ui_broadcast.send(ServerToUi::RepoOpChanged { repo_id, op: None });
 
     match sync_result {
@@ -891,7 +898,7 @@ async fn await_target_completion(
 
 #[cfg(test)]
 mod tests {
-    use std::{os::unix::fs::PermissionsExt, sync::OnceLock};
+    use std::{os::unix::fs::PermissionsExt, sync::OnceLock, time::Duration};
 
     use chrono::TimeZone;
     use tempfile::TempDir;
@@ -1092,15 +1099,26 @@ esac
         .await
         .unwrap();
 
+        let background_task_tracker = crate::background_tasks::BackgroundTaskTracker::default();
         sync_existing_archives(
             &pool,
             &encryption_key,
             repo.id,
             &UiBroadcast::new(),
-            &crate::background_tasks::BackgroundTaskTracker::default(),
+            &background_task_tracker,
         )
         .await
         .expect("sync_existing_archives failed");
+
+        // sync_existing_archives fires archive-stat enrichment in the background
+        // (enrich_archive_stats_background) rather than awaiting it, so the assertions
+        // below would otherwise race that task's completion - whether it finishes before
+        // this test function returns and tears down its tokio runtime is a scheduling
+        // coincidence, which is exactly what produces non-deterministic coverage on the
+        // functions it calls (parse_archive_stats, enrich_single_archive_stats, ...).
+        background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
 
         let stale_count = sqlx::query_scalar!(
             "SELECT COUNT(*)::BIGINT FROM backup_reports WHERE repo_id = $1 AND archive_name = $2",
@@ -1123,6 +1141,103 @@ esac
         .unwrap()
         .unwrap_or(0);
         assert_eq!(fresh_count, 1);
+    }
+
+    /// Exercises `run_repo_sync` end-to-end (not just the `sync_existing_archives`
+    /// call it eventually makes) so the due-sync-check loop, the `RepoOpTracker`
+    /// guard construction, and `run_scheduled_repo_sync`'s bookkeeping are all
+    /// covered by something other than a direct call to the inner sync function.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn run_repo_sync_triggers_due_scheduled_sync_and_clears_repo_op(pool: sqlx::PgPool) {
+        let _borg_lock = borg_binary_lock().await;
+        let empty_list_json = r#"{"archives":[]}"#;
+        let info_repo_json = r#"{
+  "cache": {
+    "stats": {
+      "total_size": 0,
+      "total_csize": 0,
+      "unique_csize": 0,
+      "total_chunks": 0,
+      "unique_chunks": 0
+    }
+  }
+}"#;
+        let (_borg_dir, _borg_guard) =
+            install_fake_borg(empty_list_json, empty_list_json, info_repo_json).await;
+        let encryption_key =
+            shared::crypto::derive_key(b"test-secret-key-for-scheduled-sync").unwrap();
+        let passphrase_encrypted =
+            shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
+        let repo = db::insert_repo(
+            &pool,
+            &InsertRepoParams {
+                name: "scheduled-sync-test-repo",
+                repo_path: "/backup/scheduled-sync-test",
+                ssh_user: "borg",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Every-minute cron with no prior sync (repo.last_synced_at is NULL) is
+        // immediately due, so run_repo_sync must pick this repo up on this tick.
+        sqlx::query!(
+            "UPDATE repos SET sync_schedule = $2 WHERE id = $1",
+            repo.id,
+            "* * * * *",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let ui_broadcast = UiBroadcast::new();
+        let repo_op_tracker = RepoOpTracker::default();
+        let repo_lock = RepoLock::default();
+        let background_task_tracker = crate::background_tasks::BackgroundTaskTracker::default();
+
+        run_repo_sync(
+            &pool,
+            &encryption_key,
+            &ui_broadcast,
+            &repo_op_tracker,
+            &repo_lock,
+            &background_task_tracker,
+        )
+        .await;
+
+        // run_repo_sync only starts run_scheduled_repo_sync in the background;
+        // wait for it (and anything it in turn kicks off) to actually finish
+        // before asserting on its effects.
+        background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while repo_op_tracker.any_active().await {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("repo_op_tracker never cleared the scheduled sync's entry");
+
+        let last_synced_at = sqlx::query_scalar!(
+            "SELECT last_synced_at FROM repo_stats WHERE repo_id = $1",
+            repo.id,
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap()
+        .flatten();
+        assert!(
+            last_synced_at.is_some(),
+            "run_repo_sync should have run the due sync and recorded last_synced_at"
+        );
     }
 
     // tick() integration tests

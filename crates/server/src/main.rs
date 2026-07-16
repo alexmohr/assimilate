@@ -219,7 +219,7 @@ async fn resume_single_import(
 ) {
     let (task_id, cancel) = state.import_tasks.start(repo_id).await;
 
-    server::api::repos::set_server_sync_op(&state, repo_id).await;
+    let op_clear_guard = server::api::repos::set_server_sync_op(&state, repo_id).await;
     tokio::select! {
         () = cancel.cancelled() => {
             tracing::info!(repo_id, "resumed import cancelled");
@@ -255,8 +255,14 @@ async fn resume_single_import(
         } => {}
     }
 
-    state.import_tasks.finish(repo_id, task_id).await;
-    server::api::repos::clear_server_sync_op(&state, repo_id).await;
+    server::api::repos::finish_server_sync_task(
+        &state.import_tasks,
+        &broadcast,
+        repo_id,
+        task_id,
+        op_clear_guard,
+    )
+    .await;
 }
 
 /// Finds repositories still marked as importing from before this server

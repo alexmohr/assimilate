@@ -217,13 +217,22 @@ fn test_app_stats_and_notification_routes() -> Router<server::AppState> {
 
 #[cfg(test)]
 fn build_test_app(pool: PgPool) -> Router {
+    build_test_app_with_state(pool).0
+}
+
+/// Like [`build_test_app`], but also hands back the [`server::AppState`] so a test
+/// can wait on `background_task_tracker.any_active()` after a request that fires a
+/// fire-and-forget background task (e.g. archive-stat enrichment after a sync).
+#[cfg(test)]
+fn build_test_app_with_state(pool: PgPool) -> (Router, server::AppState) {
     let state = build_test_state(pool);
 
-    Router::new()
+    let router = Router::new()
         .merge(test_app_core_routes())
         .merge(test_app_repo_routes())
         .merge(test_app_stats_and_notification_routes())
-        .with_state(state)
+        .with_state(state.clone());
+    (router, state)
 }
 
 #[cfg(test)]
@@ -1363,7 +1372,7 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
     )
     .await;
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let agent_id: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, display_name, agent_token_hash) VALUES ($1, $2, $3) \
          RETURNING id",
@@ -1404,6 +1413,11 @@ async fn test_sync_repo_indexes_new_archive_after_success() {
     .await
     .unwrap();
     assert_eq!(file_rows, 2);
+
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(5))
+        .await;
 }
 
 #[tokio::test]
@@ -2714,7 +2728,7 @@ async fn test_sync_fetches_missing_hostname_via_borg_info() {
     let (_borg_dir, _borg_guard) =
         install_fake_borg(list_json, info_all_json, info_repo_json, "", "").await;
 
-    let mut app = build_test_app(pool.clone());
+    let (mut app, state) = build_test_app_with_state(pool.clone());
     let repo_id = insert_test_repo(&pool, "hostname-format-repo").await;
 
     let req = json_request("POST", &format!("/api/repos/{repo_id}/sync"), None);
@@ -2761,6 +2775,11 @@ async fn test_sync_fetches_missing_hostname_via_borg_info() {
         token_hash, "imported:no-auth",
         "placeholder agent should carry the imported sentinel token"
     );
+
+    state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(5))
+        .await;
 }
 
 /// Regression test: borg list exits 0 but outputs unparseable text.

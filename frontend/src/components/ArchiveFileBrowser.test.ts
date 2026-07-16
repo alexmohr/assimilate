@@ -116,11 +116,10 @@ describe('ArchiveFileBrowser', () => {
     const callCountBefore = vi.mocked(apiClient.get).mock.calls.length
 
     const crumb = wrapper.find('.crumb')
-    if (crumb.exists()) {
-      await crumb.trigger('click')
-      await flushPromises()
-      await nextTick()
-    }
+    expect(crumb.exists()).toBe(true)
+    await crumb.trigger('click')
+    await flushPromises()
+    await nextTick()
 
     expect(vi.mocked(apiClient.get).mock.calls.length).toBeGreaterThan(callCountBefore)
   })
@@ -155,12 +154,9 @@ describe('ArchiveFileBrowser', () => {
     const createElementSpy = vi.spyOn(document, 'createElement')
     const downloadBtn = wrapper.find('.btn-ghost')
     expect(downloadBtn.exists()).toBe(true)
-
-    if (downloadBtn.exists()) {
-      await downloadBtn.trigger('click')
-      await flushPromises()
-      await nextTick()
-    }
+    await downloadBtn.trigger('click')
+    await flushPromises()
+    await nextTick()
 
     // downloadEntry creates an anchor element
     const anchorCalls = createElementSpy.mock.calls.filter(([tag]) => tag === 'a')

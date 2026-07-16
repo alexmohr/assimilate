@@ -359,6 +359,86 @@ jobs:
               );
             }
 
+      # GitHub Actions tokens can never formally `--approve` a PR (platform-
+      # level restriction - "GitHub Actions is not permitted to approve pull
+      # requests"), so once this same bot account has ever formally
+      # requested changes on a "different account" PR, a later clean verdict
+      # can only ever be filed as a plain COMMENTED review (see the prompt's
+      # own fallback above). GitHub's reviewDecision only updates a
+      # reviewer's standing verdict when that reviewer submits a NEW
+      # APPROVED or CHANGES_REQUESTED review - a COMMENTED review does not
+      # supersede an earlier CHANGES_REQUESTED from the same user at all, so
+      # without this the PR's native reviewDecision stays stuck at
+      # CHANGES_REQUESTED forever, no matter how many clean rounds follow.
+      # Confirmed live on PR #365 (this repo's own harness PR): a clean,
+      # approving verdict, filed as COMMENTED, left `review=CHANGES_REQUESTED
+      # (native=CHANGES_REQUESTED)` in the very next label sync.
+      #
+      # Dismissing a review only requires push access (this workflow's own
+      # pull-requests: write already covers it) - it does not have to be
+      # done by the review's original author. Only dismisses the specific
+      # review still driving reviewDecision (the most recent APPROVED/
+      # CHANGES_REQUESTED from this bot, ignoring any COMMENTED reviews in
+      # between, which don't affect reviewDecision either way) - never
+      # touches anything from a different reviewer.
+      - name: Dismiss this bot's own stale changes-requested review
+        if: steps.precheck.outputs.run_claude == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const prNumber = Number("${{ steps.resolve.outputs.pr_number }}");
+            const BOT_LOGIN = "github-actions[bot]";
+
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner,
+              repo,
+              pull_number: prNumber,
+              per_page: 100,
+            });
+            const ownReviews = reviews.filter((r) => r.user && r.user.login === BOT_LOGIN);
+            if (ownReviews.length === 0) {
+              return;
+            }
+
+            // reviewDecision only ever reflects a reviewer's most recent
+            // APPROVED/CHANGES_REQUESTED review - a COMMENTED one in between
+            // (or after) doesn't change what's "in effect" at all.
+            const decisionBearing = ownReviews.filter(
+              (r) => r.state === "APPROVED" || r.state === "CHANGES_REQUESTED",
+            );
+            if (decisionBearing.length === 0) {
+              return;
+            }
+            const stillInEffect = decisionBearing[decisionBearing.length - 1];
+            if (stillInEffect.state !== "CHANGES_REQUESTED") {
+              return; // already clear, or a formal approval already landed
+            }
+
+            // Only dismiss if this exact run's own verdict was NOT itself a
+            // fresh CHANGES_REQUESTED - otherwise there's nothing stale about
+            // it, it's the current, correct, blocking verdict.
+            const thisRun = ownReviews[ownReviews.length - 1];
+            if (thisRun.state === "CHANGES_REQUESTED") {
+              return;
+            }
+
+            await github.rest.pulls.dismissReview({
+              owner,
+              repo,
+              pull_number: prNumber,
+              review_id: stillInEffect.id,
+              message:
+                "Superseded by a later, clean verdict from the same automated reviewer - " +
+                "GitHub Actions tokens cannot formally re-approve to clear this natively, so " +
+                "the newer verdict was filed as a plain comment instead. Dismissing so " +
+                "reviewDecision reflects the current state rather than staying stuck on this.",
+            });
+            core.info(
+              `Dismissed stale CHANGES_REQUESTED review ${stillInEffect.id} from ${BOT_LOGIN}`,
+            );
+
       # Belt-and-suspenders: re-sync immediately after Claude's turn (not
       # waiting on whatever trigger fires next). pre-review-checks.js already
       # waited for both pre-flight stages' check runs to conclude before

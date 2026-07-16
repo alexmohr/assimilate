@@ -202,19 +202,21 @@ describe('ArchiveFileBrowser', () => {
   it('filters files by display size', async () => {
     const wrapper = await mountWithEntries()
 
+    const rowsBefore = wrapper
+      .findAll('tr')
+      .filter((r) => !r.classes().includes('p-datatable-header'))
     const sizeInput = wrapper.findAll('.filter-input')[1]
     await sizeInput.setValue('1.0')
     await sizeInput.trigger('input')
     await nextTick()
 
-    const rows = wrapper.findAll('tr')
-    const visibleSizes = rows
-      .filter((r) => !r.classes().includes('p-datatable-header'))
-      .map((r) => r.text())
+    const rows = wrapper.findAll('tr').filter((r) => !r.classes().includes('p-datatable-header'))
+    const visibleSizes = rows.map((r) => r.text())
     expect(visibleSizes.some((t) => t.includes('1.0 KB'))).toBe(true)
+    expect(rows.length).toBeLessThan(rowsBefore.length)
   })
 
-  it('handles mtime filter input interaction', async () => {
+  it('filters files by display date', async () => {
     const wrapper = await mountWithEntries()
 
     const mtimeInput = wrapper.findAll('.filter-input')[2]
@@ -222,8 +224,10 @@ describe('ArchiveFileBrowser', () => {
     await mtimeInput.trigger('input')
     await nextTick()
 
-    // smoke check: component doesn't error and filter input retains value
-    expect((mtimeInput.element as HTMLInputElement).value).toBe('2026')
+    const rows = wrapper.findAll('tr').filter((r) => !r.classes().includes('p-datatable-header'))
+    const visibleDates = rows.map((r) => r.text())
+    expect(visibleDates.some((t) => t.includes('2026'))).toBe(true)
+    expect(rows.length).toBeGreaterThan(0)
   })
 
   it('clicking the dot-directory row does NOT navigate', async () => {

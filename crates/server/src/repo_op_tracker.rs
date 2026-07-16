@@ -17,14 +17,21 @@ use tokio::sync::RwLock;
 struct RepoOpState {
     active: Option<ActiveRepoOp>,
     queued: u32,
-    /// Identifies which [`RepoOpGuard::set_guarded`] call last claimed `active`,
-    /// so a guard's deferred clear (see `RepoOpGuard`) can tell whether it's
-    /// still clearing its own operation or a later one that reused this
-    /// `repo_id` after the guard's operation already finished. Only ever
-    /// compared for equality - a plain `u64` counter that survives the map
-    /// entry being removed and recreated would work too, but a per-tracker
-    /// monotonic token sidesteps having to reason about whether it could ever
-    /// wrap back to a value a still-live guard remembers.
+    /// Identifies which call last claimed `active` - `set`, `begin`, and
+    /// `set_guarded` all stamp a fresh token whenever they do, so a guard's
+    /// deferred clear (see `RepoOpGuard`) can tell whether it's still
+    /// clearing its own operation or a later one that reused this `repo_id`.
+    /// This has to be updated by every method that claims `active`, not just
+    /// `set_guarded`: if a guarded operation's entry survives its own clear
+    /// because something is still queued behind it (`clear_if_token` only
+    /// removes the map entry, and the token with it, once `queued == 0`), a
+    /// later plain `begin()`/`set()` call would otherwise leave the old
+    /// token in place - letting the original guard's still-pending deferred
+    /// clear match it and wipe out the new operation once it finally runs.
+    /// Only ever compared for equality - a plain `u64` counter that survives
+    /// the map entry being removed and recreated would work too, but a
+    /// per-tracker monotonic token sidesteps having to reason about whether
+    /// it could ever wrap back to a value a still-live guard remembers.
     token: u64,
 }
 
@@ -58,8 +65,10 @@ impl RepoOpTracker {
 
     /// Mark an operation as the one now running for this repository.
     pub async fn set(&self, repo_id: i64, kind: RepoOpKind, actor: String) {
+        let token = self.next_token.fetch_add(1, Ordering::SeqCst);
         let mut map = self.state.write().await;
         let state = map.entry(repo_id).or_default();
+        state.token = token;
         state.active = Some(ActiveRepoOp {
             kind,
             actor,
@@ -70,8 +79,10 @@ impl RepoOpTracker {
 
     /// Transition a queued operation into the running slot.
     pub async fn begin(&self, repo_id: i64, kind: RepoOpKind, actor: String) {
+        let token = self.next_token.fetch_add(1, Ordering::SeqCst);
         let mut map = self.state.write().await;
         let state = map.entry(repo_id).or_default();
+        state.token = token;
         state.queued = state.queued.saturating_sub(1);
         state.active = Some(ActiveRepoOp {
             kind,
@@ -372,5 +383,77 @@ mod tests {
 
         drop(second);
         wait_until_cleared(&tracker, 1).await;
+    }
+
+    /// The exact interleaving a follow-up review flagged: a guarded
+    /// operation's entry survives its own `clear_now()` because something is
+    /// queued behind it, so a later plain `begin()` (the path
+    /// `run_archive_deletion` uses) must stamp a fresh token - otherwise the
+    /// original guard's still-pending deferred `Drop` cleanup would match the
+    /// unchanged stale token and wipe out the new operation once it runs.
+    #[tokio::test]
+    async fn plain_begin_after_guarded_clear_is_immune_to_the_stale_guards_deferred_clear() {
+        let tracker = RepoOpTracker::default();
+        let guard = tracker
+            .set_guarded(1, RepoOpKind::ServerSync, "server".to_owned())
+            .await;
+
+        // A second operation queues behind the guarded one before it finishes.
+        tracker.enqueue(1).await;
+
+        // The guarded operation finishes and clears itself explicitly - but
+        // the entry (and its now-stale token) survives because something is
+        // still queued.
+        guard.clear_now().await;
+        assert!(tracker.get(1).await.is_none());
+
+        // The queued operation transitions into the running slot via the
+        // plain, non-guarded `begin()`.
+        tracker
+            .begin(1, RepoOpKind::DeleteArchive, "user".to_owned())
+            .await;
+        assert_eq!(
+            tracker.get(1).await.map(|op| op.kind),
+            Some(RepoOpKind::DeleteArchive)
+        );
+
+        // The stale guard's deferred Drop cleanup fires with its now-stale
+        // token and must not clobber the new operation.
+        drop(guard);
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert_eq!(
+            tracker.get(1).await.map(|op| op.kind),
+            Some(RepoOpKind::DeleteArchive),
+            "a stale guard's deferred clear wiped out a plain begin()'s active operation"
+        );
+    }
+
+    /// Same interleaving as above but through `set()` - the path
+    /// `break_lock` uses instead of `begin()`.
+    #[tokio::test]
+    async fn plain_set_after_guarded_clear_is_immune_to_the_stale_guards_deferred_clear() {
+        let tracker = RepoOpTracker::default();
+        let guard = tracker
+            .set_guarded(1, RepoOpKind::ServerSync, "server".to_owned())
+            .await;
+        tracker.enqueue(1).await;
+        guard.clear_now().await;
+        assert!(tracker.get(1).await.is_none());
+
+        tracker
+            .set(1, RepoOpKind::BreakLock, "admin".to_owned())
+            .await;
+        assert_eq!(
+            tracker.get(1).await.map(|op| op.kind),
+            Some(RepoOpKind::BreakLock)
+        );
+
+        drop(guard);
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert_eq!(
+            tracker.get(1).await.map(|op| op.kind),
+            Some(RepoOpKind::BreakLock),
+            "a stale guard's deferred clear wiped out a plain set()'s active operation"
+        );
     }
 }

@@ -452,6 +452,24 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
         _mark_stuck(cfg, pr, "could not resolve merge conflicts")
         return False
 
+    if git_ops.head_sha(cfg.repo_dir) != git_ops.remote_head_sha(cfg.repo_dir, pr.head_ref_name):
+        # _resolve_conflicts (rebase-onto-base, always run - see its own
+        # docstring) actually moved HEAD: base had commits this branch
+        # didn't, and rebasing onto them picked up a real fix (e.g. PR
+        # #323's cargo-deny failure on a since-patched dependency). `git
+        # rebase` already committed that result locally - nothing further
+        # needs to happen for the fix to exist. Push it now rather than
+        # waiting on opencode/the mechanical shortcut to separately produce
+        # a change: if the rebase alone was enough, a capable opencode run
+        # correctly finds nothing left to fix and makes no edits,
+        # run_fix_and_validate below reports "opencode made no changes",
+        # and the rebase would otherwise be discarded via
+        # discard_uncommitted_changes and never reach origin at all - reset
+        # away again by the very next cycle's checkout_branch_at_remote.
+        git_ops.push(cfg.repo_dir, pr.head_ref_name, force_with_lease=True)
+        log.info("PR #%d: pushed a rebase-onto-base fix on its own", pr.number)
+        return True
+
     # Only take the mechanical shortcut when CI is the *only* outstanding
     # problem - if review feedback or a coverage/duplicate-code precheck is
     # also unresolved, a trivial "fix: apply pre-commit auto-fixes" push

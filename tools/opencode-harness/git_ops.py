@@ -161,3 +161,11 @@ def push(cwd: Path, branch: str, force_with_lease: bool = False) -> None:
 
 def head_sha(cwd: Path) -> str:
     return _run(cwd, ["rev-parse", "HEAD"]).stdout.strip()
+
+
+def remote_head_sha(cwd: Path, branch: str) -> str:
+    """The remote-tracking ref's SHA as of the last fetch of `branch` - not a
+    live query. Used to tell whether a local rebase actually moved HEAD
+    since the last checkout/fetch, not whether origin has since changed.
+    """
+    return _run(cwd, ["rev-parse", f"origin/{branch}"]).stdout.strip()

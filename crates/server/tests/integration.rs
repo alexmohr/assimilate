@@ -509,26 +509,116 @@ async fn wait_for_import_completion(pool: &PgPool, repo_id: i64) {
 
 #[cfg(test)]
 async fn clean_tables(pool: &PgPool) {
-    sqlx::query("DELETE FROM backup_reports")
-        .execute(pool)
-        .await
-        .unwrap();
-    sqlx::query("DELETE FROM schedules")
-        .execute(pool)
-        .await
-        .unwrap();
+    /// Helper: DELETE all rows from each listed table.
+    async fn delete_tables(pool: &PgPool, tables: &[&str]) {
+        for table in tables {
+            sqlx::query(&format!("DELETE FROM {table}"))
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+    }
+
+    // Layer 0: Leaf tables (no FK dependencies on other app tables).
+    delete_tables(
+        pool,
+        &[
+            "audit_log",
+            "login_attempts",
+            "system_events",
+            "system_settings",
+            "server_quotas",
+        ],
+    )
+    .await;
     sqlx::query("UPDATE excludes_global_config SET raw_text = ''")
         .execute(pool)
         .await
         .unwrap();
-    sqlx::query("DELETE FROM repos")
-        .execute(pool)
-        .await
-        .unwrap();
-    sqlx::query("DELETE FROM agents")
-        .execute(pool)
-        .await
-        .unwrap();
+
+    // Layer 1: Tables referencing notification_channels.
+    delete_tables(pool, &["notification_deliveries", "notification_rules"]).await;
+
+    // Layer 2: Tables referencing agents.
+    delete_tables(
+        pool,
+        &["ssh_tunnels", "agent_hostname_patterns", "agent_tags"],
+    )
+    .await;
+
+    // Layer 3: Tables referencing schedules (and possibly agents).
+    delete_tables(
+        pool,
+        &[
+            "schedule_targets",
+            "per_agent_excludes",
+            "per_agent_commands",
+            "per_agent_file_change_patterns",
+        ],
+    )
+    .await;
+
+    // Layer 4: Tables referencing archives.
+    delete_tables(
+        pool,
+        &[
+            "archive_tags",
+            "archive_files",
+            "archive_index_jobs",
+            "archive_paths",
+        ],
+    )
+    .await;
+
+    // Layer 5: archives references repos.
+    delete_tables(pool, &["archives"]).await;
+
+    // Layer 6: backup_sources references schedules, agents, repos.
+    delete_tables(pool, &["backup_sources"]).await;
+
+    // Layer 7: backup_reports references agents, repos, schedules.
+    delete_tables(pool, &["backup_reports"]).await;
+
+    // Layer 8: canary_results references repos and schedules.
+    delete_tables(pool, &["canary_results"]).await;
+
+    // Layer 9: Tables referencing repos (but not auth entities).
+    delete_tables(
+        pool,
+        &[
+            "repo_tags",
+            "repo_stats",
+            "repo_import_state",
+            "repo_last_op",
+            "repo_quotas",
+            "repo_relocation_pending_hosts",
+        ],
+    )
+    .await;
+
+    // Layer 10: schedules references repos.
+    delete_tables(pool, &["schedules"]).await;
+
+    // Layer 11: Auth-related tables. Roles are system-seeded and never cleaned.
+    delete_tables(
+        pool,
+        &[
+            "dismissed_dashboard_findings",
+            "push_subscriptions",
+            "api_tokens",
+            "sessions",
+            "user_roles",
+            "user_groups",
+            "repo_permissions",
+        ],
+    )
+    .await;
+
+    // Layer 12: Root entity tables.
+    delete_tables(pool, &["users", "groups", "tags"]).await;
+
+    // Layer 13: Root entities - all children deleted above.
+    delete_tables(pool, &["repos", "agents", "notification_channels"]).await;
 }
 
 /// Inserts a repo directly into DB, bypassing the API (which requires SSH connectivity).
@@ -640,6 +730,7 @@ async fn test_agent_crud() {
 #[ignore = "requires DATABASE_URL"]
 async fn test_notification_channels_list() {
     let pool = setup_pool().await;
+    clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone());
 
@@ -654,6 +745,7 @@ async fn test_notification_channels_list() {
 #[ignore = "requires DATABASE_URL"]
 async fn test_notification_channel_create_webhook() {
     let pool = setup_pool().await;
+    clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone());
 
@@ -679,6 +771,7 @@ async fn test_notification_channel_create_webhook() {
 #[ignore = "requires DATABASE_URL"]
 async fn test_tunnels_list() {
     let pool = setup_pool().await;
+    clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone());
 
@@ -1591,6 +1684,7 @@ async fn test_reset_import_cancels_active_sync() {
 #[ignore = "requires DATABASE_URL"]
 async fn test_auth_me_without_session() {
     let pool = setup_pool().await;
+    clean_tables(&pool).await;
     let mut app = build_test_app(pool.clone());
 
     let req = Request::builder()
@@ -2993,6 +3087,7 @@ fn mcp_session_request(method: &str, uri: &str) -> Request<Body> {
 #[ignore = "requires DATABASE_URL"]
 async fn must_change_password_blocks_regular_endpoints() {
     let pool = setup_pool().await;
+    clean_tables(&pool).await;
     create_must_change_password_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone());
 
@@ -3008,6 +3103,7 @@ async fn must_change_password_blocks_regular_endpoints() {
 #[ignore = "requires DATABASE_URL"]
 async fn must_change_password_allows_me_endpoint() {
     let pool = setup_pool().await;
+    clean_tables(&pool).await;
     create_must_change_password_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone());
 

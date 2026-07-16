@@ -277,6 +277,14 @@ jobs:
             CLI (already authenticated) since you have no built-in review/label tool:
             - Different account's PR: `gh pr review ${{ steps.resolve.outputs.pr_number }} --approve --body "..."`
               or `gh pr review ${{ steps.resolve.outputs.pr_number }} --request-changes --body "..."`.
+              If `--approve` itself is rejected ("GitHub Actions is not permitted to approve pull
+              requests" - a platform-level restriction on this token, not something retrying fixes),
+              resubmit the exact same verdict as `gh pr review ${{ steps.resolve.outputs.pr_number }}
+              --comment --body "..."` instead, and additionally run
+              `gh pr edit ${{ steps.resolve.outputs.pr_number }} --add-label "claude-approved"
+              --remove-label "claude-changes-requested"` (ignore the remove if that label isn't
+              present) so the verdict is still recorded somewhere machine-readable - a plain
+              comment alone doesn't move GitHub's own reviewDecision.
             - Your own account's PR: `gh pr edit ${{ steps.resolve.outputs.pr_number }} --add-label "claude-approved"`
               or `--add-label "claude-changes-requested"` (and remove whichever of the two was
               previously set with `--remove-label`).

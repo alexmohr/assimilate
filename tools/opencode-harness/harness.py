@@ -641,20 +641,42 @@ def _check_and_fix_pr(cfg: Config, state: HarnessState, number: int) -> bool | N
                 "human review` yourself to have the harness retry.",
                 question=True,
             )
+            if not cfg.dry_run:
+                state.set_stuck_reason(number, "needs_human_review")
         else:
             log.info("PR #%d: still needs human review, skipping", number)
         return None
 
     if cfg.stuck_label in detail.labels:
-        head_sha = gh.get_pr_head_sha(cfg.repo, number)
         recorded = state.pr_attempts.get(str(number))
-        if recorded is not None and recorded.last_head_sha == head_sha:
-            log.info("PR #%d still stuck (no new commits), skipping", number)
-            return None
-        log.info("PR #%d has new commits since being marked stuck; clearing and retrying", number)
-        gh.remove_label(cfg.repo, number, cfg.stuck_label)
-        if cfg.question_label in detail.labels:
-            gh.remove_label(cfg.repo, number, cfg.question_label)
+        if recorded is not None and recorded.stuck_reason == "needs_human_review":
+            # This PR was marked stuck by the needs_human_review branch
+            # above, not the ordinary fingerprint circuit breaker - the only
+            # thing that ever resolves that is the label clearing (a new
+            # commit is neither necessary nor sufficient for it), and
+            # detail.needs_human_review is already false here or the branch
+            # above would have caught this PR instead. Un-stick regardless
+            # of head_sha - without this, a human doing exactly what the
+            # stuck comment asked (removing the label, no new commit) would
+            # otherwise deadlock forever against the ordinary "no new
+            # commits, still stuck" check below, which the comment never
+            # warns about since it only tells them to remove one label.
+            log.info("PR #%d: needs human review cleared; clearing and retrying", number)
+            gh.remove_label(cfg.repo, number, cfg.stuck_label)
+            if cfg.question_label in detail.labels:
+                gh.remove_label(cfg.repo, number, cfg.question_label)
+            state.clear_pr(number)
+        else:
+            head_sha = gh.get_pr_head_sha(cfg.repo, number)
+            if recorded is not None and recorded.last_head_sha == head_sha:
+                log.info("PR #%d still stuck (no new commits), skipping", number)
+                return None
+            log.info(
+                "PR #%d has new commits since being marked stuck; clearing and retrying", number
+            )
+            gh.remove_label(cfg.repo, number, cfg.stuck_label)
+            if cfg.question_label in detail.labels:
+                gh.remove_label(cfg.repo, number, cfg.question_label)
 
     if not detail.needs_fix:
         log.info("PR #%d: nothing actionable (labels=%s)", number, detail.labels)

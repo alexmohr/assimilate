@@ -23,6 +23,13 @@ class PrAttempt:
     fingerprint: str = ""
     attempts: int = 0
     last_head_sha: str = ""
+    # Set to "needs_human_review" when the harness's stuck+question marking
+    # came from the needs_human_review branch specifically (see harness.py's
+    # _check_and_fix_pr) - that case is only ever actually resolved by the
+    # `needs human review` label clearing, never by a new commit, so it
+    # needs its own un-stick condition distinct from the ordinary
+    # fingerprint/head-sha circuit breaker below.
+    stuck_reason: str = ""
 
 
 @dataclass
@@ -53,6 +60,7 @@ class HarnessState:
                     "fingerprint": a.fingerprint,
                     "attempts": a.attempts,
                     "last_head_sha": a.last_head_sha,
+                    "stuck_reason": a.stuck_reason,
                 }
                 for number, a in self.pr_attempts.items()
             },
@@ -81,6 +89,22 @@ class HarnessState:
 
     def clear_pr(self, pr_number: int) -> None:
         self.pr_attempts.pop(str(pr_number), None)
+        self.save()
+
+    def set_stuck_reason(self, pr_number: int, reason: str) -> None:
+        """Tags the current stuck marking with why, for un-stick conditions
+        that need to tell branches apart (see PrAttempt.stuck_reason) -
+        creates the entry if a fix attempt was never actually recorded for
+        this PR (the needs_human_review branch can mark a PR stuck without
+        ever calling record_attempt, since it fires before any fix is
+        attempted).
+        """
+        key = str(pr_number)
+        existing = self.pr_attempts.get(key)
+        if existing is None:
+            self.pr_attempts[key] = PrAttempt(stuck_reason=reason)
+        else:
+            existing.stuck_reason = reason
         self.save()
 
     def mark_issue_started(self, issue_number: int) -> None:

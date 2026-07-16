@@ -46,9 +46,12 @@ asked to edit files.
    checklists. `cargo test` always runs `--lib --bins`; if a Postgres is
    also reachable at `DATABASE_URL` (default
    `postgres://borg:borg_secret@localhost:5432/borg`, same as this repo's
-   own CI), it additionally runs the full `#[sqlx::test]`-based suite in
-   `crates/server/tests/{db_queries,integration}.rs` — the same tests CI's
-   "Database Integration Tests"/"Nightly Tests" jobs run. Without a
+   own CI), it additionally runs the DB-backed tests in
+   `crates/server/tests/{db_queries,integration}.rs` and the server lib's
+   own `#[ignore = "requires DATABASE_URL"]` tests — the same tests CI's
+   "Database Integration Tests"/"Nightly Tests" jobs run, including the
+   `--ignored` runs those tests need (`cargo test` skips them by default).
+   Without a
    reachable DB this step is skipped and only CI can catch a regression
    there; with one, opencode gets the same fast local feedback loop CI has,
    instead of finding out several minutes later via a full push+CI

@@ -14,15 +14,21 @@ Those need Docker and are CI's job, not a per-cycle local gate's - see the
 harness's own CI-failure-log-driven retry loop for that tier instead.
 
 The DB-backed test suite (crates/server/tests/db_queries.rs and
-integration.rs, both `#[sqlx::test]`-based) is different: it's run here too,
-opportunistically, whenever a Postgres is reachable at DATABASE_URL (see
-_db_reachable). Skipping it unconditionally used to mean opencode's local
-retry loop could never actually see a regression there - it would validate
-clean (since `cargo test --workspace --lib --bins` never touches those
-files), push, and only find out several minutes later via a full CI
-round-trip that its "fix" broke an integration test, burning through
+integration.rs, plus the server lib's own DB-dependent tests) is different:
+it's run here too, opportunistically, whenever a Postgres is reachable at
+DATABASE_URL (see _db_reachable). Skipping it unconditionally used to mean
+opencode's local retry loop could never actually see a regression there - it
+would validate clean (since `cargo test --workspace --lib --bins` never
+touches those files), push, and only find out several minutes later via a
+full CI round-trip that its "fix" broke an integration test, burning through
 HARNESS_MAX_STUCK_CYCLES on slow, unverifiable guesses instead of fast local
-iteration. If no DB is already reachable, this tries to start one itself via
+iteration. Mirrors CI's "Nightly Tests" AND "Database Integration Tests" jobs
+specifically, not just the former: db_queries.rs's #[sqlx::test] tests (and
+integration.rs's non-ignored ones) run under a plain `cargo test`, but every
+DB-dependent test in integration.rs and the ignored ones in the server lib
+is marked `#[ignore = "requires DATABASE_URL"]`, which `cargo test` skips
+entirely without an explicit `--ignored` - two additional runs cover those.
+If no DB is already reachable, this tries to start one itself via
 `docker run` (matching this repo's own CI Postgres service exactly - image,
 credentials, port) rather than requiring the operator to have set one up by
 hand - see _ensure_docker_postgres_running. The container is left running
@@ -211,15 +217,47 @@ def run_rust_checks(cwd: Path, timeout: int = 1800) -> list[ValidationResult]:
         # --test-threads=1 with DATABASE_URL set): the #[sqlx::test] suite
         # in db_queries.rs/integration.rs isolates each test in its own DB,
         # but running them single-threaded avoids incidental cross-test
-        # contention on the same Postgres instance.
-        results.append(
-            _run(
-                cwd,
-                ["cargo", "+nightly", "test", "--workspace", "--", "--test-threads=1"],
-                timeout,
-                env=_db_env(),
-            )
-        )
+        # contention on the same Postgres instance. This alone does NOT
+        # cover "Database Integration Tests" despite the similar name and
+        # despite touching the same files - every DB-dependent test in
+        # integration.rs and the ignored ones in the server lib is marked
+        # #[ignore = "requires DATABASE_URL"], which plain `cargo test`
+        # skips entirely without --ignored. Without the two runs below,
+        # this gate silently never executes any of them, so opencode never
+        # finds out locally that its fix broke one - exactly the round-trip
+        # this feature exists to avoid - and only CI catches it, several
+        # minutes later.
+        db_test_runs = [
+            ["cargo", "+nightly", "test", "--workspace", "--", "--test-threads=1"],
+            [
+                "cargo",
+                "+nightly",
+                "test",
+                "-p",
+                "server",
+                "--test",
+                "integration",
+                "--",
+                "--ignored",
+                "--test-threads=1",
+            ],
+            [
+                "cargo",
+                "+nightly",
+                "test",
+                "-p",
+                "server",
+                "--lib",
+                "--",
+                "--ignored",
+                "--test-threads=1",
+            ],
+        ]
+        for run_args in db_test_runs:
+            result = _run(cwd, run_args, timeout, env=_db_env())
+            results.append(result)
+            if not result.ok:
+                break
     else:
         log.info(
             "no Postgres reachable at DATABASE_URL (or migrations failed); skipping the "

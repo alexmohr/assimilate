@@ -865,4 +865,21 @@ describe('ScheduleDetailView - Backups tab', () => {
     // Save bar should be hidden on Backups tab
     expect(wrapper.find('.save-bar').exists()).toBe(false)
   })
+
+  it('resets selected archive when schedule id changes', async () => {
+    setupEditMode()
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    const vm = wrapper.vm as { selectedBackupReport: { id: number; archive_name: string } | null }
+    vm.selectedBackupReport = { id: 1, archive_name: 'test-archive' }
+    await nextTick()
+    expect(vm.selectedBackupReport).not.toBeNull()
+
+    setupEditMode({ ...mockSchedule, id: 2 })
+    await wrapper.setProps({ id: '2' })
+    await flushPromises()
+
+    expect(vm.selectedBackupReport).toBeNull()
+  })
 })

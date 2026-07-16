@@ -136,6 +136,19 @@ describe('ArchiveFileBrowser', () => {
     expect(subdirRow).toBeTruthy()
   })
 
+  it('clicking a directory row navigates to that directory', async () => {
+    const wrapper = await mountWithEntries()
+    const callCountBefore = vi.mocked(apiClient.get).mock.calls.length
+
+    const subdirRow = wrapper.findAll('tr.clickable').find((r) => r.text().includes('subdir'))
+    expect(subdirRow).toBeTruthy()
+    await subdirRow!.trigger('click')
+    await flushPromises()
+    await nextTick()
+
+    expect(vi.mocked(apiClient.get).mock.calls.length).toBeGreaterThan(callCountBefore)
+  })
+
   it('download button renders in action column', async () => {
     const wrapper = await mountWithEntries()
 

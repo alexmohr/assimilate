@@ -45,6 +45,23 @@ pub struct RepoOpTracker {
 }
 
 impl RepoOpTracker {
+    /// Stamp a fresh token onto `state` and record `kind`/`actor` as its
+    /// active operation, invalidating whatever token (and thus whichever
+    /// guard's deferred clear) was previously associated with this entry.
+    /// Shared by every method that claims an entry's active slot - see the
+    /// `token` field's doc comment for why they all need to do this.
+    fn claim(&self, state: &mut RepoOpState, kind: RepoOpKind, actor: String) -> u64 {
+        let token = self.next_token.fetch_add(1, Ordering::SeqCst);
+        state.token = token;
+        state.active = Some(ActiveRepoOp {
+            kind,
+            actor,
+            started_at: Utc::now(),
+            queued: state.queued,
+        });
+        token
+    }
+
     /// Record that an operation is waiting to run for this repository.
     pub async fn enqueue(&self, repo_id: i64) {
         let mut state = self.state.write().await;
@@ -65,31 +82,17 @@ impl RepoOpTracker {
 
     /// Mark an operation as the one now running for this repository.
     pub async fn set(&self, repo_id: i64, kind: RepoOpKind, actor: String) {
-        let token = self.next_token.fetch_add(1, Ordering::SeqCst);
         let mut map = self.state.write().await;
         let state = map.entry(repo_id).or_default();
-        state.token = token;
-        state.active = Some(ActiveRepoOp {
-            kind,
-            actor,
-            started_at: Utc::now(),
-            queued: state.queued,
-        });
+        self.claim(state, kind, actor);
     }
 
     /// Transition a queued operation into the running slot.
     pub async fn begin(&self, repo_id: i64, kind: RepoOpKind, actor: String) {
-        let token = self.next_token.fetch_add(1, Ordering::SeqCst);
         let mut map = self.state.write().await;
         let state = map.entry(repo_id).or_default();
-        state.token = token;
         state.queued = state.queued.saturating_sub(1);
-        state.active = Some(ActiveRepoOp {
-            kind,
-            actor,
-            started_at: Utc::now(),
-            queued: state.queued,
-        });
+        self.claim(state, kind, actor);
     }
 
     /// Clear the running operation. The repository entry is dropped once nothing
@@ -177,16 +180,9 @@ impl RepoOpTracker {
     /// state.
     #[must_use]
     pub async fn set_guarded(&self, repo_id: i64, kind: RepoOpKind, actor: String) -> RepoOpGuard {
-        let token = self.next_token.fetch_add(1, Ordering::SeqCst);
         let mut map = self.state.write().await;
         let state = map.entry(repo_id).or_default();
-        state.token = token;
-        state.active = Some(ActiveRepoOp {
-            kind,
-            actor,
-            started_at: Utc::now(),
-            queued: state.queued,
-        });
+        let token = self.claim(state, kind, actor);
         RepoOpGuard {
             tracker: self.clone(),
             repo_id,

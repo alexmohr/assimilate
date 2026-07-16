@@ -512,6 +512,19 @@ def _check_and_fix_pr(cfg: Config, state: HarnessState, number: int) -> bool | N
         log.info("PR #%d closed without merging, skipping", number)
         return None
 
+    if detail.checks_in_progress:
+        # Judging this PR right now - fingerprinting it, counting a stuck
+        # attempt, deciding it needs a fix - would mean doing so against a
+        # commit whose CI/review hasn't had a chance to actually finish.
+        # Concretely: push a fix, poll again a few minutes later while CI is
+        # still running, see the *same* stale review/CI content because the
+        # automated re-review this repo runs can't have landed yet either,
+        # and count that as "no progress" toward max_stuck_cycles - even
+        # though the fix was never actually evaluated. Skip entirely and
+        # let a later cycle re-check once everything has settled.
+        log.info("PR #%d: checks still in progress, waiting for them to settle", number)
+        return None
+
     if detail.needs_human_review and not (
         detail.ci_failing
         or detail.merge_conflict

@@ -28,6 +28,8 @@ log = logging.getLogger("harness.gh")
 RUN_ID_RE = re.compile(r"/actions/runs/(\d+)")
 JOB_ID_RE = re.compile(r"/job/(\d+)")
 
+_IN_PROGRESS_CHECK_STATUSES = {"QUEUED", "IN_PROGRESS", "WAITING", "PENDING", "REQUESTED"}
+
 STATUS_LABEL_NAMES = {
     "needs review",
     "changes requested",
@@ -113,6 +115,29 @@ class PrDetail:
     @property
     def needs_human_review(self) -> bool:
         return "needs human review" in self.labels
+
+    @property
+    def checks_in_progress(self) -> bool:
+        """True if any check/status on the head commit hasn't finished yet.
+
+        `statusCheckRollup` entries come in two shapes: a `CheckRun` (GitHub
+        Actions jobs, most of this repo's own checks - status is QUEUED/
+        IN_PROGRESS/COMPLETED/etc, with `conclusion` only meaningful once
+        COMPLETED) or a `StatusContext` (legacy commit statuses, e.g.
+        Coveralls - state is PENDING/SUCCESS/FAILURE/ERROR directly, no
+        separate in-progress/conclusion split). Used to avoid judging a PR
+        - fingerprinting it, counting a stuck attempt, or fetching review/CI
+        content - against a commit whose checks are still mid-flight and
+        haven't had a chance to actually finish, let alone for the
+        automated review this repo runs once they do to have landed yet.
+        """
+        for item in self.status_check_rollup:
+            typename = item.get("__typename")
+            if typename == "CheckRun" and item.get("status") in _IN_PROGRESS_CHECK_STATUSES:
+                return True
+            if typename == "StatusContext" and (item.get("state") or "").upper() == "PENDING":
+                return True
+        return False
 
     @property
     def needs_fix(self) -> bool:

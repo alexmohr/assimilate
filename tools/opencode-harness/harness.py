@@ -515,7 +515,12 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
                 pr.number,
                 validation.step,
             )
-            _mark_stuck(cfg, pr, "opencode's merge-conflict resolution failed local validation")
+            _mark_stuck(
+                cfg,
+                pr,
+                "opencode's merge-conflict resolution failed local validation",
+                f"**Failed step:** `{validation.step}`\n\n```\n{validation.output[-4000:]}\n```",
+            )
             git_ops.discard_uncommitted_changes(cfg.repo_dir)
             return False
         if git_ops.has_uncommitted_changes(cfg.repo_dir):
@@ -597,11 +602,15 @@ def _check_and_fix_pr(cfg: Config, state: HarnessState, number: int) -> bool | N
         log.info("PR #%d: checks still in progress, waiting for them to settle", number)
         return None
 
-    if detail.needs_human_review and not (
-        detail.ci_failing
-        or detail.merge_conflict
-        or detail.coverage_failed
-        or detail.duplicate_code
+    if (
+        detail.needs_human_review
+        and detail.changes_requested
+        and not (
+            detail.ci_failing
+            or detail.merge_conflict
+            or detail.coverage_failed
+            or detail.duplicate_code
+        )
     ):
         # `needs human review` is the repo's own sticky sign-off gate (see
         # HUMAN_LABEL/humanSignOffStillStands in sync-pr-labels.js) - only a

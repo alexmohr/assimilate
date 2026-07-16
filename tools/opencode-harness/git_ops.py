@@ -143,6 +143,15 @@ def changed_files(cwd: Path, against: str = "HEAD") -> list[str]:
     return sorted(set(staged) | set(unstaged) | set(untracked))
 
 
+def changed_files_between(cwd: Path, ref_a: str, ref_b: str) -> list[str]:
+    """Files that differ between two *committed* refs - unlike `changed_files`
+    (uncommitted staged/unstaged/untracked only), this sees content that's
+    already been committed, e.g. a conflict resolution landed via
+    `continue_rebase` before any validation has run over it.
+    """
+    return _run(cwd, ["diff", "--name-only", ref_a, ref_b]).stdout.splitlines()
+
+
 def commit(cwd: Path, message: str) -> bool:
     """Stage everything and commit. Returns False if there was nothing to commit."""
     _run(cwd, ["add", "-A"])

@@ -44,6 +44,7 @@ import hashlib
 import logging
 import sys
 import time
+from enum import Enum
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -238,7 +239,25 @@ def _try_mechanical_ci_fix(cfg: Config, pr: PrDetail) -> bool:
     return True
 
 
-def _resolve_conflicts(cfg: Config) -> bool:
+class RebaseOutcome(Enum):
+    """_resolve_conflicts' three possible outcomes.
+
+    CLEAN and RESOLVED_BY_OPENCODE are deliberately distinct, not just two
+    flavors of "succeeded": a clean rebase replays already-CI-tested
+    commits onto a new base with no new content at all, safe to push
+    immediately - but opencode resolving a real conflict produces new,
+    unvalidated file edits that need the same local validation gate any
+    other opencode-authored change in this file goes through before ever
+    reaching origin. Conflating the two let a conflict resolution get
+    force-pushed with zero validation - see handle_pr_fix.
+    """
+
+    CLEAN = "clean"
+    RESOLVED_BY_OPENCODE = "resolved_by_opencode"
+    FAILED = "failed"
+
+
+def _resolve_conflicts(cfg: Config) -> RebaseOutcome:
     """Rebases the current checkout onto `cfg.base_branch`, asking opencode to
     resolve real conflicts if the rebase doesn't apply cleanly.
 
@@ -251,7 +270,7 @@ def _resolve_conflicts(cfg: Config) -> bool:
     """
     ok, status = git_ops.rebase_onto(cfg.repo_dir, cfg.base_branch)
     if ok:
-        return True
+        return RebaseOutcome.CLEAN
     prompt = (
         f"Resolve the git rebase conflicts in this repository (rebasing onto "
         f"{cfg.base_branch}).\n\n`git status` output:\n\n{status}\n\n" + prompts.COMMON_RULES
@@ -261,12 +280,12 @@ def _resolve_conflicts(cfg: Config) -> bool:
     )
     if not result.ok:
         git_ops.abort_rebase(cfg.repo_dir)
-        return False
+        return RebaseOutcome.FAILED
     ok, _ = git_ops.continue_rebase(cfg.repo_dir)
     if not ok:
         git_ops.abort_rebase(cfg.repo_dir)
-        return False
-    return True
+        return RebaseOutcome.FAILED
+    return RebaseOutcome.RESOLVED_BY_OPENCODE
 
 
 def _commit_message_for(pr: PrDetail, cfg: Config) -> str:
@@ -447,27 +466,62 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
         return False
 
     git_ops.checkout_branch_at_remote(cfg.repo_dir, pr.head_ref_name)
+    pre_rebase_head = git_ops.head_sha(cfg.repo_dir)
 
-    if not _resolve_conflicts(cfg):
+    rebase_outcome = _resolve_conflicts(cfg)
+    if rebase_outcome is RebaseOutcome.FAILED:
         _mark_stuck(cfg, pr, "could not resolve merge conflicts")
         return False
 
-    if git_ops.head_sha(cfg.repo_dir) != git_ops.remote_head_sha(cfg.repo_dir, pr.head_ref_name):
-        # _resolve_conflicts (rebase-onto-base, always run - see its own
-        # docstring) actually moved HEAD: base had commits this branch
-        # didn't, and rebasing onto them picked up a real fix (e.g. PR
-        # #323's cargo-deny failure on a since-patched dependency). `git
-        # rebase` already committed that result locally - nothing further
-        # needs to happen for the fix to exist. Push it now rather than
-        # waiting on opencode/the mechanical shortcut to separately produce
-        # a change: if the rebase alone was enough, a capable opencode run
-        # correctly finds nothing left to fix and makes no edits,
-        # run_fix_and_validate below reports "opencode made no changes",
-        # and the rebase would otherwise be discarded via
+    if rebase_outcome is RebaseOutcome.CLEAN and git_ops.head_sha(
+        cfg.repo_dir
+    ) != git_ops.remote_head_sha(cfg.repo_dir, pr.head_ref_name):
+        # rebase-onto-base (always run - see _resolve_conflicts' own
+        # docstring) actually moved HEAD with no opencode involvement: base
+        # had commits this branch didn't, and rebasing onto them picked up
+        # a real fix (e.g. PR #323's cargo-deny failure on a since-patched
+        # dependency). `git rebase` already committed that result locally -
+        # nothing further needs to happen for the fix to exist, and no new
+        # content means no new validation risk either. Push it now rather
+        # than waiting on opencode/the mechanical shortcut to separately
+        # produce a change: if the rebase alone was enough, a capable
+        # opencode run correctly finds nothing left to fix and makes no
+        # edits, run_fix_and_validate below reports "opencode made no
+        # changes", and the rebase would otherwise be discarded via
         # discard_uncommitted_changes and never reach origin at all - reset
         # away again by the very next cycle's checkout_branch_at_remote.
         git_ops.push(cfg.repo_dir, pr.head_ref_name, force_with_lease=True)
         log.info("PR #%d: pushed a rebase-onto-base fix on its own", pr.number)
+        return True
+
+    if rebase_outcome is RebaseOutcome.RESOLVED_BY_OPENCODE:
+        # Unlike a clean rebase, opencode edited files to resolve a real
+        # conflict here - already committed via continue_rebase, but never
+        # validated. That's new, unvetted content, so it needs the same
+        # local gate any other opencode-authored change in this function
+        # goes through before it can reach origin - a force-push straight
+        # from conflict resolution with zero validation is exactly how a
+        # bad resolution (formatting, a broken test) would reach origin
+        # undetected until a full CI round-trip, if at all.
+        changed = git_ops.changed_files_between(cfg.repo_dir, pre_rebase_head, "HEAD")
+        validation = validate.run_all(cfg.repo_dir, changed)
+        if not validation.ok:
+            # pre-commit/cargo fmt autofix in place even on a failing run -
+            # same reasoning as run_fix_and_validate's identical retry.
+            validation = validate.run_all(cfg.repo_dir, changed)
+        if not validation.ok:
+            log.warning(
+                "PR #%d: opencode's conflict resolution failed local validation (%s)",
+                pr.number,
+                validation.step,
+            )
+            _mark_stuck(cfg, pr, "opencode's merge-conflict resolution failed local validation")
+            git_ops.discard_uncommitted_changes(cfg.repo_dir)
+            return False
+        if git_ops.has_uncommitted_changes(cfg.repo_dir):
+            git_ops.commit(cfg.repo_dir, "fix: apply pre-commit auto-fixes")
+        git_ops.push(cfg.repo_dir, pr.head_ref_name, force_with_lease=True)
+        log.info("PR #%d: pushed opencode's validated conflict resolution", pr.number)
         return True
 
     # Only take the mechanical shortcut when CI is the *only* outstanding
@@ -791,7 +845,12 @@ def main() -> int:
     log.info("opencode-harness starting: %s", cfg.summary())
 
     state = HarnessState.load(cfg.state_file)
-    if cfg.target_pr is not None and str(cfg.target_pr) in state.pr_attempts:
+    if cfg.target_pr is not None and not cfg.dry_run and str(cfg.target_pr) in state.pr_attempts:
+        # Gated on dry_run like the label-clearing block right below it -
+        # state.clear_pr() calls save() immediately, so without this a
+        # --dry-run --pr N run would write .state.json to disk despite
+        # HARNESS_DRY_RUN being documented as "log intended actions without
+        # invoking opencode or pushing".
         log.info(
             "--pr %d: clearing %d prior attempt(s) from a previous run before starting",
             cfg.target_pr,

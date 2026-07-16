@@ -37,10 +37,10 @@ jobs:
     # commits land. draft is checked straight from the event payload here
     # (no extra API call, always fresh) purely to avoid spinning up the
     # heavier job below for a PR nobody's asked to look at yet - the actual
-    # trust gate (has a maintainer opted this PR into review at all) is
+    # trust gate (has this PR already been reviewed at least once) is
     # deliberately NOT decided here, since synchronize fires on every push
     # an external PR author fully controls themselves; see the "check"
-    # step below, which re-derives it from the PR's current labels instead.
+    # step below.
     if: >-
       (github.event_name == 'pull_request_target' && github.event.action == 'labeled' && github.event.label.name == 'needs review') || (github.event_name == 'pull_request_target' && github.event.action == 'synchronize' && !github.event.pull_request.draft) || (github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[0] != null) || (github.event_name == 'issue_comment' &&
         github.event.issue.pull_request != null &&
@@ -55,23 +55,33 @@ jobs:
         with:
           script: |
             // "needs review" landing and /claude-review are already
-            // precise/trusted triggers by construction (the former requires
-            // a maintainer to have added the label; the latter requires
-            // write access) - always proceed for those; the review job's
-            // own pre-review-checks.js does the real CI/merge-conflict
-            // gating once it starts. "CI completed" (workflow_run) and a
-            // plain push (synchronize) both fire on every push to every
-            // open PR regardless of state - and, unlike the other two,
-            // entirely within an external contributor's own control on a
-            // public repo, with no maintainer approval needed for either
-            // one. Gate both of those on the PR *already* carrying a label
-            // that means a maintainer opted this PR into automated review
-            // at some point (the initial "needs review" landing, or a
-            // verdict from an earlier round) - without this, synchronize
-            // alone would let any external PR author re-trigger a job with
-            // write-scoped GITHUB_TOKEN and the real Claude OAuth secret
-            // just by pushing a second commit, reopening exactly the
-            // quota-griefing risk this gate exists to prevent.
+            // precise/trusted triggers by construction (the former only
+            // fires on the label *transition* - at most once per status
+            // change, not once per push; the latter requires write access)
+            // - always proceed for those; the review job's own
+            // pre-review-checks.js does the real CI/merge-conflict gating
+            // once it starts. "CI completed" (workflow_run) and a plain
+            // push (synchronize) both fire on every push to every open PR
+            // regardless of state - and, unlike the other two, entirely
+            // within an external contributor's own control on a public
+            // repo, with no maintainer approval needed for either one.
+            //
+            // Gating those two on the PR's *current* "needs review" label
+            // (an earlier version of this check) doesn't actually bound
+            // anything: per sync-pr-labels.js, "needs review" is the
+            // default/fallback status ("Awaiting CI completion") applied
+            // to essentially every open PR from the moment it's opened
+            // until CI finishes, and again after almost every subsequent
+            // push - not a one-time maintainer opt-in. A first-time
+            // external contributor's brand-new PR carries it immediately,
+            // so checking it lets `synchronize` re-trigger on literally
+            // every single push, exactly the quota-griefing this gate
+            // exists to prevent. Check whether this PR has ever had *any*
+            // review submitted instead - reviews are never deleted (only
+            // dismissed, which keeps the review itself), so unlike a
+            // label this can't be raced away by a concurrent label sync,
+            // and it only becomes true once the PR has already gone
+            // through one of the two genuinely bounded triggers above.
             if (context.eventName !== "workflow_run" && context.eventName !== "pull_request_target") {
               core.setOutput("should_run", "true");
               return;
@@ -84,15 +94,13 @@ jobs:
               context.eventName === "workflow_run"
                 ? context.payload.workflow_run.pull_requests[0].number
                 : context.payload.pull_request.number;
-            const { data: pr } = await github.rest.pulls.get({
+            const reviews = await github.rest.pulls.listReviews({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: prNumber,
+              per_page: 1,
             });
-            const alreadyOptedIn = pr.labels.some((l) =>
-              ["needs review", "claude-approved", "claude-changes-requested"].includes(l.name),
-            );
-            core.setOutput("should_run", alreadyOptedIn ? "true" : "false");
+            core.setOutput("should_run", reviews.data.length > 0 ? "true" : "false");
 
   review:
     name: Review PR

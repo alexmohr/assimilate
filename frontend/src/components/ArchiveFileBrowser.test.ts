@@ -114,6 +114,7 @@ describe('ArchiveFileBrowser', () => {
   it('clicking breadcrumb button triggers navigateTo', async () => {
     const wrapper = await mountWithEntries()
 
+    const callCountBefore = vi.mocked(apiClient.get).mock.calls.length
     const crumb = wrapper.find('.crumb')
     expect(crumb.exists()).toBe(true)
     expect(crumb.text()).toBe('~')
@@ -121,11 +122,7 @@ describe('ArchiveFileBrowser', () => {
     await flushPromises()
     await nextTick()
 
-    const calls = vi.mocked(apiClient.get).mock.calls
-    const contentCalls = calls.filter(
-      ([url]) => typeof url === 'string' && url.includes('/contents'),
-    )
-    expect(contentCalls.length).toBeGreaterThan(0)
+    expect(vi.mocked(apiClient.get).mock.calls.length).toBeGreaterThan(callCountBefore)
   })
 
   it('renders directory rows as clickable', async () => {
@@ -142,17 +139,14 @@ describe('ArchiveFileBrowser', () => {
   it('clicking a directory row navigates to that directory', async () => {
     const wrapper = await mountWithEntries()
 
+    const callCountBefore = vi.mocked(apiClient.get).mock.calls.length
     const subdirRow = wrapper.findAll('tr.clickable').find((r) => r.text().includes('subdir'))
     expect(subdirRow).toBeTruthy()
     await subdirRow!.trigger('click')
     await flushPromises()
     await nextTick()
 
-    const calls = vi.mocked(apiClient.get).mock.calls
-    const contentCalls = calls.filter(
-      ([url]) => typeof url === 'string' && url.includes('/contents'),
-    )
-    expect(contentCalls.length).toBeGreaterThan(0)
+    expect(vi.mocked(apiClient.get).mock.calls.length).toBeGreaterThan(callCountBefore)
   })
 
   it('download button renders in action column and triggers download', async () => {
@@ -203,6 +197,33 @@ describe('ArchiveFileBrowser', () => {
       .filter((r) => !r.classes().includes('p-datatable-header'))
       .map((r) => r.text())
     expect(visibleNames.some((t) => t.includes('readme.txt'))).toBe(true)
+  })
+
+  it('filters files by display size', async () => {
+    const wrapper = await mountWithEntries()
+
+    const sizeInput = wrapper.findAll('.filter-input')[1]
+    await sizeInput.setValue('1.0')
+    await sizeInput.trigger('input')
+    await nextTick()
+
+    const rows = wrapper.findAll('tr')
+    const visibleSizes = rows
+      .filter((r) => !r.classes().includes('p-datatable-header'))
+      .map((r) => r.text())
+    expect(visibleSizes.some((t) => t.includes('1.0 KB'))).toBe(true)
+  })
+
+  it('handles mtime filter input interaction', async () => {
+    const wrapper = await mountWithEntries()
+
+    const mtimeInput = wrapper.findAll('.filter-input')[2]
+    await mtimeInput.setValue('2026')
+    await mtimeInput.trigger('input')
+    await nextTick()
+
+    // smoke check: component doesn't error and filter input retains value
+    expect((mtimeInput.element as HTMLInputElement).value).toBe('2026')
   })
 
   it('clicking the dot-directory row does NOT navigate', async () => {

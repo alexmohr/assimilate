@@ -11,7 +11,7 @@ import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import { Folder, File, Download } from '@lucide/vue'
 import BaseSpinner from './BaseSpinner.vue'
-import { useArchiveBrowser } from '../composables/useArchiveBrowser'
+import { useArchiveBrowser, type ArchiveEntry } from '../composables/useArchiveBrowser'
 
 interface DisplayEntry {
   type: string
@@ -24,6 +24,8 @@ interface DisplayEntry {
   displaySize: string
   displayMtime: string
 }
+
+const CURRENT_DIR_MARKER = '.'
 
 const props = defineProps<{
   repoId: number | null
@@ -56,7 +58,7 @@ const browserEntries = computed<DisplayEntry[]>(() => [
     mode: d.mode,
     displayName: d.displayName,
     isDir: true,
-    displaySize: '',
+    displaySize: '-',
     displayMtime: '',
   })),
   ...browser.files.value.map((f) => ({
@@ -72,8 +74,8 @@ const browserEntries = computed<DisplayEntry[]>(() => [
   })),
 ])
 
-function setArchive(name: string): void {
-  browser.selectedArchive.value = {
+function archivePlaceholder(name: string): ArchiveEntry {
+  return {
     name,
     start: '',
     hostname: '',
@@ -83,7 +85,17 @@ function setArchive(name: string): void {
     matched: null,
     agent_hostname: null,
   }
+}
+
+function setArchive(name: string): void {
+  browser.selectedArchive.value = archivePlaceholder(name)
   browser.loadContents('/')
+}
+
+function handleRowClick(entry: DisplayEntry): void {
+  if (entry.isDir && entry.displayName !== CURRENT_DIR_MARKER) {
+    navigateTo(entry.path)
+  }
 }
 
 function reset(): void {
@@ -166,10 +178,7 @@ onBeforeUnmount(() => {
         :row-class="(data: DisplayEntry) => (data.isDir ? 'clickable' : '')"
         filter-display="row"
         table-class="data-table browser-table"
-        @row-click="
-          (e: { data: DisplayEntry }) =>
-            e.data.isDir && e.data.displayName !== '.' && navigateTo(e.data.path)
-        "
+        @row-click="(e: { data: DisplayEntry }) => handleRowClick(e.data)"
       >
         <Column
           field="displayName"

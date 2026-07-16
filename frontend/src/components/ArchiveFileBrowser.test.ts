@@ -113,15 +113,19 @@ describe('ArchiveFileBrowser', () => {
 
   it('clicking breadcrumb button triggers navigateTo', async () => {
     const wrapper = await mountWithEntries()
-    const callCountBefore = vi.mocked(apiClient.get).mock.calls.length
 
     const crumb = wrapper.find('.crumb')
     expect(crumb.exists()).toBe(true)
+    expect(crumb.text()).toBe('~')
     await crumb.trigger('click')
     await flushPromises()
     await nextTick()
 
-    expect(vi.mocked(apiClient.get).mock.calls.length).toBeGreaterThan(callCountBefore)
+    const calls = vi.mocked(apiClient.get).mock.calls
+    const contentCalls = calls.filter(
+      ([url]) => typeof url === 'string' && url.includes('/contents'),
+    )
+    expect(contentCalls.length).toBeGreaterThan(0)
   })
 
   it('renders directory rows as clickable', async () => {
@@ -137,7 +141,6 @@ describe('ArchiveFileBrowser', () => {
 
   it('clicking a directory row navigates to that directory', async () => {
     const wrapper = await mountWithEntries()
-    const callCountBefore = vi.mocked(apiClient.get).mock.calls.length
 
     const subdirRow = wrapper.findAll('tr.clickable').find((r) => r.text().includes('subdir'))
     expect(subdirRow).toBeTruthy()
@@ -145,23 +148,33 @@ describe('ArchiveFileBrowser', () => {
     await flushPromises()
     await nextTick()
 
-    expect(vi.mocked(apiClient.get).mock.calls.length).toBeGreaterThan(callCountBefore)
+    const calls = vi.mocked(apiClient.get).mock.calls
+    const contentCalls = calls.filter(
+      ([url]) => typeof url === 'string' && url.includes('/contents'),
+    )
+    expect(contentCalls.length).toBeGreaterThan(0)
   })
 
-  it('download button renders in action column', async () => {
+  it('download button renders in action column and triggers download', async () => {
     const wrapper = await mountWithEntries()
 
     const createElementSpy = vi.spyOn(document, 'createElement')
+    const appendChildSpy = vi.spyOn(document.body, 'appendChild')
+    const removeChildSpy = vi.spyOn(document.body, 'removeChild')
     const downloadBtn = wrapper.find('.btn-ghost')
     expect(downloadBtn.exists()).toBe(true)
     await downloadBtn.trigger('click')
     await flushPromises()
     await nextTick()
 
-    // downloadEntry creates an anchor element
+    // downloadEntry creates an anchor element and appends it to body
     const anchorCalls = createElementSpy.mock.calls.filter(([tag]) => tag === 'a')
     expect(anchorCalls.length).toBe(1)
+    expect(appendChildSpy).toHaveBeenCalledWith(expect.any(HTMLAnchorElement))
+    expect(removeChildSpy).toHaveBeenCalledWith(expect.any(HTMLAnchorElement))
     createElementSpy.mockRestore()
+    appendChildSpy.mockRestore()
+    removeChildSpy.mockRestore()
   })
 
   it('renders filter inputs and handles interaction', async () => {
@@ -169,11 +182,42 @@ describe('ArchiveFileBrowser', () => {
 
     expect(wrapper.find('.data-table').exists()).toBe(true)
     const filterInputs = wrapper.findAll('.filter-input')
-    expect(filterInputs.length).toBeGreaterThanOrEqual(1)
-    for (const input of filterInputs) {
-      await input.setValue('filter')
-      await input.trigger('input')
-    }
+    expect(filterInputs.length).toBe(3)
+    const nameInput = filterInputs[0]
+    expect(nameInput.element.getAttribute('placeholder')).toBe('Filter name...')
+    await nameInput.setValue('readme')
+    await nameInput.trigger('input')
+  })
+
+  it('filters files by display name', async () => {
+    const wrapper = await mountWithEntries()
+
+    const nameInput = wrapper.findAll('.filter-input')[0]
+    await nameInput.setValue('readme')
+    await nameInput.trigger('input')
+    await nextTick()
+
+    // The DataTable should now show only matching rows
+    const rows = wrapper.findAll('tr')
+    const visibleNames = rows
+      .filter((r) => !r.classes().includes('p-datatable-header'))
+      .map((r) => r.text())
+    expect(visibleNames.some((t) => t.includes('readme.txt'))).toBe(true)
+  })
+
+  it('clicking the dot-directory row does NOT navigate', async () => {
+    const wrapper = await mountWithEntries()
+
+    const dotRow = wrapper.findAll('tr.clickable').find((r) => r.text().includes('.'))
+    expect(dotRow).toBeTruthy()
+    const callCountBefore = vi.mocked(apiClient.get).mock.calls.length
+
+    await dotRow!.trigger('click')
+    await flushPromises()
+    await nextTick()
+
+    // Verify no new API calls were made (the '.' entry should not navigate)
+    expect(vi.mocked(apiClient.get).mock.calls.length).toBe(callCountBefore)
   })
 
   it('calls stopPolling on unmount', async () => {

@@ -1419,4 +1419,190 @@ mod tests {
     fn percentage_of_half_yields_50() {
         assert!((super::percentage_of(50, 100) - 50.0).abs() < f64::EPSILON);
     }
+
+    fn base_target_row() -> crate::db::dashboard::TargetRow {
+        crate::db::dashboard::TargetRow {
+            schedule_id: 1,
+            schedule_name: Some("nightly".to_owned()),
+            cron_expression: "0 3 * * *".to_owned(),
+            schedule_enabled: true,
+            schedule_last_run_at: None,
+            next_run_at: None,
+            agent_id: 1,
+            hostname: "host-a".to_owned(),
+            repo_id: 1,
+            repo_name: "repo-a".to_owned(),
+            latest_report_id: Some(42),
+            latest_started_at: None,
+            latest_finished_at: None,
+            latest_failed: Some(false),
+            latest_warning: Some(false),
+            latest_started: Some(false),
+            latest_message: None,
+            last_success_at: Some(chrono::Utc::now()),
+        }
+    }
+
+    fn now_and_due_soon() -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
+        let now = chrono::Utc::now();
+        let due_soon = now
+            .checked_add_signed(chrono::Duration::hours(2))
+            .unwrap_or(now);
+        (now, due_soon)
+    }
+
+    #[test]
+    fn target_finding_returns_none_while_backup_in_progress() {
+        let mut target = base_target_row();
+        target.latest_started = Some(true);
+        let (now, due_soon) = now_and_due_soon();
+
+        let finding = super::target_finding(
+            &target,
+            &std::collections::HashSet::new(),
+            now,
+            due_soon,
+            chrono_tz::UTC,
+        );
+
+        assert!(finding.is_none());
+    }
+
+    #[test]
+    fn target_finding_reports_backup_failed() {
+        let mut target = base_target_row();
+        target.latest_failed = Some(true);
+        target.latest_message = Some("boom".to_owned());
+        let (now, due_soon) = now_and_due_soon();
+
+        let finding = super::target_finding(
+            &target,
+            &std::collections::HashSet::new(),
+            now,
+            due_soon,
+            chrono_tz::UTC,
+        )
+        .expect("expected a backup_failed finding");
+
+        assert_eq!(finding.kind, "backup_failed");
+        assert_eq!(finding.severity, "critical");
+        assert_eq!(finding.reason, "boom");
+        assert!(matches!(
+            finding.destination,
+            super::DashboardDestinationResponse::Activity { report_id } if report_id == 42
+        ));
+    }
+
+    #[test]
+    fn target_finding_reports_schedule_target_overdue() {
+        let mut target = base_target_row();
+        target.last_success_at = Some(chrono::Utc::now() - chrono::Duration::days(3));
+        let (now, due_soon) = now_and_due_soon();
+
+        let finding = super::target_finding(
+            &target,
+            &std::collections::HashSet::new(),
+            now,
+            due_soon,
+            chrono_tz::UTC,
+        )
+        .expect("expected a schedule_target_overdue finding");
+
+        assert_eq!(finding.kind, "schedule_target_overdue");
+        assert!(matches!(
+            finding.destination,
+            super::DashboardDestinationResponse::Schedule { schedule_id } if schedule_id == 1
+        ));
+    }
+
+    #[test]
+    fn target_finding_reports_backup_warning() {
+        let mut target = base_target_row();
+        target.latest_warning = Some(true);
+        target.latest_message = Some("low disk space".to_owned());
+        let (now, due_soon) = now_and_due_soon();
+
+        let finding = super::target_finding(
+            &target,
+            &std::collections::HashSet::new(),
+            now,
+            due_soon,
+            chrono_tz::UTC,
+        )
+        .expect("expected a backup_warning finding");
+
+        assert_eq!(finding.kind, "backup_warning");
+        assert_eq!(finding.severity, "warning");
+        assert_eq!(finding.reason, "low disk space");
+    }
+
+    #[test]
+    fn target_finding_reports_schedule_target_never_succeeded() {
+        let mut target = base_target_row();
+        target.last_success_at = None;
+        target.schedule_last_run_at = Some(chrono::Utc::now());
+        let (now, due_soon) = now_and_due_soon();
+
+        let finding = super::target_finding(
+            &target,
+            &std::collections::HashSet::new(),
+            now,
+            due_soon,
+            chrono_tz::UTC,
+        )
+        .expect("expected a schedule_target_never_succeeded finding");
+
+        assert_eq!(finding.kind, "schedule_target_never_succeeded");
+    }
+
+    #[test]
+    fn target_finding_reports_host_offline_due_soon_when_host_disconnected() {
+        let mut target = base_target_row();
+        let (now, due_soon) = now_and_due_soon();
+        target.next_run_at = now.checked_add_signed(chrono::Duration::hours(1));
+
+        let finding = super::target_finding(
+            &target,
+            &std::collections::HashSet::new(),
+            now,
+            due_soon,
+            chrono_tz::UTC,
+        )
+        .expect("expected a host_offline_due_soon finding");
+
+        assert_eq!(finding.kind, "host_offline_due_soon");
+        assert!(matches!(
+            finding.destination,
+            super::DashboardDestinationResponse::Host { ref hostname } if hostname == "host-a"
+        ));
+    }
+
+    #[test]
+    fn target_finding_returns_none_when_host_due_soon_but_connected() {
+        let mut target = base_target_row();
+        let (now, due_soon) = now_and_due_soon();
+        target.next_run_at = now.checked_add_signed(chrono::Duration::hours(1));
+        let mut connected = std::collections::HashSet::new();
+        connected.insert("host-a".to_owned());
+
+        let finding = super::target_finding(&target, &connected, now, due_soon, chrono_tz::UTC);
+
+        assert!(finding.is_none());
+    }
+
+    #[test]
+    fn target_finding_returns_none_for_healthy_target() {
+        let target = base_target_row();
+        let (now, due_soon) = now_and_due_soon();
+
+        let finding = super::target_finding(
+            &target,
+            &std::collections::HashSet::new(),
+            now,
+            due_soon,
+            chrono_tz::UTC,
+        );
+
+        assert!(finding.is_none());
+    }
 }

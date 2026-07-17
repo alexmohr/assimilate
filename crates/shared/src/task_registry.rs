@@ -46,20 +46,36 @@ impl TaskRegistry {
     /// finish before the deadline are counted as done even if a straggler
     /// times out - otherwise every registered handle would be reported as
     /// outstanding just because one of them was slow.
+    ///
+    /// Re-checks `self.handles` between completions rather than taking a single
+    /// snapshot up front, so a handle registered *during* the drain (e.g. a
+    /// `GracefulChild` reaper spawned because some unrelated in-flight borg call
+    /// got cancelled by its own caller-level timeout while shutdown is already in
+    /// progress) still gets folded in and joined instead of being silently
+    /// orphaned in an already-drained registry.
     pub async fn shutdown(&self, timeout_duration: Duration) -> usize {
-        let handles = std::mem::take(
-            &mut *self
-                .handles
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        );
-        let mut remaining = handles.len();
-        let mut joins: futures_util::stream::FuturesUnordered<_> = handles.into_iter().collect();
         let deadline = tokio::time::Instant::now()
             .checked_add(timeout_duration)
             .unwrap_or_else(tokio::time::Instant::now);
 
-        while remaining > 0 {
+        let mut joins: futures_util::stream::FuturesUnordered<JoinHandle<()>> =
+            futures_util::stream::FuturesUnordered::new();
+        let mut remaining = 0usize;
+
+        loop {
+            let newly_registered = std::mem::take(
+                &mut *self
+                    .handles
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            );
+            remaining = remaining.saturating_add(newly_registered.len());
+            joins.extend(newly_registered);
+
+            if remaining == 0 {
+                break;
+            }
+
             let Ok(Some(result)) = tokio::time::timeout_at(deadline, joins.next()).await else {
                 break;
             };
@@ -157,6 +173,43 @@ mod tests {
         let outstanding = registry.shutdown(Duration::from_secs(5)).await;
 
         assert_eq!(outstanding, 0);
+    }
+
+    #[tokio::test]
+    async fn shutdown_joins_a_task_registered_during_its_own_drain() {
+        let registry = TaskRegistry::default();
+        let ran_late = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let ran_late_clone = Arc::clone(&ran_late);
+
+        // Already registered when shutdown() starts, so it's in the initial snapshot.
+        registry.register(tokio::spawn(async {
+            tokio::time::sleep(Duration::from_millis(80)).await;
+        }));
+
+        // Registers a second handle mid-drain, simulating a GracefulChild reaper
+        // spawned because some unrelated in-flight borg call got cancelled by its
+        // own caller-level timeout while shutdown() is already awaiting the first
+        // handle. A single up-front snapshot would never see this one.
+        let registry_clone = registry.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            registry_clone.register(tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(40)).await;
+                ran_late_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+            }));
+        });
+
+        let outstanding = registry.shutdown(Duration::from_secs(5)).await;
+
+        assert_eq!(
+            outstanding, 0,
+            "both the pre-registered and mid-drain-registered tasks must be joined"
+        );
+        assert!(
+            ran_late.load(std::sync::atomic::Ordering::SeqCst),
+            "the task registered during shutdown's drain must run to completion, not be orphaned \
+             in an already-drained registry"
+        );
     }
 
     #[tokio::test]

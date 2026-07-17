@@ -244,16 +244,7 @@ impl Drop for GracefulChild {
 
                     let _ = nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGKILL);
 
-                    if let Some(repo) = repo
-                        && let Err(e) = tokio::process::Command::new(&binary)
-                            .arg("break-lock")
-                            .arg(&repo)
-                            .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-                            .output()
-                            .await
-                    {
-                        tracing::warn!(error = %e, "borg: break-lock failed after SIGKILL");
-                    }
+                    run_break_lock(&binary, repo, &env, "SIGKILL").await;
                 });
                 self.task_registry.register(handle);
             }
@@ -278,20 +269,32 @@ impl Drop for GracefulChild {
             let env = self.env.clone();
             let handle = tokio::spawn(async move {
                 let _ = owned_child.wait().await;
-
-                if let Some(repo) = repo
-                    && let Err(e) = tokio::process::Command::new(&binary)
-                        .arg("break-lock")
-                        .arg(&repo)
-                        .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-                        .output()
-                        .await
-                {
-                    tracing::warn!(error = %e, "borg: break-lock failed after termination");
-                }
+                run_break_lock(&binary, repo, &env, "termination").await;
             });
             self.task_registry.register(handle);
         }
+    }
+}
+
+/// Runs `borg break-lock` for `repo` (a no-op if `repo` is `None` - not every caller knows
+/// the repository URL) after a forced termination, logging on failure. `reason` names what
+/// triggered the termination (`"SIGKILL"` on Unix, `"termination"` on Windows) for the log
+/// line.
+async fn run_break_lock(
+    binary: &Path,
+    repo: Option<String>,
+    env: &[(String, String)],
+    reason: &str,
+) {
+    if let Some(repo) = repo
+        && let Err(e) = tokio::process::Command::new(binary)
+            .arg("break-lock")
+            .arg(&repo)
+            .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .output()
+            .await
+    {
+        tracing::warn!(error = %e, reason, "borg: break-lock failed");
     }
 }
 

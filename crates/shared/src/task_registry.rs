@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+use futures_util::StreamExt;
 use tokio::task::JoinHandle;
 
 /// Collects the `JoinHandle`s of fire-and-forget work spawned outside the
@@ -39,7 +40,12 @@ impl TaskRegistry {
     /// aborted - forcibly killing a borg operation mid-write is exactly what
     /// this codebase avoids elsewhere, see `GracefulChild`) rather than
     /// blocking shutdown indefinitely. Returns the number of tasks that were
-    /// still outstanding at the deadline, so the caller can log it.
+    /// still outstanding at the deadline, so the caller can log it. Handles
+    /// are joined individually against a shared deadline (rather than via a
+    /// single `join_all` gated by an overall timeout) so that tasks which
+    /// finish before the deadline are counted as done even if a straggler
+    /// times out - otherwise every registered handle would be reported as
+    /// outstanding just because one of them was slow.
     pub async fn shutdown(&self, timeout_duration: Duration) -> usize {
         let handles = std::mem::take(
             &mut *self
@@ -47,20 +53,27 @@ impl TaskRegistry {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
         );
-        let total = handles.len();
+        let mut remaining = handles.len();
+        let mut joins: futures_util::stream::FuturesUnordered<_> = handles.into_iter().collect();
+        let deadline = tokio::time::Instant::now()
+            .checked_add(timeout_duration)
+            .unwrap_or_else(tokio::time::Instant::now);
 
-        let joined =
-            tokio::time::timeout(timeout_duration, futures_util::future::join_all(handles)).await;
-
-        match joined {
-            Ok(results) => {
-                results.iter().filter_map(|r| r.as_ref().err()).for_each(
-                    |e| tracing::warn!(error = %e, "background task panicked during shutdown"),
-                );
-                0
+        while remaining > 0 {
+            let Ok(Some(result)) = tokio::time::timeout_at(deadline, joins.next()).await else {
+                break;
+            };
+            remaining = remaining.saturating_sub(1);
+            if let Err(e) = result {
+                if e.is_panic() {
+                    tracing::warn!(error = %e, "background task panicked during shutdown");
+                } else {
+                    tracing::warn!(error = %e, "background task was cancelled during shutdown");
+                }
             }
-            Err(_) => total,
         }
+
+        remaining
     }
 
     /// Whether any registered task hasn't been drained by [`Self::shutdown`]
@@ -118,6 +131,45 @@ mod tests {
     async fn shutdown_with_no_registered_tasks_returns_immediately() {
         let registry = TaskRegistry::default();
         let outstanding = registry.shutdown(Duration::from_secs(5)).await;
+        assert_eq!(outstanding, 0);
+    }
+
+    #[tokio::test]
+    async fn shutdown_does_not_count_a_finished_task_as_outstanding_when_a_straggler_times_out() {
+        let registry = TaskRegistry::default();
+        registry.register(tokio::spawn(async {}));
+        registry.register(tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }));
+
+        let outstanding = registry.shutdown(Duration::from_millis(50)).await;
+
+        assert_eq!(outstanding, 1);
+    }
+
+    #[tokio::test]
+    async fn shutdown_logs_a_panicked_task_and_still_reports_none_outstanding() {
+        let registry = TaskRegistry::default();
+        registry.register(tokio::spawn(async {
+            panic!("boom");
+        }));
+
+        let outstanding = registry.shutdown(Duration::from_secs(5)).await;
+
+        assert_eq!(outstanding, 0);
+    }
+
+    #[tokio::test]
+    async fn shutdown_logs_a_cancelled_task_and_still_reports_none_outstanding() {
+        let registry = TaskRegistry::default();
+        let handle = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        });
+        handle.abort();
+        registry.register(handle);
+
+        let outstanding = registry.shutdown(Duration::from_secs(5)).await;
+
         assert_eq!(outstanding, 0);
     }
 }

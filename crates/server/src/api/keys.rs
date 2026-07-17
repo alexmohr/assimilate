@@ -69,6 +69,7 @@ pub async fn export_key(
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
 
     let output = Borg::new()
+        .with_registry(state.task_registry.clone())
         .run(&["key", "export", "--stdout", borg_repo.as_str()], &env)
         .await
         .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
@@ -137,6 +138,7 @@ pub async fn import_key(
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
 
     let mut child = Borg::new()
+        .with_registry(state.task_registry.clone())
         .spawn_with_stdin(&["key", "import", borg_repo.as_str(), "-"], &env)
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
 
@@ -218,6 +220,7 @@ pub async fn change_passphrase(
     );
 
     let output = Borg::new()
+        .with_registry(state.task_registry.clone())
         .run(&["key", "change-passphrase", borg_repo.as_str()], &env)
         .await
         .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;

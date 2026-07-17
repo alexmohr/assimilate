@@ -120,7 +120,7 @@ pub async fn search_archive(
 
     let output = tokio::time::timeout(
         SEARCH_TIMEOUT,
-        Borg::new().run(
+        Borg::new().with_registry(state.task_registry.clone()).run(
             &[
                 "list",
                 "--json-lines",
@@ -300,7 +300,7 @@ pub async fn cross_archive_search(
     check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_view).await?;
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
 
-    let archives = list_archives_sorted(&borg_repo, &env).await?;
+    let archives = list_archives_sorted(&borg_repo, &env, &state.task_registry).await?;
     let archives_to_search: Vec<&ArchiveEntryBrief> = archives.iter().take(max_archives).collect();
     let total_archives_searched = archives_to_search.len();
 
@@ -316,7 +316,14 @@ pub async fn cross_archive_search(
             break;
         }
 
-        let entries = search_in_archive(&borg_repo, &archive.name, &borg_pattern, &env).await?;
+        let entries = search_in_archive(
+            &borg_repo,
+            &archive.name,
+            &borg_pattern,
+            &env,
+            &state.task_registry,
+        )
+        .await?;
 
         for entry in entries {
             seen.entry(entry.path.clone()).or_insert(entry);
@@ -345,8 +352,10 @@ struct ArchiveEntryBrief {
 async fn list_archives_sorted(
     borg_repo: &str,
     env: &HashMap<String, String>,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<Vec<ArchiveEntryBrief>, ApiError> {
     let output = Borg::new()
+        .with_registry(task_registry.clone())
         .run(
             &[
                 "list",
@@ -401,12 +410,13 @@ async fn search_in_archive(
     archive_name: &str,
     borg_pattern: &str,
     env: &HashMap<String, String>,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<Vec<CrossSearchEntry>, ApiError> {
     let repo_archive = format!("{borg_repo}::{archive_name}");
 
     let result = tokio::time::timeout(
         PER_ARCHIVE_TIMEOUT,
-        Borg::new().run(
+        Borg::new().with_registry(task_registry.clone()).run(
             &[
                 "list",
                 "--json-lines",

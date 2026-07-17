@@ -140,6 +140,7 @@ mod tests {
             pending_deletes: crate::new_pending_map(),
             shutdown_token: tokio_util::sync::CancellationToken::new(),
             client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
+            task_registry: shared::task_registry::TaskRegistry::default(),
         }
     }
 

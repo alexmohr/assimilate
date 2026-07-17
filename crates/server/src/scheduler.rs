@@ -81,6 +81,7 @@ pub async fn run(state: AppState) {
                 &sync_state.repo_op_tracker,
                 &sync_state.repo_lock,
                 &sync_state.background_task_tracker,
+                &sync_state.task_registry,
             )
             .await;
         }
@@ -118,6 +119,7 @@ pub async fn run_repo_sync(
     repo_op_tracker: &RepoOpTracker,
     repo_lock: &RepoLock,
     background_task_tracker: &crate::background_tasks::BackgroundTaskTracker,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) {
     let repos = match db::list_repos_with_sync_schedule(pool).await {
         Ok(r) => r,
@@ -217,6 +219,7 @@ pub async fn run_repo_sync(
             repo_lock: repo_lock.clone(),
             background_task_tracker: background_task_tracker.clone(),
             task_guard,
+            task_registry: task_registry.clone(),
             repo_id: repo.id,
             repo_name: repo.name.clone(),
         };
@@ -232,6 +235,7 @@ struct ScheduledRepoSync {
     repo_lock: RepoLock,
     background_task_tracker: crate::background_tasks::BackgroundTaskTracker,
     task_guard: crate::background_tasks::BackgroundTaskGuard,
+    task_registry: shared::task_registry::TaskRegistry,
     repo_id: i64,
     repo_name: String,
 }
@@ -245,6 +249,7 @@ async fn run_scheduled_repo_sync(task: ScheduledRepoSync) {
         repo_lock,
         background_task_tracker,
         task_guard: _task_guard,
+        task_registry,
         repo_id,
         repo_name,
     } = task;
@@ -257,6 +262,7 @@ async fn run_scheduled_repo_sync(task: ScheduledRepoSync) {
         repo_id,
         &ui_broadcast,
         &background_task_tracker,
+        &task_registry,
     )
     .await;
 
@@ -1112,12 +1118,14 @@ esac
         .unwrap();
 
         let background_task_tracker = crate::background_tasks::BackgroundTaskTracker::default();
+        let task_registry = shared::task_registry::TaskRegistry::default();
         sync_existing_archives(
             &pool,
             &encryption_key,
             repo.id,
             &UiBroadcast::new(),
             &background_task_tracker,
+            &task_registry,
         )
         .await
         .expect("sync_existing_archives failed");
@@ -1213,6 +1221,7 @@ esac
         let repo_op_tracker = RepoOpTracker::default();
         let repo_lock = RepoLock::default();
         let background_task_tracker = crate::background_tasks::BackgroundTaskTracker::default();
+        let task_registry = shared::task_registry::TaskRegistry::default();
 
         run_repo_sync(
             &pool,
@@ -1221,6 +1230,7 @@ esac
             &repo_op_tracker,
             &repo_lock,
             &background_task_tracker,
+            &task_registry,
         )
         .await;
 

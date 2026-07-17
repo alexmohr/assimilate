@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::{collections::HashMap, fmt, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt, time::Duration};
 
 use axum::{
     Json,
@@ -273,13 +273,17 @@ pub async fn create_repo(
     let repo_url = build_repo_url(&req.ssh_user, &req.ssh_host, ssh_port_u16, &req.repo_path);
 
     let info_timeout = Duration::from_secs(30);
-    let info_result: Option<BorgInfoResult> =
-        match tokio::time::timeout(info_timeout, run_borg_info(&repo_url, &req.passphrase)).await {
-            Err(_) => None,
-            Ok(Ok(info)) => Some(info),
-            Ok(Err(ApiError::BadGateway(ref msg))) if is_lock_error(msg) => None,
-            Ok(Err(e)) => return Err(e),
-        };
+    let info_result: Option<BorgInfoResult> = match tokio::time::timeout(
+        info_timeout,
+        run_borg_info(&repo_url, &req.passphrase, &state.task_registry),
+    )
+    .await
+    {
+        Err(_) => None,
+        Ok(Ok(info)) => Some(info),
+        Ok(Err(ApiError::BadGateway(ref msg))) if is_lock_error(msg) => None,
+        Ok(Err(e)) => return Err(e),
+    };
 
     let encryption = info_result
         .as_ref()
@@ -389,7 +393,14 @@ async fn run_initial_import_work(work: InitialImportWork<'_>) {
     // running them in parallel would force the list into the lock-retry path.
     if need_borg_info {
         let timeout = get_borg_timeout(pool).await;
-        match run_borg_info_with_retry(bg_repo_url, bg_passphrase, timeout).await {
+        match run_borg_info_with_retry(
+            bg_repo_url,
+            bg_passphrase,
+            timeout,
+            &task_state.task_registry,
+        )
+        .await
+        {
             Ok(info) => {
                 if let Err(e) =
                     db::update_repo_encryption(pool, repo_id, &info.encryption.to_string()).await
@@ -418,6 +429,7 @@ async fn run_initial_import_work(work: InitialImportWork<'_>) {
         repo_id,
         ui_broadcast,
         &task_state.background_task_tracker,
+        &task_state.task_registry,
     )
     .await
     {
@@ -448,6 +460,7 @@ async fn run_initial_import_work(work: InitialImportWork<'_>) {
             ui_broadcast.clone(),
             state_repo_lock,
             false,
+            task_state.task_registry.clone(),
         )
         .await;
     }
@@ -920,7 +933,13 @@ pub async fn init_repo(
         .map_err(|e| ApiError::BadGateway(e.to_string()))?;
     let repo_url = build_repo_url(&req.ssh_user, &req.ssh_host, ssh_port_u16, &req.repo_path);
 
-    let borg_output = run_borg_init(&repo_url, &req.passphrase, req.encryption).await?;
+    let borg_output = run_borg_init(
+        &repo_url,
+        &req.passphrase,
+        req.encryption,
+        &state.task_registry,
+    )
+    .await?;
 
     let passphrase_encrypted = encrypt_passphrase(&req.passphrase, &state.encryption_key)?;
     let compression = helpers::validate_compression(req.compression.as_deref())?;
@@ -1094,7 +1113,7 @@ pub async fn break_lock(
             op: state.repo_op_tracker.get(repo_id).await,
         });
 
-    let result = run_borg_break_lock(&repo_url, &passphrase).await;
+    let result = run_borg_break_lock(&repo_url, &passphrase, &state.task_registry).await;
 
     state.repo_op_tracker.clear(repo_id).await;
     state
@@ -1261,6 +1280,7 @@ pub async fn exec_borg(
     info!(repo_id, name = %repo.name, subcommand = %subcommand, "admin executing borg command");
 
     let output = Borg::new()
+        .with_registry(state.task_registry.clone())
         .run(&req.args, &env)
         .await
         .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
@@ -1365,7 +1385,13 @@ pub async fn migrate_encryption(
 
     info!(repo_id, %migrated_path, "renamed old repo for migration");
 
-    let init_result = run_borg_init(&repo_url, &passphrase, req.target_encryption).await;
+    let init_result = run_borg_init(
+        &repo_url,
+        &passphrase,
+        req.target_encryption,
+        &state.task_registry,
+    )
+    .await;
     if let Err(e) = init_result {
         warn!(repo_id, %e, "borg init failed during migration, rolling back");
         let _ = run_ssh_command(
@@ -1464,8 +1490,12 @@ fn is_lock_error(stderr: &str) -> bool {
         || lower.contains("lockroster")
 }
 
-async fn run_borg_info(repo_url: &str, passphrase: &str) -> Result<BorgInfoResult, ApiError> {
-    run_borg_info_once(repo_url, passphrase).await
+async fn run_borg_info(
+    repo_url: &str,
+    passphrase: &str,
+    task_registry: &shared::task_registry::TaskRegistry,
+) -> Result<BorgInfoResult, ApiError> {
+    run_borg_info_once(repo_url, passphrase, task_registry).await
 }
 
 const LOCK_RETRY_INTERVAL: Duration = Duration::from_secs(30);
@@ -1526,16 +1556,21 @@ async fn run_borg_info_with_retry(
     repo_url: &str,
     passphrase: &str,
     timeout: Duration,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<BorgInfoResult, ApiError> {
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
-        let attempt_result =
-            match tokio::time::timeout(timeout, run_borg_info_once(repo_url, passphrase)).await {
-                Ok(result) => result,
-                Err(_) => Err(ApiError::Internal(format!(
-                    "borg info timed out after {}s; the repository may be unreachable",
-                    timeout.as_secs()
-                ))),
-            };
+        let attempt_result = match tokio::time::timeout(
+            timeout,
+            run_borg_info_once(repo_url, passphrase, task_registry),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(ApiError::Internal(format!(
+                "borg info timed out after {}s; the repository may be unreachable",
+                timeout.as_secs()
+            ))),
+        };
         match attempt_result {
             Ok(result) => return Ok(result),
             Err(e) => {
@@ -1558,10 +1593,15 @@ async fn run_borg_info_with_retry(
     ))
 }
 
-async fn run_borg_info_once(repo_url: &str, passphrase: &str) -> Result<BorgInfoResult, ApiError> {
+async fn run_borg_info_once(
+    repo_url: &str,
+    passphrase: &str,
+    task_registry: &shared::task_registry::TaskRegistry,
+) -> Result<BorgInfoResult, ApiError> {
     let env = helpers::borg_base_env(passphrase);
 
     let output = Borg::new()
+        .with_registry(task_registry.clone())
         .run(&["info", "--json", repo_url], &env)
         .await
         .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
@@ -1612,10 +1652,15 @@ async fn run_borg_info_once(repo_url: &str, passphrase: &str) -> Result<BorgInfo
     Ok(BorgInfoResult { encryption })
 }
 
-async fn run_borg_break_lock(repo_url: &str, passphrase: &str) -> Result<String, ApiError> {
+async fn run_borg_break_lock(
+    repo_url: &str,
+    passphrase: &str,
+    task_registry: &shared::task_registry::TaskRegistry,
+) -> Result<String, ApiError> {
     let env = helpers::borg_base_env(passphrase);
 
     let output = Borg::new()
+        .with_registry(task_registry.clone())
         .run(
             &["break-lock", "--lock-wait", LOCK_WAIT_SECS, repo_url],
             &env,
@@ -1648,10 +1693,12 @@ async fn run_borg_init(
     repo_url: &str,
     passphrase: &str,
     encryption: BorgEncryption,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<String, ApiError> {
     let env = helpers::borg_base_env(passphrase);
 
     let output = Borg::new()
+        .with_registry(task_registry.clone())
         .run(
             &["init", "--encryption", encryption.as_borg_arg(), repo_url],
             &env,
@@ -1687,16 +1734,31 @@ async fn run_borg_init(
     Ok(combined.trim().to_string())
 }
 
-async fn run_borg_list_with_retry(
-    borg_repo: &str,
-    env: &std::collections::HashMap<String, String>,
+struct BorgListRetryArgs<'a> {
+    borg_repo: &'a str,
+    env: &'a std::collections::HashMap<String, String>,
     timeout: Duration,
     stage_timeout: Duration,
-    pool: &PgPool,
-    ui_broadcast: &UiBroadcast,
+    pool: &'a PgPool,
+    ui_broadcast: &'a UiBroadcast,
     repo_id: i64,
+    task_registry: &'a shared::task_registry::TaskRegistry,
+}
+
+async fn run_borg_list_with_retry(
+    args: BorgListRetryArgs<'_>,
 ) -> Result<Vec<serde_json::Value>, ApiError> {
-    let borg = Borg::new();
+    let BorgListRetryArgs {
+        borg_repo,
+        env,
+        timeout,
+        stage_timeout,
+        pool,
+        ui_broadcast,
+        repo_id,
+        task_registry,
+    } = args;
+    let borg = Borg::new().with_registry(task_registry.clone());
     // Plain `borg list --json` reads the repository manifest and returns
     // immediately; adding `--format` forces per-archive metadata loads and
     // makes full resyncs crawl on large repositories.
@@ -1811,6 +1873,7 @@ async fn refresh_repo_info_stats(
     repo_id: i64,
     archive_count: i64,
     timeout: Duration,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) {
     let args = [
         "info",
@@ -1820,7 +1883,14 @@ async fn refresh_repo_info_stats(
         "--",
         borg_repo,
     ];
-    let output = match tokio::time::timeout(timeout, Borg::new().run(&args, env)).await {
+    let output = match tokio::time::timeout(
+        timeout,
+        Borg::new()
+            .with_registry(task_registry.clone())
+            .run(&args, env),
+    )
+    .await
+    {
         Ok(Ok(output)) => output,
         Ok(Err(e)) => {
             warn!(repo_id, error = %e, "failed to run borg info for repo stats");
@@ -1924,6 +1994,7 @@ async fn fetch_archive_metadata_with_retry(
     env: &HashMap<String, String>,
     archive_name: &str,
     timeout: Duration,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<serde_json::Value, ApiError> {
     let repo_archive = format!("{borg_repo}::{archive_name}");
     let args = [
@@ -1936,7 +2007,14 @@ async fn fetch_archive_metadata_with_retry(
     ];
 
     for attempt in 1..=LOCK_RETRY_MAX_ATTEMPTS {
-        let output = match tokio::time::timeout(timeout, Borg::new().run(&args, env)).await {
+        let output = match tokio::time::timeout(
+            timeout,
+            Borg::new()
+                .with_registry(task_registry.clone())
+                .run(&args, env),
+        )
+        .await
+        {
             Ok(Ok(output)) => output,
             Ok(Err(e)) => {
                 return Err(ApiError::Internal(format!(
@@ -1992,17 +2070,70 @@ async fn fetch_archive_metadata_with_retry(
     )))
 }
 
-async fn hydrate_archives_with_metadata(
-    pool: &PgPool,
-    ui_broadcast: &UiBroadcast,
+struct HydrateArchivesArgs<'a> {
+    pool: &'a PgPool,
+    ui_broadcast: &'a UiBroadcast,
     repo_id: i64,
+    borg_repo: &'a str,
+    env: &'a HashMap<String, String>,
+    timeout: Duration,
+    archives: &'a [&'a serde_json::Value],
+    task_registry: &'a shared::task_registry::TaskRegistry,
+}
+
+/// Fills in `hostname`/`end` for a single archive if missing, via a fresh `borg info`
+/// lookup. Archives that already have both, or have no `name`, are returned unchanged.
+async fn hydrate_one_archive(
+    archive: serde_json::Value,
     borg_repo: &str,
     env: &HashMap<String, String>,
     timeout: Duration,
-    archives: &[&serde_json::Value],
+    task_registry: &shared::task_registry::TaskRegistry,
+) -> Result<serde_json::Value, ApiError> {
+    if !archive_metadata_missing(&archive) {
+        return Ok(archive);
+    }
+
+    let archive_name = archive
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if archive_name.is_empty() {
+        return Ok(archive);
+    }
+
+    let metadata =
+        fetch_archive_metadata_with_retry(borg_repo, env, archive_name, timeout, task_registry)
+            .await?;
+
+    let mut merged = archive;
+    for field in ["hostname", "end"] {
+        let needs_update = merged
+            .get(field)
+            .is_none_or(|v| v.is_null() || v.as_str().is_some_and(str::is_empty));
+        if needs_update
+            && let Some(new_value) = metadata.get(field)
+            && let Some(obj) = merged.as_object_mut()
+        {
+            obj.insert(field.to_string(), new_value.clone());
+        }
+    }
+    Ok(merged)
+}
+
+async fn hydrate_archives_with_metadata(
+    args: HydrateArchivesArgs<'_>,
 ) -> Result<Vec<serde_json::Value>, ApiError> {
-    let borg_repo = Arc::new(borg_repo.to_owned());
-    let env = Arc::new(env.clone());
+    let HydrateArchivesArgs {
+        pool,
+        ui_broadcast,
+        repo_id,
+        borg_repo,
+        env,
+        timeout,
+        archives,
+        task_registry,
+    } = args;
     let total = archives.len();
     let total_i32 = i32::try_from(total).unwrap_or(i32::MAX);
 
@@ -2011,8 +2142,8 @@ async fn hydrate_archives_with_metadata(
     #[allow(
         clippy::unnecessary_to_owned,
         reason = "false positive: dropping .copied() makes `archive` a &&Value, and the .clone() \
-                  later in this loop then clones the outer reference instead of producing an \
-                  owned Value, which fails to type-check"
+                  inside hydrate_one_archive then clones the outer reference instead of producing \
+                  an owned Value, which fails to type-check"
     )]
     for archive in archives.iter().copied() {
         let archive_name = archive
@@ -2035,43 +2166,8 @@ async fn hydrate_archives_with_metadata(
         )
         .await;
 
-        let archive = {
-            let borg_repo = Arc::clone(&borg_repo);
-            let env = Arc::clone(&env);
-            async move {
-                let archive = archive.clone();
-                if !archive_metadata_missing(&archive) {
-                    return Ok::<serde_json::Value, ApiError>(archive);
-                }
-
-                let archive_name = archive
-                    .get("name")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default();
-                if archive_name.is_empty() {
-                    return Ok::<serde_json::Value, ApiError>(archive);
-                }
-
-                let metadata =
-                    fetch_archive_metadata_with_retry(&borg_repo, &env, archive_name, timeout)
-                        .await?;
-
-                let mut merged = archive;
-                for field in ["hostname", "end"] {
-                    let needs_update = merged
-                        .get(field)
-                        .is_none_or(|v| v.is_null() || v.as_str().is_some_and(str::is_empty));
-                    if needs_update
-                        && let Some(new_value) = metadata.get(field)
-                        && let Some(obj) = merged.as_object_mut()
-                    {
-                        obj.insert(field.to_string(), new_value.clone());
-                    }
-                }
-                Ok::<serde_json::Value, ApiError>(merged)
-            }
-        }
-        .await?;
+        let archive =
+            hydrate_one_archive(archive.clone(), borg_repo, env, timeout, task_registry).await?;
 
         completed = completed.saturating_add(1);
         let loaded_msg = if archive_name.is_empty() {
@@ -2374,6 +2470,7 @@ async fn import_and_persist_archives(
     to_import: &[&serde_json::Value],
     importing_msg: &str,
     background_task_tracker: &crate::background_tasks::BackgroundTaskTracker,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<ImportOutcome, ApiError> {
     let total = to_import.len();
     publish_import_progress(
@@ -2395,15 +2492,16 @@ async fn import_and_persist_archives(
         Some("Loading archive metadata..."),
     )
     .await;
-    let hydrated_archives = hydrate_archives_with_metadata(
+    let hydrated_archives = hydrate_archives_with_metadata(HydrateArchivesArgs {
         pool,
         ui_broadcast,
         repo_id,
         borg_repo,
         env,
         timeout,
-        to_import,
-    )
+        archives: to_import,
+        task_registry,
+    })
     .await?;
     let hydrated_refs: Vec<&serde_json::Value> = hydrated_archives.iter().collect();
 
@@ -2434,6 +2532,7 @@ async fn import_and_persist_archives(
         repo_id,
         archive_names.clone(),
         background_task_tracker,
+        task_registry.clone(),
     );
 
     Ok(ImportOutcome {
@@ -2449,6 +2548,7 @@ async fn sync_archives(
     ui_broadcast: &UiBroadcast,
     mode: SyncMode<'_>,
     background_task_tracker: &crate::background_tasks::BackgroundTaskTracker,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<(u64, u64), ApiError> {
     let (borg_repo, env) = super::archives::get_repo_env(pool, encryption_key, repo_id).await?;
     let timeout = get_borg_timeout(pool).await;
@@ -2464,15 +2564,16 @@ async fn sync_archives(
     )
     .await;
 
-    let archives = run_borg_list_with_retry(
-        &borg_repo,
-        &env,
+    let archives = run_borg_list_with_retry(BorgListRetryArgs {
+        borg_repo: &borg_repo,
+        env: &env,
         timeout,
         stage_timeout,
         pool,
         ui_broadcast,
         repo_id,
-    )
+        task_registry,
+    })
     .await?;
 
     let ArchiveSyncDiff {
@@ -2484,7 +2585,16 @@ async fn sync_archives(
     let repo_archive_count = i64::try_from(borg_names.len()).unwrap_or(i64::MAX);
 
     if to_import.is_empty() {
-        refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, repo_archive_count, timeout).await;
+        refresh_repo_info_stats(
+            pool,
+            &borg_repo,
+            &env,
+            repo_id,
+            repo_archive_count,
+            timeout,
+            task_registry,
+        )
+        .await;
         return Ok((0, removed));
     }
 
@@ -2507,21 +2617,82 @@ async fn sync_archives(
         &to_import,
         &importing_msg,
         background_task_tracker,
+        task_registry,
     )
     .await?;
+
+    finish_archive_sync(FinishArchiveSyncArgs {
+        pool,
+        encryption_key,
+        repo_id,
+        ui_broadcast,
+        borg_repo: &borg_repo,
+        env: &env,
+        mode,
+        background_task_tracker,
+        task_registry,
+        archive_names,
+        repo_archive_count,
+        timeout,
+        total,
+        processed,
+    })
+    .await;
+
+    Ok((processed, removed))
+}
+
+struct FinishArchiveSyncArgs<'a> {
+    pool: &'a PgPool,
+    encryption_key: &'a [u8; 32],
+    repo_id: i64,
+    ui_broadcast: &'a UiBroadcast,
+    borg_repo: &'a str,
+    env: &'a std::collections::HashMap<String, String>,
+    mode: SyncMode<'a>,
+    background_task_tracker: &'a crate::background_tasks::BackgroundTaskTracker,
+    task_registry: &'a shared::task_registry::TaskRegistry,
+    archive_names: Vec<String>,
+    repo_archive_count: i64,
+    timeout: Duration,
+    total: usize,
+    processed: u64,
+}
+
+/// Queues content indexing for newly-imported archives (incremental sync only),
+/// refreshes the repo's authoritative stats, and logs completion. Split out of
+/// [`sync_archives`] to stay under clippy's function-length limit.
+async fn finish_archive_sync(args: FinishArchiveSyncArgs<'_>) {
+    let FinishArchiveSyncArgs {
+        pool,
+        encryption_key,
+        repo_id,
+        ui_broadcast,
+        borg_repo,
+        env,
+        mode,
+        background_task_tracker,
+        task_registry,
+        archive_names,
+        repo_archive_count,
+        timeout,
+        total,
+        processed,
+    } = args;
 
     let total_i32 = i32::try_from(total).unwrap_or(i32::MAX);
 
     if let SyncMode::New { repo_lock } = mode {
-        queue_archive_indexing(
+        queue_archive_indexing(QueueArchiveIndexingArgs {
             pool,
             encryption_key,
             repo_id,
-            &archive_names,
+            archive_names: &archive_names,
             repo_lock,
             background_task_tracker,
-            "incremental sync",
-        )
+            task_registry,
+            sync_kind: "incremental sync",
+        })
         .await;
     }
 
@@ -2534,7 +2705,16 @@ async fn sync_archives(
         Some("Refreshing repository statistics\u{2026}"),
     )
     .await;
-    refresh_repo_info_stats(pool, &borg_repo, &env, repo_id, repo_archive_count, timeout).await;
+    refresh_repo_info_stats(
+        pool,
+        borg_repo,
+        env,
+        repo_id,
+        repo_archive_count,
+        timeout,
+        task_registry,
+    )
+    .await;
 
     match mode {
         SyncMode::Existing => {
@@ -2554,7 +2734,6 @@ async fn sync_archives(
             );
         }
     }
-    Ok((processed, removed))
 }
 
 /// # Errors
@@ -2566,6 +2745,7 @@ pub async fn sync_existing_archives(
     repo_id: i64,
     ui_broadcast: &UiBroadcast,
     background_task_tracker: &crate::background_tasks::BackgroundTaskTracker,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<(u64, u64), ApiError> {
     sync_archives(
         pool,
@@ -2574,6 +2754,7 @@ pub async fn sync_existing_archives(
         ui_broadcast,
         SyncMode::Existing,
         background_task_tracker,
+        task_registry,
     )
     .await
 }
@@ -2588,6 +2769,7 @@ pub async fn sync_new_archives(
     ui_broadcast: &UiBroadcast,
     repo_lock: &RepoLock,
     background_task_tracker: &crate::background_tasks::BackgroundTaskTracker,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<(u64, u64), ApiError> {
     sync_archives(
         pool,
@@ -2596,6 +2778,7 @@ pub async fn sync_new_archives(
         ui_broadcast,
         SyncMode::New { repo_lock },
         background_task_tracker,
+        task_registry,
     )
     .await
 }
@@ -2607,6 +2790,7 @@ fn enrich_archive_stats_background(
     repo_id: i64,
     archive_names: Vec<String>,
     background_task_tracker: &crate::background_tasks::BackgroundTaskTracker,
+    task_registry: shared::task_registry::TaskRegistry,
 ) {
     // Guard is claimed synchronously, before the task is spawned - any_active()
     // must read true the instant this function returns, not merely once the
@@ -2640,10 +2824,18 @@ fn enrich_archive_stats_background(
                 let borg_repo = borg_repo.clone();
                 let env = env.clone();
                 let semaphore = std::sync::Arc::clone(&semaphore);
+                let task_registry = task_registry.clone();
                 async move {
                     let _permit = semaphore.acquire_owned().await;
-                    enrich_single_archive_stats(&pool, &borg_repo, &env, repo_id, &archive_name)
-                        .await;
+                    enrich_single_archive_stats(
+                        &pool,
+                        &borg_repo,
+                        &env,
+                        repo_id,
+                        &archive_name,
+                        &task_registry,
+                    )
+                    .await;
                 }
             })
             .collect();
@@ -2660,9 +2852,11 @@ async fn run_borg_info_for_stats(
     env: &std::collections::HashMap<String, String>,
     repo_id: i64,
     archive_name: &str,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) -> Option<serde_json::Value> {
     let repo_archive = format!("{borg_repo}::{archive_name}");
     let output = match Borg::new()
+        .with_registry(task_registry.clone())
         .run(
             &[
                 "info",
@@ -2753,8 +2947,11 @@ async fn enrich_single_archive_stats(
     env: &std::collections::HashMap<String, String>,
     repo_id: i64,
     archive_name: &str,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) {
-    let Some(json) = run_borg_info_for_stats(borg_repo, env, repo_id, archive_name).await else {
+    let Some(json) =
+        run_borg_info_for_stats(borg_repo, env, repo_id, archive_name, task_registry).await
+    else {
         return;
     };
 
@@ -2792,18 +2989,32 @@ async fn enrich_single_archive_stats(
     }
 }
 
-async fn queue_archive_indexing(
-    pool: &PgPool,
-    encryption_key: &[u8; 32],
+struct QueueArchiveIndexingArgs<'a> {
+    pool: &'a PgPool,
+    encryption_key: &'a [u8; 32],
     repo_id: i64,
-    archive_names: &[String],
-    repo_lock: &RepoLock,
-    background_task_tracker: &crate::background_tasks::BackgroundTaskTracker,
-    sync_kind: &str,
-) {
+    archive_names: &'a [String],
+    repo_lock: &'a RepoLock,
+    background_task_tracker: &'a crate::background_tasks::BackgroundTaskTracker,
+    task_registry: &'a shared::task_registry::TaskRegistry,
+    sync_kind: &'a str,
+}
+
+async fn queue_archive_indexing(args: QueueArchiveIndexingArgs<'_>) {
+    let QueueArchiveIndexingArgs {
+        pool,
+        encryption_key,
+        repo_id,
+        archive_names,
+        repo_lock,
+        background_task_tracker,
+        task_registry,
+        sync_kind,
+    } = args;
     join_all(archive_names.iter().map(|archive_name| {
         let pool = pool.clone();
         let repo_lock = repo_lock.clone();
+        let task_registry = task_registry.clone();
         async move {
             if let Err(e) = archive_index::ensure_indexed(
                 pool,
@@ -2812,6 +3023,7 @@ async fn queue_archive_indexing(
                 archive_name.clone(),
                 repo_lock,
                 background_task_tracker,
+                task_registry,
             )
             .await
             {
@@ -2840,6 +3052,7 @@ async fn index_archives_with_progress(
     ui_broadcast: UiBroadcast,
     repo_lock: RepoLock,
     repo_lock_held: bool,
+    task_registry: shared::task_registry::TaskRegistry,
 ) {
     let all = match db::list_archive_names_for_repo(&pool, repo_id).await {
         Ok(names) => names,
@@ -2880,6 +3093,7 @@ async fn index_archives_with_progress(
             index,
             total,
             total_i32,
+            task_registry: &task_registry,
         })
         .await;
     }
@@ -2907,6 +3121,7 @@ struct IndexOneArchiveArgs<'a> {
     index: usize,
     total: usize,
     total_i32: i32,
+    task_registry: &'a shared::task_registry::TaskRegistry,
 }
 
 /// Indexes a single archive's contents, broadcasting progress as it goes.
@@ -2927,6 +3142,7 @@ async fn index_one_archive(args: IndexOneArchiveArgs<'_>) {
         index,
         total,
         total_i32,
+        task_registry,
     } = args;
 
     let completed = i32::try_from(index).unwrap_or(i32::MAX);
@@ -2978,6 +3194,7 @@ async fn index_one_archive(args: IndexOneArchiveArgs<'_>) {
             repo_id,
             archive_name,
             &mut on_progress,
+            task_registry,
         )
         .await
     } else {
@@ -2988,6 +3205,7 @@ async fn index_one_archive(args: IndexOneArchiveArgs<'_>) {
             archive_name,
             repo_lock,
             &mut on_progress,
+            task_registry,
         )
         .await
     };
@@ -3228,6 +3446,7 @@ async fn run_repo_sync_work(work: RepoSyncWork<'_>) {
         repo_id,
         ui_broadcast,
         &task_state.background_task_tracker,
+        &task_state.task_registry,
     )
     .await;
     let elapsed = start.elapsed();
@@ -3278,6 +3497,7 @@ async fn run_repo_sync_work(work: RepoSyncWork<'_>) {
             ui_broadcast.clone(),
             repo_lock,
             true,
+            task_state.task_registry.clone(),
         )
         .await;
     }

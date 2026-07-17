@@ -120,6 +120,7 @@ pub async fn export_archive(
     );
 
     let mut child = Borg::new()
+        .with_registry(state.task_registry.clone())
         .spawn(&args, &env)
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
 

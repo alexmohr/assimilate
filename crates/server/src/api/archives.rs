@@ -383,6 +383,7 @@ pub async fn archive_info(
     let repo_archive = format!("{borg_repo}::{archive_name}");
 
     let output = Borg::new()
+        .with_registry(state.task_registry.clone())
         .run(
             &[
                 "info",
@@ -579,6 +580,7 @@ async fn execute_borg_delete(
 ) -> bool {
     let repo_archive = format!("{borg_repo}::{archive_name}");
     let result = Borg::new()
+        .with_registry(state.task_registry.clone())
         .run(
             &[
                 "delete",
@@ -663,6 +665,7 @@ async fn finalize_archive_deletion(
             repo_id,
             &state.ui_broadcast,
             &state.background_task_tracker,
+            &state.task_registry,
         )
         .await
         {
@@ -864,6 +867,7 @@ pub async fn list_contents(
                 archive_name.clone(),
                 state.repo_lock.clone(),
                 &state.background_task_tracker,
+                state.task_registry.clone(),
             )
             .await?;
             return Ok(Json(ContentsResponse {
@@ -875,7 +879,8 @@ pub async fn list_contents(
 
     // Fallback: borg-based listing (used when index is in 'failed' state).
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
-    let raw_entries = borg_list_raw_entries(&env, &borg_repo, &archive_name, path).await?;
+    let raw_entries =
+        borg_list_raw_entries(&env, &borg_repo, &archive_name, path, &state.task_registry).await?;
 
     let prefix = path
         .map(|p| p.trim_end_matches('/').to_string())
@@ -898,6 +903,7 @@ async fn borg_list_raw_entries(
     borg_repo: &str,
     archive_name: &str,
     path: Option<&str>,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<Vec<ContentEntry>, ApiError> {
     const LINE_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -911,6 +917,7 @@ async fn borg_list_raw_entries(
     args.push(repo_archive.as_str());
 
     let mut child = Borg::new()
+        .with_registry(task_registry.clone())
         .spawn(&args, env)
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
 
@@ -1079,6 +1086,7 @@ pub async fn extract_file(
     let repo_archive = format!("{borg_repo}::{archive_name}");
 
     let mut child = Borg::new()
+        .with_registry(state.task_registry.clone())
         .spawn(
             &[
                 "extract",

@@ -49,6 +49,12 @@ enum StartupError {
     RustlsProvider,
 }
 
+/// Extra time beyond borg's own SIGKILL-escalation delay ([`shared::borg::kill_escalation_delay`])
+/// that shutdown waits for `AppState::task_registry` (every in-flight `Borg`
+/// invocation's `GracefulChild` reaper) to drain, before giving up and letting the
+/// process exit anyway.
+const SHUTDOWN_GRACE_BUFFER: Duration = Duration::from_secs(10);
+
 #[tokio::main]
 async fn main() -> Result<(), StartupError> {
     rustls::crypto::ring::default_provider()
@@ -99,6 +105,7 @@ async fn main() -> Result<(), StartupError> {
 
     let login_router = build_login_router(&state, client_ip_resolver);
     let registry = state.registry.clone();
+    let task_registry = state.task_registry.clone();
     let app = build_router(login_router)
         .with_state(state)
         .layer(axum_middleware::from_fn(csp_headers))
@@ -127,6 +134,19 @@ async fn main() -> Result<(), StartupError> {
         } => {
             tracing::warn!("graceful shutdown timed out after 10s, exiting");
         }
+    }
+
+    // Let every `Borg` invocation's GracefulChild reaper (SIGKILL-escalation +
+    // break-lock, see shared::borg::kill_escalation_delay) finish before the process
+    // exits out from under it, instead of abandoning whatever cleanup it promised.
+    let outstanding = task_registry
+        .shutdown(shared::borg::kill_escalation_delay().saturating_add(SHUTDOWN_GRACE_BUFFER))
+        .await;
+    if outstanding > 0 {
+        tracing::warn!(
+            outstanding,
+            "background borg tasks still running at shutdown deadline"
+        );
     }
 
     tunnel_manager.shutdown().await;
@@ -185,6 +205,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         client_ip_resolver,
         shutdown_token,
     } = args;
+    let task_registry = shared::task_registry::TaskRegistry::default();
 
     AppState {
         pool,
@@ -205,6 +226,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         pending_deletes: server::new_pending_map(),
         shutdown_token,
         client_ip_resolver,
+        task_registry,
     }
 }
 
@@ -231,6 +253,7 @@ async fn resume_single_import(
                 repo_id,
                 &broadcast,
                 &state.background_task_tracker,
+                &state.task_registry,
             )
             .await
             {

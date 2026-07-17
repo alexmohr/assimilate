@@ -23,11 +23,10 @@ static TEST_BINARY_OVERRIDE: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
 /// Wrapper around the borg binary that provides structured logging for every invocation.
 pub struct Borg {
     binary: PathBuf,
-    /// Where a [`GracefulChild`]'s SIGKILL-escalation reaper task registers itself. Each
-    /// `Borg` gets its own registry: unlike the agent (which joins a single process-wide
-    /// registry on shutdown, see `agent::main`), the server doesn't yet coordinate a
-    /// graceful-shutdown wait across its many independent borg invocations, so there's no
-    /// shared instance for this to feed into today.
+    /// Where a [`GracefulChild`]'s SIGKILL-escalation reaper task registers itself.
+    /// Defaults to a private, disposable registry that nothing joins; call sites with
+    /// access to [`crate::AppState`] should use [`Self::with_registry`] to register
+    /// against `AppState::task_registry` instead, so `main`'s shutdown can join it.
     task_registry: TaskRegistry,
 }
 
@@ -59,6 +58,15 @@ impl Borg {
     #[must_use]
     pub fn binary(&self) -> &Path {
         &self.binary
+    }
+
+    /// Register this instance's `GracefulChild` reaper tasks with `task_registry`
+    /// instead of a private, disposable one, so shutdown can join them. See
+    /// `AppState::task_registry`.
+    #[must_use]
+    pub fn with_registry(mut self, task_registry: TaskRegistry) -> Self {
+        self.task_registry = task_registry;
+        self
     }
 
     /// Run borg and wait for it to finish, logging subcommand, exit code, and elapsed time.
@@ -277,5 +285,29 @@ mod tests {
     fn args_with_positional_delegates_to_shared_impl() {
         let result = Borg::args_with_positional(&["list", "--json"], &[] as &[&str]);
         assert_eq!(result, vec!["list".to_owned(), "--json".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn with_registry_plumbs_the_given_registry_into_spawned_children() {
+        let _env_lock = test_env_lock().await;
+        let _guard = override_binary_for_tests(PathBuf::from("sleep"));
+        let registry = shared::task_registry::TaskRegistry::default();
+        let borg = Borg::new().with_registry(registry.clone());
+
+        let child = borg.spawn(&["5"], &HashMap::new()).unwrap();
+        assert_eq!(
+            registry.pending_count(),
+            0,
+            "nothing registered until the child is dropped mid-flight"
+        );
+
+        drop(child);
+
+        assert_eq!(
+            registry.pending_count(),
+            1,
+            "dropping a still-running child must register its reaper task on the registry passed \
+             to with_registry, not a private default one"
+        );
     }
 }

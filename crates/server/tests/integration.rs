@@ -80,6 +80,7 @@ fn build_test_state(pool: PgPool) -> server::AppState {
         import_tasks: server::ImportTaskRegistry::default(),
         shutdown_token: tokio_util::sync::CancellationToken::new(),
         client_ip_resolver: server::client_ip::ClientIpResolver::new(),
+        task_registry: shared::task_registry::TaskRegistry::default(),
     }
 }
 
@@ -2648,6 +2649,7 @@ async fn test_scheduler_dispatches_repo_syncs_concurrently() {
         &repo_op_tracker,
         &repo_lock,
         &server::background_tasks::BackgroundTaskTracker::default(),
+        &shared::task_registry::TaskRegistry::default(),
     )
     .await;
     let dispatch_elapsed = started.elapsed();

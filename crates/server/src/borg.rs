@@ -194,24 +194,40 @@ pub(crate) fn override_binary_for_tests(binary: PathBuf) -> TestBinaryOverrideGu
 mod tests {
     use super::*;
 
-    #[test]
-    fn new_picks_up_test_binary_override() {
+    // TEST_BINARY_OVERRIDE and BORG_BINARY are process-global state, so any test that reads
+    // or writes either one needs to hold this for its whole body - otherwise it races every
+    // other test below doing the same thing under cargo test's default parallelism. A tokio
+    // Mutex (not std::sync::Mutex) since several of these tests hold it across an `.await`.
+    static TEST_ENV_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+    async fn test_env_lock() -> tokio::sync::MutexGuard<'static, ()> {
+        TEST_ENV_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await
+    }
+
+    #[tokio::test]
+    async fn new_picks_up_test_binary_override() {
+        let _env_lock = test_env_lock().await;
         let _guard = override_binary_for_tests(PathBuf::from("/custom/borg"));
         assert_eq!(Borg::new().binary(), Path::new("/custom/borg"));
     }
 
-    #[test]
-    fn new_falls_back_to_borg_binary_env_var() {
+    #[tokio::test]
+    async fn new_falls_back_to_borg_binary_env_var() {
+        let _env_lock = test_env_lock().await;
         assert!(test_binary_override().is_none());
-        // SAFETY: single-threaded test, no concurrent env access.
+        // SAFETY: serialized by TEST_ENV_LOCK above.
         unsafe { std::env::set_var("BORG_BINARY", "/env/borg") };
         assert_eq!(Borg::new().binary(), Path::new("/env/borg"));
-        // SAFETY: single-threaded test, no concurrent env access.
+        // SAFETY: serialized by TEST_ENV_LOCK above.
         unsafe { std::env::remove_var("BORG_BINARY") };
     }
 
     #[tokio::test]
     async fn spawn_returns_a_child_whose_stdout_and_stderr_are_streamable() {
+        let _env_lock = test_env_lock().await;
         let _guard = override_binary_for_tests(PathBuf::from("sh"));
         let borg = Borg::new();
         let mut child = borg
@@ -228,6 +244,7 @@ mod tests {
     async fn spawn_with_stdin_pipes_stdin_for_writing() {
         use tokio::io::AsyncWriteExt;
 
+        let _env_lock = test_env_lock().await;
         let _guard = override_binary_for_tests(PathBuf::from("sh"));
         let borg = Borg::new();
         let mut child = borg
@@ -248,6 +265,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_uses_graceful_child_and_returns_its_output() {
+        let _env_lock = test_env_lock().await;
         let _guard = override_binary_for_tests(PathBuf::from("echo"));
         let borg = Borg::new();
         let output = borg.run(&["hello"], &HashMap::new()).await.unwrap();

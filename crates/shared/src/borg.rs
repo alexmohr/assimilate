@@ -200,43 +200,84 @@ impl Drop for GracefulChild {
             return;
         };
         // id() returns None once the process has been successfully waited on, meaning it has
-        // already exited and released any locks. Some(pid) means it may still be running.
-        let Some(pid) = child.id() else { return };
+        // already exited and released any locks.
+        if child.id().is_none() {
+            return;
+        }
 
         // Non-blocking check: if the child has already exited there is nothing to kill and
-        // no lock to break. Skipping the reaper avoids sending SIGKILL to a recycled PID.
+        // no lock to break. Skipping the reaper avoids sending a signal to a recycled PID.
         match child.try_wait() {
             Ok(Some(_)) => return,
             Ok(None) => {}
             Err(e) => {
-                tracing::warn!(error = %e, "borg: try_wait failed; proceeding with SIGTERM");
+                tracing::warn!(error = %e, "borg: try_wait failed; proceeding with termination");
             }
         }
 
         #[cfg(unix)]
-        if let Ok(pid) = i32::try_from(pid) {
-            let nix_pid = nix::unistd::Pid::from_raw(pid);
-            let _ = nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGTERM);
+        {
+            // child.id() was Some above and try_wait() just confirmed it hasn't exited, so
+            // this can't fail.
+            let Some(pid) = child.id() else { return };
+            if let Ok(pid) = i32::try_from(pid) {
+                let nix_pid = nix::unistd::Pid::from_raw(pid);
+                let _ = nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGTERM);
+
+                let binary = self.binary.clone();
+                let repo = self.repo.clone();
+                let env = self.env.clone();
+
+                // Escalate to SIGKILL if borg has not responded to SIGTERM within
+                // kill_escalation_delay(). SIGKILL leaves lock.exclusive on the repository,
+                // so break-lock is run immediately after to remove the stale lock.
+                let escalation_delay = kill_escalation_delay();
+                let handle = tokio::spawn(async move {
+                    tokio::time::sleep(escalation_delay).await;
+
+                    // Send signal 0 (existence check) before escalating to SIGKILL.
+                    // If the process is already gone, skip SIGKILL to avoid hitting a
+                    // recycled PID.
+                    if nix::sys::signal::kill(nix_pid, None).is_err() {
+                        return;
+                    }
+
+                    let _ = nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGKILL);
+
+                    if let Some(repo) = repo
+                        && let Err(e) = tokio::process::Command::new(&binary)
+                            .arg("break-lock")
+                            .arg(&repo)
+                            .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+                            .output()
+                            .await
+                    {
+                        tracing::warn!(error = %e, "borg: break-lock failed after SIGKILL");
+                    }
+                });
+                self.task_registry.register(handle);
+            }
+        }
+
+        // Windows has no SIGTERM equivalent for an arbitrary child process, so there's no
+        // graceful stage to attempt here the way there is on Unix - request termination
+        // immediately (start_kill() only submits the request, it doesn't wait for exit)
+        // rather than leaving the child, and its repository lock, running forever. Still
+        // tracked the same way so shutdown can join it: waits for the actual exit before
+        // running break-lock, since running it while the process might still hold the lock
+        // would be racing the very thing it's meant to clean up after.
+        #[cfg(not(unix))]
+        {
+            let _ = child.start_kill();
+            let Some(mut owned_child) = self.child.take() else {
+                return;
+            };
 
             let binary = self.binary.clone();
             let repo = self.repo.clone();
             let env = self.env.clone();
-
-            // Escalate to SIGKILL if borg has not responded to SIGTERM within
-            // kill_escalation_delay(). SIGKILL leaves lock.exclusive on the repository,
-            // so break-lock is run immediately after to remove the stale lock.
-            let escalation_delay = kill_escalation_delay();
             let handle = tokio::spawn(async move {
-                tokio::time::sleep(escalation_delay).await;
-
-                // Send signal 0 (existence check) before escalating to SIGKILL.
-                // If the process is already gone, skip SIGKILL to avoid hitting a
-                // recycled PID.
-                if nix::sys::signal::kill(nix_pid, None).is_err() {
-                    return;
-                }
-
-                let _ = nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGKILL);
+                let _ = owned_child.wait().await;
 
                 if let Some(repo) = repo
                     && let Err(e) = tokio::process::Command::new(&binary)
@@ -246,7 +287,7 @@ impl Drop for GracefulChild {
                         .output()
                         .await
                 {
-                    tracing::warn!(error = %e, "borg: break-lock failed after SIGKILL");
+                    tracing::warn!(error = %e, "borg: break-lock failed after termination");
                 }
             });
             self.task_registry.register(handle);

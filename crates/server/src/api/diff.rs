@@ -92,6 +92,31 @@ fn classify_change(change_type: &BorgDiffChangeType) -> ChangeCategory {
     }
 }
 
+/// Parses one line of `borg diff --json-lines` output into a `(path, category)` pair,
+/// logging and skipping (rather than failing the whole diff) a line that isn't valid
+/// JSON or has no `path`.
+fn parse_diff_line(line: &str) -> Option<(String, ChangeCategory)> {
+    let v: serde_json::Value = serde_json::from_str(line)
+        .inspect_err(|e| {
+            tracing::trace!(error = %e, "skipping unparseable borg diff line");
+        })
+        .ok()?;
+    let path = v
+        .get("path")
+        .and_then(serde_json::Value::as_str)?
+        .to_string();
+    let category = v
+        .get("changes")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|changes| changes.first())
+        .and_then(|c| c.get("type"))
+        .and_then(serde_json::Value::as_str)
+        .map_or(ChangeCategory::Modified, |change_type| {
+            classify_change(&BorgDiffChangeType::from(change_type))
+        });
+    Some((path, category))
+}
+
 fn classify_borg_diff_error(exit_code: i32, stderr: &str) -> ApiError {
     if stderr.contains("Archive") && stderr.contains("does not exist") {
         return ApiError::NotFound(format!("archive not found: {stderr}"));
@@ -192,27 +217,7 @@ pub async fn diff_archives(
     let mut all_entries: Vec<(String, ChangeCategory)> = stdout
         .lines()
         .filter(|line| !line.is_empty())
-        .filter_map(|line| {
-            let v: serde_json::Value = serde_json::from_str(line)
-                .inspect_err(|e| {
-                    tracing::trace!(error = %e, "skipping unparseable borg diff line");
-                })
-                .ok()?;
-            let path = v
-                .get("path")
-                .and_then(serde_json::Value::as_str)?
-                .to_string();
-            let category = v
-                .get("changes")
-                .and_then(serde_json::Value::as_array)
-                .and_then(|changes| changes.first())
-                .and_then(|c| c.get("type"))
-                .and_then(serde_json::Value::as_str)
-                .map_or(ChangeCategory::Modified, |change_type| {
-                    classify_change(&BorgDiffChangeType::from(change_type))
-                });
-            Some((path, category))
-        })
+        .filter_map(parse_diff_line)
         .collect();
 
     all_entries.sort_by(|a, b| a.0.cmp(&b.0));
@@ -291,26 +296,8 @@ mod tests {
             r#"{"path": "etc/old-file", "changes": [{"type": "removed"}]}"#,
         ];
 
-        let mut entries: Vec<(String, ChangeCategory)> = lines
-            .iter()
-            .filter_map(|line| {
-                let v: serde_json::Value = serde_json::from_str(line).ok()?;
-                let path = v
-                    .get("path")
-                    .and_then(serde_json::Value::as_str)?
-                    .to_string();
-                let category = v
-                    .get("changes")
-                    .and_then(serde_json::Value::as_array)
-                    .and_then(|c| c.first())
-                    .and_then(|c| c.get("type"))
-                    .and_then(serde_json::Value::as_str)
-                    .map_or(ChangeCategory::Modified, |change_type| {
-                        classify_change(&BorgDiffChangeType::from(change_type))
-                    });
-                Some((path, category))
-            })
-            .collect();
+        let mut entries: Vec<(String, ChangeCategory)> =
+            lines.iter().copied().filter_map(parse_diff_line).collect();
 
         entries.sort_by(|a, b| a.0.cmp(&b.0));
 

@@ -12,6 +12,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt as _;
+use lz4_flex::frame::FrameEncoder;
 use serde::{Deserialize, Serialize};
 use shared::{
     responses::{
@@ -25,7 +26,7 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, BufReader},
     sync::oneshot,
 };
-use tokio_util::io::ReaderStream;
+use tokio_util::io::{ReaderStream, SyncIoBridge};
 
 use super::{auth::AuthUser, permissions::check_repo_permission};
 use crate::{AppState, borg::Borg, db, error::ApiError};
@@ -143,6 +144,78 @@ pub fn classify_borg_error(exit_code: i32, stderr: &str) -> ApiError {
         return ApiError::BadGateway(format!("SSH connection failed: {stderr}"));
     }
     ApiError::Internal(format!("borg command failed (exit {exit_code}): {stderr}"))
+}
+
+/// Fails with a [`classify_borg_error`]-derived [`ApiError`] if `output`'s exit status
+/// wasn't successful; otherwise returns its stdout.
+///
+/// # Errors
+///
+/// Returns the [`ApiError`] classified from `output`'s exit code and stderr if it failed.
+pub fn ensure_borg_success(output: std::process::Output) -> Result<Vec<u8>, ApiError> {
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let code = output.status.code().unwrap_or(1);
+        return Err(classify_borg_error(code, &stderr));
+    }
+    Ok(output.stdout)
+}
+
+/// Spawns `borg export-tar` for `repo_archive` (optionally limited to `positional` paths)
+/// and returns a streaming tar.lz4 response body.
+///
+/// Pipes borg's stdout through the lz4 encoder as it arrives, rather than buffering the
+/// whole tar in memory first. Aborting the download (browser cancel, client disconnect)
+/// drops the duplex reader returned as part of the stream, which makes writes into the
+/// paired writer fail, so the copy running in the background returns early and the spawned
+/// child is dropped (SIGTERM, escalating to SIGKILL + break-lock) instead of running to
+/// completion regardless of the client.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Internal`] if borg fails to spawn or its stdout can't be captured.
+pub(crate) fn stream_export_tar_lz4(
+    borg: &Borg,
+    repo_archive: &str,
+    positional: &[String],
+    env: &HashMap<String, String>,
+) -> Result<Body, ApiError> {
+    let args = Borg::args_with_positional(
+        &[
+            "export-tar",
+            "--lock-wait",
+            LOCK_WAIT_SECS,
+            repo_archive,
+            "-",
+        ],
+        positional,
+    );
+
+    let mut child = borg
+        .spawn(&args, env)
+        .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
+
+    let borg_stdout = child
+        .take_stdout()
+        .ok_or_else(|| ApiError::Internal("failed to capture borg stdout".to_string()))?;
+
+    let (reader, writer) = tokio::io::duplex(64 * 1024);
+
+    tokio::spawn(async move {
+        let mut sync_stdout = SyncIoBridge::new(borg_stdout);
+        let sync_writer = SyncIoBridge::new(writer);
+        tokio::task::spawn_blocking(move || {
+            let mut encoder = FrameEncoder::new(sync_writer);
+            std::io::copy(&mut sync_stdout, &mut encoder).ok();
+            encoder.finish().ok();
+        })
+        .await
+        .ok();
+
+        let _r = tokio::time::timeout(Duration::from_secs(30), child.wait()).await;
+    });
+
+    Ok(Body::from_stream(ReaderStream::new(reader)))
 }
 
 /// MIME content type derived from a file extension.

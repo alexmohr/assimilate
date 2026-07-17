@@ -15,6 +15,8 @@ use tokio::{
     sync::mpsc,
 };
 
+use crate::task_registry::TaskRegistry;
+
 fn log_run_result(
     subcommand: &str,
     elapsed_ms: u128,
@@ -37,10 +39,10 @@ fn log_run_result(
 const DEFAULT_KILL_ESCALATION_SECS: u64 = 30;
 
 /// Delay before escalating a SIGTERM'd borg child to SIGKILL. Overridable via
-/// `BORG_KILL_ESCALATION_SECS` so CI coverage runs (which tear down the container on a
-/// matching 30 s timeout, see `ci.yml`'s e2e job) can shorten it enough that the
-/// escalation path reliably completes, and gets recorded as covered, before teardown.
-fn kill_escalation_delay() -> Duration {
+/// `BORG_KILL_ESCALATION_SECS` so CI/test runs that need the escalation path to complete
+/// quickly don't have to wait out the full 30s default; shutdown now joins the reaper task
+/// via `TaskRegistry` (see `GracefulChild::drop`) instead of racing it against teardown.
+pub(crate) fn kill_escalation_delay() -> Duration {
     let secs = std::env::var("BORG_KILL_ESCALATION_SECS")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -58,6 +60,7 @@ struct GracefulChild {
     /// `BORG_REPO` value, used to run break-lock after a forced SIGKILL.
     repo: Option<String>,
     env: Vec<(String, String)>,
+    task_registry: TaskRegistry,
 }
 
 impl GracefulChild {
@@ -66,12 +69,14 @@ impl GracefulChild {
         binary: PathBuf,
         repo: Option<String>,
         env: Vec<(String, String)>,
+        task_registry: TaskRegistry,
     ) -> Self {
         Self {
             child,
             binary,
             repo,
             env,
+            task_registry,
         }
     }
 
@@ -188,31 +193,36 @@ impl Drop for GracefulChild {
             // Escalate to SIGKILL if borg has not responded to SIGTERM within
             // kill_escalation_delay(). SIGKILL leaves lock.exclusive on the repository,
             // so break-lock is run immediately after to remove the stale lock.
+            //
+            // Registered with task_registry (rather than a detached std::thread) so shutdown
+            // can join this task instead of racing it: a detached thread sleeping through
+            // kill_escalation_delay gets killed along with the rest of the process on exit,
+            // meaning the SIGKILL+break-lock cleanup it promised would never run at all.
             let escalation_delay = kill_escalation_delay();
-            let _ = std::thread::Builder::new()
-                .name("borg-reaper".to_owned())
-                .spawn(move || {
-                    std::thread::sleep(escalation_delay);
+            let handle = tokio::spawn(async move {
+                tokio::time::sleep(escalation_delay).await;
 
-                    // Send signal 0 (existence check) before escalating to SIGKILL.
-                    // If the process is already gone, skip SIGKILL to avoid hitting a
-                    // recycled PID.
-                    if nix::sys::signal::kill(nix_pid, None).is_err() {
-                        return;
-                    }
+                // Send signal 0 (existence check) before escalating to SIGKILL.
+                // If the process is already gone, skip SIGKILL to avoid hitting a
+                // recycled PID.
+                if nix::sys::signal::kill(nix_pid, None).is_err() {
+                    return;
+                }
 
-                    let _ = nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGKILL);
+                let _ = nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGKILL);
 
-                    if let Some(repo) = repo
-                        && let Err(e) = std::process::Command::new(&binary)
-                            .arg("break-lock")
-                            .arg(&repo)
-                            .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-                            .output()
-                    {
-                        tracing::warn!(error = %e, "borg: break-lock failed after SIGKILL");
-                    }
-                });
+                if let Some(repo) = repo
+                    && let Err(e) = tokio::process::Command::new(&binary)
+                        .arg("break-lock")
+                        .arg(&repo)
+                        .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+                        .output()
+                        .await
+                {
+                    tracing::warn!(error = %e, "borg: break-lock failed after SIGKILL");
+                }
+            });
+            self.task_registry.register(handle);
         }
     }
 }
@@ -222,26 +232,29 @@ pub struct Borg {
     binary: PathBuf,
     /// Extra environment variables injected at run time, used by tests to override behaviour.
     extra_env: Vec<(String, String)>,
-}
-
-impl Default for Borg {
-    fn default() -> Self {
-        Self::new()
-    }
+    /// Where a `GracefulChild`'s SIGKILL-escalation reaper task registers itself, so shutdown
+    /// can join it. Shared (not per-`Borg`) so every borg invocation across the process feeds
+    /// the same registry that `main` drains on exit.
+    task_registry: TaskRegistry,
 }
 
 impl Borg {
-    pub fn new() -> Self {
+    pub fn new(task_registry: TaskRegistry) -> Self {
         Self {
             binary: std::env::var("BORG_BINARY")
                 .map_or_else(|_| PathBuf::from("borg"), PathBuf::from),
             extra_env: Vec::new(),
+            task_registry,
         }
     }
 
     #[cfg(test)]
     pub fn with_extra_env(binary: PathBuf, extra_env: Vec<(String, String)>) -> Self {
-        Self { binary, extra_env }
+        Self {
+            binary,
+            extra_env,
+            task_registry: TaskRegistry::default(),
+        }
     }
 
     /// Build a full argument list by joining `flags` with `positional` args using a `--`
@@ -312,7 +325,13 @@ impl Borg {
             .map(|(_, v)| v.clone());
         let combined_env: Vec<_> = env.iter().chain(self.extra_env.iter()).cloned().collect();
 
-        let mut guard = GracefulChild::new(child, self.binary.clone(), repo, combined_env);
+        let mut guard = GracefulChild::new(
+            child,
+            self.binary.clone(),
+            repo,
+            combined_env,
+            self.task_registry.clone(),
+        );
         let result = guard.wait_with_stderr_stream(log_tx).await;
         log_run_result(&subcommand, start.elapsed().as_millis(), &result);
         result
@@ -360,7 +379,13 @@ impl Borg {
             .map(|(_, v)| v.clone());
         let combined_env: Vec<_> = env.iter().chain(self.extra_env.iter()).cloned().collect();
 
-        let mut guard = GracefulChild::new(child, self.binary.clone(), repo, combined_env);
+        let mut guard = GracefulChild::new(
+            child,
+            self.binary.clone(),
+            repo,
+            combined_env,
+            self.task_registry.clone(),
+        );
         let result = guard.wait_with_output().await;
         log_run_result(&subcommand, start.elapsed().as_millis(), &result);
         result
@@ -429,5 +454,37 @@ mod tests {
             Duration::from_secs(DEFAULT_KILL_ESCALATION_SECS)
         );
         unsafe { std::env::remove_var("BORG_KILL_ESCALATION_SECS") };
+    }
+
+    // Registration happens synchronously inside Drop, before the reaper's escalation delay
+    // even starts sleeping - this is what makes it trackable at all: a test (or shutdown)
+    // that checks the registry right after drop() returns must never race the reaper's own
+    // scheduling to see it, unlike the detached std::thread this replaced.
+    #[tokio::test]
+    async fn graceful_child_drop_registers_its_reaper_task_synchronously() {
+        let registry = TaskRegistry::default();
+        let child = Command::new("sleep")
+            .arg("5")
+            .kill_on_drop(false)
+            .spawn()
+            .expect("failed to spawn sleep for test");
+
+        let guard = GracefulChild::new(
+            child,
+            PathBuf::from("borg"),
+            None,
+            Vec::new(),
+            registry.clone(),
+        );
+        assert_eq!(registry.pending_count(), 0);
+
+        drop(guard);
+
+        assert_eq!(
+            registry.pending_count(),
+            1,
+            "reaper task must be registered before drop() returns"
+        );
+        // drop(guard) already sent the child SIGTERM; nothing left to clean up here.
     }
 }

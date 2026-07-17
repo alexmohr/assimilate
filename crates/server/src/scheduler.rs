@@ -200,6 +200,15 @@ pub async fn run_repo_sync(
             op: repo_op_tracker.get(repo.id).await,
         });
 
+        // Claimed synchronously (before spawning) rather than inside run_scheduled_repo_sync,
+        // so background_task_tracker.any_active() reflects this task immediately instead of
+        // only once it gets its first poll - the same race class fixed for
+        // enrich_archive_stats_background in #371. Without this, a test that only waits on
+        // repo_op_tracker (which clears earlier, right after sync_existing_archives returns)
+        // can observe run_scheduled_repo_sync's own bookkeeping - handle_scheduled_sync_success
+        // in particular - as a scheduling coincidence, which is exactly what produced
+        // non-deterministic coverage on scheduler.rs.
+        let task_guard = background_task_tracker.begin();
         let task = ScheduledRepoSync {
             pool: pool.clone(),
             encryption_key: *encryption_key,
@@ -207,6 +216,7 @@ pub async fn run_repo_sync(
             op_clear_guard,
             repo_lock: repo_lock.clone(),
             background_task_tracker: background_task_tracker.clone(),
+            task_guard,
             repo_id: repo.id,
             repo_name: repo.name.clone(),
         };
@@ -221,6 +231,7 @@ struct ScheduledRepoSync {
     op_clear_guard: crate::repo_op_tracker::RepoOpGuard,
     repo_lock: RepoLock,
     background_task_tracker: crate::background_tasks::BackgroundTaskTracker,
+    task_guard: crate::background_tasks::BackgroundTaskGuard,
     repo_id: i64,
     repo_name: String,
 }
@@ -233,6 +244,7 @@ async fn run_scheduled_repo_sync(task: ScheduledRepoSync) {
         op_clear_guard,
         repo_lock,
         background_task_tracker,
+        task_guard: _task_guard,
         repo_id,
         repo_name,
     } = task;
@@ -1212,19 +1224,18 @@ esac
         )
         .await;
 
-        // run_repo_sync only starts run_scheduled_repo_sync in the background;
-        // wait for it (and anything it in turn kicks off) to actually finish
-        // before asserting on its effects.
+        // run_repo_sync only starts run_scheduled_repo_sync in the background. Its
+        // background_task_tracker guard is now claimed synchronously before the spawn and held
+        // for the whole task (including handle_scheduled_sync_success, which runs after
+        // repo_op_tracker has already cleared), so assert_idle alone is sufficient to know
+        // everything - not just repo_op_tracker's earlier-clearing entry - has finished.
         background_task_tracker
             .assert_idle(Duration::from_secs(5))
             .await;
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while repo_op_tracker.any_active().await {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("repo_op_tracker never cleared the scheduled sync's entry");
+        assert!(
+            !repo_op_tracker.any_active().await,
+            "repo_op_tracker should have cleared the scheduled sync's entry"
+        );
 
         let last_synced_at = sqlx::query_scalar!(
             "SELECT last_synced_at FROM repo_stats WHERE repo_id = $1",

@@ -18,7 +18,7 @@ use tokio::{process::Command, sync::mpsc};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use crate::borg::Borg;
+use crate::{borg::Borg, task_registry::TaskRegistry};
 
 #[derive(Debug, thiserror::Error)]
 pub enum BackupError {
@@ -160,9 +160,9 @@ pub struct BackupEngine {
 }
 
 impl BackupEngine {
-    pub fn new() -> Self {
+    pub fn new(task_registry: TaskRegistry) -> Self {
         Self {
-            borg: Borg::new(),
+            borg: Borg::new(task_registry),
             borg_timeout: None,
         }
     }

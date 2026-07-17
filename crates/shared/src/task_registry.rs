@@ -9,16 +9,16 @@ use std::{
 use tokio::task::JoinHandle;
 
 /// Collects the `JoinHandle`s of fire-and-forget work spawned outside the
-/// request/response cycle - queued borg operations (`Executor`'s
-/// `tokio::spawn` sites) and a borg child's SIGKILL-escalation/break-lock
-/// cleanup (`borg::GracefulChild`'s reaper, spawned from `Drop`) - so
-/// shutdown can wait for them to actually finish instead of silently
-/// dropping them when the process exits. `register` is synchronous
-/// (a `std::sync::Mutex`, not `tokio::sync::Mutex`) specifically so `Drop`
-/// impls can call it directly - `Drop` can't `.await`. Without this, whether
-/// a task's remaining lines run before the process exits (SIGTERM, or a
-/// test's tokio runtime tearing down) is a scheduling race rather than
-/// something callers can join on.
+/// request/response cycle - queued borg operations, and a borg child's
+/// SIGKILL-escalation/break-lock cleanup (`borg::GracefulChild`'s reaper,
+/// spawned from `Drop`) - so shutdown can wait for them to actually finish
+/// instead of silently dropping them when the process exits. `register` is
+/// synchronous (a `std::sync::Mutex`, not `tokio::sync::Mutex`) specifically
+/// so `Drop` impls can call it directly - `Drop` can't `.await`. Without
+/// this, whether a task's remaining lines run before the process exits
+/// (SIGTERM, or a test's tokio runtime tearing down) is a scheduling race
+/// rather than something callers can join on. Shared between `agent` and
+/// `server` since both spawn borg child processes through `shared::borg`.
 #[derive(Clone, Default)]
 pub struct TaskRegistry {
     handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
@@ -64,9 +64,11 @@ impl TaskRegistry {
     }
 
     /// Whether any registered task hasn't been drained by [`Self::shutdown`]
-    /// yet. Test-oriented: lets a test assert that a spawn actually reached
-    /// the registry before joining it, without a fixed sleep.
-    #[cfg(test)]
+    /// yet. Test-oriented: lets a test (in this crate or a dependent one) assert
+    /// that a spawn actually reached the registry before joining it, without a
+    /// fixed sleep. Not `#[cfg(test)]` because that gate is crate-local - it
+    /// would disappear for `agent`/`server`'s own tests, which depend on
+    /// `shared` as an ordinary (non-test) dependency.
     pub fn pending_count(&self) -> usize {
         self.handles
             .lock()

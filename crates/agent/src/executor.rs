@@ -15,6 +15,7 @@ use chrono::Utc;
 use shared::{
     protocol::AgentToServer,
     ssh::{borg_rsh, borg_rsh_with_known_hosts, known_hosts_host},
+    task_registry::TaskRegistry,
     types::{
         AgentConfig, BORG_REPO_ENV_KEY, BorgEncryption, DryRunFile, RepoConfig, RepoId,
         build_repo_url,
@@ -30,7 +31,6 @@ use crate::{
     backup::{BackupEngine, BackupError, BackupResult, BackupTarget, CanaryResult},
     borg::Borg,
     ssh_forward::{SshForwardError, SshForwardSocket, run_ssh_forward},
-    task_registry::TaskRegistry,
 };
 
 pub enum ExecutorCommand {

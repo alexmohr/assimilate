@@ -30,3 +30,7 @@ iana-time-zone = "0.1"
 croner = { workspace = true }
 tokio-tungstenite = { workspace = true }
 ts-rs = { version = "12", features = ["chrono-impl", "format"] }
+tokio = { workspace = true }
+tracing = { workspace = true }
+nix = { workspace = true }
+futures-util = { workspace = true }

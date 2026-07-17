@@ -12,13 +12,14 @@ use chrono::Utc;
 use serde::Deserialize;
 use shared::{
     ssh::{borg_rsh, borg_rsh_with_known_hosts},
+    task_registry::TaskRegistry,
     types::{BORG_REPO_ENV_KEY, BackupStatus, Compression, FileChangePattern, build_repo_url},
 };
 use tokio::{process::Command, sync::mpsc};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use crate::{borg::Borg, task_registry::TaskRegistry};
+use crate::borg::Borg;
 
 #[derive(Debug, thiserror::Error)]
 pub enum BackupError {

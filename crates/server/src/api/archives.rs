@@ -1116,9 +1116,9 @@ pub async fn extract_file(
     let body = Body::from_stream(stream);
 
     // Hold the child alive until the stream finishes or the connection is closed,
-    // then drop it. Dropping ServerChild sends SIGTERM first (graceful lock
-    // release), escalating to SIGKILL + break-lock after 30 seconds if the
-    // process has not already exited on its own.
+    // then drop it. Dropping GracefulChild sends SIGTERM first (graceful lock
+    // release), escalating to SIGKILL + break-lock after kill_escalation_delay()
+    // if the process has not already exited on its own.
     tokio::spawn(async move {
         let _ = done_rx.await;
         drop(child);

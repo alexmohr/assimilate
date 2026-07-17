@@ -9,19 +9,17 @@ mod borg;
 mod executor;
 mod ssh_forward;
 mod systemd;
-mod task_registry;
 mod ws;
 
 use std::{process, time::Duration};
 
 use clap::Parser;
 use executor::{Executor, ExecutorCommand};
-use shared::protocol::AgentToServer;
-use task_registry::TaskRegistry;
+use shared::{protocol::AgentToServer, task_registry::TaskRegistry};
 use tokio::sync::mpsc;
 use tracing_subscriber::EnvFilter;
 
-/// Extra time beyond borg's own SIGKILL-escalation delay ([`borg::kill_escalation_delay`])
+/// Extra time beyond borg's own SIGKILL-escalation delay ([`shared::borg::kill_escalation_delay`])
 /// that shutdown waits for the task registry (queued operations, plus each borg child's
 /// reaper) to drain, before giving up and letting the process exit anyway.
 const SHUTDOWN_GRACE_BUFFER: Duration = Duration::from_secs(10);
@@ -142,7 +140,7 @@ async fn main() -> Result<(), StartupError> {
         Err(_) => tracing::warn!("executor task did not shut down within the grace period"),
     }
     let outstanding = task_registry
-        .shutdown(borg::kill_escalation_delay().saturating_add(SHUTDOWN_GRACE_BUFFER))
+        .shutdown(shared::borg::kill_escalation_delay().saturating_add(SHUTDOWN_GRACE_BUFFER))
         .await;
     if outstanding > 0 {
         tracing::warn!(

@@ -268,6 +268,45 @@ describe('SchedulesView', () => {
     expect(wrapper.text()).toContain('Last backup failed')
   })
 
+  it('shows an overdue toggle with per-host detail when a host has no error message', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules') return Promise.resolve({ data: [mockSchedules[0]] })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/stats/health') {
+        return Promise.resolve({
+          data: [
+            {
+              schedule_id: 1,
+              hostname: 'web-server-01',
+              target_name: 'server-daily',
+              last_status: 'success',
+              last_backup_at: '2026-05-25T02:00:00Z',
+              is_overdue: true,
+              last_error_message: null,
+              cron_expression: '0 2 * * *',
+              schedule_enabled: true,
+            },
+          ],
+        })
+      }
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('1 host overdue')
+    expect(wrapper.text()).not.toContain('Last backup failed')
+
+    const toggle = wrapper.findAll('.error-toggle').find((b) => b.text().includes('overdue'))
+    expect(toggle).toBeTruthy()
+    expect(wrapper.text()).not.toContain('Web Server (web-server-01) — last backup:')
+
+    await toggle!.trigger('click')
+
+    expect(wrapper.text()).toContain('Web Server (web-server-01) — last backup:')
+  })
+
   it('shows empty state when no schedules exist', async () => {
     mockApiClient.get.mockResolvedValue({ data: [] })
     const wrapper = renderWithPlugins(SchedulesView)

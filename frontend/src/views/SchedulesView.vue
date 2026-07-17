@@ -96,6 +96,7 @@ interface EnrichedSchedule extends ScheduleRow {
   hostLabels: string[]
   repo: Repo | null
   health: HealthEntry | null
+  overdueEntries: HealthEntry[]
   isRunning: boolean
 }
 
@@ -106,6 +107,11 @@ const agentMap = computed(() => {
   agents.value.forEach((agent) => map.set(agent.hostname, agent))
   return map
 })
+
+function hostLabel(hostname: string): string {
+  const displayName = agentMap.value.get(hostname)?.display_name
+  return displayName ? `${displayName} (${hostname})` : hostname
+}
 
 const healthBySchedule = computed(() => {
   const m = new Map<number, HealthEntry[]>()
@@ -119,10 +125,7 @@ const healthBySchedule = computed(() => {
 
 const enrichedSchedules = computed<EnrichedSchedule[]>(() =>
   schedules.value.map((s) => {
-    const hostLabels = s.target_hostnames.map((hostname) => {
-      const agent = agentMap.value.get(hostname)
-      return agent?.display_name ? `${agent.display_name} (${hostname})` : hostname
-    })
+    const hostLabels = s.target_hostnames.map(hostLabel)
     const repo: Repo | null = s.repo_id != null ? (repoMap.value.get(s.repo_id) ?? null) : null
     const entries = healthBySchedule.value.get(s.id) ?? []
     const healthEntry: HealthEntry | null =
@@ -132,10 +135,11 @@ const enrichedSchedules = computed<EnrichedSchedule[]>(() =>
       ) ??
       entries[0] ??
       null
+    const overdueEntries = entries.filter((h) => h.is_overdue)
     const isRunning = entries.some(
       (h) => h.last_status != null && RUNNING_STATUSES.has(h.last_status),
     )
-    return { ...s, hostLabels, repo, health: healthEntry, isRunning }
+    return { ...s, hostLabels, repo, health: healthEntry, overdueEntries, isRunning }
   }),
 )
 
@@ -243,6 +247,15 @@ function statusLabel(entry: HealthEntry | null): string {
     case null:
       return 'No data'
   }
+}
+
+function overdueMessage(entries: HealthEntry[]): string {
+  return entries
+    .map((h) => {
+      const last = h.last_backup_at ? formatDateShort(h.last_backup_at) : 'never'
+      return `${hostLabel(h.hostname)} — last backup: ${last}`
+    })
+    .join('\n')
 }
 
 async function fetchAll(): Promise<void> {
@@ -479,6 +492,12 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
             s.health.last_status === 'warning' ? 'Last backup had a warning' : 'Last backup failed'
           "
           :message="s.health.last_error_message"
+        />
+        <CardError
+          v-if="s.overdueEntries.length > 0"
+          tone="warning"
+          :label="`${s.overdueEntries.length} host${s.overdueEntries.length === 1 ? '' : 's'} overdue`"
+          :message="overdueMessage(s.overdueEntries)"
         />
         <div class="card-stats">
           <div class="stat">

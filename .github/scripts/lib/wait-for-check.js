@@ -13,6 +13,23 @@
 
 const PASSING_CONCLUSIONS = ["success", "skipped", "neutral"];
 
+// checks.listForRef returns every check-run entry ever recorded for the ref,
+// not just the current one - a workflow re-run (whether manual or a fresh
+// trigger on the same sha) leaves the earlier attempt's run in the list
+// alongside the new one. Without collapsing to one entry per check name,
+// a stale failure from an earlier attempt would permanently block this
+// commit even after the check was re-run and passed. `id` increases
+// monotonically with creation, so the highest `id` per name is always the
+// most recent attempt.
+function latestRunPerName(runs) {
+  const byName = new Map();
+  for (const run of runs) {
+    const current = byName.get(run.name);
+    if (!current || run.id > current.id) byName.set(run.name, run);
+  }
+  return [...byName.values()];
+}
+
 async function waitForAllChecks(
   github,
   core,
@@ -27,7 +44,7 @@ async function waitForAllChecks(
     // would make `results.concat(undefined)` push a literal `undefined` into
     // the accumulated array on every page.
     const runs = await github.paginate(github.rest.checks.listForRef, { owner, repo, ref, per_page: 100 });
-    const relevant = runs.filter((run) => !excludeNames.includes(run.name));
+    const relevant = latestRunPerName(runs.filter((run) => !excludeNames.includes(run.name)));
     const pending = relevant.filter((run) => run.status !== "completed");
 
     if (pending.length === 0) {

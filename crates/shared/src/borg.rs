@@ -79,11 +79,15 @@ pub fn args_with_positional(
 /// Wraps a borg child process and sends SIGTERM (not SIGKILL) on drop, giving borg time
 /// to release its repository lock. Escalates to SIGKILL after [`kill_escalation_delay`]
 /// if borg does not exit, then runs `borg break-lock` to remove the stale lock that
-/// SIGKILL leaves behind. The escalation/break-lock step is a `tokio::spawn` task
-/// registered with `TaskRegistry` (rather than a detached `std::thread`) so shutdown can
-/// join it instead of racing it: a detached thread sleeping through the escalation delay
-/// gets killed along with the rest of the process on exit, meaning the cleanup it
-/// promised would never run at all.
+/// SIGKILL leaves behind. The escalation/break-lock step normally runs as a `tokio::spawn`
+/// task registered with `TaskRegistry` (rather than a detached `std::thread`) so shutdown
+/// can join it instead of racing it: a detached thread sleeping through the escalation
+/// delay gets killed along with the rest of the process on exit, meaning the cleanup it
+/// promised would never run at all. If drop runs with no live tokio runtime on the current
+/// thread - e.g. this `GracefulChild` is itself being force-dropped as part of
+/// `Runtime::drop`'s own shutdown of a still-running task - `tokio::spawn` is skipped in
+/// favor of a detached `std::thread` with blocking equivalents instead, since nothing at
+/// that point could join a `TaskRegistry` handle anyway.
 ///
 /// `child` is `Option` so a caller that takes ownership of the underlying pipes (via
 /// [`Self::take_stdout`] etc.) or has already awaited [`Self::wait`] can still safely
@@ -232,21 +236,47 @@ impl Drop for GracefulChild {
                 // kill_escalation_delay(). SIGKILL leaves lock.exclusive on the repository,
                 // so break-lock is run immediately after to remove the stale lock.
                 let escalation_delay = kill_escalation_delay();
-                let handle = tokio::spawn(async move {
-                    tokio::time::sleep(escalation_delay).await;
 
-                    // Send signal 0 (existence check) before escalating to SIGKILL.
-                    // If the process is already gone, skip SIGKILL to avoid hitting a
-                    // recycled PID.
-                    if nix::sys::signal::kill(nix_pid, None).is_err() {
-                        return;
+                // GracefulChild::drop can itself run with no live tokio runtime on the
+                // current thread - e.g. dropped as part of Runtime::drop's own forced
+                // cancellation of a still-running task during process shutdown. Guard the
+                // spawn with try_current() and fall back to a detached OS thread (with
+                // blocking equivalents) in that case rather than risking a panic from
+                // tokio::spawn.
+                match tokio::runtime::Handle::try_current() {
+                    Ok(rt_handle) => {
+                        let handle = rt_handle.spawn(async move {
+                            tokio::time::sleep(escalation_delay).await;
+
+                            // Send signal 0 (existence check) before escalating to SIGKILL.
+                            // If the process is already gone, skip SIGKILL to avoid hitting
+                            // a recycled PID.
+                            if nix::sys::signal::kill(nix_pid, None).is_err() {
+                                return;
+                            }
+
+                            let _ =
+                                nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGKILL);
+
+                            run_break_lock(&binary, repo, &env, "SIGKILL").await;
+                        });
+                        self.task_registry.register(handle);
                     }
+                    Err(_) => {
+                        std::thread::spawn(move || {
+                            std::thread::sleep(escalation_delay);
 
-                    let _ = nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGKILL);
+                            if nix::sys::signal::kill(nix_pid, None).is_err() {
+                                return;
+                            }
 
-                    run_break_lock(&binary, repo, &env, "SIGKILL").await;
-                });
-                self.task_registry.register(handle);
+                            let _ =
+                                nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGKILL);
+
+                            run_break_lock_blocking(&binary, repo, &env, "SIGKILL");
+                        });
+                    }
+                }
             }
         }
 
@@ -267,11 +297,29 @@ impl Drop for GracefulChild {
             let binary = self.binary.clone();
             let repo = self.repo.clone();
             let env = self.env.clone();
-            let handle = tokio::spawn(async move {
-                let _ = owned_child.wait().await;
-                run_break_lock(&binary, repo, &env, "termination").await;
-            });
-            self.task_registry.register(handle);
+
+            // See the Unix branch above: guard against dropping with no live tokio runtime
+            // on this thread (e.g. during Runtime::drop's own forced task cancellation).
+            match tokio::runtime::Handle::try_current() {
+                Ok(rt_handle) => {
+                    let handle = rt_handle.spawn(async move {
+                        let _ = owned_child.wait().await;
+                        run_break_lock(&binary, repo, &env, "termination").await;
+                    });
+                    self.task_registry.register(handle);
+                }
+                Err(_) => {
+                    std::thread::spawn(move || {
+                        loop {
+                            match owned_child.try_wait() {
+                                Ok(Some(_)) | Err(_) => break,
+                                Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+                            }
+                        }
+                        run_break_lock_blocking(&binary, repo, &env, "termination");
+                    });
+                }
+            }
         }
     }
 }
@@ -293,6 +341,25 @@ async fn run_break_lock(
             .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .output()
             .await
+    {
+        tracing::warn!(error = %e, reason, "borg: break-lock failed");
+    }
+}
+
+/// Blocking equivalent of [`run_break_lock`], for the detached-thread fallback
+/// `GracefulChild::drop` uses when it has no live tokio runtime to spawn onto.
+fn run_break_lock_blocking(
+    binary: &Path,
+    repo: Option<String>,
+    env: &[(String, String)],
+    reason: &str,
+) {
+    if let Some(repo) = repo
+        && let Err(e) = std::process::Command::new(binary)
+            .arg("break-lock")
+            .arg(&repo)
+            .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .output()
     {
         tracing::warn!(error = %e, reason, "borg: break-lock failed");
     }
@@ -439,6 +506,38 @@ mod tests {
             "reaper task must be registered before drop() returns"
         );
         // drop(guard) already sent the child SIGTERM; nothing left to clean up here.
+    }
+
+    #[tokio::test]
+    async fn graceful_child_drop_falls_back_to_a_thread_without_a_tokio_runtime() {
+        let registry = TaskRegistry::default();
+        let child = Command::new("sleep")
+            .arg("5")
+            .kill_on_drop(false)
+            .spawn()
+            .expect("failed to spawn sleep for test");
+
+        let guard = GracefulChild::new(
+            child,
+            PathBuf::from("borg"),
+            None,
+            Vec::new(),
+            registry.clone(),
+        );
+
+        // Drop the guard from a plain OS thread with no tokio runtime context, forcing
+        // GracefulChild::drop's Handle::try_current() fallback path (a detached
+        // std::thread::spawn) instead of tokio::spawn, which would panic or - per manual
+        // testing against a runtime mid-teardown - silently discard the reaper task.
+        std::thread::spawn(move || drop(guard))
+            .join()
+            .expect("dropping GracefulChild outside a tokio runtime must not panic");
+
+        assert_eq!(
+            registry.pending_count(),
+            0,
+            "the detached-thread fallback isn't tracked by task_registry - nothing can join it"
+        );
     }
 
     /// Spawns a trivial `sh -c "exit 0"` child wrapped in a fresh `GracefulChild`, for tests

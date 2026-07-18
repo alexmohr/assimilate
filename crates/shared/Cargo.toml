@@ -30,3 +30,12 @@ iana-time-zone = "0.1"
 croner = { workspace = true }
 tokio-tungstenite = { workspace = true }
 ts-rs = { version = "12", features = ["chrono-impl", "format"] }
+tokio = { workspace = true }
+tracing = { workspace = true }
+futures-util = { workspace = true }
+
+# nix has no Windows support at all (not even a stub); GracefulChild's SIGTERM/SIGKILL
+# escalation is already #[cfg(unix)]-gated in borg.rs, so scope the dependency itself the
+# same way rather than making it an unconditional build requirement for every platform.
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true }

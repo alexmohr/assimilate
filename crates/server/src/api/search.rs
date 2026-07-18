@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    archives::{LOCK_WAIT_SECS, classify_borg_error, get_repo_env},
+    archives::{LOCK_WAIT_SECS, classify_borg_error, ensure_borg_success, get_repo_env},
     auth::AuthUser,
     permissions::check_repo_permission,
 };
@@ -61,6 +61,16 @@ pub struct SearchResponse {
     pub limit: usize,
     /// Number of entries skipped.
     pub offset: usize,
+}
+
+/// Parses one line of `borg list --json-lines` output, logging and skipping
+/// (rather than failing the whole search) a line that isn't valid JSON.
+fn parse_borg_list_json_line(line: &str) -> Option<serde_json::Value> {
+    serde_json::from_str(line)
+        .inspect_err(|e| {
+            tracing::trace!(error = %e, "skipping unparseable borg output line");
+        })
+        .ok()
 }
 
 #[utoipa::path(
@@ -120,7 +130,7 @@ pub async fn search_archive(
 
     let output = tokio::time::timeout(
         SEARCH_TIMEOUT,
-        Borg::new().run(
+        Borg::new().with_registry(state.task_registry.clone()).run(
             &[
                 "list",
                 "--json-lines",
@@ -156,11 +166,7 @@ pub async fn search_archive(
         .lines()
         .filter(|line| !line.is_empty())
         .filter_map(|line| {
-            let v: serde_json::Value = serde_json::from_str(line)
-                .inspect_err(|e| {
-                    tracing::trace!(error = %e, "skipping unparseable borg output line");
-                })
-                .ok()?;
+            let v = parse_borg_list_json_line(line)?;
 
             let path = v
                 .get("path")
@@ -300,7 +306,7 @@ pub async fn cross_archive_search(
     check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_view).await?;
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
 
-    let archives = list_archives_sorted(&borg_repo, &env).await?;
+    let archives = list_archives_sorted(&borg_repo, &env, &state.task_registry).await?;
     let archives_to_search: Vec<&ArchiveEntryBrief> = archives.iter().take(max_archives).collect();
     let total_archives_searched = archives_to_search.len();
 
@@ -316,7 +322,14 @@ pub async fn cross_archive_search(
             break;
         }
 
-        let entries = search_in_archive(&borg_repo, &archive.name, &borg_pattern, &env).await?;
+        let entries = search_in_archive(
+            &borg_repo,
+            &archive.name,
+            &borg_pattern,
+            &env,
+            &state.task_registry,
+        )
+        .await?;
 
         for entry in entries {
             seen.entry(entry.path.clone()).or_insert(entry);
@@ -345,8 +358,10 @@ struct ArchiveEntryBrief {
 async fn list_archives_sorted(
     borg_repo: &str,
     env: &HashMap<String, String>,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<Vec<ArchiveEntryBrief>, ApiError> {
     let output = Borg::new()
+        .with_registry(task_registry.clone())
         .run(
             &[
                 "list",
@@ -360,14 +375,9 @@ async fn list_archives_sorted(
         )
         .await
         .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
+    let stdout = ensure_borg_success(output)?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let code = output.status.code().unwrap_or(1);
-        return Err(classify_borg_error(code, &stderr));
-    }
-
-    let json_output: serde_json::Value = serde_json::from_slice(&output.stdout)
+    let json_output: serde_json::Value = serde_json::from_slice(&stdout)
         .map_err(|e| ApiError::Internal(format!("failed to parse borg output: {e}")))?;
 
     let mut archives: Vec<ArchiveEntryBrief> = json_output
@@ -401,12 +411,13 @@ async fn search_in_archive(
     archive_name: &str,
     borg_pattern: &str,
     env: &HashMap<String, String>,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<Vec<CrossSearchEntry>, ApiError> {
     let repo_archive = format!("{borg_repo}::{archive_name}");
 
     let result = tokio::time::timeout(
         PER_ARCHIVE_TIMEOUT,
-        Borg::new().run(
+        Borg::new().with_registry(task_registry.clone()).run(
             &[
                 "list",
                 "--json-lines",
@@ -434,22 +445,14 @@ async fn search_in_archive(
         }
     };
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let code = output.status.code().unwrap_or(1);
-        return Err(classify_borg_error(code, &stderr));
-    }
+    let stdout_bytes = ensure_borg_success(output)?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = String::from_utf8_lossy(&stdout_bytes);
     let entries: Vec<CrossSearchEntry> = stdout
         .lines()
         .filter(|line| !line.is_empty())
         .filter_map(|line| {
-            let v: serde_json::Value = serde_json::from_str(line)
-                .inspect_err(|e| {
-                    tracing::trace!(error = %e, "skipping unparseable borg output line");
-                })
-                .ok()?;
+            let v = parse_borg_list_json_line(line)?;
 
             let mtime_str = v
                 .get("mtime")

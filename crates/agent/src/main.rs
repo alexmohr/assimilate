@@ -11,13 +11,24 @@ mod ssh_forward;
 mod systemd;
 mod ws;
 
-use std::process;
+use std::{process, time::Duration};
 
 use clap::Parser;
 use executor::{Executor, ExecutorCommand};
-use shared::protocol::AgentToServer;
+use shared::{protocol::AgentToServer, task_registry::TaskRegistry};
 use tokio::sync::mpsc;
 use tracing_subscriber::EnvFilter;
+
+/// Extra time beyond borg's own SIGKILL-escalation delay ([`shared::borg::kill_escalation_delay`])
+/// that shutdown waits for the task registry (queued operations, plus each borg child's
+/// reaper) to drain, before giving up and letting the process exit anyway.
+const SHUTDOWN_GRACE_BUFFER: Duration = Duration::from_secs(10);
+
+/// How long shutdown waits for the spawned `Executor::run` task to return once its
+/// command channel has been closed. That loop only breaks on channel closure - it
+/// doesn't itself wait on any in-flight operations - so this only needs to cover
+/// ordinary task-scheduling latency, not a full backup.
+const EXECUTOR_JOIN_GRACE: Duration = Duration::from_secs(5);
 
 // Resolves when SIGINT or SIGTERM is received.
 // SIGTERM is critical for coverage builds: docker compose stop sends SIGTERM,
@@ -101,19 +112,45 @@ async fn main() -> Result<(), StartupError> {
     let (exec_cmd_tx, exec_cmd_rx) = mpsc::channel::<ExecutorCommand>(16);
     let (outbound_tx, outbound_rx) = mpsc::channel::<AgentToServer>(64);
 
-    let executor = Executor::new(&args.server_url, &args.token);
+    let task_registry = TaskRegistry::default();
+    let executor = Executor::new(&args.server_url, &args.token, task_registry.clone());
 
-    tokio::spawn(async move {
+    let executor_handle = tokio::spawn(async move {
         executor.run(exec_cmd_rx, outbound_tx).await;
     });
 
-    tokio::select! {
+    // Either way this select resolves, the ws_client future (which owns exec_cmd_tx) is
+    // gone once it returns below - completed on its own, or dropped as the losing branch -
+    // closing the channel executor.run() is reading. That's the standard tokio idiom for
+    // signalling a spawned task to wind down.
+    let fatal = tokio::select! {
         result = ws::run_ws_client(&args, exec_cmd_tx, outbound_rx, &restart_capability) => {
-            if result.as_ref().err().is_some_and(ws::is_fatal) {
-                process::exit(1);
-            }
+            result.as_ref().err().is_some_and(ws::is_fatal)
         }
-        () = shutdown_signal() => {}
+        () = shutdown_signal() => false,
+    };
+
+    // Give executor.run() a chance to actually return (it will, promptly, once the
+    // channel above closes) and let every task it and borg's GracefulChild reapers
+    // spawned finish cleanly, instead of the process exiting out from under them and
+    // silently abandoning whatever they were mid-way through.
+    match tokio::time::timeout(EXECUTOR_JOIN_GRACE, executor_handle).await {
+        Ok(Err(e)) => tracing::warn!(error = %e, "executor task panicked during shutdown"),
+        Ok(Ok(())) => {}
+        Err(_) => tracing::warn!("executor task did not shut down within the grace period"),
+    }
+    let outstanding = task_registry
+        .shutdown(shared::borg::kill_escalation_delay().saturating_add(SHUTDOWN_GRACE_BUFFER))
+        .await;
+    if outstanding > 0 {
+        tracing::warn!(
+            outstanding,
+            "background tasks still running at shutdown deadline"
+        );
+    }
+
+    if fatal {
+        process::exit(1);
     }
     Ok(())
 }

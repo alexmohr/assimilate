@@ -12,6 +12,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt as _;
+use lz4_flex::frame::FrameEncoder;
 use serde::{Deserialize, Serialize};
 use shared::{
     responses::{
@@ -25,7 +26,7 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, BufReader},
     sync::oneshot,
 };
-use tokio_util::io::ReaderStream;
+use tokio_util::io::{ReaderStream, SyncIoBridge};
 
 use super::{auth::AuthUser, permissions::check_repo_permission};
 use crate::{AppState, borg::Borg, db, error::ApiError};
@@ -143,6 +144,85 @@ pub fn classify_borg_error(exit_code: i32, stderr: &str) -> ApiError {
         return ApiError::BadGateway(format!("SSH connection failed: {stderr}"));
     }
     ApiError::Internal(format!("borg command failed (exit {exit_code}): {stderr}"))
+}
+
+/// Fails with a [`classify_borg_error`]-derived [`ApiError`] if `output`'s exit status
+/// wasn't successful; otherwise returns its stdout.
+///
+/// # Errors
+///
+/// Returns the [`ApiError`] classified from `output`'s exit code and stderr if it failed.
+pub fn ensure_borg_success(output: std::process::Output) -> Result<Vec<u8>, ApiError> {
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let code = output.status.code().unwrap_or(1);
+        return Err(classify_borg_error(code, &stderr));
+    }
+    Ok(output.stdout)
+}
+
+/// Spawns `borg export-tar` for `repo_archive` (optionally limited to `positional` paths)
+/// and returns a streaming tar.lz4 response body.
+///
+/// Pipes borg's stdout through the lz4 encoder as it arrives, rather than buffering the
+/// whole tar in memory first. Aborting the download (browser cancel, client disconnect)
+/// drops the duplex reader returned as part of the stream, which makes writes into the
+/// paired writer fail, so the copy running in the background returns early and the spawned
+/// child is dropped (SIGTERM, escalating to SIGKILL + break-lock) instead of running to
+/// completion regardless of the client.
+///
+/// The encode-and-wait task itself is registered with `task_registry` (the same registry
+/// `borg` was given via `Borg::with_registry`), not just the `GracefulChild` reaper it may
+/// spawn - so shutdown joins the whole pipeline instead of aborting a copy that's still
+/// draining borg's output.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Internal`] if borg fails to spawn or its stdout can't be captured.
+pub(crate) fn stream_export_tar_lz4(
+    borg: &Borg,
+    repo_archive: &str,
+    positional: &[String],
+    env: &HashMap<String, String>,
+    task_registry: &shared::task_registry::TaskRegistry,
+) -> Result<Body, ApiError> {
+    let args = Borg::args_with_positional(
+        &[
+            "export-tar",
+            "--lock-wait",
+            LOCK_WAIT_SECS,
+            repo_archive,
+            "-",
+        ],
+        positional,
+    );
+
+    let mut child = borg
+        .spawn(&args, env)
+        .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
+
+    let borg_stdout = child
+        .take_stdout()
+        .ok_or_else(|| ApiError::Internal("failed to capture borg stdout".to_string()))?;
+
+    let (reader, writer) = tokio::io::duplex(64 * 1024);
+
+    let handle = tokio::spawn(async move {
+        let mut sync_stdout = SyncIoBridge::new(borg_stdout);
+        let sync_writer = SyncIoBridge::new(writer);
+        tokio::task::spawn_blocking(move || {
+            let mut encoder = FrameEncoder::new(sync_writer);
+            std::io::copy(&mut sync_stdout, &mut encoder).ok();
+            encoder.finish().ok();
+        })
+        .await
+        .ok();
+
+        let _r = tokio::time::timeout(Duration::from_secs(30), child.wait()).await;
+    });
+    task_registry.register(handle);
+
+    Ok(Body::from_stream(ReaderStream::new(reader)))
 }
 
 /// MIME content type derived from a file extension.
@@ -383,6 +463,7 @@ pub async fn archive_info(
     let repo_archive = format!("{borg_repo}::{archive_name}");
 
     let output = Borg::new()
+        .with_registry(state.task_registry.clone())
         .run(
             &[
                 "info",
@@ -579,6 +660,7 @@ async fn execute_borg_delete(
 ) -> bool {
     let repo_archive = format!("{borg_repo}::{archive_name}");
     let result = Borg::new()
+        .with_registry(state.task_registry.clone())
         .run(
             &[
                 "delete",
@@ -663,6 +745,7 @@ async fn finalize_archive_deletion(
             repo_id,
             &state.ui_broadcast,
             &state.background_task_tracker,
+            &state.task_registry,
         )
         .await
         {
@@ -864,6 +947,7 @@ pub async fn list_contents(
                 archive_name.clone(),
                 state.repo_lock.clone(),
                 &state.background_task_tracker,
+                state.task_registry.clone(),
             )
             .await?;
             return Ok(Json(ContentsResponse {
@@ -875,7 +959,8 @@ pub async fn list_contents(
 
     // Fallback: borg-based listing (used when index is in 'failed' state).
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
-    let raw_entries = borg_list_raw_entries(&env, &borg_repo, &archive_name, path).await?;
+    let raw_entries =
+        borg_list_raw_entries(&env, &borg_repo, &archive_name, path, &state.task_registry).await?;
 
     let prefix = path
         .map(|p| p.trim_end_matches('/').to_string())
@@ -898,6 +983,7 @@ async fn borg_list_raw_entries(
     borg_repo: &str,
     archive_name: &str,
     path: Option<&str>,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<Vec<ContentEntry>, ApiError> {
     const LINE_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -911,6 +997,7 @@ async fn borg_list_raw_entries(
     args.push(repo_archive.as_str());
 
     let mut child = Borg::new()
+        .with_registry(task_registry.clone())
         .spawn(&args, env)
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
 
@@ -1079,6 +1166,7 @@ pub async fn extract_file(
     let repo_archive = format!("{borg_repo}::{archive_name}");
 
     let mut child = Borg::new()
+        .with_registry(state.task_registry.clone())
         .spawn(
             &[
                 "extract",
@@ -1116,9 +1204,9 @@ pub async fn extract_file(
     let body = Body::from_stream(stream);
 
     // Hold the child alive until the stream finishes or the connection is closed,
-    // then drop it. Dropping ServerChild sends SIGTERM first (graceful lock
-    // release), escalating to SIGKILL + break-lock after 30 seconds if the
-    // process has not already exited on its own.
+    // then drop it. Dropping GracefulChild sends SIGTERM first (graceful lock
+    // release), escalating to SIGKILL + break-lock after kill_escalation_delay()
+    // if the process has not already exited on its own.
     tokio::spawn(async move {
         let _ = done_rx.await;
         drop(child);
@@ -1137,6 +1225,29 @@ pub async fn extract_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn stream_export_tar_lz4_registers_its_pump_task_with_the_given_registry() {
+        let _guard = crate::borg::override_binary_for_tests(std::path::PathBuf::from("true"));
+        let task_registry = shared::task_registry::TaskRegistry::default();
+        let borg = Borg::new().with_registry(task_registry.clone());
+
+        let _body = stream_export_tar_lz4(
+            &borg,
+            "test-repo::archive",
+            &[],
+            &HashMap::new(),
+            &task_registry,
+        )
+        .expect("stream_export_tar_lz4 failed to spawn");
+
+        assert_eq!(
+            task_registry.pending_count(),
+            1,
+            "the encode-and-wait pump task must be registered synchronously before returning, not \
+             just the GracefulChild reaper it may spawn later"
+        );
+    }
 
     #[test]
     fn validate_path_rejects_leading_dash() {

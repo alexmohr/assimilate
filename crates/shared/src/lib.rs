@@ -4,6 +4,10 @@
 //! Domain types, WebSocket protocol schema, and crypto utilities shared
 //! between the `server` and `agent` crates.
 
+/// Shared borg process wrapper: graceful SIGTERM/SIGKILL child termination,
+/// argument building, and the common spawn/wait/log pattern used by both the
+/// server and agent `Borg` wrappers.
+pub mod borg;
 /// Encryption and decryption helpers used to protect secrets (e.g. borg
 /// repository passphrases) at rest.
 pub mod crypto;
@@ -15,6 +19,8 @@ pub mod responses;
 pub mod schedule;
 /// Types and helpers for SSH agent forwarding between server and agent.
 pub mod ssh;
+/// Tracks fire-and-forget background tasks so shutdown can join them.
+pub mod task_registry;
 /// Core domain types (identifiers, hosts, repositories, backup reports, etc.)
 /// used throughout the workspace.
 pub mod types;

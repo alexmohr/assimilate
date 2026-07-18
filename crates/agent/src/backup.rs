@@ -12,6 +12,7 @@ use chrono::Utc;
 use serde::Deserialize;
 use shared::{
     ssh::{borg_rsh, borg_rsh_with_known_hosts},
+    task_registry::TaskRegistry,
     types::{BORG_REPO_ENV_KEY, BackupStatus, Compression, FileChangePattern, build_repo_url},
 };
 use tokio::{process::Command, sync::mpsc};
@@ -160,9 +161,9 @@ pub struct BackupEngine {
 }
 
 impl BackupEngine {
-    pub fn new() -> Self {
+    pub fn new(task_registry: TaskRegistry) -> Self {
         Self {
-            borg: Borg::new(),
+            borg: Borg::new(task_registry),
             borg_timeout: None,
         }
     }

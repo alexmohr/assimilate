@@ -5,21 +5,18 @@ use std::time::Duration;
 
 use axum::{
     Json,
-    body::Body,
     extract::{Path as AxumPath, State},
     http::header,
     response::{IntoResponse, Response},
 };
-use lz4_flex::frame::FrameEncoder;
 use serde::{Deserialize, Serialize};
 use shared::{protocol::ServerToAgent, types::RepoId};
 use tokio::sync::oneshot;
-use tokio_util::io::{ReaderStream, SyncIoBridge};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::{
-    archives::{LOCK_WAIT_SECS, get_repo_env, validate_path},
+    archives::{get_repo_env, stream_export_tar_lz4, validate_path},
     auth::{AuthUser, RequireAdmin},
     permissions::check_repo_permission,
 };
@@ -80,49 +77,13 @@ pub async fn download_files(
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
     let repo_archive = format!("{borg_repo}::{archive_name}");
 
-    let args = Borg::args_with_positional(
-        &[
-            "export-tar",
-            "--lock-wait",
-            LOCK_WAIT_SECS,
-            repo_archive.as_str(),
-            "-",
-        ],
+    let body_stream = stream_export_tar_lz4(
+        &Borg::new().with_registry(state.task_registry.clone()),
+        &repo_archive,
         &body.paths,
-    );
-
-    let mut child = Borg::new()
-        .spawn(&args, &env)
-        .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
-
-    let borg_stdout = child
-        .take_stdout()
-        .ok_or_else(|| ApiError::Internal("failed to capture borg stdout".to_string()))?;
-
-    let (reader, writer) = tokio::io::duplex(64 * 1024);
-
-    // Pipe borg's stdout through the lz4 encoder as it arrives, rather than
-    // buffering the whole tar in memory first. Aborting the download (browser
-    // cancel, client disconnect) drops `reader`, which makes writes into
-    // `writer` fail, so the copy below returns early and `child` is dropped
-    // (SIGTERM, escalating to SIGKILL + break-lock) instead of running to
-    // completion regardless of the client.
-    tokio::spawn(async move {
-        let mut sync_stdout = SyncIoBridge::new(borg_stdout);
-        let sync_writer = SyncIoBridge::new(writer);
-        tokio::task::spawn_blocking(move || {
-            let mut encoder = FrameEncoder::new(sync_writer);
-            std::io::copy(&mut sync_stdout, &mut encoder).ok();
-            encoder.finish().ok();
-        })
-        .await
-        .ok();
-
-        let _r = tokio::time::timeout(Duration::from_secs(30), child.wait()).await;
-    });
-
-    let stream = ReaderStream::new(reader);
-    let body_stream = Body::from_stream(stream);
+        &env,
+        &state.task_registry,
+    )?;
     let filename = format!("{archive_name}.tar.lz4");
 
     if let Err(e) = db::audit::insert_audit_entry(

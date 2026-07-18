@@ -11,7 +11,7 @@ use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
 
 use super::{
-    archives::{classify_borg_error, get_repo_env},
+    archives::{ensure_borg_success, get_repo_env},
     auth::RequireAdmin,
 };
 use crate::{
@@ -69,15 +69,11 @@ pub async fn export_key(
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
 
     let output = Borg::new()
+        .with_registry(state.task_registry.clone())
         .run(&["key", "export", "--stdout", borg_repo.as_str()], &env)
         .await
         .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let code = output.status.code().unwrap_or(1);
-        return Err(classify_borg_error(code, &stderr));
-    }
+    let stdout = ensure_borg_success(output)?;
 
     insert_audit_entry(
         &state.pool,
@@ -94,7 +90,7 @@ pub async fn export_key(
     .await
     .map_err(ApiError::Database)?;
 
-    let key_text = String::from_utf8(output.stdout)
+    let key_text = String::from_utf8(stdout)
         .map_err(|e| ApiError::Internal(format!("borg key output is not valid UTF-8: {e}")))?;
 
     Ok((
@@ -137,6 +133,7 @@ pub async fn import_key(
     let (borg_repo, env) = get_repo_env(&state.pool, &state.encryption_key, repo_id).await?;
 
     let mut child = Borg::new()
+        .with_registry(state.task_registry.clone())
         .spawn_with_stdin(&["key", "import", borg_repo.as_str(), "-"], &env)
         .map_err(|e| ApiError::Internal(format!("failed to spawn borg: {e}")))?;
 
@@ -155,12 +152,7 @@ pub async fn import_key(
         .wait_with_output()
         .await
         .map_err(|e| ApiError::Internal(format!("failed to wait for borg: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let code = output.status.code().unwrap_or(1);
-        return Err(classify_borg_error(code, &stderr));
-    }
+    ensure_borg_success(output)?;
 
     insert_audit_entry(
         &state.pool,
@@ -218,15 +210,11 @@ pub async fn change_passphrase(
     );
 
     let output = Borg::new()
+        .with_registry(state.task_registry.clone())
         .run(&["key", "change-passphrase", borg_repo.as_str()], &env)
         .await
         .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let code = output.status.code().unwrap_or(1);
-        return Err(classify_borg_error(code, &stderr));
-    }
+    ensure_borg_success(output)?;
 
     let encrypted = shared::crypto::encrypt_passphrase(&req.new_passphrase, &state.encryption_key)
         .map_err(|e| ApiError::Internal(format!("failed to encrypt passphrase: {e}")))?;

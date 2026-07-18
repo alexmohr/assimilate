@@ -258,10 +258,17 @@ api POST "/api/schedules" "{
     \"backup_sources\": [\"/srv\"]
 }" > /dev/null
 
+# next_run_at must stay within the dashboard's 2-hour "due soon" window (now..now+2h) at
+# whatever wall-clock time Playwright actually visits the dashboard, not just at seed time -
+# the e2e job's own image build/container startup can eat well over 30 minutes on a slow
+# runner, which used to push next_run_at into the past before any test ever checked it,
+# making the "host offline, due soon" dashboard finding disappear non-deterministically.
+# 100 minutes leaves a comfortable margin against that startup delay while staying safely
+# under the 2-hour ceiling.
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
 UPDATE schedules
 SET last_run_at = NOW() - interval '45 minutes',
-    next_run_at = NOW() + interval '30 minutes'
+    next_run_at = NOW() + interval '100 minutes'
 WHERE name = 'Offline agent due soon';
 
 SQL

@@ -147,6 +147,7 @@ pub async fn ensure_indexed(
     archive_name: String,
     repo_lock: RepoLock,
     background_task_tracker: &BackgroundTaskTracker,
+    task_registry: shared::task_registry::TaskRegistry,
 ) -> Result<IndexStatus, ApiError> {
     let archive_id = get_or_create_archive_id(&pool, repo_id, &archive_name).await?;
 
@@ -173,6 +174,7 @@ pub async fn ensure_indexed(
                 &archive_name_bg,
                 &repo_lock,
                 &mut |_, _| {},
+                &task_registry,
             )
             .await
             {
@@ -247,6 +249,7 @@ pub async fn run_indexing<F: FnMut(u64, Option<&str>)>(
     archive_name: &str,
     repo_lock: &RepoLock,
     on_progress: &mut F,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<(), ApiError> {
     let archive_id = get_or_create_archive_id(pool, repo_id, archive_name).await?;
     // Serialise the borg `list` with every other borg operation on this repo so
@@ -260,6 +263,7 @@ pub async fn run_indexing<F: FnMut(u64, Option<&str>)>(
         archive_id,
         archive_name,
         on_progress,
+        task_registry,
     )
     .await
 }
@@ -273,6 +277,7 @@ pub async fn run_indexing_with_lock_held<F: FnMut(u64, Option<&str>)>(
     repo_id: i64,
     archive_name: &str,
     on_progress: &mut F,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<(), ApiError> {
     let archive_id = get_or_create_archive_id(pool, repo_id, archive_name).await?;
 
@@ -283,6 +288,7 @@ pub async fn run_indexing_with_lock_held<F: FnMut(u64, Option<&str>)>(
         archive_id,
         archive_name,
         on_progress,
+        task_registry,
     )
     .await
 }
@@ -294,6 +300,7 @@ async fn run_indexing_impl<F: FnMut(u64, Option<&str>)>(
     archive_id: i64,
     archive_name: &str,
     on_progress: &mut F,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<(), ApiError> {
     sqlx::query!(
         "UPDATE archive_index_jobs SET status = 'indexing', started_at = NOW() WHERE archive_id = \
@@ -311,6 +318,7 @@ async fn run_indexing_impl<F: FnMut(u64, Option<&str>)>(
         archive_id,
         archive_name,
         on_progress,
+        task_registry,
     )
     .await
     {
@@ -353,12 +361,14 @@ async fn borg_list_archive_entries<F: FnMut(u64, Option<&str>)>(
     env: &std::collections::HashMap<String, String>,
     archive_name: &str,
     on_progress: &mut F,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<Vec<ContentEntry>, ApiError> {
     const LINE_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
     let repo_archive = format!("{borg_repo}::{archive_name}");
 
     let mut child = Borg::new()
+        .with_registry(task_registry.clone())
         .spawn(
             &[
                 "list",
@@ -600,9 +610,11 @@ async fn index_archive<F: FnMut(u64, Option<&str>)>(
     archive_id: i64,
     archive_name: &str,
     on_progress: &mut F,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<i64, ApiError> {
     let (borg_repo, env) = get_repo_env(pool, encryption_key, repo_id).await?;
-    let raw = borg_list_archive_entries(&borg_repo, &env, archive_name, on_progress).await?;
+    let raw = borg_list_archive_entries(&borg_repo, &env, archive_name, on_progress, task_registry)
+        .await?;
 
     let ExpandedArchiveEntries {
         paths,

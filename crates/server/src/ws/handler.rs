@@ -946,6 +946,7 @@ fn spawn_post_backup_indexing(state: &AppState, repo_id: i64, archive_name: Stri
     let encryption_key = state.encryption_key;
     let repo_lock = state.repo_lock.clone();
     let background_task_tracker = state.background_task_tracker.clone();
+    let task_registry = state.task_registry.clone();
     let task_guard = state.background_task_tracker.begin();
     tokio::spawn(async move {
         let _task_guard = task_guard;
@@ -956,6 +957,7 @@ fn spawn_post_backup_indexing(state: &AppState, repo_id: i64, archive_name: Stri
             archive_name.clone(),
             repo_lock,
             &background_task_tracker,
+            task_registry,
         )
         .await
         {
@@ -1155,6 +1157,7 @@ async fn run_post_backup_sync(
     ui_broadcast: crate::ws::ui_broadcast::UiBroadcast,
     repo_lock: crate::RepoLock,
     background_task_tracker: crate::background_tasks::BackgroundTaskTracker,
+    task_registry: shared::task_registry::TaskRegistry,
 ) {
     let _task_guard = background_task_tracker.begin();
     if let Err(e) = db::set_repo_importing(&pool, repo_id, true).await {
@@ -1168,6 +1171,7 @@ async fn run_post_backup_sync(
         &ui_broadcast,
         &repo_lock,
         &background_task_tracker,
+        &task_registry,
     )
     .await
     {
@@ -1236,6 +1240,7 @@ fn spawn_post_backup_sync(state: &AppState, repo_id: i64) {
         state.ui_broadcast.clone(),
         state.repo_lock.clone(),
         state.background_task_tracker.clone(),
+        state.task_registry.clone(),
     ));
 }
 
@@ -1821,6 +1826,7 @@ mod tests {
             pending_deletes: crate::new_pending_map(),
             shutdown_token: tokio_util::sync::CancellationToken::new(),
             client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
+            task_registry: shared::task_registry::TaskRegistry::default(),
         }
     }
 

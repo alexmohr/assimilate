@@ -55,6 +55,16 @@ enum StartupError {
 /// process exit anyway.
 const SHUTDOWN_GRACE_BUFFER: Duration = Duration::from_secs(10);
 
+/// How long shutdown waits for `AppState::background_task_tracker` (the outer
+/// scheduled-sync/post-backup-sync/post-backup-indexing/initial-import tasks, each of
+/// which claims a guard synchronously before being spawned) to go idle before giving up
+/// and draining `task_registry` anyway. These tasks aren't themselves registered with
+/// `task_registry` - only the `GracefulChild` reapers a *cancelled* borg call inside them
+/// would spawn are - so without this wait, a task still normally running a borg call when
+/// shutdown lands would have that call force-dropped when the runtime tears down, with
+/// nothing having ever tried to let it finish first.
+const BACKGROUND_TASK_SHUTDOWN_GRACE: Duration = Duration::from_secs(20);
+
 #[tokio::main]
 async fn main() -> Result<(), StartupError> {
     rustls::crypto::ring::default_provider()
@@ -106,6 +116,7 @@ async fn main() -> Result<(), StartupError> {
     let login_router = build_login_router(&state, client_ip_resolver);
     let registry = state.registry.clone();
     let task_registry = state.task_registry.clone();
+    let background_task_tracker = state.background_task_tracker.clone();
     let app = build_router(login_router)
         .with_state(state)
         .layer(axum_middleware::from_fn(csp_headers))
@@ -134,6 +145,17 @@ async fn main() -> Result<(), StartupError> {
         } => {
             tracing::warn!("graceful shutdown timed out after 10s, exiting");
         }
+    }
+
+    // Give outer background tasks (scheduled sync, post-backup sync/indexing, initial
+    // import) a chance to finish - including whatever borg call they're in the middle of
+    // running - before task_registry.shutdown() below tries to join reaper tasks that
+    // wouldn't exist yet if one of these got force-dropped by the runtime instead.
+    if !background_task_tracker
+        .wait_until_idle(BACKGROUND_TASK_SHUTDOWN_GRACE)
+        .await
+    {
+        tracing::warn!("background tasks still running at shutdown deadline");
     }
 
     // Let every `Borg` invocation's GracefulChild reaper (SIGKILL-escalation +

@@ -24,6 +24,59 @@ test.describe('Schedules management', () => {
     await expect(page.getByText('media-store-01').first()).toBeVisible()
   })
 
+  test('overdue schedule card shows an expandable per-host detail toggle', async ({ page }) => {
+    await loginAsAdmin(page)
+
+    // The demo's seeded health data has no overdue hosts, so intercept
+    // /api/stats/health and mark the web-server-01 / server-daily entry
+    // (schedule 1, see 'schedule detail shows cron expression...' below)
+    // overdue without an error message - this reproduces a host whose own
+    // last report is stale even though the schedule itself looks on track,
+    // which is exactly what the expandable "N host(s) overdue" toggle exists
+    // to surface.
+    await page.route(
+      (url) => url.pathname === '/api/stats/health',
+      async (route) => {
+        const response = await route.fetch()
+        const entries = (await response.json()) as Array<Record<string, unknown>>
+        const withoutTarget = entries.filter(
+          (e) => !(e.schedule_id === 1 && e.hostname === 'web-server-01'),
+        )
+        withoutTarget.push({
+          schedule_id: 1,
+          hostname: 'web-server-01',
+          target_name: 'server-daily',
+          last_status: 'success',
+          last_backup_at: '2020-01-01T02:00:00Z',
+          is_overdue: true,
+          last_error_message: null,
+          cron_expression: '0 2 * * *',
+          schedule_enabled: true,
+        })
+        return route.fulfill({
+          status: response.status(),
+          contentType: 'application/json',
+          body: JSON.stringify(withoutTarget),
+        })
+      },
+    )
+
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator('.schedule-card', { hasText: 'server-daily' })
+    await expect(card.getByText('1 host overdue')).toBeVisible()
+    await expect(
+      card.getByText('Production Web Server (web-server-01) — last backup:'),
+    ).not.toBeVisible()
+
+    await card.getByText('1 host overdue').click()
+
+    await expect(
+      card.getByText('Production Web Server (web-server-01) — last backup:'),
+    ).toBeVisible()
+  })
+
   test('clicking a schedule navigates to detail page', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules')

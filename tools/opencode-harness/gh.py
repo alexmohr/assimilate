@@ -321,6 +321,19 @@ def get_review_comments(repo: str, number: int, max_chars: int = 8000) -> str:
     problems and, worse, kept tripping harness.py's "this needs a human
     policy decision" heuristic on old language (e.g. "needs a human
     decision") from a concern that was resolved rounds ago.
+
+    "Most recent" here means the most recent APPROVED or CHANGES_REQUESTED
+    review specifically, not the most recent review of any state - a
+    COMMENTED review (a follow-up clarification, or another automated pass
+    that leaves inline comments without resubmitting a formal verdict) does
+    not supersede an earlier CHANGES_REQUESTED in GitHub's own reviewDecision
+    (confirmed live via .github/workflows/claude-review.yml's stale-review
+    dismissal step, which has to work around this same platform behavior).
+    Picking the chronologically-latest review regardless of state would drop
+    a still-in-effect CHANGES_REQUESTED (and its inline comments) the moment
+    a later COMMENTED review landed - exactly the "mirrors reviewDecision"
+    claim this function makes, so it needs the same decision-bearing filter
+    claude-review.yml's own dismissal logic uses.
     """
     reviews = _run_json(["gh", "api", f"repos/{repo}/pulls/{number}/reviews"])
     inline = _run_json(["gh", "api", f"repos/{repo}/pulls/{number}/comments"])
@@ -329,6 +342,8 @@ def get_review_comments(repo: str, number: int, max_chars: int = 8000) -> str:
     for r in reviews:
         login = (r.get("user") or {}).get("login")
         if not login:
+            continue
+        if r.get("state") not in ("APPROVED", "CHANGES_REQUESTED"):
             continue
         existing = latest_by_user.get(login)
         if existing is None or r.get("submitted_at", "") > existing.get("submitted_at", ""):

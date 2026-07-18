@@ -20,6 +20,7 @@ use shared::{
 };
 use sqlx::PgPool;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     AppState,
@@ -238,7 +239,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     send_reconnect_catchup(&state, &mut ws_sink, &hostname, agent_id).await;
 
-    tokio::spawn(ping_loop(ping_tx));
+    tokio::spawn(ping_loop(ping_tx, state.shutdown_token.clone()));
 
     loop {
         tokio::select! {
@@ -261,6 +262,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     }
                     Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Binary(_))) => {}
                 }
+            }
+            () = state.shutdown_token.cancelled() => {
+                tracing::debug!(hostname = %hostname, "shutdown, closing agent connection");
+                break;
             }
         }
     }
@@ -377,10 +382,13 @@ async fn send_reconnect_catchup(
     }
 }
 
-async fn ping_loop(sender: mpsc::Sender<ServerToAgent>) {
+async fn ping_loop(sender: mpsc::Sender<ServerToAgent>, shutdown_token: CancellationToken) {
     let mut interval = tokio::time::interval(PING_INTERVAL);
     loop {
-        interval.tick().await;
+        tokio::select! {
+            () = shutdown_token.cancelled() => return,
+            _ = interval.tick() => {}
+        }
         if sender.send(ServerToAgent::Ping).await.is_err() {
             break;
         }
@@ -1765,8 +1773,25 @@ mod tests {
     };
     use sqlx::PgPool;
     use tokio::time::timeout;
+    use tokio_util::sync::CancellationToken;
 
     use super::*;
+
+    #[tokio::test]
+    async fn ping_loop_exits_promptly_when_shutdown_token_cancelled() {
+        let (tx, mut rx) = mpsc::channel::<ServerToAgent>(4);
+        let token = CancellationToken::new();
+
+        let handle = tokio::spawn(ping_loop(tx, token.clone()));
+        token.cancel();
+
+        let result = timeout(Duration::from_secs(5), handle).await;
+        assert!(
+            result.is_ok(),
+            "ping_loop did not exit within 5s after shutdown_token cancellation"
+        );
+        assert!(rx.try_recv().is_err(), "no ping should have been sent");
+    }
 
     #[test]
     fn quota_status_label_covers_every_status() {

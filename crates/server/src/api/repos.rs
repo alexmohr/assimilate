@@ -2235,6 +2235,7 @@ pub async fn set_server_sync_op(
             repo_id,
             shared::protocol::RepoOpKind::ServerSync,
             "server".to_owned(),
+            state.task_registry.clone(),
         )
         .await;
     state

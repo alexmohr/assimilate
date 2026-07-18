@@ -110,7 +110,14 @@ async fn handle_ssh_relay(mut socket: WebSocket, hostname: String, state: AppSta
         }
     };
 
-    tokio::join!(unix_to_ws, ws_to_unix);
+    tokio::select! {
+        () = async {
+            tokio::join!(unix_to_ws, ws_to_unix);
+        } => {}
+        () = state.shutdown_token.cancelled() => {
+            tracing::debug!(hostname = %hostname, "shutdown signal received, closing relay");
+        }
+    }
 
     tracing::info!(hostname = %hostname, "ssh relay connection closed");
 }

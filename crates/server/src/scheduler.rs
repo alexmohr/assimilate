@@ -32,65 +32,91 @@ const SESSION_CLEANUP_INTERVAL: Duration = Duration::from_hours(1);
 const SYNC_WARN_DURATION: Duration = Duration::from_mins(5);
 
 /// Main scheduler loop: ticks schedules, runs retention, syncs repos, and cleans up sessions.
+/// Every inner loop races its interval tick against `state.shutdown_token`, so the whole
+/// function returns promptly once shutdown starts instead of keeping the process alive
+/// (and, in a coverage build, keeping LLVM's atexit-flush from ever running) until the
+/// runtime is torn down out from under it.
 pub async fn run(state: AppState) {
     let _receiver = state.completion_bus.subscribe();
     let schedule_state = state.clone();
     let retention_pool = state.pool.clone();
     let sync_state = state.clone();
     let session_pool = state.pool.clone();
+    let shutdown_token = state.shutdown_token.clone();
 
-    let schedule_task = async move {
-        let mut interval = tokio::time::interval(TICK_INTERVAL);
-        loop {
-            interval.tick().await;
-            if let Err(e) = tick(&TickDeps {
-                pool: &schedule_state.pool,
-                registry: &schedule_state.registry,
-                encryption_key: &schedule_state.encryption_key,
-                tunnel_manager: &schedule_state.tunnel_manager,
-                completion_bus: &schedule_state.completion_bus,
-                repo_lock: &schedule_state.repo_lock,
-                repo_op_tracker: &schedule_state.repo_op_tracker,
-                ui_broadcast: &schedule_state.ui_broadcast,
-            })
-            .await
-            {
-                tracing::error!(error = %e, "scheduler tick failed");
+    let schedule_task = {
+        let shutdown_token = shutdown_token.clone();
+        async move {
+            let mut interval = tokio::time::interval(TICK_INTERVAL);
+            loop {
+                tokio::select! {
+                    () = shutdown_token.cancelled() => return,
+                    _ = interval.tick() => {}
+                }
+                if let Err(e) = tick(&TickDeps {
+                    pool: &schedule_state.pool,
+                    registry: &schedule_state.registry,
+                    encryption_key: &schedule_state.encryption_key,
+                    tunnel_manager: &schedule_state.tunnel_manager,
+                    completion_bus: &schedule_state.completion_bus,
+                    repo_lock: &schedule_state.repo_lock,
+                    repo_op_tracker: &schedule_state.repo_op_tracker,
+                    ui_broadcast: &schedule_state.ui_broadcast,
+                })
+                .await
+                {
+                    tracing::error!(error = %e, "scheduler tick failed");
+                }
             }
         }
     };
 
-    let retention_task = async move {
-        let mut interval = tokio::time::interval(RETENTION_INTERVAL);
-        loop {
-            interval.tick().await;
-            if let Err(e) = run_retention_cleanup(&retention_pool).await {
-                tracing::error!(error = %e, "retention cleanup failed");
+    let retention_task = {
+        let shutdown_token = shutdown_token.clone();
+        async move {
+            let mut interval = tokio::time::interval(RETENTION_INTERVAL);
+            loop {
+                tokio::select! {
+                    () = shutdown_token.cancelled() => return,
+                    _ = interval.tick() => {}
+                }
+                if let Err(e) = run_retention_cleanup(&retention_pool).await {
+                    tracing::error!(error = %e, "retention cleanup failed");
+                }
             }
         }
     };
 
-    let sync_task = async move {
-        let mut interval = tokio::time::interval(SYNC_CHECK_INTERVAL);
-        loop {
-            interval.tick().await;
-            run_repo_sync(
-                &sync_state.pool,
-                &sync_state.encryption_key,
-                &sync_state.ui_broadcast,
-                &sync_state.repo_op_tracker,
-                &sync_state.repo_lock,
-                &sync_state.background_task_tracker,
-                &sync_state.task_registry,
-            )
-            .await;
+    let sync_task = {
+        let shutdown_token = shutdown_token.clone();
+        async move {
+            let mut interval = tokio::time::interval(SYNC_CHECK_INTERVAL);
+            loop {
+                tokio::select! {
+                    () = shutdown_token.cancelled() => return,
+                    _ = interval.tick() => {}
+                }
+                run_repo_sync(
+                    &sync_state.pool,
+                    &sync_state.encryption_key,
+                    &sync_state.ui_broadcast,
+                    &sync_state.repo_op_tracker,
+                    &sync_state.repo_lock,
+                    &sync_state.background_task_tracker,
+                    &sync_state.task_registry,
+                )
+                .await;
+            }
         }
     };
 
     let session_cleanup_task = async move {
         let mut interval = tokio::time::interval(SESSION_CLEANUP_INTERVAL);
         loop {
-            interval.tick().await;
+            tokio::select! {
+                () = shutdown_token.cancelled() => return,
+                _ = interval.tick() => {}
+            }
             match db::delete_expired_sessions(&session_pool).await {
                 Ok(count) if count > 0 => {
                     tracing::debug!(count, "deleted expired sessions");
@@ -195,6 +221,7 @@ pub async fn run_repo_sync(
                 repo.id,
                 shared::protocol::RepoOpKind::ServerSync,
                 "server".to_owned(),
+                task_registry.clone(),
             )
             .await;
         ui_broadcast.send(ServerToUi::RepoOpChanged {
@@ -929,6 +956,52 @@ mod tests {
         tunnel::TunnelManager,
         ws::{completion_bus::CompletionBus, registry::AgentRegistry, ui_broadcast::UiBroadcast},
     };
+
+    /// `run()`'s four inner loops each race their interval tick against
+    /// `shutdown_token.cancelled()`; since every configured interval is
+    /// seconds-to-hours long, cancelling immediately after spawning must win
+    /// every time, letting `run()` return without ever touching the DB (so a
+    /// lazily-connected, never-reachable pool is fine here).
+    #[tokio::test]
+    async fn run_returns_promptly_when_shutdown_token_is_cancelled() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();
+        let ui_broadcast = UiBroadcast::new();
+        let state = AppState {
+            pool: pool.clone(),
+            encryption_key: shared::crypto::derive_key(b"scheduler-shutdown-test-key").unwrap(),
+            registry: AgentRegistry::new(),
+            ui_broadcast: ui_broadcast.clone(),
+            tunnel_manager: TunnelManager::new(
+                pool.clone(),
+                ui_broadcast,
+                "127.0.0.1:0".parse().unwrap(),
+            ),
+            log_buffer: crate::log_buffer::LogBuffer::default(),
+            notification_service: crate::notifications::NotificationService::new(pool),
+            completion_bus: CompletionBus::new(),
+            repo_op_tracker: RepoOpTracker::default(),
+            background_task_tracker: crate::background_tasks::BackgroundTaskTracker::default(),
+            repo_lock: RepoLock::default(),
+            import_tasks: crate::ImportTaskRegistry::default(),
+            pending_dryruns: crate::new_pending_map(),
+            pending_restores: crate::new_pending_map(),
+            pending_migrations: crate::new_pending_map(),
+            pending_deletes: crate::new_pending_map(),
+            shutdown_token: tokio_util::sync::CancellationToken::new(),
+            client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
+            task_registry: shared::task_registry::TaskRegistry::default(),
+        };
+        let shutdown_token = state.shutdown_token.clone();
+
+        let handle = tokio::spawn(run(state));
+        shutdown_token.cancel();
+
+        let result = tokio::time::timeout(Duration::from_secs(5), handle).await;
+        assert!(
+            result.is_ok(),
+            "scheduler::run did not exit within 5s after shutdown_token cancellation"
+        );
+    }
 
     static BORG_BINARY_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 

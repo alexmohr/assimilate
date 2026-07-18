@@ -401,6 +401,17 @@ jobs:
             sleep 1
           done
           echo "::error::Background operations never quiesced after 360s - coverage collected past this point would be non-deterministic."
+          # health()'s debug log (RUST_LOG=debug in the demo compose) breaks
+          # down which of repo_ops_active / notification_deliveries_in_flight /
+          # background_tasks_active is the one still set, since the poll above
+          # only ever sees the combined bool - the demo container is still
+          # running at this point (teardown hasn't started yet), so its logs
+          # are available directly via `docker logs`, no stop/copy needed.
+          DEMO_CONTAINER=$(docker compose $COMPOSE_FILES ps -qa demo 2>/dev/null | head -1)
+          if [ -n "$DEMO_CONTAINER" ]; then
+            echo "=== Demo container logs (tail 300) ==="
+            docker logs "$DEMO_CONTAINER" --tail 300
+          fi
           exit 1
       - name: Collect backend coverage from Docker
         run: |

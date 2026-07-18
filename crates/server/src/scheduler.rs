@@ -50,6 +50,7 @@ pub async fn run(state: AppState) {
             let mut interval = tokio::time::interval(TICK_INTERVAL);
             loop {
                 tokio::select! {
+                    biased;
                     () = shutdown_token.cancelled() => return,
                     _ = interval.tick() => {}
                 }
@@ -77,6 +78,7 @@ pub async fn run(state: AppState) {
             let mut interval = tokio::time::interval(RETENTION_INTERVAL);
             loop {
                 tokio::select! {
+                    biased;
                     () = shutdown_token.cancelled() => return,
                     _ = interval.tick() => {}
                 }
@@ -93,6 +95,7 @@ pub async fn run(state: AppState) {
             let mut interval = tokio::time::interval(SYNC_CHECK_INTERVAL);
             loop {
                 tokio::select! {
+                    biased;
                     () = shutdown_token.cancelled() => return,
                     _ = interval.tick() => {}
                 }
@@ -114,6 +117,7 @@ pub async fn run(state: AppState) {
         let mut interval = tokio::time::interval(SESSION_CLEANUP_INTERVAL);
         loop {
             tokio::select! {
+                biased;
                 () = shutdown_token.cancelled() => return,
                 _ = interval.tick() => {}
             }
@@ -958,10 +962,13 @@ mod tests {
     };
 
     /// `run()`'s four inner loops each race their interval tick against
-    /// `shutdown_token.cancelled()`; since every configured interval is
-    /// seconds-to-hours long, cancelling immediately after spawning must win
-    /// every time, letting `run()` return without ever touching the DB (so a
-    /// lazily-connected, never-reachable pool is fine here).
+    /// `shutdown_token.cancelled()` with `biased;` ordering the cancellation arm
+    /// first, so cancelling immediately after spawning always wins even on a
+    /// freshly-created `interval` (whose first `tick()` resolves immediately,
+    /// same as the cancellation future, rather than after a full period) - without
+    /// `biased`, `tokio::select!` would break that tie randomly instead of
+    /// deterministically preferring shutdown. `run()` returns without ever
+    /// touching the DB, so a lazily-connected, never-reachable pool is fine here.
     #[tokio::test]
     async fn run_returns_promptly_when_shutdown_token_is_cancelled() {
         let pool = sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap();

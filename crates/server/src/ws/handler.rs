@@ -386,6 +386,7 @@ async fn ping_loop(sender: mpsc::Sender<ServerToAgent>, shutdown_token: Cancella
     let mut interval = tokio::time::interval(PING_INTERVAL);
     loop {
         tokio::select! {
+            biased;
             () = shutdown_token.cancelled() => return,
             _ = interval.tick() => {}
         }
@@ -489,12 +490,20 @@ fn dispatch_quota_breach_notification(
         schedule_name: None,
         archive_name: None,
     };
+    spawn_notification_dispatch(state, quota_event);
+}
+
+/// Spawns `notifications::dispatch` for `event` as a detached task registered with
+/// `task_registry`, so shutdown can join it instead of the runtime abandoning a
+/// still-in-flight webhook/email/push delivery. Shared by every call site that builds
+/// a [`NotificationEvent`] and fires it off in the background.
+fn spawn_notification_dispatch(state: &AppState, event: NotificationEvent) {
     let service = state.notification_service.clone();
     let task_registry = state.task_registry.clone();
     let task_guard = state.background_task_tracker.begin();
     tokio::spawn(async move {
         let _task_guard = task_guard;
-        if let Err(e) = notifications::dispatch(&service, quota_event, &task_registry).await {
+        if let Err(e) = notifications::dispatch(&service, event, &task_registry).await {
             tracing::error!(error = %e, "notification dispatch failed");
         }
     });
@@ -1146,15 +1155,7 @@ async fn dispatch_backup_completion_notification(
         schedule_name,
         archive_name,
     };
-    let service = state.notification_service.clone();
-    let task_registry = state.task_registry.clone();
-    let task_guard = state.background_task_tracker.begin();
-    tokio::spawn(async move {
-        let _task_guard = task_guard;
-        if let Err(e) = notifications::dispatch(&service, event, &task_registry).await {
-            tracing::error!(error = %e, "notification dispatch failed");
-        }
-    });
+    spawn_notification_dispatch(state, event);
 }
 
 /// Runs the post-backup archive sync in the background: marks the repo as
@@ -1560,15 +1561,7 @@ async fn handle_check_completed(args: CheckCompletedArgs<'_>) {
         schedule_name,
         archive_name: None,
     };
-    let service = state.notification_service.clone();
-    let task_registry = state.task_registry.clone();
-    let task_guard = state.background_task_tracker.begin();
-    tokio::spawn(async move {
-        let _task_guard = task_guard;
-        if let Err(e) = notifications::dispatch(&service, event, &task_registry).await {
-            tracing::error!(error = %e, "notification dispatch failed");
-        }
-    });
+    spawn_notification_dispatch(state, event);
 
     state.ui_broadcast.send(ServerToUi::DataChanged);
 }

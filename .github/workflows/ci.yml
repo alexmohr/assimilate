@@ -13,7 +13,7 @@ jobs:
     name: Rust (fmt + clippy + test)
     runs-on: ubuntu-latest
     services:
-      postgres:
+      postgres: &postgres_service
         image: postgres:latest
         env:
           POSTGRES_DB: borg
@@ -121,28 +121,10 @@ jobs:
     name: Database Integration Tests
     runs-on: ubuntu-latest
     services:
-      postgres:
-        image: postgres:latest
-        env:
-          POSTGRES_DB: borg
-          POSTGRES_USER: borg
-          POSTGRES_PASSWORD: borg_secret
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U borg -d borg" --health-interval 5s --health-timeout 3s --health-retries 10
+      postgres: *postgres_service
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust nightly
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: nightly
-      - name: Install sqlx-cli
-        run: cargo install sqlx-cli --locked --no-default-features --features postgres
-      - name: Apply database migrations
-        run: cargo sqlx migrate run --source crates/server/migrations
-        env:
-          DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
+      - uses: ./.github/actions/setup-rust-nightly-db
       - name: Run database integration tests
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
@@ -159,28 +141,10 @@ jobs:
     name: Nightly Tests (no coverage)
     runs-on: ubuntu-latest
     services:
-      postgres:
-        image: postgres:latest
-        env:
-          POSTGRES_DB: borg
-          POSTGRES_USER: borg
-          POSTGRES_PASSWORD: borg_secret
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U borg -d borg" --health-interval 5s --health-timeout 3s --health-retries 10
+      postgres: *postgres_service
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust nightly
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: nightly
-      - name: Install sqlx-cli
-        run: cargo install sqlx-cli --locked --no-default-features --features postgres
-      - name: Apply database migrations
-        run: cargo sqlx migrate run --source crates/server/migrations
-        env:
-          DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
+      - uses: ./.github/actions/setup-rust-nightly-db
       - name: Run tests (unit + integration) on nightly
         env:
           DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
@@ -211,16 +175,7 @@ jobs:
     name: Code Coverage
     runs-on: ubuntu-latest
     services:
-      postgres:
-        image: postgres:latest
-        env:
-          POSTGRES_DB: borg
-          POSTGRES_USER: borg
-          POSTGRES_PASSWORD: borg_secret
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U borg -d borg" --health-interval 5s --health-timeout 3s --health-retries 10
+      postgres: *postgres_service
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust stable

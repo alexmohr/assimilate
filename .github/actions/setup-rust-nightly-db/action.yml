@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+name: Set up Rust nightly and apply database migrations
+description: >-
+  Shared setup steps for jobs that run tests against the Postgres service on Rust nightly - toolchain, sqlx-cli, and migrations. Requires the repo to already be checked out and the postgres service to already be up.
+runs:
+  using: composite
+  steps:
+    - name: Install Rust nightly
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: nightly
+    - name: Install sqlx-cli
+      shell: bash
+      run: cargo install sqlx-cli --locked --no-default-features --features postgres
+    - name: Apply database migrations
+      shell: bash
+      run: cargo sqlx migrate run --source crates/server/migrations
+      env:
+        DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg

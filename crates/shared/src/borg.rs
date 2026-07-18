@@ -480,22 +480,23 @@ mod tests {
         unsafe { std::env::remove_var("BORG_KILL_ESCALATION_SECS") };
     }
 
-    #[tokio::test]
-    async fn graceful_child_drop_registers_its_reaper_task_synchronously() {
-        let registry = TaskRegistry::default();
+    /// Spawns a real, still-running `sleep 5` wrapped in a fresh `GracefulChild` registered
+    /// with `registry`, for tests exercising `Drop`'s SIGTERM/reaper-registration behaviour
+    /// against a child that hasn't exited yet.
+    fn spawn_long_running_guard(registry: TaskRegistry) -> GracefulChild {
         let child = Command::new("sleep")
             .arg("5")
             .kill_on_drop(false)
             .spawn()
             .expect("failed to spawn sleep for test");
 
-        let guard = GracefulChild::new(
-            child,
-            PathBuf::from("borg"),
-            None,
-            Vec::new(),
-            registry.clone(),
-        );
+        GracefulChild::new(child, PathBuf::from("borg"), None, Vec::new(), registry)
+    }
+
+    #[tokio::test]
+    async fn graceful_child_drop_registers_its_reaper_task_synchronously() {
+        let registry = TaskRegistry::default();
+        let guard = spawn_long_running_guard(registry.clone());
         assert_eq!(registry.pending_count(), 0);
 
         drop(guard);
@@ -511,19 +512,7 @@ mod tests {
     #[tokio::test]
     async fn graceful_child_drop_falls_back_to_a_thread_without_a_tokio_runtime() {
         let registry = TaskRegistry::default();
-        let child = Command::new("sleep")
-            .arg("5")
-            .kill_on_drop(false)
-            .spawn()
-            .expect("failed to spawn sleep for test");
-
-        let guard = GracefulChild::new(
-            child,
-            PathBuf::from("borg"),
-            None,
-            Vec::new(),
-            registry.clone(),
-        );
+        let guard = spawn_long_running_guard(registry.clone());
 
         // Drop the guard from a plain OS thread with no tokio runtime context, forcing
         // GracefulChild::drop's Handle::try_current() fallback path (a detached

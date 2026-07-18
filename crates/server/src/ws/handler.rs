@@ -490,10 +490,11 @@ fn dispatch_quota_breach_notification(
         archive_name: None,
     };
     let service = state.notification_service.clone();
+    let task_registry = state.task_registry.clone();
     let task_guard = state.background_task_tracker.begin();
     tokio::spawn(async move {
         let _task_guard = task_guard;
-        if let Err(e) = notifications::dispatch(&service, quota_event).await {
+        if let Err(e) = notifications::dispatch(&service, quota_event, &task_registry).await {
             tracing::error!(error = %e, "notification dispatch failed");
         }
     });
@@ -1146,10 +1147,11 @@ async fn dispatch_backup_completion_notification(
         archive_name,
     };
     let service = state.notification_service.clone();
+    let task_registry = state.task_registry.clone();
     let task_guard = state.background_task_tracker.begin();
     tokio::spawn(async move {
         let _task_guard = task_guard;
-        if let Err(e) = notifications::dispatch(&service, event).await {
+        if let Err(e) = notifications::dispatch(&service, event, &task_registry).await {
             tracing::error!(error = %e, "notification dispatch failed");
         }
     });
@@ -1559,10 +1561,11 @@ async fn handle_check_completed(args: CheckCompletedArgs<'_>) {
         archive_name: None,
     };
     let service = state.notification_service.clone();
+    let task_registry = state.task_registry.clone();
     let task_guard = state.background_task_tracker.begin();
     tokio::spawn(async move {
         let _task_guard = task_guard;
-        if let Err(e) = notifications::dispatch(&service, event).await {
+        if let Err(e) = notifications::dispatch(&service, event, &task_registry).await {
             tracing::error!(error = %e, "notification dispatch failed");
         }
     });

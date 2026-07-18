@@ -14,6 +14,7 @@ use std::fmt;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use shared::task_registry::TaskRegistry;
 use sqlx::{FromRow, PgPool};
 
 /// Supported notification channel types.
@@ -308,9 +309,15 @@ struct PushSubscriptionRow {
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
+///
+/// Each matched channel's delivery is dispatched as a spawned task registered with
+/// `task_registry`, so shutdown can join it (bounded by `task_registry.shutdown`'s
+/// timeout) instead of the runtime aborting a still-in-flight webhook/email/push
+/// delivery when the process exits.
 pub async fn dispatch(
     service: &NotificationService,
     event: NotificationEvent,
+    task_registry: &TaskRegistry,
 ) -> Result<(), NotificationError> {
     let channels: Vec<MatchedChannel> = sqlx::query_as!(
         MatchedChannel,
@@ -353,7 +360,7 @@ pub async fn dispatch(
         let event_type_str = event.event_type.to_string();
         let delivery_guard = service.begin_delivery();
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let _delivery_guard = delivery_guard;
             let result =
                 deliver_to_channel(channel.channel_type, &channel_config, &payload, &pool).await;
@@ -385,6 +392,7 @@ pub async fn dispatch(
                 tracing::error!(channel_id, error = %e, "failed to record delivery attempt");
             }
         });
+        task_registry.register(handle);
     }
 
     Ok(())
@@ -571,6 +579,68 @@ mod tests {
 
     fn payload(json: serde_json::Value) -> serde_json::Value {
         json
+    }
+
+    /// A dispatched channel's delivery must be registered with `task_registry`
+    /// before `dispatch` returns, so shutdown can join it (bounded by
+    /// `task_registry.shutdown`'s timeout) instead of a still-in-flight
+    /// webhook/email/push delivery being silently aborted when the process
+    /// exits. The webhook points at an unreachable address deliberately -
+    /// this test only cares that the task was registered and is joinable, not
+    /// that delivery succeeds.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn dispatch_registers_each_channel_delivery_with_task_registry(pool: sqlx::PgPool) {
+        let channel_id: i64 = sqlx::query_scalar!(
+            "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES ($1, \
+             'webhook', $2, true) RETURNING id",
+            "test-webhook",
+            serde_json::json!({ "url": "http://127.0.0.1:1/unreachable" }),
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query!(
+            "INSERT INTO notification_rules (channel_id, event_type, enabled) VALUES ($1, \
+             'backup_success', true)",
+            channel_id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let service = NotificationService::new(pool);
+        let task_registry = TaskRegistry::default();
+        let event = NotificationEvent {
+            event_type: EventType::BackupSuccess,
+            hostname: "test-host".to_owned(),
+            repo_name: "test-repo".to_owned(),
+            status: "success".to_owned(),
+            error_message: None,
+            timestamp: Utc::now(),
+            repo_id: None,
+            agent_id: None,
+            schedule_id: None,
+            schedule_name: None,
+            archive_name: None,
+        };
+
+        dispatch(&service, event, &task_registry).await.unwrap();
+
+        assert_eq!(
+            task_registry.pending_count(),
+            1,
+            "dispatch must register the spawned per-channel delivery before returning"
+        );
+
+        let outstanding = task_registry
+            .shutdown(std::time::Duration::from_secs(5))
+            .await;
+        assert_eq!(
+            outstanding, 0,
+            "task_registry.shutdown must join the delivery task instead of abandoning it"
+        );
     }
 
     #[test]

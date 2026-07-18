@@ -127,25 +127,6 @@ REPO_WEEKLY_ID=$(api POST "/api/repos" "{
     \"compression\": \"lz4\"
 }" | jq -r '.id')
 
-echo "==> Configuring per-repo sync schedules..."
-api PUT "/api/repos/$REPO_HOURLY_ID" "{
-    \"repo_path\": \"/backup/repos/database-hourly\",
-    \"ssh_user\": \"borg\",
-    \"ssh_host\": \"localhost\",
-    \"ssh_port\": 22,
-    \"compression\": \"zstd,3\",
-    \"sync_schedule\": \"0 */4 * * *\"
-}" > /dev/null
-
-api PUT "/api/repos/$REPO_WEEKLY_ID" "{
-    \"repo_path\": \"/backup/repos/media-weekly\",
-    \"ssh_user\": \"borg\",
-    \"ssh_host\": \"localhost\",
-    \"ssh_port\": 22,
-    \"compression\": \"lz4\",
-    \"sync_schedule\": null
-}" > /dev/null
-
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<'SQL' > /dev/null
 DO $$
 BEGIN
@@ -176,6 +157,37 @@ for HOST in web-server-01 db-server-01 media-store-01 old-webserver legacy-db-pr
     done
     echo "  [$HOST] done."
 done
+
+# Configured only now, after every placeholder/agent container has finished
+# writing its archives (including legacy-db-prod's unmatched archive into
+# database-hourly) - not right after the repos are registered. sync_schedule
+# is immediately "due" the moment it's set (last_synced_at is still NULL), so
+# setting it earlier lets the server's own background scheduler race the
+# placeholder containers: it can sync database-hourly before legacy-db-prod's
+# archive exists, clear importing, and update last_synced_at - after which
+# nothing re-syncs the repo until the next 4-hour cron boundary, permanently
+# missing the archive the "unmatched-banner" E2E test depends on. The
+# explicit sync_repo calls below tolerate a 409 from a concurrent sync
+# without verifying it actually saw every archive, so they can't catch this
+# on their own.
+echo "==> Configuring per-repo sync schedules..."
+api PUT "/api/repos/$REPO_HOURLY_ID" "{
+    \"repo_path\": \"/backup/repos/database-hourly\",
+    \"ssh_user\": \"borg\",
+    \"ssh_host\": \"localhost\",
+    \"ssh_port\": 22,
+    \"compression\": \"zstd,3\",
+    \"sync_schedule\": \"0 */4 * * *\"
+}" > /dev/null
+
+api PUT "/api/repos/$REPO_WEEKLY_ID" "{
+    \"repo_path\": \"/backup/repos/media-weekly\",
+    \"ssh_user\": \"borg\",
+    \"ssh_host\": \"localhost\",
+    \"ssh_port\": 22,
+    \"compression\": \"lz4\",
+    \"sync_schedule\": null
+}" > /dev/null
 
 # Blocks until no repo reports importing == true (sync runs in the background).
 wait_for_imports() {

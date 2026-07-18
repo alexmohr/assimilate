@@ -171,6 +171,11 @@ pub fn ensure_borg_success(output: std::process::Output) -> Result<Vec<u8>, ApiE
 /// child is dropped (SIGTERM, escalating to SIGKILL + break-lock) instead of running to
 /// completion regardless of the client.
 ///
+/// The encode-and-wait task itself is registered with `task_registry` (the same registry
+/// `borg` was given via `Borg::with_registry`), not just the `GracefulChild` reaper it may
+/// spawn - so shutdown joins the whole pipeline instead of aborting a copy that's still
+/// draining borg's output.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Internal`] if borg fails to spawn or its stdout can't be captured.
@@ -179,6 +184,7 @@ pub(crate) fn stream_export_tar_lz4(
     repo_archive: &str,
     positional: &[String],
     env: &HashMap<String, String>,
+    task_registry: &shared::task_registry::TaskRegistry,
 ) -> Result<Body, ApiError> {
     let args = Borg::args_with_positional(
         &[
@@ -201,7 +207,7 @@ pub(crate) fn stream_export_tar_lz4(
 
     let (reader, writer) = tokio::io::duplex(64 * 1024);
 
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         let mut sync_stdout = SyncIoBridge::new(borg_stdout);
         let sync_writer = SyncIoBridge::new(writer);
         tokio::task::spawn_blocking(move || {
@@ -214,6 +220,7 @@ pub(crate) fn stream_export_tar_lz4(
 
         let _r = tokio::time::timeout(Duration::from_secs(30), child.wait()).await;
     });
+    task_registry.register(handle);
 
     Ok(Body::from_stream(ReaderStream::new(reader)))
 }
@@ -1218,6 +1225,29 @@ pub async fn extract_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn stream_export_tar_lz4_registers_its_pump_task_with_the_given_registry() {
+        let _guard = crate::borg::override_binary_for_tests(std::path::PathBuf::from("true"));
+        let task_registry = shared::task_registry::TaskRegistry::default();
+        let borg = Borg::new().with_registry(task_registry.clone());
+
+        let _body = stream_export_tar_lz4(
+            &borg,
+            "test-repo::archive",
+            &[],
+            &HashMap::new(),
+            &task_registry,
+        )
+        .expect("stream_export_tar_lz4 failed to spawn");
+
+        assert_eq!(
+            task_registry.pending_count(),
+            1,
+            "the encode-and-wait pump task must be registered synchronously before returning, not \
+             just the GracefulChild reaper it may spawn later"
+        );
+    }
 
     #[test]
     fn validate_path_rejects_leading_dash() {

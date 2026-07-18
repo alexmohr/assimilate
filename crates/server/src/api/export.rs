@@ -109,6 +109,7 @@ pub async fn export_archive(
         &repo_archive,
         positional,
         &env,
+        &state.task_registry,
     )?;
     let filename = format!("{archive_name}.tar.lz4");
 

@@ -82,6 +82,7 @@ pub async fn download_files(
         &repo_archive,
         &body.paths,
         &env,
+        &state.task_registry,
     )?;
     let filename = format!("{archive_name}.tar.lz4");
 

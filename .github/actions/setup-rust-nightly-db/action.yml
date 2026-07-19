@@ -3,6 +3,12 @@
 name: Set up Rust nightly and apply database migrations
 description: >-
   Shared setup steps for jobs that run tests against the Postgres service on Rust nightly - toolchain, sqlx-cli, and migrations. Requires the repo to already be checked out and the postgres service to already be up.
+inputs:
+  components:
+    description: >-
+      Extra rustup components to install alongside the nightly toolchain (e.g. "rustfmt, clippy"), forwarded as-is to setup-rust-toolchain. Leave unset for jobs that don't lint/format.
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
@@ -10,6 +16,7 @@ runs:
       uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
         toolchain: nightly
+        components: ${{ inputs.components }}
     - name: Install sqlx-cli
       shell: bash
       run: cargo install sqlx-cli --locked --no-default-features --features postgres

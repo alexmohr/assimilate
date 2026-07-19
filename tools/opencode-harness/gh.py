@@ -308,32 +308,33 @@ def get_failing_check_logs(repo: str, number: int, max_chars: int = 12000) -> st
 
 
 def get_review_comments(repo: str, number: int, max_chars: int = 8000) -> str:
-    """Inline review comments plus top-level bodies from each reviewer's
+    """Inline review comments, plus the top-level body of each reviewer's
     *latest* review requesting changes - not every CHANGES_REQUESTED review
-    ever left on the PR.
+    body ever left on the PR.
 
-    Mirrors GitHub's own reviewDecision computation (only the most recent
-    review per reviewer counts - see sync-pr-labels.js's
-    changesRequestedIsCurrent, which fixes the same staleness problem on the
-    label-sync side). Without this, a review from days ago whose findings
-    were already fixed in later rounds keeps getting concatenated in here
-    forever - which both wastes opencode's attention re-litigating solved
-    problems and, worse, kept tripping harness.py's "this needs a human
-    policy decision" heuristic on old language (e.g. "needs a human
-    decision") from a concern that was resolved rounds ago.
+    The "latest per reviewer" filter (mirroring GitHub's own reviewDecision
+    computation - see sync-pr-labels.js's changesRequestedIsCurrent) only
+    applies to which review *bodies* get surfaced: without it, a review body
+    from days ago whose findings were already fixed in later rounds keeps
+    getting concatenated in here forever, wasting opencode's attention
+    re-litigating solved problems. "Latest" here means the most recent
+    APPROVED or CHANGES_REQUESTED review specifically, not the most recent
+    review of any state - a COMMENTED review (a follow-up clarification, or
+    another automated pass that leaves inline comments without resubmitting a
+    formal verdict) does not supersede an earlier CHANGES_REQUESTED in
+    GitHub's own reviewDecision (confirmed live via
+    .github/workflows/claude-review.yml's stale-review dismissal step, which
+    has to work around this same platform behavior).
 
-    "Most recent" here means the most recent APPROVED or CHANGES_REQUESTED
-    review specifically, not the most recent review of any state - a
-    COMMENTED review (a follow-up clarification, or another automated pass
-    that leaves inline comments without resubmitting a formal verdict) does
-    not supersede an earlier CHANGES_REQUESTED in GitHub's own reviewDecision
-    (confirmed live via .github/workflows/claude-review.yml's stale-review
-    dismissal step, which has to work around this same platform behavior).
-    Picking the chronologically-latest review regardless of state would drop
-    a still-in-effect CHANGES_REQUESTED (and its inline comments) the moment
-    a later COMMENTED review landed - exactly the "mirrors reviewDecision"
-    claim this function makes, so it needs the same decision-bearing filter
-    claude-review.yml's own dismissal logic uses.
+    Inline comments are NOT filtered by which review posted them, deliberately:
+    per skills/review/SKILL.md, a same-account PR (reviewer == PR author) can
+    never get a native CHANGES_REQUESTED review at all - the verdict is
+    submitted as `--comment` (state COMMENTED) with the actual decision
+    carried only by the `claude-changes-requested` label (see
+    PrDetail.changes_requested). Restricting inline comments to only
+    decision-bearing reviews' ids would drop every inline comment on any such
+    PR, since its one real review is COMMENTED - exactly the same review that
+    carries the findings opencode needs to act on.
     """
     reviews = _run_json(["gh", "api", f"repos/{repo}/pulls/{number}/reviews"])
     inline = _run_json(["gh", "api", f"repos/{repo}/pulls/{number}/comments"])
@@ -349,17 +350,11 @@ def get_review_comments(repo: str, number: int, max_chars: int = 8000) -> str:
         if existing is None or r.get("submitted_at", "") > existing.get("submitted_at", ""):
             latest_by_user[login] = r
 
-    current_review_ids = {
-        r["id"] for r in latest_by_user.values() if r.get("state") == "CHANGES_REQUESTED"
-    }
-
     parts: list[str] = []
     for r in latest_by_user.values():
         if r.get("state") == "CHANGES_REQUESTED" and (r.get("body") or "").strip():
             parts.append(f"[review by {r.get('user', {}).get('login')}] {r['body']}")
     for c in inline:
-        if c.get("pull_request_review_id") not in current_review_ids:
-            continue
         if (c.get("body") or "").strip():
             path = c.get("path", "?")
             line = c.get("line") or c.get("original_line") or "?"

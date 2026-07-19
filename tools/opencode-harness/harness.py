@@ -602,43 +602,44 @@ def _check_and_fix_pr(cfg: Config, state: HarnessState, number: int) -> bool | N
         log.info("PR #%d: checks still in progress, waiting for them to settle", number)
         return None
 
-    if (
-        detail.needs_human_review
-        and detail.changes_requested
-        and not (
-            detail.ci_failing
-            or detail.merge_conflict
-            or detail.coverage_failed
-            or detail.duplicate_code
-        )
+    if detail.needs_human_review and not (
+        detail.ci_failing
+        or detail.merge_conflict
+        or detail.coverage_failed
+        or detail.duplicate_code
     ):
         # `needs human review` is the repo's own sticky sign-off gate (see
         # HUMAN_LABEL/humanSignOffStillStands in sync-pr-labels.js) - only a
         # human removing the *label* counts as clearing it; dismissing the
-        # review that triggered it does not touch this label at all. When
-        # changes_requested is the *only* outstanding problem, that verdict
-        # can never refresh on its own while the label holds (whoever
-        # requested changes keeps it in GitHub's own reviewDecision until
-        # they personally submit a new review or dismiss it - pushing more
-        # commits can't make that happen), so there's nothing left a code
-        # change could resolve. Deliberately scoped to *only* this case:
-        # CI/merge/coverage/duplicate-code problems are ordinary and still
-        # worth fixing regardless of this label, so it doesn't block those.
-        # Checked before the stuck-label-clearing logic below so a
-        # harness-authored commit (which changes head_sha) can't quietly
-        # un-stick a PR that's actually still waiting on a human - without
-        # this it would look "stuck" again a few attempts later, chasing
-        # the exact same already-addressed review content.
+        # review that triggered it does not touch this label at all, and
+        # neither does a fresh approval that leaves the label in place.
+        # Deliberately keyed on needs_human_review alone, not also
+        # detail.changes_requested: if this required both, changes_requested
+        # flipping back to False on its own (e.g. that same or another
+        # reviewer approves without separately removing the sticky label)
+        # would fall through this branch entirely with needs_human_review
+        # still set - straight into the un-stick block below, which assumes
+        # reaching it means needs_human_review is already false and would
+        # incorrectly clear this PR's stuck bookkeeping. CI/merge/coverage/
+        # duplicate-code problems are ordinary and still worth fixing
+        # regardless of this label, so those still fall through instead of
+        # being caught here. Checked before the stuck-label-clearing logic
+        # below so a harness-authored commit (which changes head_sha) can't
+        # quietly un-stick a PR that's actually still waiting on a human -
+        # without this it would look "stuck" again a few attempts later,
+        # chasing the exact same already-addressed review content.
         if cfg.stuck_label not in detail.labels:
             _mark_stuck(
                 cfg,
                 detail,
                 "this PR carries the repo's own `needs human review` label with no other "
                 "fixable problem outstanding",
-                "GitHub's reviewDecision for whoever requested changes stays in effect until "
-                "they personally submit a new review or dismiss it - pushing more commits can't "
-                "change that. Please resolve the outstanding review thread and remove `needs "
-                "human review` yourself to have the harness retry.",
+                "The `needs human review` label only ever clears when a human removes it "
+                "themselves - pushing more commits, or even a fresh approval, can't do that. "
+                "If a reviewer's changes-requested verdict is also still in effect, only that "
+                "reviewer's own new review or dismissal refreshes it. Please resolve the "
+                "outstanding review situation and remove `needs human review` yourself to have "
+                "the harness retry.",
                 question=True,
             )
             if not cfg.dry_run:

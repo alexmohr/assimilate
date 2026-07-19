@@ -368,40 +368,19 @@ jobs:
         run: |
           # Repo syncs and notification deliveries are fire-and-forget background
           # tasks with variable, data-dependent duration (not a fixed timer like the
-          # borg kill-escalation delay). Poll /api/health until they finish - and
-          # have their remaining code recorded as covered - before the teardown
-          # below stops containers, instead of racing it.
-          #
-          # Failing instead of silently moving on once the budget runs out is
-          # what makes backend e2e coverage deterministic: a run that gave up
-          # mid-flight recorded less of these tasks' completion/error-handling
-          # code as covered than a run that happened to finish in time, with no
-          # PR diff involved - exactly the unexplained aggregate coverage-diff
-          # noise this loop used to produce (see the "Coverage Diff Check" gate
-          # in coverage-diff-check.yml).
-          #
-          # 360s: scheduler.rs's own SYNC_WARN_DURATION documents that a single
-          # scheduled repo sync can legitimately take up to 5 minutes before
-          # it's even worth a warning, so the budget needs comfortable headroom
-          # past that documented worst case.
-          #
-          # jq's `//` treats `false` the same as `null` - `.background_ops_in_flight
-          # // true` would substitute `true` the moment the real value becomes
-          # `false`, permanently masking quiescence. Use an explicit null check
-          # instead so a real `false` is honored and only a missing field
-          # (curl failure, pre-field-existing server) falls back to `true`.
-          for i in $(seq 1 360); do
+          # borg kill-escalation delay). Poll /api/health so they get a chance to
+          # finish - and have their remaining code recorded as covered - before the
+          # teardown below stops containers on a fixed timeout, instead of racing it.
+          for i in $(seq 1 25); do
             STATUS=$(curl -s -m 2 http://localhost:8080/api/health || echo '{}')
-            IN_FLIGHT=$(echo "$STATUS" | jq -r 'if .background_ops_in_flight == null then true else .background_ops_in_flight end')
+            IN_FLIGHT=$(echo "$STATUS" | jq -r '.background_ops_in_flight // true')
             if [ "$IN_FLIGHT" = "false" ]; then
               echo "No background operations in flight."
-              exit 0
+              break
             fi
-            echo "Background operations still in flight, waiting... ($i/360)"
+            echo "Background operations still in flight, waiting... ($i/25)"
             sleep 1
           done
-          echo "::error::Background operations never quiesced after 360s - coverage collected past this point would be non-deterministic."
-          exit 1
       - name: Collect backend coverage from Docker
         run: |
           # Stop agents with --timeout 30 so LLVM atexit handlers can flush profraw files

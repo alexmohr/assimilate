@@ -77,12 +77,16 @@ const routes: Array<{ path: string; label: string; waitForApi: string | string[]
   // NotificationsView's onMounted fires four independent, uncoordinated
   // loaders with no shared loading flag: channels+rules, deliveries,
   // push/vapid-key, and repos+agents+schedules (for scope pickers) - list
-  // every endpoint they hit so all four are awaited, not just the first.
+  // every endpoint they hit so all of them are awaited, not just the first.
+  // loadChannels itself is sequential (channels, then rules only after
+  // channels resolves), so both need listing or waitForResponse can
+  // resolve on the channels response alone.
   {
     path: '/notifications',
     label: 'admin: notifications config',
     waitForApi: [
       '/api/notifications/channels',
+      '/api/notifications/rules',
       '/api/notifications/deliveries',
       '/api/notifications/push/vapid-key',
       '/api/repos',
@@ -110,17 +114,25 @@ for (const { path, label, waitForApi } of routes) {
 
 test('admin: groups management loads without error', async ({ page }) => {
   await loginAsAdmin(page)
-  await page.goto('/admin/groups', { waitUntil: 'commit' })
+  // GroupsView.onMounted does Promise.all([fetchGroups(), fetchUsers()]).
+  // fetchUsers() (GET /users) is a fully independent request not gated by
+  // fetchGroups's `loading` ref, so it needs its own network-level wait
+  // alongside the spinner wait below - otherwise the test could finish
+  // while /api/users is still in flight on the server.
+  await Promise.all([
+    page.waitForResponse((res) => res.url().includes('/api/users'), { timeout: 15_000 }),
+    page.goto('/admin/groups', { waitUntil: 'commit' }),
+  ])
   await expect(page).not.toHaveURL(/\/error/, { timeout: 15_000 })
   await expect(page).toHaveURL(/\/admin\/groups/)
-  // GroupsView.fetchGroups fetches the group list, then a per-group member
-  // count for however many groups the demo seeds - a dynamic fan-out that a
-  // fixed waitForApi list can't enumerate. Its shared `loading` ref (driving
-  // this BaseSpinner) only clears once that whole chain resolves, so wait
-  // for the spinner to appear (it may not have rendered yet at this point -
-  // `waitUntil: 'commit'` resolves before Vue mounts) and then clear, rather
-  // than asserting "0 spinners" which could be trivially true before the
-  // fetch even starts.
+  // fetchGroups fetches the group list, then a per-group member count for
+  // however many groups the demo seeds - a dynamic fan-out that a fixed
+  // waitForApi list can't enumerate. Its shared `loading` ref (driving this
+  // BaseSpinner) only clears once that whole chain resolves, so wait for
+  // the spinner to appear (it may not have rendered yet at this point -
+  // `waitUntil: 'commit'` resolves before Vue mounts) and then clear,
+  // rather than asserting "0 spinners" which could be trivially true
+  // before the fetch even starts.
   await page
     .locator('[role="status"]')
     .first()

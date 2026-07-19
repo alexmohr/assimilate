@@ -47,19 +47,25 @@ test('dashboard renders content panels', async ({ page }) => {
   await expect(page.locator('h2').first()).toBeVisible({ timeout: 10_000 })
 })
 
-// waitForApi identifies the request each route's initial mount fires, so the
-// test can wait for the actual response instead of guessing from DOM state.
-// `waitUntil: 'commit'` resolves before Vue even mounts, so a page-goto
-// immediately followed by a DOM assertion (e.g. "no loading spinner visible")
-// can pass before the fetch has *started*, not after it finished - a
-// false-negative race, not a real wait. Racing page.goto against
-// page.waitForResponse instead ties completion to the network response
-// itself, so the request (and the backend handler serving it) has
+// waitForApi identifies the request(s) each route's initial mount fires, so
+// the test can wait for the actual response(s) instead of guessing from DOM
+// state. `waitUntil: 'commit'` resolves before Vue even mounts, so a
+// page-goto immediately followed by a DOM assertion (e.g. "no loading
+// spinner visible") can pass before the fetch has *started*, not after it
+// finished - a false-negative race, not a real wait. Racing page.goto
+// against page.waitForResponse instead ties completion to the network
+// response itself, so the request (and the backend handler serving it) has
 // deterministically finished by the time the test - and eventually the
 // suite - ends. Otherwise whether the handler's lines run to completion
 // before teardown is a scheduling race, not a deterministic outcome - see
 // #366, and the get_database_storage regression on #365/#378 specifically.
-const routes = [
+//
+// A single string is only correct when the view fires exactly one request
+// (or a sequential chain ending in that request) on mount - waitForResponse
+// resolves on the *first* match, so a view that fires several concurrent,
+// independent requests needs every one of them listed, or the test still
+// finishes (and can race server-side completion) before the others do.
+const routes: Array<{ path: string; label: string; waitForApi: string | string[] }> = [
   { path: '/agents', label: 'agents list', waitForApi: '/api/agents' },
   { path: '/repos', label: 'repos list', waitForApi: '/api/repos/stats' },
   { path: '/schedules', label: 'schedules list', waitForApi: '/api/schedules' },
@@ -68,11 +74,21 @@ const routes = [
   { path: '/profile', label: 'profile page', waitForApi: '/api/tokens' },
   { path: '/system', label: 'admin: system settings', waitForApi: '/api/system/database-storage' },
   { path: '/admin/roles', label: 'admin: roles management', waitForApi: '/api/roles' },
-  { path: '/admin/groups', label: 'admin: groups management', waitForApi: '/api/groups' },
+  // NotificationsView's onMounted fires four independent, uncoordinated
+  // loaders with no shared loading flag: channels+rules, deliveries,
+  // push/vapid-key, and repos+agents+schedules (for scope pickers) - list
+  // every endpoint they hit so all four are awaited, not just the first.
   {
     path: '/notifications',
     label: 'admin: notifications config',
-    waitForApi: '/api/notifications/channels',
+    waitForApi: [
+      '/api/notifications/channels',
+      '/api/notifications/deliveries',
+      '/api/notifications/push/vapid-key',
+      '/api/repos',
+      '/api/agents',
+      '/api/schedules',
+    ],
   },
   { path: '/audit-log', label: 'admin: audit log', waitForApi: '/api/audit-log' },
 ]
@@ -80,14 +96,38 @@ const routes = [
 for (const { path, label, waitForApi } of routes) {
   test(`${label} loads without error`, async ({ page }) => {
     await loginAsAdmin(page)
+    const apis = Array.isArray(waitForApi) ? waitForApi : [waitForApi]
     await Promise.all([
-      page.waitForResponse((res) => res.url().includes(waitForApi), { timeout: 15_000 }),
+      ...apis.map((api) =>
+        page.waitForResponse((res) => res.url().includes(api), { timeout: 15_000 }),
+      ),
       page.goto(path, { waitUntil: 'commit' }),
     ])
     await expect(page).not.toHaveURL(/\/error/, { timeout: 15_000 })
     await expect(page).toHaveURL(new RegExp(path))
   })
 }
+
+test('admin: groups management loads without error', async ({ page }) => {
+  await loginAsAdmin(page)
+  await page.goto('/admin/groups', { waitUntil: 'commit' })
+  await expect(page).not.toHaveURL(/\/error/, { timeout: 15_000 })
+  await expect(page).toHaveURL(/\/admin\/groups/)
+  // GroupsView.fetchGroups fetches the group list, then a per-group member
+  // count for however many groups the demo seeds - a dynamic fan-out that a
+  // fixed waitForApi list can't enumerate. Its shared `loading` ref (driving
+  // this BaseSpinner) only clears once that whole chain resolves, so wait
+  // for the spinner to appear (it may not have rendered yet at this point -
+  // `waitUntil: 'commit'` resolves before Vue mounts) and then clear, rather
+  // than asserting "0 spinners" which could be trivially true before the
+  // fetch even starts.
+  await page
+    .locator('[role="status"]')
+    .first()
+    .waitFor({ state: 'attached', timeout: 5_000 })
+    .catch(() => {})
+  await expect(page.locator('[role="status"]')).toHaveCount(0, { timeout: 15_000 })
+})
 
 test('agents page lists seeded agents', async ({ page }) => {
   await loginAsAdmin(page)

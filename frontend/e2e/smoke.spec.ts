@@ -62,6 +62,13 @@ for (const { path, label } of routes) {
     await page.goto(path, { waitUntil: 'commit' })
     await expect(page).not.toHaveURL(/\/error/, { timeout: 15_000 })
     await expect(page).toHaveURL(new RegExp(path))
+    // Wait for the page's own initial data fetch(es) to resolve (BaseSpinner
+    // renders role="status" while loading) instead of moving on right after
+    // navigation commits. Otherwise the request is still in flight when the
+    // browser context tears down at suite end, so whether the backend
+    // handler finishes executing (and gets counted by coverage) is a race -
+    // see #366.
+    await expect(page.locator('[role="status"]')).toHaveCount(0, { timeout: 10_000 })
   })
 }
 
@@ -79,6 +86,10 @@ for (const { path, label } of adminRoutesWithLabels) {
     await page.goto(path, { waitUntil: 'commit' })
     await expect(page).not.toHaveURL(/\/error/, { timeout: 15_000 })
     await expect(page).toHaveURL(new RegExp(path))
+    // See the comment on the `routes` loop above: wait for initial loading
+    // spinners to clear so in-flight data fetches (e.g. /system's
+    // database-storage panel) resolve before the test ends.
+    await expect(page.locator('[role="status"]')).toHaveCount(0, { timeout: 10_000 })
   })
 }
 

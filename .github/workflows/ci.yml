@@ -380,19 +380,19 @@ jobs:
           # noise this loop used to produce (see the "Coverage Diff Check" gate
           # in coverage-diff-check.yml).
           #
-          # 360s (not 60s): scheduler.rs's own SYNC_WARN_DURATION documents that
-          # a single scheduled repo sync can legitimately take up to 5 minutes
-          # before it's even worth a warning, so a 60s budget was still failing
-          # on a genuinely-still-running sync, not just a stuck one - confirmed
-          # live (all 149 e2e tests passed, then this step ran the full 60s
-          # without ever seeing background_ops_in_flight go false). Comfortably
-          # clearing that documented worst case is what separates "still
-          # working" from "actually stuck"; still not quiescing by then points
-          # at a real stuck task, which is worth failing loudly for rather than
-          # folding into a "noisy" coverage number.
+          # 360s: scheduler.rs's own SYNC_WARN_DURATION documents that a single
+          # scheduled repo sync can legitimately take up to 5 minutes before
+          # it's even worth a warning, so the budget needs comfortable headroom
+          # past that documented worst case.
+          #
+          # jq's `//` treats `false` the same as `null` - `.background_ops_in_flight
+          # // true` would substitute `true` the moment the real value becomes
+          # `false`, permanently masking quiescence. Use an explicit null check
+          # instead so a real `false` is honored and only a missing field
+          # (curl failure, pre-field-existing server) falls back to `true`.
           for i in $(seq 1 360); do
             STATUS=$(curl -s -m 2 http://localhost:8080/api/health || echo '{}')
-            IN_FLIGHT=$(echo "$STATUS" | jq -r '.background_ops_in_flight // true')
+            IN_FLIGHT=$(echo "$STATUS" | jq -r 'if .background_ops_in_flight == null then true else .background_ops_in_flight end')
             if [ "$IN_FLIGHT" = "false" ]; then
               echo "No background operations in flight."
               exit 0
@@ -401,17 +401,6 @@ jobs:
             sleep 1
           done
           echo "::error::Background operations never quiesced after 360s - coverage collected past this point would be non-deterministic."
-          # health()'s debug log (RUST_LOG=debug in the demo compose) breaks
-          # down which of repo_ops_active / notification_deliveries_in_flight /
-          # background_tasks_active is the one still set, since the poll above
-          # only ever sees the combined bool - the demo container is still
-          # running at this point (teardown hasn't started yet), so its logs
-          # are available directly via `docker logs`, no stop/copy needed.
-          DEMO_CONTAINER=$(docker compose $COMPOSE_FILES ps -qa demo 2>/dev/null | head -1)
-          if [ -n "$DEMO_CONTAINER" ]; then
-            echo "=== Demo container logs (tail 300) ==="
-            docker logs "$DEMO_CONTAINER" --tail 300
-          fi
           exit 1
       - name: Collect backend coverage from Docker
         run: |

@@ -63,7 +63,7 @@ const routes = [
   { path: '/agents', label: 'agents list', waitForApi: '/api/agents' },
   { path: '/repos', label: 'repos list', waitForApi: '/api/repos/stats' },
   { path: '/schedules', label: 'schedules list', waitForApi: '/api/schedules' },
-  { path: '/activity', label: 'activity log', waitForApi: '/api/logs' },
+  { path: '/activity', label: 'activity log', waitForApi: '/api/stats/activity' },
   { path: '/tokens', label: 'tokens page', waitForApi: '/api/tokens' },
   { path: '/profile', label: 'profile page', waitForApi: '/api/tokens' },
   { path: '/system', label: 'admin: system settings', waitForApi: '/api/system/database-storage' },
@@ -81,7 +81,7 @@ for (const { path, label, waitForApi } of routes) {
   test(`${label} loads without error`, async ({ page }) => {
     await loginAsAdmin(page)
     await Promise.all([
-      page.waitForResponse((res) => res.url().includes(waitForApi)),
+      page.waitForResponse((res) => res.url().includes(waitForApi), { timeout: 15_000 }),
       page.goto(path, { waitUntil: 'commit' }),
     ])
     await expect(page).not.toHaveURL(/\/error/, { timeout: 15_000 })

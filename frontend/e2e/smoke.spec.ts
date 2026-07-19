@@ -66,30 +66,19 @@ const routes = [
   { path: '/activity', label: 'activity log', waitForApi: '/api/logs' },
   { path: '/tokens', label: 'tokens page', waitForApi: '/api/tokens' },
   { path: '/profile', label: 'profile page', waitForApi: '/api/tokens' },
+  { path: '/system', label: 'admin: system settings', waitForApi: '/api/system/database-storage' },
+  { path: '/admin/roles', label: 'admin: roles management', waitForApi: '/api/roles' },
+  { path: '/admin/groups', label: 'admin: groups management', waitForApi: '/api/groups' },
+  {
+    path: '/notifications',
+    label: 'admin: notifications config',
+    waitForApi: '/api/notifications/channels',
+  },
+  { path: '/audit-log', label: 'admin: audit log', waitForApi: '/api/audit-log' },
 ]
 
 for (const { path, label, waitForApi } of routes) {
   test(`${label} loads without error`, async ({ page }) => {
-    await loginAsAdmin(page)
-    await Promise.all([
-      page.waitForResponse((res) => res.url().includes(waitForApi)),
-      page.goto(path, { waitUntil: 'commit' }),
-    ])
-    await expect(page).not.toHaveURL(/\/error/, { timeout: 15_000 })
-    await expect(page).toHaveURL(new RegExp(path))
-  })
-}
-
-const adminRoutesWithLabels = [
-  { path: '/system', label: 'system settings', waitForApi: '/api/system/database-storage' },
-  { path: '/admin/roles', label: 'roles management', waitForApi: '/api/roles' },
-  { path: '/admin/groups', label: 'groups management', waitForApi: '/api/groups' },
-  { path: '/notifications', label: 'notifications config', waitForApi: '/api/notifications/channels' },
-  { path: '/audit-log', label: 'audit log', waitForApi: '/api/audit-log' },
-]
-
-for (const { path, label, waitForApi } of adminRoutesWithLabels) {
-  test(`admin: ${label} loads without error`, async ({ page }) => {
     await loginAsAdmin(page)
     await Promise.all([
       page.waitForResponse((res) => res.url().includes(waitForApi)),

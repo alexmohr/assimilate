@@ -4,9 +4,10 @@
 use std::path::PathBuf;
 
 use futures_util::{SinkExt, StreamExt};
+use shared::ssh::{RelayFrame, drain_frames_to_writer};
 use tempfile::TempDir;
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::AsyncReadExt,
     net::{UnixListener, UnixStream},
 };
 use tokio_tungstenite::tungstenite::Message;
@@ -85,8 +86,8 @@ async fn relay_connection(unix_stream: UnixStream, relay_url: String, token: Str
         }
     };
 
-    let (mut unix_read, mut unix_write) = tokio::io::split(unix_stream);
-    let (mut ws_sink, mut ws_stream) = ws_stream.split();
+    let (mut unix_read, unix_write) = tokio::io::split(unix_stream);
+    let (mut ws_sink, ws_stream) = ws_stream.split();
 
     if ws_sink.send(Message::Text(token.into())).await.is_err() {
         error!("ssh forward: failed to send auth token");
@@ -114,25 +115,20 @@ async fn relay_connection(unix_stream: UnixStream, relay_url: String, token: Str
         }
     };
 
-    let ws_to_unix = async {
-        loop {
-            match ws_stream.next().await {
-                Some(Ok(Message::Binary(data))) => {
-                    if unix_write.write_all(&data).await.is_err() {
-                        break;
-                    }
-                }
-                Some(Ok(Message::Close(_))) | None => break,
-                Some(Err(e)) => {
-                    warn!(error = %e, "ssh forward: ws read error");
-                    break;
-                }
-                Some(Ok(
-                    Message::Text(_) | Message::Ping(_) | Message::Pong(_) | Message::Frame(_),
-                )) => {}
+    let ws_to_unix = drain_frames_to_writer(
+        ws_stream.map(|msg| match msg {
+            Ok(Message::Binary(data)) => RelayFrame::Data(data),
+            Ok(Message::Close(_)) => RelayFrame::Stop,
+            Ok(Message::Text(_) | Message::Ping(_) | Message::Pong(_) | Message::Frame(_)) => {
+                RelayFrame::Skip
             }
-        }
-    };
+            Err(e) => {
+                warn!(error = %e, "ssh forward: ws read error");
+                RelayFrame::Stop
+            }
+        }),
+        unix_write,
+    );
 
     tokio::join!(unix_to_ws, ws_to_unix);
 }

@@ -260,6 +260,7 @@ async fn resume_single_import(
     broadcast: server::ws::ui_broadcast::UiBroadcast,
     key: [u8; 32],
     repo_id: i64,
+    _task_guard: server::background_tasks::BackgroundTaskGuard,
 ) {
     let (task_id, cancel) = state.import_tasks.start(repo_id).await;
 
@@ -326,23 +327,39 @@ async fn resume_interrupted_imports(state: AppState) {
     };
     for repo_id in repo_ids {
         tracing::info!(repo_id, "resuming interrupted import");
+        // Claimed synchronously (before spawning), same as run_repo_sync's scheduled
+        // syncs, so background_task_tracker.any_active() - and thus /api/health's
+        // background_ops_in_flight - reflects this task immediately instead of only
+        // once it gets its first poll.
+        let task_guard = state.background_task_tracker.begin();
         tokio::spawn(resume_single_import(
             state.clone(),
             pool.clone(),
             broadcast.clone(),
             key,
             repo_id,
+            task_guard,
         ));
     }
 }
 
+/// Spawns the server's long-lived, detached background loops and registers each
+/// handle with `task_registry` so shutdown can join them (bounded by
+/// `task_registry.shutdown`'s timeout) instead of the runtime aborting them
+/// mid-work when the process exits. `scheduler::run` reacts to
+/// `state.shutdown_token` and returns promptly; `tunnel_manager.run()` and
+/// `resume_interrupted_imports` finish on their own shortly after startup
+/// regardless, so registering them just gives shutdown visibility into stragglers.
 fn spawn_background_tasks(state: &AppState, tunnel_manager: &TunnelManager) {
-    tokio::spawn(server::scheduler::run(state.clone()));
+    let scheduler_handle = tokio::spawn(server::scheduler::run(state.clone()));
+    state.task_registry.register(scheduler_handle);
 
     let tm = tunnel_manager.clone();
-    tokio::spawn(async move { tm.run().await });
+    let tunnel_handle = tokio::spawn(async move { tm.run().await });
+    state.task_registry.register(tunnel_handle);
 
-    tokio::spawn(resume_interrupted_imports(state.clone()));
+    let resume_handle = tokio::spawn(resume_interrupted_imports(state.clone()));
+    state.task_registry.register(resume_handle);
 }
 
 fn build_login_router(state: &AppState, client_ip_resolver: ClientIpResolver) -> Router<AppState> {

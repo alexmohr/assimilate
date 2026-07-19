@@ -218,8 +218,11 @@ pub struct AppState {
     pub shutdown_token: CancellationToken,
     /// Resolves the real client IP behind proxies.
     pub client_ip_resolver: ClientIpResolver,
-    /// Where every `Borg` invocation's `GracefulChild` reaper (SIGKILL-escalation +
-    /// break-lock) registers itself, so `main`'s shutdown can join them instead of
-    /// abandoning them mid-sleep when the process exits.
+    /// Collects fire-and-forget work spawned outside the request/response cycle -
+    /// every `Borg` invocation's `GracefulChild` reaper (SIGKILL-escalation +
+    /// break-lock), a `RepoOpGuard`'s deferred clear, and the server's long-lived
+    /// background loops (scheduler, tunnel manager, interrupted-import resume) -
+    /// so `main`'s shutdown can join them instead of abandoning them mid-work when
+    /// the process exits.
     pub task_registry: shared::task_registry::TaskRegistry,
 }

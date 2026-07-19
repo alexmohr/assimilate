@@ -10,11 +10,15 @@ use futures_util::StreamExt;
 use tokio::task::JoinHandle;
 
 /// Collects the `JoinHandle`s of fire-and-forget work spawned outside the
-/// request/response cycle - queued borg operations, and a borg child's
+/// request/response cycle - queued borg operations, a borg child's
 /// SIGKILL-escalation/break-lock cleanup (`borg::GracefulChild`'s reaper,
-/// spawned from `Drop`) - so shutdown can wait for them to actually finish
-/// instead of silently dropping them when the process exits. `register` is
-/// synchronous (a `std::sync::Mutex`, not `tokio::sync::Mutex`) specifically
+/// spawned from `Drop`), a `RepoOpGuard`'s deferred clear (also spawned from
+/// `Drop`), the server's long-lived background loops (scheduler, tunnel
+/// manager, interrupted-import resume), and each per-channel notification
+/// delivery (`notifications::dispatch`'s spawned webhook/email/push send) -
+/// so shutdown can wait for them to actually finish instead of silently
+/// dropping them when the process exits. `register` is synchronous (a
+/// `std::sync::Mutex`, not `tokio::sync::Mutex`) specifically
 /// so `Drop` impls can call it directly - `Drop` can't `.await`. Without
 /// this, whether a task's remaining lines run before the process exits
 /// (SIGTERM, or a test's tokio runtime tearing down) is a scheduling race

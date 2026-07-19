@@ -9,7 +9,8 @@ use axum::{
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
-use tokio::{io::AsyncWriteExt, net::UnixStream, time};
+use shared::ssh::{RelayFrame, drain_frames_to_writer};
+use tokio::{net::UnixStream, time};
 use tokio_util::io::ReaderStream;
 
 use crate::{AppState, db};
@@ -80,9 +81,9 @@ async fn handle_ssh_relay(mut socket: WebSocket, hostname: String, state: AppSta
 
     tracing::info!(hostname = %hostname, "ssh relay connection opened");
 
-    let (unix_read, mut unix_write) = tokio::io::split(unix_stream);
+    let (unix_read, unix_write) = tokio::io::split(unix_stream);
     let mut unix_read_stream = ReaderStream::new(unix_read);
-    let (mut ws_sink, mut ws_stream) = socket.split();
+    let (mut ws_sink, ws_stream) = socket.split();
 
     let unix_to_ws = async {
         while let Some(Ok(data)) = unix_read_stream.next().await {
@@ -92,25 +93,27 @@ async fn handle_ssh_relay(mut socket: WebSocket, hostname: String, state: AppSta
         }
     };
 
-    let ws_to_unix = async {
-        loop {
-            match ws_stream.next().await {
-                Some(Ok(Message::Binary(data))) => {
-                    if unix_write.write_all(&data).await.is_err() {
-                        break;
-                    }
-                }
-                Some(Ok(Message::Close(_))) | None => break,
-                Some(Err(e)) => {
-                    tracing::warn!(error = %e, "ssh relay: ws read error");
-                    break;
-                }
-                Some(Ok(Message::Text(_) | Message::Ping(_) | Message::Pong(_))) => {}
+    let ws_to_unix = drain_frames_to_writer(
+        ws_stream.map(|msg| match msg {
+            Ok(Message::Binary(data)) => RelayFrame::Data(data),
+            Ok(Message::Close(_)) => RelayFrame::Stop,
+            Ok(Message::Text(_) | Message::Ping(_) | Message::Pong(_)) => RelayFrame::Skip,
+            Err(e) => {
+                tracing::warn!(error = %e, "ssh relay: ws read error");
+                RelayFrame::Stop
             }
-        }
-    };
+        }),
+        unix_write,
+    );
 
-    tokio::join!(unix_to_ws, ws_to_unix);
+    tokio::select! {
+        () = async {
+            tokio::join!(unix_to_ws, ws_to_unix);
+        } => {}
+        () = state.shutdown_token.cancelled() => {
+            tracing::debug!(hostname = %hostname, "shutdown signal received, closing relay");
+        }
+    }
 
     tracing::info!(hostname = %hostname, "ssh relay connection closed");
 }

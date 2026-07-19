@@ -10,7 +10,10 @@ use std::{
 };
 
 use chrono::Utc;
-use shared::protocol::{ActiveRepoOp, RepoOpKind};
+use shared::{
+    protocol::{ActiveRepoOp, RepoOpKind},
+    task_registry::TaskRegistry,
+};
 use tokio::sync::RwLock;
 
 #[derive(Default)]
@@ -178,8 +181,18 @@ impl RepoOpTracker {
     /// different operation claimed the slot before this guard got dropped),
     /// the stale clear is a no-op instead of wiping out the new operation's
     /// state.
+    ///
+    /// `task_registry` is registered with the guard's `Drop`-spawned cleanup
+    /// task (mirroring `borg::GracefulChild`'s reaper) so shutdown can join it
+    /// instead of abandoning it mid-flight when the process exits.
     #[must_use]
-    pub async fn set_guarded(&self, repo_id: i64, kind: RepoOpKind, actor: String) -> RepoOpGuard {
+    pub async fn set_guarded(
+        &self,
+        repo_id: i64,
+        kind: RepoOpKind,
+        actor: String,
+        task_registry: TaskRegistry,
+    ) -> RepoOpGuard {
         let mut map = self.state.write().await;
         let state = map.entry(repo_id).or_default();
         let token = self.claim(state, kind, actor);
@@ -187,6 +200,7 @@ impl RepoOpTracker {
             tracker: self.clone(),
             repo_id,
             token,
+            task_registry,
         }
     }
 
@@ -211,6 +225,7 @@ pub struct RepoOpGuard {
     tracker: RepoOpTracker,
     repo_id: i64,
     token: u64,
+    task_registry: TaskRegistry,
 }
 
 impl RepoOpGuard {
@@ -228,9 +243,10 @@ impl Drop for RepoOpGuard {
         let tracker = self.tracker.clone();
         let repo_id = self.repo_id;
         let token = self.token;
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             tracker.clear_if_token(repo_id, token).await;
         });
+        self.task_registry.register(handle);
     }
 }
 
@@ -322,7 +338,12 @@ mod tests {
     async fn guard_clears_entry_when_dropped_without_an_explicit_clear() {
         let tracker = RepoOpTracker::default();
         let guard = tracker
-            .set_guarded(1, RepoOpKind::AgentBackup, "some-host".to_owned())
+            .set_guarded(
+                1,
+                RepoOpKind::AgentBackup,
+                "some-host".to_owned(),
+                TaskRegistry::default(),
+            )
             .await;
         assert!(tracker.any_active().await);
 
@@ -334,7 +355,12 @@ mod tests {
     async fn guard_cleanup_is_a_harmless_no_op_after_clear_now() {
         let tracker = RepoOpTracker::default();
         let guard = tracker
-            .set_guarded(1, RepoOpKind::AgentBackup, "some-host".to_owned())
+            .set_guarded(
+                1,
+                RepoOpKind::AgentBackup,
+                "some-host".to_owned(),
+                TaskRegistry::default(),
+            )
             .await;
 
         guard.clear_now().await;
@@ -351,7 +377,12 @@ mod tests {
     async fn guard_drop_does_not_clobber_a_newer_operation_on_the_same_repo() {
         let tracker = RepoOpTracker::default();
         let first = tracker
-            .set_guarded(1, RepoOpKind::ServerSync, "server".to_owned())
+            .set_guarded(
+                1,
+                RepoOpKind::ServerSync,
+                "server".to_owned(),
+                TaskRegistry::default(),
+            )
             .await;
         first.clear_now().await;
         assert!(tracker.get(1).await.is_none());
@@ -360,7 +391,12 @@ mod tests {
         // gets dropped - e.g. a manual break-lock racing a scheduled sync's
         // task teardown.
         let second = tracker
-            .set_guarded(1, RepoOpKind::BreakLock, "admin".to_owned())
+            .set_guarded(
+                1,
+                RepoOpKind::BreakLock,
+                "admin".to_owned(),
+                TaskRegistry::default(),
+            )
             .await;
         assert_eq!(
             tracker.get(1).await.map(|op| op.kind),
@@ -391,7 +427,12 @@ mod tests {
     async fn plain_begin_after_guarded_clear_is_immune_to_the_stale_guards_deferred_clear() {
         let tracker = RepoOpTracker::default();
         let guard = tracker
-            .set_guarded(1, RepoOpKind::ServerSync, "server".to_owned())
+            .set_guarded(
+                1,
+                RepoOpKind::ServerSync,
+                "server".to_owned(),
+                TaskRegistry::default(),
+            )
             .await;
 
         // A second operation queues behind the guarded one before it finishes.
@@ -430,7 +471,12 @@ mod tests {
     async fn plain_set_after_guarded_clear_is_immune_to_the_stale_guards_deferred_clear() {
         let tracker = RepoOpTracker::default();
         let guard = tracker
-            .set_guarded(1, RepoOpKind::ServerSync, "server".to_owned())
+            .set_guarded(
+                1,
+                RepoOpKind::ServerSync,
+                "server".to_owned(),
+                TaskRegistry::default(),
+            )
             .await;
         tracker.enqueue(1).await;
         guard.clear_now().await;
@@ -451,5 +497,31 @@ mod tests {
             Some(RepoOpKind::BreakLock),
             "a stale guard's deferred clear wiped out a plain set()'s active operation"
         );
+    }
+
+    /// Mirrors `borg::GracefulChild`'s reaper registration: the guard's
+    /// `Drop`-spawned cleanup task must be joinable via `task_registry`
+    /// instead of being silently abandoned if the process exits right after
+    /// `Drop` fires.
+    #[tokio::test]
+    async fn guard_drop_registers_its_cleanup_task_with_task_registry() {
+        let tracker = RepoOpTracker::default();
+        let task_registry = TaskRegistry::default();
+        let guard = tracker
+            .set_guarded(
+                1,
+                RepoOpKind::AgentBackup,
+                "some-host".to_owned(),
+                task_registry.clone(),
+            )
+            .await;
+
+        drop(guard);
+
+        let outstanding = task_registry
+            .shutdown(std::time::Duration::from_secs(5))
+            .await;
+        assert_eq!(outstanding, 0);
+        assert!(tracker.get(1).await.is_none());
     }
 }

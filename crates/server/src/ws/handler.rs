@@ -20,6 +20,7 @@ use shared::{
 };
 use sqlx::PgPool;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     AppState,
@@ -238,7 +239,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     send_reconnect_catchup(&state, &mut ws_sink, &hostname, agent_id).await;
 
-    tokio::spawn(ping_loop(ping_tx));
+    tokio::spawn(ping_loop(ping_tx, state.shutdown_token.clone()));
 
     loop {
         tokio::select! {
@@ -261,6 +262,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     }
                     Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Binary(_))) => {}
                 }
+            }
+            () = state.shutdown_token.cancelled() => {
+                tracing::debug!(hostname = %hostname, "shutdown, closing agent connection");
+                break;
             }
         }
     }
@@ -377,10 +382,14 @@ async fn send_reconnect_catchup(
     }
 }
 
-async fn ping_loop(sender: mpsc::Sender<ServerToAgent>) {
+async fn ping_loop(sender: mpsc::Sender<ServerToAgent>, shutdown_token: CancellationToken) {
     let mut interval = tokio::time::interval(PING_INTERVAL);
     loop {
-        interval.tick().await;
+        tokio::select! {
+            biased;
+            () = shutdown_token.cancelled() => return,
+            _ = interval.tick() => {}
+        }
         if sender.send(ServerToAgent::Ping).await.is_err() {
             break;
         }
@@ -481,11 +490,20 @@ fn dispatch_quota_breach_notification(
         schedule_name: None,
         archive_name: None,
     };
+    spawn_notification_dispatch(state, quota_event);
+}
+
+/// Spawns `notifications::dispatch` for `event` as a detached task registered with
+/// `task_registry`, so shutdown can join it instead of the runtime abandoning a
+/// still-in-flight webhook/email/push delivery. Shared by every call site that builds
+/// a [`NotificationEvent`] and fires it off in the background.
+fn spawn_notification_dispatch(state: &AppState, event: NotificationEvent) {
     let service = state.notification_service.clone();
+    let task_registry = state.task_registry.clone();
     let task_guard = state.background_task_tracker.begin();
     tokio::spawn(async move {
         let _task_guard = task_guard;
-        if let Err(e) = notifications::dispatch(&service, quota_event).await {
+        if let Err(e) = notifications::dispatch(&service, event, &task_registry).await {
             tracing::error!(error = %e, "notification dispatch failed");
         }
     });
@@ -1137,14 +1155,7 @@ async fn dispatch_backup_completion_notification(
         schedule_name,
         archive_name,
     };
-    let service = state.notification_service.clone();
-    let task_guard = state.background_task_tracker.begin();
-    tokio::spawn(async move {
-        let _task_guard = task_guard;
-        if let Err(e) = notifications::dispatch(&service, event).await {
-            tracing::error!(error = %e, "notification dispatch failed");
-        }
-    });
+    spawn_notification_dispatch(state, event);
 }
 
 /// Runs the post-backup archive sync in the background: marks the repo as
@@ -1550,14 +1561,7 @@ async fn handle_check_completed(args: CheckCompletedArgs<'_>) {
         schedule_name,
         archive_name: None,
     };
-    let service = state.notification_service.clone();
-    let task_guard = state.background_task_tracker.begin();
-    tokio::spawn(async move {
-        let _task_guard = task_guard;
-        if let Err(e) = notifications::dispatch(&service, event).await {
-            tracing::error!(error = %e, "notification dispatch failed");
-        }
-    });
+    spawn_notification_dispatch(state, event);
 
     state.ui_broadcast.send(ServerToUi::DataChanged);
 }
@@ -1765,8 +1769,25 @@ mod tests {
     };
     use sqlx::PgPool;
     use tokio::time::timeout;
+    use tokio_util::sync::CancellationToken;
 
     use super::*;
+
+    #[tokio::test]
+    async fn ping_loop_exits_promptly_when_shutdown_token_cancelled() {
+        let (tx, mut rx) = mpsc::channel::<ServerToAgent>(4);
+        let token = CancellationToken::new();
+
+        let handle = tokio::spawn(ping_loop(tx, token.clone()));
+        token.cancel();
+
+        let result = timeout(Duration::from_secs(5), handle).await;
+        assert!(
+            result.is_ok(),
+            "ping_loop did not exit within 5s after shutdown_token cancellation"
+        );
+        assert!(rx.try_recv().is_err(), "no ping should have been sent");
+    }
 
     #[test]
     fn quota_status_label_covers_every_status() {

@@ -49,9 +49,10 @@ echo "==> Cleaning up existing demo data (idempotent re-run)..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<'SQL' > /dev/null 2>&1
 DELETE FROM backup_reports WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod'));
 DELETE FROM schedules WHERE id IN (SELECT st.schedule_id FROM schedule_targets st JOIN agents c ON c.id = st.agent_id WHERE c.hostname IN ('web-server-01','db-server-01','media-store-01'));
+DELETE FROM schedules WHERE name = 'Stale nightly report';
 DELETE FROM ssh_tunnels WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM agent_hostname_patterns WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
-DELETE FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod','unassigned-01','offline-due-01','disabled-only-01');
+DELETE FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod','unassigned-01','offline-due-01','disabled-only-01','stale-report-01');
 DELETE FROM repo_quotas WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly'));
 DELETE FROM server_quotas WHERE ssh_host = 'localhost';
 DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly'));
@@ -85,6 +86,7 @@ MEDIA_TOKEN=$(api POST "/api/agents" '{"hostname":"media-store-01","display_name
 api POST "/api/agents" '{"hostname":"unassigned-01","display_name":"Unassigned Demo Agent"}' > /dev/null
 api POST "/api/agents" '{"hostname":"offline-due-01","display_name":"Offline Due Soon"}' > /dev/null
 api POST "/api/agents" '{"hostname":"disabled-only-01","display_name":"Disabled Schedule Agent"}' > /dev/null
+api POST "/api/agents" '{"hostname":"stale-report-01","display_name":"Stale Report Demo"}' > /dev/null
 
 export AGENT_TOKEN_1="$WEB01_TOKEN"
 export AGENT_TOKEN_2="$DB01_TOKEN"
@@ -229,6 +231,7 @@ DB01_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id 
 MEDIA_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='media-store-01'")
 OFFLINE_DUE_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='offline-due-01'")
 DISABLED_ONLY_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='disabled-only-01'")
+STALE_REPORT_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "SELECT id FROM agents WHERE hostname='stale-report-01'")
 
 echo "==> Creating schedules..."
 api POST "/api/schedules" "{
@@ -338,6 +341,40 @@ api POST "/api/schedules" "{
         {\"agent_id\": $WEB01_ID, \"raw_text\": \"*/var/log/nginx/error.log* ignore\"}
     ]
 }" > /dev/null
+
+api POST "/api/schedules" "{
+    \"name\": \"Stale nightly report\",
+    \"agent_ids\": [$STALE_REPORT_ID],
+    \"repo_id\": $REPO_DAILY_ID,
+    \"cron_expression\": \"0 5 * * *\",
+    \"enabled\": true,
+    \"keep_hourly\": 0,
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6,
+    \"backup_sources\": [\"/opt/app\"]
+}" > /dev/null
+
+# Demonstrates the Schedules page's "N host(s) overdue" expand toggle: the
+# schedule's own last_run_at/next_run_at look on track (last dispatch a
+# couple hours ago, next one tonight), but this target host's own most
+# recent backup report is old enough that it's overdue for a daily cron
+# (see is_overdue() in crates/server/src/api/stats.rs) - the exact
+# "looks fine but the badge says Overdue" scenario the toggle exists to
+# explain. No error_message on the report, since this host's problem is
+# staleness, not a failure.
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
+INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, status, archive_name)
+SELECT $STALE_REPORT_ID, $REPO_DAILY_ID, s.id,
+       NOW() - interval '4 days' - interval '5 minutes', NOW() - interval '4 days',
+       'success', 'stale-report-01-backup-old'
+FROM schedules s WHERE s.name = 'Stale nightly report';
+
+UPDATE schedules
+SET last_run_at = NOW() - interval '2 hours',
+    next_run_at = NOW() + interval '10 hours'
+WHERE name = 'Stale nightly report';
+SQL
 
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
 UPDATE backup_reports br

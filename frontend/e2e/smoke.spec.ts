@@ -47,49 +47,56 @@ test('dashboard renders content panels', async ({ page }) => {
   await expect(page.locator('h2').first()).toBeVisible({ timeout: 10_000 })
 })
 
+// waitForApi identifies the request each route's initial mount fires, so the
+// test can wait for the actual response instead of guessing from DOM state.
+// `waitUntil: 'commit'` resolves before Vue even mounts, so a page-goto
+// immediately followed by a DOM assertion (e.g. "no loading spinner visible")
+// can pass before the fetch has *started*, not after it finished - a
+// false-negative race, not a real wait. Racing page.goto against
+// page.waitForResponse instead ties completion to the network response
+// itself, so the request (and the backend handler serving it) has
+// deterministically finished by the time the test - and eventually the
+// suite - ends. Otherwise whether the handler's lines run to completion
+// before teardown is a scheduling race, not a deterministic outcome - see
+// #366, and the get_database_storage regression on #365/#378 specifically.
 const routes = [
-  { path: '/agents', label: 'agents list' },
-  { path: '/repos', label: 'repos list' },
-  { path: '/schedules', label: 'schedules list' },
-  { path: '/activity', label: 'activity log' },
-  { path: '/tokens', label: 'tokens page' },
-  { path: '/profile', label: 'profile page' },
+  { path: '/agents', label: 'agents list', waitForApi: '/api/agents' },
+  { path: '/repos', label: 'repos list', waitForApi: '/api/repos/stats' },
+  { path: '/schedules', label: 'schedules list', waitForApi: '/api/schedules' },
+  { path: '/activity', label: 'activity log', waitForApi: '/api/logs' },
+  { path: '/tokens', label: 'tokens page', waitForApi: '/api/tokens' },
+  { path: '/profile', label: 'profile page', waitForApi: '/api/tokens' },
 ]
 
-for (const { path, label } of routes) {
+for (const { path, label, waitForApi } of routes) {
   test(`${label} loads without error`, async ({ page }) => {
     await loginAsAdmin(page)
-    await page.goto(path, { waitUntil: 'commit' })
+    await Promise.all([
+      page.waitForResponse((res) => res.url().includes(waitForApi)),
+      page.goto(path, { waitUntil: 'commit' }),
+    ])
     await expect(page).not.toHaveURL(/\/error/, { timeout: 15_000 })
     await expect(page).toHaveURL(new RegExp(path))
-    // Wait for the page's own initial data fetch(es) to resolve (BaseSpinner
-    // renders role="status" while loading) instead of moving on right after
-    // navigation commits. Otherwise the request is still in flight when the
-    // browser context tears down at suite end, so whether the backend
-    // handler finishes executing (and gets counted by coverage) is a race -
-    // see #366.
-    await expect(page.locator('[role="status"]')).toHaveCount(0, { timeout: 10_000 })
   })
 }
 
-const adminRoutesWithLabels: Array<{ path: string; label: string }> = [
-  { path: '/system', label: 'system settings' },
-  { path: '/admin/roles', label: 'roles management' },
-  { path: '/admin/groups', label: 'groups management' },
-  { path: '/notifications', label: 'notifications config' },
-  { path: '/audit-log', label: 'audit log' },
+const adminRoutesWithLabels = [
+  { path: '/system', label: 'system settings', waitForApi: '/api/system/database-storage' },
+  { path: '/admin/roles', label: 'roles management', waitForApi: '/api/roles' },
+  { path: '/admin/groups', label: 'groups management', waitForApi: '/api/groups' },
+  { path: '/notifications', label: 'notifications config', waitForApi: '/api/notifications/channels' },
+  { path: '/audit-log', label: 'audit log', waitForApi: '/api/audit-log' },
 ]
 
-for (const { path, label } of adminRoutesWithLabels) {
+for (const { path, label, waitForApi } of adminRoutesWithLabels) {
   test(`admin: ${label} loads without error`, async ({ page }) => {
     await loginAsAdmin(page)
-    await page.goto(path, { waitUntil: 'commit' })
+    await Promise.all([
+      page.waitForResponse((res) => res.url().includes(waitForApi)),
+      page.goto(path, { waitUntil: 'commit' }),
+    ])
     await expect(page).not.toHaveURL(/\/error/, { timeout: 15_000 })
     await expect(page).toHaveURL(new RegExp(path))
-    // See the comment on the `routes` loop above: wait for initial loading
-    // spinners to clear so in-flight data fetches (e.g. /system's
-    // database-storage panel) resolve before the test ends.
-    await expect(page.locator('[role="status"]')).toHaveCount(0, { timeout: 10_000 })
   })
 }
 

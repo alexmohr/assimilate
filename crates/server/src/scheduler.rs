@@ -63,6 +63,7 @@ pub async fn run(state: AppState) {
                     repo_lock: &schedule_state.repo_lock,
                     repo_op_tracker: &schedule_state.repo_op_tracker,
                     ui_broadcast: &schedule_state.ui_broadcast,
+                    background_task_tracker: &schedule_state.background_task_tracker,
                 })
                 .await
                 {
@@ -499,6 +500,7 @@ struct TickDeps<'a> {
     repo_lock: &'a RepoLock,
     repo_op_tracker: &'a RepoOpTracker,
     ui_broadcast: &'a UiBroadcast,
+    background_task_tracker: &'a crate::background_tasks::BackgroundTaskTracker,
 }
 
 async fn tick(deps: &TickDeps<'_>) -> Result<(), crate::error::ApiError> {
@@ -511,6 +513,7 @@ async fn tick(deps: &TickDeps<'_>) -> Result<(), crate::error::ApiError> {
         repo_lock,
         repo_op_tracker,
         ui_broadcast,
+        background_task_tracker,
     } = *deps;
     let now = Utc::now();
     let due = db::list_due_schedules(pool, now).await?;
@@ -571,6 +574,15 @@ async fn tick(deps: &TickDeps<'_>) -> Result<(), crate::error::ApiError> {
         }
 
         let (triggered_tx, triggered_rx) = tokio::sync::oneshot::channel();
+        // Claimed synchronously (before spawning) rather than inside run_sequential_schedule,
+        // so background_task_tracker.any_active() reflects this task immediately instead of
+        // only once it gets its first poll - same pattern as run_scheduled_repo_sync above,
+        // fixed for the same reason (#371). Without this, await_target_completion (which can
+        // run for as long as every target's backup takes) is a fully untracked tokio::spawn:
+        // whether it finishes before e2e teardown polls background_ops_in_flight and stops
+        // containers is a scheduling race, producing non-deterministic coverage on this
+        // function whenever a multi-target schedule actually fires during a run.
+        let task_guard = background_task_tracker.begin();
         let ctx = SequentialExecution {
             pool: pool.clone(),
             registry: registry.clone(),
@@ -588,6 +600,7 @@ async fn tick(deps: &TickDeps<'_>) -> Result<(), crate::error::ApiError> {
             tz,
             run_id,
             triggered_tx,
+            task_guard,
         };
         tokio::spawn(async move {
             run_sequential_schedule(ctx).await;
@@ -662,6 +675,10 @@ struct SequentialExecution {
     /// Signalled once the first target's messages have been sent (or skipped).
     /// Allows `tick()` to wait briefly so callers using `try_recv()` see messages.
     triggered_tx: tokio::sync::oneshot::Sender<()>,
+    /// Held for the lifetime of `run_sequential_schedule`; dropping it (task
+    /// completion or panic) is what `background_task_tracker.any_active()`
+    /// observes - see the claim site in `tick()` above.
+    task_guard: crate::background_tasks::BackgroundTaskGuard,
 }
 
 struct SequentialTargetCtx<'a> {
@@ -704,6 +721,7 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         tz,
         run_id,
         triggered_tx,
+        task_guard: _task_guard,
     } = ctx;
     let mut marked_triggered = false;
     let mut triggered_tx = Some(triggered_tx);
@@ -1450,6 +1468,7 @@ esac
             repo_lock: &RepoLock::default(),
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &UiBroadcast::new(),
+            background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
         })
         .await
         .unwrap();
@@ -1498,6 +1517,7 @@ esac
             repo_lock: &RepoLock::default(),
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &UiBroadcast::new(),
+            background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
         })
         .await
         .unwrap();
@@ -1545,6 +1565,7 @@ esac
             repo_lock: &RepoLock::default(),
             repo_op_tracker: &RepoOpTracker::default(),
             ui_broadcast: &UiBroadcast::new(),
+            background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
         })
         .await
         .unwrap();
@@ -1553,6 +1574,176 @@ esac
         assert!(
             due.iter().any(|s| s.schedule_id == schedule_id),
             "schedule must remain due when the agent was not connected"
+        );
+    }
+
+    /// Like `setup_due_schedule`, but with two targets so `tick()` dispatches
+    /// through `run_sequential_schedule` for more than a single agent.
+    async fn setup_due_sequential_schedule(
+        pool: &sqlx::PgPool,
+        key: &[u8; 32],
+    ) -> (i64, String, String) {
+        let passphrase_enc = shared::crypto::encrypt_passphrase("test-pass", key).unwrap();
+        let agent1 = db::insert_agent(pool, "tick-test-agent-1", None, "hash", None)
+            .await
+            .unwrap();
+        let agent2 = db::insert_agent(pool, "tick-test-agent-2", None, "hash", None)
+            .await
+            .unwrap();
+        let repo = db::insert_repo(
+            pool,
+            &InsertRepoParams {
+                name: "tick-sequential-repo",
+                repo_path: "/backup/tick-sequential",
+                ssh_user: "borg",
+                ssh_host: "host.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_enc,
+                compression: "lz4",
+                encryption: "none",
+                owner_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        db::update_repo_ssh_host_key(pool, repo.id, "ssh-ed25519 AAAATICKTEST")
+            .await
+            .unwrap();
+        let schedule = db::insert_schedule(
+            pool,
+            repo.id,
+            &ScheduleParams {
+                name: "tick-sequential-sched",
+                schedule_type: "backup",
+                cron_expression: "0 3 * * *",
+                enabled: true,
+                canary_enabled: false,
+                exclude_patterns_raw: "",
+                file_change_patterns_raw: "",
+                ignore_global_excludes: false,
+                keep_hourly: 24,
+                keep_daily: 7,
+                keep_weekly: 4,
+                keep_monthly: 6,
+                keep_yearly: 0,
+                compact_enabled: true,
+                rate_limit_kbps: None,
+                pre_backup_commands: "[]",
+                post_backup_commands: "[]",
+                on_failure: "stop",
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        db::insert_schedule_targets(pool, schedule.id, &[(agent1.id, 0), (agent2.id, 1)])
+            .await
+            .unwrap();
+        let past = Utc::now()
+            .checked_sub_signed(chrono::Duration::hours(1))
+            .unwrap();
+        db::set_next_run_at(pool, schedule.id, past).await.unwrap();
+        (
+            repo.id,
+            "tick-test-agent-1".to_owned(),
+            "tick-test-agent-2".to_owned(),
+        )
+    }
+
+    /// Regression test for the untracked `tokio::spawn(run_sequential_schedule)` in
+    /// `tick()`: without a `background_task_tracker` guard claimed before the spawn,
+    /// whether `await_target_completion` finishes before e2e teardown polls
+    /// `background_ops_in_flight` is a scheduling race - which is what produced the
+    /// non-deterministic coverage on this function described in #366/#378.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_tracks_sequential_schedule_via_background_task_tracker(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let (repo_id, host1, host2) = setup_due_sequential_schedule(&pool, &key).await;
+
+        let registry = AgentRegistry::new();
+        let (tx1, mut rx1) = mpsc::channel(32);
+        registry.register(host1.clone(), tx1, false, None).await;
+        let (tx2, mut rx2) = mpsc::channel(32);
+        registry.register(host2.clone(), tx2, false, None).await;
+
+        let tunnel = dummy_tunnel(pool.clone());
+        let bus = CompletionBus::new();
+        let background_task_tracker = crate::background_tasks::BackgroundTaskTracker::default();
+
+        tick(&TickDeps {
+            pool: &pool,
+            registry: &registry,
+            encryption_key: &key,
+            tunnel_manager: &tunnel,
+            completion_bus: &bus,
+            repo_lock: &RepoLock::default(),
+            repo_op_tracker: &RepoOpTracker::default(),
+            ui_broadcast: &UiBroadcast::new(),
+            background_task_tracker: &background_task_tracker,
+        })
+        .await
+        .unwrap();
+
+        assert!(
+            background_task_tracker.any_active(),
+            "the spawned sequential-schedule task must be tracked immediately after tick() \
+             returns, not only once it gets its first poll"
+        );
+
+        // Each target gets a ConfigUpdate before its trigger message; skip past it to
+        // the actual RunBackupNow so the first target can be reported complete.
+        let first_trigger = loop {
+            match rx1
+                .recv()
+                .await
+                .expect("expected messages for first target")
+            {
+                shared::protocol::ServerToAgent::ConfigUpdate(_) => {}
+                other => break other,
+            }
+        };
+        assert!(
+            matches!(
+                first_trigger,
+                shared::protocol::ServerToAgent::RunBackupNow { .. }
+            ),
+            "expected RunBackupNow for the first target, got: {first_trigger:?}"
+        );
+        bus.publish(completion_bus::OperationOutcome {
+            hostname: host1,
+            repo_id,
+            success: true,
+        });
+
+        let second_trigger = loop {
+            match rx2
+                .recv()
+                .await
+                .expect("expected messages for second target")
+            {
+                shared::protocol::ServerToAgent::ConfigUpdate(_) => {}
+                other => break other,
+            }
+        };
+        assert!(
+            matches!(
+                second_trigger,
+                shared::protocol::ServerToAgent::RunBackupNow { .. }
+            ),
+            "expected RunBackupNow for the second target, got: {second_trigger:?}"
+        );
+        bus.publish(completion_bus::OperationOutcome {
+            hostname: host2,
+            repo_id,
+            success: true,
+        });
+
+        assert!(
+            background_task_tracker
+                .wait_until_idle(std::time::Duration::from_secs(5))
+                .await,
+            "background_task_tracker must go idle once both targets have completed"
         );
     }
 }

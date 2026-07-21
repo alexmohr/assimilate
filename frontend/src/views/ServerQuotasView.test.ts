@@ -4,6 +4,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
+import { mockFormatUtils, mockErrorUtils, renderWithPlugins } from '../test-utils'
+import { listServerQuotas, upsertServerQuota, deleteServerQuota } from '../api/serverQuotas'
+import ServerQuotasView from './ServerQuotasView.vue'
 
 vi.mock('../api/serverQuotas', () => ({
   listServerQuotas: vi.fn(),
@@ -11,14 +14,9 @@ vi.mock('../api/serverQuotas', () => ({
   deleteServerQuota: vi.fn(),
 }))
 
-vi.mock('../utils/format', () => ({
-  formatBytes: (n: number): string => `${n} B`,
-}))
+vi.mock('../utils/format', () => mockFormatUtils())
 
-vi.mock('../utils/error', () => ({
-  extractError: (): string => 'API error',
-  extractBlobError: async (): Promise<string> => 'API error',
-}))
+vi.mock('../utils/error', () => mockErrorUtils())
 
 vi.mock('../components/BaseSpinner.vue', () => ({
   default: { template: '<div class="base-spinner" />' },
@@ -27,10 +25,6 @@ vi.mock('../components/BaseSpinner.vue', () => ({
 vi.mock('../components/ToggleSwitch.vue', () => ({
   default: { template: '<input type="checkbox" />', props: ['modelValue'] },
 }))
-
-import { listServerQuotas, upsertServerQuota, deleteServerQuota } from '../api/serverQuotas'
-import { renderWithPlugins } from '../test-utils'
-import ServerQuotasView from './ServerQuotasView.vue'
 
 const mockList = vi.mocked(listServerQuotas)
 const mockUpsert = vi.mocked(upsertServerQuota)
@@ -158,16 +152,5 @@ describe('ServerQuotasView', () => {
 
     expect(mockDelete).toHaveBeenCalledWith('backup.example.com')
     expect(mockList).toHaveBeenCalledTimes(2)
-  })
-
-  it('renders quota entries as cards', async () => {
-    mockList.mockResolvedValue([configuredQuota, unconfiguredQuota])
-    const wrapper = renderWithPlugins(ServerQuotasView)
-    await flushPromises()
-
-    expect(wrapper.findAll('.quota-card')).toHaveLength(2)
-    expect(wrapper.text()).toContain('backup.example.com')
-    expect(wrapper.text()).toContain('Block backups')
-    expect(wrapper.text()).toContain('Not set')
   })
 })

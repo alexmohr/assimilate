@@ -103,6 +103,19 @@ export function createMockRouter(): ReturnType<typeof createRouter> {
   })
 }
 
+export function mockFormatUtils(): Record<string, unknown> {
+  return {
+    formatBytes: (bytes: number): string => `${bytes} B`,
+  }
+}
+
+export function mockErrorUtils(): Record<string, unknown> {
+  return {
+    extractError: (_e: unknown): string => 'API error',
+    extractBlobError: async (_e: unknown): Promise<string> => 'API error',
+  }
+}
+
 export function renderWithPlugins(
   component: Component,
   options: RenderWithPluginsOptions = {},

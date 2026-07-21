@@ -536,6 +536,21 @@ SQL
 echo "==> Updating database storage statistics..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -c 'ANALYZE;' > /dev/null
 
+echo "==> Enabling TOTP/2FA for admin user (for demo screenshots)..."
+TOTP_SETUP=$(api POST /api/auth/totp/setup)
+echo "$TOTP_SETUP" | jq -e '.secret' > /dev/null || {
+    echo "TOTP setup failed (may already be enabled)" >&2
+}
+if echo "$TOTP_SETUP" | jq -e '.secret' > /dev/null 2>&1; then
+    TOTP_SECRET=$(echo "$TOTP_SETUP" | jq -r '.secret')
+    TOTP_CODE=$(oathtool --totp -b "$TOTP_SECRET" 2>/dev/null || oathtool --totp "$TOTP_SECRET" 2>/dev/null)
+    if [ -n "$TOTP_CODE" ]; then
+        api POST /api/auth/totp/verify "{\"code\":\"$TOTP_CODE\"}" > /dev/null 2>&1 && \
+            echo "  TOTP/2FA enabled for admin user" || \
+            echo "  TOTP verify attempt outcome (OK if already enabled)" >&2
+    fi
+fi
+
 echo "==> Verifying config export/import round-trip (repos, tags, quotas)..."
 EXPORT_JSON=$(api GET /api/config/export)
 echo "$EXPORT_JSON" | jq -e '.repos | length > 0' > /dev/null || {

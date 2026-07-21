@@ -45,6 +45,7 @@ System settings are stored in the database and managed through the UI or the `/a
 | `failed_report_retention_days` | `365` | Days to keep failed/archive-less backup reports. `0` = keep forever. |
 | `system_event_retention_days` | `retention_days` (or `90`) | Days to keep system event log entries. `0` = keep forever. |
 | `timezone` | `UTC` | Timezone used for displaying timestamps in the UI and for scheduling cron-based backups (e.g., `Europe/Berlin`, `America/New_York`). |
+| `session_idle_timeout_minutes` | `480` | Number of minutes of inactivity before a session is automatically revoked. Set to empty/null to disable idle timeout. |
 
 ## Database Storage
 
@@ -162,6 +163,25 @@ These values are compiled into the server and are not runtime-configurable witho
 | Password minimum length | `8 characters` | Minimum length enforced when setting or changing a password. |
 | Token hashing | SHA-256 | API tokens are stored as SHA-256 hashes; the plaintext is never persisted. |
 | Passphrase encryption | AES-256-GCM | Repository passphrases are encrypted with a key derived from `ASSIMILATE_SECRET_KEY`. |
+| Session idle timeout | `480` minutes (8 hours) | Inactive sessions are automatically revoked after this duration. Configurable via System Settings. |
+| TOTP/2FA | SHA-1, 30-second period, 6-digit codes | Two-factor authentication using time-based one-time passwords. Enrolled per user from the Profile page. Recovery codes (bcrypt-hashed) are provided at enrollment. |
+
+### Two-Factor Authentication (TOTP)
+
+Users can enable TOTP-based two-factor authentication from their **Profile** page. Once enabled:
+
+1. **Login** requires password + TOTP code in two steps.
+2. The password step returns a temporary session token (valid for 10 minutes) that can only be used to complete TOTP verification.
+3. **Recovery codes** (10 codes, provided at enrollment) can bypass TOTP if the authenticator device is lost. Each recovery code can be used once.
+4. To disable TOTP, the current password must be provided.
+
+### Session Management
+
+Users can view and manage their active sessions from the **Sessions** tab in their Profile page:
+
+- Each session shows its creation time, expiration, last activity, and whether "Remember Me" is enabled.
+- Users can revoke individual sessions (except the current one).
+- An **Idle Timeout** can be configured in System Settings. Sessions with no activity beyond this threshold are automatically revoked.
 
 See [Security](security.md) for a full discussion of the security model.
 

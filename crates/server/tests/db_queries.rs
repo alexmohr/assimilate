@@ -2566,6 +2566,171 @@ async fn session_extend(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn session_revoke_by_id(pool: PgPool) {
+    let user = db::insert_user(&pool, "revokeuser", "hash").await.unwrap();
+    let other = db::insert_user(&pool, "otheruser", "hash2").await.unwrap();
+
+    let expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
+    db::insert_session(&pool, "sess_revoke_1", user.id, expires, false, false)
+        .await
+        .unwrap();
+    db::insert_session(&pool, "sess_revoke_2", user.id, expires, false, false)
+        .await
+        .unwrap();
+    db::insert_session(&pool, "sess_other_user", other.id, expires, false, false)
+        .await
+        .unwrap();
+
+    // Revoke sess_revoke_1 by user - should succeed
+    let deleted = db::delete_session_by_id(&pool, "sess_revoke_1", user.id)
+        .await
+        .unwrap();
+    assert!(deleted);
+
+    // Revoking same session again should return false
+    let deleted = db::delete_session_by_id(&pool, "sess_revoke_1", user.id)
+        .await
+        .unwrap();
+    assert!(!deleted);
+
+    // Other user's session cannot be revoked by user (ownership check)
+    let deleted = db::delete_session_by_id(&pool, "sess_other_user", user.id)
+        .await
+        .unwrap();
+    assert!(!deleted, "cannot revoke another user's session");
+
+    // Other user's session still exists
+    let fetched = db::get_session(&pool, "sess_other_user").await.unwrap();
+    assert_eq!(fetched.user_id, other.id);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_last_seen_update(pool: PgPool) {
+    let user = db::insert_user(&pool, "seenuser", "hash").await.unwrap();
+
+    let expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
+    db::insert_session(&pool, "sess_seen", user.id, expires, false, false)
+        .await
+        .unwrap();
+
+    let session = db::get_session(&pool, "sess_seen").await.unwrap();
+    let initial_seen = session.last_seen_at;
+
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    db::update_session_last_seen(&pool, "sess_seen")
+        .await
+        .unwrap();
+
+    let session = db::get_session(&pool, "sess_seen").await.unwrap();
+    assert!(
+        session.last_seen_at > initial_seen,
+        "last_seen_at must be updated"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn session_pending_totp(pool: PgPool) {
+    let user = db::insert_user(&pool, "pendingtotpuser", "hash")
+        .await
+        .unwrap();
+
+    let expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
+    // Session with pending_totp = true (temp session during two-step login)
+    db::insert_session(&pool, "sess_pending", user.id, expires, false, true)
+        .await
+        .unwrap();
+
+    let session = db::get_session(&pool, "sess_pending").await.unwrap();
+    assert!(session.pending_totp);
+
+    // Regular session with pending_totp = false
+    db::insert_session(&pool, "sess_regular", user.id, expires, false, false)
+        .await
+        .unwrap();
+    let session = db::get_session(&pool, "sess_regular").await.unwrap();
+    assert!(!session.pending_totp);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_fields_crud(pool: PgPool) {
+    let user = db::insert_user(&pool, "totpuser", "hash").await.unwrap();
+
+    // Initially TOTP should not be configured
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    assert!(fields.is_none());
+
+    // Set TOTP secret and recovery codes
+    let secret = b"encrypted_secret_bytes";
+    let codes = vec!["bcrypt_code_1".to_string(), "bcrypt_code_2".to_string()];
+    db::set_user_totp_secret(&pool, user.id, secret, &codes)
+        .await
+        .unwrap();
+
+    // Should be present but not enabled
+    let fields = db::get_user_totp_fields(&pool, user.id)
+        .await
+        .unwrap()
+        .expect("TOTP fields should exist");
+    assert_eq!(fields.secret_encrypted.as_deref(), Some(secret as &[u8]));
+    assert!(!fields.enabled);
+    assert_eq!(fields.recovery_codes.len(), 2);
+    assert!(fields.last_verified_at.is_none());
+
+    // Enable TOTP
+    db::enable_user_totp(&pool, user.id).await.unwrap();
+
+    let fields = db::get_user_totp_fields(&pool, user.id)
+        .await
+        .unwrap()
+        .expect("TOTP fields should exist");
+    assert!(fields.enabled);
+    assert!(
+        fields.last_verified_at.is_some(),
+        "last_verified_at should be set on enable"
+    );
+
+    // Update last_verified_at
+    let prev_verified = fields.last_verified_at;
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    db::update_totp_last_verified_at(&pool, user.id)
+        .await
+        .unwrap();
+
+    let fields = db::get_user_totp_fields(&pool, user.id)
+        .await
+        .unwrap()
+        .expect("TOTP fields should exist");
+    assert!(fields.last_verified_at > prev_verified);
+
+    // Replace recovery codes (remove one)
+    let remaining = vec!["bcrypt_code_1".to_string()];
+    db::replace_totp_recovery_codes(&pool, user.id, &remaining)
+        .await
+        .unwrap();
+
+    let fields = db::get_user_totp_fields(&pool, user.id)
+        .await
+        .unwrap()
+        .expect("TOTP fields should exist");
+    assert_eq!(fields.recovery_codes.len(), 1);
+    assert_eq!(fields.recovery_codes.first().unwrap(), "bcrypt_code_1");
+
+    // Disable TOTP (clears everything)
+    db::disable_user_totp(&pool, user.id).await.unwrap();
+
+    let fields = db::get_user_totp_fields(&pool, user.id).await.unwrap();
+    assert!(fields.is_none());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn totp_fields_for_nonexistent_user(pool: PgPool) {
+    let fields = db::get_user_totp_fields(&pool, 999_999_999).await.unwrap();
+    assert!(fields.is_none());
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn login_attempts(pool: PgPool) {
     db::insert_login_attempt(&pool, "user1", "192.168.1.1", false)
         .await

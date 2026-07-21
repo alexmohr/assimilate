@@ -94,6 +94,40 @@ Users with `can_view_all_repos` can see all repositories. For others, fine-grain
 
 Permissions are managed by admins under **Settings → Access Control**.
 
+## Session Idle Timeout
+
+An idle timeout can be configured under **System Settings**. Sessions that have no API activity for longer than the configured duration are automatically revoked on the next request.
+
+- **Default:** 480 minutes (8 hours).
+- When idle timeout is exceeded, the session is deleted from the database and the user receives a `401 Unauthorized` response with the message "session expired due to inactivity".
+- The idle window is reset on every API call that reads the session (including `/api/auth/me` and `/api/auth/refresh`).
+- This is enforced in `AuthUser::from_request_parts`, which runs before every protected handler, so there is no gap between the timeout elapsing and access being denied.
+
+## Two-Factor Authentication (TOTP)
+
+Users can enable TOTP-based two-factor authentication from their **Profile** page. Once enabled, logging in requires two steps:
+
+1. **Password step** — the user authenticates with their username and password. The server returns a `totp_required: true` flag and a short-lived `temp_token`.
+2. **TOTP step** — the user provides the 6-digit code from their authenticator app, along with the `temp_token`. The server verifies the code and issues a real session cookie.
+
+Security properties:
+
+- **Temp tokens** are stored in the same `sessions` table but with `pending_totp = true`. The `AuthUser` middleware **rejects** pending sessions, so a temp token cannot be used to access any API endpoint except TOTP verification/recovery.
+- **TOTP codes** use RFC 6238 (SHA-1, 30-second period, 6 digits).
+- **Replay protection** — each TOTP code is rejected if the user's `totp_last_verified_at` is within the current 30-second window.
+- **Recovery codes** — 10 codes are generated at enrollment using 8 bytes of cryptographic randomness, formatted as hex groups. They are hashed with **bcrypt** before storage. Each code is single-use: after verification it is removed from the stored set.
+- **Secret encryption** — the TOTP secret is encrypted with AES-256-GCM using the same key derivation as repository passphrases.
+- Enrollment can be cancelled; TOTP is only activated after a successful verification code confirms the user can generate valid codes.
+
+## Session Management
+
+Users can view and manage their active sessions from the **Sessions** tab in their Profile page.
+
+- Each session displays creation time, expiration, last activity, and the "Remember Me" flag.
+- Users can revoke any session **except** their current one.
+- Session revocation checks ownership at the database layer (`DELETE FROM sessions WHERE id = $1 AND user_id = $2`), preventing a user from revoking another user's session.
+- Session IDs are stored as SHA-256 hashes; the plaintext UUID is never persisted.
+
 ## Brute-Force Protection
 
 The login endpoint tracks failed attempts per username and client IP address.
@@ -152,7 +186,9 @@ When you start Assimilate for the first time:
 1. **Default credentials** — the server creates an `admin` account with password `admin`.
 2. **Forced password change** — the UI requires you to set a new password before you can use the application.
 3. **Set `ASSIMILATE_SECRET_KEY`** — generate a strong random value and keep it stable. Without it, passphrase encryption cannot function.
-4. **Review user accounts** — create per-user accounts with the least privilege needed. Avoid sharing the admin account.
-5. **Rotate agent tokens** — if an agent token is ever exposed, delete the agent and recreate it to issue a new token.
+4. **Enable TOTP/2FA** — enroll two-factor authentication on the **Profile** page for all administrative accounts.
+5. **Configure idle timeout** — set a session idle timeout under **System Settings** to automatically revoke inactive sessions.
+6. **Review user accounts** — create per-user accounts with the least privilege needed. Avoid sharing the admin account.
+7. **Rotate agent tokens** — if an agent token is ever exposed, delete the agent and recreate it to issue a new token.
 
 See [Getting Started](getting-started.md) for the full setup walkthrough.

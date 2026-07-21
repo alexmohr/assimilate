@@ -4218,12 +4218,21 @@ pub async fn get_user_totp_fields(
     .await
     .map_err(ApiError::Database)?;
 
-    Ok(row.map(|r| UserTotpFields {
-        secret_encrypted: r.totp_secret_encrypted,
-        enabled: r.totp_enabled,
-        recovery_codes: r.totp_recovery_codes.unwrap_or_default(),
-        last_verified_at: r.totp_last_verified_at,
-    }))
+    Ok(match row {
+        Some(r) => {
+            if r.totp_secret_encrypted.is_some() {
+                Some(UserTotpFields {
+                    secret_encrypted: r.totp_secret_encrypted,
+                    enabled: r.totp_enabled,
+                    recovery_codes: r.totp_recovery_codes.unwrap_or_default(),
+                    last_verified_at: r.totp_last_verified_at,
+                })
+            } else {
+                None
+            }
+        }
+        None => None,
+    })
 }
 
 /// TOTP configuration fields for a user.

@@ -436,74 +436,12 @@ onMounted(loadQuotas)
 }
 
 .modal {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.5rem;
-  width: 100%;
   max-width: 420px;
-  box-shadow: var(--shadow-lg);
-}
-
-.modal h2 {
-  color: var(--text-primary);
-  margin: 0 0 1rem;
-  font-weight: 700;
-  font-size: 1.05rem;
-}
-
-.modal-form {
-  gap: 0.75rem;
-  display: flex;
-  flex-direction: column;
-}
-
-.form-group {
-  gap: 0.25rem;
-  display: flex;
-  flex-direction: column;
-}
-
-.form-group label {
-  font-weight: 500;
-  color: var(--text-secondary);
-  font-size: 0.8125rem;
-}
-
-.form-group input,
-.form-group select {
-  color: var(--text-primary);
-  font-size: 0.875rem;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-input);
-}
-
-.form-group input:focus,
-.form-group select:focus {
-  border-color: var(--accent);
-  outline: none;
 }
 
 .toggle-row {
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
-}
-
-.modal-error {
-  border-radius: var(--radius-sm);
-  color: var(--danger);
-  font-size: 0.8125rem;
-  padding: 0.5rem 0.75rem;
-  background: var(--danger-subtle);
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
 }
 </style>

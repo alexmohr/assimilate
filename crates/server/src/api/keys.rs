@@ -249,4 +249,3 @@ pub async fn change_passphrase(
 
     Ok(StatusCode::NO_CONTENT)
 }
-

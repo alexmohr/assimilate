@@ -179,6 +179,21 @@ const mockHealth = [
   },
 ]
 
+const overdueWebServerHealth = [
+  {
+    repo_id: 20,
+    schedule_id: 1,
+    hostname: 'web-server-01',
+    target_name: 'server-daily',
+    last_status: 'success',
+    last_backup_at: '2026-05-25T02:00:00Z',
+    is_overdue: true,
+    last_error_message: null,
+    cron_expression: '0 2 * * *',
+    schedule_enabled: true,
+  },
+]
+
 function setupApiSuccess(): void {
   mockApiClient.get.mockImplementation((url: string) => {
     if (url === '/schedules') return Promise.resolve({ data: mockSchedules })
@@ -275,24 +290,7 @@ describe('SchedulesView', () => {
       if (url === '/schedules') return Promise.resolve({ data: [mockSchedules[0]] })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
       if (url === '/agents') return Promise.resolve({ data: mockAgents })
-      if (url === '/stats/health') {
-        return Promise.resolve({
-          data: [
-            {
-              repo_id: 20,
-              schedule_id: 1,
-              hostname: 'web-server-01',
-              target_name: 'server-daily',
-              last_status: 'success',
-              last_backup_at: '2026-05-25T02:00:00Z',
-              is_overdue: true,
-              last_error_message: null,
-              cron_expression: '0 2 * * *',
-              schedule_enabled: true,
-            },
-          ],
-        })
-      }
+      if (url === '/stats/health') return Promise.resolve({ data: overdueWebServerHealth })
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(SchedulesView)
@@ -334,24 +332,7 @@ describe('SchedulesView', () => {
           ],
         })
       }
-      if (url === '/stats/health') {
-        return Promise.resolve({
-          data: [
-            {
-              repo_id: 20,
-              schedule_id: 1,
-              hostname: 'web-server-01',
-              target_name: 'server-daily',
-              last_status: 'success',
-              last_backup_at: '2026-05-25T02:00:00Z',
-              is_overdue: true,
-              last_error_message: null,
-              cron_expression: '0 2 * * *',
-              schedule_enabled: true,
-            },
-          ],
-        })
-      }
+      if (url === '/stats/health') return Promise.resolve({ data: overdueWebServerHealth })
       return Promise.resolve({ data: [] })
     })
     const wrapper = renderWithPlugins(SchedulesView)

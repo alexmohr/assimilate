@@ -146,20 +146,46 @@ async function createEditWrapper(): Promise<ReturnType<typeof renderWithPlugins>
   return wrapper
 }
 
-function setupWithReports(reports: unknown[]): void {
+function setupEditModeWithReport(report: Record<string, unknown>): void {
   mockApiClient.get.mockImplementation((url: string) => {
     if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
     if (url === '/schedules/1/targets')
       return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
     if (url === '/schedules/1/sources')
       return Promise.resolve({ data: { backup_sources: ['/data'], backup_sources_per_host: [] } })
-    if (url === '/schedules/1/reports') return Promise.resolve({ data: reports })
+    if (url === '/schedules/1/reports') return Promise.resolve({ data: [report] })
     if (url === '/agents') return Promise.resolve({ data: mockAgents })
     if (url === '/repos') return Promise.resolve({ data: mockRepos })
     return Promise.resolve({ data: [] })
   })
 }
 
+async function renderAndStartBackup(): Promise<ReturnType<typeof renderWithPlugins>> {
+  setupEditMode()
+  const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+  await flushPromises()
+
+  wsHandlers['BackupStarted']?.({
+    hostname: 'web-server-01',
+    target_name: 'server-daily',
+    archive_name: null,
+    schedule_id: 1,
+  })
+  await nextTick()
+  return wrapper
+}
+
+async function renderEditModeAndSave(): Promise<ReturnType<typeof renderWithPlugins>> {
+  setupEditMode()
+  mockApiClient.put.mockResolvedValue({ data: mockSchedule })
+  const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+  await flushPromises()
+
+  const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save Changes')
+  await saveBtn!.trigger('click')
+  await flushPromises()
+  return wrapper
+}
 describe('ScheduleDetailView - edit mode', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -265,23 +291,8 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(saveBtn).toBeTruthy()
   })
 
-  async function createWrapperWithSaveMock(): Promise<ReturnType<typeof renderWithPlugins>> {
-    setupEditMode()
-    mockApiClient.put.mockResolvedValue({ data: mockSchedule })
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-    return wrapper
-  }
-
-  async function clickSave(wrapper: ReturnType<typeof renderWithPlugins>): Promise<void> {
-    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save Changes')
-    await saveBtn!.trigger('click')
-    await flushPromises()
-  }
-
   it('calls PUT on save', async () => {
-    const wrapper = await createWrapperWithSaveMock()
-    await clickSave(wrapper)
+    await renderEditModeAndSave()
 
     expect(mockApiClient.put).toHaveBeenCalledWith('/schedules/1', expect.any(Object))
   })
@@ -295,8 +306,7 @@ describe('ScheduleDetailView - edit mode', () => {
   })
 
   it('shows save success message after successful save', async () => {
-    const wrapper = await createWrapperWithSaveMock()
-    await clickSave(wrapper)
+    const wrapper = await renderEditModeAndSave()
 
     expect(wrapper.find('.save-success').exists()).toBe(true)
     expect(wrapper.text()).toContain('Saved')
@@ -462,7 +472,7 @@ describe('ScheduleDetailView - edit mode', () => {
   })
 
   it('seeds running state from recent reports and shows Cancel Backup instead of Run Now', async () => {
-    setupWithReports([{ id: 1, status: 'started' }])
+    setupEditModeWithReport({ id: 1, status: 'started' })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
 
@@ -472,7 +482,7 @@ describe('ScheduleDetailView - edit mode', () => {
   })
 
   it('calls cancel API when Cancel Backup is clicked', async () => {
-    setupWithReports([{ id: 1, status: 'pending' }])
+    setupEditModeWithReport({ id: 1, status: 'pending' })
     mockApiClient.post.mockResolvedValue({ data: {} })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
@@ -625,7 +635,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
   })
 
   it('BackupLog with matching schedule_id and archive_progress JSON updates progress data', async () => {
-    const wrapper = await createActiveBackupWrapper()
+    const wrapper = await renderAndStartBackup()
 
     wsHandlers['BackupLog']?.({
       hostname: 'web-server-01',
@@ -646,15 +656,13 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
   })
 
   it('replayed BackupLog updates a running backup after reload', async () => {
-    setupWithReports([
-      {
-        id: 1,
-        status: 'started',
-        started_at: '2026-06-27T10:00:00Z',
-        agent_id: 10,
-        original_size: 0,
-      },
-    ])
+    setupEditModeWithReport({
+      id: 1,
+      status: 'started',
+      started_at: '2026-06-27T10:00:00Z',
+      agent_id: 10,
+      original_size: 0,
+    })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
 
@@ -680,7 +688,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
   })
 
   it('BackupLog with wrong schedule_id does not update progress', async () => {
-    const wrapper = await createActiveBackupWrapper()
+    const wrapper = await renderAndStartBackup()
 
     wsHandlers['BackupLog']?.({
       hostname: 'web-server-01',
@@ -699,7 +707,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
   })
 
   it('BackupLog with null schedule_id and matching repo_id updates progress', async () => {
-    const wrapper = await createActiveBackupWrapper()
+    const wrapper = await renderAndStartBackup()
 
     wsHandlers['BackupLog']?.({
       hostname: 'web-server-01',
@@ -719,7 +727,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
   })
 
   it('BackupLog with null schedule_id and wrong repo_id does not update progress', async () => {
-    const wrapper = await createActiveBackupWrapper()
+    const wrapper = await renderAndStartBackup()
 
     wsHandlers['BackupLog']?.({
       hostname: 'web-server-01',
@@ -738,7 +746,7 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
   })
 
   it('BackupLog with non-JSON line adds text to live log output', async () => {
-    const wrapper = await createActiveBackupWrapper()
+    const wrapper = await renderAndStartBackup()
 
     wsHandlers['BackupLog']?.({
       hostname: 'web-server-01',

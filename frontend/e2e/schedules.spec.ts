@@ -170,11 +170,15 @@ test.describe('Schedules management', () => {
     const staleSchedule = schedules.find((s) => s.name === 'Stale nightly report')
     expect(staleSchedule).toBeDefined()
 
-    await page.goto(`/schedules/${staleSchedule!.id}`)
+    const [healthResponse] = await Promise.all([
+      page.waitForResponse((resp) => resp.url().includes('/api/stats/health') && resp.ok()),
+      page.goto(`/schedules/${staleSchedule!.id}`),
+    ])
+    expect(healthResponse.ok()).toBe(true)
     await page.waitForLoadState('networkidle')
 
     const targetsRow = page.locator('.info-row-targets')
-    await expect(targetsRow.getByText('Overdue')).toBeVisible()
+    await expect(targetsRow.getByText('Overdue')).toBeVisible({ timeout: 10_000 })
     const retryButton = targetsRow.getByRole('button', { name: 'Retry' })
     await expect(retryButton).toBeVisible()
 

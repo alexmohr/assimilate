@@ -4,13 +4,13 @@
 use std::net::SocketAddr;
 
 use isahc::{
-    HttpClient,
+    AsyncReadResponseExt, HttpClient,
     config::{Configurable, ResolveMap},
 };
 use reqwest::Url;
 use web_push::{
-    ContentEncoding, IsahcWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient,
-    WebPushMessageBuilder,
+    ContentEncoding, SubscriptionInfo, VapidSignatureBuilder, WebPushMessageBuilder,
+    request_builder,
 };
 
 use super::NotificationError;
@@ -56,15 +56,81 @@ pub async fn send(
         map.add(host, port, addr.ip())
     });
 
-    let client = IsahcWebPushClient::from(
-        HttpClient::builder()
-            .redirect_policy(isahc::config::RedirectPolicy::None)
-            .dns_resolve(resolve_map)
-            .build()
-            .map_err(|e| NotificationError::Config(format!("web push client error: {e}")))?,
-    );
+    let client = HttpClient::builder()
+        .redirect_policy(isahc::config::RedirectPolicy::None)
+        .dns_resolve(resolve_map)
+        .build()
+        .map_err(|e| NotificationError::Config(format!("web push client error: {e}")))?;
 
-    client.send(message).await?;
+    // Send the request with our own client instead of going through
+    // `IsahcWebPushClient::send`: that wrapper collapses any transport-level failure
+    // (DNS, TLS, connect, timeout, proxy, ...) into `WebPushError::Unspecified` with no
+    // detail at all (`impl From<isahc::Error> for WebPushError` discards the error),
+    // which made every non-HTTP-response failure indistinguishable and undiagnosable.
+    let request = request_builder::build_request::<isahc::AsyncBody>(message);
+    let mut response = client
+        .send_async(request)
+        .await
+        .map_err(|e| NotificationError::Config(format!("web push transport error: {e}")))?;
+
+    let status = response.status();
+    let body = response
+        .bytes()
+        .await
+        .map_err(|e| NotificationError::Config(format!("web push response read error: {e}")))?;
+
+    request_builder::parse_response(status, body)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Public example VAPID key and subscription fixture from the `web-push` crate's own
+    // test suite (`vapid/builder.rs`) -- shape-valid but not tied to any real subscriber,
+    // safe to use as a throwaway key/subscription for exercising the send path.
+    const VAPID_PRIVATE_KEY: &str = "IQ9Ur0ykXoHS9gzfYX0aBjy9lvdrjx_PFUXmie9YRcY";
+    const P256DH: &str =
+        "BH1HTeKM7-NwaLGHEqxeu2IamQaVVLkcsFHPIHmsCnqxcBHPQBprF41bEMOr3O1hUQ2jU1opNEm1F_lZV_sxMP8";
+    const AUTH: &str = "sBXU5_tIYz-5w7G2B25BEw";
+
+    /// Regression test for a bug where any transport-level failure (DNS, TLS,
+    /// connection refused, timeout, ...) surfaced as `web push error: unspecified
+    /// error`, because `IsahcWebPushClient::send` discards the underlying `isahc::Error`
+    /// entirely. Connecting to a closed local port exercises exactly that failure mode,
+    /// and the resulting message must retain the real cause instead of "unspecified".
+    #[tokio::test]
+    async fn send_reports_transport_errors_instead_of_swallowing_them() {
+        let endpoint = "https://127.0.0.1:1/push";
+        let url: Url = endpoint.parse().unwrap();
+        let addrs = vec![SocketAddr::from(([127, 0, 0, 1], 1))];
+
+        let result = send(
+            VAPID_PRIVATE_KEY,
+            endpoint.to_owned(),
+            P256DH.to_owned(),
+            AUTH.to_owned(),
+            &serde_json::json!({"title": "t"}),
+            &url,
+            &addrs,
+        )
+        .await;
+
+        let err = result.expect_err("connecting to a closed local port must fail");
+        match err {
+            NotificationError::Config(msg) => {
+                assert!(
+                    msg.contains("web push transport error"),
+                    "expected a transport error with real detail, got: {msg}"
+                );
+                assert!(
+                    !msg.contains("unspecified"),
+                    "must not collapse to the crate's opaque Unspecified error: {msg}"
+                );
+            }
+            other => panic!("expected NotificationError::Config, got: {other}"),
+        }
+    }
 }

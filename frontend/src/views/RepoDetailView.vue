@@ -524,7 +524,7 @@ const unmatchedHostnames = computed(() => [
 ])
 
 const archiveFilter = ref('')
-const collapsedGroups = ref<Set<string>>(new Set())
+const expandedGroups = ref<Set<string>>(new Set())
 const groupArchivesByHost = ref(true)
 const archiveSortMode = ref<ArchiveSortMode>('date-desc')
 
@@ -627,15 +627,15 @@ const groupedArchives = computed<ArchiveGroup[]>(() => {
 })
 
 function toggleGroup(hostname: string): void {
-  if (collapsedGroups.value.has(hostname)) {
-    collapsedGroups.value.delete(hostname)
+  if (expandedGroups.value.has(hostname)) {
+    expandedGroups.value.delete(hostname)
   } else {
-    collapsedGroups.value.add(hostname)
+    expandedGroups.value.add(hostname)
   }
 }
 
 function isGroupCollapsed(hostname: string): boolean {
-  return collapsedGroups.value.has(hostname)
+  return !expandedGroups.value.has(hostname)
 }
 
 const isAdmin = computed(() => authStore.isAdmin)
@@ -924,7 +924,7 @@ watch(
     allTags.value = []
     repoTagIds.value = []
     archiveFilter.value = ''
-    collapsedGroups.value = new Set()
+    expandedGroups.value = new Set()
     selectedArchive.value = null
     repoSchedules.value = []
     await loadRepo()
@@ -1686,6 +1686,20 @@ async function resetImport(): Promise<void> {
             >
               No archives found.
             </div>
+            <div
+              v-else-if="hasArchiveFilter"
+              class="archive-filter-banner"
+            >
+              <span>
+                Showing only <strong>{{ archiveFilterName }}</strong>
+              </span>
+              <button
+                class="btn btn-sm btn-ghost"
+                @click="clearArchiveFilter"
+              >
+                Show all archives
+              </button>
+            </div>
             <template v-else>
               <div class="archive-controls">
                 <input
@@ -1712,20 +1726,6 @@ async function resetImport(): Promise<void> {
                   @click="groupArchivesByHost = !groupArchivesByHost"
                 >
                   {{ groupArchivesByHost ? 'Grouped by host' : 'Flat list' }}
-                </button>
-              </div>
-              <div
-                v-if="hasArchiveFilter"
-                class="archive-filter-banner"
-              >
-                <span>
-                  Showing only <strong>{{ archiveFilterName }}</strong>
-                </span>
-                <button
-                  class="btn btn-sm btn-ghost"
-                  @click="clearArchiveFilter"
-                >
-                  Show all archives
                 </button>
               </div>
               <div
@@ -3240,7 +3240,7 @@ async function resetImport(): Promise<void> {
 
 .archive-row-detailed {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) auto auto auto auto;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) 9.5rem 4.25rem 4.25rem auto;
   gap: 0.75rem;
   padding-left: 0.75rem;
 }
@@ -3508,6 +3508,39 @@ async function resetImport(): Promise<void> {
 @media (max-width: 1100px) {
   .archives-layout {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .data-table {
+    width: 100%;
+    table-layout: fixed;
+  }
+
+  .data-table th:nth-child(3),
+  .data-table td:nth-child(3) {
+    display: none;
+  }
+
+  .data-table th:nth-child(2),
+  .data-table td:nth-child(2) {
+    width: 4rem;
+  }
+
+  .data-table th:nth-child(4),
+  .data-table td:nth-child(4) {
+    width: 4.5rem;
+  }
+
+  .td-name {
+    align-items: flex-start;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .td-size {
+    white-space: normal;
   }
 }
 

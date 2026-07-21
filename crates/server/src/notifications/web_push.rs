@@ -68,10 +68,12 @@ pub async fn send(
     // detail at all (`impl From<isahc::Error> for WebPushError` discards the error),
     // which made every non-HTTP-response failure indistinguishable and undiagnosable.
     let request = request_builder::build_request::<isahc::AsyncBody>(message);
-    let mut response = client
-        .send_async(request)
-        .await
-        .map_err(|e| NotificationError::Config(format!("web push transport error: {e}")))?;
+    let mut response = client.send_async(request).await.map_err(|e| {
+        NotificationError::Config(format!(
+            "web push transport error: {}",
+            describe_transport_error(&e)
+        ))
+    })?;
 
     let status = response.status();
     let body = response
@@ -82,6 +84,25 @@ pub async fn send(
     request_builder::parse_response(status, body)?;
 
     Ok(())
+}
+
+/// Renders an [`isahc::Error`] together with its full error-source chain.
+///
+/// `isahc::Error`'s own `Display` only prints its generalized [`isahc::error::ErrorKind`]
+/// description (e.g. "failed to connect to the server") and omits the wrapped
+/// `curl::Error`, which is where the actually useful detail lives -- the curl error code,
+/// the attempted address, and *why* the connection failed (refused, timed out, no route,
+/// TLS handshake failure, ...). Without walking `source()`, every transport failure looks
+/// identical and gives an operator nothing to act on.
+fn describe_transport_error(error: &isahc::Error) -> String {
+    let mut description = error.to_string();
+    let mut source = std::error::Error::source(error);
+    while let Some(err) = source {
+        description.push_str(" -> ");
+        description.push_str(&err.to_string());
+        source = err.source();
+    }
+    description
 }
 
 #[cfg(test)]
@@ -95,6 +116,50 @@ mod tests {
     const P256DH: &str =
         "BH1HTeKM7-NwaLGHEqxeu2IamQaVVLkcsFHPIHmsCnqxcBHPQBprF41bEMOr3O1hUQ2jU1opNEm1F_lZV_sxMP8";
     const AUTH: &str = "sBXU5_tIYz-5w7G2B25BEw";
+
+    /// Exercises the response-handling path (status/body read/`parse_response`) that
+    /// only runs once a connection actually succeeds -- the transport-failure test above
+    /// never reaches it. Spins up a bare-bones local HTTP server rather than mocking, so
+    /// the real request/response round trip through our own client is what's covered.
+    #[tokio::test]
+    async fn send_completes_successfully_against_a_reachable_endpoint() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let mut received = Vec::new();
+            while !received.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = socket.read(&mut buf).await.unwrap();
+                received.extend_from_slice(buf.get(..n).expect("read() length is within buf"));
+            }
+            socket
+                .write_all(b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .unwrap();
+        });
+
+        let endpoint = format!("http://127.0.0.1:{}/push", addr.port());
+        let url: Url = endpoint.parse().unwrap();
+        let addrs = vec![addr];
+
+        let result = send(
+            VAPID_PRIVATE_KEY,
+            endpoint,
+            P256DH.to_owned(),
+            AUTH.to_owned(),
+            &serde_json::json!({"title": "t"}),
+            &url,
+            &addrs,
+        )
+        .await;
+
+        server.await.unwrap();
+        result.expect("a 201 response from the push service must be treated as success");
+    }
 
     /// Regression test for a bug where any transport-level failure (DNS, TLS,
     /// connection refused, timeout, ...) surfaced as `web push error: unspecified
@@ -128,6 +193,14 @@ mod tests {
                 assert!(
                     !msg.contains("unspecified"),
                     "must not collapse to the crate's opaque Unspecified error: {msg}"
+                );
+                // curl::Error's Display always starts with "[<code>] <description>" -- its
+                // presence proves we walked past isahc::Error's generic ErrorKind text down
+                // into the actual curl-level cause (via `describe_transport_error`'s source
+                // chain), not just isahc's opaque summary.
+                assert!(
+                    msg.contains('['),
+                    "expected the underlying curl error detail to be included, got: {msg}"
                 );
             }
             other => panic!("expected NotificationError::Config, got: {other}"),

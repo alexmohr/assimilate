@@ -177,7 +177,7 @@ pub struct NotificationDelivery {
     /// Payload sent to the channel.
     pub payload: serde_json::Value,
     /// Outcome of the delivery attempt (e.g. success or failure).
-    pub status: String,
+    pub status: crate::notifications::DeliveryStatus,
     /// Error message from the delivery attempt, if it failed.
     pub error_message: Option<String>,
     /// Timestamp when the delivery was attempted.
@@ -649,8 +649,12 @@ pub async fn list_deliveries(
     let limit = query.limit.unwrap_or(50);
     let deliveries: Vec<NotificationDelivery> = sqlx::query_as!(
         NotificationDelivery,
-        "SELECT id, channel_id, event_type, payload, status, error_message, attempted_at FROM \
-         notification_deliveries ORDER BY attempted_at DESC LIMIT $1",
+        r#"
+        SELECT id, channel_id, event_type, payload,
+               status as "status: crate::notifications::DeliveryStatus", error_message,
+               attempted_at
+        FROM notification_deliveries ORDER BY attempted_at DESC LIMIT $1
+        "#,
         limit,
     )
     .fetch_all(&state.pool)

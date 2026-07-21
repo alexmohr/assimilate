@@ -80,6 +80,71 @@ impl sqlx::Encode<'_, sqlx::Postgres> for ChannelType {
     }
 }
 
+/// Outcome of a single attempt to deliver a notification event through a channel. Mirrors the
+/// `notification_deliveries.status` CHECK constraint (`0002_notifications.sql`) so a mismatch
+/// between this type and the schema is a compile-time (rather than a silently-dropped runtime
+/// INSERT) failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryStatus {
+    /// Delivery has not been attempted yet.
+    Pending,
+    /// Delivery completed successfully.
+    Sent,
+    /// Delivery was attempted and failed.
+    Failed,
+}
+
+impl fmt::Display for DeliveryStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pending => write!(f, "pending"),
+            Self::Sent => write!(f, "sent"),
+            Self::Failed => write!(f, "failed"),
+        }
+    }
+}
+
+impl std::str::FromStr for DeliveryStatus {
+    type Err = UnknownDeliveryStatus;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "pending" => Ok(Self::Pending),
+            "sent" => Ok(Self::Sent),
+            "failed" => Ok(Self::Failed),
+            other => Err(UnknownDeliveryStatus(other.to_owned())),
+        }
+    }
+}
+
+/// Error returned when parsing an unknown delivery status string.
+#[derive(Debug, PartialEq, thiserror::Error)]
+#[error("unknown delivery status: {0}")]
+pub struct UnknownDeliveryStatus(pub String);
+
+impl sqlx::Type<sqlx::Postgres> for DeliveryStatus {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <&str as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for DeliveryStatus {
+    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let s = <&str as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
+        Ok(s.parse::<DeliveryStatus>()?)
+    }
+}
+
+impl sqlx::Encode<'_, sqlx::Postgres> for DeliveryStatus {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        <String as sqlx::Encode<sqlx::Postgres>>::encode(self.to_string(), buf)
+    }
+}
+
 /// Errors that can occur during notification delivery.
 #[derive(Debug, thiserror::Error)]
 pub enum NotificationError {
@@ -366,10 +431,10 @@ pub async fn dispatch(
                 deliver_to_channel(channel.channel_type, &channel_config, &payload, &pool).await;
 
             let (status, error_message) = match &result {
-                Ok(()) => ("delivered".to_owned(), None),
+                Ok(()) => (DeliveryStatus::Sent, None),
                 Err(e) => {
                     tracing::error!(channel_id, error = %e, "notification delivery failed");
-                    ("failed".to_owned(), Some(e.to_string()))
+                    (DeliveryStatus::Failed, Some(e.to_string()))
                 }
             };
 
@@ -383,7 +448,7 @@ pub async fn dispatch(
                 channel_id,
                 &event_type_str,
                 &payload,
-                &status,
+                status.to_string(),
                 error_message,
             )
             .execute(&pool)
@@ -418,87 +483,119 @@ pub async fn deliver_to_channel(
             let cfg: webhook::WebhookConfig = serde_json::from_value(config.clone())?;
             webhook::send(&cfg, payload).await
         }
-        ChannelType::WebPush => {
-            #[derive(Deserialize)]
-            struct WebPushChannelConfig {
-                user_id: i64,
+        ChannelType::WebPush => deliver_web_push(config, payload, pool).await,
+    }
+}
+
+#[derive(Deserialize)]
+struct WebPushChannelConfig {
+    user_id: i64,
+}
+
+/// Sends `payload` as a web push notification to every subscription registered for the
+/// channel's user.
+///
+/// A channel can fan out to several subscribed devices; as long as one actually received the
+/// push, the delivery counts as successful. But if every subscription fails (network/VAPID/
+/// endpoint errors) or none exist, this returns `Err` instead of `Ok(())` -- silently reporting
+/// success here would hide a complete delivery failure behind a "sent" status, leaving no way
+/// to tell why nothing showed up client-side.
+async fn deliver_web_push(
+    config: &serde_json::Value,
+    payload: &serde_json::Value,
+    pool: &PgPool,
+) -> Result<(), NotificationError> {
+    let cfg: WebPushChannelConfig = serde_json::from_value(config.clone())?;
+    let vapid_private_key = crate::db::get_setting(pool, "vapid_private_key")
+        .await
+        .map_err(|e| NotificationError::Config(format!("DB error reading VAPID key: {e}")))?
+        .or_else(|| std::env::var("VAPID_PRIVATE_KEY").ok())
+        .ok_or_else(|| NotificationError::Config("VAPID private key not configured".to_owned()))?;
+
+    let subscriptions: Vec<PushSubscriptionRow> = sqlx::query_as!(
+        PushSubscriptionRow,
+        "SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1",
+        cfg.user_id,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    if subscriptions.is_empty() {
+        return Err(NotificationError::Config(
+            "no push subscriptions registered for this channel's user".to_owned(),
+        ));
+    }
+
+    let event_type_str = payload
+        .get("event_type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let title = if event_type_str.is_empty() {
+        "Assimilate".to_owned()
+    } else {
+        event_type_str.replace('_', " ")
+    };
+
+    let tag = if event_type_str.is_empty() {
+        "notification"
+    } else {
+        event_type_str
+    };
+    let push_payload = serde_json::json!({
+        "title": title,
+        "body": build_push_body(payload),
+        "tag": tag,
+        "url": build_push_url(payload),
+    });
+
+    let mut delivered_to_any = false;
+    let mut last_error: Option<NotificationError> = None;
+
+    for sub in &subscriptions {
+        let (url, addrs) = match self::net::validate_outbound_url(&sub.endpoint).await {
+            Ok(result) => result,
+            Err(e) => {
+                tracing::warn!(endpoint = %sub.endpoint, error = %e, "skipping push subscription with non-routable endpoint");
+                last_error = Some(e);
+                continue;
             }
-            let cfg: WebPushChannelConfig = serde_json::from_value(config.clone())?;
-            let vapid_private_key = crate::db::get_setting(pool, "vapid_private_key")
-                .await
-                .map_err(|e| NotificationError::Config(format!("DB error reading VAPID key: {e}")))?
-                .or_else(|| std::env::var("VAPID_PRIVATE_KEY").ok())
-                .ok_or_else(|| {
-                    NotificationError::Config("VAPID private key not configured".to_owned())
-                })?;
-
-            let subscriptions: Vec<PushSubscriptionRow> = sqlx::query_as!(
-                PushSubscriptionRow,
-                "SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1",
-                cfg.user_id,
-            )
-            .fetch_all(pool)
-            .await?;
-
-            let event_type_str = payload
-                .get("event_type")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("");
-            let title = if event_type_str.is_empty() {
-                "Assimilate".to_owned()
-            } else {
-                event_type_str.replace('_', " ")
-            };
-            let body = build_push_body(payload);
-            let push_url = build_push_url(payload);
-
-            let push_payload = serde_json::json!({
-                "title": title,
-                "body": body,
-                "tag": payload.get("event_type")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("notification"),
-                "url": push_url,
-            });
-
-            for sub in &subscriptions {
-                let (url, addrs) = match self::net::validate_outbound_url(&sub.endpoint).await {
-                    Ok(result) => result,
-                    Err(e) => {
-                        tracing::warn!(endpoint = %sub.endpoint, error = %e, "skipping push subscription with non-routable endpoint");
-                        continue;
-                    }
-                };
-                match web_push::send(
-                    &vapid_private_key,
-                    sub.endpoint.clone(),
-                    sub.p256dh.clone(),
-                    sub.auth.clone(),
-                    &push_payload,
-                    &url,
-                    &addrs,
+        };
+        match web_push::send(
+            &vapid_private_key,
+            sub.endpoint.clone(),
+            sub.p256dh.clone(),
+            sub.auth.clone(),
+            &push_payload,
+            &url,
+            &addrs,
+        )
+        .await
+        {
+            Ok(()) => delivered_to_any = true,
+            Err(NotificationError::WebPush(::web_push::WebPushError::EndpointNotValid(_))) => {
+                tracing::warn!(endpoint = %sub.endpoint, "removing stale push subscription (410 Gone)");
+                let _ = sqlx::query!(
+                    "DELETE FROM push_subscriptions WHERE endpoint = $1",
+                    &sub.endpoint,
                 )
-                .await
-                {
-                    Ok(()) => {}
-                    Err(NotificationError::WebPush(
-                        ::web_push::WebPushError::EndpointNotValid(_),
-                    )) => {
-                        tracing::warn!(endpoint = %sub.endpoint, "removing stale push subscription (410 Gone)");
-                        let _ = sqlx::query!(
-                            "DELETE FROM push_subscriptions WHERE endpoint = $1",
-                            &sub.endpoint,
-                        )
-                        .execute(pool)
-                        .await;
-                    }
-                    Err(e) => {
-                        tracing::error!(endpoint = %sub.endpoint, error = %e, "web push delivery failed");
-                    }
-                }
+                .execute(pool)
+                .await;
             }
-            Ok(())
+            Err(e) => {
+                tracing::error!(endpoint = %sub.endpoint, error = %e, "web push delivery failed");
+                last_error = Some(e);
+            }
         }
+    }
+
+    if delivered_to_any {
+        Ok(())
+    } else {
+        Err(last_error.unwrap_or_else(|| {
+            NotificationError::Config(
+                "all push subscriptions were stale and have been removed".to_owned(),
+            )
+        }))
     }
 }
 
@@ -643,6 +740,115 @@ mod tests {
         );
     }
 
+    /// Regression test for a bug where a successful delivery was recorded with
+    /// `status = "delivered"`, a value the `notification_deliveries` CHECK
+    /// constraint doesn't allow (only `pending`/`sent`/`failed`). The mismatched
+    /// insert failed silently (logged, not propagated), so every successful
+    /// delivery -- across every channel type -- never appeared in the delivery
+    /// history at all. Exercises every `DeliveryStatus` variant's `Display`
+    /// output directly against the real schema, independent of any network
+    /// call, so it fails the same way the schema itself would reject a
+    /// mismatched literal.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn delivery_status_values_satisfy_db_check_constraint(pool: sqlx::PgPool) {
+        let channel_id: i64 = sqlx::query_scalar!(
+            "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES ($1, \
+             'webhook', $2, true) RETURNING id",
+            "test-webhook",
+            serde_json::json!({ "url": "https://example.invalid/hook" }),
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        for status in [
+            DeliveryStatus::Pending,
+            DeliveryStatus::Sent,
+            DeliveryStatus::Failed,
+        ] {
+            sqlx::query!(
+                "INSERT INTO notification_deliveries (channel_id, event_type, payload, status, \
+                 attempted_at) VALUES ($1, $2, $3, $4, NOW())",
+                channel_id,
+                "backup_success",
+                serde_json::json!({}),
+                status.to_string(),
+            )
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|e| {
+                panic!("status {status} must satisfy the DB CHECK constraint: {e}")
+            });
+        }
+    }
+
+    /// Regression test for a bug where a web-push channel with no subscribed
+    /// devices (or where every subscription failed to deliver) still returned
+    /// `Ok(())` from `deliver_to_channel`, so `dispatch` recorded the attempt
+    /// as a success. That masked genuine delivery failures -- including the
+    /// literal "nothing showed up on any client" case -- behind a "sent"
+    /// status with no error message to diagnose from.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn dispatch_records_failure_when_no_push_subscriptions_exist(pool: sqlx::PgPool) {
+        crate::db::set_setting(&pool, "vapid_private_key", "dummy")
+            .await
+            .unwrap();
+
+        let channel_id: i64 = sqlx::query_scalar!(
+            "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES ($1, \
+             'web_push', $2, true) RETURNING id",
+            "test-web-push",
+            serde_json::json!({ "user_id": 1 }),
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query!(
+            "INSERT INTO notification_rules (channel_id, event_type, enabled) VALUES ($1, \
+             'backup_success', true)",
+            channel_id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let service = NotificationService::new(pool.clone());
+        let task_registry = TaskRegistry::default();
+        let event = NotificationEvent {
+            event_type: EventType::BackupSuccess,
+            hostname: "test-host".to_owned(),
+            repo_name: "test-repo".to_owned(),
+            status: "success".to_owned(),
+            error_message: None,
+            timestamp: Utc::now(),
+            repo_id: None,
+            agent_id: None,
+            schedule_id: None,
+            schedule_name: None,
+            archive_name: None,
+        };
+
+        dispatch(&service, event, &task_registry).await.unwrap();
+        task_registry
+            .shutdown(std::time::Duration::from_secs(5))
+            .await;
+
+        let delivery = sqlx::query!(
+            r#"SELECT status as "status: DeliveryStatus", error_message
+               FROM notification_deliveries WHERE channel_id = $1"#,
+            channel_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("the delivery attempt must be recorded in notification_deliveries");
+
+        assert_eq!(delivery.status, DeliveryStatus::Failed);
+        assert!(delivery.error_message.is_some());
+    }
+
     #[test]
     fn channel_type_from_str() {
         assert_eq!(ChannelType::from_str("email"), Ok(ChannelType::Email));
@@ -661,6 +867,27 @@ mod tests {
     #[test]
     fn channel_type_default_is_email() {
         assert_eq!(ChannelType::default(), ChannelType::Email);
+    }
+
+    #[test]
+    fn delivery_status_from_str() {
+        assert_eq!(
+            DeliveryStatus::from_str("pending"),
+            Ok(DeliveryStatus::Pending)
+        );
+        assert_eq!(DeliveryStatus::from_str("sent"), Ok(DeliveryStatus::Sent));
+        assert_eq!(
+            DeliveryStatus::from_str("failed"),
+            Ok(DeliveryStatus::Failed)
+        );
+        assert!(DeliveryStatus::from_str("delivered").is_err());
+    }
+
+    #[test]
+    fn delivery_status_display() {
+        assert_eq!(DeliveryStatus::Pending.to_string(), "pending");
+        assert_eq!(DeliveryStatus::Sent.to_string(), "sent");
+        assert_eq!(DeliveryStatus::Failed.to_string(), "failed");
     }
 
     #[test]

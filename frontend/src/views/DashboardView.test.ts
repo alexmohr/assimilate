@@ -56,6 +56,10 @@ function defaultApiHandler(url: string): Promise<{ data: unknown }> {
   return Promise.resolve({ data: [] })
 }
 
+const { wsHandlers } = vi.hoisted(() => ({
+  wsHandlers: {} as Record<string, (payload: unknown) => void>,
+}))
+
 // jscpd:ignore-start -- test setup boilerplate (vi.mock factories cannot reference module-scoped helpers)
 vi.mock('vue-chartjs', () => ({
   Line: { template: '<canvas />' },
@@ -89,8 +93,13 @@ vi.mock('../api/client', () => ({
 }))
 
 vi.mock('../composables/useWebSocket', () => ({
-  useWebSocket: (): { onMessage: ReturnType<typeof vi.fn>; status: { value: string } } => ({
-    onMessage: vi.fn(),
+  useWebSocket: (): {
+    onMessage: (event: string, handler: (payload: unknown) => void) => void
+    status: { value: string }
+  } => ({
+    onMessage: (event: string, handler: (payload: unknown) => void): void => {
+      wsHandlers[event] = handler
+    },
     status: { value: 'disconnected' },
   }),
 }))
@@ -116,34 +125,6 @@ vi.mock('../utils/cron', () => ({
   cronToHuman: (s: string): string => `cron:${s}`,
 }))
 // jscpd:ignore-end
-
-vi.mock('../composables/useWebSocket', () => ({
-  useWebSocket: (): { onMessage: ReturnType<typeof vi.fn>; status: { value: string } } => ({
-    onMessage: vi.fn(),
-    status: { value: 'disconnected' },
-  }),
-}))
-
-vi.mock('../composables/useTimezone', () => ({
-  useTimezone: (): { timezone: { value: 'UTC' }; allTimezones: [] } => ({
-    timezone: { value: 'UTC' },
-    allTimezones: [],
-  }),
-}))
-
-vi.mock('../utils/logger', () => ({
-  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
-}))
-
-vi.mock('../utils/format', () => ({
-  formatBytes: (n: number): string => `${n}B`,
-  relativeTime: (s: string): string => `rel:${s}`,
-  formatDuration: (n: number): string => `${n}s`,
-}))
-
-vi.mock('../utils/cron', () => ({
-  cronToHuman: (s: string): string => `cron:${s}`,
-}))
 
 /** Overview response with a single finding for tests that verify findings rendering. */
 function overviewWithFindings() {
@@ -180,7 +161,6 @@ function overviewWithFindings() {
 }
 
 vi.mocked(apiClient.get).mockImplementation(defaultApiHandler)
-
 describe('DashboardView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -389,6 +369,21 @@ describe('DashboardView success ring', () => {
     }
   }
 
+  function dashboardWithBackups(): (url: string) => ReturnType<typeof defaultApiHandler> {
+    return (url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve(mockOverviewData([runningOperation()]))
+      }
+      return defaultApiHandler(url)
+    }
+  }
+
+  async function renderDashboard(): Promise<ReturnType<typeof renderWithPlugins>> {
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+    return wrapper
+  }
+
   it('counts passed, warned, and failed separately instead of folding warnings into failed', async () => {
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
       if (url.startsWith('/stats/activity')) {
@@ -436,15 +431,8 @@ describe('DashboardView success ring', () => {
 
   // jscpd:ignore-start -- test boilerplate: repeated mock setup patterns
   it('hydrates active backups from running operations after reload', async () => {
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/stats/dashboard-overview') {
-        return Promise.resolve(mockOverviewData([runningOperation()]))
-      }
-      return defaultApiHandler(url)
-    })
-
-    const wrapper = renderWithPlugins(DashboardView)
-    await flushPromises()
+    vi.mocked(apiClient.get).mockImplementation(dashboardWithBackups())
+    const wrapper = await renderDashboard()
 
     expect(wrapper.text()).toContain('Backups In Progress')
     expect(wrapper.text()).toContain('web-server-01')
@@ -453,15 +441,8 @@ describe('DashboardView success ring', () => {
   })
 
   it('shows the schedule name and links the host and repo to their detail pages', async () => {
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/stats/dashboard-overview') {
-        return Promise.resolve(mockOverviewData([runningOperation()]))
-      }
-      return defaultApiHandler(url)
-    })
-
-    const wrapper = renderWithPlugins(DashboardView)
-    await flushPromises()
+    vi.mocked(apiClient.get).mockImplementation(dashboardWithBackups())
+    const wrapper = await renderDashboard()
 
     expect(wrapper.text()).toContain('daily-web')
     expect(wrapper.text()).toMatch(/Running for/)
@@ -501,8 +482,7 @@ describe('DashboardView success ring', () => {
       return defaultApiHandler(url)
     })
 
-    const wrapper = renderWithPlugins(DashboardView)
-    await flushPromises()
+    const wrapper = await renderDashboard()
     await flushPromises()
 
     expect(wrapper.text()).toMatch(/left/)
@@ -510,15 +490,8 @@ describe('DashboardView success ring', () => {
 
   // jscpd:ignore-start -- test boilerplate: repeated mock setup patterns
   it('does not show an estimated time when no historical duration data is available', async () => {
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/stats/dashboard-overview') {
-        return Promise.resolve(mockOverviewData([runningOperation()]))
-      }
-      return defaultApiHandler(url)
-    })
-
-    const wrapper = renderWithPlugins(DashboardView)
-    await flushPromises()
+    vi.mocked(apiClient.get).mockImplementation(dashboardWithBackups())
+    const wrapper = await renderDashboard()
 
     expect(wrapper.text()).toContain('Running for')
     expect(wrapper.text()).not.toMatch(/left/)
@@ -528,15 +501,8 @@ describe('DashboardView success ring', () => {
   it('cleans up the elapsed timer on unmount', async () => {
     const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval')
 
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/stats/dashboard-overview') {
-        return Promise.resolve(mockOverviewData([runningOperation()]))
-      }
-      return defaultApiHandler(url)
-    })
-
-    const wrapper = renderWithPlugins(DashboardView)
-    await flushPromises()
+    vi.mocked(apiClient.get).mockImplementation(dashboardWithBackups())
+    const wrapper = await renderDashboard()
 
     wrapper.unmount()
     expect(clearIntervalSpy).toHaveBeenCalled()
@@ -546,13 +512,7 @@ describe('DashboardView success ring', () => {
   it('triggers the elapsed timer interval callback', async () => {
     const setIntervalSpy = vi.spyOn(globalThis, 'setInterval')
 
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/stats/dashboard-overview') {
-        return Promise.resolve(mockOverviewData([runningOperation()]))
-      }
-      return defaultApiHandler(url)
-    })
-
+    vi.mocked(apiClient.get).mockImplementation(dashboardWithBackups())
     renderWithPlugins(DashboardView)
     await flushPromises()
 
@@ -564,13 +524,7 @@ describe('DashboardView success ring', () => {
     const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval')
 
     // First mount with active backups
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/stats/dashboard-overview') {
-        return Promise.resolve(mockOverviewData([runningOperation()]))
-      }
-      return defaultApiHandler(url)
-    })
-
+    vi.mocked(apiClient.get).mockImplementation(dashboardWithBackups())
     renderWithPlugins(DashboardView)
     await flushPromises()
 
@@ -607,5 +561,25 @@ describe('DashboardView success ring', () => {
     // Should not throw - error is caught and logged
     await flushPromises()
     await flushPromises()
+  })
+
+  it('fires the interval callback and stops the timer when backups complete', async () => {
+    vi.useFakeTimers()
+    const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval')
+
+    vi.mocked(apiClient.get).mockImplementation(dashboardWithBackups())
+    renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    // Advance timer to trigger setInterval callback (covers line 110)
+    vi.advanceTimersByTime(1000)
+
+    // Trigger BackupCompleted to clear activeBackups (covers lines 116-117)
+    wsHandlers['BackupCompleted']({ hostname: 'web-server-01', target_name: 'server-daily' })
+    await flushPromises()
+
+    expect(clearIntervalSpy).toHaveBeenCalled()
+    clearIntervalSpy.mockRestore()
+    vi.useRealTimers()
   })
 })

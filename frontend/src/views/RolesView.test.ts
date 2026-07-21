@@ -161,6 +161,38 @@ describe('RolesView', () => {
     expect(wrapper.text()).toContain('Upgrade Agent')
   })
 
+  it('toggles permission checkbox in create modal', async () => {
+    const wrapper = renderWithPlugins(RolesView)
+
+    await flushPromises()
+
+    const newButton = wrapper.findAll('button').find((b) => b.text().includes('New'))
+    expect(newButton).toBeDefined()
+    await newButton!.trigger('click')
+
+    const checkboxes = wrapper.findAll('.perm-checkbox input[type="checkbox"]')
+    expect(checkboxes.length).toBeGreaterThan(0)
+
+    await checkboxes[0].setValue(true)
+    expect((checkboxes[0].element as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('toggles permission checkbox in edit modal', async () => {
+    const wrapper = renderWithPlugins(RolesView)
+
+    await flushPromises()
+
+    const editButton = wrapper.findAll('button').find((b) => b.text().includes('Edit'))
+    expect(editButton).toBeDefined()
+    await editButton!.trigger('click')
+
+    const checkboxes = wrapper.findAll('.perm-checkbox input[type="checkbox"]')
+    expect(checkboxes.length).toBeGreaterThan(0)
+
+    await checkboxes[0].setValue(true)
+    expect((checkboxes[0].element as HTMLInputElement).checked).toBe(true)
+  })
+
   it('opens delete modal on non-seeded role and cancels', async () => {
     const wrapper = renderWithPlugins(RolesView)
 

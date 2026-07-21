@@ -1017,6 +1017,9 @@ mod tests {
             shutdown_token: tokio_util::sync::CancellationToken::new(),
             client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
             task_registry: shared::task_registry::TaskRegistry::default(),
+            session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(
+                480,
+            )),
         };
         let shutdown_token = state.shutdown_token.clone();
 

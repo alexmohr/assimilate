@@ -30,18 +30,7 @@ import CardError from '../components/CardError.vue'
 import type { AgentRow } from '../types/agent'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import type { Repo } from '../types/repo'
-
-interface HealthEntry {
-  schedule_id: number
-  hostname: string
-  target_name: string
-  last_status: string | null
-  last_backup_at: string | null
-  is_overdue: boolean
-  last_error_message: string | null
-  cron_expression: string | null
-  schedule_enabled: boolean | null
-}
+import type { HealthSummaryResponse as HealthEntry } from '../types/generated/HealthSummaryResponse'
 
 const schedules = ref<ScheduleRow[]>([])
 const repos = ref<Repo[]>([])
@@ -249,11 +238,18 @@ function statusLabel(entry: HealthEntry | null): string {
   }
 }
 
+function connectivityNote(hostname: string): string {
+  const agent = agentMap.value.get(hostname)
+  if (!agent || agent.is_connected !== false) return ''
+  const lastSeen = agent.last_seen_at ? formatDateShort(agent.last_seen_at) : 'never'
+  return ` — agent offline (last seen ${lastSeen})`
+}
+
 function overdueMessage(entries: HealthEntry[]): string {
   return entries
     .map((h) => {
       const last = h.last_backup_at ? formatDateShort(h.last_backup_at) : 'never'
-      return `${hostLabel(h.hostname)} — last backup: ${last}`
+      return `${hostLabel(h.hostname)} — last backup: ${last}${connectivityNote(h.hostname)}`
     })
     .join('\n')
 }
@@ -280,7 +276,7 @@ function navigateToSchedule(s: ScheduleRow): void {
 async function runNow(s: ScheduleRow): Promise<void> {
   runNowLoading.value = s.id
   try {
-    await apiClient.post(`/schedules/${s.id}/run`)
+    await apiClient.post(`/schedules/${s.id}/run`, {})
     toastSuccess(`${scheduleTypeLabel(s.schedule_type)} started.`)
   } catch (e: unknown) {
     toastError(extractError(e))

@@ -381,6 +381,86 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(buttons).not.toContain('Cancel Backup')
   })
 
+  it('shows an Overdue badge and Retry button for an overdue target, with an offline note', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
+      if (url === '/schedules/1/targets')
+        return Promise.resolve({
+          data: [
+            { agent_id: 10, execution_order: 0 },
+            { agent_id: 11, execution_order: 1 },
+          ],
+        })
+      if (url === '/schedules/1/sources')
+        return Promise.resolve({
+          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
+        })
+      if (url === '/agents')
+        return Promise.resolve({
+          data: [
+            {
+              id: 10,
+              hostname: 'web-server-01',
+              display_name: 'Web Server',
+              is_connected: false,
+              last_seen_at: '2026-05-23T02:00:00Z',
+            },
+            {
+              id: 11,
+              hostname: 'db-server-01',
+              display_name: null,
+              is_connected: true,
+              last_seen_at: '2026-05-30T02:00:00Z',
+            },
+          ],
+        })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/stats/health')
+        return Promise.resolve({
+          data: [
+            {
+              repo_id: 20,
+              schedule_id: 1,
+              hostname: 'web-server-01',
+              target_name: 'server-daily',
+              last_status: 'success',
+              last_backup_at: '2026-05-23T02:00:00Z',
+              is_overdue: true,
+              last_error_message: null,
+              cron_expression: '0 2 * * *',
+              schedule_enabled: true,
+            },
+            {
+              repo_id: 20,
+              schedule_id: 1,
+              hostname: 'db-server-01',
+              target_name: 'server-daily',
+              last_status: 'success',
+              last_backup_at: '2026-05-30T02:00:00Z',
+              is_overdue: false,
+              last_error_message: null,
+              cron_expression: '0 2 * * *',
+              schedule_enabled: true,
+            },
+          ],
+        })
+      return Promise.resolve({ data: [] })
+    })
+    mockApiClient.post.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Overdue')
+    expect(wrapper.text()).toContain('Agent offline (last seen')
+
+    const retryButton = wrapper.findAll('button').find((b) => b.text() === 'Retry')
+    expect(retryButton).toBeTruthy()
+    await retryButton!.trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.post).toHaveBeenCalledWith('/schedules/1/run', { agent_ids: [10] })
+  })
+
   it('seeds running state from recent reports and shows Cancel Backup instead of Run Now', async () => {
     setupWithReports([{ id: 1, status: 'started' }])
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })

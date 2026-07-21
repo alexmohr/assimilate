@@ -157,6 +157,40 @@ test.describe('Schedules management', () => {
     ).toBeVisible()
   })
 
+  test('schedule detail shows a Retry button for an overdue target and re-runs just that host', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+
+    // stale-report-01 is seeded with a backdated backup report, so its
+    // schedule always shows this target as overdue - see seed-demo.sh.
+    const listResp = await page.request.get('/api/schedules')
+    expect(listResp.ok()).toBe(true)
+    const schedules = (await listResp.json()) as ScheduleListEntry[]
+    const staleSchedule = schedules.find((s) => s.name === 'Stale nightly report')
+    expect(staleSchedule).toBeDefined()
+
+    await page.goto(`/schedules/${staleSchedule!.id}`)
+    await page.waitForLoadState('networkidle')
+
+    const targetsRow = page.locator('.info-row-targets')
+    await expect(targetsRow.getByText('Overdue')).toBeVisible()
+    const retryButton = targetsRow.getByRole('button', { name: 'Retry' })
+    await expect(retryButton).toBeVisible()
+
+    const [runResponse] = await Promise.all([
+      page.waitForResponse(
+        (resp) =>
+          /\/api\/schedules\/\d+\/run$/.test(resp.url()) && resp.request().method() === 'POST',
+      ),
+      retryButton.click(),
+    ])
+    expect(runResponse.ok()).toBe(true)
+    expect(runResponse.request().postDataJSON()).toEqual({
+      agent_ids: [expect.any(Number)],
+    })
+  })
+
   test('creating a new schedule succeeds (regression: agent_ids/_per_agent field naming)', async ({
     page,
   }) => {

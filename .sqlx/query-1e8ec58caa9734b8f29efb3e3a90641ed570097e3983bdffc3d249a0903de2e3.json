@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, channel_id, event_type, payload, status, error_message, attempted_at FROM notification_deliveries ORDER BY attempted_at DESC LIMIT $1",
+  "query": "\n        SELECT id, channel_id, event_type, payload,\n               status as \"status: crate::notifications::DeliveryStatus\", error_message,\n               attempted_at\n        FROM notification_deliveries ORDER BY attempted_at DESC LIMIT $1\n        ",
   "describe": {
     "columns": [
       {
@@ -25,7 +25,7 @@
       },
       {
         "ordinal": 4,
-        "name": "status",
+        "name": "status: crate::notifications::DeliveryStatus",
         "type_info": "Text"
       },
       {
@@ -54,5 +54,5 @@
       false
     ]
   },
-  "hash": "1fe326be061cd4abe28064d6b309a8c357e8ef3f4140a408a78028408feb20bd"
+  "hash": "1e8ec58caa9734b8f29efb3e3a90641ed570097e3983bdffc3d249a0903de2e3"
 }

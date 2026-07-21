@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT status as \"status: DeliveryStatus\", error_message\n               FROM notification_deliveries WHERE channel_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "status: DeliveryStatus",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "error_message",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "ac06505ea9750472fe9cae90b93fea221f768ece8afd0f2f2e2ac09b1fe7bb06"
+}

@@ -443,6 +443,44 @@ describe('RepoDetailView', () => {
     expect(groupToggle.text()).toContain('Grouped by host')
   })
 
+  it('collapses host groups by default and expands on click', async () => {
+    mockBrowserArchives.value = [
+      {
+        name: 'web-server-01-2026-06-08T01:00:00',
+        start: '2026-06-08T01:00:00',
+        hostname: 'web-server-01',
+        comment: '',
+        original_size: 1_000,
+        deduplicated_size: 500,
+        matched: true,
+        agent_hostname: 'web-server-01',
+      },
+    ]
+    mockSortedArchives.value = [...mockBrowserArchives.value]
+    setupApiSuccess()
+
+    const wrapper = renderWithPlugins(RepoDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')
+    await archivesTab!.trigger('click')
+    await flushPromises()
+
+    const groupHeader = wrapper.find('.group-header')
+    expect(groupHeader.exists()).toBe(true)
+    expect(groupHeader.classes()).toContain('collapsed')
+    expect(wrapper.find('.group-archives').attributes('style')).toContain('display: none')
+
+    await groupHeader.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.group-header').classes()).not.toContain('collapsed')
+    expect(wrapper.find('.group-archives').attributes('style') ?? '').not.toContain('display: none')
+  })
+
   it('shows danger zone for admin users', async () => {
     setupApiSuccess()
     const wrapper = await renderRepoDetail()
@@ -570,7 +608,7 @@ describe('RepoDetailView', () => {
       expect(wrapper.vm.hasArchiveFilter).toBe(true)
     })
 
-    it('AC-U3: archive list is filtered to show only the named archive', async () => {
+    it('AC-U3: archive browser and filters are hidden, showing only the filter banner', async () => {
       const wrapper = await renderRepoDetail()
 
       // Navigate to archives tab with the archive filter
@@ -579,7 +617,8 @@ describe('RepoDetailView', () => {
       })
       await flushPromises()
 
-      expect(wrapper.findAll('.archive-row').length).toBe(1)
+      expect(wrapper.findAll('.archive-row').length).toBe(0)
+      expect(wrapper.find('.archive-controls').exists()).toBe(false)
       expect(wrapper.find('.archive-filter-banner').text()).toContain(
         `Showing only ${archiveA.name}`,
       )
@@ -604,7 +643,7 @@ describe('RepoDetailView', () => {
       expect(wrapper.findAll('.archive-row').length).toBe(2)
     })
 
-    it('AC-U5: archive filter with non-existent name shows "No matching archives"', async () => {
+    it('AC-U5: archive filter with non-existent name shows only the filter banner', async () => {
       const wrapper = await renderRepoDetail()
 
       await wrapper.vm.$router.replace({
@@ -612,14 +651,15 @@ describe('RepoDetailView', () => {
       })
       await flushPromises()
 
-      expect(wrapper.text()).toContain('No matching archives.')
+      expect(wrapper.findAll('.archive-row').length).toBe(0)
+      expect(wrapper.find('.archive-controls').exists()).toBe(false)
       expect(wrapper.find('.archive-filter-banner').exists()).toBe(true)
       expect(wrapper.find('.archive-filter-banner').text()).toContain(
         'Showing only nonexistent-archive',
       )
     })
 
-    it('AC-U6: filter works correctly with different sort modes', async () => {
+    it('AC-U6: sort mode has no effect while an archive filter hides the browser', async () => {
       const wrapper = await renderRepoDetail()
 
       await wrapper.vm.$router.replace({
@@ -640,7 +680,7 @@ describe('RepoDetailView', () => {
         wrapper.vm.archiveSortMode = mode
         await flushPromises()
 
-        expect(wrapper.findAll('.archive-row').length).toBe(1)
+        expect(wrapper.findAll('.archive-row').length).toBe(0)
         expect(wrapper.find('.archive-filter-banner').exists()).toBe(true)
       }
     })

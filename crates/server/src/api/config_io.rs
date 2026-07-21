@@ -84,7 +84,7 @@ pub async fn export_config(
     for repo in &repos {
         let quota = db::quota::get_quota(&state.pool, repo.id)
             .await
-            .unwrap_or(None);
+            .map_err(ApiError::Database)?;
         let tags = db::list_tags_for_repo(&state.pool, repo.id)
             .await?
             .into_iter()
@@ -258,7 +258,7 @@ pub async fn import_config(
     };
 
     // Phase 1: Import repositories (before schedules, which reference them by name)
-    import_repos(
+    let repo_name_to_id_owned: HashMap<String, i64> = import_repos(
         &state.pool,
         &payload.repos,
         &state.encryption_key,
@@ -278,9 +278,10 @@ pub async fn import_config(
     }
 
     // Phase 3: Import schedules (repo_name_to_id now includes newly created repos)
-    let repos = db::list_all_repos(&state.pool).await?;
-    let repo_name_to_id: HashMap<&str, i64> =
-        repos.iter().map(|r| (r.name.as_str(), r.id)).collect();
+    let repo_name_to_id: HashMap<&str, i64> = repo_name_to_id_owned
+        .iter()
+        .map(|(k, v)| (k.as_str(), *v))
+        .collect();
 
     for sched in &payload.schedules {
         import_schedule(
@@ -699,10 +700,6 @@ async fn sync_repo_tags(
     repo_id: i64,
     tag_names: &[String],
 ) -> Result<(), ApiError> {
-    if tag_names.is_empty() {
-        return Ok(());
-    }
-
     let mut tag_ids = Vec::new();
     for name in tag_names {
         let tag = get_or_create_tag(pool, name, "repo").await?;

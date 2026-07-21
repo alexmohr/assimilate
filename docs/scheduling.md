@@ -189,6 +189,15 @@ The dry-run result shows:
 !!! note
     Dry-run uses the same exclude patterns, backup sources, and pre-commands as the real backup. Post-commands are not executed during a dry run. No archive is created and no data is written to the repository.
 
+## Browsing Archives from a Schedule
+
+Each backup schedule's detail view includes a **Backups** tab that shows every archive created by that schedule. From this tab you can:
+
+1. Select an archive from the list to inspect its contents in the file browser panel on the right.
+2. Browse directories and download individual files — see [Archive Browsing & Extraction](archives.md) for the full file browser reference.
+
+The Backups tab is available only for schedules of type **Backup**.
+
 ## Editing and Deleting Schedules
 
 **Editing:** Changes take effect on the next scheduled run. If a backup is already in progress when you save an edit, the running backup completes with the old settings. The updated cron expression and retention policy apply from the next run onward.

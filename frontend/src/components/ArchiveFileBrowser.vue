@@ -87,11 +87,6 @@ function archivePlaceholder(name: string): ArchiveEntry {
   }
 }
 
-function setArchive(name: string): void {
-  browser.selectedArchive.value = archivePlaceholder(name)
-  browser.loadContents('/')
-}
-
 function handleRowClick(entry: DisplayEntry): void {
   if (entry.isDir && entry.displayName !== CURRENT_DIR_MARKER) {
     navigateTo(entry.path)
@@ -111,8 +106,11 @@ function reset(): void {
 watch(
   () => props.archiveName,
   (name) => {
-    reset()
-    if (name) setArchive(name)
+    if (name) {
+      browser.selectArchive(archivePlaceholder(name))
+    } else {
+      reset()
+    }
   },
   { immediate: true },
 )

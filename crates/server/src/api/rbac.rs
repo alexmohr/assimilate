@@ -109,20 +109,10 @@ pub struct RolePermissionFields {
     pub can_upgrade_agent: bool,
 }
 
-/// Request payload for creating a new role.
+/// Request payload for creating or updating a role.
 #[derive(Debug, Deserialize)]
-pub struct CreateRoleRequest {
+pub struct RoleRequest {
     /// Role name.
-    pub name: String,
-    /// Role permissions.
-    #[serde(flatten)]
-    pub perms: RolePermissionFields,
-}
-
-/// Request payload for updating a role.
-#[derive(Debug, Deserialize)]
-pub struct UpdateRoleRequest {
-    /// Updated role name.
     pub name: String,
     /// Role permissions.
     #[serde(flatten)]
@@ -288,6 +278,16 @@ pub async fn list_roles(
     Ok(Json(roles))
 }
 
+fn validate_name(name: &str) -> Result<&str, ApiError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::BadRequest(
+            "role name must not be empty".to_string(),
+        ));
+    }
+    Ok(trimmed)
+}
+
 /// Create a new role (admin only).
 ///
 /// # Errors
@@ -296,14 +296,9 @@ pub async fn list_roles(
 pub async fn create_role(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
-    ApiJson(req): ApiJson<CreateRoleRequest>,
+    ApiJson(req): ApiJson<RoleRequest>,
 ) -> Result<(StatusCode, Json<RoleResponse>), ApiError> {
-    let name = req.name.trim();
-    if name.is_empty() {
-        return Err(ApiError::BadRequest(
-            "role name must not be empty".to_string(),
-        ));
-    }
+    let name = validate_name(&req.name)?;
     let params = role_params_from_perms(name, &req.perms);
     let role: RoleResponse = db::insert_role(&state.pool, &params).await?.into();
     Ok((StatusCode::CREATED, Json(role)))
@@ -318,14 +313,9 @@ pub async fn update_role(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
     Path(id): Path<i64>,
-    ApiJson(req): ApiJson<UpdateRoleRequest>,
+    ApiJson(req): ApiJson<RoleRequest>,
 ) -> Result<Json<RoleResponse>, ApiError> {
-    let name = req.name.trim();
-    if name.is_empty() {
-        return Err(ApiError::BadRequest(
-            "role name must not be empty".to_string(),
-        ));
-    }
+    let name = validate_name(&req.name)?;
     let params = role_params_from_perms(name, &req.perms);
     let role: RoleResponse = db::update_role(&state.pool, id, &params).await?.into();
     Ok(Json(role))

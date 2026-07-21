@@ -371,6 +371,16 @@ api POST "/api/tags" '{"name":"staging","color":"#f59e0b","scope":"agent"}' > /d
 api POST "/api/tags" '{"name":"critical","color":"#dc2626","scope":"repo"}' > /dev/null 2>&1 || true
 api POST "/api/tags" '{"name":"archival","color":"#6366f1","scope":"repo"}' > /dev/null 2>&1 || true
 
+echo "==> Associating repo tags (for config-export coverage)..."
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
+INSERT INTO repo_tags (repo_id, tag_id)
+SELECT $REPO_DAILY_ID, t.id FROM tags t WHERE t.name = 'critical' AND t.scope = 'repo'
+ON CONFLICT DO NOTHING;
+INSERT INTO repo_tags (repo_id, tag_id)
+SELECT $REPO_WEEKLY_ID, t.id FROM tags t WHERE t.name = 'archival' AND t.scope = 'repo'
+ON CONFLICT DO NOTHING;
+SQL
+
 echo "==> Creating additional users and roles..."
 # Passwords match the usernames (bcrypt cost 10, pre-computed), the same convention
 # used for the admin account above, so e2e RBAC tests can log in as these roles.
@@ -506,5 +516,14 @@ SQL
 
 echo "==> Updating database storage statistics..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -c 'ANALYZE;' > /dev/null
+
+echo "==> Verifying config export/import round-trip (repos, tags, quotas)..."
+EXPORT_JSON=$(api GET /api/config/export)
+echo "$EXPORT_JSON" | jq -e '.repos | length > 0' > /dev/null || {
+    echo "ERROR: config export should include at least one repo" >&2
+    exit 1
+}
+IMPORT_RESULT=$(api POST /api/config/import "$EXPORT_JSON")
+echo "$IMPORT_RESULT" | jq -e '.repos_updated > 0' > /dev/null && echo "  config import updated existing repos (expected)." || true
 
 echo "==> Demo data seeded successfully."

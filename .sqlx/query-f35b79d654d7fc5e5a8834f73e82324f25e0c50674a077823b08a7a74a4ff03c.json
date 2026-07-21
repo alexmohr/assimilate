@@ -1,0 +1,96 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE repos SET name = $2, repo_path = $3, ssh_user = $4, ssh_host = $5, ssh_port = $6, compression = $7, encryption = $8, enabled = $9 WHERE id = $1 RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, enabled, owner_id, visibility, sync_schedule",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "repo_path",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "ssh_user",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "ssh_host",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "ssh_port",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "compression",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "encryption",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 9,
+        "name": "owner_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
+        "name": "visibility",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "sync_schedule",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Int4",
+        "Text",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "f35b79d654d7fc5e5a8834f73e82324f25e0c50674a077823b08a7a74a4ff03c"
+}

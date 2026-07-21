@@ -1228,6 +1228,7 @@ mod tests {
 
     #[tokio::test]
     async fn stream_export_tar_lz4_registers_its_pump_task_with_the_given_registry() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
         let _guard = crate::borg::override_binary_for_tests(std::path::PathBuf::from("true"));
         let task_registry = shared::task_registry::TaskRegistry::default();
         let borg = Borg::new().with_registry(task_registry.clone());

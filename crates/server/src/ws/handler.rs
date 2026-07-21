@@ -1980,6 +1980,7 @@ exit 0
                 compression: "lz4",
                 encryption: "repokey",
                 owner_id: None,
+                sync_schedule: None,
             },
         )
         .await
@@ -2017,6 +2018,7 @@ exit 0
             .await
             .expect("insert schedule target");
 
+        let _gate = crate::borg::acquire_test_binary_gate().await;
         let borg_binary = write_fake_borg_binary().await;
         let _borg_guard = crate::borg::override_binary_for_tests(borg_binary);
         let state = build_test_state(pool.clone());
@@ -2102,6 +2104,7 @@ exit 0
                 compression: "lz4",
                 encryption: "repokey",
                 owner_id: None,
+                sync_schedule: None,
             },
         )
         .await
@@ -2361,6 +2364,7 @@ exit 0
                 compression: "lz4",
                 encryption: "repokey",
                 owner_id: None,
+                sync_schedule: None,
             },
         )
         .await
@@ -2445,6 +2449,7 @@ exit 0
                 compression: "lz4",
                 encryption: "repokey",
                 owner_id: None,
+                sync_schedule: None,
             },
         )
         .await
@@ -2461,6 +2466,7 @@ exit 0
                 compression: "lz4",
                 encryption: "repokey",
                 owner_id: None,
+                sync_schedule: None,
             },
         )
         .await

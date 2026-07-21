@@ -6,6 +6,8 @@ Archives are point-in-time snapshots created by each backup run. Assimilate lets
 
 Navigate to **Repos** in the sidebar, select a repository, then open the **Archives** tab. The list shows every archive stored in that repository.
 
+You can also browse archives per schedule: open a schedule's detail view and switch to the **Backups** tab (see [Scheduling](scheduling.md#browsing-archives-from-a-schedule)). This shows only the archives created by that specific schedule, with the same file browser panel for browsing and extraction.
+
 Use the list mode selector to switch between **Host groups** and flat archive ordering by **date**, **original size**, or **deduplicated size**, each in ascending or descending order.
 
 The table supports **sorting** (click any column header) and **inline filtering** (type in the filter row below headers to narrow results).

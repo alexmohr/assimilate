@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { flushPromises } from '@vue/test-utils'
+import { flushPromises, type VueWrapper } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
 import SystemView from './SystemView.vue'
 
@@ -36,6 +36,7 @@ import { apiClient } from '../api/client'
 
 const mockGet = vi.mocked(apiClient.get)
 const mockPut = vi.mocked(apiClient.put)
+const mockPost = vi.mocked(apiClient.post)
 
 const SSH_KEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA test-key'
 
@@ -333,5 +334,88 @@ describe('SystemView', () => {
     expect(retentionInput.element.value).toBe('14')
     const reportInput = wrapper.find<HTMLInputElement>('#settings-report-retention')
     expect(reportInput.element.value).toBe('0')
+  })
+
+  describe('config import', () => {
+    const MOCK_IMPORT_RESULT = {
+      hosts_created: 2,
+      hosts_updated: 0,
+      schedules_created: 3,
+      repos_created: 1,
+      repos_updated: 0,
+      warnings: [],
+    }
+
+    async function selectFile(wrapper: VueWrapper, content: string, name: string): Promise<void> {
+      const file = new File([content], name, { type: 'application/json' })
+      const fileInput = wrapper.find<HTMLInputElement>('input[type="file"]')
+      Object.defineProperty(fileInput.element, 'files', {
+        value: [file],
+        writable: false,
+      })
+      await fileInput.trigger('change')
+      await flushPromises()
+    }
+
+    it('renders No file chosen initially', () => {
+      setupSuccessMocks()
+      const wrapper = renderWithPlugins(SystemView)
+      expect(wrapper.text()).toContain('No file chosen')
+    })
+
+    it('shows filename after file selection', async () => {
+      setupSuccessMocks()
+      const wrapper = renderWithPlugins(SystemView)
+      await flushPromises()
+      await selectFile(wrapper, '{}', 'my-config.json')
+      expect(wrapper.text()).toContain('my-config.json')
+    })
+
+    it('disables Import button when no file is selected', async () => {
+      setupSuccessMocks()
+      const wrapper = renderWithPlugins(SystemView)
+      await flushPromises()
+      const importBtn = wrapper.findAll('button').find((b) => b.text() === 'Import')!
+      expect((importBtn.element as HTMLButtonElement).disabled).toBe(true)
+    })
+
+    async function selectAndImport(wrapper: VueWrapper): Promise<void> {
+      await selectFile(
+        wrapper,
+        JSON.stringify({ version: 1, hosts: [], schedules: [], repos: [] }),
+        'cfg.json',
+      )
+      const importBtn = wrapper.findAll('button').find((b) => b.text() === 'Import')!
+      await importBtn.trigger('click')
+    }
+
+    it('calls API and shows result on successful import', async () => {
+      setupSuccessMocks()
+      mockPost.mockResolvedValue({ data: MOCK_IMPORT_RESULT })
+      const wrapper = renderWithPlugins(SystemView)
+      await flushPromises()
+      await selectAndImport(wrapper)
+      await flushPromises()
+      expect(mockPost).toHaveBeenCalledWith('/config/import', {
+        version: 1,
+        hosts: [],
+        schedules: [],
+        repos: [],
+      })
+      expect(wrapper.text()).toContain('Hosts created: 2')
+      expect(wrapper.text()).toContain('Schedules created: 3')
+      expect(wrapper.text()).toContain('Repos created: 1')
+      expect(wrapper.text()).toContain('Repos updated: 0')
+    })
+
+    it('shows error when import API fails', async () => {
+      setupSuccessMocks()
+      mockPost.mockRejectedValue(new Error('Network error'))
+      const wrapper = renderWithPlugins(SystemView)
+      await flushPromises()
+      await selectAndImport(wrapper)
+      await flushPromises()
+      expect(wrapper.text()).toContain('Import failed')
+    })
   })
 })

@@ -232,6 +232,7 @@ async fn create_test_repo(pool: &PgPool) -> RepoRow {
             compression: "lz4",
             encryption: "repokey",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -758,6 +759,7 @@ async fn create_test_schedule(pool: &PgPool) -> (AgentRow, RepoRow, ScheduleRow)
             compression: "none",
             encryption: "none",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -933,6 +935,7 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             compression: "none",
             encryption: "none",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -2181,6 +2184,7 @@ async fn storage_breakdown_multi_repo_ordering(pool: PgPool) {
             compression: "lz4",
             encryption: "none",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -2339,6 +2343,7 @@ async fn dashboard_summary_total_storage_from_repo_info(pool: PgPool) {
             compression: "lz4",
             encryption: "none",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -3262,6 +3267,7 @@ async fn create_test_repo_with_host(pool: &PgPool, name: &str, ssh_host: &str) -
             compression: "lz4",
             encryption: "repokey",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -3926,6 +3932,7 @@ async fn get_archives_for_agent_across_multiple_repos(pool: PgPool) {
             compression: "lz4",
             encryption: "repokey",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -3942,6 +3949,7 @@ async fn get_archives_for_agent_across_multiple_repos(pool: PgPool) {
             compression: "zstd",
             encryption: "repokey",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -4229,6 +4237,7 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
             compression: "lz4",
             encryption: "repokey",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -4245,6 +4254,7 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
             compression: "zstd",
             encryption: "repokey",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -4466,7 +4476,7 @@ async fn repo_sync_schedule_update(pool: PgPool) {
             compression: "lz4",
             encryption: "repokey",
             enabled: true,
-            sync_schedule: Some("0 */6 * * *"),
+            sync_schedule: Some(Some("0 */6 * * *")),
         },
     )
     .await
@@ -4491,13 +4501,39 @@ async fn repo_sync_schedule_disable(pool: PgPool) {
             compression: "lz4",
             encryption: "repokey",
             enabled: true,
-            sync_schedule: None,
+            sync_schedule: Some(None),
         },
     )
     .await
     .unwrap();
 
     assert!(updated.sync_schedule.is_none());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_sync_schedule_unchanged(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    // After an update that doesn't touch sync_schedule, it must retain the DB default.
+    let updated = db::update_repo(
+        &pool,
+        &UpdateRepoParams {
+            repo_id: repo.id,
+            name: "test-repo",
+            repo_path: "/backups/test",
+            ssh_user: "backup",
+            ssh_host: "storage.local",
+            ssh_port: 22,
+            compression: "lz4",
+            encryption: "repokey",
+            enabled: true,
+            sync_schedule: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(updated.sync_schedule.as_deref(), Some("0 0,12 * * *"));
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -4982,6 +5018,7 @@ async fn repo_relocation_per_host_multi_agent(pool: PgPool) {
             compression: "none",
             encryption: "none",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -6922,6 +6959,7 @@ async fn check_repo_permission_view_all_is_view_only(pool: PgPool) {
             compression: "none",
             encryption: "none",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -7024,4 +7062,25 @@ async fn validate_agent_repo_rejects_and_logs_security_event(pool: PgPool) {
             .message
             .contains("rogue-agent")
     );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_tags_use_repo_scope(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+
+    let tag = db::insert_tag(&pool, "critical", "#EF4444", "repo")
+        .await
+        .unwrap();
+    assert_eq!(tag.name, "critical");
+    assert_eq!(tag.scope, "repo");
+
+    db::set_repo_tags(&pool, repo.id, &[tag.id]).await.unwrap();
+
+    let tags = db::list_tags_for_repo(&pool, repo.id).await.unwrap();
+    assert_eq!(tags.len(), 1);
+    assert_eq!(tags.first().unwrap().name, "critical");
+    assert_eq!(tags.first().unwrap().scope, "repo");
+
+    let all_repo_tags = db::list_tags(&pool, "repo").await.unwrap();
+    assert!(all_repo_tags.iter().any(|t| t.name == "critical"));
 }

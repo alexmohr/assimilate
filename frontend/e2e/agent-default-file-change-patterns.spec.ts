@@ -93,13 +93,11 @@ test('admin can view and edit default file change patterns on a host', async ({ 
     async (route) => {
       if (route.request().method() === 'PUT') {
         savedBody = (await route.request().postDataJSON()) as Record<string, unknown>
+        agent.default_file_change_patterns_raw = savedBody.default_file_change_patterns_raw
         return route.fulfill({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify({
-            ...agent,
-            default_file_change_patterns_raw: savedBody.default_file_change_patterns_raw,
-          }),
+          body: JSON.stringify(agent),
         })
       }
       return route.continue()

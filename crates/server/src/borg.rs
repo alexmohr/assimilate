@@ -20,6 +20,29 @@ use tokio::process::Command;
 #[cfg(test)]
 static TEST_BINARY_OVERRIDE: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
 
+/// Gate that serialises all tests touching `TEST_BINARY_OVERRIDE` or
+/// `BORG_BINARY` across the whole crate.  Every test module that calls
+/// [`override_binary_for_tests`] or reads `BORG_BINARY` must acquire this
+/// lock for its entire body, otherwise tests from different modules race
+/// on the process-global state under `cargo test`'s default parallelism.
+///
+/// A tokio `Mutex` (not `std::sync::Mutex`) because callers hold the guard
+/// across `.await` points.
+#[cfg(test)]
+pub(crate) static TEST_BINARY_GATE: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+/// Acquire the crate-wide gate that serialises tests touching
+/// [`TEST_BINARY_OVERRIDE`] / `BORG_BINARY`.  Every test that calls
+/// [`override_binary_for_tests`] or manipulates `BORG_BINARY` must hold
+/// this for its whole body.
+#[cfg(test)]
+pub(crate) async fn acquire_test_binary_gate() -> tokio::sync::MutexGuard<'static, ()> {
+    TEST_BINARY_GATE
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await
+}
+
 /// Wrapper around the borg binary that provides structured logging for every invocation.
 pub struct Borg {
     binary: PathBuf,
@@ -202,40 +225,27 @@ pub(crate) fn override_binary_for_tests(binary: PathBuf) -> TestBinaryOverrideGu
 mod tests {
     use super::*;
 
-    // TEST_BINARY_OVERRIDE and BORG_BINARY are process-global state, so any test that reads
-    // or writes either one needs to hold this for its whole body - otherwise it races every
-    // other test below doing the same thing under cargo test's default parallelism. A tokio
-    // Mutex (not std::sync::Mutex) since several of these tests hold it across an `.await`.
-    static TEST_ENV_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-
-    async fn test_env_lock() -> tokio::sync::MutexGuard<'static, ()> {
-        TEST_ENV_LOCK
-            .get_or_init(|| tokio::sync::Mutex::new(()))
-            .lock()
-            .await
-    }
-
     #[tokio::test]
     async fn new_picks_up_test_binary_override() {
-        let _env_lock = test_env_lock().await;
+        let _gate = acquire_test_binary_gate().await;
         let _guard = override_binary_for_tests(PathBuf::from("/custom/borg"));
         assert_eq!(Borg::new().binary(), Path::new("/custom/borg"));
     }
 
     #[tokio::test]
     async fn new_falls_back_to_borg_binary_env_var() {
-        let _env_lock = test_env_lock().await;
+        let _gate = acquire_test_binary_gate().await;
         assert!(test_binary_override().is_none());
-        // SAFETY: serialized by TEST_ENV_LOCK above.
+        // SAFETY: serialized by TEST_BINARY_GATE above.
         unsafe { std::env::set_var("BORG_BINARY", "/env/borg") };
         assert_eq!(Borg::new().binary(), Path::new("/env/borg"));
-        // SAFETY: serialized by TEST_ENV_LOCK above.
+        // SAFETY: serialized by TEST_BINARY_GATE above.
         unsafe { std::env::remove_var("BORG_BINARY") };
     }
 
     #[tokio::test]
     async fn spawn_returns_a_child_whose_stdout_and_stderr_are_streamable() {
-        let _env_lock = test_env_lock().await;
+        let _gate = acquire_test_binary_gate().await;
         let _guard = override_binary_for_tests(PathBuf::from("sh"));
         let borg = Borg::new();
         let mut child = borg
@@ -252,7 +262,7 @@ mod tests {
     async fn spawn_with_stdin_pipes_stdin_for_writing() {
         use tokio::io::AsyncWriteExt;
 
-        let _env_lock = test_env_lock().await;
+        let _gate = acquire_test_binary_gate().await;
         let _guard = override_binary_for_tests(PathBuf::from("sh"));
         let borg = Borg::new();
         let mut child = borg
@@ -273,7 +283,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_uses_graceful_child_and_returns_its_output() {
-        let _env_lock = test_env_lock().await;
+        let _gate = acquire_test_binary_gate().await;
         let _guard = override_binary_for_tests(PathBuf::from("echo"));
         let borg = Borg::new();
         let output = borg.run(&["hello"], &HashMap::new()).await.unwrap();
@@ -289,7 +299,7 @@ mod tests {
 
     #[tokio::test]
     async fn with_registry_plumbs_the_given_registry_into_spawned_children() {
-        let _env_lock = test_env_lock().await;
+        let _gate = acquire_test_binary_gate().await;
         let _guard = override_binary_for_tests(PathBuf::from("sleep"));
         let registry = shared::task_registry::TaskRegistry::default();
         let borg = Borg::new().with_registry(registry.clone());

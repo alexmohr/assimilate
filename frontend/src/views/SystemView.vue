@@ -12,14 +12,11 @@ import { extractError } from '../utils/error'
 import { formatBytes } from '../utils/format'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import TimezoneSelect from '../components/TimezoneSelect.vue'
-import type { SettingsResponse, SystemResetResponse } from '../types/generated'
-
-interface ImportResult {
-  hosts_created: number
-  hosts_updated: number
-  schedules_created: number
-  warnings: string[]
-}
+import type {
+  ImportResultResponse,
+  SettingsResponse,
+  SystemResetResponse,
+} from '../types/generated'
 
 interface VersionInfo {
   server_version: string
@@ -145,7 +142,7 @@ const exportError = ref('')
 
 const importing = ref(false)
 const importError = ref('')
-const importResult = ref<ImportResult | null>(null)
+const importResult = ref<ImportResultResponse | null>(null)
 const importFileInput = ref<HTMLInputElement | null>(null)
 const importFileName = ref('')
 
@@ -188,7 +185,7 @@ async function importConfig(): Promise<void> {
   try {
     const text = await file.text()
     const payload: unknown = JSON.parse(text)
-    const res = await apiClient.post<ImportResult>('/config/import', payload)
+    const res = await apiClient.post<ImportResultResponse>('/config/import', payload)
     importResult.value = res.data
     if (importFileInput.value) {
       importFileInput.value.value = ''
@@ -663,6 +660,8 @@ async function resetSystem(): Promise<void> {
             <span>Hosts created: {{ importResult.hosts_created }}</span>
             <span>Hosts updated: {{ importResult.hosts_updated }}</span>
             <span>Schedules created: {{ importResult.schedules_created }}</span>
+            <span>Repos created: {{ importResult.repos_created }}</span>
+            <span>Repos updated: {{ importResult.repos_updated }}</span>
           </div>
           <ul
             v-if="importResult.warnings.length"

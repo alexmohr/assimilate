@@ -37,8 +37,10 @@ class Config:
     max_local_validation_attempts: int
     max_stuck_cycles: int
     max_solved: int | None
-    target_pr: int | None
-    target_issue: int | None
+    target_prs: tuple[int, ...] | None
+    target_all_prs: bool
+    target_issues: tuple[int, ...] | None
+    fallback_to_issues: bool
     stuck_label: str
     question_label: str
     ignore_label: str
@@ -61,8 +63,10 @@ class Config:
             max_local_validation_attempts=_int("HARNESS_MAX_LOCAL_ATTEMPTS", 3),
             max_stuck_cycles=_int("HARNESS_MAX_STUCK_CYCLES", 3),
             max_solved=_optional_int("HARNESS_MAX_SOLVED"),
-            target_pr=None,
-            target_issue=None,
+            target_prs=None,
+            target_all_prs=False,
+            target_issues=None,
+            fallback_to_issues=_bool("HARNESS_FALLBACK_TO_ISSUES", True),
             stuck_label=os.environ.get("HARNESS_STUCK_LABEL", "opencode-harness-stuck"),
             question_label=os.environ.get("HARNESS_QUESTION_LABEL", "opencode-harness-question"),
             ignore_label=os.environ.get("HARNESS_IGNORE_LABEL", "opencode-harness-ignore"),
@@ -85,10 +89,12 @@ class Config:
         model = self.opencode_model or "(opencode default)"
         max_solved = self.max_solved if self.max_solved is not None else "unlimited"
         target = "auto"
-        if self.target_pr is not None:
-            target = f"pr #{self.target_pr}"
-        elif self.target_issue is not None:
-            target = f"issue #{self.target_issue}"
+        if self.target_all_prs:
+            target = "all open PRs"
+        elif self.target_prs is not None:
+            target = "pr(s) " + ",".join(f"#{n}" for n in self.target_prs)
+        elif self.target_issues is not None:
+            target = "issue(s) " + ",".join(f"#{n}" for n in self.target_issues)
         return (
             f"repo={self.repo} repo_dir={self.repo_dir} base_branch={self.base_branch} "
             f"poll_interval={self.poll_interval_seconds}s model={model} target={target} "
@@ -96,5 +102,6 @@ class Config:
             f"max_local_attempts={self.max_local_validation_attempts} "
             f"max_stuck_cycles={self.max_stuck_cycles} max_solved={max_solved} "
             f"stuck_label={self.stuck_label} question_label={self.question_label} "
+            f"fallback_to_issues={self.fallback_to_issues} "
             f"dry_run={self.dry_run} once={self.once}"
         )

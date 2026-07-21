@@ -29,9 +29,10 @@ Priority order, checked every poll cycle:
 2. If a PR keeps hitting the same problem after several push attempts, stop
    touching it (`opencode-harness-stuck` label + a comment) rather than
    burning cycles or pushing something worse.
-3. Only once there are zero open PRs at all, pick the newest open issue and
-   implement it on a new branch, then open a PR - which flows back into
-   step 1 on the next cycle.
+3. Once there are zero open PRs, or every open PR is momentarily unactionable
+   (e.g. all still mid-CI) and `HARNESS_FALLBACK_TO_ISSUES` hasn't been
+   turned off, pick the newest open issue and implement it on a new branch,
+   then open a PR - which flows back into step 1 on the next cycle.
 
 See README.md for setup, required env vars, and the safety notes around
 opencode's `--auto` flag.
@@ -708,14 +709,20 @@ def _check_and_fix_pr(cfg: Config, state: HarnessState, number: int) -> bool | N
     return handle_pr_fix(cfg, state, detail)
 
 
-def process_prs(cfg: Config, state: HarnessState, prs: list[PrSummary]) -> bool:
-    """Handles at most one actionable PR. Returns True if a fix was pushed.
+def process_prs(cfg: Config, state: HarnessState, prs: list[PrSummary]) -> tuple[bool, bool]:
+    """Handles at most one actionable PR. Returns (attempted, solved).
 
-    Logs here, not in the caller: `_check_and_fix_pr`'s return changed
-    meaning from "an attempt was made" to "a fix was actually pushed", so a
-    caller that only sees this function's bool return can no longer tell
-    "nothing was actionable" apart from "something was actionable, attempted,
-    and didn't converge" - only this loop still has that distinction.
+    `attempted` is True the moment any PR turns out actionable and
+    `handle_pr_fix` actually runs on it, regardless of whether that attempt
+    converged - that's this cycle's one unit of work already spent. It's
+    False only when every PR was skipped (checks still in progress, stuck
+    with no new commits, ignored, ...), which leaves the cycle free for
+    something else - see run_once's issue fallback. `solved` is True only if
+    a fix was actually pushed - this is what "solved problems" counts for
+    --max-solved. Logs here, not in the caller, since `_check_and_fix_pr`'s
+    own return can't tell "nothing was actionable" apart from "something was
+    actionable, attempted, and didn't converge" - only this loop still has
+    that distinction.
     """
     for summary in prs:
         result = _check_and_fix_pr(cfg, state, summary.number)
@@ -727,26 +734,59 @@ def process_prs(cfg: Config, state: HarnessState, prs: list[PrSummary]) -> bool:
                 len(prs),
                 summary.number,
             )
-        return result  # an attempt was made - stop here regardless of outcome
+        return True, result  # an attempt was made - stop here regardless of outcome
     log.info("%d open PR(s), none actionable right now", len(prs))
-    return False
+    return False, False
 
 
 def process_single_pr(cfg: Config, state: HarnessState, number: int) -> bool:
     """Handles a specific PR (--pr N) regardless of auto-selection order.
 
     The one-time override of the stuck-cycle backoff for an explicitly
-    targeted PR happens once, in main(), before the poll loop starts - not
-    here. This function runs once per poll cycle for as long as the process
-    keeps running (every cycle when not --once), so if it re-cleared the
-    stuck label on every call, a long-running `--pr N` process would never
-    let the circuit breaker hold: mark stuck, immediately clear+retry next
-    cycle, mark stuck again, forever - repeatedly burning opencode attempts
-    and reposting the same give-up comment. Delegating to the same
-    `_check_and_fix_pr` the auto-scan path uses means a still-stuck PR with
-    no new commits is correctly skipped after that first override.
+    targeted PR happens once per number, the first time `_override_stuck_pr`
+    sees it - not on every cycle. This function may run for the same number
+    on every poll cycle for as long as the process keeps running, so if it
+    re-cleared the stuck label on every call, a long-running `--pr N` process
+    would never let the circuit breaker hold: mark stuck, immediately
+    clear+retry next cycle, mark stuck again, forever - repeatedly burning
+    opencode attempts and reposting the same give-up comment. Delegating to
+    the same `_check_and_fix_pr` the auto-scan path uses means a still-stuck
+    PR with no new commits is correctly skipped after that first override.
     """
     return bool(_check_and_fix_pr(cfg, state, number))
+
+
+def _override_stuck_pr(cfg: Config, state: HarnessState, overridden: set[int], number: int) -> None:
+    """One-time-per-number override of the stuck-cycle backoff for a PR
+    reached via `--pr` (an explicit list, or "all open PRs"): a human
+    pointing the harness at a PR by number is choosing to retry it right
+    now, which isn't the same as "retry forever on every poll cycle this
+    number happens to come up again" - see process_single_pr's docstring for
+    what goes wrong without the one-time guard. `overridden` is owned by
+    main()'s loop and lives only for this process's lifetime; a restart
+    re-overrides every targeted number once more, which is harmless (the
+    same "explicitly targeting this PR means retry now" reasoning applies
+    just as much right after a restart).
+    """
+    if number in overridden:
+        return
+    overridden.add(number)
+    if cfg.dry_run:
+        return
+    if str(number) in state.pr_attempts:
+        log.info(
+            "--pr %d: clearing %d prior attempt(s) from a previous run before starting",
+            number,
+            state.pr_attempts[str(number)].attempts,
+        )
+        state.clear_pr(number)
+    detail = gh.get_pr(cfg.repo, number)
+    if cfg.stuck_label in detail.labels:
+        log.info("--pr %d: clearing stuck label before starting", number)
+        gh.remove_label(cfg.repo, number, cfg.stuck_label)
+    if cfg.question_label in detail.labels:
+        log.info("--pr %d: clearing question label before starting", number)
+        gh.remove_label(cfg.repo, number, cfg.question_label)
 
 
 def _implement_issue(cfg: Config, state: HarnessState, issue: dict) -> bool:
@@ -791,7 +831,13 @@ def _implement_issue(cfg: Config, state: HarnessState, issue: dict) -> bool:
 
 
 def process_issues(cfg: Config, state: HarnessState) -> bool:
-    """Implements the newest actionable open issue. Returns True if a PR was opened."""
+    """Implements the newest actionable open issue. Returns True if a PR was opened.
+
+    Called both when there are zero open PRs at all, and - when
+    `cfg.fallback_to_issues` - when open PRs exist but none of them are
+    actionable this cycle (e.g. all mid-CI); the log lines below stay
+    generic rather than assuming "no open PRs" for that reason.
+    """
     issues = gh.list_open_issues(cfg.repo)
     candidates = [
         i
@@ -799,11 +845,11 @@ def process_issues(cfg: Config, state: HarnessState) -> bool:
         if cfg.ignore_label not in i["labels"] and cfg.stuck_label not in i["labels"]
     ]
     if not candidates:
-        log.info("no open PRs and no actionable open issues; idle this cycle")
+        log.info("no actionable open issues either; idle this cycle")
         return False
 
     issue = candidates[0]
-    log.info("no open PRs; picking up newest open issue #%d: %s", issue["number"], issue["title"])
+    log.info("picking up newest open issue #%d: %s", issue["number"], issue["title"])
     return _implement_issue(cfg, state, issue)
 
 
@@ -817,17 +863,53 @@ def process_single_issue(cfg: Config, state: HarnessState, number: int) -> bool:
     return _implement_issue(cfg, state, issue)
 
 
-def run_once(cfg: Config, state: HarnessState) -> bool:
+def _round_robin(numbers: list[int], cycle: int) -> int | None:
+    """Picks one target per poll cycle out of a (possibly multi-item, possibly
+    per-cycle-refreshed) list - `cycle` is the poll loop's own iteration
+    count, so successive calls advance through `numbers` in order and wrap
+    around, rather than the harness hammering the same one every time or
+    needing to persist a cursor across restarts.
+    """
+    if not numbers:
+        return None
+    return numbers[cycle % len(numbers)]
+
+
+def run_once(cfg: Config, state: HarnessState, cycle: int, overridden_prs: set[int]) -> bool:
     """Runs a single cycle. Returns True if it solved a problem (pushed a PR
     fix, or implemented an issue into a new PR) - see --max-solved."""
-    if cfg.target_pr is not None:
-        return process_single_pr(cfg, state, cfg.target_pr)
-    if cfg.target_issue is not None:
-        return process_single_issue(cfg, state, cfg.target_issue)
+    if cfg.target_prs is not None or cfg.target_all_prs:
+        # "all open PRs" is re-resolved fresh every cycle (new PRs may have
+        # opened, others merged/closed since the last one) - an explicit
+        # list from --pr N [N ...] stays fixed for the process's lifetime.
+        numbers = (
+            list(cfg.target_prs)
+            if cfg.target_prs is not None
+            else [p.number for p in gh.list_open_prs(cfg.repo)]
+        )
+        number = _round_robin(numbers, cycle)
+        if number is None:
+            log.info("--pr: no open PRs to target this cycle")
+            return False
+        _override_stuck_pr(cfg, state, overridden_prs, number)
+        return process_single_pr(cfg, state, number)
+    if cfg.target_issues is not None:
+        number = _round_robin(list(cfg.target_issues), cycle)
+        if number is None:
+            return False
+        return process_single_issue(cfg, state, number)
 
     prs = gh.list_open_prs(cfg.repo)
     if prs:
-        return process_prs(cfg, state, prs)
+        attempted, solved = process_prs(cfg, state, prs)
+        if attempted or not cfg.fallback_to_issues:
+            return solved
+        # Nothing among the open PRs was actionable this cycle (e.g. all mid-
+        # CI) - rather than idling until the next poll, pick up an open issue
+        # instead. Only reached when process_prs made no attempt at all; if
+        # it attempted a PR and just didn't converge, that's real work
+        # already done this cycle, not idle time to fill.
+        return process_issues(cfg, state)
     return process_issues(cfg, state)
 
 
@@ -863,20 +945,36 @@ def main() -> int:
     parser.add_argument(
         "--pr",
         type=int,
+        nargs="*",
         default=None,
         metavar="N",
-        help="work only on PR N instead of auto-selecting - mutually exclusive with --issue",
+        help=(
+            "work only on PR(s) N instead of auto-selecting - one or more numbers "
+            "(--pr 12 34), round-robining one per poll cycle if more than one; bare "
+            "--pr with no numbers targets every currently open PR, re-resolved fresh "
+            "each cycle. Mutually exclusive with --issue"
+        ),
     )
     parser.add_argument(
         "--issue",
         type=int,
+        nargs="*",
         default=None,
         metavar="N",
-        help="implement only issue N instead of auto-selecting - mutually exclusive with --pr",
+        help=(
+            "implement only issue(s) N instead of auto-selecting - one or more numbers "
+            "(--issue 5 6), round-robining one per poll cycle if more than one. "
+            "Mutually exclusive with --pr"
+        ),
     )
     args = parser.parse_args()
     if args.pr is not None and args.issue is not None:
         parser.error("--pr and --issue are mutually exclusive")
+    if args.issue is not None and len(args.issue) == 0:
+        parser.error(
+            "--issue requires at least one issue number "
+            "(use --pr with no number for 'all open PRs')"
+        )
 
     cfg = Config.from_env()
     overrides: dict[str, object] = {}
@@ -889,9 +987,12 @@ def main() -> int:
     if args.max_solved is not None:
         overrides["max_solved"] = args.max_solved
     if args.pr is not None:
-        overrides["target_pr"] = args.pr
+        if len(args.pr) == 0:
+            overrides["target_all_prs"] = True
+        else:
+            overrides["target_prs"] = tuple(args.pr)
     if args.issue is not None:
-        overrides["target_issue"] = args.issue
+        overrides["target_issues"] = tuple(args.issue)
     if overrides:
         cfg = Config(**{**cfg.__dict__, **overrides})
 
@@ -899,41 +1000,17 @@ def main() -> int:
     log.info("opencode-harness starting: %s", cfg.summary())
 
     state = HarnessState.load(cfg.state_file)
-    if cfg.target_pr is not None and not cfg.dry_run and str(cfg.target_pr) in state.pr_attempts:
-        # Gated on dry_run like the label-clearing block right below it -
-        # state.clear_pr() calls save() immediately, so without this a
-        # --dry-run --pr N run would write .state.json to disk despite
-        # HARNESS_DRY_RUN being documented as "log intended actions without
-        # invoking opencode or pushing".
-        log.info(
-            "--pr %d: clearing %d prior attempt(s) from a previous run before starting",
-            cfg.target_pr,
-            state.pr_attempts[str(cfg.target_pr)].attempts,
-        )
-        state.clear_pr(cfg.target_pr)
-    if cfg.target_pr is not None and not cfg.dry_run:
-        # Explicitly targeting a PR overrides the stuck-cycle backoff, but only
-        # once, here, before the loop starts - a human running --pr N is
-        # choosing to retry right now, which isn't the same as "retry forever
-        # on every poll cycle for as long as this process happens to keep
-        # running". Doing this clear inside the per-cycle code path instead
-        # (process_single_pr, prior to this fix) meant a long-running --pr
-        # process could never let a stuck mark hold: it re-cleared the label
-        # and state on every single cycle, immediately retried, hit the same
-        # unresolvable problem again, and re-posted the same give-up comment
-        # every few hours - see the fixed function's docstring.
-        detail = gh.get_pr(cfg.repo, cfg.target_pr)
-        if cfg.stuck_label in detail.labels:
-            log.info("--pr %d: clearing stuck label before starting", cfg.target_pr)
-            gh.remove_label(cfg.repo, cfg.target_pr, cfg.stuck_label)
-        if cfg.question_label in detail.labels:
-            log.info("--pr %d: clearing question label before starting", cfg.target_pr)
-            gh.remove_label(cfg.repo, cfg.target_pr, cfg.question_label)
     solved_count = 0
+    cycle = 0
+    # Every PR number the harness has already applied _override_stuck_pr's
+    # one-time stuck-cycle-backoff override to, this process's lifetime -
+    # see that function's docstring for why it must happen once per number,
+    # not on every cycle the number comes up again under --pr.
+    overridden_prs: set[int] = set()
 
     while True:
         try:
-            if run_once(cfg, state):
+            if run_once(cfg, state, cycle, overridden_prs):
                 solved_count += 1
                 if cfg.max_solved is not None and solved_count >= cfg.max_solved:
                     log.info("solved %d problem(s), reached --max-solved; stopping", solved_count)
@@ -941,6 +1018,7 @@ def main() -> int:
         except Exception:
             log.exception("unhandled error during cycle; will retry next cycle")
 
+        cycle += 1
         if cfg.once:
             return 0
 

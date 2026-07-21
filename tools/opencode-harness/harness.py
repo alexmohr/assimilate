@@ -510,19 +510,41 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
             # same reasoning as run_fix_and_validate's identical retry.
             validation = validate.run_all(cfg.repo_dir, changed)
         if not validation.ok:
-            log.warning(
-                "PR #%d: opencode's conflict resolution failed local validation (%s)",
-                pr.number,
+            # A conflict that applies cleanly at the text level can still be
+            # semantically broken - e.g. a struct gained a field in this PR's
+            # own history while base independently added new call sites that
+            # never learned about it; git's line-based merge has no way to
+            # catch that, only an actual build does. That's exactly the kind
+            # of concrete, fixable failure opencode can act on given another
+            # turn, so retry through the same opencode+validate loop every
+            # other fix path uses instead of giving up after a single
+            # attempt - confirmed live on PR #323, where a real compile error
+            # (a missing struct field two unrelated test call sites needed)
+            # got surfaced clearly here and then simply discarded unfixed.
+            retry_prompt = prompts.build_retry_prompt(
+                f"You just resolved a merge conflict while rebasing this repository onto "
+                f"{cfg.base_branch}. " + prompts.COMMON_RULES,
                 validation.step,
+                validation.output,
             )
-            _mark_stuck(
-                cfg,
-                pr,
-                "opencode's merge-conflict resolution failed local validation",
-                f"**Failed step:** `{validation.step}`\n\n```\n{validation.output[-4000:]}\n```",
-            )
-            git_ops.discard_uncommitted_changes(cfg.repo_dir)
-            return False
+            ok, _ = run_fix_and_validate(cfg, retry_prompt)
+            if not ok:
+                log.warning(
+                    "PR #%d: opencode's conflict resolution failed local validation (%s)",
+                    pr.number,
+                    validation.step,
+                )
+                details = (
+                    f"**Failed step:** `{validation.step}`\n\n```\n{validation.output[-4000:]}\n```"
+                )
+                _mark_stuck(
+                    cfg,
+                    pr,
+                    "opencode's merge-conflict resolution failed local validation",
+                    details,
+                )
+                git_ops.discard_uncommitted_changes(cfg.repo_dir)
+                return False
         if git_ops.has_uncommitted_changes(cfg.repo_dir):
             git_ops.commit(cfg.repo_dir, "fix: apply pre-commit auto-fixes")
         git_ops.push(cfg.repo_dir, pr.head_ref_name, force_with_lease=True)

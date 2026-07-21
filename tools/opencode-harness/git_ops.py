@@ -124,7 +124,29 @@ def abort_rebase(cwd: Path) -> None:
     _run(cwd, ["rebase", "--abort"], check=False)
 
 
-def continue_rebase(cwd: Path) -> tuple[bool, str]:
+def rebase_in_progress(cwd: Path) -> bool:
+    return (cwd / ".git" / "rebase-merge").exists() or (cwd / ".git" / "rebase-apply").exists()
+
+
+def continue_rebase(cwd: Path, base: str) -> tuple[bool, str]:
+    """Stages opencode's conflict resolution and finishes the rebase.
+
+    Nothing in the prompt asking opencode to resolve a conflict tells it not
+    to also run `git rebase --continue` itself - the obvious next step once
+    files are fixed - and a capable model reliably does exactly that. If it
+    already finished the whole rebase (no `rebase-merge`/`rebase-apply`
+    directory left), running `git rebase --continue` again fails outright
+    ("fatal: No rebase in progress?", exit 128) since there's nothing left to
+    continue - which used to get misread as the conflict resolution itself
+    having failed, permanently marking the PR stuck even though the rebase
+    had actually already succeeded. Confirm success via `merge-base
+    --is-ancestor` (HEAD now sits on top of `base`) rather than trusting the
+    directory's absence alone, since an aborted or otherwise abandoned rebase
+    would leave no rebase-in-progress marker either.
+    """
+    if not rebase_in_progress(cwd):
+        proc = _run(cwd, ["merge-base", "--is-ancestor", f"origin/{base}", "HEAD"], check=False)
+        return proc.returncode == 0, _run(cwd, ["status"], check=False).stdout
     _run(cwd, ["add", "-A"], check=False)
     proc = _run(cwd, ["rebase", "--continue"], check=False)
     if proc.returncode == 0:

@@ -281,7 +281,7 @@ def _resolve_conflicts(cfg: Config) -> RebaseOutcome:
     if not result.ok:
         git_ops.abort_rebase(cfg.repo_dir)
         return RebaseOutcome.FAILED
-    ok, _ = git_ops.continue_rebase(cfg.repo_dir)
+    ok, _ = git_ops.continue_rebase(cfg.repo_dir, cfg.base_branch)
     if not ok:
         git_ops.abort_rebase(cfg.repo_dir)
         return RebaseOutcome.FAILED

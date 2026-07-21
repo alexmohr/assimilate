@@ -313,8 +313,8 @@ async fn import_repos(
         let passphrase_encrypted = encrypt_passphrase("", encryption_key)?;
 
         if let Some(&existing_id) = repo_name_to_id.get(&repo_export.name) {
-            // Update existing repo -- skip passphrase change. Only update
-            // sync_schedule if the export explicitly provides one.
+            // Update existing repo -- skip passphrase change. sync_schedule
+            // from the export is always applied (null or a value).
             db::update_repo(
                 pool,
                 &db::UpdateRepoParams {

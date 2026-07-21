@@ -12,6 +12,7 @@ commit/push button at all.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 from pathlib import Path
 
@@ -22,10 +23,31 @@ class GitError(RuntimeError):
     pass
 
 
+# This harness runs fully unattended, so no git command it invokes must ever
+# be able to block on interactive input - confirmed live: `git rebase
+# --continue` (continue_rebase, below) opens an editor by default to let a
+# human confirm/edit the conflict-resolved commit's message, which hangs
+# until the process's own subprocess timeout kills it when there's no real
+# TTY to satisfy it, rather than failing fast. GIT_EDITOR=true makes any such
+# editor invocation a no-op (exits 0 instantly, keeping the reused message);
+# GIT_TERMINAL_PROMPT=0 stops git's own credential prompts from blocking the
+# same way. stdin is closed outright as a second layer of defense against
+# any other unexpected interactive prompt this doesn't anticipate.
+_NONINTERACTIVE_ENV = {**os.environ, "GIT_EDITOR": "true", "GIT_TERMINAL_PROMPT": "0"}
+
+
 def _run(
     cwd: Path, args: list[str], timeout: int = 120, check: bool = True
 ) -> subprocess.CompletedProcess:
-    proc = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=timeout)
+    proc = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=_NONINTERACTIVE_ENV,
+        stdin=subprocess.DEVNULL,
+    )
     if check and proc.returncode != 0:
         raise GitError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
     return proc
@@ -148,7 +170,14 @@ def continue_rebase(cwd: Path, base: str) -> tuple[bool, str]:
         proc = _run(cwd, ["merge-base", "--is-ancestor", f"origin/{base}", "HEAD"], check=False)
         return proc.returncode == 0, _run(cwd, ["status"], check=False).stdout
     _run(cwd, ["add", "-A"], check=False)
-    proc = _run(cwd, ["rebase", "--continue"], check=False)
+    # Generous, non-default timeout: if a local `pre-commit install` hook is
+    # set up in this checkout, the commit `--continue` creates here triggers
+    # it like any other commit - the full Rust lint suite (fmt, clippy,
+    # dylint) has been observed taking well over the default 120s elsewhere
+    # in this same pipeline, and a hook that's still legitimately running
+    # shouldn't be killed and misread as a stuck conflict resolution the same
+    # way the missing-in-progress-check bug above was.
+    proc = _run(cwd, ["rebase", "--continue"], timeout=600, check=False)
     if proc.returncode == 0:
         return True, ""
     return False, _run(cwd, ["status"], check=False).stdout

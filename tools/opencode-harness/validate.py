@@ -9,20 +9,62 @@ AGENTS.md workflow step 4 (pre-commit) and the exact validation-checklist
 commands from skills/rust/SKILL.md and skills/frontend/SKILL.md itself, in
 Python, every single time, regardless of what the model did or didn't do.
 
-Deliberately NOT run here: cargo dylint, the db-integration/e2e/coverage CI
-jobs. Those need Docker/Postgres and are CI's job, not a per-cycle local
-gate's - see the harness's own CI-failure-log-driven retry loop for that
-tier instead.
+Deliberately NOT run here: cargo dylint, the e2e/frontend-coverage CI jobs.
+Those need Docker and are CI's job, not a per-cycle local gate's - see the
+harness's own CI-failure-log-driven retry loop for that tier instead.
+
+The DB-backed test suite (crates/server/tests/db_queries.rs and
+integration.rs, plus the server lib's own DB-dependent tests) is different:
+it's run here too, opportunistically, whenever a Postgres is reachable at
+DATABASE_URL (see _db_reachable). Skipping it unconditionally used to mean
+opencode's local retry loop could never actually see a regression there - it
+would validate clean (since `cargo test --workspace --lib --bins` never
+touches those files), push, and only find out several minutes later via a
+full CI round-trip that its "fix" broke an integration test, burning through
+HARNESS_MAX_STUCK_CYCLES on slow, unverifiable guesses instead of fast local
+iteration. Mirrors CI's "Nightly Tests" AND "Database Integration Tests" jobs
+specifically, not just the former: db_queries.rs's #[sqlx::test] tests (and
+integration.rs's non-ignored ones) run under a plain `cargo test`, but every
+DB-dependent test in integration.rs and the ignored ones in the server lib
+is marked `#[ignore = "requires DATABASE_URL"]`, which `cargo test` skips
+entirely without an explicit `--ignored` - two additional runs cover those.
+If no DB is already reachable, this tries to start one itself via
+`docker run` (matching this repo's own CI Postgres service exactly - image,
+credentials, port) rather than requiring the operator to have set one up by
+hand - see _ensure_docker_postgres_running. The container is left running
+across cycles (like frontend/node_modules - see git_ops._CLEAN_EXCLUDES) so
+this only actually costs a cold start once. If Docker isn't installed, or
+starting it fails for any reason, this falls back to `--lib --bins` only and
+defers to CI for that tier, same as before any of this existed.
+
+Each command is streamed via procstream.run_streaming rather than captured
+silently until it exits - pre-commit (installing hook environments on a
+first run) and cargo test/clippy in particular can run for minutes, and
+without this a working-but-slow validation pass looks identical to a hang.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
+import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import procstream
+
 log = logging.getLogger("harness.validate")
+
+_LOCKFILE_HASH_MARKER = ".harness-lockfile-hash"
+# Matches this repo's own CI services (see .github/workflows/ci.yml) - not a
+# credential, just the fixed local dev/CI Postgres this repo's tests assume
+# (see crates/server/tests/db_queries.rs's own module docs).
+_DEFAULT_DATABASE_URL = "postgres://borg:borg_secret@localhost:5432/borg"
+_DOCKER_CONTAINER_NAME = "opencode-harness-postgres"
+_DOCKER_STARTUP_TIMEOUT_SECONDS = 60
 
 RUST_FMT_ARGS = [
     "cargo",
@@ -42,14 +84,15 @@ class ValidationResult:
     output: str
 
 
-def _run(cwd: Path, args: list[str], timeout: int) -> ValidationResult:
+def _run(
+    cwd: Path, args: list[str], timeout: int, env: dict[str, str] | None = None
+) -> ValidationResult:
     step = " ".join(args)
-    try:
-        proc = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
-        return ValidationResult(ok=False, step=step, output=f"timed out after {timeout}s: {exc}")
-    output = proc.stdout + ("\n" + proc.stderr if proc.stderr else "")
-    return ValidationResult(ok=proc.returncode == 0, step=step, output=output)
+    result = procstream.run_streaming(args, cwd, timeout, log, step, env=env)
+    if result.timed_out:
+        output = f"timed out after {timeout}s:\n{result.output}"
+        return ValidationResult(ok=False, step=step, output=output)
+    return ValidationResult(ok=result.returncode == 0, step=step, output=result.output)
 
 
 def run_precommit(cwd: Path, timeout: int = 900) -> ValidationResult:
@@ -58,11 +101,108 @@ def run_precommit(cwd: Path, timeout: int = 900) -> ValidationResult:
     )
 
 
+def _db_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env.setdefault("DATABASE_URL", _DEFAULT_DATABASE_URL)
+    return env
+
+
+def _migrations_apply(cwd: Path) -> bool:
+    return _run(
+        cwd,
+        ["cargo", "sqlx", "migrate", "run", "--source", "crates/server/migrations"],
+        timeout=30,
+        env=_db_env(),
+    ).ok
+
+
+def _ensure_docker_postgres_running() -> bool:
+    """Starts (or reuses, across cycles) a local Postgres container matching
+    this repo's own CI service exactly - image, credentials, port - so a
+    reachable DB doesn't have to be something the operator set up by hand
+    for opencode's local DB-backed test runs to work at all.
+
+    Best-effort and silent on failure: if Docker isn't installed, or
+    something else entirely already owns port 5432, this just returns False
+    and _db_reachable falls back to skipping the DB-backed suite, same as
+    if this didn't exist. Left running (not stopped/removed) after use, same
+    reasoning as frontend/node_modules in git_ops._CLEAN_EXCLUDES - so only
+    the first cycle that needs it pays the container cold-start cost.
+    """
+    if shutil.which("docker") is None:
+        return False
+    try:
+        inspect = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", _DOCKER_CONTAINER_NAME],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if inspect.returncode == 0:
+            if inspect.stdout.strip() == "true":
+                return True
+            started = subprocess.run(
+                ["docker", "start", _DOCKER_CONTAINER_NAME],
+                capture_output=True,
+                timeout=30,
+            )
+            return started.returncode == 0
+        run = subprocess.run(
+            [
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                _DOCKER_CONTAINER_NAME,
+                "-e",
+                "POSTGRES_DB=borg",
+                "-e",
+                "POSTGRES_USER=borg",
+                "-e",
+                "POSTGRES_PASSWORD=borg_secret",
+                "-p",
+                "5432:5432",
+                "postgres:latest",
+            ],
+            capture_output=True,
+            timeout=60,
+        )
+        return run.returncode == 0
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        log.warning("could not start local Postgres via docker: %s", exc)
+        return False
+
+
+def _db_reachable(cwd: Path) -> bool:
+    """Best-effort: true if a Postgres is reachable at DATABASE_URL and this
+    repo's migrations apply cleanly against it - the same DB this repo's CI
+    spins up for its Database Integration Tests / Nightly Tests jobs.
+    Attempts to start one itself via Docker if nothing answers yet, then
+    polls until migrations succeed or _DOCKER_STARTUP_TIMEOUT_SECONDS
+    elapses. `cargo sqlx migrate run` is idempotent (a no-op against a DB
+    that's already current), so this is safe and cheap to call every cycle.
+    """
+    if _migrations_apply(cwd):
+        return True
+    if not _ensure_docker_postgres_running():
+        return False
+    deadline = time.monotonic() + _DOCKER_STARTUP_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if _migrations_apply(cwd):
+            return True
+        time.sleep(2)
+    log.warning(
+        "started a local Postgres container but migrations didn't succeed within %ss",
+        _DOCKER_STARTUP_TIMEOUT_SECONDS,
+    )
+    return False
+
+
 def run_rust_checks(cwd: Path, timeout: int = 1800) -> list[ValidationResult]:
     steps = [
         RUST_FMT_ARGS,
         ["cargo", "+nightly", "clippy", "--workspace", "--", "-D", "warnings"],
-        ["cargo", "test", "--workspace"],
+        ["cargo", "test", "--workspace", "--lib", "--bins"],
         ["cargo", "deny", "check"],
     ]
     results = []
@@ -70,13 +210,95 @@ def run_rust_checks(cwd: Path, timeout: int = 1800) -> list[ValidationResult]:
         result = _run(cwd, step, timeout)
         results.append(result)
         if not result.ok:
-            break
+            return results
+
+    if _db_reachable(cwd):
+        # Mirrors CI's own "Nightly Tests" job (cargo test --workspace --
+        # --test-threads=1 with DATABASE_URL set): the #[sqlx::test] suite
+        # in db_queries.rs/integration.rs isolates each test in its own DB,
+        # but running them single-threaded avoids incidental cross-test
+        # contention on the same Postgres instance. This alone does NOT
+        # cover "Database Integration Tests" despite the similar name and
+        # despite touching the same files - every DB-dependent test in
+        # integration.rs and the ignored ones in the server lib is marked
+        # #[ignore = "requires DATABASE_URL"], which plain `cargo test`
+        # skips entirely without --ignored. Without the two runs below,
+        # this gate silently never executes any of them, so opencode never
+        # finds out locally that its fix broke one - exactly the round-trip
+        # this feature exists to avoid - and only CI catches it, several
+        # minutes later.
+        db_test_runs = [
+            ["cargo", "+nightly", "test", "--workspace", "--", "--test-threads=1"],
+            [
+                "cargo",
+                "+nightly",
+                "test",
+                "-p",
+                "server",
+                "--test",
+                "integration",
+                "--",
+                "--ignored",
+                "--test-threads=1",
+            ],
+            [
+                "cargo",
+                "+nightly",
+                "test",
+                "-p",
+                "server",
+                "--lib",
+                "--",
+                "--ignored",
+                "--test-threads=1",
+            ],
+        ]
+        for run_args in db_test_runs:
+            result = _run(cwd, run_args, timeout, env=_db_env())
+            results.append(result)
+            if not result.ok:
+                break
+    else:
+        log.info(
+            "no Postgres reachable at DATABASE_URL (or migrations failed); skipping the "
+            "DB-backed test suite locally - only CI will catch a regression there this cycle"
+        )
     return results
+
+
+def _lockfile_hash(frontend_dir: Path) -> str | None:
+    lockfile = frontend_dir / "package-lock.json"
+    return hashlib.sha256(lockfile.read_bytes()).hexdigest() if lockfile.exists() else None
+
+
+def _npm_ci_needed(frontend_dir: Path) -> bool:
+    """node_modules/ is preserved across cycles (see git_ops._CLEAN_EXCLUDES)
+    to avoid a full reinstall every single time - but the harness works many
+    different PRs/branches in the same HARNESS_REPO_DIR checkout in
+    sequence, and "does node_modules exist" doesn't mean "matches the
+    package-lock.json of whichever branch is checked out right now". Unlike
+    cargo, `npm run lint`/`build`/`test` never reconcile node_modules
+    against the lockfile themselves - only `npm ci`/`install` do - so a
+    stale install from a previous PR's dependencies would otherwise produce
+    spurious failures with nothing to do with the PR actually being fixed.
+    Reinstall whenever the lockfile's content differs from the one last
+    installed, tracked via a hash marker inside node_modules/ itself (so it
+    is wiped together with node_modules/ if that's ever cleaned out).
+    """
+    node_modules = frontend_dir / "node_modules"
+    if not node_modules.exists():
+        return True
+    marker = node_modules / _LOCKFILE_HASH_MARKER
+    if not marker.exists():
+        return True
+    return marker.read_text().strip() != (_lockfile_hash(frontend_dir) or "")
 
 
 def run_frontend_checks(cwd: Path, timeout: int = 1800) -> list[ValidationResult]:
     frontend_dir = cwd / "frontend"
-    steps = [
+    npm_ci_needed = _npm_ci_needed(frontend_dir)
+    steps = [["npm", "ci"]] if npm_ci_needed else []
+    steps += [
         ["npm", "run", "format:check"],
         ["npm", "run", "lint"],
         ["npm", "run", "build"],
@@ -88,6 +310,10 @@ def run_frontend_checks(cwd: Path, timeout: int = 1800) -> list[ValidationResult
         results.append(result)
         if not result.ok:
             break
+    if npm_ci_needed and results and results[0].ok:
+        lockfile_hash = _lockfile_hash(frontend_dir)
+        if lockfile_hash is not None:
+            (frontend_dir / "node_modules" / _LOCKFILE_HASH_MARKER).write_text(lockfile_hash)
     return results
 
 

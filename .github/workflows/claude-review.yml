@@ -3,7 +3,7 @@
 name: Claude PR Review
 on:
   pull_request_target:
-    types: [labeled]
+    types: [labeled, synchronize]
   workflow_run:
     workflows: ["CI"]
     types: [completed]
@@ -22,12 +22,27 @@ jobs:
   gate:
     name: Check if a review is actually needed
     runs-on: ubuntu-latest
-    # Only ever proceed for: the "needs review" label landing, CI finishing on
-    # a PR, or a /claude-review comment from someone with write access (an
-    # open author_association check here is an open invitation to burn quota
-    # on a public repo).
+    # Only ever proceed for: the "needs review" label landing, a non-draft
+    # push to an existing PR, CI finishing on a PR, or a /claude-review
+    # comment from someone with write access (an open author_association
+    # check here is an open invitation to burn quota on a public repo).
+    #
+    # workflow_run (CI completing) is kept as a defense-in-depth backup, but
+    # has proven unreliable in practice for this repo's own same-repo PR
+    # branches - observed to never fire even once across dozens of
+    # `pull_request`-triggered CI completions on a real PR. pull_request_target's
+    # own `synchronize` action is a first-party GitHub event tied directly to
+    # the push itself rather than a second-order "did another workflow
+    # complete" signal, so it's the primary path for re-reviewing after new
+    # commits land. draft is checked straight from the event payload here
+    # (no extra API call, always fresh) purely to avoid spinning up the
+    # heavier job below for a PR nobody's asked to look at yet - the actual
+    # trust gate (has this PR already been reviewed at least once) is
+    # deliberately NOT decided here, since synchronize fires on every push
+    # an external PR author fully controls themselves; see the "check"
+    # step below.
     if: >-
-      (github.event_name == 'pull_request_target' && github.event.label.name == 'needs review') || (github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[0] != null) || (github.event_name == 'issue_comment' &&
+      (github.event_name == 'pull_request_target' && github.event.action == 'labeled' && github.event.label.name == 'needs review') || (github.event_name == 'pull_request_target' && github.event.action == 'synchronize' && !github.event.pull_request.draft) || (github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[0] != null) || (github.event_name == 'issue_comment' &&
         github.event.issue.pull_request != null &&
         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
         contains(github.event.comment.body, '/claude-review'))
@@ -39,25 +54,53 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            // "needs review" landing and /claude-review are already precise
-            // triggers by construction - always proceed for those. "CI
-            // completed" fires on every push to every open PR regardless of
-            // state, though, so without this check the full job below
-            // (checkout, coverage download, possibly Claude) would spin up
-            // on every single one, even PRs nowhere near ready for review.
-            // Gate it on the PR's current "needs review" label instead.
-            if (context.eventName !== "workflow_run") {
+            // "needs review" landing and /claude-review are already
+            // precise/trusted triggers by construction (the former only
+            // fires on the label *transition* - at most once per status
+            // change, not once per push; the latter requires write access)
+            // - always proceed for those; the review job's own
+            // pre-review-checks.js does the real CI/merge-conflict gating
+            // once it starts. "CI completed" (workflow_run) and a plain
+            // push (synchronize) both fire on every push to every open PR
+            // regardless of state - and, unlike the other two, entirely
+            // within an external contributor's own control on a public
+            // repo, with no maintainer approval needed for either one.
+            //
+            // Gating those two on the PR's *current* "needs review" label
+            // (an earlier version of this check) doesn't actually bound
+            // anything: per sync-pr-labels.js, "needs review" is the
+            // default/fallback status ("Awaiting CI completion") applied
+            // to essentially every open PR from the moment it's opened
+            // until CI finishes, and again after almost every subsequent
+            // push - not a one-time maintainer opt-in. A first-time
+            // external contributor's brand-new PR carries it immediately,
+            // so checking it lets `synchronize` re-trigger on literally
+            // every single push, exactly the quota-griefing this gate
+            // exists to prevent. Check whether this PR has ever had *any*
+            // review submitted instead - reviews are never deleted (only
+            // dismissed, which keeps the review itself), so unlike a
+            // label this can't be raced away by a concurrent label sync,
+            // and it only becomes true once the PR has already gone
+            // through one of the two genuinely bounded triggers above.
+            if (context.eventName !== "workflow_run" && context.eventName !== "pull_request_target") {
               core.setOutput("should_run", "true");
               return;
             }
-            const prNumber = context.payload.workflow_run.pull_requests[0].number;
-            const { data: pr } = await github.rest.pulls.get({
+            if (context.eventName === "pull_request_target" && context.payload.action === "labeled") {
+              core.setOutput("should_run", "true");
+              return;
+            }
+            const prNumber =
+              context.eventName === "workflow_run"
+                ? context.payload.workflow_run.pull_requests[0].number
+                : context.payload.pull_request.number;
+            const reviews = await github.rest.pulls.listReviews({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: prNumber,
+              per_page: 1,
             });
-            const needsReview = pr.labels.some((l) => l.name === "needs review");
-            core.setOutput("should_run", needsReview ? "true" : "false");
+            core.setOutput("should_run", reviews.data.length > 0 ? "true" : "false");
 
   review:
     name: Review PR
@@ -142,6 +185,11 @@ jobs:
               headSha: "${{ steps.head.outputs.sha }}",
               force: "${{ steps.resolve.outputs.force }}" === "true",
             });
+
+      - name: Record job start time
+        id: job_start
+        if: steps.precheck.outputs.run_claude == 'true'
+        run: echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       # github_token is required: without it, claude-code-action leaves
       # OVERRIDE_GITHUB_TOKEN unset and falls back to exchanging a GitHub
@@ -234,6 +282,14 @@ jobs:
             CLI (already authenticated) since you have no built-in review/label tool:
             - Different account's PR: `gh pr review ${{ steps.resolve.outputs.pr_number }} --approve --body "..."`
               or `gh pr review ${{ steps.resolve.outputs.pr_number }} --request-changes --body "..."`.
+              If `--approve` itself is rejected ("GitHub Actions is not permitted to approve pull
+              requests" - a platform-level restriction on this token, not something retrying fixes),
+              resubmit the exact same verdict as `gh pr review ${{ steps.resolve.outputs.pr_number }}
+              --comment --body "..."` instead, and additionally run
+              `gh pr edit ${{ steps.resolve.outputs.pr_number }} --add-label "claude-approved"
+              --remove-label "claude-changes-requested"` (ignore the remove if that label isn't
+              present) so the verdict is still recorded somewhere machine-readable - a plain
+              comment alone doesn't move GitHub's own reviewDecision.
             - Your own account's PR: `gh pr edit ${{ steps.resolve.outputs.pr_number }} --add-label "claude-approved"`
               or `--add-label "claude-changes-requested"` (and remove whichever of the two was
               previously set with `--remove-label`).
@@ -313,6 +369,117 @@ jobs:
                 MARKER,
                 `${MARKER}\nA retried automated review completed - see the review below.`,
                 { onlyIfExists: true },
+              );
+            }
+
+      # GitHub Actions tokens can never formally `--approve` a PR (platform-
+      # level restriction - "GitHub Actions is not permitted to approve pull
+      # requests"), so once this same bot account has ever formally
+      # requested changes on a "different account" PR, a later clean verdict
+      # can only ever be filed as a plain COMMENTED review (see the prompt's
+      # own fallback above). GitHub's reviewDecision only updates a
+      # reviewer's standing verdict when that reviewer submits a NEW
+      # APPROVED or CHANGES_REQUESTED review - a COMMENTED review does not
+      # supersede an earlier CHANGES_REQUESTED from the same user at all, so
+      # without this the PR's native reviewDecision stays stuck at
+      # CHANGES_REQUESTED forever, no matter how many clean rounds follow.
+      # Confirmed live on PR #365 (this repo's own harness PR): a clean,
+      # approving verdict, filed as COMMENTED, left `review=CHANGES_REQUESTED
+      # (native=CHANGES_REQUESTED)` in the very next label sync.
+      #
+      # Dismissing a review only requires push access (this workflow's own
+      # pull-requests: write already covers it) - it does not have to be
+      # done by the review's original author. Only dismisses the specific
+      # review still driving reviewDecision (the most recent APPROVED/
+      # CHANGES_REQUESTED from this bot, ignoring any COMMENTED reviews in
+      # between, which don't affect reviewDecision either way) - never
+      # touches anything from a different reviewer.
+      #
+      # Gated on steps.claude.outcome == 'success' (not just run_claude, the
+      # same condition the Claude step itself uses) and further restricted to
+      # a review actually submitted after this exact job started
+      # (steps.job_start.outputs.started_at) - not "whichever of this bot's
+      # reviews happens to be last in the PR's entire history". Without both
+      # of those, a Claude step that errored out or intentionally deferred
+      # (the prompt explicitly allows submitting nothing over an incomplete
+      # verdict - a non-error outcome) would still run this step, misread
+      # some old unrelated review as "this round's clean pass", and dismiss a
+      # real, still-unaddressed CHANGES_REQUESTED that nothing actually
+      # re-reviewed this run.
+      - name: Dismiss this bot's own stale changes-requested review
+        if: steps.precheck.outputs.run_claude == 'true' && steps.claude.outcome == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const prNumber = Number("${{ steps.resolve.outputs.pr_number }}");
+            const BOT_LOGIN = "github-actions[bot]";
+            const jobStartedAt = new Date("${{ steps.job_start.outputs.started_at }}");
+
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner,
+              repo,
+              pull_number: prNumber,
+              per_page: 100,
+            });
+            const ownReviews = reviews.filter((r) => r.user && r.user.login === BOT_LOGIN);
+            if (ownReviews.length === 0) {
+              return;
+            }
+
+            // "This run's own verdict" must be something this exact job
+            // actually submitted, not just the last item in the bot's whole
+            // review history on this PR (which could be arbitrarily old).
+            const thisRunReviews = ownReviews.filter(
+              (r) => new Date(r.submitted_at) > jobStartedAt,
+            );
+            if (thisRunReviews.length === 0) {
+              return; // nothing was actually submitted this run - don't touch anything
+            }
+            const thisRun = thisRunReviews[thisRunReviews.length - 1];
+            if (thisRun.state === "CHANGES_REQUESTED") {
+              return; // this run's own verdict genuinely still requests changes
+            }
+
+            // reviewDecision only ever reflects a reviewer's most recent
+            // APPROVED/CHANGES_REQUESTED review - a COMMENTED one in between
+            // (or after) doesn't change what's "in effect" at all.
+            const decisionBearing = ownReviews.filter(
+              (r) => r.state === "APPROVED" || r.state === "CHANGES_REQUESTED",
+            );
+            if (decisionBearing.length === 0) {
+              return;
+            }
+            const stillInEffect = decisionBearing[decisionBearing.length - 1];
+            if (stillInEffect.state !== "CHANGES_REQUESTED" || stillInEffect.id === thisRun.id) {
+              return; // already clear, or a formal approval already landed
+            }
+
+            try {
+              await github.rest.pulls.dismissReview({
+                owner,
+                repo,
+                pull_number: prNumber,
+                review_id: stillInEffect.id,
+                message:
+                  "Superseded by a later, clean verdict from the same automated reviewer - " +
+                  "GitHub Actions tokens cannot formally re-approve to clear this natively, so " +
+                  "the newer verdict was filed as a plain comment instead. Dismissing so " +
+                  "reviewDecision reflects the current state rather than staying stuck on this.",
+              });
+              core.info(
+                `Dismissed stale CHANGES_REQUESTED review ${stillInEffect.id} from ${BOT_LOGIN}`,
+              );
+            } catch (err) {
+              // Tolerate a concurrent trigger (e.g. a push immediately
+              // followed by a /claude-review comment) having already
+              // dismissed the same review - not worth failing this job over.
+              if (err.status !== 422 && err.status !== 404) {
+                throw err;
+              }
+              core.info(
+                `Review ${stillInEffect.id} already dismissed or gone (status ${err.status}) - skipping.`,
               );
             }
 

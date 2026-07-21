@@ -19,12 +19,16 @@ import json
 import logging
 import re
 import subprocess
+import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any
 
 log = logging.getLogger("harness.gh")
 
 RUN_ID_RE = re.compile(r"/actions/runs/(\d+)")
+JOB_ID_RE = re.compile(r"/job/(\d+)")
+
+_IN_PROGRESS_CHECK_STATUSES = {"QUEUED", "IN_PROGRESS", "WAITING", "PENDING", "REQUESTED"}
 
 STATUS_LABEL_NAMES = {
     "needs review",
@@ -113,6 +117,29 @@ class PrDetail:
         return "needs human review" in self.labels
 
     @property
+    def checks_in_progress(self) -> bool:
+        """True if any check/status on the head commit hasn't finished yet.
+
+        `statusCheckRollup` entries come in two shapes: a `CheckRun` (GitHub
+        Actions jobs, most of this repo's own checks - status is QUEUED/
+        IN_PROGRESS/COMPLETED/etc, with `conclusion` only meaningful once
+        COMPLETED) or a `StatusContext` (legacy commit statuses, e.g.
+        Coveralls - state is PENDING/SUCCESS/FAILURE/ERROR directly, no
+        separate in-progress/conclusion split). Used to avoid judging a PR
+        - fingerprinting it, counting a stuck attempt, or fetching review/CI
+        content - against a commit whose checks are still mid-flight and
+        haven't had a chance to actually finish, let alone for the
+        automated review this repo runs once they do to have landed yet.
+        """
+        for item in self.status_check_rollup:
+            typename = item.get("__typename")
+            if typename == "CheckRun" and item.get("status") in _IN_PROGRESS_CHECK_STATUSES:
+                return True
+            if typename == "StatusContext" and (item.get("state") or "").upper() == "PENDING":
+                return True
+        return False
+
+    @property
     def needs_fix(self) -> bool:
         return (
             self.ci_failing
@@ -187,52 +214,144 @@ def get_pr_head_sha(repo: str, number: int) -> str:
     return commits[-1]["oid"] if commits else ""
 
 
+_FAILING_CHECK_CONCLUSIONS = {"failure", "cancelled", "timed_out", "action_required"}
+
+
+def get_failing_checks(repo: str, number: int) -> list[dict[str, Any]]:
+    """Failed/errored/cancelled check runs on the PR's head commit (name, link).
+
+    Deliberately `gh api` (the REST check-runs endpoint) rather than
+    `gh pr checks --json`: the latter's `--json` flag doesn't exist on older
+    `gh` versions at all ("unknown flag: --json"), which isn't something
+    this harness can assume is unavailable on whatever machine runs it - the
+    same reasoning as add_label/remove_label using `gh api` instead of
+    `gh pr edit` elsewhere in this file.
+    """
+    head_sha = get_pr_head_sha(repo, number)
+    if not head_sha:
+        return []
+    data = _run_json(["gh", "api", f"repos/{repo}/commits/{head_sha}/check-runs?per_page=100"])
+    return [
+        {"name": c["name"], "link": c.get("details_url") or c.get("html_url") or ""}
+        for c in data.get("check_runs", [])
+        if c.get("status") == "completed" and c.get("conclusion") in _FAILING_CHECK_CONCLUSIONS
+    ]
+
+
+def get_failing_check_names(repo: str, number: int) -> list[str]:
+    return [c["name"] for c in get_failing_checks(repo, number)]
+
+
 def get_failing_check_logs(repo: str, number: int, max_chars: int = 12000) -> str:
-    """Best-effort: find failed check runs on the PR and pull their failed-step logs."""
-    checks = _run_json(
-        [
-            "gh",
-            "pr",
-            "checks",
-            str(number),
-            "--repo",
-            repo,
-            "--json",
-            "name,state,link",
-            "--fail-fast",
-        ]
-    )
-    logs: list[str] = []
-    seen_runs: set[str] = set()
-    for check in checks:
-        if check.get("state") not in ("FAILURE", "ERROR", "CANCELLED"):
-            continue
+    """Best-effort: find failed check runs on the PR and pull their failed-step logs.
+
+    Each run's log is truncated to its own fair share of `max_chars` before
+    concatenating - not the combined string's tail as a whole. A single
+    verbose failing job (e.g. cargo-deny dumping its entire resolved
+    dependency tree before the actual advisory line) can otherwise consume
+    the whole budget and silently push every other failing check's log out
+    of what opencode ever sees, even though that other check might be the
+    one with the actually actionable content.
+    """
+    seen_jobs: set[str] = set()
+    jobs: list[tuple[str, str, str | None]] = []  # (name, run_id, job_id)
+    for check in get_failing_checks(repo, number):
         link = check.get("link") or ""
-        m = RUN_ID_RE.search(link)
-        if not m:
+        run_m = RUN_ID_RE.search(link)
+        if not run_m:
             continue
-        run_id = m.group(1)
-        if run_id in seen_runs:
+        job_m = JOB_ID_RE.search(link)
+        dedupe_key = job_m.group(1) if job_m else run_m.group(1)
+        if dedupe_key in seen_jobs:
             continue
-        seen_runs.add(run_id)
+        seen_jobs.add(dedupe_key)
+        jobs.append((check.get("name") or "?", run_m.group(1), job_m.group(1) if job_m else None))
+
+    per_job_budget = max(max_chars // max(len(jobs), 1), 2000)
+    logs: list[str] = []
+    for name, run_id, job_id in jobs:
+        # Prefer --job <job_id>: it scopes gh's log fetch to exactly this
+        # check, whereas a bare run_id makes gh aggregate every job in the
+        # run and filter, which has been observed to come back with an
+        # empty log for a specific failing job on a run with many parallel
+        # jobs (this repo's CI has ~20). A run-wide, unscoped fetch also
+        # means one huge job's failed-step output can dominate what `gh`
+        # returns before it ever gets to a smaller, more relevant one.
+        cmd = (
+            ["gh", "run", "view", "--job", job_id, "--repo", repo, "--log-failed"]
+            if job_id
+            else ["gh", "run", "view", run_id, "--repo", repo, "--log-failed"]
+        )
         try:
-            out = _run(["gh", "run", "view", run_id, "--repo", repo, "--log-failed"], timeout=180)
+            out = _run(cmd, timeout=180)
         except GhError as exc:
             out = f"(could not fetch log for run {run_id}: {exc})"
-        logs.append(f"=== {check.get('name')} (run {run_id}) ===\n{out}")
-    combined = "\n\n".join(logs)
+        if not out.strip():
+            out = "(no failed-step log content returned for this check; inspect it on GitHub)"
+        if len(out) > per_job_budget:
+            out = "...(truncated)...\n" + out[-per_job_budget:]
+        logs.append(f"=== {name} (run {run_id}) ===\n{out}")
+    combined = "\n\n".join(logs) or (
+        "(no failed check logs could be retrieved; inspect `gh pr checks` manually)"
+    )
+    # The per-job budget above has a 2000-char floor so a handful of failing
+    # jobs each still get something readable - but that floor overrides the
+    # "fair share" division once more than max_chars // 2000 jobs fail at
+    # once, so the joined total can run well past max_chars with nothing to
+    # cap it. Backstop on the combined string too, same as the pre-refactor
+    # single-string version did, so the worst case (many jobs failing at
+    # once - exactly when this text feeds the fix prompt/fingerprint most)
+    # can't silently blow the documented size guarantee.
     if len(combined) > max_chars:
-        combined = combined[-max_chars:]
-        combined = "...(truncated)...\n" + combined
-    return combined or "(no failed check logs could be retrieved; inspect `gh pr checks` manually)"
+        combined = "...(truncated)...\n" + combined[-max_chars:]
+    return combined
 
 
 def get_review_comments(repo: str, number: int, max_chars: int = 8000) -> str:
-    """Inline review comments plus top-level review bodies requesting changes."""
+    """Inline review comments, plus the top-level body of each reviewer's
+    *latest* review requesting changes - not every CHANGES_REQUESTED review
+    body ever left on the PR.
+
+    The "latest per reviewer" filter (mirroring GitHub's own reviewDecision
+    computation - see sync-pr-labels.js's changesRequestedIsCurrent) only
+    applies to which review *bodies* get surfaced: without it, a review body
+    from days ago whose findings were already fixed in later rounds keeps
+    getting concatenated in here forever, wasting opencode's attention
+    re-litigating solved problems. "Latest" here means the most recent
+    APPROVED or CHANGES_REQUESTED review specifically, not the most recent
+    review of any state - a COMMENTED review (a follow-up clarification, or
+    another automated pass that leaves inline comments without resubmitting a
+    formal verdict) does not supersede an earlier CHANGES_REQUESTED in
+    GitHub's own reviewDecision (confirmed live via
+    .github/workflows/claude-review.yml's stale-review dismissal step, which
+    has to work around this same platform behavior).
+
+    Inline comments are NOT filtered by which review posted them, deliberately:
+    per skills/review/SKILL.md, a same-account PR (reviewer == PR author) can
+    never get a native CHANGES_REQUESTED review at all - the verdict is
+    submitted as `--comment` (state COMMENTED) with the actual decision
+    carried only by the `claude-changes-requested` label (see
+    PrDetail.changes_requested). Restricting inline comments to only
+    decision-bearing reviews' ids would drop every inline comment on any such
+    PR, since its one real review is COMMENTED - exactly the same review that
+    carries the findings opencode needs to act on.
+    """
     reviews = _run_json(["gh", "api", f"repos/{repo}/pulls/{number}/reviews"])
     inline = _run_json(["gh", "api", f"repos/{repo}/pulls/{number}/comments"])
-    parts: list[str] = []
+
+    latest_by_user: dict[str, dict[str, Any]] = {}
     for r in reviews:
+        login = (r.get("user") or {}).get("login")
+        if not login:
+            continue
+        if r.get("state") not in ("APPROVED", "CHANGES_REQUESTED"):
+            continue
+        existing = latest_by_user.get(login)
+        if existing is None or r.get("submitted_at", "") > existing.get("submitted_at", ""):
+            latest_by_user[login] = r
+
+    parts: list[str] = []
+    for r in latest_by_user.values():
         if r.get("state") == "CHANGES_REQUESTED" and (r.get("body") or "").strip():
             parts.append(f"[review by {r.get('user', {}).get('login')}] {r['body']}")
     for c in inline:
@@ -268,14 +387,19 @@ def get_bot_comments(
 
 
 def add_label(repo: str, number: int, label: str) -> None:
-    _run(["gh", "pr", "edit", str(number), "--repo", repo, "--add-label", label])
+    # Deliberately `gh api` (REST), not `gh pr edit --add-label`: the latter's
+    # underlying GraphQL query fetches the PR's projectCards field, which
+    # GitHub has deprecated/removed, so it fails outright on repos that hit
+    # that field regardless of the label mutation itself.
+    _run(["gh", "api", f"repos/{repo}/issues/{number}/labels", "-f", f"labels[]={label}"])
 
 
 def remove_label(repo: str, number: int, label: str) -> None:
+    encoded = urllib.parse.quote(label, safe="")
     try:
-        _run(["gh", "pr", "edit", str(number), "--repo", repo, "--remove-label", label])
+        _run(["gh", "api", "--method", "DELETE", f"repos/{repo}/issues/{number}/labels/{encoded}"])
     except GhError as exc:
-        if "not found" not in str(exc).lower() and "does not have" not in str(exc).lower():
+        if "not found" not in str(exc).lower() and "404" not in str(exc):
             raise
 
 
@@ -303,6 +427,13 @@ def list_open_issues(repo: str) -> list[dict[str, Any]]:
     for issue in raw:
         issue["labels"] = [label_name(lbl) for lbl in issue.get("labels", [])]
     raw.sort(key=lambda i: i["createdAt"], reverse=True)
+    return raw
+
+
+def get_issue(repo: str, number: int) -> dict[str, Any]:
+    fields = "number,title,body,state,labels"
+    raw = _run_json(["gh", "issue", "view", str(number), "--repo", repo, "--json", fields])
+    raw["labels"] = [label_name(lbl) for lbl in raw.get("labels", [])]
     return raw
 
 

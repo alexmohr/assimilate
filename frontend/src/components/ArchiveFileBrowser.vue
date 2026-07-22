@@ -7,11 +7,17 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { FilterMatchMode } from '@primevue/core/api'
 import { formatBytes, formatDate } from '../utils/format'
+import { extractError } from '../utils/error'
+import { useToast } from '../composables/useToast'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
-import { Folder, File, Download } from '@lucide/vue'
+import { Folder, File, Download, RotateCcw, Trash2 } from '@lucide/vue'
 import BaseSpinner from './BaseSpinner.vue'
-import { useArchiveBrowser, type ArchiveEntry } from '../composables/useArchiveBrowser'
+import {
+  useArchiveBrowser,
+  type ArchiveEntry,
+  type ContentEntry,
+} from '../composables/useArchiveBrowser'
 
 interface DisplayEntry {
   type: string
@@ -27,10 +33,22 @@ interface DisplayEntry {
 
 const CURRENT_DIR_MARKER = '.'
 
-const props = defineProps<{
-  repoId: number | null
-  archiveName: string | null
+const props = withDefaults(
+  defineProps<{
+    repoId: number | null
+    archive: ArchiveEntry | null
+    isAdmin?: boolean
+  }>(),
+  {
+    isAdmin: false,
+  },
+)
+
+const emit = defineEmits<{
+  'delete-archive': [archive: ArchiveEntry]
 }>()
+
+const { success: toastSuccess, error: toastError } = useToast()
 
 const repoIdRef = computed(() => props.repoId ?? 0)
 const browser = useArchiveBrowser(repoIdRef)
@@ -74,19 +92,6 @@ const browserEntries = computed<DisplayEntry[]>(() => [
   })),
 ])
 
-function archivePlaceholder(name: string): ArchiveEntry {
-  return {
-    name,
-    start: '',
-    hostname: '',
-    comment: '',
-    original_size: 0,
-    deduplicated_size: 0,
-    matched: null,
-    agent_hostname: null,
-  }
-}
-
 function handleRowClick(entry: DisplayEntry): void {
   if (entry.isDir && entry.displayName !== CURRENT_DIR_MARKER) {
     navigateTo(entry.path)
@@ -104,10 +109,10 @@ function reset(): void {
 }
 
 watch(
-  () => props.archiveName,
-  (name) => {
-    if (name) {
-      browser.selectArchive(archivePlaceholder(name))
+  () => props.archive,
+  (archive) => {
+    if (archive) {
+      browser.selectArchive(archive)
     } else {
       reset()
     }
@@ -118,12 +123,26 @@ watch(
 onBeforeUnmount(() => {
   browser.stopPolling()
 })
+
+async function handleRestore(entry: ContentEntry): Promise<void> {
+  try {
+    const restored = await browser.restoreEntry(entry)
+    if (!restored) return
+    toastSuccess(entry.path.length > 0 ? `Restored ${entry.path}.` : 'Restored the whole archive.')
+  } catch (e: unknown) {
+    toastError(extractError(e))
+  }
+}
+
+function handleDeleteWholeArchive(): void {
+  if (props.archive) emit('delete-archive', props.archive)
+}
 </script>
 
 <template>
   <div class="archive-file-browser">
     <div
-      v-if="!archiveName"
+      v-if="!archive"
       class="empty-state"
     >
       Select an archive to browse its contents.
@@ -131,7 +150,27 @@ onBeforeUnmount(() => {
 
     <template v-else>
       <div class="browser-header">
-        <span class="browser-title">Files -- {{ archiveName }}</span>
+        <span class="browser-title">Files -- {{ archive.name }}</span>
+      </div>
+
+      <div
+        v-if="archive.start"
+        class="archive-meta-bar"
+      >
+        <span class="archive-meta-item">
+          <span class="archive-meta-label">Date</span>
+          <span class="archive-meta-value">{{ formatDate(archive.start) }}</span>
+        </span>
+        <span class="archive-meta-sep" />
+        <span class="archive-meta-item">
+          <span class="archive-meta-label">Original</span>
+          <span class="archive-meta-value">{{ formatBytes(archive.original_size) }}</span>
+        </span>
+        <span class="archive-meta-sep" />
+        <span class="archive-meta-item">
+          <span class="archive-meta-label">Dedup</span>
+          <span class="archive-meta-value">{{ formatBytes(archive.deduplicated_size) }}</span>
+        </span>
       </div>
 
       <div class="breadcrumb">
@@ -254,16 +293,38 @@ onBeforeUnmount(() => {
         </Column>
         <Column
           header=""
-          style="width: 3rem"
+          style="width: 7rem"
         >
           <template #body="{ data }">
             <span class="td-action">
               <button
                 class="btn btn-sm btn-ghost"
-                :title="data.isDir ? 'Download as .tar.lz4' : 'Download'"
+                :title="
+                  data.isDir
+                    ? data.path
+                      ? 'Download as .tar.lz4'
+                      : 'Download whole archive'
+                    : 'Download'
+                "
                 @click.stop="downloadEntry(data)"
               >
                 <Download :size="14" />
+              </button>
+              <button
+                v-if="isAdmin"
+                class="btn btn-sm btn-ghost"
+                :title="data.path ? 'Restore to host' : 'Restore whole archive to host'"
+                @click.stop="handleRestore(data)"
+              >
+                <RotateCcw :size="14" />
+              </button>
+              <button
+                v-if="isAdmin && data.displayName === '.' && data.path.length === 0"
+                class="btn btn-sm btn-ghost"
+                title="Delete whole archive"
+                @click.stop="handleDeleteWholeArchive"
+              >
+                <Trash2 :size="14" />
               </button>
             </span>
           </template>
@@ -298,6 +359,40 @@ onBeforeUnmount(() => {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-muted);
+}
+
+.archive-meta-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-base);
+}
+
+.archive-meta-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+
+.archive-meta-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.archive-meta-value {
+  font-size: 0.82rem;
+  color: var(--text-primary);
+}
+
+.archive-meta-sep {
+  width: 1px;
+  height: 1rem;
+  background: var(--border);
 }
 
 .state-msg {
@@ -358,17 +453,17 @@ onBeforeUnmount(() => {
   margin-left: 0.2rem;
 }
 
-.browser-table {
+:deep(.browser-table) {
   table-layout: fixed;
 }
 
-.data-table {
+:deep(.data-table) {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.85rem;
 }
 
-.data-table th {
+:deep(.data-table th) {
   text-align: left;
   padding: 0.5rem 1rem;
   color: var(--text-muted);
@@ -379,22 +474,22 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--border);
 }
 
-.data-table td {
+:deep(.data-table td) {
   padding: 0.6rem 1rem;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.data-table tr:last-child td {
+:deep(.data-table tr:last-child td) {
   border-bottom: none;
 }
 
-.data-table tr.clickable {
+:deep(.data-table tr.clickable) {
   cursor: pointer;
   transition: background 0.1s;
 }
 
-.data-table tr.clickable:hover {
+:deep(.data-table tr.clickable:hover) {
   background: var(--bg-hover);
 }
 
@@ -433,6 +528,8 @@ onBeforeUnmount(() => {
 
 .td-action {
   text-align: right;
+  display: inline-flex;
+  gap: 0.25rem;
 }
 
 .filter-input {
@@ -448,5 +545,31 @@ onBeforeUnmount(() => {
 .filter-input:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+@media (max-width: 640px) {
+  :deep(.browser-table th:nth-child(3)),
+  :deep(.browser-table td:nth-child(3)) {
+    display: none;
+  }
+
+  :deep(.browser-table th:nth-child(2)),
+  :deep(.browser-table td:nth-child(2)) {
+    width: 4rem;
+  }
+
+  .td-name {
+    align-items: flex-start;
+  }
+
+  .name-text {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .td-size {
+    white-space: normal;
+  }
 }
 </style>

@@ -37,7 +37,7 @@ vi.mock('../components/BaseSpinner.vue', () => ({
 
 vi.mock('../components/ArchiveFileBrowser.vue', () => ({
   default: {
-    props: ['repoId', 'archiveName'],
+    props: ['repoId', 'archive', 'isAdmin'],
     template: '<div class="archive-file-browser-stub" />',
   },
 }))

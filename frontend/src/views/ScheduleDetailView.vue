@@ -21,6 +21,8 @@ import CronBuilder from '../components/CronBuilder.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import BackupProgressCard from '../components/BackupProgressCard.vue'
 import ArchiveFileBrowser from '../components/ArchiveFileBrowser.vue'
+import ArchiveBrowserLayout from '../components/ArchiveBrowserLayout.vue'
+import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
@@ -123,6 +125,22 @@ const scheduleArchives = computed<ReportRow[]>(() =>
     })
     .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime()),
 )
+
+const selectedScheduleArchive = computed<ArchiveEntry | null>(() => {
+  const r = selectedBackupReport.value
+  if (!r || r.archive_name == null) return null
+  const hostname = agentMap.value.get(r.agent_id ?? 0)?.hostname ?? r.hostname ?? ''
+  return {
+    name: r.archive_name,
+    start: r.started_at,
+    hostname,
+    comment: '',
+    original_size: r.original_size,
+    deduplicated_size: r.deduplicated_size,
+    matched: true,
+    agent_hostname: hostname,
+  }
+})
 
 function selectScheduleArchive(report: ReportRow): void {
   selectedBackupReport.value = report
@@ -1533,61 +1551,55 @@ watch(activeTab, (tab) => {
         >
           No backup archives found for this schedule.
         </div>
-        <div
-          v-else
-          class="backups-layout"
-        >
-          <!-- Archive list -->
-          <div class="backups-list-panel">
-            <div class="panel-header">
-              <span class="panel-title">Archives</span>
+        <ArchiveBrowserLayout v-else>
+          <template #list>
+            <!-- Archive list -->
+            <div class="panel backups-list-panel">
+              <div class="panel-header">
+                <span class="panel-title">Archives</span>
+              </div>
+              <table class="archives-table">
+                <thead>
+                  <tr>
+                    <th>Archive</th>
+                    <th>Host</th>
+                    <th>Date</th>
+                    <th>Size</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="r in scheduleArchives"
+                    :key="r.id"
+                    class="archive-row"
+                    :class="{ selected: selectedBackupReport?.id === r.id }"
+                    @click="selectScheduleArchive(r)"
+                  >
+                    <td class="cell-archive-name">{{ r.archive_name }}</td>
+                    <td class="cell-host">
+                      {{
+                        agentMap.get(r.agent_id ?? 0)?.display_name ??
+                        agentMap.get(r.agent_id ?? 0)?.hostname ??
+                        `#${r.agent_id ?? 0}`
+                      }}
+                    </td>
+                    <td class="cell-date">{{ formatDateShort(r.started_at) }}</td>
+                    <td class="cell-size">{{ formatBytes(r.original_size) }}</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
-            <table class="archives-table">
-              <thead>
-                <tr>
-                  <th>Archive</th>
-                  <th>Host</th>
-                  <th>Date</th>
-                  <th>Size</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="r in scheduleArchives"
-                  :key="r.id"
-                  class="archive-row"
-                  :class="{ selected: selectedBackupReport?.id === r.id }"
-                  @click="selectScheduleArchive(r)"
-                >
-                  <td class="cell-archive-name">{{ r.archive_name }}</td>
-                  <td class="cell-host">
-                    {{
-                      agentMap.get(r.agent_id ?? 0)?.display_name ??
-                      agentMap.get(r.agent_id ?? 0)?.hostname ??
-                      `#${r.agent_id ?? 0}`
-                    }}
-                  </td>
-                  <td class="cell-date">{{ formatDateShort(r.started_at) }}</td>
-                  <td class="cell-size">{{ formatBytes(r.original_size) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <!-- File browser -->
-          <div class="backups-browser-panel">
-            <ArchiveFileBrowser
-              v-if="selectedBackupReport"
-              :repo-id="schedule?.repo_id ?? null"
-              :archive-name="selectedBackupReport.archive_name ?? null"
-            />
-            <div
-              v-else
-              class="empty-browser"
-            >
-              <span class="muted">Select an archive to browse its contents.</span>
+          </template>
+          <template #browser>
+            <!-- File browser -->
+            <div class="panel backups-browser-panel">
+              <ArchiveFileBrowser
+                :repo-id="schedule?.repo_id ?? null"
+                :archive="selectedScheduleArchive"
+              />
             </div>
-          </div>
-        </div>
+          </template>
+        </ArchiveBrowserLayout>
       </div>
 
       <!-- Save bar -->
@@ -2456,20 +2468,6 @@ watch(activeTab, (tab) => {
 
 /* Backups tab layout */
 
-.backups-layout {
-  display: grid;
-  grid-template-columns: 360px 1fr;
-  gap: 1rem;
-  align-items: start;
-}
-
-.backups-list-panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
 .backups-list-panel .panel-header {
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border);
@@ -2548,21 +2546,6 @@ watch(activeTab, (tab) => {
 }
 
 .backups-browser-panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
   min-height: 300px;
-}
-
-.empty-browser {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 200px;
-}
-
-.muted {
-  color: var(--text-muted);
 }
 </style>

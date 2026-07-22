@@ -3,6 +3,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
+import type { VueWrapper } from '@vue/test-utils'
+import type { ComponentPublicInstance } from 'vue'
 import { ref } from 'vue'
 
 const mockBrowserArchives = ref<
@@ -151,6 +153,23 @@ function setupApiSuccess(repo: RepoWithStats = mockRepo, scanHostKey = refreshed
   })
 }
 
+async function mountRepo(
+  overrides: { id?: string; role?: 'admin' | 'viewer' } = {},
+): Promise<VueWrapper<ComponentPublicInstance>> {
+  const wrapper = renderWithPlugins(RepoDetailView, {
+    props: { id: overrides.id ?? '1' },
+    storeState: { auth: { user: { role: overrides.role ?? 'admin' } } },
+  })
+  await flushPromises()
+  return wrapper
+}
+
+async function goToArchivesTab(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
+  const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')
+  await archivesTab!.trigger('click')
+  await flushPromises()
+}
+
 describe('RepoDetailView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -160,22 +179,14 @@ describe('RepoDetailView', () => {
 
   it('renders repo name in breadcrumb and info grid', async () => {
     setupApiSuccess()
-    const wrapper = renderWithPlugins(RepoDetailView, {
-      props: { id: '1' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountRepo()
 
     expect(wrapper.text()).toContain('server-daily')
   })
 
   it('displays compression and encryption values', async () => {
     setupApiSuccess()
-    const wrapper = renderWithPlugins(RepoDetailView, {
-      props: { id: '1' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountRepo()
 
     const text = wrapper.text()
     expect(text).toContain('lz4')
@@ -184,22 +195,14 @@ describe('RepoDetailView', () => {
 
   it('shows SSH target in info grid', async () => {
     setupApiSuccess()
-    const wrapper = renderWithPlugins(RepoDetailView, {
-      props: { id: '1' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountRepo()
 
     expect(wrapper.text()).toContain('borg@backup.example.com:22')
   })
 
   it('shows accept key only when the host key mismatches', async () => {
     setupApiSuccess()
-    const wrapper = renderWithPlugins(RepoDetailView, {
-      props: { id: '1' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountRepo()
 
     expect(wrapper.findAll('button').some((button) => button.text() === 'Accept SSH Key')).toBe(
       true,
@@ -209,11 +212,7 @@ describe('RepoDetailView', () => {
 
   it('hides the accept key button when the host key matches', async () => {
     setupApiSuccess({ ...mockRepo, ssh_host_key: refreshedHostKey }, refreshedHostKey)
-    const wrapper = renderWithPlugins(RepoDetailView, {
-      props: { id: '1' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountRepo()
 
     expect(wrapper.findAll('button').some((button) => button.text() === 'Accept SSH Key')).toBe(
       false,
@@ -222,11 +221,7 @@ describe('RepoDetailView', () => {
 
   it('accepts a refreshed SSH host key', async () => {
     setupApiSuccess()
-    const wrapper = renderWithPlugins(RepoDetailView, {
-      props: { id: '1' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountRepo()
 
     const acceptButton = wrapper
       .findAll('button')
@@ -240,22 +235,14 @@ describe('RepoDetailView', () => {
 
   it('shows repo path in info grid', async () => {
     setupApiSuccess()
-    const wrapper = renderWithPlugins(RepoDetailView, {
-      props: { id: '1' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountRepo()
 
     expect(wrapper.text()).toContain('/backup/repos/server-daily')
   })
 
   it('renders stat cards with archive count and agent count', async () => {
     setupApiSuccess()
-    const wrapper = renderWithPlugins(RepoDetailView, {
-      props: { id: '1' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountRepo()
 
     const text = wrapper.text()
     expect(text).toContain('30')
@@ -266,44 +253,28 @@ describe('RepoDetailView', () => {
 
   it('renders QuotaPanel component', async () => {
     setupApiSuccess()
-    const wrapper = renderWithPlugins(RepoDetailView, {
-      props: { id: '1' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountRepo()
 
     expect(wrapper.find('[data-testid="quota-panel"]').exists()).toBe(true)
   })
 
   it('shows Enabled status badge when repo is enabled', async () => {
     setupApiSuccess()
-    const wrapper = renderWithPlugins(RepoDetailView, {
-      props: { id: '1' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountRepo()
 
     expect(wrapper.text()).toContain('Enabled')
   })
 
   it('shows Disabled status badge when repo is disabled', async () => {
     setupApiSuccess({ ...mockRepo, enabled: false })
-    const wrapper = renderWithPlugins(RepoDetailView, {
-      props: { id: '1' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountRepo()
 
     expect(wrapper.text()).toContain('Disabled')
   })
 
   it('shows Overview and Archives tabs', async () => {
     setupApiSuccess()
-    const wrapper = renderWithPlugins(RepoDetailView, {
-      props: { id: '1' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountRepo()
 
     const text = wrapper.text()
     expect(text).toContain('Overview')
@@ -312,16 +283,8 @@ describe('RepoDetailView', () => {
 
   it('shows archives tab content when Archives tab is clicked', async () => {
     setupApiSuccess()
-    const wrapper = renderWithPlugins(RepoDetailView, {
-      props: { id: '1' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-
-    const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')
-    expect(archivesTab).toBeDefined()
-    await archivesTab!.trigger('click')
-    await flushPromises()
+    const wrapper = await mountRepo()
+    await goToArchivesTab(wrapper)
 
     expect(wrapper.text()).toContain('No archives found')
   })
@@ -342,16 +305,8 @@ describe('RepoDetailView', () => {
     mockSortedArchives.value = [...mockBrowserArchives.value]
     setupApiSuccess()
 
-    const wrapper = renderWithPlugins(RepoDetailView, {
-      props: { id: '1' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-
-    const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')
-    expect(archivesTab).toBeDefined()
-    await archivesTab!.trigger('click')
-    await flushPromises()
+    const wrapper = await mountRepo()
+    await goToArchivesTab(wrapper)
 
     const select = wrapper.find('.archive-sort-select')
     expect(select.exists()).toBe(true)
@@ -380,15 +335,8 @@ describe('RepoDetailView', () => {
     mockSortedArchives.value = [...mockBrowserArchives.value]
     setupApiSuccess()
 
-    const wrapper = renderWithPlugins(RepoDetailView, {
-      props: { id: '1' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-
-    const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')
-    await archivesTab!.trigger('click')
-    await flushPromises()
+    const wrapper = await mountRepo()
+    await goToArchivesTab(wrapper)
 
     const groupHeader = wrapper.find('.group-header')
     expect(groupHeader.exists()).toBe(true)
@@ -404,11 +352,7 @@ describe('RepoDetailView', () => {
 
   it('shows danger zone for admin users', async () => {
     setupApiSuccess()
-    const wrapper = renderWithPlugins(RepoDetailView, {
-      props: { id: '1' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountRepo()
 
     expect(wrapper.text()).toContain('Danger Zone')
     expect(wrapper.text()).toContain('Delete Repository')
@@ -416,22 +360,14 @@ describe('RepoDetailView', () => {
 
   it('hides danger zone for non-admin users', async () => {
     setupApiSuccess()
-    const wrapper = renderWithPlugins(RepoDetailView, {
-      props: { id: '1' },
-      storeState: { auth: { user: { role: 'viewer' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountRepo({ role: 'viewer' })
 
     expect(wrapper.find('.danger-zone').exists()).toBe(false)
   })
 
   it('shows error message when repo load fails', async () => {
     vi.mocked(apiClient.get).mockRejectedValue(new Error('Not found'))
-    const wrapper = renderWithPlugins(RepoDetailView, {
-      props: { id: '99' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountRepo({ id: '99' })
 
     expect(wrapper.text()).toContain('Not found')
   })
@@ -440,11 +376,7 @@ describe('RepoDetailView', () => {
     setupApiSuccess()
     vi.mocked(apiClient.post).mockResolvedValue({ status: 202, data: {} })
 
-    const wrapper = renderWithPlugins(RepoDetailView, {
-      props: { id: '1' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountRepo()
 
     const syncBtn = wrapper.findAll('button').find((b) => b.text() === 'Full Resync')
     expect(syncBtn).toBeDefined()
@@ -462,11 +394,7 @@ describe('RepoDetailView', () => {
     setupApiSuccess()
     vi.mocked(apiClient.post).mockRejectedValue(new Error('Connection refused'))
 
-    const wrapper = renderWithPlugins(RepoDetailView, {
-      props: { id: '1' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountRepo()
 
     const syncBtn = wrapper.findAll('button').find((b) => b.text() === 'Full Resync')
     expect(syncBtn).toBeDefined()
@@ -489,11 +417,7 @@ describe('RepoDetailView', () => {
       return Promise.resolve({ data: [] })
     })
 
-    const wrapper = renderWithPlugins(RepoDetailView, {
-      props: { id: '1' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
+    const wrapper = await mountRepo()
     expect(wrapper.text()).toContain('server-daily')
 
     await wrapper.setProps({ id: '2' })
@@ -532,27 +456,17 @@ describe('RepoDetailView', () => {
     })
 
     it('AC-U1: archive filter computed returns null when no ?archive= query is present', async () => {
-      const wrapper = renderWithPlugins(RepoDetailView, {
-        props: { id: '1' },
-        storeState: { auth: { user: { role: 'admin' } } },
-      })
-      await flushPromises()
+      const wrapper = await mountRepo()
 
       expect(wrapper.find('.archive-filter-banner').exists()).toBe(false)
 
-      const archivesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Archives')
-      await archivesTab!.trigger('click')
-      await flushPromises()
+      await goToArchivesTab(wrapper)
 
       expect(wrapper.findAll('.archive-row').length).toBe(2)
     })
 
     it('AC-U2: archive filter computed returns the archive name when ?archive=<name> is present', async () => {
-      const wrapper = renderWithPlugins(RepoDetailView, {
-        props: { id: '1' },
-        storeState: { auth: { user: { role: 'admin' } } },
-      })
-      await flushPromises()
+      const wrapper = await mountRepo()
 
       await wrapper.vm.$router.replace({ query: { archive: archiveA.name } })
       await flushPromises()
@@ -562,11 +476,7 @@ describe('RepoDetailView', () => {
     })
 
     it('AC-U3: archive browser and filters are hidden, showing only the filter banner', async () => {
-      const wrapper = renderWithPlugins(RepoDetailView, {
-        props: { id: '1' },
-        storeState: { auth: { user: { role: 'admin' } } },
-      })
-      await flushPromises()
+      const wrapper = await mountRepo()
 
       // Navigate to archives tab with the archive filter
       await wrapper.vm.$router.replace({
@@ -582,11 +492,7 @@ describe('RepoDetailView', () => {
     })
 
     it('AC-U4: clicking "Show all archives" clears the filter', async () => {
-      const wrapper = renderWithPlugins(RepoDetailView, {
-        props: { id: '1' },
-        storeState: { auth: { user: { role: 'admin' } } },
-      })
-      await flushPromises()
+      const wrapper = await mountRepo()
 
       // Navigate to archives tab with the archive filter
       await wrapper.vm.$router.replace({
@@ -605,11 +511,7 @@ describe('RepoDetailView', () => {
     })
 
     it('AC-U5: archive filter with non-existent name shows only the filter banner', async () => {
-      const wrapper = renderWithPlugins(RepoDetailView, {
-        props: { id: '1' },
-        storeState: { auth: { user: { role: 'admin' } } },
-      })
-      await flushPromises()
+      const wrapper = await mountRepo()
 
       await wrapper.vm.$router.replace({
         query: { tab: 'archives', archive: 'nonexistent-archive' },
@@ -625,11 +527,7 @@ describe('RepoDetailView', () => {
     })
 
     it('AC-U6: sort mode has no effect while an archive filter hides the browser', async () => {
-      const wrapper = renderWithPlugins(RepoDetailView, {
-        props: { id: '1' },
-        storeState: { auth: { user: { role: 'admin' } } },
-      })
-      await flushPromises()
+      const wrapper = await mountRepo()
 
       await wrapper.vm.$router.replace({
         query: { tab: 'archives', archive: archiveA.name },
@@ -655,11 +553,7 @@ describe('RepoDetailView', () => {
     })
 
     it('AC-U7: clear archive filter via function call', async () => {
-      const wrapper = renderWithPlugins(RepoDetailView, {
-        props: { id: '1' },
-        storeState: { auth: { user: { role: 'admin' } } },
-      })
-      await flushPromises()
+      const wrapper = await mountRepo()
 
       await wrapper.vm.$router.replace({ query: { archive: archiveA.name } })
       await flushPromises()

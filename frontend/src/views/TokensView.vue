@@ -4,94 +4,33 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { apiClient } from '../api/client'
-import { useClipboard } from '../composables/useClipboard'
+import { onMounted } from 'vue'
+import { useTokenManagement } from '../composables/useTokenManagement'
 import { formatDate } from '../utils/format'
-import { extractError } from '../utils/error'
 import { Plus, Key, Trash2 } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 
-interface ApiToken {
-  id: number
-  user_id: number
-  name: string
-  created_at: string
-  last_used_at: string | null
-}
-
-const tokens = ref<ApiToken[]>([])
-const loading = ref(true)
-
-const showCreateModal = ref(false)
-const createName = ref('')
-const createError = ref('')
-const createSubmitting = ref(false)
-
-const newTokenPlaintext = ref('')
-const { copied: tokenCopied, copy: copyToClipboard } = useClipboard()
-
-const showDeleteModal = ref(false)
-const deleteTarget = ref<ApiToken | null>(null)
-const deleteSubmitting = ref(false)
-
-async function fetchTokens(): Promise<void> {
-  loading.value = true
-  try {
-    const res = await apiClient.get<{ tokens: ApiToken[] }>('/tokens')
-    tokens.value = res.data.tokens
-  } finally {
-    loading.value = false
-  }
-}
-
-function openCreate(): void {
-  createName.value = ''
-  createError.value = ''
-  newTokenPlaintext.value = ''
-  showCreateModal.value = true
-}
-
-async function submitCreate(): Promise<void> {
-  createError.value = ''
-  createSubmitting.value = true
-  try {
-    const res = await apiClient.post<{ token: ApiToken; plaintext: string }>('/tokens', {
-      name: createName.value,
-    })
-    newTokenPlaintext.value = res.data.plaintext
-    await fetchTokens()
-  } catch (e: unknown) {
-    createError.value = extractError(e, 'Failed to create token')
-  } finally {
-    createSubmitting.value = false
-  }
-}
-
-function closeCreateModal(): void {
-  showCreateModal.value = false
-  newTokenPlaintext.value = ''
-  tokenCopied.value = false
-}
-
-function openDelete(token: ApiToken): void {
-  deleteTarget.value = token
-  showDeleteModal.value = true
-}
-
-async function confirmDelete(): Promise<void> {
-  if (!deleteTarget.value) return
-  deleteSubmitting.value = true
-  try {
-    await apiClient.delete(`/tokens/${deleteTarget.value.id}`)
-    showDeleteModal.value = false
-    deleteTarget.value = null
-    await fetchTokens()
-  } finally {
-    deleteSubmitting.value = false
-  }
-}
+const {
+  tokens,
+  tokensLoading: loading,
+  showCreateModal,
+  createName,
+  createError,
+  createSubmitting,
+  newTokenPlaintext,
+  tokenCopied,
+  copyToClipboard,
+  showDeleteModal,
+  deleteTarget,
+  deleteSubmitting,
+  fetchTokens,
+  openCreate,
+  submitCreate,
+  closeCreateModal,
+  openDelete,
+  confirmDelete,
+} = useTokenManagement()
 
 onMounted(fetchTokens)
 </script>

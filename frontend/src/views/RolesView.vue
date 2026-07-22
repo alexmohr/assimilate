@@ -10,6 +10,7 @@ import { extractError } from '../utils/error'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { Plus, Trash2 } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
+import ModalFormFooter from '../components/ModalFormFooter.vue'
 
 interface Role {
   id: number
@@ -390,28 +391,13 @@ onMounted(fetchRoles)
               <span>{{ perm.label }}</span>
             </label>
           </div>
-          <div
-            v-if="createError"
-            class="modal-error"
-          >
-            {{ createError }}
-          </div>
-          <div class="modal-actions">
-            <button
-              type="button"
-              class="btn btn-ghost"
-              @click="showCreateModal = false"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              class="btn btn-primary"
-              :disabled="createSubmitting || !createForm.name.trim()"
-            >
-              {{ createSubmitting ? 'Creating...' : 'Create' }}
-            </button>
-          </div>
+          <ModalFormFooter
+            :error="createError"
+            :submitting="createSubmitting"
+            :disabled="!createForm.name.trim()"
+            submit-text="Create"
+            @cancel="showCreateModal = false"
+          />
         </form>
       </div>
     </div>
@@ -441,28 +427,12 @@ onMounted(fetchRoles)
               <span>{{ perm.label }}</span>
             </label>
           </div>
-          <div
-            v-if="editError"
-            class="modal-error"
-          >
-            {{ editError }}
-          </div>
-          <div class="modal-actions">
-            <button
-              type="button"
-              class="btn btn-ghost"
-              @click="showEditModal = false"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              class="btn btn-primary"
-              :disabled="editSubmitting"
-            >
-              {{ editSubmitting ? 'Saving...' : 'Save' }}
-            </button>
-          </div>
+          <ModalFormFooter
+            :error="editError"
+            :submitting="editSubmitting"
+            submit-text="Save"
+            @cancel="showEditModal = false"
+          />
         </form>
       </div>
     </div>
@@ -479,27 +449,15 @@ onMounted(fetchRoles)
           Are you sure you want to delete the role <strong>{{ deleteTarget?.name }}</strong
           >? Users assigned this role will lose its permissions.
         </p>
-        <div
-          v-if="deleteError"
-          class="modal-error"
-        >
-          {{ deleteError }}
-        </div>
-        <div class="modal-actions">
-          <button
-            class="btn btn-ghost"
-            @click="showDeleteModal = false"
-          >
-            Cancel
-          </button>
-          <button
-            class="btn btn-danger"
-            :disabled="deleteSubmitting"
-            @click="confirmDelete"
-          >
-            {{ deleteSubmitting ? 'Deleting...' : 'Delete' }}
-          </button>
-        </div>
+        <form @submit.prevent="confirmDelete">
+          <ModalFormFooter
+            :error="deleteError"
+            :submitting="deleteSubmitting"
+            submit-text="Delete"
+            variant="danger"
+            @cancel="showDeleteModal = false"
+          />
+        </form>
       </div>
     </div>
   </div>
@@ -508,46 +466,6 @@ onMounted(fetchRoles)
 <style scoped>
 .roles-page {
   max-width: 1200px;
-}
-
-.page-description {
-  font-size: 0.875rem;
-  line-height: 1.5;
-  color: var(--text-secondary);
-  margin-bottom: 1rem;
-}
-
-@media (max-width: 768px) {
-  .page-description {
-    display: none;
-  }
-}
-
-.header-actions {
-  display: flex;
-  gap: 0.5rem;
-  margin-left: auto;
-}
-
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 1.5rem;
-}
-
-.search-input {
-  width: 260px;
-}
-
-.state-msg {
-  text-align: center;
-  padding: 3rem;
-  color: var(--text-muted);
-}
-
-.state-error {
-  color: var(--danger);
 }
 
 .matrix-wrap {
@@ -657,56 +575,11 @@ onMounted(fetchRoles)
 }
 
 .modal {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.5rem;
-  width: 100%;
   max-width: 400px;
-  box-shadow: var(--shadow-lg);
 }
 
 .modal-wide {
   max-width: 550px;
-}
-
-.modal h2 {
-  font-size: 1.05rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0 0 1rem;
-}
-
-.modal-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.form-group label {
-  font-size: 0.8125rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.form-group input {
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-input);
-  color: var(--text-primary);
-  font-size: 0.875rem;
-}
-
-.form-group input:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 
 .permissions-grid {
@@ -731,21 +604,6 @@ onMounted(fetchRoles)
 .perm-checkbox input[type='checkbox'] {
   accent-color: var(--accent);
   cursor: pointer;
-}
-
-.modal-error {
-  font-size: 0.8125rem;
-  color: var(--danger);
-  padding: 0.5rem 0.75rem;
-  background: var(--danger-subtle);
-  border-radius: var(--radius-sm);
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
 }
 
 .confirm-text {

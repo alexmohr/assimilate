@@ -412,29 +412,6 @@ onMounted(loadQuotas)
   color: var(--text-muted);
 }
 
-.status-badge {
-  display: inline-block;
-  padding: 0.2rem 0.6rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 600;
-}
-
-.badge-ok {
-  background: var(--success-subtle, oklch(0.95 0.05 145));
-  color: var(--success);
-}
-
-.badge-warning {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.badge-critical {
-  background: var(--danger-subtle);
-  color: var(--danger);
-}
-
 .modal {
   max-width: 420px;
 }

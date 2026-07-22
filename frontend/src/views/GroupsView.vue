@@ -11,6 +11,7 @@ import { logger } from '../utils/logger'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { Plus, Trash2 } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
+import ModalFormFooter from '../components/ModalFormFooter.vue'
 
 interface Group {
   id: number
@@ -350,28 +351,13 @@ onMounted(async () => {
               placeholder="Optional description"
             />
           </div>
-          <div
-            v-if="createError"
-            class="modal-error"
-          >
-            {{ createError }}
-          </div>
-          <div class="modal-actions">
-            <button
-              type="button"
-              class="btn btn-ghost"
-              @click="showCreateModal = false"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              class="btn btn-primary"
-              :disabled="createSubmitting || !createForm.name.trim()"
-            >
-              {{ createSubmitting ? 'Creating...' : 'Create' }}
-            </button>
-          </div>
+          <ModalFormFooter
+            :error="createError"
+            :submitting="createSubmitting"
+            :disabled="!createForm.name.trim()"
+            submit-text="Create"
+            @cancel="showCreateModal = false"
+          />
         </form>
       </div>
     </div>
@@ -406,28 +392,13 @@ onMounted(async () => {
               placeholder="Optional description"
             />
           </div>
-          <div
-            v-if="editError"
-            class="modal-error"
-          >
-            {{ editError }}
-          </div>
-          <div class="modal-actions">
-            <button
-              type="button"
-              class="btn btn-ghost"
-              @click="showEditModal = false"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              class="btn btn-primary"
-              :disabled="editSubmitting || !editForm.name.trim()"
-            >
-              {{ editSubmitting ? 'Saving...' : 'Save' }}
-            </button>
-          </div>
+          <ModalFormFooter
+            :error="editError"
+            :submitting="editSubmitting"
+            :disabled="!editForm.name.trim()"
+            submit-text="Save"
+            @cancel="showEditModal = false"
+          />
         </form>
       </div>
     </div>
@@ -444,27 +415,15 @@ onMounted(async () => {
           Are you sure you want to delete <strong>{{ deleteTarget?.name }}</strong
           >? Members will be removed from this group.
         </p>
-        <div
-          v-if="deleteError"
-          class="modal-error"
-        >
-          {{ deleteError }}
-        </div>
-        <div class="modal-actions">
-          <button
-            class="btn btn-ghost"
-            @click="showDeleteModal = false"
-          >
-            Cancel
-          </button>
-          <button
-            class="btn btn-danger"
-            :disabled="deleteSubmitting"
-            @click="confirmDelete"
-          >
-            {{ deleteSubmitting ? 'Deleting...' : 'Delete' }}
-          </button>
-        </div>
+        <form @submit.prevent="confirmDelete">
+          <ModalFormFooter
+            :error="deleteError"
+            :submitting="deleteSubmitting"
+            submit-text="Delete"
+            variant="danger"
+            @cancel="showDeleteModal = false"
+          />
+        </form>
       </div>
     </div>
 
@@ -536,66 +495,6 @@ onMounted(async () => {
 <style scoped>
 .groups-page {
   max-width: 900px;
-}
-
-.page-description {
-  font-size: 0.875rem;
-  line-height: 1.5;
-  color: var(--text-secondary);
-  margin-bottom: 1rem;
-}
-
-@media (max-width: 768px) {
-  .page-description {
-    display: none;
-  }
-}
-
-.header-actions {
-  display: flex;
-  gap: 0.5rem;
-  margin-left: auto;
-}
-
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 1.5rem;
-}
-
-.search-input {
-  width: 260px;
-}
-
-.state-msg {
-  text-align: center;
-  padding: 3rem;
-  color: var(--text-muted);
-}
-
-.state-error {
-  color: var(--danger);
-}
-
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.875rem;
-}
-
-.data-table th {
-  text-align: left;
-  padding: 0.625rem 0.75rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border);
-}
-
-.data-table td {
-  padding: 0.625rem 0.75rem;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-primary);
 }
 
 .name-cell {

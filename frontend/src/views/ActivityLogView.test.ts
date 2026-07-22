@@ -275,31 +275,31 @@ describe('ActivityLogView', () => {
       const wrapper = mountView()
       await flushPromises()
 
-      expect(wrapper.find('.table-wrap').exists()).toBe(false)
+      expect(wrapper.find('.run-list').exists()).toBe(false)
     })
   })
 
-  describe('activity table with data', () => {
-    it('renders the table wrapper when backup rows are present', async () => {
+  describe('activity list with data', () => {
+    it('renders the run list when backup rows are present', async () => {
       setupDefaultMocks()
       const wrapper = mountView()
       await flushPromises()
 
-      expect(wrapper.find('.table-wrap').exists()).toBe(true)
+      expect(wrapper.find('.run-list').exists()).toBe(true)
       expect(wrapper.find('.empty-state').exists()).toBe(false)
     })
 
-    it('renders backup rows with hostname and target columns', async () => {
+    it('renders backup cards with hostname and target', async () => {
       setupDefaultMocks()
       const wrapper = mountView()
       await flushPromises()
 
-      const rows = wrapper.findAll('tr.log-row')
+      const rows = wrapper.findAll('.run-card:not(.run-card-system) .run-card-summary')
       expect(rows.length).toBeGreaterThan(0)
 
       const firstRow = rows[0]
-      expect(firstRow.find('.cell-host').text()).toBeTruthy()
-      expect(firstRow.find('.cell-target').text()).toBeTruthy()
+      expect(firstRow.find('.run-card-hostname').text()).toBeTruthy()
+      expect(firstRow.find('.run-card-meta').text()).toBeTruthy()
     })
 
     it('renders backup rows with status badges', async () => {
@@ -344,12 +344,12 @@ describe('ActivityLogView', () => {
       await flushPromises()
 
       const warningRows = wrapper
-        .findAll('tr.log-row')
+        .findAll('.run-card:not(.run-card-system) .run-card-summary')
         .filter(
           (r) =>
             r.find('.badge-warning').exists() &&
-            r.find('.cell-host').text() === 'web-server-01' &&
-            r.find('.cell-target').text().startsWith('/var/www'),
+            r.find('.run-card-hostname').text() === 'web-server-01' &&
+            r.find('.run-card-meta').text().startsWith('/var/www'),
         )
       expect(warningRows.length).toBeGreaterThan(0)
 
@@ -368,12 +368,12 @@ describe('ActivityLogView', () => {
       await flushPromises()
 
       const warningRows = wrapper
-        .findAll('tr.log-row')
+        .findAll('.run-card:not(.run-card-system) .run-card-summary')
         .filter(
           (r) =>
             r.find('.badge-warning').exists() &&
-            r.find('.cell-host').text() === 'web-server-01' &&
-            r.find('.cell-target').text().startsWith('/var/www'),
+            r.find('.run-card-hostname').text() === 'web-server-01' &&
+            r.find('.run-card-meta').text().startsWith('/var/www'),
         )
       await warningRows[0].trigger('click')
       await flushPromises()
@@ -394,8 +394,8 @@ describe('ActivityLogView', () => {
       const wrapper = mountView()
       await flushPromises()
 
-      const systemRows = wrapper.findAll('tr.row-system')
-      expect(systemRows.length).toBe(SYSTEM_EVENTS.length)
+      const systemCards = wrapper.findAll('.run-card-system')
+      expect(systemCards.length).toBe(SYSTEM_EVENTS.length)
     })
 
     it('renders system event messages', async () => {
@@ -403,8 +403,8 @@ describe('ActivityLogView', () => {
       const wrapper = mountView()
       await flushPromises()
 
-      const systemRows = wrapper.findAll('tr.row-system')
-      const messages = systemRows.map((r) => r.find('.cell-message').text())
+      const systemCards = wrapper.findAll('.run-card-system')
+      const messages = systemCards.map((r) => r.find('.run-card-message').text())
       expect(messages).toContain('Agent connected')
       expect(messages).toContain('Agent disconnected')
     })
@@ -418,7 +418,7 @@ describe('ActivityLogView', () => {
       await systemBtn?.trigger('click')
       await flushPromises()
 
-      const backupRows = wrapper.findAll('tr.log-row:not(.row-system)')
+      const backupRows = wrapper.findAll('.run-card:not(.run-card-system)')
       expect(backupRows.length).toBe(0)
     })
 
@@ -427,16 +427,18 @@ describe('ActivityLogView', () => {
       const wrapper = mountView()
       await flushPromises()
 
-      const systemRows = wrapper.findAll('tr.row-system')
-      expect(systemRows.length).toBeGreaterThan(0)
+      const systemCards = wrapper.findAll('.run-card-system')
+      expect(systemCards.length).toBeGreaterThan(0)
 
-      expect(wrapper.find('tr.detail-row').exists()).toBe(false)
+      expect(wrapper.find('.run-card-system .detail-panel').exists()).toBe(false)
 
-      await systemRows[0].trigger('click')
+      await systemCards[0].find('.run-card-summary').trigger('click')
       await flushPromises()
 
-      expect(wrapper.find('tr.detail-row').exists()).toBe(true)
-      expect(wrapper.find('tr.detail-row pre.error-pre').text()).toBe(SYSTEM_EVENTS[0].message)
+      expect(wrapper.find('.run-card-system .detail-panel').exists()).toBe(true)
+      expect(wrapper.find('.run-card-system .detail-panel pre.error-pre').text()).toBe(
+        SYSTEM_EVENTS[0].message,
+      )
     })
 
     it('collapses a system event row on second click', async () => {
@@ -444,14 +446,14 @@ describe('ActivityLogView', () => {
       const wrapper = mountView()
       await flushPromises()
 
-      const systemRows = wrapper.findAll('tr.row-system')
-      await systemRows[0].trigger('click')
+      const systemCards = wrapper.findAll('.run-card-system')
+      await systemCards[0].find('.run-card-summary').trigger('click')
       await flushPromises()
-      expect(wrapper.find('tr.detail-row').exists()).toBe(true)
+      expect(wrapper.find('.run-card-system .detail-panel').exists()).toBe(true)
 
-      await systemRows[0].trigger('click')
+      await systemCards[0].find('.run-card-summary').trigger('click')
       await flushPromises()
-      expect(wrapper.find('tr.detail-row').exists()).toBe(false)
+      expect(wrapper.find('.run-card-system .detail-panel').exists()).toBe(false)
     })
 
     it('adds expanded class to the clicked system event row', async () => {
@@ -459,13 +461,13 @@ describe('ActivityLogView', () => {
       const wrapper = mountView()
       await flushPromises()
 
-      const systemRows = wrapper.findAll('tr.row-system')
-      expect(systemRows[0].classes()).not.toContain('expanded')
+      const systemCards = wrapper.findAll('.run-card-system')
+      expect(systemCards[0].classes()).not.toContain('expanded')
 
-      await systemRows[0].trigger('click')
+      await systemCards[0].find('.run-card-summary').trigger('click')
       await flushPromises()
 
-      expect(systemRows[0].classes()).toContain('expanded')
+      expect(systemCards[0].classes()).toContain('expanded')
     })
   })
 
@@ -521,7 +523,7 @@ describe('ActivityLogView', () => {
       await statusSelect?.setValue('failed')
       await flushPromises()
 
-      const rows = wrapper.findAll('tr.log-row:not(.row-system)')
+      const rows = wrapper.findAll('.run-card:not(.run-card-system)')
       const nonFailedBadges = rows.filter((r) => r.find('.badge-failed').exists())
       expect(nonFailedBadges.length).toBe(rows.length)
     })
@@ -641,7 +643,7 @@ describe('ActivityLogView', () => {
       await systemBtn?.trigger('click')
       await flushPromises()
 
-      const badges = wrapper.findAll('td .badge')
+      const badges = wrapper.findAll('.run-card .badge')
       const successBadge = badges.find((b) => b.text() === 'repo sync')
       const failedBadge = badges.find((b) => b.text() === 'repo sync failed')
       expect(successBadge?.classes()).toContain('badge-success')

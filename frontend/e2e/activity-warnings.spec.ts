@@ -82,14 +82,17 @@ test('expands warning report row and shows warning messages', async ({ page }: {
   await page.goto('/activity')
   await page.waitForTimeout(1000)
 
-  const warningRow = page.locator('tr.log-row').filter({ hasText: 'warning' })
+  const warningRow = page.locator('.run-card:not(.run-card-system)').filter({ hasText: 'warning' })
   await expect(warningRow.first()).toBeVisible({ timeout: 10_000 })
 
-  await warningRow.first().click()
+  await warningRow.first().locator('.run-card-summary').click()
   await page.waitForTimeout(500)
 
   const warningText = page.locator('.status-pre.warning-pre')
   await expect(warningText).toBeVisible({ timeout: 10_000 })
   await expect(warningText).toContainText('file changed while being read')
   await expect(warningText).toContainText('slow read on /var/log/nginx/access.log')
+
+  // A warning-only report must not also render a duplicate Error box.
+  await expect(page.locator('.status-pre.error-pre')).toHaveCount(0)
 })

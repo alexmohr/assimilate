@@ -361,6 +361,24 @@ describe('HostDetailView — backups tab', () => {
 
     expect(wrapper.text()).toContain('some file changed during backup')
   })
+
+  it('pins, expands and highlights the newest report matching the status query param', async () => {
+    setupApi()
+    const wrapper = renderWithPlugins(HostDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
+    await router.push({ query: { tab: 'backups', status: 'failed' } })
+    await flushPromises()
+
+    const highlighted = wrapper.find('.result-card-highlighted')
+    expect(highlighted.exists()).toBe(true)
+    expect(highlighted.classes()).toContain('result-failed')
+    expect(wrapper.text()).toContain('Connection refused')
+  })
 })
 
 describe('HostDetailView — schedules tab', () => {
@@ -438,6 +456,79 @@ describe('HostDetailView — schedules tab', () => {
     await openSchedulesTab(wrapper)
 
     expect(wrapper.text()).toContain('No schedules for this agent.')
+  })
+
+  function setupApiWithHealth(
+    schedules: unknown[],
+    health: unknown[],
+    reports: unknown[] = [],
+  ): void {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
+      if (url === '/agents/test-host/repos')
+        return Promise.resolve({ data: [{ id: 10, name: 'shared-repo' }] })
+      if (url === '/schedules') return Promise.resolve({ data: schedules })
+      if (url === '/agents/test-host/reports') return Promise.resolve({ data: reports })
+      if (url === '/stats/health') return Promise.resolve({ data: health })
+      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
+      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+  }
+
+  const overdueSchedule = [
+    {
+      id: 1,
+      repo_id: 10,
+      name: 'Nightly Backup',
+      target_hostnames: ['test-host'],
+      schedule_type: 'backup',
+      cron_expression: '0 2 * * *',
+      enabled: true,
+      next_run_at: null,
+    },
+  ]
+
+  const overdueHealth = [
+    {
+      schedule_id: 1,
+      hostname: 'test-host',
+      target_name: 'shared-repo',
+      last_status: 'success',
+      last_backup_at: '2026-01-01T00:00:00Z',
+      is_overdue: true,
+      last_error_message: null,
+      cron_expression: '0 2 * * *',
+      schedule_enabled: true,
+    },
+  ]
+
+  it('shows an Overdue health badge on a schedule with no recent run', async () => {
+    setupApiWithHealth(overdueSchedule, overdueHealth)
+    const wrapper = renderWithPlugins(HostDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await openSchedulesTab(wrapper)
+
+    expect(wrapper.find('.health-badge').text()).toBe('Overdue')
+    expect(wrapper.find('.schedule-card').classes()).not.toContain('schedule-card-highlighted')
+  })
+
+  it('highlights overdue schedule cards when the health=overdue query param is set', async () => {
+    setupApiWithHealth(overdueSchedule, overdueHealth)
+    const wrapper = renderWithPlugins(HostDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
+    await router.push({ query: { tab: 'schedules', health: 'overdue' } })
+    await flushPromises()
+
+    expect(wrapper.find('.schedule-card').classes()).toContain('schedule-card-highlighted')
   })
 })
 

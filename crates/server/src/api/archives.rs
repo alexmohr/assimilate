@@ -932,9 +932,9 @@ pub async fn list_contents(
         Some(IndexStatus::Failed) => {
             // Fall through to the borg-based path below so browsing still works.
         }
-        Some(IndexStatus::Pending | IndexStatus::Indexing) => {
+        Some(status @ (IndexStatus::Pending | IndexStatus::Indexing)) => {
             return Ok(Json(ContentsResponse {
-                index_status: IndexStatus::Pending,
+                index_status: status,
                 entries: vec![],
             }));
         }

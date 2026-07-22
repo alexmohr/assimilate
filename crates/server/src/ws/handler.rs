@@ -16,7 +16,7 @@ use futures_util::{
 };
 use shared::{
     protocol::{AgentToServer, ServerToAgent, ServerToUi},
-    types::{ScheduleType, SystemEventType},
+    types::{BackupStatus, ScheduleType, SystemEventType},
 };
 use sqlx::PgPool;
 use tokio::sync::mpsc;
@@ -1289,7 +1289,7 @@ async fn persist_backup_completed_report(
     state: &AppState,
     hostname: &str,
     agent_id: i64,
-    status: &str,
+    status: BackupStatus,
     report: shared::types::BackupReport,
 ) -> bool {
     let params = db::InsertReportParams {
@@ -1298,7 +1298,7 @@ async fn persist_backup_completed_report(
         schedule_id: report.schedule_id,
         started_at: report.started_at,
         finished_at: report.finished_at,
-        status: status.parse().unwrap_or_default(),
+        status,
         original_size: report.original_size,
         compressed_size: report.compressed_size,
         deduplicated_size: report.deduplicated_size,
@@ -1382,11 +1382,6 @@ async fn handle_backup_completed(
     let report_status = report.status;
 
     let outcome_success = !matches!(report_status, shared::types::BackupStatus::Failed);
-    let status = match report_status {
-        shared::types::BackupStatus::Success => "success",
-        shared::types::BackupStatus::Warning => "warning",
-        shared::types::BackupStatus::Failed => "failed",
-    };
     state.completion_bus.publish(OperationOutcome {
         hostname: hostname.to_owned(),
         repo_id,
@@ -1402,7 +1397,9 @@ async fn handle_backup_completed(
     );
 
     let report_persisted =
-        persist_backup_completed_report(state, hostname, agent_id, status, report).await;
+        persist_backup_completed_report(state, hostname, agent_id, report_status, report).await;
+
+    let status_str = &report_status.to_string();
 
     handle_post_backup_report_side_effects(
         state,
@@ -1445,7 +1442,7 @@ async fn handle_backup_completed(
         report_status,
         hostname,
         repo_name,
-        status,
+        status_str,
         notification_error_message,
         repo_id,
         agent_id,

@@ -363,7 +363,7 @@ api POST "/api/schedules" "{
 # "looks fine but the badge says Overdue" scenario the toggle exists to
 # explain. No error_message on the report, since this host's problem is
 # staleness, not a failure.
-PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL
 INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, status, archive_name)
 SELECT $STALE_REPORT_ID, $REPO_DAILY_ID, s.id,
        NOW() - interval '4 days' - interval '5 minutes', NOW() - interval '4 days',
@@ -375,6 +375,17 @@ SET last_run_at = NOW() - interval '2 hours',
     next_run_at = NOW() + interval '10 hours'
 WHERE name = 'Stale nightly report';
 SQL
+
+# Fail loudly here rather than leaving the Retry-button e2e test to fail with
+# a confusing "Overdue badge never appeared" 20+ minutes later - this makes a
+# silently-empty INSERT (e.g. no schedule matched the SELECT) diagnosable
+# from the seed step itself instead of guessed at from a downstream test.
+STALE_REPORT_COUNT=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc \
+    "SELECT COUNT(*) FROM backup_reports WHERE agent_id = $STALE_REPORT_ID AND archive_name = 'stale-report-01-backup-old'")
+if [ "$STALE_REPORT_COUNT" != "1" ]; then
+    echo "expected exactly 1 backdated backup_reports row for stale-report-01, found $STALE_REPORT_COUNT" >&2
+    exit 1
+fi
 
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
 UPDATE backup_reports br

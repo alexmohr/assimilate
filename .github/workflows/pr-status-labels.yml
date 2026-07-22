@@ -76,4 +76,8 @@ jobs:
               prNumber: Number("${{ steps.pr.outputs.number }}"),
               eventAction: context.payload.action,
               selfCheckNames: ["Sync PR status labels"],
+              // Off unless explicitly turned on (Settings -> Secrets and
+              // variables -> Actions -> Variables -> AUTO_MERGE_ENABLED =
+              // "true") - see skills/review/SKILL.md's "Auto-merge" section.
+              autoMergeEnabled: "${{ vars.AUTO_MERGE_ENABLED }}" === "true",
             });

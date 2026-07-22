@@ -495,7 +495,21 @@ async function createGateCheck(github, owner, repo, headSha, status, summary, pe
   });
 }
 
-module.exports = async ({ github, context, core, prNumber, eventAction, selfCheckNames = [] }) => {
+module.exports = async ({
+  github,
+  context,
+  core,
+  prNumber,
+  eventAction,
+  selfCheckNames = [],
+  // Off by default - flip the AUTO_MERGE_ENABLED repo/environment variable
+  // to `true` once the pipeline has earned enough trust to merge PRs with
+  // no human clicking the button. Every gate below (ready to merge, a
+  // genuine approval, the label-provenance check) still runs and gets
+  // logged either way, so turning this on later is a config change, not a
+  // code change - see the "Auto-merge" section in skills/review/SKILL.md.
+  autoMergeEnabled = false,
+}) => {
   const owner = context.repo.owner;
   const repo = context.repo.repo;
 
@@ -685,15 +699,50 @@ module.exports = async ({ github, context, core, prNumber, eventAction, selfChec
       excludeNames: [...selfCheckNames, GATE_CHECK_NAME],
       timeoutMs: 0,
     });
-    if (completeness.completed && completeness.ok) {
+    // waitForAllChecks only reports on check runs that already exist - it
+    // can't tell "hasn't even been created yet" apart from "there was
+    // nothing to wait for", so a check that simply hasn't started registering
+    // yet is silently treated as if it had already passed. Concretely: this
+    // job's own sync can finish and see zero pending checks a full instant
+    // before coverage-diff-check.yml/duplicate-code-check.yml have even been
+    // scheduled by GitHub Actions (both trigger off this exact same
+    // workflow_run: CI completed event, with no ordering guarantee between
+    // them or this job - see skills/review/SKILL.md), wrongly granting
+    // ready-to-merge before either has assessed this commit at all. Confirmed
+    // live on PR #373: a stale `coverage failed` label sat alongside a
+    // passing "Coverage Diff Check" run for hours with no fresh sync to
+    // reconcile them. Requiring both named checks to have actually completed
+    // for this exact head sha (any conclusion - completeness.ok above already
+    // covers their pass/fail once they exist) closes that gap without
+    // needing to know every check's name up front, the same way
+    // labelReflectsCurrentCommit already guards the opposite direction (a
+    // failing label stale from a prior commit).
+    const coverageChecked = await labelReflectsCurrentCommit(
+      github,
+      owner,
+      repo,
+      pr.head.sha,
+      COVERAGE_DIFF_CHECK_NAME,
+    );
+    const duplicateChecked = await labelReflectsCurrentCommit(
+      github,
+      owner,
+      repo,
+      pr.head.sha,
+      DUPLICATE_CODE_CHECK_NAME,
+    );
+    if (completeness.completed && completeness.ok && coverageChecked && duplicateChecked) {
       status = STATUS_LABELS.READY_TO_MERGE;
       summary = "CI is green — ready to merge.";
-    } else if (completeness.completed) {
+    } else if (completeness.completed && !completeness.ok) {
       status = STATUS_LABELS.NEEDS_REVIEW;
       summary = `CI is green, but another check is failing: ${completeness.failed.join(", ")}.`;
     } else {
       status = STATUS_LABELS.NEEDS_REVIEW;
-      summary = `CI is green, but still waiting on: ${completeness.pending.join(", ")}.`;
+      const stillWaiting = new Set(completeness.completed ? [] : completeness.pending);
+      if (!coverageChecked) stillWaiting.add(COVERAGE_DIFF_CHECK_NAME);
+      if (!duplicateChecked) stillWaiting.add(DUPLICATE_CODE_CHECK_NAME);
+      summary = `CI is green, but still waiting on: ${[...stillWaiting].join(", ")}.`;
       pending = true;
     }
   } else {
@@ -757,7 +806,11 @@ module.exports = async ({ github, context, core, prNumber, eventAction, selfChec
         `PR #${prNumber}: claude-approved is present but wasn't applied by ${TRUSTED_AUTOMATION_LOGIN} - not auto-merging.`,
       );
     }
-    if (approved) {
+    if (approved && !autoMergeEnabled) {
+      core.info(
+        `PR #${prNumber}: ready to merge with a genuine approval, but AUTO_MERGE_ENABLED is off - leaving it for a human to merge.`,
+      );
+    } else if (approved) {
       await autoMergeIfApproved(github, core, owner, repo, prNumber, pr);
     }
   }

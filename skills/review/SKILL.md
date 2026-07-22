@@ -77,6 +77,20 @@ still worth doing and still worth requesting via the normal flow (Workflow
 section above) — an explicit `changes requested` verdict still blocks the
 gate the same as any other failing precheck.
 
+`ready to merge` also requires `coverage-diff-check.yml` and
+`duplicate-code-check.yml` to have each actually **completed** a check run
+on this exact commit — not merely that neither's failure label is currently
+set. Both trigger off the same `workflow_run: CI completed` event
+`pr-status-labels.yml` itself reacts to, with no ordering guarantee between
+any of them (see "How Claude's gate uses them" below) — a check that simply
+hasn't been scheduled yet is indistinguishable from "nothing to wait for"
+to a snapshot that only looks at checks which already exist, so without
+this, `sync-pr-labels.js` could grant `ready to merge` in the instant
+before either stage has even started analyzing the commit. Confirmed live
+on PR #373: a stale `coverage failed` label sat next to an already-passing
+"Coverage Diff Check" run for hours with no fresh sync ever reconciling
+them, exactly the kind of inconsistency this guards against.
+
 `coverage failed` and `duplicate code` are two independent stages and can
 both be present on a PR at once — neither erases the other. Each owns its
 own add/remove lifecycle end to end in its own script
@@ -284,6 +298,18 @@ one-time, repo-owner-only change — agents must not attempt to modify branch
 protection themselves.
 
 ### Auto-merge (deterministic, not agent-driven)
+
+**Currently disabled by default**, gated behind the `AUTO_MERGE_ENABLED`
+repository (or environment) Actions variable — set it to the literal
+string `true` (Settings → Secrets and variables → Actions → Variables) to
+turn it on. It defaults off because merging code with no human clicking a
+button deserves the pipeline having actually earned that trust first, not
+because the mechanism itself is provisional — every gate described below
+(ready to merge, a genuine approval, the label-provenance check) runs and
+logs its decision regardless of the flag; turning it on later is purely a
+config change; no code change needed. See
+[#390](https://github.com/alexmohr/assimilate/issues/390) for what should
+be true before flipping it.
 
 The same `sync-pr-labels.js` run that computes `ready to merge` also
 squash-merges the PR itself (`--delete-branch` for same-repo branches) the

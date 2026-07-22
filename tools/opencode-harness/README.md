@@ -75,10 +75,12 @@ asked to edit files.
 4. From there the repo's own automation takes back over: CI runs,
    `pr-status-labels.yml` re-syncs labels and `claude-review.yml` reviews;
    once the result is `ready to merge` with a genuine approval and no
-   `needs human review` label, `pr-status-labels.yml` itself squash-merges
-   it deterministically (see `skills/review/SKILL.md`'s "Auto-merge"
-   section). The harness never merges anything itself. It just polls; once
-   a PR is merged or closed it moves to the next one.
+   `needs human review` label, `pr-status-labels.yml` can squash-merge it
+   deterministically (see `skills/review/SKILL.md`'s "Auto-merge" section) -
+   currently disabled by default pending
+   [#390](https://github.com/alexmohr/assimilate/issues/390), so until then
+   a human still clicks merge. The harness never merges anything itself. It
+   just polls; once a PR is merged or closed it moves to the next one.
 5. If the *same* underlying problem (same failing-check content, same
    review comments, etc.) survives `HARNESS_MAX_STUCK_CYCLES` push attempts,
    the harness stops touching that PR: it adds its own

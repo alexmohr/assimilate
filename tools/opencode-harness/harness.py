@@ -268,6 +268,20 @@ def _resolve_conflicts(cfg: Config) -> RebaseOutcome:
     problem base has already fixed (e.g. a since-patched dependency), which
     only actually rebasing picks up. When the branch is already current,
     `git rebase` is a no-op, so this is always safe to call.
+
+    Retries up to `cfg.max_local_validation_attempts` times, feeding the
+    actual failure back into the prompt each time - same budget and pattern
+    `run_fix_and_validate` uses for every other kind of fix. Giving up after
+    a single opencode call (the original behavior here) meant a merge
+    conflict got exactly one shot before the PR was marked
+    `opencode-harness-stuck`, unlike a CI failure or review comment, which
+    both get several - confirmed live on PR #335, stuck on "could not
+    resolve merge conflicts" twice, ~12 hours apart, each apparently after
+    only one attempt. A failed `git rebase --continue` deliberately does NOT
+    abort the rebase before retrying (see git_ops.continue_rebase) - the
+    mid-rebase state, conflict markers included, is exactly what the next
+    opencode call needs to see to make further progress; only the final,
+    exhausted attempt aborts.
     """
     ok, status = git_ops.rebase_onto(cfg.repo_dir, cfg.base_branch)
     if ok:
@@ -276,17 +290,48 @@ def _resolve_conflicts(cfg: Config) -> RebaseOutcome:
         f"Resolve the git rebase conflicts in this repository (rebasing onto "
         f"{cfg.base_branch}).\n\n`git status` output:\n\n{status}\n\n" + prompts.COMMON_RULES
     )
-    result = opencode_runner.run_opencode(
-        prompt, cfg.repo_dir, cfg.opencode_model, cfg.opencode_timeout_seconds
-    )
-    if not result.ok:
-        git_ops.abort_rebase(cfg.repo_dir)
-        return RebaseOutcome.FAILED
-    ok, _ = git_ops.continue_rebase(cfg.repo_dir, cfg.base_branch)
-    if not ok:
-        git_ops.abort_rebase(cfg.repo_dir)
-        return RebaseOutcome.FAILED
-    return RebaseOutcome.RESOLVED_BY_OPENCODE
+    attempt = 0
+    while True:
+        attempt += 1
+        result = opencode_runner.run_opencode(
+            prompt, cfg.repo_dir, cfg.opencode_model, cfg.opencode_timeout_seconds
+        )
+        if not result.ok:
+            if attempt >= cfg.max_local_validation_attempts:
+                log.warning(
+                    "conflict resolution: opencode run failed (attempt %d/%d), giving up: %s",
+                    attempt,
+                    cfg.max_local_validation_attempts,
+                    result.output[:500],
+                )
+                git_ops.abort_rebase(cfg.repo_dir)
+                return RebaseOutcome.FAILED
+            log.info(
+                "conflict resolution: opencode run failed (attempt %d/%d), retrying",
+                attempt,
+                cfg.max_local_validation_attempts,
+            )
+            prompt = prompts.build_retry_prompt(
+                prompt, "opencode conflict resolution", result.output
+            )
+            continue
+
+        ok, continue_status = git_ops.continue_rebase(cfg.repo_dir, cfg.base_branch)
+        if ok:
+            return RebaseOutcome.RESOLVED_BY_OPENCODE
+        if attempt >= cfg.max_local_validation_attempts:
+            log.warning(
+                "conflict resolution: rebase --continue still failing after %d attempts, giving up",
+                attempt,
+            )
+            git_ops.abort_rebase(cfg.repo_dir)
+            return RebaseOutcome.FAILED
+        log.info(
+            "conflict resolution: rebase --continue still failing (attempt %d/%d), retrying",
+            attempt,
+            cfg.max_local_validation_attempts,
+        )
+        prompt = prompts.build_retry_prompt(prompt, "git rebase --continue", continue_status)
 
 
 def _commit_message_for(pr: PrDetail, cfg: Config) -> str:

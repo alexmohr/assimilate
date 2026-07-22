@@ -4,11 +4,11 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { Plus, Trash2 } from '@lucide/vue'
 import { apiClient } from '../api/client'
 import { extractError } from '../utils/error'
 import { useAsyncAction } from '../composables/useAsyncAction'
-import { Plus, Trash2 } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 
 interface Role {
@@ -67,50 +67,45 @@ const roles = ref<Role[]>([])
 const { loading, error, run } = useAsyncAction('Failed to load roles')
 loading.value = true
 
+function emptyPerms(): Record<PermissionKey, boolean> {
+  return {
+    can_create_agent: false,
+    can_delete_agent: false,
+    can_delete_own_agent: false,
+    can_create_repo: false,
+    can_delete_repo: false,
+    can_delete_own_repo: false,
+    can_create_schedule: false,
+    can_delete_schedule: false,
+    can_delete_own_schedule: false,
+    can_manage_tags: false,
+    can_view_all_repos: false,
+    can_manage_tunnels: false,
+    can_upgrade_agent: false,
+  }
+}
+
 const showCreateModal = ref(false)
 const createForm = ref<{ name: string } & Record<PermissionKey, boolean>>({
   name: '',
-  can_create_agent: false,
-  can_delete_agent: false,
-  can_delete_own_agent: false,
-  can_create_repo: false,
-  can_delete_repo: false,
-  can_delete_own_repo: false,
-  can_create_schedule: false,
-  can_delete_schedule: false,
-  can_delete_own_schedule: false,
-  can_manage_tags: false,
-  can_view_all_repos: false,
-  can_manage_tunnels: false,
-  can_upgrade_agent: false,
+  ...emptyPerms(),
 })
 const createError = ref<string | null>(null)
-const createSubmitting = ref(false)
-
 const showEditModal = ref(false)
 const editTarget = ref<Role | null>(null)
-const editForm = ref<Record<PermissionKey, boolean>>({
-  can_create_agent: false,
-  can_delete_agent: false,
-  can_delete_own_agent: false,
-  can_create_repo: false,
-  can_delete_repo: false,
-  can_delete_own_repo: false,
-  can_create_schedule: false,
-  can_delete_schedule: false,
-  can_delete_own_schedule: false,
-  can_manage_tags: false,
-  can_view_all_repos: false,
-  can_manage_tunnels: false,
-  can_upgrade_agent: false,
-})
+const createSubmitting = ref(false)
+
+const editForm = ref<Record<PermissionKey, boolean>>(emptyPerms())
 const editError = ref<string | null>(null)
 const editSubmitting = ref(false)
 
 const showDeleteModal = ref(false)
 const deleteTarget = ref<Role | null>(null)
-const deleteSubmitting = ref(false)
-const deleteError = ref<string | null>(null)
+const {
+  loading: deleteSubmitting,
+  error: deleteError,
+  run: runDelete,
+} = useAsyncAction('Failed to delete role')
 
 const filterText = ref('')
 
@@ -136,22 +131,7 @@ async function fetchRoles(): Promise<void> {
 }
 
 function openCreate(): void {
-  createForm.value = {
-    name: '',
-    can_create_agent: false,
-    can_delete_agent: false,
-    can_delete_own_agent: false,
-    can_create_repo: false,
-    can_delete_repo: false,
-    can_delete_own_repo: false,
-    can_create_schedule: false,
-    can_delete_schedule: false,
-    can_delete_own_schedule: false,
-    can_manage_tags: false,
-    can_view_all_repos: false,
-    can_manage_tunnels: false,
-    can_upgrade_agent: false,
-  }
+  createForm.value = { name: '', ...emptyPerms() }
   createError.value = null
   showCreateModal.value = true
 }
@@ -164,22 +144,7 @@ async function submitCreate(): Promise<void> {
   createSubmitting.value = true
   createError.value = null
   try {
-    await apiClient.post('/roles', {
-      name: createForm.value.name.trim(),
-      can_create_agent: createForm.value.can_create_agent,
-      can_delete_agent: createForm.value.can_delete_agent,
-      can_delete_own_agent: createForm.value.can_delete_own_agent,
-      can_create_repo: createForm.value.can_create_repo,
-      can_delete_repo: createForm.value.can_delete_repo,
-      can_delete_own_repo: createForm.value.can_delete_own_repo,
-      can_create_schedule: createForm.value.can_create_schedule,
-      can_delete_schedule: createForm.value.can_delete_schedule,
-      can_delete_own_schedule: createForm.value.can_delete_own_schedule,
-      can_manage_tags: createForm.value.can_manage_tags,
-      can_view_all_repos: createForm.value.can_view_all_repos,
-      can_manage_tunnels: createForm.value.can_manage_tunnels,
-      can_upgrade_agent: createForm.value.can_upgrade_agent,
-    })
+    await apiClient.post('/roles', createForm.value)
     showCreateModal.value = false
     await fetchRoles()
   } catch (e: unknown) {
@@ -191,21 +156,11 @@ async function submitCreate(): Promise<void> {
 
 function openEdit(role: Role): void {
   editTarget.value = role
-  editForm.value = {
-    can_create_agent: role.can_create_agent,
-    can_delete_agent: role.can_delete_agent,
-    can_delete_own_agent: role.can_delete_own_agent,
-    can_create_repo: role.can_create_repo,
-    can_delete_repo: role.can_delete_repo,
-    can_delete_own_repo: role.can_delete_own_repo,
-    can_create_schedule: role.can_create_schedule,
-    can_delete_schedule: role.can_delete_schedule,
-    can_delete_own_schedule: role.can_delete_own_schedule,
-    can_manage_tags: role.can_manage_tags,
-    can_view_all_repos: role.can_view_all_repos,
-    can_manage_tunnels: role.can_manage_tunnels,
-    can_upgrade_agent: role.can_upgrade_agent,
+  const perms = emptyPerms()
+  for (const key of Object.keys(perms) as PermissionKey[]) {
+    perms[key] = role[key]
   }
+  editForm.value = perms
   editError.value = null
   showEditModal.value = true
 }
@@ -215,7 +170,7 @@ async function submitEdit(): Promise<void> {
   editSubmitting.value = true
   editError.value = null
   try {
-    await apiClient.put(`/roles/${editTarget.value.id}`, editForm.value)
+    await apiClient.put(`/roles/${editTarget.value.id}`, { ...editForm.value })
     showEditModal.value = false
     await fetchRoles()
   } catch (e: unknown) {
@@ -232,27 +187,24 @@ function openDelete(role: Role): void {
 }
 
 async function confirmDelete(): Promise<void> {
-  if (!deleteTarget.value) return
-  deleteSubmitting.value = true
-  deleteError.value = null
-  try {
-    await apiClient.delete(`/roles/${deleteTarget.value.id}`)
+  const target = deleteTarget.value
+  if (!target) return
+  await runDelete(async () => {
+    await apiClient.delete(`/roles/${target.id}`)
     showDeleteModal.value = false
     await fetchRoles()
-  } catch (e: unknown) {
-    deleteError.value = extractError(e, 'Failed to delete role')
-  } finally {
-    deleteSubmitting.value = false
-  }
+  })
 }
 
-onMounted(fetchRoles)
+onMounted((): void => {
+  void fetchRoles()
+})
 </script>
 
 <template>
   <div class="roles-page">
     <div class="page-header">
-      <h1 class="page-title">Roles</h1>
+      <span class="page-title">Roles</span>
       <div class="header-actions">
         <button
           class="btn btn-primary"
@@ -449,20 +401,7 @@ onMounted(fetchRoles)
               <span>{{ perm.label }}</span>
             </label>
           </div>
-          <div
-            v-if="editError"
-            class="modal-error"
-          >
-            {{ editError }}
-          </div>
           <div class="modal-actions">
-            <button
-              type="button"
-              class="btn btn-ghost"
-              @click="showEditModal = false"
-            >
-              Cancel
-            </button>
             <button
               type="submit"
               class="btn btn-primary"
@@ -470,6 +409,19 @@ onMounted(fetchRoles)
             >
               {{ editSubmitting ? 'Saving...' : 'Save' }}
             </button>
+            <button
+              type="button"
+              class="btn btn-ghost"
+              @click="showEditModal = false"
+            >
+              Cancel
+            </button>
+          </div>
+          <div
+            v-if="editError"
+            class="modal-error"
+          >
+            {{ editError }}
           </div>
         </form>
       </div>
@@ -487,19 +439,7 @@ onMounted(fetchRoles)
           Are you sure you want to delete the role <strong>{{ deleteTarget?.name }}</strong
           >? Users assigned this role will lose its permissions.
         </p>
-        <div
-          v-if="deleteError"
-          class="modal-error"
-        >
-          {{ deleteError }}
-        </div>
         <div class="modal-actions">
-          <button
-            class="btn btn-ghost"
-            @click="showDeleteModal = false"
-          >
-            Cancel
-          </button>
           <button
             class="btn btn-danger"
             :disabled="deleteSubmitting"
@@ -507,6 +447,18 @@ onMounted(fetchRoles)
           >
             {{ deleteSubmitting ? 'Deleting...' : 'Delete' }}
           </button>
+          <button
+            class="btn btn-ghost"
+            @click="showDeleteModal = false"
+          >
+            Cancel
+          </button>
+        </div>
+        <div
+          v-if="deleteError"
+          class="modal-error"
+        >
+          {{ deleteError }}
         </div>
       </div>
     </div>
@@ -516,46 +468,6 @@ onMounted(fetchRoles)
 <style scoped>
 .roles-page {
   max-width: 1200px;
-}
-
-.page-description {
-  font-size: 0.875rem;
-  line-height: 1.5;
-  color: var(--text-secondary);
-  margin-bottom: 1rem;
-}
-
-@media (max-width: 768px) {
-  .page-description {
-    display: none;
-  }
-}
-
-.header-actions {
-  display: flex;
-  gap: 0.5rem;
-  margin-left: auto;
-}
-
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 1.5rem;
-}
-
-.search-input {
-  width: 260px;
-}
-
-.state-msg {
-  text-align: center;
-  padding: 3rem;
-  color: var(--text-muted);
-}
-
-.state-error {
-  color: var(--danger);
 }
 
 .matrix-wrap {
@@ -664,57 +576,8 @@ onMounted(fetchRoles)
   justify-content: flex-end;
 }
 
-.modal {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.5rem;
-  width: 100%;
-  max-width: 400px;
-  box-shadow: var(--shadow-lg);
-}
-
 .modal-wide {
   max-width: 550px;
-}
-
-.modal h2 {
-  font-size: 1.05rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0 0 1rem;
-}
-
-.modal-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.form-group label {
-  font-size: 0.8125rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.form-group input {
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-input);
-  color: var(--text-primary);
-  font-size: 0.875rem;
-}
-
-.form-group input:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 
 .permissions-grid {
@@ -739,27 +602,5 @@ onMounted(fetchRoles)
 .perm-checkbox input[type='checkbox'] {
   accent-color: var(--accent);
   cursor: pointer;
-}
-
-.modal-error {
-  font-size: 0.8125rem;
-  color: var(--danger);
-  padding: 0.5rem 0.75rem;
-  background: var(--danger-subtle);
-  border-radius: var(--radius-sm);
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
-}
-
-.confirm-text {
-  line-height: 1.6;
-  font-size: 0.875rem;
-  color: var(--text-secondary);
-  margin-bottom: 0.5rem;
 }
 </style>

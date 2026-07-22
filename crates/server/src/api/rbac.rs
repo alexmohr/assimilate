@@ -109,7 +109,7 @@ pub struct RolePermissionFields {
     pub can_upgrade_agent: bool,
 }
 
-/// Request payload for creating a new role.
+/// Holds role name and flattened permission fields for create/update operations.
 #[derive(Debug, Deserialize)]
 pub struct CreateRoleRequest {
     /// Role name.
@@ -119,11 +119,9 @@ pub struct CreateRoleRequest {
     pub perms: RolePermissionFields,
 }
 
-/// Request payload for updating a role. Shares the same shape as
-/// [`CreateRoleRequest`] - both are flattened around [`RolePermissionFields`].
+/// Request payload for updating a role: same shape as [`CreateRoleRequest`].
 pub type UpdateRoleRequest = CreateRoleRequest;
-
-/// Request payload for setting a user's role assignments.
+/// Request body for setting a user's role assignments.
 #[derive(Debug, Deserialize)]
 pub struct SetUserRolesRequest {
     /// Role IDs to assign to the user.
@@ -275,6 +273,7 @@ fn build_role_params<'a>(
             "role name must not be empty".to_string(),
         ));
     }
+    // Populate all permission fields from the request
     Ok(db::InsertRoleParams {
         name,
         can_create_agent: perms.can_create_agent,
@@ -327,9 +326,11 @@ pub async fn update_role(
 const PROTECTED_ROLE_NAMES: &[&str] = &["admin", "operator", "viewer"];
 
 /// Delete a role (admin only). Built-in roles cannot be deleted.
+///
 /// # Errors
-/// [`ApiError::NotFound`] if the role does not exist.
-/// [`ApiError::BadRequest`] if the role is built-in.
+///
+/// - [`ApiError::NotFound`] if the role does not exist.
+/// - [`ApiError::BadRequest`] if the role is built-in.
 pub async fn delete_role(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -353,7 +354,7 @@ pub async fn delete_role(
 ///
 /// # Errors
 ///
-/// Returns an error if the underlying database operation fails.
+/// Returns an error if the underlying database query fails.
 pub async fn list_user_roles(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,

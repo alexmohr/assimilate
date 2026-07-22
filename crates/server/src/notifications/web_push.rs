@@ -52,7 +52,8 @@ pub async fn send(
         .ok_or_else(|| NotificationError::Config("push endpoint URL has no host".to_string()))?;
     let port = url.port_or_known_default().unwrap_or(443);
 
-    let resolve_map = addrs.iter().fold(ResolveMap::new(), |map, addr| {
+    let pinned_addrs = reachable_addrs(addrs).await;
+    let resolve_map = pinned_addrs.iter().fold(ResolveMap::new(), |map, addr| {
         map.add(host, port, addr.ip())
     });
 
@@ -108,6 +109,48 @@ fn describe_transport_error(error: &isahc::Error) -> String {
         source = err.source();
     }
     description
+}
+
+/// Filters `addrs` down to the ones a real TCP connect can actually reach, probed
+/// concurrently. Exists because pinning every DNS-resolved address (including ones from an
+/// unreachable address family) via `CURLOPT_RESOLVE` does not reliably fall back to a
+/// working address the way curl's own default resolver does: an IPv6 candidate that fails
+/// with a *synchronous* "network unreachable" (no outbound IPv6 route, as opposed to an
+/// async connect timeout) can make the whole pinned request fail outright instead of
+/// falling through to a working IPv4 address -- confirmed against a real deployment where
+/// a plain `curl` with no `--resolve` override succeeded by trying every DNS-returned
+/// candidate itself, while our DNS-pinned client failed completely with the exact same
+/// candidate set. Probing first and pinning only what's verified reachable sidesteps
+/// whatever curl-internal difference causes that. Falls back to the full, unfiltered list
+/// if nothing responds (e.g. every candidate is genuinely down or this probe itself is
+/// blocked), so the real request still gets attempted and produces a normal, diagnosable
+/// failure instead of silently being skipped. Single-address lists skip the probe
+/// entirely -- there's no fallback candidate to select between.
+async fn reachable_addrs(addrs: &[SocketAddr]) -> Vec<SocketAddr> {
+    if addrs.len() <= 1 {
+        return addrs.to_vec();
+    }
+
+    let checked: Vec<(SocketAddr, bool)> =
+        futures_util::future::join_all(addrs.iter().map(|&addr| async move {
+            let reachable = matches!(
+                tokio::time::timeout(PROBE_TIMEOUT, tokio::net::TcpStream::connect(addr)).await,
+                Ok(Ok(_))
+            );
+            (addr, reachable)
+        }))
+        .await;
+
+    let reachable: Vec<SocketAddr> = checked
+        .into_iter()
+        .filter_map(|(addr, ok)| ok.then_some(addr))
+        .collect();
+
+    if reachable.is_empty() {
+        addrs.to_vec()
+    } else {
+        reachable
+    }
 }
 
 /// Runs a bare TCP connect against *every* pinned address used for the failed isahc/curl
@@ -325,5 +368,51 @@ mod tests {
             probe.contains("timed out"),
             "expected a timeout description, got: {probe}"
         );
+    }
+
+    /// The exact bug this exists to fix: given a mix of reachable and unreachable
+    /// candidates (e.g. working IPv4 alongside IPv6 with no outbound route), only the
+    /// reachable one(s) should end up pinned.
+    #[tokio::test]
+    async fn reachable_addrs_filters_out_unreachable_candidates() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let good_addr = listener.local_addr().unwrap();
+        let accept = tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+        let bad_addr = SocketAddr::from(([127, 0, 0, 1], 1));
+
+        let result = reachable_addrs(&[bad_addr, good_addr]).await;
+        accept.await.unwrap();
+
+        assert_eq!(result, vec![good_addr]);
+    }
+
+    /// If every candidate is genuinely unreachable, fall back to the full list instead of
+    /// pinning an empty resolve map -- the real request still gets attempted (and produces
+    /// a normal, diagnosable failure) rather than being silently skipped.
+    #[tokio::test]
+    async fn reachable_addrs_falls_back_to_full_list_when_nothing_responds() {
+        let addrs = vec![
+            SocketAddr::from(([127, 0, 0, 1], 1)),
+            SocketAddr::from(([127, 0, 0, 1], 2)),
+        ];
+
+        let result = reachable_addrs(&addrs).await;
+
+        assert_eq!(result, addrs);
+    }
+
+    /// A single-address list has no fallback candidate to select between, so the probe is
+    /// skipped entirely and the address is returned as-is, reachable or not.
+    #[tokio::test]
+    async fn reachable_addrs_skips_the_probe_for_a_single_address() {
+        let addr = SocketAddr::from(([127, 0, 0, 1], 1));
+        assert_eq!(reachable_addrs(&[addr]).await, vec![addr]);
+    }
+
+    #[tokio::test]
+    async fn reachable_addrs_returns_empty_for_an_empty_list() {
+        assert_eq!(reachable_addrs(&[]).await, Vec::<SocketAddr>::new());
     }
 }

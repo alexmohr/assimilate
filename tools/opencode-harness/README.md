@@ -120,7 +120,11 @@ asked to edit files.
    (see step 1's `HARNESS_FALLBACK_TO_ISSUES`), it picks the newest open
    issue, implements it on a new `opencode/issue-<n>` branch using the same
    fix-and-validate loop, and opens a PR — which flows back into step 1 on
-   the next cycle.
+   the next cycle. An issue stays open (and so keeps showing up as a
+   candidate) until the PR that closes it actually *merges*, not just once
+   one is opened - the harness checks for an already-open PR against that
+   issue's branch first and skips it if one exists, rather than trying to
+   open a second one.
 
 ## Requirements
 

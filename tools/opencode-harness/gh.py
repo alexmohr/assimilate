@@ -230,6 +230,36 @@ def label_name(label: Any) -> str:
     return label["name"] if isinstance(label, dict) else str(label)
 
 
+def find_open_pr_for_branch(repo: str, branch: str) -> int | None:
+    """The open PR number with `branch` as its head, if one already exists.
+
+    Used before implementing an issue: an open issue stays open until the PR
+    that closes it actually *merges*, not just once one is opened - so
+    without this check, the same issue can be picked (again) on a later
+    cycle or an explicit `--issue N` re-run and blow up at `gh pr create`
+    with "a pull request already exists for this branch", instead of simply
+    recognizing there's already an open PR and leaving it alone.
+    """
+    raw = _run_json(
+        [
+            "gh",
+            "pr",
+            "list",
+            "--repo",
+            repo,
+            "--head",
+            branch,
+            "--state",
+            "open",
+            "--json",
+            "number",
+            "--limit",
+            "1",
+        ]
+    )
+    return raw[0]["number"] if raw else None
+
+
 def get_pr(repo: str, number: int) -> PrDetail:
     raw = _run_json(["gh", "pr", "view", str(number), "--repo", repo, "--json", PR_VIEW_FIELDS])
     return PrDetail(

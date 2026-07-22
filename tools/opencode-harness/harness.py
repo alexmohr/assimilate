@@ -837,11 +837,21 @@ def _override_stuck_pr(cfg: Config, state: HarnessState, overridden: set[int], n
 def _implement_issue(cfg: Config, state: HarnessState, issue: dict) -> bool:
     """Implements `issue` on a new branch and opens a PR. Returns True on success."""
     number = issue["number"]
+    branch = f"opencode/issue-{number}"
+    # An issue stays open until the PR that closes it actually merges, not
+    # just once one is opened - so the same issue can otherwise be re-picked
+    # on a later cycle (auto-select) or a repeated explicit `--issue N` run
+    # and crash at `gh pr create` with "a pull request already exists for
+    # this branch" instead of recognizing there's already one open.
+    existing_pr = gh.find_open_pr_for_branch(cfg.repo, branch)
+    if existing_pr is not None:
+        log.info("issue #%d: PR #%d is already open for %s, skipping", number, existing_pr, branch)
+        return False
+
     if cfg.dry_run:
         log.info("[dry-run] would implement issue #%d now", number)
         return False
 
-    branch = f"opencode/issue-{number}"
     git_ops.checkout_new_branch_from_base(cfg.repo_dir, branch, cfg.base_branch)
 
     prompt = prompts.build_issue_prompt(number, issue["title"], issue.get("body") or "")

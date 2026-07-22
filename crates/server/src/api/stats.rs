@@ -1258,7 +1258,10 @@ pub async fn undismiss_finding(
 
 #[cfg(test)]
 mod tests {
-    use shared::{responses::HealthResponse, types::BackupStatus};
+    use shared::{
+        responses::HealthResponse,
+        types::{BackupStatus, FindingKind, FindingSeverity},
+    };
 
     #[test]
     fn health_response_parses_valid_status() {
@@ -1469,8 +1472,8 @@ mod tests {
         )
         .expect("expected a backup_failed finding");
 
-        assert_eq!(finding.kind, "backup_failed");
-        assert_eq!(finding.severity, "critical");
+        assert_eq!(finding.kind, FindingKind::BackupFailed);
+        assert_eq!(finding.severity, FindingSeverity::Critical);
         assert_eq!(finding.reason, "boom");
         assert!(matches!(
             finding.destination,
@@ -1493,7 +1496,7 @@ mod tests {
         )
         .expect("expected a schedule_target_overdue finding");
 
-        assert_eq!(finding.kind, "schedule_target_overdue");
+        assert_eq!(finding.kind, FindingKind::ScheduleTargetOverdue);
         assert!(matches!(
             finding.destination,
             super::DashboardDestinationResponse::Schedule { schedule_id } if schedule_id == 1
@@ -1516,8 +1519,8 @@ mod tests {
         )
         .expect("expected a backup_warning finding");
 
-        assert_eq!(finding.kind, "backup_warning");
-        assert_eq!(finding.severity, "warning");
+        assert_eq!(finding.kind, FindingKind::BackupWarning);
+        assert_eq!(finding.severity, FindingSeverity::Warning);
         assert_eq!(finding.reason, "low disk space");
     }
 
@@ -1537,7 +1540,7 @@ mod tests {
         )
         .expect("expected a schedule_target_never_succeeded finding");
 
-        assert_eq!(finding.kind, "schedule_target_never_succeeded");
+        assert_eq!(finding.kind, FindingKind::ScheduleTargetNeverSucceeded);
     }
 
     #[test]
@@ -1555,7 +1558,7 @@ mod tests {
         )
         .expect("expected a host_offline_due_soon finding");
 
-        assert_eq!(finding.kind, "host_offline_due_soon");
+        assert_eq!(finding.kind, FindingKind::HostOfflineDueSoon);
         assert!(matches!(
             finding.destination,
             super::DashboardDestinationResponse::Host { ref hostname } if hostname == "host-a"

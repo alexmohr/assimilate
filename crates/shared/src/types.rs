@@ -440,11 +440,7 @@ impl FromStr for QuotaAction {
 }
 
 /// Overall outcome of a single backup run.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema, sqlx::Type,
-)]
-#[sqlx(type_name = "TEXT")]
-#[sqlx(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum BackupStatus {
     /// The backup completed with no errors or warnings.
@@ -485,9 +481,7 @@ impl FromStr for BackupStatus {
 /// Visibility scope of a repository, agent, or schedule - controls whether
 /// the resource is visible only to its owner or shared with all users that
 /// share a group with the owner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, TS, ToSchema, sqlx::Type)]
-#[sqlx(type_name = "TEXT")]
-#[sqlx(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, TS, ToSchema)]
 pub enum Visibility {
     /// Visible only to the owner and users sharing a group with the owner.
     #[default]
@@ -543,14 +537,14 @@ impl<'de> Deserialize<'de> for Visibility {
 }
 
 /// Well-known system event types recorded in the `system_events` table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, TS, ToSchema, sqlx::Type)]
-#[sqlx(type_name = "TEXT")]
-#[sqlx(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TS, ToSchema)]
 pub enum SystemEventType {
     /// An agent authentication attempt failed.
     AuthFailed,
     /// A periodic repository sync completed.
     RepoSync,
+    /// A periodic repository sync was cancelled.
+    RepoSyncCancelled,
     /// A periodic repository sync took longer than the warning threshold.
     RepoSyncSlow,
     /// A periodic repository sync failed.
@@ -566,6 +560,7 @@ impl std::fmt::Display for SystemEventType {
         match self {
             Self::AuthFailed => write!(f, "auth_failed"),
             Self::RepoSync => write!(f, "repo_sync"),
+            Self::RepoSyncCancelled => write!(f, "repo_sync_cancelled"),
             Self::RepoSyncSlow => write!(f, "repo_sync_slow"),
             Self::RepoSyncFailed => write!(f, "repo_sync_failed"),
             Self::ArchiveDeleteFailed => write!(f, "archive_delete_failed"),
@@ -581,6 +576,7 @@ impl FromStr for SystemEventType {
         match s {
             "auth_failed" => Ok(Self::AuthFailed),
             "repo_sync" => Ok(Self::RepoSync),
+            "repo_sync_cancelled" => Ok(Self::RepoSyncCancelled),
             "repo_sync_slow" => Ok(Self::RepoSyncSlow),
             "repo_sync_failed" => Ok(Self::RepoSyncFailed),
             "archive_delete_failed" => Ok(Self::ArchiveDeleteFailed),

@@ -3677,7 +3677,8 @@ pub async fn reset_import(
         info!(repo_id, repo_name = %repo.name, "repo sync cancelled");
         let msg = format!("repo sync cancelled for '{}'", repo.name);
         if let Err(e) =
-            db::insert_system_event(&state.pool, "repo_sync_cancelled", None, &msg).await
+            db::insert_system_event(&state.pool, SystemEventType::RepoSyncCancelled, None, &msg)
+                .await
         {
             tracing::error!(repo_id, error = %e, "failed to log sync cancelled event");
         }

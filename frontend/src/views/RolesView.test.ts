@@ -182,12 +182,15 @@ describe('RolesView', () => {
 
     await flushPromises()
 
-    const editButton = wrapper.findAll('button').find((b) => b.text().includes('Edit'))
-    expect(editButton).toBeDefined()
-    await editButton!.trigger('click')
+    // Open edit on the last (custom) role - all perms are false, so a setValue(true)
+    // actually changes the value and triggers the v-model change event.
+    const editButtons = wrapper.findAll('button').filter((b) => b.text().includes('Edit'))
+    expect(editButtons.length).toBeGreaterThan(0)
+    await editButtons[editButtons.length - 1].trigger('click')
 
     const checkboxes = wrapper.findAll('.perm-checkbox input[type="checkbox"]')
     expect(checkboxes.length).toBeGreaterThan(0)
+    expect((checkboxes[0].element as HTMLInputElement).checked).toBe(false)
 
     await checkboxes[0].setValue(true)
     expect((checkboxes[0].element as HTMLInputElement).checked).toBe(true)

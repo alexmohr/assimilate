@@ -190,6 +190,45 @@ describe('NotificationsView', () => {
     expect(wrapper.text()).toContain('No delivery history yet')
   })
 
+  it('expands a delivery row to reveal the full error and payload', async () => {
+    mockListChannels.mockResolvedValue([WEBHOOK_CHANNEL, EMAIL_CHANNEL])
+    mockListRules.mockResolvedValue(MOCK_RULES)
+    mockListDeliveries.mockResolvedValue([
+      {
+        id: 1,
+        channel_id: WEBHOOK_CHANNEL.id,
+        event_type: 'backup_failed',
+        payload: { hostname: 'web-01', repo_name: 'daily-backup' },
+        status: 'failed',
+        error_message: 'connection refused',
+        attempted_at: '2026-01-15T03:00:12Z',
+      },
+    ])
+    mockGetVapidPublicKey.mockResolvedValue({ key: '', configured: false })
+    mockApiGet.mockResolvedValue({ data: [] })
+
+    const wrapper = renderWithPlugins(NotificationsView)
+    await flushPromises()
+    const historyTab = wrapper.findAll('button').find((b) => b.text().includes('History'))
+    await historyTab!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('web-01')
+
+    const deliveryRow = wrapper.find('.delivery-row')
+    expect(deliveryRow.exists()).toBe(true)
+    await deliveryRow.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.detail-row').exists()).toBe(true)
+    expect(wrapper.text()).toContain('web-01')
+    expect(wrapper.text()).toContain('daily-backup')
+
+    await deliveryRow.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.detail-row').exists()).toBe(false)
+  })
+
   it('shows Add Channel wizard when New is clicked', async () => {
     setupDefaultMocks()
     const wrapper = renderWithPlugins(NotificationsView)

@@ -52,7 +52,8 @@ pub async fn send(
         .ok_or_else(|| NotificationError::Config("push endpoint URL has no host".to_string()))?;
     let port = url.port_or_known_default().unwrap_or(443);
 
-    let resolve_map = addrs.iter().fold(ResolveMap::new(), |map, addr| {
+    let pinned_addrs = reachable_addrs(addrs).await;
+    let resolve_map = pinned_addrs.iter().fold(ResolveMap::new(), |map, addr| {
         map.add(host, port, addr.ip())
     });
 
@@ -110,6 +111,46 @@ fn describe_transport_error(error: &isahc::Error) -> String {
     description
 }
 
+/// Filters `addrs` down to the ones a real TCP connect can actually reach, probed
+/// concurrently. Exists because pinning every DNS-resolved address (including ones from an
+/// unreachable address family) via `CURLOPT_RESOLVE` does not reliably fall back to a
+/// working address the way curl's own default resolver does: an IPv6 candidate that fails
+/// with a *synchronous* "network unreachable" (no outbound IPv6 route, as opposed to an
+/// async connect timeout) can make the whole pinned request fail outright instead of
+/// falling through to a working IPv4 address -- confirmed against a real deployment where
+/// a plain `curl` with no `--resolve` override succeeded by trying every DNS-returned
+/// candidate itself, while our DNS-pinned client failed completely with the exact same
+/// candidate set. Probing first and pinning only what's verified reachable sidesteps
+/// whatever curl-internal difference causes that. Falls back to the full, unfiltered list
+/// if nothing responds (e.g. every candidate is genuinely down or this probe itself is
+/// blocked), so the real request still gets attempted and produces a normal, diagnosable
+/// failure instead of silently being skipped. Single-address lists skip the probe
+/// entirely -- there's no fallback candidate to select between.
+///
+/// Deliberate cost: unlike `probe_tcp_connect` (only reached after the real request has
+/// already failed), this runs on every send to a dual-stack host, including the success
+/// path. A candidate that's firewalled/silently dropped rather than synchronously refused
+/// eats up to `PROBE_TIMEOUT` (5s) here before the real request is even attempted --
+/// accepted in exchange for actually delivering to reachable addresses instead of failing
+/// outright, per the bug this fixes.
+async fn reachable_addrs(addrs: &[SocketAddr]) -> Vec<SocketAddr> {
+    if addrs.len() <= 1 {
+        return addrs.to_vec();
+    }
+
+    let reachable: Vec<SocketAddr> = probe_all(addrs)
+        .await
+        .into_iter()
+        .filter_map(|(addr, result)| result.is_ok().then_some(addr))
+        .collect();
+
+    if reachable.is_empty() {
+        addrs.to_vec()
+    } else {
+        reachable
+    }
+}
+
 /// Runs a bare TCP connect against *every* pinned address used for the failed isahc/curl
 /// request, not just one -- a dual-stack endpoint can have some addresses reachable and
 /// others not (e.g. no outbound IPv6 route while IPv4 works fine), and curl's own error
@@ -124,32 +165,58 @@ async fn probe_tcp_connect(addrs: &[SocketAddr]) -> String {
         return String::new();
     }
 
-    let results: Vec<String> = futures_util::future::join_all(addrs.iter().map(|&addr| {
-        describe_probe_result(addr, tokio::net::TcpStream::connect(addr), PROBE_TIMEOUT)
-    }))
-    .await;
+    let descriptions: Vec<String> = probe_all(addrs)
+        .await
+        .into_iter()
+        .map(|(addr, result)| describe_probe_outcome(addr, result))
+        .collect();
 
-    format!(" (raw TCP probe: {})", results.join("; "))
+    format!(" (raw TCP probe: {})", descriptions.join("; "))
 }
 
 const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// Races `connect` against `timeout`, rendering the outcome. Split out from
-/// `probe_tcp_connect` so the timeout branch -- not reliably reproducible with a real
-/// socket in a fast, deterministic test -- can be exercised with an injected connect
-/// future that simply never resolves.
-async fn describe_probe_result<F>(
-    addr: SocketAddr,
-    connect: F,
-    timeout: std::time::Duration,
-) -> String
+/// Concurrently probes every address with a real TCP connect, bounded by `PROBE_TIMEOUT`
+/// each. The shared "connect to every candidate at once" primitive behind both
+/// `reachable_addrs` (which only needs to know which candidates are reachable) and
+/// `probe_tcp_connect` (which needs a human-readable per-address outcome), so that
+/// mechanic lives in one place instead of two independent `join_all` calls.
+async fn probe_all(addrs: &[SocketAddr]) -> Vec<(SocketAddr, std::io::Result<()>)> {
+    futures_util::future::join_all(addrs.iter().map(|&addr| async move {
+        let result = probe_connect(tokio::net::TcpStream::connect(addr), PROBE_TIMEOUT).await;
+        (addr, result)
+    }))
+    .await
+}
+
+/// Renders a single address's probe outcome from `probe_all` as a human-readable summary.
+fn describe_probe_outcome(addr: SocketAddr, result: std::io::Result<()>) -> String {
+    match result {
+        Ok(()) => format!("{addr} connected"),
+        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+            format!("{addr} timed out after {PROBE_TIMEOUT:?}")
+        }
+        Err(e) => format!("{addr} failed: {e}"),
+    }
+}
+
+/// Races `connect` against `timeout`, folding an elapsed timeout into
+/// [`std::io::ErrorKind::TimedOut`] so callers see a single `io::Result` regardless of
+/// which layer gave up. Generic over the connect future (rather than calling
+/// `TcpStream::connect` directly) so the timeout branch -- not reliably reproducible with
+/// a real socket in a fast, deterministic test -- can be exercised with an injected future
+/// that simply never resolves.
+async fn probe_connect<F>(connect: F, timeout: std::time::Duration) -> std::io::Result<()>
 where
     F: std::future::Future<Output = std::io::Result<tokio::net::TcpStream>>,
 {
     match tokio::time::timeout(timeout, connect).await {
-        Ok(Ok(_)) => format!("{addr} connected"),
-        Ok(Err(e)) => format!("{addr} failed: {e}"),
-        Err(_) => format!("{addr} timed out after {timeout:?}"),
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(e)) => Err(e),
+        Err(_) => Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            format!("timed out after {timeout:?}"),
+        )),
     }
 }
 
@@ -311,19 +378,89 @@ mod tests {
 
     /// A real connect attempt that genuinely hangs (a firewall silently dropping SYN
     /// packets, an unreachable-but-not-yet-rejected route) isn't reproducible fast or
-    /// deterministically with a real socket, so this drives `describe_probe_result`
-    /// directly with a connect future that never resolves.
+    /// deterministically with a real socket, so this drives `probe_connect` directly with
+    /// a connect future that never resolves.
     #[tokio::test]
-    async fn probe_reports_a_timeout_when_connect_never_completes() {
-        let addr: SocketAddr = "127.0.0.1:1".parse().unwrap();
+    async fn probe_connect_times_out_when_connect_never_completes() {
         let never_completes = std::future::pending::<std::io::Result<tokio::net::TcpStream>>();
 
-        let probe =
-            describe_probe_result(addr, never_completes, std::time::Duration::from_millis(1)).await;
+        let result = probe_connect(never_completes, std::time::Duration::from_millis(1)).await;
 
-        assert!(
-            probe.contains("timed out"),
-            "expected a timeout description, got: {probe}"
+        assert_eq!(
+            result
+                .expect_err("a never-completing connect must time out")
+                .kind(),
+            std::io::ErrorKind::TimedOut
         );
+    }
+
+    #[test]
+    fn describe_probe_outcome_formats_a_timeout_distinctly_from_other_errors() {
+        let addr: SocketAddr = "127.0.0.1:1".parse().unwrap();
+
+        // The inner message is irrelevant for a TimedOut error -- only the ErrorKind is
+        // inspected, and the rendered text always reports PROBE_TIMEOUT itself.
+        let timeout_err = std::io::Error::new(std::io::ErrorKind::TimedOut, "ignored inner text");
+        assert_eq!(
+            describe_probe_outcome(addr, Err(timeout_err)),
+            format!("{addr} timed out after {PROBE_TIMEOUT:?}")
+        );
+
+        let other_err = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused");
+        assert_eq!(
+            describe_probe_outcome(addr, Err(other_err)),
+            format!("{addr} failed: refused")
+        );
+
+        assert_eq!(
+            describe_probe_outcome(addr, Ok(())),
+            format!("{addr} connected")
+        );
+    }
+
+    /// The exact bug this exists to fix: given a mix of reachable and unreachable
+    /// candidates (e.g. working IPv4 alongside IPv6 with no outbound route), only the
+    /// reachable one(s) should end up pinned.
+    #[tokio::test]
+    async fn reachable_addrs_filters_out_unreachable_candidates() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let good_addr = listener.local_addr().unwrap();
+        let accept = tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+        let bad_addr = SocketAddr::from(([127, 0, 0, 1], 1));
+
+        let result = reachable_addrs(&[bad_addr, good_addr]).await;
+        accept.await.unwrap();
+
+        assert_eq!(result, vec![good_addr]);
+    }
+
+    /// If every candidate is genuinely unreachable, fall back to the full list instead of
+    /// pinning an empty resolve map -- the real request still gets attempted (and produces
+    /// a normal, diagnosable failure) rather than being silently skipped.
+    #[tokio::test]
+    async fn reachable_addrs_falls_back_to_full_list_when_nothing_responds() {
+        let addrs = vec![
+            SocketAddr::from(([127, 0, 0, 1], 1)),
+            SocketAddr::from(([127, 0, 0, 1], 2)),
+        ];
+
+        let result = reachable_addrs(&addrs).await;
+
+        assert_eq!(result, addrs);
+    }
+
+    /// A single-address list has no fallback candidate to select between, so the probe is
+    /// skipped entirely and the address is returned as-is, reachable or not.
+    #[tokio::test]
+    async fn reachable_addrs_skips_the_probe_for_a_single_address() {
+        let addr = SocketAddr::from(([127, 0, 0, 1], 1));
+        assert_eq!(reachable_addrs(&[addr]).await, vec![addr]);
+    }
+
+    #[tokio::test]
+    async fn reachable_addrs_returns_empty_for_an_empty_list() {
+        assert_eq!(reachable_addrs(&[]).await, Vec::<SocketAddr>::new());
     }
 }

@@ -473,6 +473,25 @@ FROM notification_channels c,
 WHERE c.name = 'Admin Email';
 SQL
 
+echo "==> Adding notification delivery history..."
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
+INSERT INTO notification_deliveries (channel_id, event_type, payload, status, error_message, attempted_at)
+SELECT c.id, 'backup_failed',
+    '{"event_type":"backup_failed","hostname":"web-server-01","repo_name":"server-daily","status":"failed","error_message":"Repository lock could not be acquired","timestamp":"2026-01-15T03:00:12Z"}',
+    'failed',
+    'webhook delivery failed: could not resolve host: hooks.example.com',
+    NOW() - interval '7 days'
+FROM notification_channels c WHERE c.name = 'Ops Webhook';
+
+INSERT INTO notification_deliveries (channel_id, event_type, payload, status, error_message, attempted_at)
+SELECT c.id, 'backup_warning',
+    '{"event_type":"backup_warning","hostname":"web-server-01","repo_name":"server-daily","status":"warning","timestamp":"2026-01-14T01:00:05Z"}',
+    'sent',
+    NULL,
+    NOW() - interval '1 day'
+FROM notification_channels c WHERE c.name = 'Ops Webhook';
+SQL
+
 echo "==> Adding SSH tunnel entry for loopback agent communication..."
 api POST "/api/tunnels" "{\"agent_id\":$MEDIA_ID,\"ssh_host\":\"127.0.0.1\",\"ssh_user\":\"borg\",\"ssh_port\":22,\"tunnel_port\":18080,\"enabled\":true}" > /dev/null
 

@@ -822,180 +822,164 @@ function filterByRun(runId: string): void {
 
       <div
         v-else
-        class="table-wrap"
+        class="run-list"
       >
-        <table class="log-table">
-          <thead>
-            <tr>
-              <th>Timestamp</th>
-              <th>Machine</th>
-              <th>Target / Event</th>
-              <th>Status</th>
-              <th>Duration</th>
-            </tr>
-          </thead>
-          <tbody>
-            <template
-              v-for="row in unifiedRows"
-              :key="row.id"
+        <template
+          v-for="row in unifiedRows"
+          :key="row.id"
+        >
+          <article
+            v-if="row.kind === 'backup' && row.backup"
+            class="run-card"
+            :class="{ expanded: expandedId === row.backup.id }"
+          >
+            <div
+              class="run-card-summary"
+              @click="toggleRow(row.backup)"
             >
-              <tr
-                v-if="row.kind === 'backup' && row.backup"
-                class="log-row"
-                :class="{ expanded: expandedId === row.backup.id }"
-                @click="toggleRow(row.backup)"
-              >
-                <td class="cell-ts">
-                  {{ formatDateShort(row.backup.started_at) }}
-                </td>
-                <td class="cell-host">
-                  {{ row.backup.hostname }}
-                </td>
-                <td class="cell-target">
-                  <span>{{ row.backup.target_name }}</span>
-                  <span
-                    v-if="row.backup.schedule_name"
-                    class="schedule-label"
-                    >{{ row.backup.schedule_name }}</span
-                  >
-                </td>
-                <td>
-                  <span
-                    class="badge"
-                    :class="statusClass(row.backup.status)"
-                    >{{ row.backup.status }}</span
-                  >
-                </td>
-                <td class="cell-dur">
-                  <span>{{ formatDuration(row.backup.duration_secs) }}</span>
-                  <button
-                    v-if="row.backup.run_id && filterRunId !== row.backup.run_id"
-                    class="btn-run-filter"
-                    title="View all events for this run"
-                    @click.stop="filterByRun(row.backup.run_id)"
-                  >
-                    View run
-                  </button>
-                </td>
-              </tr>
-              <tr
-                v-if="row.kind === 'backup' && row.backup && expandedId === row.backup.id"
-                class="detail-row"
-              >
-                <td colspan="5">
-                  <div class="detail-panel">
-                    <div
-                      v-if="expandedLoading"
-                      class="detail-loading"
-                    >
-                      Loading details...
-                    </div>
-                    <div
-                      v-else-if="expandedDetail"
-                      class="detail-grid"
-                    >
-                      <div class="detail-section">
-                        <h3 class="detail-heading">Timing</h3>
-                        <dl class="detail-dl">
-                          <dt>Started</dt>
-                          <dd>{{ formatDateShort(expandedDetail.started_at) }}</dd>
-                          <dt>Finished</dt>
-                          <dd>{{ formatDateShort(expandedDetail.finished_at) }}</dd>
-                          <dt>Duration</dt>
-                          <dd>{{ formatDuration(expandedDetail.duration_secs) }}</dd>
-                        </dl>
-                      </div>
-                      <div class="detail-section">
-                        <h3 class="detail-heading">Sizes</h3>
-                        <dl class="detail-dl">
-                          <dt>Original</dt>
-                          <dd>{{ formatBytes(expandedDetail.original_size) }}</dd>
-                          <dt>Compressed</dt>
-                          <dd>{{ formatBytes(expandedDetail.compressed_size) }}</dd>
-                          <dt>Deduplicated</dt>
-                          <dd>{{ formatBytes(expandedDetail.deduplicated_size) }}</dd>
-                        </dl>
-                      </div>
-                      <div class="detail-section">
-                        <h3 class="detail-heading">Stats</h3>
-                        <dl class="detail-dl">
-                          <dt>Files processed</dt>
-                          <dd>{{ expandedDetail.files_processed.toLocaleString() }}</dd>
-                          <dt>Borg version</dt>
-                          <dd>{{ expandedDetail.borg_version ?? '—' }}</dd>
-                        </dl>
-                      </div>
-                      <div
-                        v-if="expandedDetail.borg_command"
-                        class="detail-section detail-command-section"
-                      >
-                        <h3 class="detail-heading">Command</h3>
-                        <pre class="command-pre">{{ expandedDetail.borg_command }}</pre>
-                      </div>
-                      <div
-                        v-if="expandedDetail.warnings.length > 0"
-                        class="detail-section detail-warning-section"
-                      >
-                        <h3 class="detail-heading status-heading warning-heading">Warnings</h3>
-                        <pre class="status-pre warning-pre">{{
-                          expandedDetail.warnings.join('\n')
-                        }}</pre>
-                      </div>
-                      <div
-                        v-if="expandedDetail.error_message"
-                        class="detail-section detail-error-section"
-                      >
-                        <h3 class="detail-heading status-heading error-heading">Error</h3>
-                        <pre class="status-pre error-pre">{{ expandedDetail.error_message }}</pre>
-                      </div>
-                    </div>
-                    <div
-                      v-else
-                      class="detail-loading"
-                    >
-                      No detail available.
-                    </div>
-                  </div>
-                </td>
-              </tr>
+              <div class="run-card-top">
+                <div class="run-card-host">
+                  <span class="run-card-hostname">{{ row.backup.hostname }}</span>
+                  <span class="run-card-time">{{ formatDateShort(row.backup.started_at) }}</span>
+                </div>
+                <span
+                  class="badge"
+                  :class="statusClass(row.backup.status)"
+                  >{{ row.backup.status }}</span
+                >
+              </div>
+              <div class="run-card-meta">
+                <span>{{ row.backup.target_name }}</span>
+                <span
+                  v-if="row.backup.schedule_name"
+                  class="schedule-label"
+                  >{{ row.backup.schedule_name }}</span
+                >
+              </div>
+              <div class="run-card-foot">
+                <span class="run-card-duration">{{
+                  formatDuration(row.backup.duration_secs)
+                }}</span>
+                <button
+                  v-if="row.backup.run_id && filterRunId !== row.backup.run_id"
+                  class="btn-run-filter"
+                  title="View all events for this run"
+                  @click.stop="filterByRun(row.backup.run_id)"
+                >
+                  View run
+                </button>
+              </div>
+            </div>
 
-              <tr
-                v-if="row.kind === 'system' && row.event"
-                class="log-row row-system"
-                :class="{ expanded: expandedSystemId === row.event.id }"
-                @click="toggleSystemRow(row.event)"
+            <div
+              v-if="expandedId === row.backup.id"
+              class="detail-panel"
+              @click.stop
+            >
+              <div
+                v-if="expandedLoading"
+                class="detail-loading"
               >
-                <td class="cell-ts">
-                  {{ formatDateShort(row.event.created_at) }}
-                </td>
-                <td class="cell-host">
-                  {{ row.event.hostname ?? '—' }}
-                </td>
-                <td class="cell-target cell-message">
-                  {{ row.event.message }}
-                </td>
-                <td>
-                  <span
-                    class="badge"
-                    :class="eventTypeClass(row.event.event_type)"
-                    >{{ formatEventType(row.event.event_type) }}</span
-                  >
-                </td>
-                <td class="cell-dur">—</td>
-              </tr>
-              <tr
-                v-if="row.kind === 'system' && row.event && expandedSystemId === row.event.id"
-                class="detail-row"
+                Loading details...
+              </div>
+              <div
+                v-else-if="expandedDetail"
+                class="detail-grid"
               >
-                <td colspan="5">
-                  <div class="detail-panel">
-                    <pre class="status-pre error-pre">{{ row.event.message }}</pre>
-                  </div>
-                </td>
-              </tr>
-            </template>
-          </tbody>
-        </table>
+                <div class="detail-section">
+                  <h3 class="detail-heading">Timing</h3>
+                  <dl class="detail-dl">
+                    <dt>Started</dt>
+                    <dd>{{ formatDateShort(expandedDetail.started_at) }}</dd>
+                    <dt>Finished</dt>
+                    <dd>{{ formatDateShort(expandedDetail.finished_at) }}</dd>
+                    <dt>Duration</dt>
+                    <dd>{{ formatDuration(expandedDetail.duration_secs) }}</dd>
+                  </dl>
+                </div>
+                <div class="detail-section">
+                  <h3 class="detail-heading">Sizes</h3>
+                  <dl class="detail-dl">
+                    <dt>Original</dt>
+                    <dd>{{ formatBytes(expandedDetail.original_size) }}</dd>
+                    <dt>Compressed</dt>
+                    <dd>{{ formatBytes(expandedDetail.compressed_size) }}</dd>
+                    <dt>Deduplicated</dt>
+                    <dd>{{ formatBytes(expandedDetail.deduplicated_size) }}</dd>
+                  </dl>
+                </div>
+                <div class="detail-section">
+                  <h3 class="detail-heading">Stats</h3>
+                  <dl class="detail-dl">
+                    <dt>Files processed</dt>
+                    <dd>{{ expandedDetail.files_processed.toLocaleString() }}</dd>
+                    <dt>Borg version</dt>
+                    <dd>{{ expandedDetail.borg_version ?? '—' }}</dd>
+                  </dl>
+                </div>
+                <div
+                  v-if="expandedDetail.borg_command"
+                  class="detail-section detail-command-section"
+                >
+                  <h3 class="detail-heading">Command</h3>
+                  <pre class="command-pre">{{ expandedDetail.borg_command }}</pre>
+                </div>
+                <div
+                  v-if="expandedDetail.warnings.length > 0"
+                  class="detail-section detail-warning-section"
+                >
+                  <h3 class="detail-heading status-heading warning-heading">Warnings</h3>
+                  <pre class="status-pre warning-pre">{{ expandedDetail.warnings.join('\n') }}</pre>
+                </div>
+                <div
+                  v-if="expandedDetail.error_message"
+                  class="detail-section detail-error-section"
+                >
+                  <h3 class="detail-heading status-heading error-heading">Error</h3>
+                  <pre class="status-pre error-pre">{{ expandedDetail.error_message }}</pre>
+                </div>
+              </div>
+              <div
+                v-else
+                class="detail-loading"
+              >
+                No detail available.
+              </div>
+            </div>
+          </article>
+
+          <article
+            v-if="row.kind === 'system' && row.event"
+            class="run-card run-card-system"
+            :class="{ expanded: expandedSystemId === row.event.id }"
+          >
+            <div
+              class="run-card-summary"
+              @click="toggleSystemRow(row.event)"
+            >
+              <div class="run-card-top">
+                <div class="run-card-host">
+                  <span class="run-card-hostname">{{ row.event.hostname ?? '—' }}</span>
+                  <span class="run-card-time">{{ formatDateShort(row.event.created_at) }}</span>
+                </div>
+                <span
+                  class="badge"
+                  :class="eventTypeClass(row.event.event_type)"
+                  >{{ formatEventType(row.event.event_type) }}</span
+                >
+              </div>
+              <p class="run-card-message">{{ row.event.message }}</p>
+            </div>
+
+            <div
+              v-if="expandedSystemId === row.event.id"
+              class="detail-panel"
+              @click.stop
+            >
+              <pre class="status-pre error-pre">{{ row.event.message }}</pre>
+            </div>
+          </article>
+        </template>
       </div>
 
       <div
@@ -1174,12 +1158,6 @@ function filterByRun(runId: string): void {
   font-size: 0.95rem;
 }
 
-.table-wrap {
-  overflow-x: auto;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-}
-
 .log-table {
   width: 100%;
   border-collapse: collapse;
@@ -1201,42 +1179,90 @@ function filterByRun(runId: string): void {
   border-bottom: 1px solid var(--border);
 }
 
-.log-row {
-  cursor: pointer;
-  transition: background 0.1s;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.log-row:hover {
-  background: var(--bg-hover);
-}
-
-.log-row.expanded {
-  background: var(--bg-hover);
-}
-
-.log-row td {
-  padding: 0.7rem 1rem;
-  vertical-align: middle;
-}
-
 .cell-ts {
   color: var(--text-muted);
   white-space: nowrap;
 }
 
-.cell-host {
+.run-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.run-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.run-card.expanded {
+  border-color: var(--text-muted);
+}
+
+.run-card-summary {
+  cursor: pointer;
+  padding: 0.85rem 1.1rem;
+  transition: background 0.1s;
+}
+
+.run-card-summary:hover {
+  background: var(--bg-hover);
+}
+
+.run-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.run-card-host {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.run-card-hostname {
   font-weight: 600;
   color: var(--text-primary);
 }
 
-.cell-target {
+.run-card-time {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.run-card-meta {
+  margin-top: 0.35rem;
+  font-size: 0.85rem;
   color: var(--text-secondary);
 }
 
-.cell-dur {
+.run-card-message {
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.run-card-foot {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.run-card-duration {
+  font-size: 0.8rem;
   color: var(--text-muted);
-  white-space: nowrap;
+  font-family: var(--mono);
 }
 
 .badge {
@@ -1273,15 +1299,10 @@ function filterByRun(runId: string): void {
   color: var(--text-muted);
 }
 
-.detail-row td {
-  padding: 0;
-  background: var(--bg-base);
-}
-
 .detail-panel {
-  padding: 1.25rem 1.5rem;
+  padding: 1.1rem 1.1rem 1.25rem;
   border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
+  background: var(--bg-base);
 }
 
 .detail-loading {
@@ -1410,15 +1431,6 @@ function filterByRun(runId: string): void {
 .btn-load-more:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.cell-message {
-  font-size: 0.8rem;
-  color: var(--text-secondary);
-  max-width: 300px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .filter-group-search {

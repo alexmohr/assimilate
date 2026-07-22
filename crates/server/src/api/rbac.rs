@@ -134,7 +134,7 @@ pub struct SetUserRolesRequest {
 ///
 /// # Errors
 ///
-/// Returns an error if the underlying operation fails.
+/// Returns an error if the underlying database operation fails.
 pub async fn list_groups(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -151,7 +151,7 @@ pub async fn list_groups(
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::BadRequest`] if the request is invalid.
+/// Returns [`ApiError::BadRequest`] if the group name is empty.
 pub async fn create_group(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -173,7 +173,7 @@ pub async fn create_group(
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::BadRequest`] if the request is invalid.
+/// Returns [`ApiError::BadRequest`] if the updated name is empty.
 pub async fn update_group(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -196,7 +196,7 @@ pub async fn update_group(
 ///
 /// # Errors
 ///
-/// Returns an error if the underlying operation fails.
+/// Returns an error if the underlying database operation fails.
 pub async fn delete_group(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -247,7 +247,7 @@ pub async fn set_group_members(
 ///
 /// # Errors
 ///
-/// Returns an error if the underlying operation fails.
+/// Returns an error if the underlying database operation fails.
 pub async fn list_roles(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -260,13 +260,11 @@ pub async fn list_roles(
     Ok(Json(roles))
 }
 
-/// Create a new role (admin only).
+/// Validate role name and build [`InsertRoleParams`] from a request with [`RolePermissionFields`].
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::BadRequest`] if the request is invalid.
-/// Validate role name and build an [`InsertRoleParams`] from a request with
-/// [`RolePermissionFields`].
+/// Returns [`ApiError::BadRequest`] if the role name is empty.
 fn build_role_params<'a>(
     name: &'a str,
     perms: &'a RolePermissionFields,
@@ -299,7 +297,7 @@ fn build_role_params<'a>(
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::BadRequest`] if the request is invalid.
+/// Returns [`ApiError::BadRequest`] if the role name is empty.
 pub async fn create_role(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -314,7 +312,7 @@ pub async fn create_role(
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::BadRequest`] if the request is invalid.
+/// Returns [`ApiError::BadRequest`] if the updated name is empty.
 pub async fn update_role(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -329,12 +327,9 @@ pub async fn update_role(
 const PROTECTED_ROLE_NAMES: &[&str] = &["admin", "operator", "viewer"];
 
 /// Delete a role (admin only). Built-in roles cannot be deleted.
-///
 /// # Errors
-///
-/// Returns an error if:
-/// - [`ApiError::NotFound`]: the requested resource does not exist
-/// - [`ApiError::BadRequest`]: the request is invalid
+/// [`ApiError::NotFound`] if the role does not exist.
+/// [`ApiError::BadRequest`] if the role is built-in.
 pub async fn delete_role(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -358,7 +353,7 @@ pub async fn delete_role(
 ///
 /// # Errors
 ///
-/// Returns an error if the underlying operation fails.
+/// Returns an error if the underlying database operation fails.
 pub async fn list_user_roles(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -376,7 +371,7 @@ pub async fn list_user_roles(
 ///
 /// # Errors
 ///
-/// Returns an error if the underlying operation fails.
+/// Returns an error if the underlying database operation fails.
 pub async fn set_user_roles(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -391,7 +386,7 @@ pub async fn set_user_roles(
 ///
 /// # Errors
 ///
-/// Returns an error if the underlying operation fails.
+/// Returns an error if the underlying database operation fails.
 pub async fn list_user_groups(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -409,7 +404,7 @@ pub async fn list_user_groups(
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::Forbidden`] if the caller lacks permission for this operation.
+/// Returns [`ApiError::Forbidden`] if the caller lacks permission.
 pub async fn get_effective_permissions(
     State(state): State<AppState>,
     auth: AuthUser,

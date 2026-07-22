@@ -131,4 +131,37 @@ describe('RolesView', () => {
     expect(yes.length).toBeGreaterThan(0)
     expect(no.length).toBeGreaterThan(0)
   })
+
+  it('renders the create role form when New is clicked', async () => {
+    const wrapper = renderWithPlugins(RolesView)
+
+    await flushPromises()
+
+    const newButton = wrapper.findAll('button').find((b) => b.text().includes('New'))
+    expect(newButton).toBeDefined()
+    await newButton!.trigger('click')
+
+    expect(wrapper.find('form').exists()).toBe(true)
+    expect(wrapper.find('input#create-role-name').exists()).toBe(true)
+    const perms = wrapper.findAll('.perm-checkbox')
+    expect(perms.length).toBe(13)
+  })
+
+  it('closes the create modal when Cancel is clicked', async () => {
+    const wrapper = renderWithPlugins(RolesView)
+
+    await flushPromises()
+
+    const newButton = wrapper.findAll('button').find((b) => b.text().includes('New'))
+    expect(newButton).toBeDefined()
+    await newButton!.trigger('click')
+
+    expect(wrapper.find('.overlay').exists()).toBe(true)
+
+    const cancelBtn = wrapper.findAll('button').find((b) => b.text() === 'Cancel')
+    expect(cancelBtn).toBeDefined()
+    await cancelBtn!.trigger('click')
+
+    expect(wrapper.find('.overlay').exists()).toBe(false)
+  })
 })

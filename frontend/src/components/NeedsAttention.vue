@@ -60,13 +60,7 @@ async function dismiss(finding: DashboardFinding): Promise<void> {
       <span class="finding-count">{{ findings.length }} findings</span>
     </div>
     <div
-      v-if="findings.length === 0"
-      class="empty-state"
-    >
-      No active problems
-    </div>
-    <div
-      v-else
+      v-if="findings.length > 0"
       class="finding-list"
     >
       <div
@@ -140,14 +134,6 @@ p {
   color: var(--text-muted);
   font-size: 0.75rem;
   white-space: nowrap;
-}
-
-.empty-state {
-  padding: 1.5rem;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--success);
-  text-align: center;
 }
 
 .finding-list {

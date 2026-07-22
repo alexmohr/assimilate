@@ -8,12 +8,12 @@ The Dashboard is an operational summary of current backup risk, fleet protection
 
 The top row uses explicit entity counts:
 
-| Counter | Definition |
-|---------|------------|
-| **Protected Agents** | Eligible visible agents with at least one enabled backup assignment and at least one successful run for an enabled assignment. |
-| **Needs Attention** | Current actionable findings after target-level symptom deduplication. |
-| **Running Operations** | Persisted backup operations that are currently running. |
-| **Storage** | Current deduplicated size summed once per enabled repository from authoritative Borg repository statistics. |
+| Counter                | Definition                                                                                                                     |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| **Protected Agents**   | Eligible visible agents with at least one enabled backup assignment and at least one successful run for an enabled assignment. |
+| **Needs Attention**    | Current actionable findings after target-level symptom deduplication.                                                          |
+| **Running Operations** | Persisted backup operations that are currently running.                                                                        |
+| **Storage**            | Current deduplicated size summed once per enabled repository from authoritative Borg repository statistics.                    |
 
 Eligible agents are registered agents that are not hidden and are not imported placeholder agents. Hidden and imported agents do not affect the coverage denominator.
 
@@ -32,7 +32,7 @@ Findings include the affected agent, schedule, or repository, the reason, an age
 - Repository quota warning and critical states.
 - Repository import failures with reliable persisted error state.
 
-An empty list displays **No active problems**.
+When no findings exist, the Needs Attention panel is hidden entirely and the sidebar panels span the full row side by side.
 
 ## Protection Coverage
 

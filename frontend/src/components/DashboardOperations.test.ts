@@ -70,7 +70,10 @@ describe('dashboard operational components', () => {
 
   it('renders the no-problems empty state', () => {
     const wrapper = renderWithPlugins(NeedsAttention, { props: { findings: [] } })
-    expect(wrapper.text()).toContain('No active problems')
+    // The empty state is now handled by the parent (DashboardView) via v-if,
+    // so the component renders only the section wrapper when findings are absent.
+    expect(wrapper.find('section').exists()).toBe(true)
+    expect(wrapper.find('.finding-list').exists()).toBe(false)
   })
 
   it('dismiss button calls the api and emits dismissed', async () => {

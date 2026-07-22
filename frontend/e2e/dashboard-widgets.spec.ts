@@ -33,6 +33,34 @@ test.describe('Dashboard widgets', () => {
     expect(body['total_agents']).toBeGreaterThan(0)
   })
 
+  test('hides NeedsAttention panel when no findings exist', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+
+    // The demo environment has findings, so dismiss them all via the API to
+    // verify the panel hides.
+    const resp = await page.request.get('/api/stats/dashboard-overview')
+    const body = (await resp.json()) as { findings: Array<{ id: string }> }
+    const findingIds = body.findings.map((f) => f.id)
+
+    try {
+      for (const id of findingIds) {
+        await page.request.post(`/api/stats/findings/${id}/dismiss`)
+      }
+
+      await page.goto('/')
+      await page.waitForLoadState('networkidle')
+
+      await expect(page.locator('#needs-attention')).toHaveCount(0)
+    } finally {
+      // Restore dismissed findings so they remain visible in the demo environment.
+      for (const id of findingIds) {
+        await page.request.delete(`/api/stats/findings/${id}/dismiss`)
+      }
+    }
+  })
+
   test('dashboard shows recent activity section', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/')

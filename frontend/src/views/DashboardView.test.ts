@@ -24,6 +24,7 @@ function defaultApiHandler(url: string): Promise<{ data: unknown }> {
   if (url === '/stats/dashboard-overview') {
     return Promise.resolve({
       data: {
+        findings: [],
         summary: {
           protected_hosts: 0,
           eligible_hosts: 0,
@@ -31,7 +32,6 @@ function defaultApiHandler(url: string): Promise<{ data: unknown }> {
           running_operations: 0,
           total_storage_bytes: 0,
         },
-        findings: [],
         protection: {
           protected_hosts: 0,
           eligible_hosts: 0,
@@ -41,76 +41,45 @@ function defaultApiHandler(url: string): Promise<{ data: unknown }> {
           never_succeeded_agents: [],
           disabled_only_agents: [],
         },
-        running_operations: [],
-        upcoming_schedules: [],
         repository_capacity: [],
+        upcoming_schedules: [],
+        running_operations: [],
       },
     })
   }
   return Promise.resolve({ data: [] })
 }
 
-vi.mock('vue-chartjs', () => ({
-  Line: { template: '<canvas />' },
-}))
+vi.mock('vue-chartjs', () => {
+  const Line = { template: '<canvas />' }
+  return { Line }
+})
 
-vi.mock('chart.js', () => ({
-  Chart: { register: vi.fn() },
-  CategoryScale: {},
-  LinearScale: {},
-  PointElement: {},
-  LineElement: {},
-  Title: {},
-  Tooltip: {},
-  Legend: {},
-  Filler: {},
-}))
+vi.mock('chart.js', () => {
+  const Chart = { register: vi.fn() }
+  const CategoryScale = {}
+  const LinearScale = {}
+  const PointElement = {}
+  const LineElement = {}
+  const Title = {}
+  const Tooltip = {}
+  const Legend = {}
+  const Filler = {}
+  return {
+    Chart,
+    CategoryScale,
+    LinearScale,
+    PointElement,
+    LineElement,
+    Title,
+    Tooltip,
+    Legend,
+    Filler,
+  }
+})
 
 vi.mock('../api/client', () => ({
-  apiClient: {
-    get: vi.fn().mockImplementation((url: string) => {
-      if (url.startsWith('/stats/summary')) {
-        return Promise.resolve({
-          data: {
-            total_hosts: 0,
-            online_hosts: 0,
-            total_repos: 0,
-            total_size_bytes: 0,
-            total_backups: 0,
-            recent_failures: 0,
-            storage_by_repo: [],
-          },
-        })
-      }
-      if (url === '/stats/dashboard-overview') {
-        return Promise.resolve({
-          data: {
-            summary: {
-              protected_hosts: 0,
-              eligible_hosts: 0,
-              needs_attention: 0,
-              running_operations: 0,
-              total_storage_bytes: 0,
-            },
-            findings: [],
-            protection: {
-              protected_hosts: 0,
-              eligible_hosts: 0,
-              protected_agent_links: [],
-              unassigned_agents: [],
-              never_succeeded_targets: 0,
-              never_succeeded_agents: [],
-              disabled_only_agents: [],
-            },
-            running_operations: [],
-            upcoming_schedules: [],
-            repository_capacity: [],
-          },
-        })
-      }
-      return Promise.resolve({ data: [] })
-    }),
-  },
+  apiClient: { get: vi.fn() },
 }))
 
 vi.mock('../composables/useWebSocket', () => ({
@@ -141,6 +110,42 @@ vi.mock('../utils/cron', () => ({
   cronToHuman: (s: string): string => `cron:${s}`,
 }))
 
+/** Overview response with a single finding for tests that verify findings rendering. */
+function overviewWithFindings() {
+  return {
+    summary: {
+      protected_hosts: 0,
+      eligible_hosts: 0,
+      needs_attention: 1,
+      running_operations: 0,
+      total_storage_bytes: 0,
+    },
+    findings: [
+      {
+        id: 'f1',
+        kind: 'backup_failed',
+        severity: 'critical',
+        reason: 'Backup failed',
+        destination: { kind: 'host', hostname: 'web-01' },
+      },
+    ],
+    protection: {
+      protected_hosts: 0,
+      eligible_hosts: 0,
+      protected_agent_links: [],
+      unassigned_agents: [],
+      never_succeeded_targets: 0,
+      never_succeeded_agents: [],
+      disabled_only_agents: [],
+    },
+    running_operations: [],
+    upcoming_schedules: [],
+    repository_capacity: [],
+  }
+}
+
+vi.mocked(apiClient.get).mockImplementation(defaultApiHandler)
+
 describe('DashboardView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -159,6 +164,157 @@ describe('DashboardView', () => {
   it('renders the dashboard container element', () => {
     const wrapper = renderWithPlugins(DashboardView)
     expect(wrapper.find('.dashboard').exists()).toBe(true)
+  })
+})
+
+describe('DashboardView attention panel', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.mocked(apiClient.get).mockImplementation(defaultApiHandler)
+  })
+
+  it('hides NeedsAttention when findings are empty', async () => {
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    expect(wrapper.find('#needs-attention').exists()).toBe(false)
+  })
+
+  it('shows NeedsAttention when findings exist', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({ data: overviewWithFindings() })
+      }
+      return defaultApiHandler(url)
+    })
+
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    expect(wrapper.find('#needs-attention').exists()).toBe(true)
+  })
+
+  it('applies attention-sidebar-wide class when findings are empty', async () => {
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    const sidebar = wrapper.find('.attention-sidebar')
+    expect(sidebar.classes()).toContain('attention-sidebar-wide')
+  })
+
+  it('does not apply attention-sidebar-wide class when findings exist', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({ data: overviewWithFindings() })
+      }
+      return defaultApiHandler(url)
+    })
+
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    const sidebar = wrapper.find('.attention-sidebar')
+    expect(sidebar.classes()).not.toContain('attention-sidebar-wide')
+  })
+
+  it('re-fetches overview when findings are dismissed', async () => {
+    const getSpy = vi.mocked(apiClient.get)
+    getSpy.mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({ data: overviewWithFindings() })
+      }
+      return defaultApiHandler(url)
+    })
+
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    // NeedsAttention should be visible when findings exist
+    expect(wrapper.find('#needs-attention').exists()).toBe(true)
+
+    // Emit dismissed from the parent component's scope via the NeedsAttention component
+    // We find it by component name and emit on its wrapper
+    const needsAttWrapper = wrapper.findComponent({ name: 'NeedsAttention' })
+    if (needsAttWrapper.exists()) {
+      needsAttWrapper.vm.$emit('dismissed')
+      await flushPromises()
+    }
+
+    // The fetchOverview call should have been made again (overview endpoint called at least twice)
+    const overviewCalls = getSpy.mock.calls.filter(([url]) => url === '/stats/dashboard-overview')
+    expect(overviewCalls.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('renders fallback em-dash when summary lacks next_backup_at', async () => {
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    // The default overview response has no next_backup_at, so the fallback should appear
+    const dashPlaceholder = wrapper.text()
+    expect(dashPlaceholder).toContain('\u2014')
+  })
+
+  it('applies attention-row-full class when findings are empty', async () => {
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    const row = wrapper.find('.attention-row')
+    expect(row.classes()).toContain('attention-row-full')
+  })
+
+  it('removes attention-row-full class when findings exist', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({ data: overviewWithFindings() })
+      }
+      return defaultApiHandler(url)
+    })
+
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    const row = wrapper.find('.attention-row')
+    expect(row.classes()).not.toContain('attention-row-full')
+  })
+
+  it('hides NeedsAttention after dismiss when fetchOverview returns empty findings', async () => {
+    const getSpy = vi.mocked(apiClient.get)
+    getSpy.mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({ data: overviewWithFindings() })
+      }
+      return defaultApiHandler(url)
+    })
+
+    const wrapper = renderWithPlugins(DashboardView)
+    await flushPromises()
+
+    expect(wrapper.find('#needs-attention').exists()).toBe(true)
+
+    // On next fetchOverview, return findings with no results
+    getSpy.mockImplementation((url: string) => {
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({
+          data: { ...overviewWithFindings(), findings: [] },
+        })
+      }
+      return defaultApiHandler(url)
+    })
+
+    const needsAttWrapper = wrapper.findComponent({ name: 'NeedsAttention' })
+    expect(needsAttWrapper.exists()).toBe(true)
+    needsAttWrapper.vm.$emit('dismissed')
+    await flushPromises()
+
+    // After dismiss and fetchOverview with empty findings, NeedsAttention should hide
+    expect(wrapper.find('#needs-attention').exists()).toBe(false)
+
+    // The attention row should now be full width
+    const row = wrapper.find('.attention-row')
+    expect(row.classes()).toContain('attention-row-full')
   })
 })
 
@@ -233,6 +389,9 @@ describe('DashboardView success ring', () => {
       if (url === '/stats/dashboard-overview') {
         return Promise.resolve({
           data: {
+            repository_capacity: [],
+            upcoming_schedules: [],
+            findings: [],
             summary: {
               protected_hosts: 0,
               eligible_hosts: 0,
@@ -240,7 +399,6 @@ describe('DashboardView success ring', () => {
               running_operations: 1,
               total_storage_bytes: 0,
             },
-            findings: [],
             protection: {
               protected_hosts: 0,
               eligible_hosts: 0,
@@ -263,8 +421,6 @@ describe('DashboardView success ring', () => {
                 destination: { kind: 'schedule', schedule_id: 7 },
               },
             ],
-            upcoming_schedules: [],
-            repository_capacity: [],
           },
         })
       }

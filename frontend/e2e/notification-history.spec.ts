@@ -39,13 +39,7 @@ function makeDelivery(): object {
   }
 }
 
-test('expands a delivery row and shows the full error and payload', async ({
-  page,
-}: {
-  page: Page
-}) => {
-  await loginAsAdmin(page)
-
+async function mockNotificationsApi(page: Page): Promise<void> {
   await page.route('**/api/notifications/channels', (route) =>
     route.fulfill({
       status: 200,
@@ -79,6 +73,15 @@ test('expands a delivery row and shows the full error and payload', async ({
   await page.route('**/api/schedules', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
   )
+}
+
+test('expands a delivery row and shows the full error and payload', async ({
+  page,
+}: {
+  page: Page
+}) => {
+  await loginAsAdmin(page)
+  await mockNotificationsApi(page)
 
   await page.goto('/notifications')
   await page.waitForLoadState('networkidle')
@@ -109,40 +112,7 @@ test('history table switches to a stacked card layout on narrow viewports', asyn
 }) => {
   await page.setViewportSize({ width: 375, height: 800 })
   await loginAsAdmin(page)
-
-  await page.route('**/api/notifications/channels', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify([makeChannel()]),
-    }),
-  )
-  await page.route('**/api/notifications/rules', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
-  await page.route('**/api/notifications/deliveries*', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify([makeDelivery()]),
-    }),
-  )
-  await page.route('**/api/notifications/push/vapid-key', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ public_key: '', configured: false }),
-    }),
-  )
-  await page.route('**/api/repos', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
-  await page.route('**/api/agents', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
-  await page.route('**/api/schedules', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-  )
+  await mockNotificationsApi(page)
 
   await page.goto('/notifications')
   await page.waitForLoadState('networkidle')

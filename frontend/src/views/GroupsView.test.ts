@@ -155,9 +155,11 @@ describe('GroupsView', () => {
     await editBtns[0].trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.overlay').exists()).toBe(true)
+    const overlay = wrapper.find('.overlay')
+    expect(overlay.exists()).toBe(true)
+    expect(overlay.text()).toContain('Edit Group')
 
-    await wrapper.find('.overlay .btn-ghost').trigger('click')
+    await overlay.find('.btn-ghost').trigger('click')
     await flushPromises()
 
     expect(wrapper.findAll('.overlay').length).toBe(0)

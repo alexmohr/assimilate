@@ -15,13 +15,12 @@ import { useMobile } from '../composables/useMobile'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
-import { Plus, SlidersHorizontal, Server, AlertCircle } from '@lucide/vue'
+import { Plus, SlidersHorizontal, Server, AlertCircle, Clock } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import MergeAgentDialog from '../components/MergeAgentDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
-import CardError from '../components/CardError.vue'
 import type { DashboardOverview } from '../types/dashboard'
 import type { AgentRow } from '../types/agent'
 import type { TagRow } from '../types/tag'
@@ -233,13 +232,12 @@ function agentHasIssues(agent: AgentRow): boolean {
   return h.failed > 0 || h.overdue > 0
 }
 
-function agentIssueLabel(agent: AgentRow): string {
-  const h = agentHealthStatus(agent)
-  if (!h) return ''
-  const parts: string[] = []
-  if (h.failed > 0) parts.push(`${h.failed} failed`)
-  if (h.overdue > 0) parts.push(`${h.overdue} overdue`)
-  return parts.join(', ')
+function navigateToAgentIssue(agent: AgentRow, kind: 'failed' | 'overdue'): void {
+  const query =
+    kind === 'failed'
+      ? { tab: 'backups', status: 'failed' }
+      : { tab: 'schedules', health: 'overdue' }
+  router.push({ path: `/agents/${agent.hostname}`, query })
 }
 
 function toggleTagFilter(tagId: number): void {
@@ -744,28 +742,28 @@ watch(
             <span class="stat-label">Agent</span>
           </div>
         </div>
-        <CardError
-          v-if="agentHasIssues(agent) && agentHealthStatus(agent)!.last_error_message"
-          :label="agentIssueLabel(agent)"
-          :message="agentHealthStatus(agent)!.last_error_message!"
-        />
         <div
-          v-else-if="agentHasIssues(agent)"
-          class="card-health-issues"
+          v-if="agentHasIssues(agent)"
+          class="card-issues"
         >
-          <AlertCircle :size="12" />
-          <span
+          <button
             v-if="agentHealthStatus(agent)!.failed > 0"
-            class="issue-text issue-failed"
+            class="issue-row issue-row-failed"
+            @click.stop="navigateToAgentIssue(agent, 'failed')"
           >
+            <AlertCircle :size="12" />
             {{ agentHealthStatus(agent)!.failed }} failed
-          </span>
-          <span
+            <span class="issue-row-arrow">→</span>
+          </button>
+          <button
             v-if="agentHealthStatus(agent)!.overdue > 0"
-            class="issue-text issue-overdue"
+            class="issue-row issue-row-overdue"
+            @click.stop="navigateToAgentIssue(agent, 'overdue')"
           >
+            <Clock :size="12" />
             {{ agentHealthStatus(agent)!.overdue }} overdue
-          </span>
+            <span class="issue-row-arrow">→</span>
+          </button>
         </div>
         <div
           v-if="hostActiveBackups(agent).length > 0"
@@ -1185,25 +1183,52 @@ watch(
   gap: 0.3rem;
 }
 
-.card-health-issues {
+.card-issues {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.issue-row {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  color: var(--danger);
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: none;
   font-size: 0.75rem;
   font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
 }
 
-.issue-text {
+.issue-row-arrow {
+  margin-left: auto;
+  opacity: 0.6;
   font-size: 0.72rem;
 }
 
-.issue-failed {
+.issue-row-failed {
   color: var(--danger);
+  background: var(--danger-subtle);
 }
 
-.issue-overdue {
+.issue-row-failed:hover {
+  border-color: var(--danger);
+}
+
+.issue-row-overdue {
   color: var(--warning);
+  background: var(--warning-subtle);
+}
+
+.issue-row-overdue:hover {
+  border-color: var(--warning);
 }
 
 .card-active-backup {

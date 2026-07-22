@@ -221,6 +221,110 @@ describe('HostsView', () => {
   })
 })
 
+describe('HostsView issue rows', () => {
+  const issueAgent = {
+    id: 42,
+    hostname: 'flaky-host',
+    display_name: null,
+    agent_version: null,
+    agent_git_sha: null,
+    agent_build_time: null,
+    agent_commit_count: null,
+    created_at: '2026-06-01T00:00:00Z',
+    last_seen_at: null,
+    is_connected: true,
+    is_imported: false,
+    is_hidden: false,
+    default_backup_paths: [],
+  }
+
+  async function mountWithHealth(): Promise<{
+    wrapper: ReturnType<typeof mount>
+    router: ReturnType<typeof createRouter>
+  }> {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [issueAgent] })
+      if (url === '/stats/health') {
+        return Promise.resolve({
+          data: [
+            {
+              hostname: 'flaky-host',
+              target_name: 'offsite',
+              last_status: 'failed',
+              last_backup_at: '2026-01-01T00:00:00Z',
+              is_overdue: false,
+              last_error_message: 'Network is unreachable',
+            },
+            {
+              hostname: 'flaky-host',
+              target_name: 'onsite',
+              last_status: 'success',
+              last_backup_at: '2026-01-01T00:00:00Z',
+              is_overdue: true,
+              last_error_message: null,
+            },
+          ],
+        })
+      }
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({
+          data: {
+            protection: {
+              protected_agent_links: [],
+              unassigned_agents: [],
+              never_succeeded_agents: [],
+              disabled_only_agents: [],
+            },
+          },
+        })
+      }
+      if (url === '/system/version') return Promise.resolve({ data: { agent_version: null } })
+      return Promise.resolve({ data: [] })
+    })
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+    return { wrapper, router }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('renders separate failed and overdue rows instead of a combined label', async () => {
+    const { wrapper } = await mountWithHealth()
+
+    const failedRow = wrapper.find('.issue-row-failed')
+    const overdueRow = wrapper.find('.issue-row-overdue')
+    expect(failedRow.exists()).toBe(true)
+    expect(overdueRow.exists()).toBe(true)
+    expect(failedRow.text()).toContain('1 failed')
+    expect(overdueRow.text()).toContain('1 overdue')
+  })
+
+  it('navigates to the backups tab filtered to failed when the failed row is clicked', async () => {
+    const { wrapper, router } = await mountWithHealth()
+
+    await wrapper.find('.issue-row-failed').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.path).toBe('/agents/flaky-host')
+    expect(router.currentRoute.value.query).toMatchObject({ tab: 'backups', status: 'failed' })
+  })
+
+  it('navigates to the schedules tab filtered to overdue when the overdue row is clicked', async () => {
+    const { wrapper, router } = await mountWithHealth()
+
+    await wrapper.find('.issue-row-overdue').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.path).toBe('/agents/flaky-host')
+    expect(router.currentRoute.value.query).toMatchObject({ tab: 'schedules', health: 'overdue' })
+  })
+})
+
 describe('HostsView deploy button label', () => {
   beforeEach(() => {
     vi.clearAllMocks()

@@ -27,7 +27,7 @@ import { parseFileChangePatterns } from '../utils/fileChangePatterns'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
-import { normalizeBackupStatus } from '../utils/backupStatus'
+import { normalizeBackupStatus, type NormalizedBackupStatus } from '../utils/backupStatus'
 import type { TagRow } from '../types/tag'
 import type { CreateAgentResponse } from '../types/generated'
 import type { Repo } from '../types/repo'
@@ -56,21 +56,50 @@ const tabs: { id: TabId; label: string }[] = [
   { id: 'backups', label: 'Backups' },
 ]
 
+interface ScheduleHealthEntry {
+  schedule_id: number
+  hostname: string
+  target_name: string
+  last_status: string | null
+  last_backup_at: string | null
+  is_overdue: boolean
+  last_error_message: string | null
+  cron_expression: string | null
+  schedule_enabled: boolean | null
+}
+
 const agent = ref<AgentRow | null>(null)
 const repos = ref<Repo[]>([])
 const schedules = ref<ScheduleRow[]>([])
 const reports = ref<ReportRow[]>([])
+const scheduleHealth = ref<ScheduleHealthEntry[]>([])
 const { loading, error, run } = useAsyncAction()
 const expandedReportId = ref<number | null>(null)
 
 // Backup filter / sort
-const filterStatus = ref<'all' | 'success' | 'warning' | 'failed'>('all')
+function isRunStatusFilter(value: unknown): value is 'success' | 'warning' | 'failed' {
+  return value === 'success' || value === 'warning' || value === 'failed'
+}
+const filterStatus = ref<'all' | 'success' | 'warning' | 'failed'>(
+  isRunStatusFilter(route.query.status) ? route.query.status : 'all',
+)
 const sortAscending = ref(false)
 
 const highlightedArchiveName = computed(() => {
   const a = route.query.archive
   return typeof a === 'string' ? a : undefined
 })
+
+const pinnedStatus = computed(() => {
+  const s = route.query.status
+  return isRunStatusFilter(s) ? s : undefined
+})
+const pinnedReportId = ref<number | null>(null)
+
+function isOverdueQuery(value: unknown): value is 'overdue' {
+  return value === 'overdue'
+}
+const overdueHighlighted = computed(() => isOverdueQuery(route.query.health))
 
 const filteredSortedReports = computed(() => {
   let result = reports.value
@@ -551,14 +580,16 @@ async function loadTabData(): Promise<void> {
   if (!agent.value) return
   const hostname = agent.value.hostname
   try {
-    const [repoRes, schedRes, reportRes] = await Promise.all([
+    const [repoRes, schedRes, reportRes, healthRes] = await Promise.all([
       apiClient.get<Repo[]>(`/agents/${hostname}/repos`),
       apiClient.get<ScheduleRow[]>('/schedules'),
       apiClient.get<ReportRow[]>(`/agents/${hostname}/reports`),
+      apiClient.get<ScheduleHealthEntry[]>('/stats/health'),
     ])
     repos.value = repoRes.data
     schedules.value = schedRes.data
     reports.value = reportRes.data
+    scheduleHealth.value = healthRes.data.filter((h) => h.hostname === hostname)
     const runningReports = reportRes.data.filter((r) => {
       const status = normalizeBackupStatus(r.status)
       return status === 'pending' || status === 'started'
@@ -585,6 +616,25 @@ async function loadTabData(): Promise<void> {
 }
 
 watch(
+  [reports, pinnedStatus],
+  ([, status]) => {
+    if (!status || pinnedReportId.value !== null) return
+    const match = [...reports.value]
+      .filter((r) => r.status === status)
+      .sort((a, b) => new Date(b.finished_at).getTime() - new Date(a.finished_at).getTime())[0]
+    if (!match) return
+    pinnedReportId.value = match.id
+    expandedReportId.value = match.id
+    nextTick(() => {
+      document
+        .getElementById(`report-${match.id}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+  },
+  { immediate: true },
+)
+
+watch(
   [reports, highlightedArchiveName],
   ([, archiveName]) => {
     if (!archiveName) return
@@ -604,6 +654,57 @@ const agentSchedules = computed(() => {
   const hostname = agent.value?.hostname
   return hostname ? schedules.value.filter((s) => s.target_hostnames.includes(hostname)) : []
 })
+
+function scheduleRunStatus(h: ScheduleHealthEntry | null): NormalizedBackupStatus | null {
+  return h?.last_status != null ? normalizeBackupStatus(h.last_status) : null
+}
+
+function scheduleHealthFor(s: ScheduleRow): ScheduleHealthEntry | null {
+  const entries = scheduleHealth.value.filter((h) => h.schedule_id === s.id)
+  return (
+    entries.find((h) => h.is_overdue) ??
+    entries.find((h) => scheduleRunStatus(h) === 'failed') ??
+    entries[0] ??
+    null
+  )
+}
+
+function scheduleHealthClass(h: ScheduleHealthEntry | null): string {
+  if (!h) return ''
+  if (h.is_overdue) return 'status-overdue'
+  switch (scheduleRunStatus(h)) {
+    case 'success':
+      return 'status-success'
+    case 'warning':
+      return 'status-warning'
+    case 'failed':
+    case 'cancelled':
+      return 'status-failed'
+    case 'started':
+    case 'pending':
+    case null:
+      return ''
+  }
+}
+
+function scheduleHealthLabel(h: ScheduleHealthEntry | null): string {
+  if (!h) return ''
+  if (h.is_overdue) return 'Overdue'
+  switch (scheduleRunStatus(h)) {
+    case 'success':
+      return 'Success'
+    case 'warning':
+      return 'Warning'
+    case 'failed':
+    case 'cancelled':
+      return 'Failed'
+    case 'started':
+    case 'pending':
+      return 'Running'
+    case null:
+      return ''
+  }
+}
 
 function repoNameForSchedule(s: ScheduleRow): string {
   return (
@@ -1619,7 +1720,10 @@ watch(wsStatus, (newStatus, oldStatus) => {
             v-for="s in agentSchedules"
             :key="s.id"
             class="schedule-card"
-            :class="{ disabled: !s.enabled }"
+            :class="{
+              disabled: !s.enabled,
+              'schedule-card-highlighted': overdueHighlighted && scheduleHealthFor(s)?.is_overdue,
+            }"
             @click="navigateToSchedule(s)"
           >
             <div class="card-top">
@@ -1641,6 +1745,13 @@ watch(wsStatus, (newStatus, oldStatus) => {
                 :class="`type-${s.schedule_type ?? 'backup'}`"
               >
                 {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
+              </span>
+              <span
+                v-if="scheduleHealthFor(s) && scheduleHealthLabel(scheduleHealthFor(s))"
+                class="health-badge"
+                :class="scheduleHealthClass(scheduleHealthFor(s))"
+              >
+                {{ scheduleHealthLabel(scheduleHealthFor(s)) }}
               </span>
             </div>
             <div class="card-stats">
@@ -1713,7 +1824,8 @@ watch(wsStatus, (newStatus, oldStatus) => {
               `result-${r.status}`,
               {
                 'result-card-link': r.status === 'success',
-                'result-card-highlighted': r.archive_name === highlightedArchiveName,
+                'result-card-highlighted':
+                  r.archive_name === highlightedArchiveName || r.id === pinnedReportId,
               },
             ]"
             @click="handleResultClick(r)"
@@ -2316,6 +2428,42 @@ watch(wsStatus, (newStatus, oldStatus) => {
 
 .schedule-card.disabled {
   opacity: 0.5;
+}
+
+.schedule-card-highlighted {
+  border-color: var(--warning);
+  box-shadow: 0 0 0 3px var(--warning-subtle);
+}
+
+.health-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.health-badge.status-success {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.health-badge.status-warning {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.health-badge.status-failed {
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.health-badge.status-overdue {
+  background: var(--warning-subtle);
+  color: var(--warning);
 }
 
 .card-top {

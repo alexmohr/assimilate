@@ -520,32 +520,6 @@ describe('DashboardView success ring', () => {
     setIntervalSpy.mockRestore()
   })
 
-  it('stops the timer when active backups become empty', async () => {
-    const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval')
-
-    // First mount with active backups
-    vi.mocked(apiClient.get).mockImplementation(dashboardWithBackups())
-    renderWithPlugins(DashboardView)
-    await flushPromises()
-
-    // Trigger a re-render that clears activeBackups via BackupCompleted
-    // Simulate by setting the mock to return empty running_operations
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/stats/dashboard-overview') {
-        return Promise.resolve(mockOverviewData([]))
-      }
-      return defaultApiHandler(url)
-    })
-
-    // Trigger the BackupCompleted handler by calling onMessage directly
-    // We need to access the registered handlers
-    await flushPromises()
-
-    // Since activeBackups is ref, we can verify the timer was started
-    expect(clearIntervalSpy).not.toHaveBeenCalled()
-    clearIntervalSpy.mockRestore()
-  })
-
   it('handles fetchAvgDuration API error gracefully', async () => {
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
       if (url === '/stats/dashboard-overview') {

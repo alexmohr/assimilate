@@ -63,9 +63,9 @@ const statusLabel = computed((): string => {
 
 const statusBadgeClass = computed((): string => {
   const s = quotaStatus.value
-  if (s === 'warning') return 'badge-warn'
-  if (s === 'critical') return 'badge-crit'
-  return 'badge-ok'
+  if (s === 'warning') return 'quota-badge-warn'
+  if (s === 'critical') return 'quota-badge-crit'
+  return 'quota-badge-ok'
 })
 
 const progressBarClass = computed((): string => {
@@ -149,7 +149,7 @@ onMounted(loadQuota)
       <div class="info-header-actions">
         <span
           v-if="quota && quota.enabled"
-          class="status-badge"
+          class="quota-status-badge"
           :class="statusBadgeClass"
         >
           {{ statusLabel }}
@@ -330,11 +330,6 @@ onMounted(loadQuota)
   text-transform: uppercase;
   letter-spacing: 0.04em;
   margin: 0;
-}
-
-.badge-crit {
-  background: var(--danger-subtle);
-  color: var(--danger);
 }
 
 .quota-usage {

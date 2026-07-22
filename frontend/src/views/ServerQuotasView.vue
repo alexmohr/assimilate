@@ -153,8 +153,8 @@ onMounted(loadQuotas)
         <div class="quota-card-top">
           <span class="quota-host">{{ quota.ssh_host }}</span>
           <span
-            class="status-badge"
-            :class="`badge-${statusFor(quota)}`"
+            class="quota-status-badge"
+            :class="`quota-badge-${statusFor(quota)}`"
           >
             {{ statusLabel(quota) }}
           </span>

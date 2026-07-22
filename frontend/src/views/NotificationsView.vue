@@ -25,7 +25,7 @@ import {
   listDeliveries,
   validateSmtp,
 } from '../api/notifications'
-import { Plus, Trash2, Bell, Send, Mail, Globe, BellRing } from '@lucide/vue'
+import { Plus, Trash2, Bell, Send, Mail, Globe, BellRing, ChevronDown } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
@@ -219,6 +219,16 @@ function deliveryStatusClass(status: NotificationDelivery['status']): string {
 
 function channelNameById(id: number): string {
   return channels.value.find((c) => c.id === id)?.name ?? String(id)
+}
+
+const expandedDeliveryId = ref<number | null>(null)
+
+function toggleDeliveryExpand(id: number): void {
+  expandedDeliveryId.value = expandedDeliveryId.value === id ? null : id
+}
+
+function formatPayload(payload: unknown): string {
+  return JSON.stringify(payload, null, 2)
 }
 
 function channelEventsLabel(channelId: number): string {
@@ -830,9 +840,10 @@ onMounted(() => {
         v-else
         class="table-wrapper"
       >
-        <table class="data-table">
+        <table class="data-table data-table-expandable">
           <thead>
             <tr>
+              <th class="col-expand"></th>
               <th>Channel</th>
               <th>Event</th>
               <th>Status</th>
@@ -841,23 +852,60 @@ onMounted(() => {
             </tr>
           </thead>
           <tbody>
-            <tr
+            <template
               v-for="d in deliveries"
               :key="d.id"
             >
-              <td>{{ channelNameById(d.channel_id) }}</td>
-              <td>{{ eventTypeLabel(d.event_type) }}</td>
-              <td>
-                <span
-                  class="delivery-status"
-                  :class="deliveryStatusClass(d.status)"
+              <tr
+                class="delivery-row"
+                :class="{ expanded: expandedDeliveryId === d.id }"
+                @click="toggleDeliveryExpand(d.id)"
+              >
+                <td class="col-expand">
+                  <ChevronDown
+                    :size="14"
+                    class="expand-chevron"
+                  />
+                </td>
+                <td data-label="Channel">{{ channelNameById(d.channel_id) }}</td>
+                <td data-label="Event">{{ eventTypeLabel(d.event_type) }}</td>
+                <td data-label="Status">
+                  <span
+                    class="delivery-status"
+                    :class="deliveryStatusClass(d.status)"
+                  >
+                    {{ d.status }}
+                  </span>
+                </td>
+                <td
+                  data-label="Error"
+                  class="mono cell-error"
                 >
-                  {{ d.status }}
-                </span>
-              </td>
-              <td class="mono">{{ d.error_message ?? '—' }}</td>
-              <td>{{ formatDate(d.attempted_at) }}</td>
-            </tr>
+                  {{ d.error_message ?? '—' }}
+                </td>
+                <td data-label="Time">{{ formatDate(d.attempted_at) }}</td>
+              </tr>
+              <tr
+                v-if="expandedDeliveryId === d.id"
+                class="detail-row"
+              >
+                <td colspan="6">
+                  <div class="detail-panel">
+                    <div
+                      v-if="d.error_message"
+                      class="detail-block"
+                    >
+                      <span class="detail-block-label">Error</span>
+                      <pre class="detail-pre error-pre">{{ d.error_message }}</pre>
+                    </div>
+                    <div class="detail-block">
+                      <span class="detail-block-label">Payload</span>
+                      <pre class="detail-pre">{{ formatPayload(d.payload) }}</pre>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            </template>
           </tbody>
         </table>
       </div>
@@ -1703,6 +1751,152 @@ onMounted(() => {
   padding: 0.15rem 0.5rem;
   border-radius: var(--radius-sm);
   font-weight: 500;
+}
+
+.col-expand {
+  width: 2rem;
+  padding-right: 0 !important;
+}
+
+.delivery-row {
+  cursor: pointer;
+}
+
+.expand-chevron {
+  color: var(--text-muted);
+  transition: transform 0.15s;
+}
+
+.delivery-row.expanded .expand-chevron {
+  transform: rotate(-180deg);
+}
+
+.cell-error {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-row td {
+  padding: 0;
+  background: var(--bg-hover);
+}
+
+.detail-panel {
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.detail-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.detail-block-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+
+.detail-pre {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.detail-pre.error-pre {
+  color: var(--danger);
+}
+
+/* Below this breakpoint the table restructures into a stacked card list per
+   row instead of scrolling horizontally, so long values (errors, payloads)
+   wrap in place rather than forcing the whole table wider than the viewport. */
+@media (max-width: 640px) {
+  .table-wrapper {
+    overflow-x: visible;
+    border: none;
+  }
+
+  .data-table-expandable thead {
+    display: none;
+  }
+
+  .data-table-expandable tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .data-table-expandable .delivery-row {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-card);
+    padding: 0.5rem 0.75rem;
+  }
+
+  .data-table-expandable .delivery-row td {
+    border-bottom: none;
+  }
+
+  .data-table-expandable .col-expand {
+    display: none;
+  }
+
+  .data-table-expandable td {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.35rem 0;
+    text-align: right;
+    white-space: normal;
+    word-break: break-word;
+  }
+
+  .data-table-expandable td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    text-align: left;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-muted);
+  }
+
+  .data-table-expandable .cell-error {
+    max-width: none;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .data-table-expandable .detail-row td {
+    display: block;
+    background: transparent;
+    text-align: left;
+  }
+
+  .data-table-expandable .detail-row td::before {
+    content: none;
+  }
 }
 
 .status-sent {

@@ -150,4 +150,6 @@ The **History** tab shows the last 50 notification deliveries with:
 - Error message (if failed)
 - Timestamp
 
+Click a row to expand it and see the full error message and the raw event payload that was sent to the channel — useful when an error message is too long to read in the table, or when you need to see exactly which fields (hostname, repo, archive name, etc.) were included in the notification. On narrow screens the table switches to a stacked card layout instead of scrolling horizontally, so long error messages and payloads wrap in place.
+
 Failed deliveries are logged but not retried automatically. Fix the channel configuration and use the Test button to verify.

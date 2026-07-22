@@ -68,7 +68,9 @@ function removeRow(index: number): void {
         v-model="row.path"
         type="text"
         class="fcp-input"
-        :placeholder="props.placeholder ?? 'Glob against warning text, e.g. */etc/config*'"
+        :placeholder="
+          props.placeholder ?? 'Glob against warning text, e.g. */etc/config* or /data/wal/**'
+        "
         spellcheck="false"
       />
       <select
@@ -98,7 +100,9 @@ function removeRow(index: number): void {
         Glob patterns matched against the full warning message, with actions:
         <code>ignore</code> (no warning), <code>warn</code> (default, current behavior),
         <code>fatal</code> (fail backup). A bare path will not match - wrap it in <code>*</code>,
-        e.g. <code>*/etc/config*</code>. Unconfigured files still produce warnings.
+        e.g. <code>*/etc/config*</code>. <code>*</code> does not match <code>/</code> - to cover
+        every file under a directory, end the pattern with <code>**</code>, e.g.
+        <code>/data/wal/**</code>. Unconfigured files still produce warnings.
       </slot>
     </span>
   </div>

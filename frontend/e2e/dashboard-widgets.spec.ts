@@ -38,6 +38,17 @@ test.describe('Dashboard widgets', () => {
     await page.goto('/')
     await page.waitForLoadState('networkidle')
 
+    // The demo environment has findings, so dismiss them all via the API to
+    // verify the panel hides.
+    const resp = await page.request.get('/api/stats/dashboard-overview')
+    const body = (await resp.json()) as { findings: Array<{ id: string }> }
+    for (const finding of body.findings) {
+      await page.request.post(`/api/stats/findings/${finding.id}/dismiss`)
+    }
+
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+
     await expect(page.locator('#needs-attention')).toHaveCount(0)
   })
 

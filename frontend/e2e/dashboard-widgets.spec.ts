@@ -42,14 +42,23 @@ test.describe('Dashboard widgets', () => {
     // verify the panel hides.
     const resp = await page.request.get('/api/stats/dashboard-overview')
     const body = (await resp.json()) as { findings: Array<{ id: string }> }
-    for (const finding of body.findings) {
-      await page.request.post(`/api/stats/findings/${finding.id}/dismiss`)
+    const findingIds = body.findings.map((f) => f.id)
+
+    try {
+      for (const id of findingIds) {
+        await page.request.post(`/api/stats/findings/${id}/dismiss`)
+      }
+
+      await page.goto('/')
+      await page.waitForLoadState('networkidle')
+
+      await expect(page.locator('#needs-attention')).toHaveCount(0)
+    } finally {
+      // Restore dismissed findings so they remain visible in the demo environment.
+      for (const id of findingIds) {
+        await page.request.delete(`/api/stats/findings/${id}/dismiss`)
+      }
     }
-
-    await page.goto('/')
-    await page.waitForLoadState('networkidle')
-
-    await expect(page.locator('#needs-attention')).toHaveCount(0)
   })
 
   test('dashboard shows recent activity section', async ({ page }) => {

@@ -136,14 +136,6 @@ p {
   white-space: nowrap;
 }
 
-.empty-state {
-  padding: 1.5rem;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--success);
-  text-align: center;
-}
-
 .finding-list {
   display: flex;
   flex-direction: column;

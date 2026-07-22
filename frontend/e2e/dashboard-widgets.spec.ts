@@ -33,6 +33,14 @@ test.describe('Dashboard widgets', () => {
     expect(body['total_agents']).toBeGreaterThan(0)
   })
 
+  test('hides NeedsAttention panel when no findings exist', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+
+    await expect(page.locator('#needs-attention')).toHaveCount(0)
+  })
+
   test('dashboard shows recent activity section', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/')

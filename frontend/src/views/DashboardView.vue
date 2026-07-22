@@ -647,7 +647,7 @@ async function fetchOverview(): Promise<void> {
               <h2 class="panel-title">Storage Breakdown</h2>
             </div>
             <p class="chart-desc">
-              Current on-disk usage per repository -- deduplicated (unique chunks across all
+              Current on-disk usage per repository — deduplicated (unique chunks across all
               archives).
             </p>
             <div class="ring-container">
@@ -787,6 +787,10 @@ async function fetchOverview(): Promise<void> {
 
 @media (max-width: 900px) {
   .attention-row {
+    grid-template-columns: 1fr;
+  }
+
+  .attention-sidebar-wide {
     grid-template-columns: 1fr;
   }
 }

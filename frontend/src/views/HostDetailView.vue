@@ -1341,6 +1341,8 @@ watch(wsStatus, (newStatus, oldStatus) => {
                 Glob patterns matched against the full warning message, with actions:
                 <code>ignore</code> (no warning), <code>warn</code> (default), <code>fatal</code>
                 (fail backup). Checked after schedule-level patterns, as a fallback for this host.
+                <code>*</code> does not match <code>/</code> - to cover every file under a
+                directory, end the pattern with <code>**</code>, e.g. <code>/data/wal/**</code>.
               </template>
             </FileChangePatternsEditor>
             <div

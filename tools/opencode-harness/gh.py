@@ -252,6 +252,18 @@ def get_pr_head_sha(repo: str, number: int) -> str:
     return commits[-1]["oid"] if commits else ""
 
 
+def get_branch_head_sha(repo: str, branch: str) -> str:
+    """Current head commit sha of `branch` (e.g. the base branch) - used to
+    detect "something merged into base" independent of any single PR's own
+    head_sha, which only ever reflects that PR's own branch.
+    """
+    try:
+        raw = _run_json(["gh", "api", f"repos/{repo}/commits/{branch}"])
+    except GhError:
+        return ""
+    return raw.get("sha", "")
+
+
 _FAILING_CHECK_CONCLUSIONS = {"failure", "cancelled", "timed_out", "action_required"}
 
 

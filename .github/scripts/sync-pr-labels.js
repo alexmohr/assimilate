@@ -17,6 +17,14 @@ const CI_WORKFLOW_FILE = "ci.yml";
 // it to actually block merging - see skills/review/SKILL.md.
 const GATE_CHECK_NAME = "PR Merge Gate";
 
+// The only actor this script trusts a claude-approved label-add event from
+// (see claudeApprovedIsGenuine below) - both this workflow's own label
+// mutations and claude-review.yml's `gh pr edit --add-label` calls run under
+// the workflow's own GITHUB_TOKEN, which GitHub always attributes to this
+// exact login. A human (or anything else) adding the label by hand via the
+// UI or their own token shows up under their real account instead.
+const TRUSTED_AUTOMATION_LOGIN = "github-actions[bot]";
+
 // Job names from coverage-diff-check.yml / duplicate-code-check.yml - see
 // labelReflectsCurrentCommit below for why these matter.
 const COVERAGE_DIFF_CHECK_NAME = "Check coverage diff";
@@ -391,6 +399,63 @@ async function humanSignOffStillStands(github, owner, repo, prNumber, headSha) {
   return new Date(latest.created_at) > commitDate;
 }
 
+// GitHub's own reviewDecision is intrinsically provenance-safe: it only ever
+// reflects a real, distinct account's formal review, and GitHub itself
+// refuses to record a self-approval (422). The claude-approved label has no
+// such guarantee - it's an ordinary label, and anyone with triage+ access
+// can add any label to any PR via the UI or their own token, which would
+// otherwise let them forge a clean verdict and trigger the auto-merge below
+// with no review ever having happened. Trust it for merging only when the
+// most recent event that added it was actually authored by this repo's own
+// automation (TRUSTED_AUTOMATION_LOGIN), never by whichever account happens
+// to currently hold triage/write access.
+async function claudeApprovedIsGenuine(github, owner, repo, prNumber) {
+  const events = await github.paginate(github.rest.issues.listEvents, {
+    owner,
+    repo,
+    issue_number: prNumber,
+    per_page: 100,
+  });
+  const labelEvents = events.filter(
+    (e) => e.event === "labeled" && e.label && e.label.name === REVIEW_VERDICT_LABELS.APPROVED.name,
+  );
+  if (labelEvents.length === 0) return false;
+  const latest = labelEvents[labelEvents.length - 1];
+  return Boolean(latest.actor) && latest.actor.login === TRUSTED_AUTOMATION_LOGIN;
+}
+
+// Squash-merges `pr` and deletes its branch (same-repo PRs only - a fork's
+// branch can't be deleted by this token, mirroring `gh pr merge
+// --delete-branch`'s own behavior). Called only once every deterministic
+// gate this script already computes - CI green, no merge conflict, no
+// coverage/duplicate-code failure, no active changes-requested verdict, no
+// pending human sign-off (all folded into `status === READY_TO_MERGE`) -
+// plus an actual, provenance-checked approval agrees. Tolerates the PR
+// already being merged/closed or genuinely not mergeable right now (a
+// concurrent push, a race with another trigger) as a no-op rather than
+// failing the whole label-sync job over it - the next sync will simply
+// re-evaluate from scratch.
+async function autoMergeIfApproved(github, core, owner, repo, prNumber, pr) {
+  try {
+    await github.rest.pulls.merge({ owner, repo, pull_number: prNumber, merge_method: "squash" });
+    core.info(`PR #${prNumber}: auto-merged (squash) - ready to merge with a genuine approval.`);
+  } catch (err) {
+    if (err.status === 405 || err.status === 409) {
+      core.info(`PR #${prNumber}: auto-merge attempt skipped (${err.status}): ${err.message}`);
+      return;
+    }
+    throw err;
+  }
+
+  if (pr.head.repo && pr.base.repo && pr.head.repo.id === pr.base.repo.id) {
+    await github.rest.git
+      .deleteRef({ owner, repo, ref: `heads/${pr.head.ref}` })
+      .catch((err) => {
+        if (err.status !== 422 && err.status !== 404) throw err;
+      });
+  }
+}
+
 // `pending` is true only for states where nothing has actually failed and
 // we're purely still waiting on other work to finish (CI hasn't concluded
 // yet, or every other check hasn't reached a conclusion). Publishing those
@@ -670,6 +735,32 @@ module.exports = async ({ github, context, core, prNumber, eventAction, selfChec
   }
 
   await createGateCheck(github, owner, repo, pr.head.sha, status, summary, pending);
+
+  // Auto-merge: every deterministic gate this function computes (CI green,
+  // no merge conflict, no coverage/duplicate-code failure, no active
+  // changes-requested verdict, no pending human sign-off) is already folded
+  // into `status === READY_TO_MERGE` - the one thing it deliberately does
+  // NOT require is an actual approval (see skills/review/SKILL.md: "An
+  // approving review is not required" for the label itself, since nobody
+  // should approve a red build). Squash-merging on top of that still needs
+  // a real approval to have happened, so check that separately here rather
+  // than loosening READY_TO_MERGE's own meaning.
+  if (status.name === STATUS_LABELS.READY_TO_MERGE.name) {
+    const isNativeApproval = nativeReviewDecision === "APPROVED";
+    // The label path only ever kicks in when there's no real native
+    // decision to trust yet - see resolveEffectiveReviewDecision.
+    const isLabelApproval = !isNativeApproval && existingLabels.includes(REVIEW_VERDICT_LABELS.APPROVED.name);
+    const approved =
+      isNativeApproval || (isLabelApproval && (await claudeApprovedIsGenuine(github, owner, repo, prNumber)));
+    if (isLabelApproval && !approved) {
+      core.info(
+        `PR #${prNumber}: claude-approved is present but wasn't applied by ${TRUSTED_AUTOMATION_LOGIN} - not auto-merging.`,
+      );
+    }
+    if (approved) {
+      await autoMergeIfApproved(github, core, owner, repo, prNumber, pr);
+    }
+  }
 };
 
 // Exported so pre-review-checks.js can (a) invoke this exact sync as its own

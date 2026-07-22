@@ -37,6 +37,11 @@ class HarnessState:
     path: Path
     pr_attempts: dict[str, PrAttempt] = field(default_factory=dict)
     started_issue_numbers: list[int] = field(default_factory=list)
+    # Base branch head sha as of the last cycle - lets the harness notice a
+    # merge landed on base (independent of any single PR's own head_sha) and
+    # give every stuck PR a fresh look, since a rebase might now resolve what
+    # looked stuck before. None until the first cycle has ever recorded one.
+    last_base_sha: str | None = None
 
     @staticmethod
     def load(path: Path) -> HarnessState:
@@ -50,6 +55,7 @@ class HarnessState:
             path=path,
             pr_attempts=pr_attempts,
             started_issue_numbers=list(raw.get("started_issue_numbers", [])),
+            last_base_sha=raw.get("last_base_sha"),
         )
 
     def save(self) -> None:
@@ -65,6 +71,7 @@ class HarnessState:
                 for number, a in self.pr_attempts.items()
             },
             "started_issue_numbers": self.started_issue_numbers,
+            "last_base_sha": self.last_base_sha,
         }
         self.path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
@@ -110,4 +117,9 @@ class HarnessState:
     def mark_issue_started(self, issue_number: int) -> None:
         if issue_number not in self.started_issue_numbers:
             self.started_issue_numbers.append(issue_number)
+            self.save()
+
+    def set_last_base_sha(self, sha: str) -> None:
+        if self.last_base_sha != sha:
+            self.last_base_sha = sha
             self.save()

@@ -875,9 +875,58 @@ def _round_robin(numbers: list[int], cycle: int) -> int | None:
     return numbers[cycle % len(numbers)]
 
 
+def _clear_stuck_after_base_merge(cfg: Config, state: HarnessState) -> None:
+    """Gives every stuck PR a fresh look the moment `cfg.base_branch` itself
+    moves - a merge landing on base is real, external progress the ordinary
+    per-PR circuit breaker can't see on its own (it only ever compares a
+    PR's *own* head_sha across cycles, never base's), even though it's
+    exactly what can unstick one: a merge conflict that looked unresolvable,
+    or a CI failure caused by something already broken on base, can both
+    simply disappear once base advances past whatever caused them - rather
+    than staying parked until a human notices and clears the label by hand.
+
+    A no-op on the very first cycle a state file has ever seen (nothing
+    recorded yet to compare against, so nothing is swept) and whenever base
+    hasn't actually moved. Skips any PR whose stuck marking came from the
+    needs_human_review branch specifically (see PrAttempt.stuck_reason) -
+    that one is gated on the repo's own `needs human review` label, which a
+    base-branch merge has no bearing on at all; clearing it here would just
+    have `_check_and_fix_pr` re-mark it (and repost the same give-up
+    comment) on the very next cycle regardless.
+    """
+    if cfg.dry_run:
+        return
+    current = gh.get_branch_head_sha(cfg.repo, cfg.base_branch)
+    if not current:
+        return
+    previous = state.last_base_sha
+    state.set_last_base_sha(current)
+    if previous is None or previous == current:
+        return
+    for pr in gh.list_open_prs(cfg.repo):
+        if cfg.stuck_label not in pr.labels:
+            continue
+        recorded = state.pr_attempts.get(str(pr.number))
+        if recorded is not None and recorded.stuck_reason == "needs_human_review":
+            continue
+        log.info(
+            "PR #%d: %s advanced (%s -> %s) since last cycle; clearing stuck state for a "
+            "fresh look",
+            pr.number,
+            cfg.base_branch,
+            previous[:8],
+            current[:8],
+        )
+        gh.remove_label(cfg.repo, pr.number, cfg.stuck_label)
+        if cfg.question_label in pr.labels:
+            gh.remove_label(cfg.repo, pr.number, cfg.question_label)
+        state.clear_pr(pr.number)
+
+
 def run_once(cfg: Config, state: HarnessState, cycle: int, overridden_prs: set[int]) -> bool:
     """Runs a single cycle. Returns True if it solved a problem (pushed a PR
     fix, or implemented an issue into a new PR) - see --max-solved."""
+    _clear_stuck_after_base_merge(cfg, state)
     if cfg.target_prs is not None or cfg.target_all_prs:
         # "all open PRs" is re-resolved fresh every cycle (new PRs may have
         # opened, others merged/closed since the last one) - an explicit

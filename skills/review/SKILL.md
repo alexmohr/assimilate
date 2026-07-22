@@ -242,16 +242,14 @@ Claude can't use it to approve a PR). Everything else goes through `gh`
 instead: `claude_args` in `claude-review.yml` grants Bash access to a
 specific set of subcommands (not blanket Bash access) — `gh pr diff`/`gh pr
 view`/`git log`/`git diff`/`git show` to actually see the change, `gh pr
-review`/`gh pr edit` for the verdict, `gh pr merge` to merge a clean
-approval — and a `GH_TOKEN` env var on that step authenticates `gh`. The
-prompt tells Claude to start with `gh pr diff`/`gh pr view` before forming
-an opinion, to use `gh pr review --approve|--request-changes` for the
-native verdict path and `gh pr edit --add-label|--remove-label` for the
-same-account label path, and — only for a clean approval with no `needs
-human review` label — to merge with `gh pr merge --squash --delete-branch`
-itself rather than leaving it for a human to click. It's told explicitly
-never to submit a placeholder/test verdict and never to retry a failed
-merge.
+review`/`gh pr edit` for the verdict — and a `GH_TOKEN` env var on that step
+authenticates `gh`. The prompt tells Claude to start with `gh pr diff`/`gh
+pr view` before forming an opinion, to use `gh pr review
+--approve|--request-changes` for the native verdict path and `gh pr edit
+--add-label|--remove-label` for the same-account label path. It's told
+explicitly never to submit a placeholder/test verdict, and never to merge
+the PR itself — merging is not part of the review job at all; see "Merge
+gate" below for how it actually happens.
 
 **Model:** defaults to `claude-sonnet-5` (overridable repo-wide via the
 `CLAUDE_REVIEW_MODEL` Actions variable). If Claude's review fails outright
@@ -274,15 +272,57 @@ re-checked, that needs a new commit (or, for coverage, a fresh CI run).
 
 ### Merge gate (enforced, not just informational)
 
-The same workflow publishes its verdict as a check run named `PR Merge Gate`
-on the head commit — `success` only when the status is `ready to merge`,
-`failure` otherwise, with a summary explaining why. Labels alone are
-advisory (nothing stops a human from clicking "Merge" on a red-labeled PR);
-`PR Merge Gate` makes the verdict machine-enforceable once it is added as a
-**required status check** in the repo's branch protection settings
-(Settings → Branches → Branch protection rule for `main` → Require status
-checks to pass → add `PR Merge Gate`). That's a one-time, repo-owner-only
-change — agents must not attempt to modify branch protection themselves.
+`pr-status-labels.yml` (via `sync-pr-labels.js`) publishes its verdict as a
+check run named `PR Merge Gate` on the head commit — `success` only when the
+status is `ready to merge`, `failure` otherwise, with a summary explaining
+why. Labels alone are advisory (nothing stops a human from clicking "Merge"
+on a red-labeled PR); `PR Merge Gate` makes the verdict machine-enforceable
+once it is added as a **required status check** in the repo's branch
+protection settings (Settings → Branches → Branch protection rule for
+`main` → Require status checks to pass → add `PR Merge Gate`). That's a
+one-time, repo-owner-only change — agents must not attempt to modify branch
+protection themselves.
+
+### Auto-merge (deterministic, not agent-driven)
+
+The same `sync-pr-labels.js` run that computes `ready to merge` also
+squash-merges the PR itself (`--delete-branch` for same-repo branches) the
+moment **all** of the following hold, every time it re-syncs (every push,
+review, label change, or CI completion — not just the instant a review is
+submitted):
+
+* `status === ready to merge` — CI green, no merge conflict, no
+  `coverage failed`/`duplicate code`, no active `changes requested` verdict,
+  and no pending `needs human review` sign-off (all the same gates the label
+  itself already requires — see the table above).
+* **A genuine approval** — either GitHub's native `reviewDecision` is
+  `APPROVED` (a different-account review; GitHub itself guarantees this is a
+  real, distinct reviewer and never a self-approval), or the same-account
+  `claude-approved` label is set. `ready to merge` on its own does **not**
+  require an approval (see the note under the table), so this is checked
+  independently — merging still needs one even though the status label
+  doesn't.
+
+This is deliberately **not** something the reviewing agent does itself
+anymore — `claude-review.yml`'s prompt explicitly tells Claude never to run
+`gh pr merge`; it ends its job at submitting the verdict. Moving the merge
+decision into the same deterministic script that already computes every
+other gate means it re-fires on its own whenever anything relevant changes
+(e.g. a human clearing `needs human review` on an already-approved PR later)
+rather than existing only as a one-shot action inside a single review turn
+that could be skipped, time out, or simply never run again.
+
+**Label forgery protection:** unlike a native review, `claude-approved` is
+an ordinary label — anyone with triage-level (or higher) repo access can add
+any label to any PR by hand via the UI or their own token, with no review
+ever having happened. Merging on the label's mere presence would let that
+forge a clean verdict. Before trusting it for merging, `sync-pr-labels.js`
+checks the PR's timeline for the most recent event that added
+`claude-approved` and requires its actor to be `github-actions[bot]` — the
+identity both `claude-review.yml`'s `gh pr edit --add-label` call and this
+workflow's own label mutations run under. A label added by any other
+account is left in place (still advisory for the status labels above) but
+is never trusted to trigger a merge.
 
 `coverage-diff-check.yml` and `duplicate-code-check.yml` each publish their
 own check run too ("Coverage Diff Check", "Duplicate Code Check") — these

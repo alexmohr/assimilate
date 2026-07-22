@@ -11,7 +11,14 @@ on:
     types: [completed]
 
 permissions:
-  contents: read
+  # write (not just read): sync-pr-labels.js squash-merges a PR itself once
+  # it computes `ready to merge` plus a genuine approval - both the merge
+  # commit and the post-merge branch deletion need contents:write, not just
+  # pull-requests:write. Safe on this pull_request_target trigger the same
+  # way pull-requests:write already was: this workflow only ever checks out
+  # trusted scripts from the default branch (sparse-checkout .github/scripts
+  # below), never the PR's own untrusted code.
+  contents: write
   pull-requests: write
   actions: read
   checks: write

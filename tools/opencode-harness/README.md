@@ -73,10 +73,12 @@ asked to edit files.
    harness itself `git commit` (with a conventional-commits message it
    generates) and `git push`.
 4. From there the repo's own automation takes back over: CI runs,
-   `pr-status-labels.yml` re-syncs labels, `claude-review.yml` reviews and —
-   if it's a clean approval with no `needs human review` label — merges it.
-   The harness never merges anything itself. It just polls; once a PR is
-   merged or closed it moves to the next one.
+   `pr-status-labels.yml` re-syncs labels and `claude-review.yml` reviews;
+   once the result is `ready to merge` with a genuine approval and no
+   `needs human review` label, `pr-status-labels.yml` itself squash-merges
+   it deterministically (see `skills/review/SKILL.md`'s "Auto-merge"
+   section). The harness never merges anything itself. It just polls; once
+   a PR is merged or closed it moves to the next one.
 5. If the *same* underlying problem (same failing-check content, same
    review comments, etc.) survives `HARNESS_MAX_STUCK_CYCLES` push attempts,
    the harness stops touching that PR: it adds its own
@@ -101,7 +103,17 @@ asked to edit files.
    retries burned) and leaves it alone until the label is gone. This is
    deliberately narrow: an ordinary CI/merge/coverage/duplicate-code problem
    on the same PR is still fixed as normal regardless of this label - it's
-   only the review verdict itself that's a dead end while it holds.
+   only the review verdict itself that's a dead end while it holds. A
+   pushed commit isn't the only thing that can un-stick a PR, though: the
+   harness also notices whenever `HARNESS_BASE_BRANCH` itself advances (a
+   merge landed on it) and clears `opencode-harness-stuck` (+
+   `opencode-harness-question`, if set) from every open PR carrying it for a
+   fresh look next cycle - a merge conflict or a CI failure that looked
+   unresolvable can simply disappear once base moves past whatever caused
+   it, which a per-PR "did *this* branch get a new commit" check alone can
+   never observe. PRs stuck specifically for the `needs human review`
+   reason are left alone by this - that one only ever clears when a human
+   removes the label themselves, regardless of what base does.
 6. **Once there are zero open PRs, or no open PR is actionable this cycle**
    (see step 1's `HARNESS_FALLBACK_TO_ISSUES`), it picks the newest open
    issue, implements it on a new `opencode/issue-<n>` branch using the same

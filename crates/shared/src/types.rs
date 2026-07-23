@@ -118,29 +118,6 @@ impl From<i64> for ReportId {
     }
 }
 
-impl FromStr for ScheduleType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "backup" => Ok(ScheduleType::Backup),
-            "check" => Ok(ScheduleType::Check),
-            "verify" => Ok(ScheduleType::Verify),
-            other => Err(format!("unknown schedule type: {other}")),
-        }
-    }
-}
-
-impl fmt::Display for ScheduleType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ScheduleType::Backup => write!(f, "backup"),
-            ScheduleType::Check => write!(f, "check"),
-            ScheduleType::Verify => write!(f, "verify"),
-        }
-    }
-}
-
 /// Compression algorithm applied by borg when writing new archive chunks to
 /// a repository.
 #[derive(Debug, Clone, Default, PartialEq, Eq, TS, ToSchema)]
@@ -256,34 +233,55 @@ impl FromStr for Compression {
 
 /// Encryption mode used when creating a new borg repository, passed to
 /// `borg init --encryption`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    ToSchema,
+    strum_macros::Display,
+    strum_macros::EnumString,
+    strum_macros::IntoStaticStr,
+)]
 pub enum BorgEncryption {
     /// AES encryption with the key stored inside the repository, protected
     /// by the repository passphrase.
     #[default]
     #[serde(rename = "repokey")]
+    #[strum(serialize = "repokey")]
     Repokey,
     /// Like [`Repokey`](Self::Repokey), but using BLAKE2 for MAC/HMAC
     /// instead of HMAC-SHA256.
     #[serde(rename = "repokey-blake2")]
+    #[strum(serialize = "repokey-blake2")]
     RepokeyBlake2,
     /// AES encryption with the key stored in a local keyfile rather than in
     /// the repository itself.
     #[serde(rename = "keyfile")]
+    #[strum(serialize = "keyfile")]
     Keyfile,
     /// Like [`Keyfile`](Self::Keyfile), but using BLAKE2 for MAC/HMAC
     /// instead of HMAC-SHA256.
     #[serde(rename = "keyfile-blake2")]
+    #[strum(serialize = "keyfile-blake2")]
     KeyfileBlake2,
     /// No encryption, but archives are authenticated to detect tampering.
     #[serde(rename = "authenticated")]
+    #[strum(serialize = "authenticated")]
     Authenticated,
     /// Like [`Authenticated`](Self::Authenticated), but using BLAKE2 instead
     /// of HMAC-SHA256.
     #[serde(rename = "authenticated-blake2")]
+    #[strum(serialize = "authenticated-blake2")]
     AuthenticatedBlake2,
     /// No encryption and no authentication.
     #[serde(rename = "none")]
+    #[strum(serialize = "none")]
     None,
 }
 
@@ -292,44 +290,27 @@ impl BorgEncryption {
     /// value for this mode.
     #[must_use]
     pub fn as_borg_arg(self) -> &'static str {
-        match self {
-            Self::Repokey => "repokey",
-            Self::RepokeyBlake2 => "repokey-blake2",
-            Self::Keyfile => "keyfile",
-            Self::KeyfileBlake2 => "keyfile-blake2",
-            Self::Authenticated => "authenticated",
-            Self::AuthenticatedBlake2 => "authenticated-blake2",
-            Self::None => "none",
-        }
-    }
-}
-
-impl std::fmt::Display for BorgEncryption {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_borg_arg())
-    }
-}
-
-impl FromStr for BorgEncryption {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "repokey" => Ok(Self::Repokey),
-            "repokey-blake2" => Ok(Self::RepokeyBlake2),
-            "keyfile" => Ok(Self::Keyfile),
-            "keyfile-blake2" => Ok(Self::KeyfileBlake2),
-            "authenticated" => Ok(Self::Authenticated),
-            "authenticated-blake2" => Ok(Self::AuthenticatedBlake2),
-            "none" => Ok(Self::None),
-            other => Err(format!("unknown borg encryption mode: {other}")),
-        }
+        (&self).into()
     }
 }
 
 /// Kind of borg operation a [`Schedule`] runs on its cron trigger.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Default,
+    TS,
+    ToSchema,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
 #[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
 pub enum ScheduleType {
     /// Runs `borg create` to take a new backup of the configured sources.
     #[default]
@@ -343,21 +324,26 @@ pub enum ScheduleType {
 
 /// How multiple schedules on the same repository are executed relative to
 /// each other. Currently only sequential execution is supported.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Default,
+    TS,
+    ToSchema,
+    strum_macros::Display,
+)]
 #[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
 pub enum ExecutionMode {
     /// Schedules run one at a time, never overlapping.
     #[default]
     #[serde(alias = "parallel")]
     Sequential,
-}
-
-impl fmt::Display for ExecutionMode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Sequential => write!(f, "sequential"),
-        }
-    }
 }
 
 impl FromStr for ExecutionMode {
@@ -372,8 +358,22 @@ impl FromStr for ExecutionMode {
 }
 
 /// What a sequential schedule's remaining targets should do when one target's backup fails.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Default,
+    TS,
+    ToSchema,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
 #[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
 pub enum OnFailure {
     /// Abort the remaining targets in the sequence once one fails.
     #[default]
@@ -382,30 +382,23 @@ pub enum OnFailure {
     Continue,
 }
 
-impl fmt::Display for OnFailure {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Stop => write!(f, "stop"),
-            Self::Continue => write!(f, "continue"),
-        }
-    }
-}
-
-impl FromStr for OnFailure {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "stop" => Ok(Self::Stop),
-            "continue" => Ok(Self::Continue),
-            other => Err(format!("unknown on_failure value: {other}")),
-        }
-    }
-}
-
 /// Action taken when a repo or server quota threshold (warn/critical) is breached.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Default,
+    TS,
+    ToSchema,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum QuotaAction {
     /// Send a notification but otherwise let backups proceed as normal.
     #[default]
@@ -416,32 +409,22 @@ pub enum QuotaAction {
     DisableSchedule,
 }
 
-impl fmt::Display for QuotaAction {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NotifyOnly => write!(f, "notify_only"),
-            Self::BlockBackups => write!(f, "block_backups"),
-            Self::DisableSchedule => write!(f, "disable_schedule"),
-        }
-    }
-}
-
-impl FromStr for QuotaAction {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "notify_only" => Ok(Self::NotifyOnly),
-            "block_backups" => Ok(Self::BlockBackups),
-            "disable_schedule" => Ok(Self::DisableSchedule),
-            other => Err(format!("unknown quota action: {other}")),
-        }
-    }
-}
-
 /// Overall outcome of a single backup run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Default,
+    TS,
+    ToSchema,
+    strum_macros::Display,
+)]
 #[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
 pub enum BackupStatus {
     /// The backup completed with no errors or warnings.
     #[default]
@@ -453,16 +436,6 @@ pub enum BackupStatus {
     /// The backup did not complete successfully.
     #[serde(alias = "Failed")]
     Failed,
-}
-
-impl fmt::Display for BackupStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Success => write!(f, "success"),
-            Self::Warning => write!(f, "warning"),
-            Self::Failed => write!(f, "failed"),
-        }
-    }
 }
 
 impl FromStr for BackupStatus {
@@ -662,7 +635,20 @@ pub struct RepoConfig {
 
 /// What to do when a backup source's set of file changes looks unusually
 /// large or small compared to prior runs (a possible ransomware/corruption signal).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, TS, ToSchema)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Default,
+    TS,
+    ToSchema,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
+#[strum(serialize_all = "lowercase")]
 pub enum FileChangeAction {
     /// Take no action; let the backup proceed regardless of the change volume.
     Ignore,
@@ -671,29 +657,6 @@ pub enum FileChangeAction {
     Warn,
     /// Abort the backup rather than let it complete.
     Fatal,
-}
-
-impl fmt::Display for FileChangeAction {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Ignore => write!(f, "ignore"),
-            Self::Warn => write!(f, "warn"),
-            Self::Fatal => write!(f, "fatal"),
-        }
-    }
-}
-
-impl FromStr for FileChangeAction {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "ignore" => Ok(Self::Ignore),
-            "warn" => Ok(Self::Warn),
-            "fatal" => Ok(Self::Fatal),
-            other => Err(format!("unknown file change action: {other}")),
-        }
-    }
 }
 
 /// A glob pattern paired with the action to take when a changed file matches it.

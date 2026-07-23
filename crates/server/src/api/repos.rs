@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::{collections::HashMap, fmt, time::Duration};
+use std::{collections::HashMap, time::Duration};
 
 use axum::{
     Json,
@@ -1137,16 +1137,34 @@ pub async fn break_lock(
     }))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    strum_macros::Display,
+    strum_macros::EnumString,
+    strum_macros::IntoStaticStr,
+)]
 enum BorgSubcommand {
+    #[strum(serialize = "info")]
     Info,
+    #[strum(serialize = "list")]
     List,
+    #[strum(serialize = "check")]
     Check,
+    #[strum(serialize = "compact")]
     Compact,
+    #[strum(serialize = "prune")]
     Prune,
+    #[strum(serialize = "delete")]
     Delete,
+    #[strum(serialize = "diff")]
     Diff,
+    #[strum(serialize = "rename")]
     Rename,
+    #[strum(serialize = "recreate")]
     Recreate,
 }
 
@@ -1164,17 +1182,7 @@ impl BorgSubcommand {
     ];
 
     fn as_str(self) -> &'static str {
-        match self {
-            BorgSubcommand::Info => "info",
-            BorgSubcommand::List => "list",
-            BorgSubcommand::Check => "check",
-            BorgSubcommand::Compact => "compact",
-            BorgSubcommand::Prune => "prune",
-            BorgSubcommand::Delete => "delete",
-            BorgSubcommand::Diff => "diff",
-            BorgSubcommand::Rename => "rename",
-            BorgSubcommand::Recreate => "recreate",
-        }
+        (&self).into()
     }
 
     fn permitted_list() -> String {
@@ -1183,31 +1191,6 @@ impl BorgSubcommand {
             .map(|s| s.as_str())
             .collect::<Vec<_>>()
             .join(", ")
-    }
-}
-
-impl fmt::Display for BorgSubcommand {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl std::str::FromStr for BorgSubcommand {
-    type Err = ();
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "info" => Ok(BorgSubcommand::Info),
-            "list" => Ok(BorgSubcommand::List),
-            "check" => Ok(BorgSubcommand::Check),
-            "compact" => Ok(BorgSubcommand::Compact),
-            "prune" => Ok(BorgSubcommand::Prune),
-            "delete" => Ok(BorgSubcommand::Delete),
-            "diff" => Ok(BorgSubcommand::Diff),
-            "rename" => Ok(BorgSubcommand::Rename),
-            "recreate" => Ok(BorgSubcommand::Recreate),
-            _ => Err(()),
-        }
     }
 }
 
@@ -1253,7 +1236,7 @@ pub async fn exec_borg(
         .first()
         .ok_or_else(|| ApiError::BadRequest("args must not be empty".to_owned()))?;
 
-    let subcommand = raw_subcommand.parse::<BorgSubcommand>().map_err(|()| {
+    let subcommand = raw_subcommand.parse::<BorgSubcommand>().map_err(|_| {
         ApiError::BadRequest(format!(
             "subcommand '{raw_subcommand}' is not allowed; permitted: {}",
             BorgSubcommand::permitted_list()

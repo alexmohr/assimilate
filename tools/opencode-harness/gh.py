@@ -29,6 +29,25 @@ RUN_ID_RE = re.compile(r"/actions/runs/(\d+)")
 JOB_ID_RE = re.compile(r"/job/(\d+)")
 
 _IN_PROGRESS_CHECK_STATUSES = {"QUEUED", "IN_PROGRESS", "WAITING", "PENDING", "REQUESTED"}
+# GraphQL statusCheckRollup conclusion/state enums for a check that's done and
+# failed - distinct from get_failing_checks' _FAILING_CHECK_CONCLUSIONS below,
+# which is REST check-runs' lowercase `conclusion` field. The rollup here
+# (`gh pr view --json statusCheckRollup`) is GraphQL and uses uppercase enum
+# values instead.
+_FAILING_CHECK_CONCLUSIONS_GQL = {
+    "FAILURE",
+    "CANCELLED",
+    "TIMED_OUT",
+    "ACTION_REQUIRED",
+    "STARTUP_FAILURE",
+}
+
+# Posted by sync-pr-labels.js (see GATE_CHECK_NAME there) only after every
+# other check on the commit has already finished - it's the one check run
+# that's *expected* to stay pending until everything else settles, so an
+# already-failed sibling check is a more useful "stop waiting" signal than
+# this one ever finishing.
+_GATE_CHECK_NAME = "PR Merge Gate"
 
 STATUS_LABEL_NAMES = {
     "needs review",
@@ -118,7 +137,7 @@ class PrDetail:
 
     @property
     def checks_in_progress(self) -> bool:
-        """True if any check/status on the head commit hasn't finished yet.
+        """True if the head commit is still mid-flight with nothing decided yet.
 
         `statusCheckRollup` entries come in two shapes: a `CheckRun` (GitHub
         Actions jobs, most of this repo's own checks - status is QUEUED/
@@ -130,14 +149,33 @@ class PrDetail:
         content - against a commit whose checks are still mid-flight and
         haven't had a chance to actually finish, let alone for the
         automated review this repo runs once they do to have landed yet.
+
+        But once some check *other* than `PR Merge Gate` has already
+        completed with a failing conclusion, the outcome is already decided -
+        no amount of waiting on the rest (e.g. a 20-minute e2e/nightly job)
+        can un-fail it, and `PR Merge Gate` itself is deliberately the last
+        thing to post, only after everything else - so waiting on it
+        specifically is circular. Report settled immediately in that case
+        instead of blocking this PR until every last check finishes.
         """
+        any_in_progress = False
         for item in self.status_check_rollup:
             typename = item.get("__typename")
-            if typename == "CheckRun" and item.get("status") in _IN_PROGRESS_CHECK_STATUSES:
-                return True
-            if typename == "StatusContext" and (item.get("state") or "").upper() == "PENDING":
-                return True
-        return False
+            if typename == "CheckRun":
+                if item.get("status") in _IN_PROGRESS_CHECK_STATUSES:
+                    any_in_progress = True
+                elif (
+                    item.get("name") != _GATE_CHECK_NAME
+                    and item.get("conclusion") in _FAILING_CHECK_CONCLUSIONS_GQL
+                ):
+                    return False
+            elif typename == "StatusContext":
+                state = (item.get("state") or "").upper()
+                if state == "PENDING":
+                    any_in_progress = True
+                elif state in ("FAILURE", "ERROR"):
+                    return False
+        return any_in_progress
 
     @property
     def needs_fix(self) -> bool:
@@ -192,6 +230,36 @@ def label_name(label: Any) -> str:
     return label["name"] if isinstance(label, dict) else str(label)
 
 
+def find_open_pr_for_branch(repo: str, branch: str) -> int | None:
+    """The open PR number with `branch` as its head, if one already exists.
+
+    Used before implementing an issue: an open issue stays open until the PR
+    that closes it actually *merges*, not just once one is opened - so
+    without this check, the same issue can be picked (again) on a later
+    cycle or an explicit `--issue N` re-run and blow up at `gh pr create`
+    with "a pull request already exists for this branch", instead of simply
+    recognizing there's already an open PR and leaving it alone.
+    """
+    raw = _run_json(
+        [
+            "gh",
+            "pr",
+            "list",
+            "--repo",
+            repo,
+            "--head",
+            branch,
+            "--state",
+            "open",
+            "--json",
+            "number",
+            "--limit",
+            "1",
+        ]
+    )
+    return raw[0]["number"] if raw else None
+
+
 def get_pr(repo: str, number: int) -> PrDetail:
     raw = _run_json(["gh", "pr", "view", str(number), "--repo", repo, "--json", PR_VIEW_FIELDS])
     return PrDetail(
@@ -212,6 +280,18 @@ def get_pr_head_sha(repo: str, number: int) -> str:
     raw = _run_json(["gh", "pr", "view", str(number), "--repo", repo, "--json", "commits"])
     commits = raw.get("commits") or []
     return commits[-1]["oid"] if commits else ""
+
+
+def get_branch_head_sha(repo: str, branch: str) -> str:
+    """Current head commit sha of `branch` (e.g. the base branch) - used to
+    detect "something merged into base" independent of any single PR's own
+    head_sha, which only ever reflects that PR's own branch.
+    """
+    try:
+        raw = _run_json(["gh", "api", f"repos/{repo}/commits/{branch}"])
+    except GhError:
+        return ""
+    return raw.get("sha", "")
 
 
 _FAILING_CHECK_CONCLUSIONS = {"failure", "cancelled", "timed_out", "action_required"}

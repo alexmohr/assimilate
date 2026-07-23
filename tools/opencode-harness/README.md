@@ -22,7 +22,19 @@ asked to edit files.
    [`pr-status-labels.yml`](../../.github/workflows/pr-status-labels.yml)
    labels — the harness reads them, it never sets or clears them itself
    (see [`skills/review/SKILL.md`](../../skills/review/SKILL.md): *"agents
-   must never add or remove the status labels themselves"*).
+   must never add or remove the status labels themselves"*). A PR whose
+   checks are still mid-flight is skipped for *this* cycle rather than
+   judged early — except once some check other than `PR Merge Gate` (the
+   check that's deliberately posted last, after everything else) has
+   already completed with a failing conclusion: no amount of waiting on the
+   remaining, still-running checks (e.g. a 20-minute e2e/nightly job) can
+   un-fail that, so the harness stops waiting on that PR right away instead
+   of sitting idle until literally every check finishes. If no open PR is
+   actionable this cycle (all momentarily mid-CI, stuck, or otherwise
+   skipped), the harness falls through to step 6 below and picks up an open
+   issue instead, rather than idling until the next poll —
+   `HARNESS_FALLBACK_TO_ISSUES=0` turns this off if you'd rather it only
+   ever touch issues once there are zero open PRs at all.
 2. CI is always discovered and reacted to by the harness's own Python, never
    by opencode — opencode never queries CI itself, it only ever sees
    log text the harness already fetched, handed to it in a prompt. If the
@@ -61,10 +73,14 @@ asked to edit files.
    harness itself `git commit` (with a conventional-commits message it
    generates) and `git push`.
 4. From there the repo's own automation takes back over: CI runs,
-   `pr-status-labels.yml` re-syncs labels, `claude-review.yml` reviews and —
-   if it's a clean approval with no `needs human review` label — merges it.
-   The harness never merges anything itself. It just polls; once a PR is
-   merged or closed it moves to the next one.
+   `pr-status-labels.yml` re-syncs labels and `claude-review.yml` reviews;
+   once the result is `ready to merge` with a genuine approval and no
+   `needs human review` label, `pr-status-labels.yml` can squash-merge it
+   deterministically (see `skills/review/SKILL.md`'s "Auto-merge" section) -
+   currently disabled by default pending
+   [#390](https://github.com/alexmohr/assimilate/issues/390), so until then
+   a human still clicks merge. The harness never merges anything itself. It
+   just polls; once a PR is merged or closed it moves to the next one.
 5. If the *same* underlying problem (same failing-check content, same
    review comments, etc.) survives `HARNESS_MAX_STUCK_CYCLES` push attempts,
    the harness stops touching that PR: it adds its own
@@ -89,11 +105,26 @@ asked to edit files.
    retries burned) and leaves it alone until the label is gone. This is
    deliberately narrow: an ordinary CI/merge/coverage/duplicate-code problem
    on the same PR is still fixed as normal regardless of this label - it's
-   only the review verdict itself that's a dead end while it holds.
-6. **Only once there are zero open PRs at all**, it picks the newest open
+   only the review verdict itself that's a dead end while it holds. A
+   pushed commit isn't the only thing that can un-stick a PR, though: the
+   harness also notices whenever `HARNESS_BASE_BRANCH` itself advances (a
+   merge landed on it) and clears `opencode-harness-stuck` (+
+   `opencode-harness-question`, if set) from every open PR carrying it for a
+   fresh look next cycle - a merge conflict or a CI failure that looked
+   unresolvable can simply disappear once base moves past whatever caused
+   it, which a per-PR "did *this* branch get a new commit" check alone can
+   never observe. PRs stuck specifically for the `needs human review`
+   reason are left alone by this - that one only ever clears when a human
+   removes the label themselves, regardless of what base does.
+6. **Once there are zero open PRs, or no open PR is actionable this cycle**
+   (see step 1's `HARNESS_FALLBACK_TO_ISSUES`), it picks the newest open
    issue, implements it on a new `opencode/issue-<n>` branch using the same
    fix-and-validate loop, and opens a PR — which flows back into step 1 on
-   the next cycle.
+   the next cycle. An issue stays open (and so keeps showing up as a
+   candidate) until the PR that closes it actually *merges*, not just once
+   one is opened - the harness checks for an already-open PR against that
+   issue's branch first and skips it if one exists, rather than trying to
+   open a second one.
 
 ## Requirements
 
@@ -152,13 +183,27 @@ are actually configured and working before pointing `--model` at one.
 | `HARNESS_DRY_RUN` | `0` | `1` to log intended actions without invoking opencode or pushing |
 | `HARNESS_ONCE` | `0` | `1` to run a single cycle and exit (also `--once`) |
 | `HARNESS_MAX_SOLVED` | (unlimited) | Stop after successfully solving N problems - a PR fix pushed, or an issue implemented into a new PR (also `--max-solved N`). A cycle that finds nothing actionable doesn't count against this |
+| `HARNESS_FALLBACK_TO_ISSUES` | `1` | `0` to only ever pick up an issue once there are zero open PRs at all, instead of also falling back to issues whenever every open PR is momentarily unactionable (e.g. all mid-CI) - see step 1 above |
 
-`--pr N` and `--issue N` are CLI-only, like `--model` - point the harness at
-one specific PR or issue instead of letting it auto-select. Mutually
-exclusive with each other. `--pr N` keeps the normal fix-and-validate loop
-but always targets PR N (still respects `--once`/`--max-solved`/stuck
-tracking); `--issue N` implements that one issue and opens a PR for it,
-ignoring the "newest open issue" auto-pick entirely.
+`--pr [N ...]` and `--issue N ...` are CLI-only, like `--model` - point the
+harness at specific PR(s)/issue(s) instead of letting it auto-select.
+Mutually exclusive with each other. Each accepts one or more numbers
+(`--pr 12 34`, `--issue 5 6`); if more than one is given, the harness
+round-robins through the list, working exactly one target per poll cycle
+(still respects `--once`/`--max-solved`/stuck tracking, tracked
+independently per number). Bare `--pr` with no numbers targets *every*
+currently open PR, re-resolved fresh each cycle (so a PR opened or merged
+mid-run is picked up/dropped automatically) - `--issue` has no equivalent
+"all open issues" mode, since that's just the normal auto-select behavior
+once there are no open PRs left. `--pr N [N ...]` keeps the normal
+fix-and-validate loop but always targets the given PR(s) instead of
+auto-selecting; `--issue N [N ...]` implements each given issue and opens a
+PR for it, ignoring the "newest open issue" auto-pick entirely. The first
+time the harness sees a given PR number under `--pr` (explicit list or the
+bare "all open PRs" form) each run, it clears any prior stuck state/labels
+on it once, the same one-time override a lone `--pr N` has always done -
+a human pointing the harness at a PR is choosing to retry it now, not
+forever on every cycle it comes back up in the rotation.
 
 ## Running it
 
@@ -176,6 +221,13 @@ python3 tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash 
 # targeted: only work on a specific PR or issue instead of auto-selecting
 python3 tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash --pr 334
 python3 tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash --issue 231
+
+# targeted: round-robin across several PRs/issues, one per poll cycle
+python3 tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash --pr 334 335 340
+python3 tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash --issue 231 232
+
+# targeted: every currently open PR, re-resolved each cycle
+python3 tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash --pr
 ```
 
 ### systemd (recommended for unattended, restart-surviving operation)

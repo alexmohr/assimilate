@@ -238,7 +238,11 @@ jobs:
       # instructed). GH_TOKEN below is required for gh to authenticate - it
       # isn't set automatically just because github_token was passed to the
       # action above (that only covers the action's own git/API calls, not
-      # Claude-invoked Bash's environment).
+      # Claude-invoked Bash's environment). No `gh pr merge` here anymore -
+      # merging moved to sync-pr-labels.js (see the prompt below), which can
+      # verify the approval's provenance before merging; an LLM turn trusting
+      # its own "is this clean?" read and self-authorizing a squash merge
+      # was never as robust as a deterministic re-check of the same facts.
       - name: Run Claude review
         id: claude
         if: steps.precheck.outputs.run_claude == 'true'
@@ -251,7 +255,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           claude_args: |
             --model ${{ steps.resolve.outputs.model }}
-            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh pr review:*),Bash(gh pr edit:*),Bash(gh pr merge:*)"
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh pr review:*),Bash(gh pr edit:*)"
           prompt: |
             Follow skills/review/SKILL.md to review pull request #${{ steps.resolve.outputs.pr_number }}
             at commit ${{ steps.head.outputs.sha }}.
@@ -300,17 +304,12 @@ jobs:
             finishing your analysis, it is better to submit nothing than to submit a token or
             incomplete verdict.
 
-            If, and only if, your verdict is a clean approval (native --approve, or
-            claude-approved with no changes requested) with no unresolved findings: run `gh pr
-            view ${{ steps.resolve.outputs.pr_number }} --json labels` and check for `needs
-            human review`. That label means the diff touches something (security/crypto/auth,
-            CI workflow files, migrations, a new suppression, ...) that requires an explicit
-            human sign-off no agent verdict can substitute for - if it's present, stop, do not
-            merge, a human has to handle this one. If it's absent, merge the PR yourself:
-            `gh pr merge ${{ steps.resolve.outputs.pr_number }} --squash --delete-branch` (this
-            repo squashes all merges - see skills/review/SKILL.md). If you requested changes,
-            are uncertain about anything, or the merge command itself fails for any reason, do
-            not retry or force it - leave the PR for a human or a later run.
+            Do not merge the PR yourself and do not run `gh pr merge` - merging is handled
+            deterministically by `.github/workflows/pr-status-labels.yml` once it re-syncs
+            after your verdict lands (squash-merging automatically once CI is green and every
+            other gate is clear, but only for a real approval - never just because a label is
+            present - and never while `needs human review` is outstanding). Your job ends at
+            submitting the verdict.
 
       # Owns the full lifecycle of the "claude review failed" label and its
       # marker comment (mirrors how analyze-duplication.js/analyze-coverage-
@@ -512,4 +511,9 @@ jobs:
               core,
               prNumber: Number("${{ steps.resolve.outputs.pr_number }}"),
               selfCheckNames: ["Check if a review is actually needed", "Review PR"],
+              // Same repo/environment variable pr-status-labels.yml's own
+              // sync call reads - one on/off switch for the whole
+              // auto-merge feature regardless of which trigger re-syncs
+              // first. See skills/review/SKILL.md's "Auto-merge" section.
+              autoMergeEnabled: "${{ vars.AUTO_MERGE_ENABLED }}" === "true",
             });

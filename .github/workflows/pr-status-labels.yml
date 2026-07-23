@@ -11,7 +11,14 @@ on:
     types: [completed]
 
 permissions:
-  contents: read
+  # write (not just read): sync-pr-labels.js squash-merges a PR itself once
+  # it computes `ready to merge` plus a genuine approval - both the merge
+  # commit and the post-merge branch deletion need contents:write, not just
+  # pull-requests:write. Safe on this pull_request_target trigger the same
+  # way pull-requests:write already was: this workflow only ever checks out
+  # trusted scripts from the default branch (sparse-checkout .github/scripts
+  # below), never the PR's own untrusted code.
+  contents: write
   pull-requests: write
   actions: read
   checks: write
@@ -69,4 +76,8 @@ jobs:
               prNumber: Number("${{ steps.pr.outputs.number }}"),
               eventAction: context.payload.action,
               selfCheckNames: ["Sync PR status labels"],
+              // Off unless explicitly turned on (Settings -> Secrets and
+              // variables -> Actions -> Variables -> AUTO_MERGE_ENABLED =
+              // "true") - see skills/review/SKILL.md's "Auto-merge" section.
+              autoMergeEnabled: "${{ vars.AUTO_MERGE_ENABLED }}" === "true",
             });

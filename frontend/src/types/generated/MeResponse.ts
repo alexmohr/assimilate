@@ -28,8 +28,4 @@ export type MeResponse = {
    * Whether the session should be remembered beyond the current browser session.
    */
   remember_me: boolean;
-  /**
-   * Whether the user has permission to upgrade agents.
-   */
-  can_upgrade_agent: boolean;
 };

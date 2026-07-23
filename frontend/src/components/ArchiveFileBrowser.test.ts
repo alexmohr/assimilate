@@ -278,7 +278,7 @@ describe('ArchiveFileBrowser', () => {
   })
 
   it('clicking a directory row navigates into it and breadcrumb navigates back', async () => {
-    const wrapper = await mountEntries()
+    const wrapper = await mountWithEntries()
 
     const dirRow = wrapper.find('.clickable')
     expect(dirRow.exists()).toBe(true)
@@ -332,7 +332,7 @@ describe('ArchiveFileBrowser', () => {
   })
 
   it('typing in filter inputs covers v-model and input callbacks', async () => {
-    const wrapper = await mountEntries()
+    const wrapper = await mountWithEntries()
 
     const inputs = wrapper.findAll('input')
     const nameInput = inputs.find((el) => el.attributes('placeholder') === 'Filter name...')

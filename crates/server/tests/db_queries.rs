@@ -232,6 +232,7 @@ async fn create_test_repo(pool: &PgPool) -> RepoRow {
             compression: "lz4",
             encryption: "repokey",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -758,6 +759,7 @@ async fn create_test_schedule(pool: &PgPool) -> (AgentRow, RepoRow, ScheduleRow)
             compression: "none",
             encryption: "none",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -933,6 +935,7 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             compression: "none",
             encryption: "none",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -2181,6 +2184,7 @@ async fn storage_breakdown_multi_repo_ordering(pool: PgPool) {
             compression: "lz4",
             encryption: "none",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -2339,6 +2343,7 @@ async fn dashboard_summary_total_storage_from_repo_info(pool: PgPool) {
             compression: "lz4",
             encryption: "none",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -3262,6 +3267,7 @@ async fn create_test_repo_with_host(pool: &PgPool, name: &str, ssh_host: &str) -
             compression: "lz4",
             encryption: "repokey",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -3926,6 +3932,7 @@ async fn get_archives_for_agent_across_multiple_repos(pool: PgPool) {
             compression: "lz4",
             encryption: "repokey",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -3942,6 +3949,7 @@ async fn get_archives_for_agent_across_multiple_repos(pool: PgPool) {
             compression: "zstd",
             encryption: "repokey",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -4229,6 +4237,7 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
             compression: "lz4",
             encryption: "repokey",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -4245,6 +4254,7 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
             compression: "zstd",
             encryption: "repokey",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -5008,6 +5018,7 @@ async fn repo_relocation_per_host_multi_agent(pool: PgPool) {
             compression: "none",
             encryption: "none",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await
@@ -6948,6 +6959,7 @@ async fn check_repo_permission_view_all_is_view_only(pool: PgPool) {
             compression: "none",
             encryption: "none",
             owner_id: None,
+            sync_schedule: None,
         },
     )
     .await

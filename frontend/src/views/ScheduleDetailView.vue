@@ -1510,7 +1510,6 @@ watch(activeTab, (tab) => {
         </div>
       </div>
 
-<<<<<<< HEAD
       <!-- Backups Tab -->
       <div
         v-if="activeTab === 'backups'"
@@ -1591,89 +1590,6 @@ watch(activeTab, (tab) => {
         </div>
       </div>
 
-||||||| parent of 11f72114 (feat: add ArchiveFileBrowser component and Backups tab to schedule detail)
-=======
-      <!-- Backups Tab -->
-      <div
-        v-if="activeTab === 'backups'"
-        class="tab-content"
-      >
-        <div
-          v-if="reportsLoading"
-          class="reports-loading"
-        >
-          <BaseSpinner size="sm" />
-        </div>
-        <div
-          v-else-if="reportsError"
-          class="error-banner"
-        >
-          {{ reportsError }}
-        </div>
-        <div
-          v-else-if="scheduleArchives.length === 0"
-          class="empty-state"
-        >
-          No backup archives found for this schedule.
-        </div>
-        <div
-          v-else
-          class="backups-layout"
-        >
-          <!-- Archive list -->
-          <div class="backups-list-panel">
-            <div class="panel-header">
-              <span class="panel-title">Archives</span>
-            </div>
-            <table class="archives-table">
-              <thead>
-                <tr>
-                  <th>Archive</th>
-                  <th>Host</th>
-                  <th>Date</th>
-                  <th>Size</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="r in scheduleArchives"
-                  :key="r.id"
-                  class="archive-row"
-                  :class="{ selected: selectedBackupReport?.id === r.id }"
-                  @click="selectScheduleArchive(r)"
-                >
-                  <td class="cell-archive-name">{{ r.archive_name }}</td>
-                  <td class="cell-host">
-                    {{
-                      agentMap.get(r.agent_id ?? 0)?.display_name ??
-                      agentMap.get(r.agent_id ?? 0)?.hostname ??
-                      `#${r.agent_id ?? 0}`
-                    }}
-                  </td>
-                  <td class="cell-date">{{ formatDateShort(r.started_at) }}</td>
-                  <td class="cell-size">{{ formatBytes(r.original_size) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <!-- File browser -->
-          <div class="backups-browser-panel">
-            <ArchiveFileBrowser
-              v-if="selectedBackupReport"
-              :repo-id="schedule?.repo_id ?? null"
-              :archive-name="selectedBackupReport.archive_name ?? null"
-            />
-            <div
-              v-else
-              class="empty-browser"
-            >
-              <span class="muted">Select an archive to browse its contents.</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
->>>>>>> 11f72114 (feat: add ArchiveFileBrowser component and Backups tab to schedule detail)
       <!-- Save bar -->
       <div
         v-if="activeTab !== 'logs' && activeTab !== 'backups'"

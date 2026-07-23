@@ -980,6 +980,9 @@ pub struct InsertRepoParams<'a> {
     pub encryption: &'a str,
     /// Owning user ID, if any.
     pub owner_id: Option<i64>,
+    /// Sync schedule cron expression.
+    /// `None` = use DB default; `Some(None)` = explicitly NULL; `Some(Some(s))` = set to `s`.
+    pub sync_schedule: Option<Option<&'a str>>,
 }
 
 /// Parameters for updating an existing repository.
@@ -1313,12 +1316,33 @@ pub async fn insert_repo(
     pool: &PgPool,
     params: &InsertRepoParams<'_>,
 ) -> Result<RepoRow, ApiError> {
+    let Some(sync_schedule) = params.sync_schedule else {
+        return sqlx::query_as!(
+            RepoRow,
+            "INSERT INTO repos (name, repo_path, ssh_user, ssh_host, ssh_port, \
+             passphrase_encrypted, compression, encryption, owner_id) VALUES ($1, $2, $3, $4, $5, \
+             $6, $7, $8, $9) RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, \
+             compression, encryption, enabled, owner_id, visibility, sync_schedule",
+            params.name,
+            params.repo_path,
+            params.ssh_user,
+            params.ssh_host,
+            params.ssh_port,
+            params.passphrase_encrypted,
+            params.compression,
+            params.encryption,
+            params.owner_id,
+        )
+        .fetch_one(pool)
+        .await
+        .map_err(ApiError::Database);
+    };
     sqlx::query_as!(
         RepoRow,
         "INSERT INTO repos (name, repo_path, ssh_user, ssh_host, ssh_port, passphrase_encrypted, \
-         compression, encryption, owner_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING \
-         id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, encryption, enabled, \
-         owner_id, visibility, sync_schedule",
+         compression, encryption, owner_id, sync_schedule) VALUES ($1, $2, $3, $4, $5, $6, $7, \
+         $8, $9, $10) RETURNING id, name, repo_path, ssh_user, ssh_host, ssh_port, compression, \
+         encryption, enabled, owner_id, visibility, sync_schedule",
         params.name,
         params.repo_path,
         params.ssh_user,
@@ -1328,6 +1352,7 @@ pub async fn insert_repo(
         params.compression,
         params.encryption,
         params.owner_id,
+        sync_schedule,
     )
     .fetch_one(pool)
     .await

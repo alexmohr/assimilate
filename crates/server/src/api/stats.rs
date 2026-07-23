@@ -1270,6 +1270,8 @@ pub async fn undismiss_finding(
 mod tests {
     use shared::{responses::HealthResponse, types::BackupStatus};
 
+    use super::{CalendarEventStatus, CalendarEventType, DashboardQuotaStatus};
+
     #[test]
     fn health_response_parses_valid_status() {
         let row = crate::db::HealthRow {
@@ -1594,5 +1596,42 @@ mod tests {
         );
 
         assert!(finding.is_none());
+    }
+
+    #[test]
+    fn dashboard_quota_status_as_str_roundtrip() {
+        let variants = [
+            (DashboardQuotaStatus::Unconfigured, "unconfigured"),
+            (DashboardQuotaStatus::Healthy, "healthy"),
+            (DashboardQuotaStatus::Warning, "warning"),
+            (DashboardQuotaStatus::Critical, "critical"),
+        ];
+        for (variant, expected) in variants {
+            assert_eq!(variant.as_str(), expected);
+        }
+    }
+
+    #[test]
+    fn calendar_event_type_as_str_roundtrip() {
+        let variants = [
+            (CalendarEventType::Backup, "backup"),
+            (CalendarEventType::Check, "check"),
+            (CalendarEventType::Verify, "verify"),
+        ];
+        for (variant, expected) in variants {
+            assert_eq!(variant.as_str(), expected);
+        }
+    }
+
+    #[test]
+    fn calendar_event_status_as_str_roundtrip() {
+        let variants = [
+            (CalendarEventStatus::Success, "success"),
+            (CalendarEventStatus::Failed, "failed"),
+            (CalendarEventStatus::Scheduled, "scheduled"),
+        ];
+        for (variant, expected) in variants {
+            assert_eq!(variant.as_str(), expected);
+        }
     }
 }

@@ -785,6 +785,22 @@ mod tests {
     }
 
     #[test]
+    fn borg_encryption_as_borg_arg() {
+        let variants = [
+            (BorgEncryption::Repokey, "repokey"),
+            (BorgEncryption::RepokeyBlake2, "repokey-blake2"),
+            (BorgEncryption::Keyfile, "keyfile"),
+            (BorgEncryption::KeyfileBlake2, "keyfile-blake2"),
+            (BorgEncryption::Authenticated, "authenticated"),
+            (BorgEncryption::AuthenticatedBlake2, "authenticated-blake2"),
+            (BorgEncryption::None, "none"),
+        ];
+        for (variant, expected) in variants {
+            assert_eq!(variant.as_borg_arg(), expected);
+        }
+    }
+
+    #[test]
     fn compression_display_roundtrip() {
         assert_eq!(Compression::None.to_string(), "none");
         assert_eq!(Compression::Lz4.to_string(), "lz4");
@@ -874,6 +890,18 @@ mod tests {
             assert_eq!(expected.parse::<FileChangeAction>().unwrap(), variant);
         }
         assert!("invalid".parse::<FileChangeAction>().is_err());
+    }
+
+    #[test]
+    fn backup_status_display_roundtrip() {
+        let variants = [
+            (BackupStatus::Success, "success"),
+            (BackupStatus::Warning, "warning"),
+            (BackupStatus::Failed, "failed"),
+        ];
+        for (variant, expected) in variants {
+            assert_eq!(variant.to_string(), expected);
+        }
     }
 
     #[test]

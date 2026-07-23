@@ -830,6 +830,55 @@ mod tests {
     }
 
     #[test]
+    fn event_type_from_str() {
+        use std::str::FromStr;
+
+        assert_eq!(
+            EventType::from_str("backup_success"),
+            Ok(EventType::BackupSuccess)
+        );
+        assert_eq!(
+            EventType::from_str("backup_warning"),
+            Ok(EventType::BackupWarning)
+        );
+        assert_eq!(
+            EventType::from_str("backup_failed"),
+            Ok(EventType::BackupFailed)
+        );
+        assert_eq!(
+            EventType::from_str("check_success"),
+            Ok(EventType::CheckSuccess)
+        );
+        assert_eq!(
+            EventType::from_str("check_failed"),
+            Ok(EventType::CheckFailed)
+        );
+        assert_eq!(
+            EventType::from_str("agent_connected"),
+            Ok(EventType::AgentConnected)
+        );
+        assert_eq!(
+            EventType::from_str("agent_disconnected"),
+            Ok(EventType::AgentDisconnected)
+        );
+        assert!(EventType::from_str("unknown_event").is_err());
+    }
+
+    #[test]
+    fn event_type_display() {
+        assert_eq!(EventType::BackupSuccess.to_string(), "backup_success");
+        assert_eq!(EventType::BackupWarning.to_string(), "backup_warning");
+        assert_eq!(EventType::BackupFailed.to_string(), "backup_failed");
+        assert_eq!(EventType::CheckSuccess.to_string(), "check_success");
+        assert_eq!(EventType::CheckFailed.to_string(), "check_failed");
+        assert_eq!(EventType::AgentConnected.to_string(), "agent_connected");
+        assert_eq!(
+            EventType::AgentDisconnected.to_string(),
+            "agent_disconnected"
+        );
+    }
+
+    #[test]
     fn backup_warning_with_archive_name_encodes_url() {
         let p = payload(serde_json::json!({
             "event_type": "backup_warning",

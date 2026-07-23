@@ -586,6 +586,16 @@ mod tests {
     use super::*;
     use crate::types::{DryRunFile, SearchEntry};
 
+    fn assert_round_trips<T>(msg: &T)
+    where
+        T: serde::Serialize + serde::de::DeserializeOwned,
+    {
+        let json = serde_json::to_string(msg).unwrap();
+        let msg2: T = serde_json::from_str(&json).unwrap();
+        let json2 = serde_json::to_string(&msg2).unwrap();
+        assert_eq!(json, json2);
+    }
+
     #[test]
     fn tunnel_status_connected_round_trips_json() {
         let status = TunnelStatus::Connected;
@@ -805,15 +815,11 @@ mod tests {
 
     #[test]
     fn agent_to_server_export_ready_round_trips() {
-        let msg = AgentToServer::ExportReady {
+        assert_round_trips(&AgentToServer::ExportReady {
             request_id: "req-4".into(),
             success: true,
             error_message: None,
-        };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        });
     }
 
     #[test]
@@ -831,28 +837,20 @@ mod tests {
 
     #[test]
     fn agent_to_server_key_import_result_round_trips() {
-        let msg = AgentToServer::KeyImportResult {
+        assert_round_trips(&AgentToServer::KeyImportResult {
             request_id: "req-6".into(),
             success: true,
             error_message: None,
-        };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        });
     }
 
     #[test]
     fn agent_to_server_passphrase_changed_round_trips() {
-        let msg = AgentToServer::PassphraseChanged {
+        assert_round_trips(&AgentToServer::PassphraseChanged {
             request_id: "req-7".into(),
             success: true,
             error_message: None,
-        };
-        let json = serde_json::to_string(&msg).unwrap();
-        let msg2: AgentToServer = serde_json::from_str(&json).unwrap();
-        let json2 = serde_json::to_string(&msg2).unwrap();
-        assert_eq!(json, json2);
+        });
     }
 
     #[test]
@@ -987,5 +985,23 @@ mod tests {
         let msg2: ServerToUi = serde_json::from_str(&json).unwrap();
         let json2 = serde_json::to_string(&msg2).unwrap();
         assert_eq!(json, json2);
+    }
+
+    #[test]
+    fn repo_op_kind_from_str_round_trips() {
+        use std::str::FromStr;
+
+        let variants = [
+            (RepoOpKind::AgentBackup, "agent_backup"),
+            (RepoOpKind::AgentCheck, "agent_check"),
+            (RepoOpKind::AgentVerify, "agent_verify"),
+            (RepoOpKind::ServerSync, "server_sync"),
+            (RepoOpKind::BreakLock, "break_lock"),
+            (RepoOpKind::DeleteArchive, "delete_archive"),
+        ];
+        for (variant, expected) in variants {
+            assert_eq!(RepoOpKind::from_str(expected).unwrap(), variant);
+        }
+        assert!(RepoOpKind::from_str("invalid").is_err());
     }
 }

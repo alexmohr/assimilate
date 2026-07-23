@@ -170,6 +170,26 @@ async function goToArchivesTab(wrapper: VueWrapper<ComponentPublicInstance>): Pr
   await flushPromises()
 }
 
+async function mountWithArchivesTab(): Promise<VueWrapper<ComponentPublicInstance>> {
+  mockBrowserArchives.value = [
+    {
+      name: 'web-server-01-2026-06-08T01:00:00',
+      start: '2026-06-08T01:00:00',
+      hostname: 'web-server-01',
+      comment: '',
+      original_size: 1_000,
+      deduplicated_size: 500,
+      matched: true,
+      agent_hostname: 'web-server-01',
+    },
+  ]
+  mockSortedArchives.value = [...mockBrowserArchives.value]
+  setupApiSuccess()
+  const wrapper = await mountRepo()
+  await goToArchivesTab(wrapper)
+  return wrapper
+}
+
 describe('RepoDetailView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -290,23 +310,7 @@ describe('RepoDetailView', () => {
   })
 
   it('shows archive list mode options when archives exist', async () => {
-    mockBrowserArchives.value = [
-      {
-        name: 'web-server-01-2026-06-08T01:00:00',
-        start: '2026-06-08T01:00:00',
-        hostname: 'web-server-01',
-        comment: '',
-        original_size: 1_000,
-        deduplicated_size: 500,
-        matched: true,
-        agent_hostname: 'web-server-01',
-      },
-    ]
-    mockSortedArchives.value = [...mockBrowserArchives.value]
-    setupApiSuccess()
-
-    const wrapper = await mountRepo()
-    await goToArchivesTab(wrapper)
+    const wrapper = await mountWithArchivesTab()
 
     const select = wrapper.find('.archive-sort-select')
     expect(select.exists()).toBe(true)
@@ -320,23 +324,7 @@ describe('RepoDetailView', () => {
   })
 
   it('collapses host groups by default and expands on click', async () => {
-    mockBrowserArchives.value = [
-      {
-        name: 'web-server-01-2026-06-08T01:00:00',
-        start: '2026-06-08T01:00:00',
-        hostname: 'web-server-01',
-        comment: '',
-        original_size: 1_000,
-        deduplicated_size: 500,
-        matched: true,
-        agent_hostname: 'web-server-01',
-      },
-    ]
-    mockSortedArchives.value = [...mockBrowserArchives.value]
-    setupApiSuccess()
-
-    const wrapper = await mountRepo()
-    await goToArchivesTab(wrapper)
+    const wrapper = await mountWithArchivesTab()
 
     const groupHeader = wrapper.find('.group-header')
     expect(groupHeader.exists()).toBe(true)

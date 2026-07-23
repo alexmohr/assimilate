@@ -816,6 +816,20 @@ mod tests {
     }
 
     #[test]
+    fn schedule_type_display_roundtrip() {
+        let variants = [
+            (ScheduleType::Backup, "backup"),
+            (ScheduleType::Check, "check"),
+            (ScheduleType::Verify, "verify"),
+        ];
+        for (variant, expected) in variants {
+            assert_eq!(variant.to_string(), expected);
+            assert_eq!(expected.parse::<ScheduleType>().unwrap(), variant);
+        }
+        assert!("invalid".parse::<ScheduleType>().is_err());
+    }
+
+    #[test]
     fn execution_mode_serde_roundtrip() {
         let json = serde_json::to_string(&ExecutionMode::Sequential).unwrap();
         assert_eq!(json, "\"sequential\"");
@@ -832,6 +846,34 @@ mod tests {
 
         let json = serde_json::to_string(&OnFailure::Continue).unwrap();
         assert_eq!(json, "\"continue\"");
+    }
+
+    #[test]
+    fn quota_action_display_roundtrip() {
+        let variants = [
+            (QuotaAction::NotifyOnly, "notify_only"),
+            (QuotaAction::BlockBackups, "block_backups"),
+            (QuotaAction::DisableSchedule, "disable_schedule"),
+        ];
+        for (variant, expected) in variants {
+            assert_eq!(variant.to_string(), expected);
+            assert_eq!(expected.parse::<QuotaAction>().unwrap(), variant);
+        }
+        assert!("invalid".parse::<QuotaAction>().is_err());
+    }
+
+    #[test]
+    fn file_change_action_display_roundtrip() {
+        let variants = [
+            (FileChangeAction::Ignore, "ignore"),
+            (FileChangeAction::Warn, "warn"),
+            (FileChangeAction::Fatal, "fatal"),
+        ];
+        for (variant, expected) in variants {
+            assert_eq!(variant.to_string(), expected);
+            assert_eq!(expected.parse::<FileChangeAction>().unwrap(), variant);
+        }
+        assert!("invalid".parse::<FileChangeAction>().is_err());
     }
 
     #[test]

@@ -13,6 +13,7 @@ import { useAsyncAction } from '../composables/useAsyncAction'
 
 import BaseSpinner from '../components/BaseSpinner.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
+import ModalFormFooter from '../components/ModalFormFooter.vue'
 import type { QuotaAction, ServerQuotaResponse } from '../types/generated'
 
 function statusFor(quota: ServerQuotaResponse): 'ok' | 'warning' | 'critical' {
@@ -274,28 +275,12 @@ onMounted(loadQuotas)
             <span>Enabled</span>
             <ToggleSwitch v-model="editForm.enabled" />
           </div>
-          <div
-            v-if="editError"
-            class="modal-error"
-          >
-            {{ editError }}
-          </div>
-          <div class="modal-actions">
-            <button
-              type="button"
-              class="btn btn-ghost"
-              @click="cancelEdit"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              class="btn btn-primary"
-              :disabled="editLoading"
-            >
-              {{ editLoading ? 'Saving...' : 'Save' }}
-            </button>
-          </div>
+          <ModalFormFooter
+            :error="editError"
+            :submitting="editLoading"
+            submit-text="Save"
+            @cancel="cancelEdit"
+          />
         </form>
       </div>
     </div>

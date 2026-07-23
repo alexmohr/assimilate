@@ -54,7 +54,8 @@ pub struct ActivityQuery {
 }
 
 /// Health status of a repository's storage quota.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum_macros::IntoStaticStr)]
+#[strum(serialize_all = "lowercase")]
 pub enum DashboardQuotaStatus {
     /// No quota is configured for this repository.
     Unconfigured,
@@ -68,12 +69,7 @@ pub enum DashboardQuotaStatus {
 
 impl DashboardQuotaStatus {
     fn as_str(self) -> &'static str {
-        match self {
-            Self::Unconfigured => "unconfigured",
-            Self::Healthy => "healthy",
-            Self::Warning => "warning",
-            Self::Critical => "critical",
-        }
+        (&self).into()
     }
 }
 
@@ -1011,7 +1007,8 @@ pub struct CalendarQuery {
 }
 
 /// Type of event displayed on the calendar.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum_macros::IntoStaticStr)]
+#[strum(serialize_all = "lowercase")]
 pub enum CalendarEventType {
     /// A backup operation.
     Backup,
@@ -1023,11 +1020,7 @@ pub enum CalendarEventType {
 
 impl CalendarEventType {
     fn as_str(self) -> &'static str {
-        match self {
-            Self::Backup => "backup",
-            Self::Check => "check",
-            Self::Verify => "verify",
-        }
+        (&self).into()
     }
 }
 
@@ -1045,7 +1038,8 @@ impl TryFrom<&str> for CalendarEventType {
 }
 
 /// Status of a calendar event.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum_macros::IntoStaticStr)]
+#[strum(serialize_all = "lowercase")]
 pub enum CalendarEventStatus {
     /// The event completed successfully.
     Success,
@@ -1057,11 +1051,7 @@ pub enum CalendarEventStatus {
 
 impl CalendarEventStatus {
     fn as_str(self) -> &'static str {
-        match self {
-            Self::Success => "success",
-            Self::Failed => "failed",
-            Self::Scheduled => "scheduled",
-        }
+        (&self).into()
     }
 }
 

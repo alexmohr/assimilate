@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::str::FromStr;
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -13,8 +11,19 @@ use crate::types::{
 };
 
 /// The kind of repository operation being performed.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema, TS)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    utoipa::ToSchema,
+    TS,
+    strum_macros::EnumString,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum RepoOpKind {
     /// Backup operation initiated by the agent.
@@ -29,15 +38,6 @@ pub enum RepoOpKind {
     BreakLock,
     /// Delete one or more archives from the repository.
     DeleteArchive,
-}
-
-impl FromStr for RepoOpKind {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        serde_json::from_value(serde_json::Value::String(s.to_owned()))
-            .map_err(|e| format!("invalid RepoOpKind: {e}"))
-    }
 }
 
 /// An active operation on a repository, including its queued depth.

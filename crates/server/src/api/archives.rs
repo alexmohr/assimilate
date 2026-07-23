@@ -226,21 +226,37 @@ pub(crate) fn stream_export_tar_lz4(
 }
 
 /// MIME content type derived from a file extension.
+#[derive(strum_macros::IntoStaticStr)]
 enum ContentType {
+    #[strum(serialize = "text/plain")]
     TextPlain,
+    #[strum(serialize = "text/html")]
     TextHtml,
+    #[strum(serialize = "text/css")]
     TextCss,
+    #[strum(serialize = "application/javascript")]
     Javascript,
+    #[strum(serialize = "application/json")]
     Json,
+    #[strum(serialize = "application/xml")]
     Xml,
+    #[strum(serialize = "application/pdf")]
     Pdf,
+    #[strum(serialize = "application/zip")]
     Zip,
+    #[strum(serialize = "application/gzip")]
     Gzip,
+    #[strum(serialize = "application/x-tar")]
     Tar,
+    #[strum(serialize = "image/png")]
     Png,
+    #[strum(serialize = "image/jpeg")]
     Jpeg,
+    #[strum(serialize = "image/gif")]
     Gif,
+    #[strum(serialize = "image/svg+xml")]
     Svg,
+    #[strum(serialize = "application/octet-stream")]
     OctetStream,
 }
 
@@ -268,23 +284,7 @@ impl From<&str> for ContentType {
 
 impl ContentType {
     fn as_str(&self) -> &'static str {
-        match self {
-            Self::TextPlain => "text/plain",
-            Self::TextHtml => "text/html",
-            Self::TextCss => "text/css",
-            Self::Javascript => "application/javascript",
-            Self::Json => "application/json",
-            Self::Xml => "application/xml",
-            Self::Pdf => "application/pdf",
-            Self::Zip => "application/zip",
-            Self::Gzip => "application/gzip",
-            Self::Tar => "application/x-tar",
-            Self::Png => "image/png",
-            Self::Jpeg => "image/jpeg",
-            Self::Gif => "image/gif",
-            Self::Svg => "image/svg+xml",
-            Self::OctetStream => "application/octet-stream",
-        }
+        self.into()
     }
 }
 

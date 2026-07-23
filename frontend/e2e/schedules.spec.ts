@@ -177,6 +177,29 @@ test.describe('Schedules management', () => {
     expect(healthResponse.ok()).toBe(true)
     await page.waitForLoadState('networkidle')
 
+    // Diagnostic: assert directly on the API payload the page itself received,
+    // so a failure here pinpoints a backend/seed data problem instead of only
+    // showing "Overdue text never appeared" with no indication of why.
+    const healthEntries = (await healthResponse.json()) as Array<{
+      schedule_id: number
+      hostname: string
+      is_overdue: boolean
+      last_backup_at: string | null
+      last_status: string | null
+      cron_expression: string | null
+    }>
+    const staleHealthEntry = healthEntries.find(
+      (h) => h.schedule_id === staleSchedule!.id && h.hostname === 'stale-report-01',
+    )
+    expect(
+      staleHealthEntry,
+      `no health entry for stale-report-01 in: ${JSON.stringify(healthEntries)}`,
+    ).toBeDefined()
+    expect(
+      staleHealthEntry?.is_overdue,
+      `health entry was not overdue: ${JSON.stringify(staleHealthEntry)}`,
+    ).toBe(true)
+
     const targetsRow = page.locator('.info-row-targets')
     await expect(targetsRow.getByText('Overdue')).toBeVisible({ timeout: 10_000 })
     const retryButton = targetsRow.getByRole('button', { name: 'Retry' })

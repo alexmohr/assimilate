@@ -6,14 +6,16 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { createRouter, createMemoryHistory } from 'vue-router'
 
-vi.mock('../composables/useTimezone', () => ({
-  useTimezone: vi.fn(),
-  getConfiguredTimezone: vi.fn().mockReturnValue(undefined),
+const mocks = vi.hoisted(() => ({
+  mockTimezone: () => ({
+    useTimezone: vi.fn(),
+    getConfiguredTimezone: vi.fn().mockReturnValue(undefined),
+  }),
+  mockApiClient: () => ({ apiClient: { get: vi.fn() } }),
 }))
 
-vi.mock('../api/client', () => ({
-  apiClient: { get: vi.fn() },
-}))
+vi.mock('../composables/useTimezone', () => mocks.mockTimezone())
+vi.mock('../api/client', () => mocks.mockApiClient())
 
 const wsMessageHandlers = new Map<string, Array<(payload?: unknown) => void>>()
 
@@ -176,6 +178,44 @@ function setupDefaultMocks(): void {
   })
 }
 
+function mockEmptyData(): void {
+  mockGet.mockImplementation((url: string) => {
+    if (url === '/agents') return Promise.resolve({ data: [] })
+    if (url === '/stats/activity') return Promise.resolve({ data: [] })
+    if (url === '/stats/system-events') return Promise.resolve({ data: [] })
+    return Promise.resolve({ data: [] })
+  })
+}
+
+async function mountDefault(): Promise<ReturnType<typeof mount>> {
+  setupDefaultMocks()
+  const wrapper = mountView()
+  await flushPromises()
+  return wrapper
+}
+
+async function mountEmpty(): Promise<ReturnType<typeof mount>> {
+  mockEmptyData()
+  const wrapper = mountView()
+  await flushPromises()
+  return wrapper
+}
+
+function findWarningRow(wrapper: ReturnType<typeof mount>) {
+  return wrapper
+    .findAll('.run-card:not(.run-card-system) .run-card-summary')
+    .filter(
+      (r) =>
+        r.find('.badge-warning').exists() &&
+        r.find('.run-card-hostname').text() === 'web-server-01' &&
+        r.find('.run-card-meta').text().startsWith('/var/www'),
+    )
+}
+
+function findSegmentBtn(wrapper: ReturnType<typeof mount>, text: string) {
+  return wrapper.findAll('.segment-btn').find((b) => b.text() === text)
+}
+
 describe('ActivityLogView', () => {
   beforeEach(() => {
     mockGet.mockReset()
@@ -219,7 +259,7 @@ describe('ActivityLogView', () => {
       const wrapper = mountView()
       await flushPromises()
 
-      const allBtn = wrapper.findAll('.segment-btn').find((b) => b.text() === 'All')
+      const allBtn = findSegmentBtn(wrapper, 'All')
       expect(allBtn?.classes()).toContain('active')
     })
 
@@ -228,7 +268,7 @@ describe('ActivityLogView', () => {
       const wrapper = mountView()
       await flushPromises()
 
-      const backupBtn = wrapper.findAll('.segment-btn').find((b) => b.text() === 'Backup')
+      const backupBtn = findSegmentBtn(wrapper, 'Backup')
       await backupBtn?.trigger('click')
       await flushPromises()
 
@@ -236,11 +276,9 @@ describe('ActivityLogView', () => {
     })
 
     it('switches to System category when System button is clicked', async () => {
-      setupDefaultMocks()
-      const wrapper = mountView()
-      await flushPromises()
+      const wrapper = await mountDefault()
 
-      const systemBtn = wrapper.findAll('.segment-btn').find((b) => b.text() === 'System')
+      const systemBtn = findSegmentBtn(wrapper, 'System')
       await systemBtn?.trigger('click')
       await flushPromises()
 
@@ -250,27 +288,14 @@ describe('ActivityLogView', () => {
 
   describe('empty state', () => {
     it('shows empty state when no activity data is returned', async () => {
-      mockGet.mockImplementation((url: string) => {
-        if (url === '/agents') return Promise.resolve({ data: [] })
-        if (url === '/stats/activity') return Promise.resolve({ data: [] })
-        if (url === '/stats/system-events') return Promise.resolve({ data: [] })
-        return Promise.resolve({ data: [] })
-      })
-
-      const wrapper = mountView()
-      await flushPromises()
+      const wrapper = await mountEmpty()
 
       expect(wrapper.find('.empty-state').exists()).toBe(true)
       expect(wrapper.find('.empty-title').text()).toBe('No activity')
     })
 
     it('does not show the table when there is no data', async () => {
-      mockGet.mockImplementation((url: string) => {
-        if (url === '/agents') return Promise.resolve({ data: [] })
-        if (url === '/stats/activity') return Promise.resolve({ data: [] })
-        if (url === '/stats/system-events') return Promise.resolve({ data: [] })
-        return Promise.resolve({ data: [] })
-      })
+      mockEmptyData()
 
       const wrapper = mountView()
       await flushPromises()
@@ -343,14 +368,7 @@ describe('ActivityLogView', () => {
       const wrapper = mountView()
       await flushPromises()
 
-      const warningRows = wrapper
-        .findAll('.run-card:not(.run-card-system) .run-card-summary')
-        .filter(
-          (r) =>
-            r.find('.badge-warning').exists() &&
-            r.find('.run-card-hostname').text() === 'web-server-01' &&
-            r.find('.run-card-meta').text().startsWith('/var/www'),
-        )
+      const warningRows = findWarningRow(wrapper)
       expect(warningRows.length).toBeGreaterThan(0)
 
       await warningRows[0].trigger('click')
@@ -361,20 +379,10 @@ describe('ActivityLogView', () => {
       expect(warningPre.text()).toContain('some file changed during backup')
       expect(warningPre.text()).toContain('slow read on /var/www/logs')
     })
-
     it('keeps the expanded detail panel open when a background DataChanged event arrives', async () => {
-      setupDefaultMocks()
-      const wrapper = mountView()
-      await flushPromises()
+      const wrapper = await mountDefault()
 
-      const warningRows = wrapper
-        .findAll('.run-card:not(.run-card-system) .run-card-summary')
-        .filter(
-          (r) =>
-            r.find('.badge-warning').exists() &&
-            r.find('.run-card-hostname').text() === 'web-server-01' &&
-            r.find('.run-card-meta').text().startsWith('/var/www'),
-        )
+      const warningRows = findWarningRow(wrapper)
       await warningRows[0].trigger('click')
       await flushPromises()
       expect(wrapper.find('pre.warning-pre').exists()).toBe(true)

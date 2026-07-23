@@ -509,116 +509,24 @@ async fn wait_for_import_completion(pool: &PgPool, repo_id: i64) {
 
 #[cfg(test)]
 async fn clean_tables(pool: &PgPool) {
-    /// Helper: DELETE all rows from each listed table.
-    async fn delete_tables(pool: &PgPool, tables: &[&str]) {
-        for table in tables {
-            sqlx::query(&format!("DELETE FROM {table}"))
-                .execute(pool)
-                .await
-                .unwrap();
-        }
-    }
-
-    // Layer 0: Leaf tables (no FK dependencies on other app tables).
-    delete_tables(
-        pool,
-        &[
-            "audit_log",
-            "login_attempts",
-            "system_events",
-            "system_settings",
-            "server_quotas",
-        ],
+    sqlx::query(
+        "TRUNCATE TABLE audit_log, login_attempts, system_events, system_settings, server_quotas, \
+         notification_deliveries, notification_rules, ssh_tunnels, agent_hostname_patterns, \
+         agent_tags, schedule_targets, per_agent_excludes, per_agent_commands, \
+         per_agent_file_change_patterns, archive_tags, archive_files, archive_index_jobs, \
+         archive_paths, archives, backup_sources, backup_reports, canary_results, repo_tags, \
+         repo_stats, repo_import_state, repo_last_op, repo_quotas, repo_relocation_pending_hosts, \
+         schedules, dismissed_dashboard_findings, push_subscriptions, api_tokens, sessions, \
+         user_roles, user_groups, repo_permissions, users, groups, tags, repos, agents, \
+         notification_channels CASCADE",
     )
-    .await;
+    .execute(pool)
+    .await
+    .unwrap();
     sqlx::query("UPDATE excludes_global_config SET raw_text = ''")
         .execute(pool)
         .await
         .unwrap();
-
-    // Layer 1: Tables referencing notification_channels.
-    delete_tables(pool, &["notification_deliveries", "notification_rules"]).await;
-
-    // Layer 2: Tables referencing agents.
-    delete_tables(
-        pool,
-        &["ssh_tunnels", "agent_hostname_patterns", "agent_tags"],
-    )
-    .await;
-
-    // Layer 3: Tables referencing schedules (and possibly agents).
-    delete_tables(
-        pool,
-        &[
-            "schedule_targets",
-            "per_agent_excludes",
-            "per_agent_commands",
-            "per_agent_file_change_patterns",
-        ],
-    )
-    .await;
-
-    // Layer 4: Tables referencing archives.
-    delete_tables(
-        pool,
-        &[
-            "archive_tags",
-            "archive_files",
-            "archive_index_jobs",
-            "archive_paths",
-        ],
-    )
-    .await;
-
-    // Layer 5: archives references repos.
-    delete_tables(pool, &["archives"]).await;
-
-    // Layer 6: backup_sources references schedules, agents, repos.
-    delete_tables(pool, &["backup_sources"]).await;
-
-    // Layer 7: backup_reports references agents, repos, schedules.
-    delete_tables(pool, &["backup_reports"]).await;
-
-    // Layer 8: canary_results references repos and schedules.
-    delete_tables(pool, &["canary_results"]).await;
-
-    // Layer 9: Tables referencing repos (but not auth entities).
-    delete_tables(
-        pool,
-        &[
-            "repo_tags",
-            "repo_stats",
-            "repo_import_state",
-            "repo_last_op",
-            "repo_quotas",
-            "repo_relocation_pending_hosts",
-        ],
-    )
-    .await;
-
-    // Layer 10: schedules references repos.
-    delete_tables(pool, &["schedules"]).await;
-
-    // Layer 11: Auth-related tables. Roles are system-seeded and never cleaned.
-    delete_tables(
-        pool,
-        &[
-            "dismissed_dashboard_findings",
-            "push_subscriptions",
-            "api_tokens",
-            "sessions",
-            "user_roles",
-            "user_groups",
-            "repo_permissions",
-        ],
-    )
-    .await;
-
-    // Layer 12: Root entity tables.
-    delete_tables(pool, &["users", "groups", "tags"]).await;
-
-    // Layer 13: Root entities - all children deleted above.
-    delete_tables(pool, &["repos", "agents", "notification_channels"]).await;
 }
 
 /// Inserts a repo directly into DB, bypassing the API (which requires SSH connectivity).

@@ -10,16 +10,26 @@ pub mod web_push;
 /// Webhook notification channel dispatcher.
 pub mod webhook;
 
-use std::fmt;
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use shared::task_registry::TaskRegistry;
 use sqlx::{FromRow, PgPool};
 
 /// Supported notification channel types.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum ChannelType {
     /// SMTP email delivery.
     #[default]
@@ -29,34 +39,6 @@ pub enum ChannelType {
     /// Web push notification via browser push API.
     WebPush,
 }
-
-impl fmt::Display for ChannelType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Email => write!(f, "email"),
-            Self::Webhook => write!(f, "webhook"),
-            Self::WebPush => write!(f, "web_push"),
-        }
-    }
-}
-
-impl std::str::FromStr for ChannelType {
-    type Err = UnknownChannelType;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "email" => Ok(Self::Email),
-            "webhook" => Ok(Self::Webhook),
-            "web_push" => Ok(Self::WebPush),
-            other => Err(UnknownChannelType(other.to_owned())),
-        }
-    }
-}
-
-/// Error returned when parsing an unknown channel type string.
-#[derive(Debug, PartialEq, thiserror::Error)]
-#[error("unknown channel type: {0}")]
-pub struct UnknownChannelType(pub String);
 
 impl sqlx::Type<sqlx::Postgres> for ChannelType {
     fn type_info() -> sqlx::postgres::PgTypeInfo {
@@ -84,8 +66,19 @@ impl sqlx::Encode<'_, sqlx::Postgres> for ChannelType {
 /// `notification_deliveries.status` CHECK constraint (`0002_notifications.sql`) so a mismatch
 /// between this type and the schema is a compile-time (rather than a silently-dropped runtime
 /// INSERT) failure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum DeliveryStatus {
     /// Delivery has not been attempted yet.
     Pending,
@@ -94,34 +87,6 @@ pub enum DeliveryStatus {
     /// Delivery was attempted and failed.
     Failed,
 }
-
-impl fmt::Display for DeliveryStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Pending => write!(f, "pending"),
-            Self::Sent => write!(f, "sent"),
-            Self::Failed => write!(f, "failed"),
-        }
-    }
-}
-
-impl std::str::FromStr for DeliveryStatus {
-    type Err = UnknownDeliveryStatus;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "pending" => Ok(Self::Pending),
-            "sent" => Ok(Self::Sent),
-            "failed" => Ok(Self::Failed),
-            other => Err(UnknownDeliveryStatus(other.to_owned())),
-        }
-    }
-}
-
-/// Error returned when parsing an unknown delivery status string.
-#[derive(Debug, PartialEq, thiserror::Error)]
-#[error("unknown delivery status: {0}")]
-pub struct UnknownDeliveryStatus(pub String);
 
 impl sqlx::Type<sqlx::Postgres> for DeliveryStatus {
     fn type_info() -> sqlx::postgres::PgTypeInfo {
@@ -169,8 +134,19 @@ pub enum NotificationError {
 }
 
 /// Notification event categories that can trigger delivery rules.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum EventType {
     /// Backup completed successfully.
     BackupSuccess,
@@ -200,43 +176,6 @@ impl EventType {
         "agent_disconnected",
     ];
 }
-
-impl fmt::Display for EventType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
-            Self::BackupSuccess => "backup_success",
-            Self::BackupWarning => "backup_warning",
-            Self::BackupFailed => "backup_failed",
-            Self::CheckSuccess => "check_success",
-            Self::CheckFailed => "check_failed",
-            Self::AgentConnected => "agent_connected",
-            Self::AgentDisconnected => "agent_disconnected",
-        };
-        f.write_str(s)
-    }
-}
-
-impl std::str::FromStr for EventType {
-    type Err = UnknownEventType;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "backup_success" => Ok(Self::BackupSuccess),
-            "backup_warning" => Ok(Self::BackupWarning),
-            "backup_failed" => Ok(Self::BackupFailed),
-            "check_success" => Ok(Self::CheckSuccess),
-            "check_failed" => Ok(Self::CheckFailed),
-            "agent_connected" => Ok(Self::AgentConnected),
-            "agent_disconnected" => Ok(Self::AgentDisconnected),
-            other => Err(UnknownEventType(other.to_owned())),
-        }
-    }
-}
-
-/// Error returned when parsing an unknown event type string.
-#[derive(Debug, thiserror::Error)]
-#[error("unknown event type: {0}")]
-pub struct UnknownEventType(pub String);
 
 /// A notification event carrying all context for delivery to a channel.
 #[derive(Debug, Clone, Serialize, Deserialize)]

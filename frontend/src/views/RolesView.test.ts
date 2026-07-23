@@ -1,10 +1,34 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { type VueWrapper, describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
 import RolesView from './RolesView.vue'
+
+async function openDeleteModalForCustomRole(wrapper: VueWrapper): Promise<void> {
+  const allRows = wrapper.findAll('tr')
+  const customRoleRow = allRows.find((r) => r.text().includes('custom-role'))
+  expect(customRoleRow).toBeDefined()
+
+  const deleteBtn = customRoleRow!.find('.btn-danger-text')
+  expect(deleteBtn!.exists()).toBe(true)
+  await deleteBtn!.trigger('click')
+
+  await flushPromises()
+
+  expect(wrapper.find('.overlay').exists()).toBe(true)
+}
+
+async function cancelModal(wrapper: VueWrapper): Promise<void> {
+  expect(wrapper.find('.overlay').exists()).toBe(true)
+
+  const cancelBtn = wrapper.findAll('button').find((b) => b.text() === 'Cancel')
+  expect(cancelBtn).toBeDefined()
+  await cancelBtn!.trigger('click')
+
+  expect(wrapper.find('.overlay').exists()).toBe(false)
+}
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -157,13 +181,7 @@ describe('RolesView', () => {
     expect(newButton).toBeDefined()
     await newButton!.trigger('click')
 
-    expect(wrapper.find('.overlay').exists()).toBe(true)
-
-    const cancelBtn = wrapper.findAll('button').find((b) => b.text() === 'Cancel')
-    expect(cancelBtn).toBeDefined()
-    await cancelBtn!.trigger('click')
-
-    expect(wrapper.find('.overlay').exists()).toBe(false)
+    await cancelModal(wrapper)
   })
 
   it('submits the create form', async () => {
@@ -232,24 +250,10 @@ describe('RolesView', () => {
 
     await flushPromises()
 
-    const allRows = wrapper.findAll('tr')
-    const customRoleRow = allRows.find((r) => r.text().includes('custom-role'))
-    expect(customRoleRow).toBeDefined()
-
-    const deleteBtn = customRoleRow!.find('.btn-danger-text')
-    expect(deleteBtn!.exists()).toBe(true)
-    await deleteBtn!.trigger('click')
-
-    await flushPromises()
-
-    expect(wrapper.find('.overlay').exists()).toBe(true)
+    await openDeleteModalForCustomRole(wrapper)
     expect(wrapper.text()).toContain('Delete Role')
 
-    const cancelBtn = wrapper.findAll('button').find((b) => b.text() === 'Cancel')
-    expect(cancelBtn).toBeDefined()
-    await cancelBtn!.trigger('click')
-
-    expect(wrapper.find('.overlay').exists()).toBe(false)
+    await cancelModal(wrapper)
   })
 
   it('confirms the delete and removes the role', async () => {
@@ -259,17 +263,7 @@ describe('RolesView', () => {
 
     await flushPromises()
 
-    const allRows = wrapper.findAll('tr')
-    const customRoleRow = allRows.find((r) => r.text().includes('custom-role'))
-    expect(customRoleRow).toBeDefined()
-
-    const deleteBtn = customRoleRow!.find('.btn-danger-text')
-    expect(deleteBtn!.exists()).toBe(true)
-    await deleteBtn!.trigger('click')
-
-    await flushPromises()
-
-    expect(wrapper.find('.overlay').exists()).toBe(true)
+    await openDeleteModalForCustomRole(wrapper)
 
     const confirmBtn = wrapper.findAll('button').find((b) => b.text() === 'Delete')
     expect(confirmBtn).toBeDefined()
@@ -290,12 +284,6 @@ describe('RolesView', () => {
     const editButtons = wrapper.findAll('button').filter((b) => b.text() === 'Edit')
     await editButtons[0].trigger('click')
 
-    expect(wrapper.find('.overlay').exists()).toBe(true)
-
-    const cancelBtn = wrapper.findAll('button').find((b) => b.text() === 'Cancel')
-    expect(cancelBtn).toBeDefined()
-    await cancelBtn!.trigger('click')
-
-    expect(wrapper.find('.overlay').exists()).toBe(false)
+    await cancelModal(wrapper)
   })
 })

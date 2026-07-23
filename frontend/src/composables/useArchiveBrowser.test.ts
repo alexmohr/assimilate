@@ -142,4 +142,57 @@ describe('useArchiveBrowser', () => {
     expect(browser.selectedArchive.value).toBeNull()
     expect(browser.archives.value).toHaveLength(1)
   })
+
+  it('browserEntries maps root directory and file entries with displayName and isDir', () => {
+    const browser = useArchiveBrowser(ref(5))
+    browser.currentPath.value = '/'
+    browser.contents.value = [
+      { type: 'd', path: '', size: 0, mtime: '2026-01-01T00:00:00Z', mode: '755' },
+      { type: '-', path: 'file.txt', size: 1024, mtime: '2026-01-01T00:00:00Z', mode: '644' },
+      { type: 'd', path: 'subdir', size: 0, mtime: '2026-01-01T00:00:00Z', mode: '755' },
+    ]
+
+    const entries = browser.browserEntries.value
+    expect(entries).toHaveLength(3)
+    expect(entries[0].displayName).toBe('.')
+    expect(entries[0].isDir).toBe(true)
+    expect(entries[1].displayName).toBe('subdir')
+    expect(entries[1].isDir).toBe(true)
+    expect(entries[2].displayName).toBe('file.txt')
+    expect(entries[2].isDir).toBe(false)
+    expect(entries[2].size).toBe(1024)
+    expect(entries[2].mtime).toBe('2026-01-01T00:00:00Z')
+  })
+
+  it('browserEntries includes ".." entry when not at root', () => {
+    const browser = useArchiveBrowser(ref(5))
+    browser.currentPath.value = '/subdir'
+    browser.contents.value = [
+      { type: 'd', path: 'subdir', size: 0, mtime: '', mode: '755' },
+      { type: '-', path: 'subdir/nested.txt', size: 512, mtime: '', mode: '644' },
+    ]
+
+    const entries = browser.browserEntries.value
+    expect(entries).toHaveLength(3)
+    const dotDir = entries.find((e) => e.displayName === '.')
+    expect(dotDir).toBeTruthy()
+    expect(dotDir!.isDir).toBe(true)
+    const dotdot = entries.find((e) => e.displayName === '..')
+    expect(dotdot).toBeTruthy()
+    expect(dotdot!.isDir).toBe(true)
+    const nestedFile = entries.find((e) => e.displayName === 'nested.txt')
+    expect(nestedFile).toBeTruthy()
+    expect(nestedFile!.isDir).toBe(false)
+  })
+
+  it('browserEntries shows only "." when at root with no content entries', () => {
+    const browser = useArchiveBrowser(ref(5))
+    browser.contents.value = []
+    browser.currentPath.value = '/'
+
+    const entries = browser.browserEntries.value
+    expect(entries).toHaveLength(1)
+    expect(entries[0].displayName).toBe('.')
+    expect(entries[0].isDir).toBe(true)
+  })
 })

@@ -246,9 +246,16 @@ describe('ArchiveFileBrowser', () => {
   })
 
   it('calls stopPolling on unmount', async () => {
-    const wrapper = await mountWithEntries()
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: { index_status: 'indexing', entries: [] },
+    })
 
+    const clearIntervalSpy = vi.spyOn(global, 'clearInterval')
+    const wrapper = await mountWithWait({ repoId: 5, archiveName: 'test-archive' })
     wrapper.unmount()
+
+    expect(clearIntervalSpy).toHaveBeenCalled()
+    clearIntervalSpy.mockRestore()
   })
 
   it('switching archiveName resets and reloads', async () => {
@@ -266,15 +273,6 @@ describe('ArchiveFileBrowser', () => {
     await nextTick()
 
     expect(wrapper.text()).toContain('second-archive')
-  })
-
-  it('calls stopPolling on unmount', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({
-      data: { index_status: 'done', entries: [] },
-    })
-
-    const wrapper = await mountWithWait({ repoId: 5, archiveName: 'test-archive' })
-    expect(() => wrapper.unmount()).not.toThrow()
   })
 
   it('clicking a directory row navigates into it and breadcrumb navigates back', async () => {
@@ -318,9 +316,8 @@ describe('ArchiveFileBrowser', () => {
     await flushPromises()
     await nextTick()
     const downloadBtn = wrapper.find('button.btn-ghost')
-    if (downloadBtn.exists()) {
-      await downloadBtn.trigger('click')
-    }
+    expect(downloadBtn.exists()).toBe(true)
+    await downloadBtn.trigger('click')
 
     expect(createElementSpy).toHaveBeenCalledWith('a')
     expect(appendChildSpy).toHaveBeenCalled()
@@ -339,22 +336,18 @@ describe('ArchiveFileBrowser', () => {
     const sizeInput = inputs.find((el) => el.attributes('placeholder') === 'Filter size...')
     const dateInput = inputs.find((el) => el.attributes('placeholder') === 'Filter date...')
 
-    if (nameInput) {
-      await nameInput.setValue('test')
-    }
-    if (sizeInput) {
-      await sizeInput.setValue('1024')
-    }
-    if (dateInput) {
-      await dateInput.setValue('2026')
-    }
+    expect(nameInput).toBeTruthy()
+    expect(sizeInput).toBeTruthy()
+    expect(dateInput).toBeTruthy()
+
+    await nameInput!.setValue('test')
+    await sizeInput!.setValue('1024')
+    await dateInput!.setValue('2026')
 
     await nextTick()
 
-    if (nameInput) {
-      const el = nameInput.element as HTMLInputElement
-      expect(el.value).toBe('test')
-    }
+    const el = nameInput!.element as HTMLInputElement
+    expect(el.value).toBe('test')
   })
 
   it('shows indexing spinner when index_status is indexing', async () => {

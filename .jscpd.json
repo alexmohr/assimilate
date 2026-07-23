@@ -6,8 +6,7 @@
     "**/.git/**",
     "**/*.lock",
     "frontend/src/types/generated/**",
-    ".sqlx/**",
-    "frontend/src/views/ScheduleDetailView.test.ts"
+    ".sqlx/**"
   ],
   "minLines": 10,
   "minTokens": 70

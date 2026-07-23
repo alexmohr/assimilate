@@ -980,8 +980,8 @@ pub struct InsertRepoParams<'a> {
     pub encryption: &'a str,
     /// Owning user ID, if any.
     pub owner_id: Option<i64>,
-    /// Sync schedule cron expression.
-    /// `None` = use DB default; `Some(None)` = explicitly NULL; `Some(Some(s))` = set to `s`.
+    /// Cron expression for automatic repository sync.
+    /// `None` = use DB default; `Some(Some(s))` = set value; `Some(None)` = disable.
     pub sync_schedule: Option<Option<&'a str>>,
 }
 
@@ -1337,6 +1337,7 @@ pub async fn insert_repo(
         .await
         .map_err(ApiError::Database);
     };
+
     sqlx::query_as!(
         RepoRow,
         "INSERT INTO repos (name, repo_path, ssh_user, ssh_host, ssh_port, passphrase_encrypted, \

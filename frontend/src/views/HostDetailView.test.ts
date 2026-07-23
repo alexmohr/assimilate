@@ -489,7 +489,7 @@ describe('HostDetailView — schedules tab', () => {
     },
   ]
 
-  const overdueHealth = [
+  const overdueHealth = Object.freeze([
     {
       schedule_id: 1,
       hostname: 'test-host',
@@ -501,14 +501,18 @@ describe('HostDetailView — schedules tab', () => {
       cron_expression: '0 2 * * *',
       schedule_enabled: true,
     },
-  ]
+  ])
 
-  it('shows an Overdue health badge on a schedule with no recent run', async () => {
+  function renderWithHealth() {
     setupApiWithHealth(overdueSchedule, overdueHealth)
-    const wrapper = renderWithPlugins(HostDetailView, {
+    return renderWithPlugins(HostDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
+  }
+
+  it('shows an Overdue health badge on a schedule with no recent run', async () => {
+    const wrapper = renderWithHealth()
     await flushPromises()
     await openSchedulesTab(wrapper)
 
@@ -517,11 +521,7 @@ describe('HostDetailView — schedules tab', () => {
   })
 
   it('highlights overdue schedule cards when the health=overdue query param is set', async () => {
-    setupApiWithHealth(overdueSchedule, overdueHealth)
-    const wrapper = renderWithPlugins(HostDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
+    const wrapper = renderWithHealth()
     await flushPromises()
 
     const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
@@ -538,7 +538,10 @@ describe('HostDetailView — backup progress', () => {
     for (const key of Object.keys(wsHandlers)) delete wsHandlers[key]
   })
 
-  it('BackupStarted for this host shows the backup in progress card', async () => {
+  async function startBackupOnHost(
+    archiveName: string | null = null,
+    eventHostname: string = 'test-host',
+  ) {
     setupApi([], [{ id: 10, name: 'server-daily' }])
     const wrapper = renderWithPlugins(HostDetailView, {
       props: { hostname: 'test-host' },
@@ -547,12 +550,25 @@ describe('HostDetailView — backup progress', () => {
     await flushPromises()
 
     wsHandlers['BackupStarted']?.({
-      hostname: 'test-host',
+      hostname: eventHostname,
       target_name: 'server-daily',
-      archive_name: 'server-daily-2026-07-06',
+      archive_name: archiveName,
       schedule_id: 1,
     })
     await nextTick()
+    return wrapper
+  }
+
+  it('BackupStarted for this host shows the backup in progress card', async () => {
+    const wrapper = await startBackupOnHost('server-daily-2026-07-06')
+
+    expect(wrapper.find('.live-log-card').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Backup in progress')
+    expect(wrapper.text()).toContain('server-daily')
+  })
+
+  it('BackupStarted shows the backup in progress card with archive name', async () => {
+    const wrapper = await startBackupOnHost('server-daily-2026-07-06')
 
     expect(wrapper.find('.live-log-card').exists()).toBe(true)
     expect(wrapper.text()).toContain('Backup in progress')
@@ -560,39 +576,13 @@ describe('HostDetailView — backup progress', () => {
   })
 
   it('BackupStarted for a different host does not show a progress card', async () => {
-    setupApi([], [{ id: 10, name: 'server-daily' }])
-    const wrapper = renderWithPlugins(HostDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-
-    wsHandlers['BackupStarted']?.({
-      hostname: 'other-host',
-      target_name: 'server-daily',
-      archive_name: null,
-      schedule_id: 1,
-    })
-    await nextTick()
+    const wrapper = await startBackupOnHost(null, 'other-host')
 
     expect(wrapper.find('.live-log-card').exists()).toBe(false)
   })
 
   it('BackupCompleted hides the progress card', async () => {
-    setupApi([], [{ id: 10, name: 'server-daily' }])
-    const wrapper = renderWithPlugins(HostDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-
-    wsHandlers['BackupStarted']?.({
-      hostname: 'test-host',
-      target_name: 'server-daily',
-      archive_name: null,
-      schedule_id: 1,
-    })
-    await nextTick()
+    const wrapper = await startBackupOnHost()
     expect(wrapper.find('.live-log-card').exists()).toBe(true)
 
     wsHandlers['BackupCompleted']?.({
@@ -606,20 +596,7 @@ describe('HostDetailView — backup progress', () => {
   })
 
   it('BackupLog with archive_progress JSON updates the progress data', async () => {
-    setupApi([], [{ id: 10, name: 'server-daily' }])
-    const wrapper = renderWithPlugins(HostDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-
-    wsHandlers['BackupStarted']?.({
-      hostname: 'test-host',
-      target_name: 'server-daily',
-      archive_name: null,
-      schedule_id: 1,
-    })
-    await nextTick()
+    const wrapper = await startBackupOnHost()
 
     wsHandlers['BackupLog']?.({
       hostname: 'test-host',

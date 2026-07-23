@@ -1112,18 +1112,21 @@ pub async fn get_archive_index_status(
     .await
     .map_err(ApiError::Database)?;
 
-    let response = row.map_or(
-        ArchiveIndexStatusResponse {
+    let response = match row {
+        None => ArchiveIndexStatusResponse {
             status: IndexStatus::Pending,
             file_count: None,
             error: None,
         },
-        |r| ArchiveIndexStatusResponse {
-            status: r.status.parse().unwrap_or_default(),
+        Some(r) => ArchiveIndexStatusResponse {
+            status: r
+                .status
+                .parse()
+                .map_err(|_| ApiError::Internal(format!("invalid index status: {}", r.status)))?,
             file_count: r.file_count,
             error: r.error_message,
         },
-    );
+    };
 
     Ok(Json(response))
 }

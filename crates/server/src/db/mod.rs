@@ -4602,7 +4602,7 @@ pub struct SystemEventRow {
     /// When the event occurred.
     pub created_at: DateTime<Utc>,
     /// Event type.
-    pub event_type: String,
+    pub event_type: SystemEventType,
     /// Hostname the event relates to, if any.
     pub hostname: Option<String>,
     /// Human-readable event message.
@@ -4635,15 +4635,28 @@ pub async fn insert_system_event(
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn get_system_events(pool: &PgPool, limit: i64) -> Result<Vec<SystemEventRow>, ApiError> {
-    sqlx::query_as!(
-        SystemEventRow,
+    let rows = sqlx::query!(
         "SELECT id, created_at, event_type, hostname, message FROM system_events ORDER BY \
          created_at DESC LIMIT $1",
         limit,
     )
     .fetch_all(pool)
     .await
-    .map_err(ApiError::Database)
+    .map_err(ApiError::Database)?;
+
+    rows.into_iter()
+        .map(|r| {
+            Ok(SystemEventRow {
+                id: r.id,
+                created_at: r.created_at,
+                event_type: r.event_type.parse().map_err(|e| {
+                    ApiError::Internal(format!("invalid system event type in row {}: {e}", r.id))
+                })?,
+                hostname: r.hostname,
+                message: r.message,
+            })
+        })
+        .collect()
 }
 
 /// # Errors

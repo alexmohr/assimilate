@@ -1652,7 +1652,7 @@ async fn insert_test_report_for_schedule(
     agent_id: i64,
     repo_id: i64,
     schedule_id: i64,
-    status: &str,
+    status: shared::types::BackupStatus,
 ) {
     let now = Utc::now();
     db::insert_backup_report(
@@ -1663,7 +1663,7 @@ async fn insert_test_report_for_schedule(
             schedule_id: Some(schedule_id),
             started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
             finished_at: now,
-            status: status.parse().unwrap_or_default(),
+            status,
             original_size: 1_000_000,
             compressed_size: 500_000,
             deduplicated_size: 250_000,
@@ -1849,7 +1849,14 @@ async fn activity_feed_days(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn health_summary(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
-    insert_test_report_for_schedule(&pool, agent.id, repo.id, schedule.id, "success").await;
+    insert_test_report_for_schedule(
+        &pool,
+        agent.id,
+        repo.id,
+        schedule.id,
+        shared::types::BackupStatus::Success,
+    )
+    .await;
 
     let health = db::get_health_summary(&pool).await.unwrap();
     assert_eq!(health.len(), 1);
@@ -1899,7 +1906,14 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
         .unwrap();
 
     // Only schedule_a has a backup run recorded.
-    insert_test_report_for_schedule(&pool, agent.id, repo.id, schedule_a.id, "success").await;
+    insert_test_report_for_schedule(
+        &pool,
+        agent.id,
+        repo.id,
+        schedule_a.id,
+        shared::types::BackupStatus::Success,
+    )
+    .await;
 
     let health = db::get_health_summary(&pool).await.unwrap();
     let entry_a = health
@@ -2026,7 +2040,14 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
         .await
         .unwrap();
 
-    insert_test_report_for_schedule(&pool, agent.id, repo.id, schedule_a.id, "success").await;
+    insert_test_report_for_schedule(
+        &pool,
+        agent.id,
+        repo.id,
+        schedule_a.id,
+        shared::types::BackupStatus::Success,
+    )
+    .await;
     sqlx::query("UPDATE schedules SET next_run_at = NOW() + INTERVAL '1 hour' WHERE id = $1")
         .bind(schedule_a.id)
         .execute(&pool)
@@ -5215,7 +5236,14 @@ async fn schedule_timezone_set(pool: PgPool) {
 async fn reports_for_schedule_test(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
 
-    insert_test_report_for_schedule(&pool, agent.id, repo.id, schedule.id, "success").await;
+    insert_test_report_for_schedule(
+        &pool,
+        agent.id,
+        repo.id,
+        schedule.id,
+        shared::types::BackupStatus::Success,
+    )
+    .await;
 
     let reports = db::list_reports_for_schedule(&pool, schedule.id, 10)
         .await
@@ -5269,7 +5297,14 @@ async fn reports_carry_repo_name_and_fall_back_to_it_when_schedule_unnamed(pool:
     .await
     .unwrap();
 
-    insert_test_report_for_schedule(&pool, agent.id, repo.id, schedule.id, "failed").await;
+    insert_test_report_for_schedule(
+        &pool,
+        agent.id,
+        repo.id,
+        schedule.id,
+        shared::types::BackupStatus::Failed,
+    )
+    .await;
 
     let reports = db::list_reports_for_agent(&pool, agent.id, None, 10)
         .await
@@ -7073,7 +7108,7 @@ async fn validate_agent_repo_rejects_and_logs_security_event(pool: PgPool) {
     let events = db::get_system_events(&pool, 10).await.unwrap();
     let security_events: Vec<_> = events
         .iter()
-        .filter(|e| e.event_type == "security_violation")
+        .filter(|e| e.event_type == shared::types::SystemEventType::SecurityViolation)
         .collect();
     assert_eq!(security_events.len(), 1);
     assert!(

@@ -2177,7 +2177,7 @@ exit 0
             .expect("get system events");
         let security_events: Vec<_> = events
             .iter()
-            .filter(|e| e.event_type == "security_violation")
+            .filter(|e| e.event_type == SystemEventType::SecurityViolation)
             .collect();
         assert_eq!(security_events.len(), 1);
         assert!(
@@ -2246,7 +2246,7 @@ exit 0
             .expect("get system events");
         let security_events: Vec<_> = events
             .iter()
-            .filter(|e| e.event_type == "security_violation")
+            .filter(|e| e.event_type == SystemEventType::SecurityViolation)
             .collect();
         assert_eq!(security_events.len(), 1);
     }
@@ -2273,7 +2273,7 @@ exit 0
             .expect("get system events");
         let security_events: Vec<_> = events
             .iter()
-            .filter(|e| e.event_type == "security_violation")
+            .filter(|e| e.event_type == SystemEventType::SecurityViolation)
             .collect();
         assert_eq!(security_events.len(), 1);
     }
@@ -2301,7 +2301,7 @@ exit 0
             .expect("get system events");
         let security_events: Vec<_> = events
             .iter()
-            .filter(|e| e.event_type == "security_violation")
+            .filter(|e| e.event_type == SystemEventType::SecurityViolation)
             .collect();
         assert_eq!(security_events.len(), 1);
     }

@@ -799,12 +799,11 @@ mod tests {
 
     #[test]
     fn agent_to_server_export_ready_round_trips() {
-        let msg = AgentToServer::ExportReady {
+        assert_round_trips(&AgentToServer::ExportReady {
             request_id: "req-4".into(),
             success: true,
             error_message: None,
-        };
-        assert_round_trips(&msg);
+        });
     }
 
     #[test]
@@ -819,22 +818,20 @@ mod tests {
 
     #[test]
     fn agent_to_server_key_import_result_round_trips() {
-        let msg = AgentToServer::KeyImportResult {
+        assert_round_trips(&AgentToServer::KeyImportResult {
             request_id: "req-6".into(),
             success: true,
             error_message: None,
-        };
-        assert_round_trips(&msg);
+        });
     }
 
     #[test]
     fn agent_to_server_passphrase_changed_round_trips() {
-        let msg = AgentToServer::PassphraseChanged {
+        assert_round_trips(&AgentToServer::PassphraseChanged {
             request_id: "req-7".into(),
             success: true,
             error_message: None,
-        };
-        assert_round_trips(&msg);
+        });
     }
 
     #[test]
@@ -948,5 +945,23 @@ mod tests {
             archive_name: "server-daily-2024-01-01T02:00:00".to_owned(),
         };
         assert_round_trips(&msg);
+    }
+
+    #[test]
+    fn repo_op_kind_from_str_round_trips() {
+        use std::str::FromStr;
+
+        let variants = [
+            (RepoOpKind::AgentBackup, "agent_backup"),
+            (RepoOpKind::AgentCheck, "agent_check"),
+            (RepoOpKind::AgentVerify, "agent_verify"),
+            (RepoOpKind::ServerSync, "server_sync"),
+            (RepoOpKind::BreakLock, "break_lock"),
+            (RepoOpKind::DeleteArchive, "delete_archive"),
+        ];
+        for (variant, expected) in variants {
+            assert_eq!(RepoOpKind::from_str(expected).unwrap(), variant);
+        }
+        assert!(RepoOpKind::from_str("invalid").is_err());
     }
 }

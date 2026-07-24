@@ -66,7 +66,11 @@ impl LogBuffer {
         };
         buf.iter()
             .rev()
-            .filter(|e| min_level.is_none_or(|lvl| level_matches(&e.level, lvl)))
+            .filter(|e| {
+                min_level.is_none_or(|lvl| {
+                    level_matches(LogLevel::from(e.level.as_str()), LogLevel::from(lvl))
+                })
+            })
             .filter(|e| {
                 search.is_none_or(|q| {
                     let q = q.to_lowercase();
@@ -85,10 +89,8 @@ impl Default for LogBuffer {
     }
 }
 
-fn level_matches(entry_level: &str, min_level: &str) -> bool {
-    let entry_ord = level_ord(entry_level);
-    let min_ord = level_ord(min_level);
-    entry_ord <= min_ord
+fn level_matches(entry_level: LogLevel, min_level: LogLevel) -> bool {
+    entry_level.ordinal() <= min_level.ordinal()
 }
 
 /// Ordering classification of a `tracing` level name. Only used to rank log
@@ -103,6 +105,19 @@ enum LogLevel {
     Unknown,
 }
 
+impl LogLevel {
+    fn ordinal(self) -> u8 {
+        match self {
+            Self::Error => 0,
+            Self::Warn => 1,
+            Self::Info => 2,
+            Self::Debug => 3,
+            Self::Trace => 4,
+            Self::Unknown => 5,
+        }
+    }
+}
+
 impl From<&str> for LogLevel {
     fn from(level: &str) -> Self {
         match level.to_uppercase().as_str() {
@@ -113,17 +128,6 @@ impl From<&str> for LogLevel {
             "TRACE" => Self::Trace,
             _ => Self::Unknown,
         }
-    }
-}
-
-fn level_ord(level: &str) -> u8 {
-    match LogLevel::from(level) {
-        LogLevel::Error => 0,
-        LogLevel::Warn => 1,
-        LogLevel::Info => 2,
-        LogLevel::Debug => 3,
-        LogLevel::Trace => 4,
-        LogLevel::Unknown => 5,
     }
 }
 

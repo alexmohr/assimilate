@@ -18,7 +18,7 @@ use shared::{
         MigrateEncryptionResponse, PassphraseResponse, RepoHostKeyResponse, RepoResponse,
         RepoWithStatsResponse, RescanResponse, SyncResponse,
     },
-    types::{BORG_REPO_ENV_KEY, BorgEncryption, build_repo_url},
+    types::{BORG_REPO_ENV_KEY, BorgEncryption, SystemEventType, build_repo_url},
 };
 use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
@@ -53,7 +53,7 @@ impl From<RepoRow> for RepoResponse {
             encryption: row.encryption.parse().unwrap_or_default(),
             enabled: row.enabled,
             owner_id: row.owner_id,
-            visibility: row.visibility,
+            visibility: row.visibility.parse().unwrap_or_default(),
             sync_schedule: row.sync_schedule,
         }
     }
@@ -78,7 +78,7 @@ impl From<RepoWithStatsRow> for RepoWithStatsResponse {
             import_total: row.import_total,
             import_status_message: row.import_status_message,
             owner_id: row.owner_id,
-            visibility: row.visibility,
+            visibility: row.visibility.parse().unwrap_or_default(),
             sync_schedule: row.sync_schedule,
             last_synced_at: row.last_synced_at,
             archive_count: row.archive_count,
@@ -2355,7 +2355,7 @@ async fn build_import_reports(
             schedule_id: None,
             started_at,
             finished_at,
-            status: "success".to_string(),
+            status: shared::types::BackupStatus::Success,
             original_size: 0,
             compressed_size: 0,
             deduplicated_size: 0,
@@ -3605,7 +3605,7 @@ async fn handle_repo_sync_failure(
         elapsed.as_secs_f64()
     );
     error!("{msg}");
-    let _ = db::insert_system_event(pool, "repo_sync_failed", None, &msg).await;
+    let _ = db::insert_system_event(pool, SystemEventType::RepoSyncFailed, None, &msg).await;
     if task_state.import_tasks.is_current(repo_id, task_id).await {
         let _ = db::set_repo_import_error(pool, repo_id, Some(&format!("{e}"))).await;
         let _ = db::set_repo_importing(pool, repo_id, false).await;
@@ -3640,11 +3640,11 @@ async fn log_repo_sync_completion(
             "{operation_label} for '{repo_name}' took {duration_secs}s (exceeds {}s threshold)",
             SYNC_WARN_DURATION.as_secs()
         );
-        let _ = db::insert_system_event(pool, "repo_sync_slow", None, &warn_msg).await;
+        let _ = db::insert_system_event(pool, SystemEventType::RepoSyncSlow, None, &warn_msg).await;
     }
 
     info!("{msg}");
-    let _ = db::insert_system_event(pool, "repo_sync", None, &msg).await;
+    let _ = db::insert_system_event(pool, SystemEventType::RepoSync, None, &msg).await;
 }
 
 #[utoipa::path(
@@ -3677,7 +3677,8 @@ pub async fn reset_import(
         info!(repo_id, repo_name = %repo.name, "repo sync cancelled");
         let msg = format!("repo sync cancelled for '{}'", repo.name);
         if let Err(e) =
-            db::insert_system_event(&state.pool, "repo_sync_cancelled", None, &msg).await
+            db::insert_system_event(&state.pool, SystemEventType::RepoSyncCancelled, None, &msg)
+                .await
         {
             tracing::error!(repo_id, error = %e, "failed to log sync cancelled event");
         }

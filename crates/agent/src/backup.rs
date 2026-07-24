@@ -433,8 +433,7 @@ impl BackupEngine {
             1 if stderr_has_warnings(&stderr) => {
                 let warnings = parse_warnings(&stderr);
                 let warnings = filter_file_change_warnings(warnings, &target.file_change_patterns)?;
-                let summary = warnings.join("; ");
-                warn!("Borg reported warnings: {summary}");
+                warn!("Borg reported warnings: {}", warnings.join("; "));
                 let stats = parse_json_stats(&output.stdout)?;
                 Ok(CreateResult {
                     status: BackupStatus::Warning,
@@ -443,7 +442,7 @@ impl BackupEngine {
                     deduplicated_size: stats.deduplicated_size,
                     repo_unique_csize: stats.repo_unique_csize,
                     files_processed: stats.files_processed,
-                    error_message: Some(summary),
+                    error_message: None,
                     warnings,
                     archive_name,
                     borg_command,
@@ -1242,14 +1241,7 @@ mod tests {
         let result = engine.run_backup(&target, None, None).await.unwrap();
 
         assert_eq!(result.status, BackupStatus::Warning);
-        assert!(result.error_message.is_some());
-        assert!(
-            result
-                .error_message
-                .as_ref()
-                .unwrap()
-                .contains("file changed")
-        );
+        assert!(result.error_message.is_none());
         assert_eq!(result.warnings.len(), 2);
         assert!(result.warnings[0].contains("file changed while we backed it up"));
         assert!(result.warnings[1].contains("file changed while we backed it up"));

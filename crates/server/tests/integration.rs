@@ -163,6 +163,10 @@ fn test_app_repo_routes() -> Router<server::AppState> {
             get(server::api::schedules::list_schedule_backup_sources),
         )
         .route(
+            "/api/schedules/{id}/run",
+            post(server::api::schedules::run_schedule_now),
+        )
+        .route(
             "/api/config/export",
             get(server::api::config_io::export_config),
         )
@@ -3067,6 +3071,93 @@ async fn test_list_schedules_for_repo() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
     assert_eq!(body.as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_run_schedule_now_restricted_to_agent_ids() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "run-now-repo").await;
+    let agent_a: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('run-now-a', 'hash-a') RETURNING \
+         id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let agent_b: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('run-now-b', 'hash-b') RETURNING \
+         id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let schedule_id = insert_test_schedule(&pool, agent_a, repo_id).await;
+    sqlx::query(
+        "INSERT INTO schedule_targets (schedule_id, agent_id, execution_order) VALUES ($1, $2, 1)",
+    )
+    .bind(schedule_id)
+    .bind(agent_b)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Restricting to agent_a only should insert a pending report for agent_a, not agent_b.
+    let req = json_request(
+        "POST",
+        &format!("/api/schedules/{schedule_id}/run"),
+        Some(json!({ "agent_ids": [agent_a] })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    let pending_agents: Vec<i64> = sqlx::query_scalar(
+        "SELECT agent_id FROM backup_reports WHERE schedule_id = $1 AND status = 'pending'",
+    )
+    .bind(schedule_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(pending_agents, vec![agent_a]);
+
+    // An agent_id that isn't a target of this schedule is rejected.
+    let req = json_request(
+        "POST",
+        &format!("/api/schedules/{schedule_id}/run"),
+        Some(json!({ "agent_ids": [999_999_999] })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // Omitting agent_ids runs every target.
+    sqlx::query("DELETE FROM backup_reports WHERE schedule_id = $1")
+        .bind(schedule_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let req = json_request(
+        "POST",
+        &format!("/api/schedules/{schedule_id}/run"),
+        Some(json!({})),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    let mut pending_agents: Vec<i64> = sqlx::query_scalar(
+        "SELECT agent_id FROM backup_reports WHERE schedule_id = $1 AND status = 'pending'",
+    )
+    .bind(schedule_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    pending_agents.sort_unstable();
+    let mut expected = vec![agent_a, agent_b];
+    expected.sort_unstable();
+    assert_eq!(pending_agents, expected);
 }
 
 // -- archive resync reliability --

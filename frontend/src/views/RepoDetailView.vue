@@ -333,7 +333,7 @@ async function loadRepoSchedules(): Promise<void> {
 async function runScheduleNow(s: ScheduleRow): Promise<void> {
   scheduleRunNowLoading.value = s.id
   try {
-    await apiClient.post(`/schedules/${s.id}/run`)
+    await apiClient.post(`/schedules/${s.id}/run`, {})
     scheduleToastSuccess(`${scheduleTypeLabel(s.schedule_type)} started.`)
   } catch (e: unknown) {
     scheduleToastError(extractError(e))

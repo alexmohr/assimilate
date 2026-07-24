@@ -15,6 +15,7 @@ import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
 import { parseLines } from '../utils/validation'
 import { normalizeBackupStatus } from '../utils/backupStatus'
+import { AlertTriangle } from '@lucide/vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import FileChangePatternsEditor from '../components/FileChangePatternsEditor.vue'
 import CronBuilder from '../components/CronBuilder.vue'
@@ -25,6 +26,7 @@ import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import type { ScheduleBackupSourcesResponse } from '../types/generated'
+import type { HealthSummaryResponse } from '../types/generated/HealthSummaryResponse'
 import type { Repo } from '../types/repo'
 
 interface ScheduleTarget {
@@ -47,6 +49,7 @@ const agents = ref<AgentRow[]>([])
 const repos = ref<Repo[]>([])
 const repo = computed(() => repos.value.find((r) => r.id === selectedRepoId.value) ?? null)
 const scheduleTargets = ref<ScheduleTarget[]>([])
+const health = ref<HealthSummaryResponse[]>([])
 const { loading, error, run } = useAsyncAction('Failed to load schedule')
 const saving = ref(false)
 const saveError = ref<string | null>(null)
@@ -55,6 +58,7 @@ const showDeleteDialog = ref(false)
 const deleteLoading = ref(false)
 const refOpen = ref(false)
 const runNowLoading = ref(false)
+const retryingAgentId = ref<number | null>(null)
 const cancelLoading = ref(false)
 const backupRunning = ref(false)
 const reports = ref<ReportRow[]>([])
@@ -183,6 +187,25 @@ function agentLabel(id: number): string {
   return c ? (c.display_name ?? c.hostname) : `#${id}`
 }
 
+const scheduleHealth = computed<HealthSummaryResponse[]>(() => {
+  const scheduleId = schedule.value?.id
+  if (scheduleId == null) return []
+  return health.value.filter((h) => h.schedule_id === scheduleId)
+})
+
+function healthForAgent(agentId: number): HealthSummaryResponse | null {
+  const hostname = agentMap.value.get(agentId)?.hostname
+  if (!hostname) return null
+  return scheduleHealth.value.find((h) => h.hostname === hostname) ?? null
+}
+
+function connectivityNote(agentId: number): string {
+  const agent = agentMap.value.get(agentId)
+  if (!agent || agent.is_connected !== false) return ''
+  const lastSeen = agent.last_seen_at ? formatDateShort(agent.last_seen_at) : 'never'
+  return `Agent offline (last seen ${lastSeen})`
+}
+
 function multiSelectLabel(): string {
   if (selectedAgentIds.value.length === 0) return 'Select agents...'
   if (selectedAgentIds.value.length === 1) return agentLabel(selectedAgentIds.value[0])
@@ -268,10 +291,6 @@ function scheduleTypeLabel(t: ScheduleType): string {
   }
 }
 
-function targetHostnames(): string {
-  return selectedAgentIds.value.map(agentLabel).join(', ')
-}
-
 async function loadData(): Promise<void> {
   await run(async () => {
     if (isCreate.value) {
@@ -287,7 +306,7 @@ async function loadData(): Promise<void> {
       }
       selectedRepoId.value = repos.value.length > 0 ? repos.value[0].id : null
     } else {
-      const [schedRes, agentsRes, reposRes, targetsRes, sourcesRes, recentReportsRes] =
+      const [schedRes, agentsRes, reposRes, targetsRes, sourcesRes, recentReportsRes, healthRes] =
         await Promise.all([
           apiClient.get<ScheduleRow>(`/schedules/${props.id}`),
           apiClient.get<AgentRow[]>('/agents'),
@@ -295,6 +314,7 @@ async function loadData(): Promise<void> {
           apiClient.get<ScheduleTarget[]>(`/schedules/${props.id}/targets`),
           apiClient.get<ScheduleBackupSourcesResponse>(`/schedules/${props.id}/sources`),
           apiClient.get<ReportRow[]>(`/schedules/${props.id}/reports`, { params: { limit: 20 } }),
+          apiClient.get<HealthSummaryResponse[]>('/stats/health'),
         ])
       schedule.value = schedRes.data
       agents.value = agentsRes.data
@@ -302,6 +322,7 @@ async function loadData(): Promise<void> {
       scheduleTargets.value = targetsRes.data
       selectedRepoId.value = schedRes.data.repo_id ?? null
       reports.value = recentReportsRes.data
+      health.value = healthRes.data
       const runningReport = recentReportsRes.data.find((r) => {
         const status = normalizeBackupStatus(r.status)
         return status === 'pending' || status === 'started'
@@ -499,15 +520,30 @@ async function confirmDeleteSchedule(): Promise<void> {
   }
 }
 
-async function runNow(): Promise<void> {
-  runNowLoading.value = true
+async function runNow(agentId?: number): Promise<void> {
+  if (agentId != null) {
+    retryingAgentId.value = agentId
+  } else {
+    runNowLoading.value = true
+  }
   try {
-    await apiClient.post(`/schedules/${props.id}/run`)
-    toastSuccess(`${scheduleTypeLabel(schedule.value?.schedule_type ?? 'backup')} started.`)
+    await apiClient.post(
+      `/schedules/${props.id}/run`,
+      agentId != null ? { agent_ids: [agentId] } : {},
+    )
+    toastSuccess(
+      agentId != null
+        ? `Retry started for ${agentLabel(agentId)}.`
+        : `${scheduleTypeLabel(schedule.value?.schedule_type ?? 'backup')} started.`,
+    )
   } catch (e: unknown) {
     toastError(extractError(e))
   } finally {
-    runNowLoading.value = false
+    if (agentId != null) {
+      retryingAgentId.value = null
+    } else {
+      runNowLoading.value = false
+    }
   }
 }
 
@@ -695,7 +731,7 @@ watch(activeTab, (tab) => {
           v-else
           class="btn btn-sm btn-primary"
           :disabled="runNowLoading"
-          @click="runNow"
+          @click="runNow()"
         >
           {{ runNowLoading ? '...' : 'Run Now' }}
         </button>
@@ -921,9 +957,44 @@ watch(activeTab, (tab) => {
             class="info-card"
           >
             <h3 class="info-title">Schedule Info</h3>
-            <div class="info-row">
+            <div class="info-row info-row-targets">
               <span class="info-label">Targets</span>
-              <span class="info-value">{{ targetHostnames() || '—' }}</span>
+              <span
+                v-if="selectedAgentIds.length === 0"
+                class="info-value"
+                >—</span
+              >
+              <div
+                v-else
+                class="target-health-list"
+              >
+                <div
+                  v-for="agentId in selectedAgentIds"
+                  :key="agentId"
+                  class="target-health-row"
+                >
+                  <span class="target-health-name">{{ agentLabel(agentId) }}</span>
+                  <template v-if="healthForAgent(agentId)?.is_overdue">
+                    <span class="target-health-badge">
+                      <AlertTriangle :size="12" />
+                      Overdue
+                    </span>
+                    <span
+                      v-if="connectivityNote(agentId)"
+                      class="target-health-note"
+                    >
+                      {{ connectivityNote(agentId) }}
+                    </span>
+                    <button
+                      class="btn btn-sm btn-ghost"
+                      :disabled="retryingAgentId === agentId"
+                      @click="runNow(agentId)"
+                    >
+                      {{ retryingAgentId === agentId ? '...' : 'Retry' }}
+                    </button>
+                  </template>
+                </div>
+              </div>
             </div>
             <div class="info-row">
               <span class="info-label">On Failure</span>
@@ -1816,6 +1887,48 @@ watch(activeTab, (tab) => {
   font-size: 0.82rem;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.info-row-targets {
+  align-items: flex-start;
+}
+
+.target-health-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  align-items: flex-end;
+}
+
+.target-health-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.target-health-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.target-health-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--warning);
+  background: var(--warning-subtle);
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius-sm);
+}
+
+.target-health-note {
+  font-size: 0.72rem;
+  color: var(--text-muted);
 }
 
 .form-group {

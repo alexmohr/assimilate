@@ -129,4 +129,54 @@ describe('RolesView', () => {
     expect(yes.length).toBeGreaterThan(0)
     expect(no.length).toBeGreaterThan(0)
   })
+
+  it('opens and cancels the create modal', async () => {
+    const wrapper = renderWithPlugins(RolesView)
+    await flushPromises()
+
+    await wrapper.find('button.btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.overlay').exists()).toBe(true)
+
+    await wrapper.find('.overlay .btn-ghost').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('.overlay').length).toBe(0)
+  })
+
+  it('opens and cancels the edit modal', async () => {
+    const wrapper = renderWithPlugins(RolesView)
+    await flushPromises()
+
+    const editBtns = wrapper.findAll('tbody .btn-ghost').filter((b) => b.text() === 'Edit')
+    await editBtns[0].trigger('click')
+    await flushPromises()
+
+    const overlay = wrapper.find('.overlay')
+    expect(overlay.exists()).toBe(true)
+    expect(overlay.text()).toContain('Edit Role')
+
+    await overlay.find('.btn-ghost').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('.overlay').length).toBe(0)
+  })
+
+  it('opens and cancels the delete modal on a non-seeded role', async () => {
+    const customRole = makeRole(4, 'custom-role', false, false)
+    vi.mocked(apiClient.get).mockResolvedValueOnce({ data: [customRole] })
+    const wrapper = renderWithPlugins(RolesView)
+    await flushPromises()
+
+    await wrapper.find('.btn-danger-text').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.overlay').exists()).toBe(true)
+
+    await wrapper.find('.overlay .btn-ghost').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('.overlay').length).toBe(0)
+  })
 })

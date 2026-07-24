@@ -3,7 +3,10 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
-import { nextTick, ref } from 'vue'
+import { nextTick } from 'vue'
+import { mockFormatUtils, mockErrorUtils, renderWithPlugins } from '../test-utils'
+import { listServerQuotas, upsertServerQuota, deleteServerQuota } from '../api/serverQuotas'
+import ServerQuotasView from './ServerQuotasView.vue'
 
 vi.mock('../api/serverQuotas', () => ({
   listServerQuotas: vi.fn(),
@@ -11,19 +14,9 @@ vi.mock('../api/serverQuotas', () => ({
   deleteServerQuota: vi.fn(),
 }))
 
-const isMobileRef = ref(false)
-vi.mock('../composables/useMobile', () => ({
-  useMobile: () => ({ isMobile: isMobileRef }),
-}))
+vi.mock('../utils/format', () => mockFormatUtils())
 
-vi.mock('../utils/format', () => ({
-  formatBytes: (bytes: number): string => `${bytes} B`,
-}))
-
-vi.mock('../utils/error', () => ({
-  extractError: (_e: unknown): string => 'API error',
-  extractBlobError: async (_e: unknown): Promise<string> => 'API error',
-}))
+vi.mock('../utils/error', () => mockErrorUtils())
 
 vi.mock('../components/BaseSpinner.vue', () => ({
   default: { template: '<div class="base-spinner" />' },
@@ -32,10 +25,6 @@ vi.mock('../components/BaseSpinner.vue', () => ({
 vi.mock('../components/ToggleSwitch.vue', () => ({
   default: { template: '<input type="checkbox" />', props: ['modelValue'] },
 }))
-
-import { listServerQuotas, upsertServerQuota, deleteServerQuota } from '../api/serverQuotas'
-import { renderWithPlugins } from '../test-utils'
-import ServerQuotasView from './ServerQuotasView.vue'
 
 const mockList = vi.mocked(listServerQuotas)
 const mockUpsert = vi.mocked(upsertServerQuota)
@@ -70,7 +59,6 @@ const unconfiguredQuota = {
 describe('ServerQuotasView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    isMobileRef.value = false
   })
 
   it('shows loading state initially', async () => {
@@ -80,11 +68,12 @@ describe('ServerQuotasView', () => {
     expect(wrapper.find('.base-spinner').exists()).toBe(true)
   })
 
-  it('lists hosts with usage and configured actions', async () => {
+  it('lists hosts with usage and configured actions in cards', async () => {
     mockList.mockResolvedValue([configuredQuota, unconfiguredQuota])
     const wrapper = renderWithPlugins(ServerQuotasView)
     await flushPromises()
 
+    expect(wrapper.findAll('.quota-card')).toHaveLength(2)
     expect(wrapper.text()).toContain('backup.example.com')
     expect(wrapper.text()).toContain('other.example.com')
     expect(wrapper.text()).toContain('Block backups')
@@ -123,7 +112,36 @@ describe('ServerQuotasView', () => {
     )
   })
 
-  it('removes a configured quota', async () => {
+  it('cancels edit and resets the form', async () => {
+    mockList.mockResolvedValue([configuredQuota])
+    const wrapper = renderWithPlugins(ServerQuotasView)
+    await flushPromises()
+
+    await wrapper.find('button.btn-ghost').trigger('click')
+    await nextTick()
+    expect(wrapper.find('.overlay').exists()).toBe(true)
+
+    await wrapper.find('.overlay').trigger('click.self')
+    await nextTick()
+    expect(wrapper.find('.overlay').exists()).toBe(false)
+  })
+
+  it('shows an error when saving a quota fails', async () => {
+    mockList.mockResolvedValue([unconfiguredQuota])
+    mockUpsert.mockRejectedValue(new Error('save failed'))
+    const wrapper = renderWithPlugins(ServerQuotasView)
+    await flushPromises()
+
+    await wrapper.find('button.btn-ghost').trigger('click')
+    await nextTick()
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('API error')
+  })
+
+  it('removes a configured quota and reloads', async () => {
     mockList.mockResolvedValue([configuredQuota])
     mockDelete.mockResolvedValue(undefined)
     const wrapper = renderWithPlugins(ServerQuotasView)
@@ -133,31 +151,6 @@ describe('ServerQuotasView', () => {
     await flushPromises()
 
     expect(mockDelete).toHaveBeenCalledWith('backup.example.com')
-  })
-
-  it('renders a card list instead of a table on narrow viewports', async () => {
-    isMobileRef.value = true
-    mockList.mockResolvedValue([configuredQuota, unconfiguredQuota])
-    const wrapper = renderWithPlugins(ServerQuotasView)
-    await flushPromises()
-
-    expect(wrapper.find('table').exists()).toBe(false)
-    expect(wrapper.findAll('.quota-card')).toHaveLength(2)
-    expect(wrapper.text()).toContain('backup.example.com')
-    expect(wrapper.text()).toContain('Block backups')
-    expect(wrapper.text()).toContain('Not set')
-  })
-
-  it('removes a configured quota from the mobile card list', async () => {
-    isMobileRef.value = true
-    mockList.mockResolvedValue([configuredQuota])
-    mockDelete.mockResolvedValue(undefined)
-    const wrapper = renderWithPlugins(ServerQuotasView)
-    await flushPromises()
-
-    await wrapper.find('button.btn-danger-text').trigger('click')
-    await flushPromises()
-
-    expect(mockDelete).toHaveBeenCalledWith('backup.example.com')
+    expect(mockList).toHaveBeenCalledTimes(2)
   })
 })

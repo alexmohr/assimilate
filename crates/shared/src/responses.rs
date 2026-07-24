@@ -36,6 +36,12 @@ pub struct LoginResponse {
     pub session_expires_at: DateTime<Utc>,
     /// Whether the session should be remembered beyond the current browser session.
     pub remember_me: bool,
+    #[serde(default)]
+    /// Whether TOTP verification is required to complete login.
+    pub totp_required: bool,
+    #[serde(default)]
+    /// Temporary session token used during two-step login.
+    pub temp_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -55,6 +61,8 @@ pub struct MeResponse {
     pub session_expires_at: Option<DateTime<Utc>>,
     /// Whether the session should be remembered beyond the current browser session.
     pub remember_me: bool,
+    /// Whether TOTP is enabled for the user.
+    pub totp_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -63,6 +71,65 @@ pub struct MeResponse {
 pub struct RefreshSessionResponse {
     /// Timestamp of when the session expires occurred.
     pub session_expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// Response containing TOTP setup information.
+pub struct TotpSetupResponse {
+    /// TOTP secret for the authenticator app.
+    pub secret: String,
+    /// QR code URI for scanning with an authenticator app.
+    pub qr_uri: String,
+    /// Recovery codes for account access if TOTP device is lost.
+    pub recovery_codes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// Response containing TOTP verification result.
+pub struct TotpVerifyResponse {
+    /// Whether the TOTP verification was successful.
+    pub success: bool,
+    /// Number of remaining backup codes.
+    pub backup_codes_remaining: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// Response containing session information.
+pub struct SessionResponse {
+    /// Session identifier.
+    pub id: String,
+    #[ts(type = "number")]
+    /// User identifier associated with this session.
+    pub user_id: i64,
+    /// Timestamp of when the session was created.
+    pub created_at: DateTime<Utc>,
+    /// Timestamp of when the session expires.
+    pub expires_at: DateTime<Utc>,
+    /// Timestamp of the last activity on this session.
+    pub last_seen_at: DateTime<Utc>,
+    /// Whether the session should persist beyond the browser session.
+    pub remember_me: bool,
+    /// Whether this is the current active session.
+    pub current: bool,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// Response containing list of user sessions.
+pub struct SessionListResponse {
+    /// List of sessions.
+    pub sessions: Vec<SessionResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// Response containing TOTP recovery codes.
+pub struct TotpRecoveryCodesResponse {
+    /// Recovery codes for account access if TOTP device is lost.
+    pub recovery_codes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -992,6 +1059,9 @@ pub struct SettingsResponse {
     #[ts(type = "number")]
     /// Timeout for borg queries in seconds.
     pub borg_query_timeout_secs: u64,
+    #[ts(type = "number | null")]
+    /// Session idle timeout duration in minutes.
+    pub session_idle_timeout_minutes: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

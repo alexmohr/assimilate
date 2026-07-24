@@ -13,6 +13,7 @@ export interface AuthUser {
   must_change_password: boolean
   created_at: string
   last_login_at: string | null
+  totp_enabled?: boolean
 }
 
 // Refresh the session when this much time remains before expiry.
@@ -29,6 +30,10 @@ export const useAuthStore = defineStore('auth', () => {
   const sessionExpiresAt = ref<string | null>(null)
   const rememberMe = ref(false)
   let refreshTimer: ReturnType<typeof setTimeout> | null = null
+
+  // TOTP login flow state
+  const totpRequired = ref(false)
+  const tempToken = ref<string | null>(null)
 
   function scheduleRefresh(expiresAt: string): void {
     if (refreshTimer !== null) {
@@ -57,7 +62,11 @@ export const useAuthStore = defineStore('auth', () => {
   async function fetchMe(): Promise<void> {
     try {
       const res = await apiClient.get<
-        AuthUser & { session_expires_at: string | null; remember_me: boolean }
+        AuthUser & {
+          session_expires_at: string | null
+          remember_me: boolean
+          totp_enabled: boolean
+        }
       >('/auth/me')
       user.value = res.data
       if (res.data.remember_me && res.data.session_expires_at) {
@@ -76,17 +85,74 @@ export const useAuthStore = defineStore('auth', () => {
       user: AuthUser
       session_expires_at: string
       remember_me: boolean
+      totp_required: boolean
+      temp_token: string | null
     }>('/auth/login', {
       username,
       password,
       remember_me: remember,
     })
+
+    if (res.data.totp_required) {
+      totpRequired.value = true
+      tempToken.value = res.data.temp_token
+      return
+    }
+
     user.value = res.data.user
     rememberMe.value = res.data.remember_me
     sessionExpiresAt.value = res.data.session_expires_at
     if (remember) {
       scheduleRefresh(res.data.session_expires_at)
     }
+
+    totpRequired.value = false
+    tempToken.value = null
+  }
+
+  async function verifyTotp(code: string, recovery = false): Promise<void> {
+    if (recovery) {
+      // Recovery code endpoint creates the real session directly
+      const res = await apiClient.post<{
+        user: AuthUser
+        session_expires_at: string
+        remember_me: boolean
+      }>('/auth/totp/recovery', {
+        code,
+        temp_token: tempToken.value,
+      })
+
+      user.value = res.data.user
+      rememberMe.value = res.data.remember_me
+      sessionExpiresAt.value = res.data.session_expires_at
+      if (res.data.remember_me) {
+        scheduleRefresh(res.data.session_expires_at)
+      }
+
+      totpRequired.value = false
+      tempToken.value = null
+      return
+    }
+
+    // Complete the login with TOTP verification
+    const res = await apiClient.post<{
+      user: AuthUser
+      session_expires_at: string
+      remember_me: boolean
+    }>('/auth/totp/verify-login', {
+      code,
+      temp_token: tempToken.value,
+    })
+
+    user.value = res.data.user
+    rememberMe.value = res.data.remember_me
+    sessionExpiresAt.value = res.data.session_expires_at
+    if (res.data.remember_me) {
+      scheduleRefresh(res.data.session_expires_at)
+    }
+
+    totpRequired.value = false
+    tempToken.value = null
   }
 
   async function changePassword(newPassword: string): Promise<void> {
@@ -107,9 +173,28 @@ export const useAuthStore = defineStore('auth', () => {
       user.value = null
       sessionExpiresAt.value = null
       rememberMe.value = false
+      totpRequired.value = false
+      tempToken.value = null
       window.location.assign('/login')
     }
   }
 
-  return { user, loading, isAdmin, fetchMe, login, changePassword, logout }
+  function resetTotpState(): void {
+    totpRequired.value = false
+    tempToken.value = null
+  }
+
+  return {
+    user,
+    loading,
+    isAdmin,
+    fetchMe,
+    login,
+    verifyTotp,
+    changePassword,
+    logout,
+    totpRequired,
+    tempToken,
+    resetTotpState,
+  }
 })

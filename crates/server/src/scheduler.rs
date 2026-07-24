@@ -450,24 +450,26 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
     let mut archive_reports_deleted: u64 = 0;
 
     if report_days > 0 {
-        let cutoff = Utc::now()
-            .checked_sub_signed(chrono::Duration::days(report_days))
-            .unwrap_or_else(Utc::now);
+        let Some(cutoff) = Utc::now().checked_sub_signed(chrono::Duration::days(report_days))
+        else {
+            return Ok(()); // clock went backwards, skip this cycle
+        };
         archive_reports_deleted =
             db::delete_backup_reports_with_archive_before(pool, cutoff).await?;
     }
 
     if failed_days > 0 {
-        let cutoff = Utc::now()
-            .checked_sub_signed(chrono::Duration::days(failed_days))
-            .unwrap_or_else(Utc::now);
+        let Some(cutoff) = Utc::now().checked_sub_signed(chrono::Duration::days(failed_days))
+        else {
+            return Ok(());
+        };
         reports_deleted = db::delete_backup_reports_before(pool, cutoff).await?;
     }
 
     if event_days > 0 {
-        let cutoff = Utc::now()
-            .checked_sub_signed(chrono::Duration::days(event_days))
-            .unwrap_or_else(Utc::now);
+        let Some(cutoff) = Utc::now().checked_sub_signed(chrono::Duration::days(event_days)) else {
+            return Ok(());
+        };
         events_deleted = db::delete_system_events_before(pool, cutoff).await?;
     }
 
@@ -1015,6 +1017,9 @@ mod tests {
             shutdown_token: tokio_util::sync::CancellationToken::new(),
             client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
             task_registry: shared::task_registry::TaskRegistry::default(),
+            session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(
+                480,
+            )),
         };
         let shutdown_token = state.shutdown_token.clone();
 

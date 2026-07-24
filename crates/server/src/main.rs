@@ -111,6 +111,9 @@ async fn main() -> Result<(), StartupError> {
         shutdown_token: shutdown_token.clone(),
     });
 
+    // Load the cached session idle timeout from the database
+    state.reload_session_idle_timeout().await;
+
     spawn_background_tasks(&state, &tunnel_manager);
 
     let login_router = build_login_router(&state, client_ip_resolver);
@@ -249,6 +252,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         shutdown_token,
         client_ip_resolver,
         task_registry,
+        session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(480)),
     }
 }
 
@@ -387,6 +391,19 @@ fn core_routes() -> Router<AppState> {
         .route(
             "/api/auth/preferences",
             get(api::auth::get_preferences).put(api::auth::update_preferences),
+        )
+        .route("/api/auth/totp/setup", post(api::totp::totp_setup))
+        .route("/api/auth/totp/verify", post(api::totp::totp_verify))
+        .route(
+            "/api/auth/totp/verify-login",
+            post(api::totp::totp_verify_login),
+        )
+        .route("/api/auth/totp/disable", post(api::totp::totp_disable))
+        .route("/api/auth/totp/recovery", post(api::totp::totp_recovery))
+        .route("/api/auth/sessions", get(api::auth::list_sessions))
+        .route(
+            "/api/auth/sessions/{session_id}",
+            delete(api::auth::revoke_session),
         )
         .route(
             "/api/users",

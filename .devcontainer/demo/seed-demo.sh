@@ -75,8 +75,8 @@ SQL
 echo "==> Logging in..."
 login
 
-echo "==> Setting timezone to Europe/Berlin..."
-api PUT /api/system/settings '{"timezone":"Europe/Berlin","retention_days":7,"report_retention_days":365,"failed_report_retention_days":365,"system_event_retention_days":90}'
+echo "==> Setting timezone to Europe/Berlin and configuring session idle timeout..."
+api PUT /api/system/settings '{"timezone":"Europe/Berlin","retention_days":7,"report_retention_days":365,"failed_report_retention_days":365,"system_event_retention_days":90,"session_idle_timeout_minutes":480}'
 
 echo "==> Registering hosts for protected, unassigned, never-succeeded, and disabled-only coverage filters..."
 WEB01_TOKEN=$(api POST "/api/agents" '{"hostname":"web-server-01","display_name":"Production Web Server"}' | jq -r '.token')
@@ -535,6 +535,21 @@ SQL
 
 echo "==> Updating database storage statistics..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -c 'ANALYZE;' > /dev/null
+
+echo "==> Enabling TOTP/2FA for admin user (for demo screenshots)..."
+TOTP_SETUP=$(api POST /api/auth/totp/setup)
+echo "$TOTP_SETUP" | jq -e '.secret' > /dev/null || {
+    echo "TOTP setup failed (may already be enabled)" >&2
+}
+if echo "$TOTP_SETUP" | jq -e '.secret' > /dev/null 2>&1; then
+    TOTP_SECRET=$(echo "$TOTP_SETUP" | jq -r '.secret')
+    TOTP_CODE=$(oathtool --totp -b "$TOTP_SECRET" 2>/dev/null || oathtool --totp "$TOTP_SECRET" 2>/dev/null)
+    if [ -n "$TOTP_CODE" ]; then
+        api POST /api/auth/totp/verify "{\"code\":\"$TOTP_CODE\"}" > /dev/null 2>&1 && \
+            echo "  TOTP/2FA enabled for admin user" || \
+            echo "  TOTP verify attempt outcome (OK if already enabled)" >&2
+    fi
+fi
 
 echo "==> Verifying config export/import round-trip (repos, tags, quotas)..."
 EXPORT_JSON=$(api GET /api/config/export)

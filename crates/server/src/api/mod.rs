@@ -59,6 +59,8 @@ pub mod system;
 pub mod tags;
 /// API token endpoints.
 pub mod tokens;
+/// TOTP/2FA authentication endpoints (setup, verify, disable, recovery).
+pub mod totp;
 /// SSH tunnel endpoints.
 pub mod tunnels;
 /// User management endpoints.

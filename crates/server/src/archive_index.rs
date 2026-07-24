@@ -24,7 +24,7 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum IndexStatus {
-    /// Index job not yet started.
+    /// Index job not yet started (or unknown status).
     Pending,
     /// Indexing is in progress.
     Indexing,

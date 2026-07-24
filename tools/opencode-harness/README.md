@@ -143,7 +143,11 @@ asked to edit files.
 * Python 3.11+, no third-party packages (stdlib only).
 * `gh` (authenticated: `gh auth login`, with access to the target repo).
 * `git`, configured with push access to the repo.
-* `opencode`, installed and authenticated with whatever model provider you use.
+* `opencode`, installed and authenticated with whatever model provider(s) you
+  use - by default (see "Model routing" below) the harness spreads work
+  across several different models, so make sure `opencode models` lists every
+  model in the routing table (or override `HARNESS_ROUTER_MODEL`/the routing
+  table in `model_router.py` to match whatever you actually have configured).
 * `uv` (for `pre-commit`), `cargo` + the `nightly` toolchain, `npm` — same
   toolchain this repo's `AGENTS.md`/skills already assume for local dev.
 * A local clone of `alexmohr/assimilate` that this process can freely
@@ -165,9 +169,10 @@ asked to edit files.
 Most settings are environment variables (see `config.py` for defaults). The
 opencode model is the one exception - it's a `--model` CLI flag only, not an
 env var, precisely so a forgotten `export` can't silently fall back to
-opencode's default with no error. The startup log line always prints the
-fully-resolved config (including the model actually in effect), so check
-that first if a run doesn't seem to be using the model you expected.
+pinning every task to one model with no error. The startup log line always
+prints the fully-resolved config (including whether a single model is pinned
+or every task is being routed per-task), so check that first if a run doesn't
+seem to be using the model you expected.
 
 The same model can be reachable through more than one provider prefix -
 e.g. `deepseek/deepseek-v4-flash` routes directly to DeepSeek's own API
@@ -176,7 +181,9 @@ e.g. `deepseek/deepseek-v4-flash` routes directly to DeepSeek's own API
 gateway. Using the wrong one for how you've authenticated opencode surfaces
 as an opaque `UnknownError: Unexpected server error` from opencode itself,
 not as a harness bug. Run `opencode models` to see which provider prefixes
-are actually configured and working before pointing `--model` at one.
+are actually configured and working before pointing `--model`/`HARNESS_ROUTER_MODEL`
+at one - the bare model ids used by default here (see "Model routing" below)
+may need a provider prefix added for your own opencode setup.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -184,6 +191,8 @@ are actually configured and working before pointing `--model` at one.
 | `HARNESS_REPO_DIR` | `.` | Path to the local clone the harness operates on |
 | `HARNESS_BASE_BRANCH` | `main` | Base branch for rebases and new issue branches |
 | `HARNESS_POLL_INTERVAL` | `180` | Seconds between cycles |
+| `HARNESS_ROUTER_MODEL` | `deepseek-v4-flash` | Cheap/fast model used to classify each task before picking the model that actually does the work - see "Model routing" below |
+| `HARNESS_ROUTER_TIMEOUT` | `120` | Seconds before the classifier call itself is killed - it only has to answer a question, not edit anything, so this is far shorter than `HARNESS_OPENCODE_TIMEOUT` |
 | `HARNESS_OPENCODE_TIMEOUT` | `14400` (4h) | Seconds before an opencode invocation is killed. Killing the whole process group, not just opencode itself, so nothing it spawned (e.g. a `pre-commit`/`cargo` call from its bash tool) is left running orphaned |
 | `HARNESS_MAX_LOCAL_ATTEMPTS` | `3` | Consecutive *identical* local validation failures before giving up *this cycle* - an attempt whose failure differs from the last one counts as progress and doesn't count against this (up to a hard cap of 3x this value regardless), so a chain of distinct, real bugs (fix one, reveal the next) gets a fair shot instead of exhausting the budget on genuine progress |
 | `HARNESS_MAX_STUCK_CYCLES` | `3` | Cycles the same problem may survive before the PR/issue is marked stuck |
@@ -217,29 +226,95 @@ on it once, the same one-time override a lone `--pr N` has always done -
 a human pointing the harness at a PR is choosing to retry it now, not
 forever on every cycle it comes back up in the rotation.
 
+## Model routing
+
+A single fixed model for every job this harness does - a mechanical CI fix,
+a large refactor, a security-sensitive review, a one-line boilerplate change -
+is never the right tradeoff between cost and capability. By default (no
+`--model` flag) the harness classifies each task before doing any real work:
+it hands a short description of the task to the cheap/fast `HARNESS_ROUTER_MODEL`
+and asks it to pick the model that should actually do the job from the table
+below (see `model_router.py`). One classification per fix attempt - a PR's
+merge-conflict resolution, its post-conflict validation retry, and its main
+CI/review fix all share the same routed model; a task shouldn't switch models
+mid-retry.
+
+| Task | Recommended model | Alternative | Notes |
+|---|---|---|---|
+| Fix failing PRs / CI failures | `kimi-k2.7-code` | `glm-5.2` | Kimi is a good default for code repair. Use GLM when the failure requires deeper architecture reasoning. |
+| Implement new features | `kimi-k2.7-code` | `glm-5.2` | Kimi for most coding; GLM for large cross-module features. |
+| Large refactors | `glm-5.2` | `kimi-k2.7-code` | Better when many files and dependencies are involved. |
+| Code review | `glm-5.2` | `kimi-k2.7-code` | GLM as reviewer, Kimi as implementer. |
+| Debug mysterious bugs | `glm-5.2` | `kimi-k2.7-code` | Use the stronger reasoning model first. |
+| Write tests | `kimi-k2.7-code` | `qwen3.7-plus` | Good balance of speed and correctness. |
+| Unit test fixes | `kimi-k2.7-code` | `deepseek-v4-pro` | Usually straightforward. |
+| Documentation generation | `qwen3.7-plus` | `kimi-k2.7-code` | Saves your stronger models for harder tasks. |
+| Simple boilerplate code | `qwen3.7-plus` | `deepseek-v4-flash` | High quota, lower importance. |
+| Dependency upgrades | `glm-5.2` | `kimi-k2.7-code` | Needs awareness of ecosystem changes. |
+| Security review | `glm-5.2` | `kimi-k2.7-code` | Prefer deeper reasoning. |
+| Architecture design | `glm-5.2` | `grok-4.5` | Planning > raw coding speed. |
+| Repo exploration / onboarding | `glm-5.2` | `kimi-k2.7-code` | Long context and reasoning matter. |
+| Small bug fixes | `kimi-k2.7-code` | `qwen3.7-plus` | Fast turnaround. |
+| Mass automated PR repair bot | `kimi-k2.7-code` | `qwen3.7-plus` | Best quota/capability ratio. |
+| Cheap background agent tasks | `deepseek-v4-flash` | `mimo-v2.5` | Use only for low-risk work. |
+
+The classifier is asked to answer with a strict JSON object (`task_type`,
+`complexity`, `files_affected`, `recommended_model`, `reason`); its
+`recommended_model` is only trusted when it actually matches a model in the
+table above (primary or alternative) - a hallucinated or malformed model
+string falls back to the chosen `task_type`'s own recommended model, and an
+unparsable or failed classification run falls back to
+`model_router.DEFAULT_FALLBACK_MODEL` (`kimi-k2.7-code`) - this harness's own
+job is overwhelmingly "Fix failing PRs / CI failures" and "Mass automated PR
+repair bot", both of which land there anyway.
+
+Passing `--model` (still CLI-only, same as before this feature existed) pins
+every task to that one model and skips the classifier call entirely - useful
+for pinning a specific model for testing, or if the routing table above
+doesn't fit your own setup.
+
+### `opencode.json` agents
+
+The repo root also ships an `opencode.json` defining a few narrow-purpose
+subagents an interactive `opencode` session (human or agent-driven) can
+delegate to via the Task tool or `@agent-name`, so the primary/expensive model
+doesn't spend its own turns on work a cheaper, more specialized model handles
+just as well - e.g. the `search` subagent runs on `deepseek-v4-flash` and is
+denied edit/bash/webfetch entirely, so it can only locate files/symbols and
+report back. See that file for the full list (`docs-writer`, `test-writer`,
+`reviewer`) and `https://opencode.ai/docs/agents/` for the config schema.
+
 ## Running it
 
 ```bash
 # one cycle, see what it would do, touch nothing
 HARNESS_DRY_RUN=1 python3 tools/opencode-harness/harness.py --once
 
-# the real thing, as a long-running process
+# the real thing, as a long-running process - per-task model routing on by
+# default, see "Model routing" above
 HARNESS_REPO_DIR=/path/to/disposable/clone \
+python3 tools/opencode-harness/harness.py
+
+# pin every task to one model instead of routing per-task
 python3 tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash
 
 # supervised: stop after 5 solved problems instead of running forever
-python3 tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash --max-solved 5
+python3 tools/opencode-harness/harness.py --max-solved 5
 
 # targeted: only work on a specific PR or issue instead of auto-selecting
-python3 tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash --pr 334
-python3 tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash --issue 231
+python3 tools/opencode-harness/harness.py --pr 334
+python3 tools/opencode-harness/harness.py --issue 231
 
 # targeted: round-robin across several PRs/issues, one per poll cycle
-python3 tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash --pr 334 335 340
-python3 tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash --issue 231 232
+python3 tools/opencode-harness/harness.py --pr 334 335 340
+python3 tools/opencode-harness/harness.py --issue 231 232
 
 # targeted: every currently open PR, re-resolved each cycle
-python3 tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash --pr
+python3 tools/opencode-harness/harness.py --pr
+
+# pin every task to one model instead of routing per-task, combined with
+# any of the modes above
+python3 tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash --pr 334
 ```
 
 ### systemd (recommended for unattended, restart-surviving operation)
@@ -250,7 +325,7 @@ Description=opencode-harness for alexmohr/assimilate
 
 [Service]
 Environment=HARNESS_REPO_DIR=/home/you/assimilate-harness-clone
-ExecStart=/usr/bin/python3 /home/you/assimilate-harness-clone/tools/opencode-harness/harness.py --model opencode-go/deepseek-v4-flash
+ExecStart=/usr/bin/python3 /home/you/assimilate-harness-clone/tools/opencode-harness/harness.py
 Restart=on-failure
 RestartSec=30
 

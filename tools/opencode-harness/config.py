@@ -33,6 +33,8 @@ class Config:
     base_branch: str
     poll_interval_seconds: int
     opencode_model: str | None
+    router_model: str
+    router_timeout_seconds: int
     opencode_timeout_seconds: int
     max_local_validation_attempts: int
     max_stuck_cycles: int
@@ -59,6 +61,8 @@ class Config:
             base_branch=os.environ.get("HARNESS_BASE_BRANCH", "main"),
             poll_interval_seconds=_int("HARNESS_POLL_INTERVAL", 180),
             opencode_model=None,
+            router_model=os.environ.get("HARNESS_ROUTER_MODEL", "deepseek-v4-flash"),
+            router_timeout_seconds=_int("HARNESS_ROUTER_TIMEOUT", 120),
             opencode_timeout_seconds=_int("HARNESS_OPENCODE_TIMEOUT", 14400),
             max_local_validation_attempts=_int("HARNESS_MAX_LOCAL_ATTEMPTS", 3),
             max_stuck_cycles=_int("HARNESS_MAX_STUCK_CYCLES", 3),
@@ -86,7 +90,7 @@ class Config:
         misconfigured env var (e.g. set on its own line without `export`,
         so it never reached this process) is visible immediately instead of
         only showing up as an unexplained default several log lines later."""
-        model = self.opencode_model or "(opencode default)"
+        model = self.opencode_model or f"(routed per-task via {self.router_model})"
         max_solved = self.max_solved if self.max_solved is not None else "unlimited"
         target = "auto"
         if self.target_all_prs:

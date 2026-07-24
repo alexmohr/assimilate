@@ -52,6 +52,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import gh
 import git_ops
+import model_router
 import opencode_runner
 import prompts
 import validate
@@ -108,9 +109,13 @@ def _failure_signature(step: str, output: str) -> str:
 _MAX_LOCAL_ATTEMPTS_HARD_CAP_MULTIPLIER = 3
 
 
-def run_fix_and_validate(cfg: Config, prompt: str) -> tuple[bool, str]:
+def run_fix_and_validate(cfg: Config, prompt: str, model: str) -> tuple[bool, str]:
     """Runs opencode, then this repo's own validation commands, retrying with
     the concrete failure fed back in - never trusting the model's say-so.
+
+    `model` is decided once by the caller (see model_router.route) and held
+    fixed across every retry in this call - a task shouldn't switch models
+    mid-retry just because an earlier attempt failed validation.
 
     An attempt whose failure differs from the previous one counts as
     progress (fix bug A, reveal distinct bug B) and doesn't count against
@@ -132,7 +137,7 @@ def run_fix_and_validate(cfg: Config, prompt: str) -> tuple[bool, str]:
     while True:
         attempt += 1
         result = opencode_runner.run_opencode(
-            current_prompt, cfg.repo_dir, cfg.opencode_model, cfg.opencode_timeout_seconds
+            current_prompt, cfg.repo_dir, model, cfg.opencode_timeout_seconds
         )
         if not result.ok:
             no_progress_streak += 1
@@ -258,9 +263,13 @@ class RebaseOutcome(Enum):
     FAILED = "failed"
 
 
-def _resolve_conflicts(cfg: Config) -> RebaseOutcome:
+def _resolve_conflicts(cfg: Config, model: str) -> RebaseOutcome:
     """Rebases the current checkout onto `cfg.base_branch`, asking opencode to
     resolve real conflicts if the rebase doesn't apply cleanly.
+
+    `model` is the one already routed for this PR's fix attempt (see
+    model_router.route in handle_pr_fix) - conflict resolution is part of the
+    same attempt, not a separately classified task.
 
     Called unconditionally on every PR the harness works, not just ones with
     the `merge conflict` label - a PR can be plainly behind base (no
@@ -294,7 +303,7 @@ def _resolve_conflicts(cfg: Config) -> RebaseOutcome:
     while True:
         attempt += 1
         result = opencode_runner.run_opencode(
-            prompt, cfg.repo_dir, cfg.opencode_model, cfg.opencode_timeout_seconds
+            prompt, cfg.repo_dir, model, cfg.opencode_timeout_seconds
         )
         if not result.ok:
             if attempt >= cfg.max_local_validation_attempts:
@@ -486,6 +495,19 @@ def _mark_stuck(
     log.warning("PR #%d marked stuck: %s (question=%s)", pr.number, reason, question)
 
 
+def _pr_task_context(
+    pr: PrDetail, ci_logs: str | None, review_comments: str | None, precheck_notes: str | None
+) -> str:
+    """Short description of `pr`'s outstanding problem for the model router -
+    reuses _problem_summary's own rendering (capped smaller here: the router
+    only needs enough to classify the task, not the full diagnostic detail a
+    human reads in a stuck-PR comment)."""
+    return (
+        f"Pull request #{pr.number} ('{pr.title}') needs a fix so it becomes mergeable.\n\n"
+        + _problem_summary(pr, ci_logs, review_comments, precheck_notes, max_chars=1500)
+    )
+
+
 def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
     """Attempts to fix `pr`. Returns True only if a fix was actually pushed -
     this is what "solved problems" counts for --max-solved."""
@@ -544,10 +566,19 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
         )
         return False
 
+    # Classified once per fix attempt, not per retry or per sub-step (conflict
+    # resolution, the post-conflict validation retry, and the main fix prompt
+    # below all share this same decision) - see model_router.route.
+    model = model_router.route(
+        cfg,
+        _pr_task_context(pr, ci_logs, review_comments, precheck_notes),
+        f"PR #{pr.number}",
+    ).model
+
     git_ops.checkout_branch_at_remote(cfg.repo_dir, pr.head_ref_name)
     pre_rebase_head = git_ops.head_sha(cfg.repo_dir)
 
-    rebase_outcome = _resolve_conflicts(cfg)
+    rebase_outcome = _resolve_conflicts(cfg, model)
     if rebase_outcome is RebaseOutcome.FAILED:
         _mark_stuck(cfg, state, pr, "could not resolve merge conflicts")
         return False
@@ -606,7 +637,7 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
                 validation.step,
                 validation.output,
             )
-            ok, _ = run_fix_and_validate(cfg, retry_prompt)
+            ok, _ = run_fix_and_validate(cfg, retry_prompt, model)
             if not ok:
                 log.warning(
                     "PR #%d: opencode's conflict resolution failed local validation (%s)",
@@ -647,7 +678,7 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
         )
 
     prompt = prompts.build_pr_fix_prompt(pr, ci_logs, review_comments, precheck_notes)
-    ok, message = run_fix_and_validate(cfg, prompt)
+    ok, message = run_fix_and_validate(cfg, prompt, model)
     if not ok:
         log.warning("PR #%d: did not converge this cycle (%s)", pr.number, message)
         git_ops.discard_uncommitted_changes(cfg.repo_dir)
@@ -909,10 +940,17 @@ def _implement_issue(cfg: Config, state: HarnessState, issue: dict) -> bool:
         log.info("[dry-run] would implement issue #%d now", number)
         return False
 
+    model = model_router.route(
+        cfg,
+        f"Implement issue #{number}: '{issue['title']}'.\n\n"
+        f"{(issue.get('body') or '(no description provided)')[:1500]}",
+        f"issue #{number}",
+    ).model
+
     git_ops.checkout_new_branch_from_base(cfg.repo_dir, branch, cfg.base_branch)
 
     prompt = prompts.build_issue_prompt(number, issue["title"], issue.get("body") or "")
-    ok, message = run_fix_and_validate(cfg, prompt)
+    ok, message = run_fix_and_validate(cfg, prompt, model)
     state.mark_issue_started(number)
     if not ok:
         gh.comment(
@@ -1091,7 +1129,12 @@ def main() -> int:
     parser.add_argument(
         "--model",
         default=None,
-        help="opencode model, e.g. deepseek/deepseek-v4-flash (defaults to opencode's own default)",
+        help=(
+            "pin every task to this one opencode model instead of the default "
+            "per-task routing (see model_router.py/README.md's routing table) - "
+            "e.g. deepseek/deepseek-v4-flash. Also skips the router classifier call "
+            "entirely, since there's nothing left for it to decide"
+        ),
     )
     parser.add_argument(
         "--max-solved",

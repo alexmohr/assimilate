@@ -246,9 +246,16 @@ describe('ArchiveFileBrowser', () => {
   })
 
   it('calls stopPolling on unmount', async () => {
-    const wrapper = await mountWithEntries()
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: { index_status: 'indexing', entries: [] },
+    })
 
+    const clearIntervalSpy = vi.spyOn(global, 'clearInterval')
+    const wrapper = await mountWithWait({ repoId: 5, archiveName: 'test-archive' })
     wrapper.unmount()
+
+    expect(clearIntervalSpy).toHaveBeenCalled()
+    clearIntervalSpy.mockRestore()
   })
 
   it('switching archiveName resets and reloads', async () => {
@@ -266,5 +273,97 @@ describe('ArchiveFileBrowser', () => {
     await nextTick()
 
     expect(wrapper.text()).toContain('second-archive')
+  })
+
+  it('clicking a directory row navigates into it and breadcrumb navigates back', async () => {
+    const wrapper = await mountWithEntries()
+
+    const dirRow = wrapper.find('.clickable')
+    expect(dirRow.exists()).toBe(true)
+
+    await dirRow.trigger('click')
+    await flushPromises()
+    await nextTick()
+
+    const rootCrumb = wrapper.find('.crumb')
+    expect(rootCrumb.exists()).toBe(true)
+
+    await rootCrumb.trigger('click')
+    await flushPromises()
+    await nextTick()
+
+    expect(wrapper.find('.breadcrumb').exists()).toBe(true)
+  })
+
+  it('download button creates a download link', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: {
+        index_status: 'done',
+        entries: [
+          { type: '-', path: 'file.txt', size: 1024, mtime: '2026-06-01T12:00:00Z', mode: '644' },
+        ],
+      },
+    })
+
+    const createElementSpy = vi.spyOn(document, 'createElement')
+    const appendChildSpy = vi.spyOn(document.body, 'appendChild')
+    const removeChildSpy = vi.spyOn(document.body, 'removeChild')
+
+    const wrapper = mount(ArchiveFileBrowser, {
+      props: { repoId: 5, archiveName: 'test-archive' },
+    })
+
+    await flushPromises()
+    await nextTick()
+    const downloadBtn = wrapper.find('button.btn-ghost')
+    expect(downloadBtn.exists()).toBe(true)
+    await downloadBtn.trigger('click')
+
+    expect(createElementSpy).toHaveBeenCalledWith('a')
+    expect(appendChildSpy).toHaveBeenCalled()
+    expect(removeChildSpy).toHaveBeenCalled()
+
+    createElementSpy.mockRestore()
+    appendChildSpy.mockRestore()
+    removeChildSpy.mockRestore()
+  })
+
+  it('typing in filter inputs covers v-model and input callbacks', async () => {
+    const wrapper = await mountWithEntries()
+
+    const inputs = wrapper.findAll('input')
+    const nameInput = inputs.find((el) => el.attributes('placeholder') === 'Filter name...')
+    const sizeInput = inputs.find((el) => el.attributes('placeholder') === 'Filter size...')
+    const dateInput = inputs.find((el) => el.attributes('placeholder') === 'Filter date...')
+
+    expect(nameInput).toBeTruthy()
+    expect(sizeInput).toBeTruthy()
+    expect(dateInput).toBeTruthy()
+
+    await nameInput!.setValue('test')
+    await sizeInput!.setValue('1024')
+    await dateInput!.setValue('2026')
+
+    await nextTick()
+
+    const el = nameInput!.element as HTMLInputElement
+    expect(el.value).toBe('test')
+  })
+
+  it('shows indexing spinner when index_status is indexing', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: { index_status: 'indexing', entries: [] },
+    })
+
+    const wrapper = mount(ArchiveFileBrowser, {
+      props: { repoId: 5, archiveName: 'test-archive' },
+    })
+
+    await flushPromises()
+    await nextTick()
+    await flushPromises()
+    await nextTick()
+
+    expect(wrapper.text()).toContain('Indexing archive contents')
   })
 })

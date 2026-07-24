@@ -698,10 +698,17 @@ describe('ScheduleDetailView - Backups tab', () => {
     })
   }
 
-  it('shows Backups tab button for backup-type schedule in edit mode', async () => {
-    setupBackupWithReports([])
+  async function createBackupsWrapper(
+    reports: unknown[],
+  ): Promise<ReturnType<typeof renderWithPlugins>> {
+    setupBackupWithReports(reports)
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
+    return wrapper
+  }
+
+  it('shows Backups tab button for backup-type schedule in edit mode', async () => {
+    const wrapper = await createBackupsWrapper([])
 
     const tabs = wrapper.findAll('.tab-btn')
     expect(tabs.some((t) => t.text() === 'Backups')).toBe(true)
@@ -737,7 +744,7 @@ describe('ScheduleDetailView - Backups tab', () => {
   })
 
   it('shows empty state when no reports have archive_name', async () => {
-    setupBackupWithReports([
+    const wrapper = await createBackupsWrapper([
       {
         id: 1,
         status: 'success',
@@ -747,10 +754,7 @@ describe('ScheduleDetailView - Backups tab', () => {
         agent_id: 10,
       },
     ])
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
 
-    // Click Backups tab to trigger reports load
     const backupsTab = wrapper.findAll('.tab-btn').find((t) => t.text() === 'Backups')
     await backupsTab!.trigger('click')
     await flushPromises()
@@ -759,7 +763,7 @@ describe('ScheduleDetailView - Backups tab', () => {
   })
 
   it('shows archive rows when reports have archive_name', async () => {
-    setupBackupWithReports([
+    const wrapper = await createBackupsWrapper([
       {
         id: 1,
         status: 'success',
@@ -788,28 +792,22 @@ describe('ScheduleDetailView - Backups tab', () => {
         hostname: 'web-server-01',
       },
     ])
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
 
-    // Click Backups tab to trigger reports load
     const backupsTab = wrapper.findAll('.tab-btn').find((t) => t.text() === 'Backups')
     await backupsTab!.trigger('click')
     await flushPromises()
 
-    // Should show the archive rows sorted newest-first
     const texts = wrapper.text()
     expect(texts).toContain('test-archive-2026-06-02')
     expect(texts).toContain('test-archive-2026-06-01')
-    // Should appear in sort order (newest first)
     expect(texts.indexOf('test-archive-2026-06-02')).toBeLessThan(
       texts.indexOf('test-archive-2026-06-01'),
     )
-    // Should NOT include the report without archive_name
     expect(texts).not.toContain('No backup archives found')
   })
 
   it('clicking an archive row selects it and shows file browser', async () => {
-    setupBackupWithReports([
+    const wrapper = await createBackupsWrapper([
       {
         id: 1,
         status: 'success',
@@ -820,27 +818,21 @@ describe('ScheduleDetailView - Backups tab', () => {
         hostname: 'web-server-01',
       },
     ])
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
 
-    // Click Backups tab
     const backupsTab = wrapper.findAll('.tab-btn').find((t) => t.text() === 'Backups')
     await backupsTab!.trigger('click')
     await flushPromises()
 
-    // Click on the archive row
     const archiveRow = wrapper.find('.archive-row')
     await archiveRow.trigger('click')
     await flushPromises()
 
-    // The selected row should have the 'selected' class
     expect(archiveRow.classes()).toContain('selected')
-    // The ArchiveFileBrowser stub should be rendered
     expect(wrapper.find('.archive-file-browser-stub').exists()).toBe(true)
   })
 
   it('hides save bar on Backups tab', async () => {
-    setupBackupWithReports([
+    const wrapper = await createBackupsWrapper([
       {
         id: 1,
         status: 'success',
@@ -851,18 +843,13 @@ describe('ScheduleDetailView - Backups tab', () => {
         hostname: 'web-server-01',
       },
     ])
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
 
-    // Save bar should be visible on Settings tab
     expect(wrapper.find('.save-bar').exists()).toBe(true)
 
-    // Click Backups tab
     const backupsTab = wrapper.findAll('.tab-btn').find((t) => t.text() === 'Backups')
     await backupsTab!.trigger('click')
     await flushPromises()
 
-    // Save bar should be hidden on Backups tab
     expect(wrapper.find('.save-bar').exists()).toBe(false)
   })
 

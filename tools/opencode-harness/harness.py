@@ -52,6 +52,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import gh
 import git_ops
+import model_router
 import opencode_runner
 import prompts
 import validate
@@ -108,9 +109,13 @@ def _failure_signature(step: str, output: str) -> str:
 _MAX_LOCAL_ATTEMPTS_HARD_CAP_MULTIPLIER = 3
 
 
-def run_fix_and_validate(cfg: Config, prompt: str) -> tuple[bool, str]:
+def run_fix_and_validate(cfg: Config, prompt: str, model: str) -> tuple[bool, str]:
     """Runs opencode, then this repo's own validation commands, retrying with
     the concrete failure fed back in - never trusting the model's say-so.
+
+    `model` is decided once by the caller (see model_router.route) and held
+    fixed across every retry in this call - a task shouldn't switch models
+    mid-retry just because an earlier attempt failed validation.
 
     An attempt whose failure differs from the previous one counts as
     progress (fix bug A, reveal distinct bug B) and doesn't count against
@@ -132,7 +137,7 @@ def run_fix_and_validate(cfg: Config, prompt: str) -> tuple[bool, str]:
     while True:
         attempt += 1
         result = opencode_runner.run_opencode(
-            current_prompt, cfg.repo_dir, cfg.opencode_model, cfg.opencode_timeout_seconds
+            current_prompt, cfg.repo_dir, model, cfg.opencode_timeout_seconds
         )
         if not result.ok:
             no_progress_streak += 1
@@ -258,9 +263,13 @@ class RebaseOutcome(Enum):
     FAILED = "failed"
 
 
-def _resolve_conflicts(cfg: Config) -> RebaseOutcome:
+def _resolve_conflicts(cfg: Config, model: str) -> RebaseOutcome:
     """Rebases the current checkout onto `cfg.base_branch`, asking opencode to
     resolve real conflicts if the rebase doesn't apply cleanly.
+
+    `model` is the one already routed for this PR's fix attempt (see
+    model_router.route in handle_pr_fix) - conflict resolution is part of the
+    same attempt, not a separately classified task.
 
     Called unconditionally on every PR the harness works, not just ones with
     the `merge conflict` label - a PR can be plainly behind base (no
@@ -294,7 +303,7 @@ def _resolve_conflicts(cfg: Config) -> RebaseOutcome:
     while True:
         attempt += 1
         result = opencode_runner.run_opencode(
-            prompt, cfg.repo_dir, cfg.opencode_model, cfg.opencode_timeout_seconds
+            prompt, cfg.repo_dir, model, cfg.opencode_timeout_seconds
         )
         if not result.ok:
             if attempt >= cfg.max_local_validation_attempts:
@@ -413,8 +422,39 @@ def _problem_summary(
     return "\n\n".join(parts) if parts else "(no diagnostic content was available)"
 
 
+def _stage_signature(pr: PrDetail) -> str:
+    """Cheap signature of which stages currently need fixing - CI, merge
+    conflict, coverage precheck, duplicate-code precheck, review - built
+    entirely from data `gh.get_pr` already fetched, no extra API calls.
+
+    Deliberately excludes the derived `PR Merge Gate` check: that check only
+    ever reflects these same five signals (see sync-pr-labels.js), it never
+    fails independently, so there's nothing "except the gate" to exclude in
+    practice - it simply never enters the signature in the first place.
+
+    Used to tell "still the exact same problem" apart from "a different stage
+    started failing since this PR was marked stuck, with no new commit
+    pushed" - see PrAttempt.stuck_stage_signature.
+    """
+    return "|".join(
+        f"{name}={value}"
+        for name, value in (
+            ("ci", pr.ci_failing),
+            ("merge", pr.merge_conflict),
+            ("coverage", pr.coverage_failed),
+            ("duplicate", pr.duplicate_code),
+            ("review", pr.changes_requested),
+        )
+    )
+
+
 def _mark_stuck(
-    cfg: Config, pr: PrDetail, reason: str, details: str | None = None, question: bool = False
+    cfg: Config,
+    state: HarnessState,
+    pr: PrDetail,
+    reason: str,
+    details: str | None = None,
+    question: bool = False,
 ) -> None:
     """Stops the harness retrying `pr` and posts why.
 
@@ -432,6 +472,7 @@ def _mark_stuck(
     if cfg.dry_run:
         log.info("[dry-run] would mark PR #%d stuck: %s", pr.number, reason)
         return
+    state.set_stuck_stage_signature(pr.number, _stage_signature(pr))
     gh.add_label(cfg.repo, pr.number, cfg.stuck_label)
     if question:
         gh.add_label(cfg.repo, pr.number, cfg.question_label)
@@ -452,6 +493,105 @@ def _mark_stuck(
         body += f"\n\n---\n\n{details}"
     gh.comment(cfg.repo, pr.number, body)
     log.warning("PR #%d marked stuck: %s (question=%s)", pr.number, reason, question)
+
+
+def _pr_task_context(
+    pr: PrDetail, ci_logs: str | None, review_comments: str | None, precheck_notes: str | None
+) -> str:
+    """Short description of `pr`'s outstanding problem for the model router -
+    reuses _problem_summary's own rendering (capped smaller here: the router
+    only needs enough to classify the task, not the full diagnostic detail a
+    human reads in a stuck-PR comment)."""
+    return (
+        f"Pull request #{pr.number} ('{pr.title}') needs a fix so it becomes mergeable.\n\n"
+        + _problem_summary(pr, ci_logs, review_comments, precheck_notes, max_chars=1500)
+    )
+
+
+def _commit_with_self_review(
+    cfg: Config, prompt: str, model: str, commit_message: str, task_label: str
+) -> bool:
+    """Commits whatever opencode's fix-and-validate loop just produced, then
+    runs exactly one review pass over that commit - using the model this
+    harness's own routing table recommends for "Code review" - before this
+    harness ever pushes it. Returns False only if there was nothing to
+    commit at all (mirrors git_ops.commit's own contract); otherwise the repo
+    is left at a commit ready to push, having had its one review pass.
+
+    The diff is committed *first*, then reviewed - not reviewed as an
+    uncommitted working-tree diff - specifically so the reviewer's own
+    opencode session (told not to edit anything, but nothing enforces that)
+    can never lose the actual fix: whatever it leaves behind in the working
+    tree afterward is unconditionally discarded via discard_uncommitted_changes,
+    which is only safe here because the fix itself is already sitting in a
+    real commit rather than only in the working tree.
+
+    Exactly one review pass, never a loop: if it reports a blocking finding,
+    one more opencode attempt (through the same run_fix_and_validate retry
+    machinery every other fix uses) gets to address it and, if that
+    converges, is committed as a second commit - but the result is pushed
+    either way. A follow-up attempt that fails to even validate is discarded
+    back to the original, already-validated commit rather than losing it -
+    a test/lint failure is a harder signal than one reviewer's opinion, and
+    this gate exists to catch problems tests miss, not to block a working fix
+    over an unresolved advisory finding.
+    """
+    if not git_ops.commit(cfg.repo_dir, commit_message):
+        return False
+    reviewed_sha = git_ops.head_sha(cfg.repo_dir)
+
+    diff_text = git_ops.diff_between(cfg.repo_dir, f"{reviewed_sha}^", reviewed_sha)
+    review_model = model_router.model_for_task_type(cfg, "code_review")
+    result = opencode_runner.run_opencode(
+        prompts.build_self_review_prompt(diff_text),
+        cfg.repo_dir,
+        review_model,
+        cfg.review_timeout_seconds,
+    )
+    # Safe precisely because reviewed_sha already holds the actual fix as a
+    # real commit - this can never lose it, only undo stray edits the
+    # reviewer's own session made on top.
+    git_ops.discard_uncommitted_changes(cfg.repo_dir)
+
+    if not result.ok:
+        log.warning(
+            "self-review: run failed for %s, proceeding without it: %s",
+            task_label,
+            result.output[:300],
+        )
+        return True
+
+    verdict = model_router.parse_json_response(result.output)
+    if verdict is None or not isinstance(verdict.get("blocking"), bool):
+        log.warning(
+            "self-review: could not parse a verdict for %s, proceeding without it", task_label
+        )
+        return True
+
+    if not verdict["blocking"]:
+        log.info("self-review: %s looks clean", task_label)
+        return True
+
+    findings = str(verdict.get("findings") or "")
+    log.info(
+        "self-review: %s found a blocking issue, giving opencode one more attempt: %s",
+        task_label,
+        findings[:300],
+    )
+    retry_prompt = prompts.build_retry_prompt(prompt, "self-review", findings)
+    ok, message = run_fix_and_validate(cfg, retry_prompt, model)
+    if not ok:
+        log.warning(
+            "self-review: follow-up fix for %s did not converge (%s); pushing the original, "
+            "already-validated commit instead",
+            task_label,
+            message,
+        )
+        git_ops.discard_uncommitted_changes(cfg.repo_dir)
+        return True
+
+    git_ops.commit(cfg.repo_dir, f"fix: address self-review findings ({task_label})")
+    return True
 
 
 def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
@@ -495,6 +635,7 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
         )
         _mark_stuck(
             cfg,
+            state,
             pr,
             f"the same problem has persisted across {attempts - 1} attempts",
             details,
@@ -511,12 +652,21 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
         )
         return False
 
+    # Classified once per fix attempt, not per retry or per sub-step (conflict
+    # resolution, the post-conflict validation retry, and the main fix prompt
+    # below all share this same decision) - see model_router.route.
+    model = model_router.route(
+        cfg,
+        _pr_task_context(pr, ci_logs, review_comments, precheck_notes),
+        f"PR #{pr.number}",
+    ).model
+
     git_ops.checkout_branch_at_remote(cfg.repo_dir, pr.head_ref_name)
     pre_rebase_head = git_ops.head_sha(cfg.repo_dir)
 
-    rebase_outcome = _resolve_conflicts(cfg)
+    rebase_outcome = _resolve_conflicts(cfg, model)
     if rebase_outcome is RebaseOutcome.FAILED:
-        _mark_stuck(cfg, pr, "could not resolve merge conflicts")
+        _mark_stuck(cfg, state, pr, "could not resolve merge conflicts")
         return False
 
     if rebase_outcome is RebaseOutcome.CLEAN and git_ops.head_sha(
@@ -573,7 +723,7 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
                 validation.step,
                 validation.output,
             )
-            ok, _ = run_fix_and_validate(cfg, retry_prompt)
+            ok, _ = run_fix_and_validate(cfg, retry_prompt, model)
             if not ok:
                 log.warning(
                     "PR #%d: opencode's conflict resolution failed local validation (%s)",
@@ -585,6 +735,7 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
                 )
                 _mark_stuck(
                     cfg,
+                    state,
                     pr,
                     "opencode's merge-conflict resolution failed local validation",
                     details,
@@ -613,13 +764,15 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
         )
 
     prompt = prompts.build_pr_fix_prompt(pr, ci_logs, review_comments, precheck_notes)
-    ok, message = run_fix_and_validate(cfg, prompt)
+    ok, message = run_fix_and_validate(cfg, prompt, model)
     if not ok:
         log.warning("PR #%d: did not converge this cycle (%s)", pr.number, message)
         git_ops.discard_uncommitted_changes(cfg.repo_dir)
         return False
 
-    committed = git_ops.commit(cfg.repo_dir, _commit_message_for(pr, cfg))
+    committed = _commit_with_self_review(
+        cfg, prompt, model, _commit_message_for(pr, cfg), f"PR #{pr.number}"
+    )
     if not committed:
         log.warning("PR #%d: opencode made no net changes; nothing to push", pr.number)
         return False
@@ -699,6 +852,7 @@ def _check_and_fix_pr(cfg: Config, state: HarnessState, number: int) -> bool | N
         if cfg.stuck_label not in detail.labels:
             _mark_stuck(
                 cfg,
+                state,
                 detail,
                 "this PR carries the repo's own `needs human review` label with no other "
                 "fixable problem outstanding",
@@ -737,12 +891,34 @@ def _check_and_fix_pr(cfg: Config, state: HarnessState, number: int) -> bool | N
             state.clear_pr(number)
         else:
             head_sha = gh.get_pr_head_sha(cfg.repo, number)
-            if recorded is not None and recorded.last_head_sha == head_sha:
+            same_commit = recorded is not None and recorded.last_head_sha == head_sha
+            # A stage other than the derived `PR Merge Gate` check flipping
+            # since this PR was parked (e.g. a slow coverage-diff/duplicate-
+            # code run finally posting a failure, or CI being re-run) is new
+            # information the plain head-sha check can't see on its own - see
+            # PrAttempt.stuck_stage_signature. Only meaningful once a
+            # signature was actually recorded (an older state file predating
+            # this field, or a PR stuck via a path that skipped it, both
+            # leave it empty - never treated as "changed" against itself).
+            same_stages = (
+                recorded is not None
+                and recorded.stuck_stage_signature != ""
+                and recorded.stuck_stage_signature == _stage_signature(detail)
+            )
+            if same_commit and same_stages:
                 log.info("PR #%d still stuck (no new commits), skipping", number)
                 return None
-            log.info(
-                "PR #%d has new commits since being marked stuck; clearing and retrying", number
-            )
+            if same_commit:
+                log.info(
+                    "PR #%d: a different stage is failing than when it was marked stuck "
+                    "(no new commit); clearing and retrying",
+                    number,
+                )
+            else:
+                log.info(
+                    "PR #%d has new commits since being marked stuck; clearing and retrying",
+                    number,
+                )
             gh.remove_label(cfg.repo, number, cfg.stuck_label)
             if cfg.question_label in detail.labels:
                 gh.remove_label(cfg.repo, number, cfg.question_label)
@@ -852,10 +1028,17 @@ def _implement_issue(cfg: Config, state: HarnessState, issue: dict) -> bool:
         log.info("[dry-run] would implement issue #%d now", number)
         return False
 
+    model = model_router.route(
+        cfg,
+        f"Implement issue #{number}: '{issue['title']}'.\n\n"
+        f"{(issue.get('body') or '(no description provided)')[:1500]}",
+        f"issue #{number}",
+    ).model
+
     git_ops.checkout_new_branch_from_base(cfg.repo_dir, branch, cfg.base_branch)
 
     prompt = prompts.build_issue_prompt(number, issue["title"], issue.get("body") or "")
-    ok, message = run_fix_and_validate(cfg, prompt)
+    ok, message = run_fix_and_validate(cfg, prompt, model)
     state.mark_issue_started(number)
     if not ok:
         gh.comment(
@@ -869,7 +1052,9 @@ def _implement_issue(cfg: Config, state: HarnessState, issue: dict) -> bool:
         git_ops.discard_uncommitted_changes(cfg.repo_dir)
         return False
 
-    committed = git_ops.commit(cfg.repo_dir, f"fix: {_sanitize_subject(issue['title'])}")
+    committed = _commit_with_self_review(
+        cfg, prompt, model, f"fix: {_sanitize_subject(issue['title'])}", f"issue #{number}"
+    )
     if not committed:
         log.warning("issue #%d: opencode made no changes", number)
         return False
@@ -1034,7 +1219,12 @@ def main() -> int:
     parser.add_argument(
         "--model",
         default=None,
-        help="opencode model, e.g. deepseek/deepseek-v4-flash (defaults to opencode's own default)",
+        help=(
+            "pin every task to this one opencode model instead of the default "
+            "per-task routing (see model_router.py/README.md's routing table) - "
+            "e.g. deepseek/deepseek-v4-flash. Also skips the router classifier call "
+            "entirely, since there's nothing left for it to decide"
+        ),
     )
     parser.add_argument(
         "--max-solved",

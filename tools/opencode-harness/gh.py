@@ -50,6 +50,7 @@ _FAILING_CHECK_CONCLUSIONS_GQL = {
 _GATE_CHECK_NAME = "PR Merge Gate"
 
 STATUS_LABEL_NAMES = {
+    "pending",
     "needs review",
     "changes requested",
     "ci failing",

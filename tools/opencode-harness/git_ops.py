@@ -203,6 +203,15 @@ def changed_files_between(cwd: Path, ref_a: str, ref_b: str) -> list[str]:
     return _run(cwd, ["diff", "--name-only", ref_a, ref_b]).stdout.splitlines()
 
 
+def diff_between(cwd: Path, ref_a: str, ref_b: str) -> str:
+    """Full diff text between two *committed* refs - used to hand a reviewer
+    model the exact content of a commit this harness already made (see
+    harness.py's self-review gate), not just the list of changed file names
+    `changed_files_between` returns.
+    """
+    return _run(cwd, ["diff", ref_a, ref_b]).stdout
+
+
 def commit(cwd: Path, message: str) -> bool:
     """Stage everything and commit. Returns False if there was nothing to commit."""
     _run(cwd, ["add", "-A"])

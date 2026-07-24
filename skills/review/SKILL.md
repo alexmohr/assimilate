@@ -50,17 +50,19 @@ submitted/dismissed review, every `claude-approved`/`claude-changes-requested`
 label change, every `coverage failed`/`duplicate code`/`merge conflict`
 change, and every CI completion, so the status label always reflects current
 reality — **agents must never add or remove the status labels themselves**
-(`needs review`, `changes requested`, `ci failing`, `merge conflict`,
-`precheck failed`, `ready to merge`, `needs human review`, `coverage failed`,
-`duplicate code`); only push a fix, submit a review, or set the verdict
-labels per the Workflow section to move them.
+(`pending`, `needs review`, `changes requested`, `ci failing`, `merge conflict`,
+`check failed`, `precheck failed`, `ready to merge`, `needs human review`,
+`coverage failed`, `duplicate code`); only push a fix, submit a review, or
+set the verdict labels per the Workflow section to move them.
 
 | Label | Meaning | Set when |
 |---|---|---|
-| `needs review` | No blocking verdict yet | Default state; also holds while `needs human review` is outstanding |
-| `changes requested` | A reviewer requested changes | GitHub review decision is `CHANGES_REQUESTED` |
+| `pending` | Nothing to review yet | Default state — CI hasn't concluded on this commit yet (and no other check has already failed either), or CI is green but a precheck stage (coverage-diff, duplicate-code) hasn't finished |
+| `needs review` | CI (and every check/precheck stage) is green; no other blocking verdict yet, but not ready to merge either | Set once CI — and every other check on the commit — has actually concluded with nothing failing (see `pending`/`check failed` above) and nothing more specific below applies — including while `needs human review` is outstanding, a review verdict has gone stale, or the last automated review attempt errored. Never set while any stage (other than the derived `PR Merge Gate` check itself) has already failed |
+| `changes requested` | A reviewer requested changes | GitHub review decision is `CHANGES_REQUESTED` — fires regardless of whether CI has concluded on this exact commit yet, since a real, current review verdict is meaningful on its own |
 | `ci failing` | Latest commit's CI run did not succeed | `CI` workflow conclusion is not `success` — always wins, and strips `ready to merge` |
 | `merge conflict` | Real conflicts with the base branch | `mergeable_state == "dirty"` — checked continuously (it's a free API field), same precedence tier as `ci failing` |
+| `check failed` | Some check on the commit other than CI itself, coverage-diff, or duplicate-code failed (e.g. `no-ai-check.yml`) | A single-shot look at every check run on the commit (excluding only the derived `PR Merge Gate` and the calling workflow's own in-progress job) finds one that's completed with a failing conclusion. Checked independently of whether CI itself has concluded yet — an already-failed check can never be un-failed by more waiting, so this settles the status immediately rather than reporting `pending` |
 | `precheck failed` | A deterministic pre-review stage failed | **Purely derived** — `sync-pr-labels.js` computes it fresh every run from `coverage failed` and/or `duplicate code`, never set directly by anything. This is the one label to look at if you just want "did any pre-flight stage fail" without caring which. See "Automated pre-flight checks" below |
 | `coverage failed` | The coverage-diff pre-review stage failed | Set only by `.github/scripts/analyze-coverage-diff.js` via the standalone `.github/workflows/coverage-diff-check.yml`. See "Automated pre-flight checks" below |
 | `duplicate code` | The duplicate-code-scan pre-review stage failed | Set only by `.github/scripts/analyze-duplication.js` via the standalone `.github/workflows/duplicate-code-check.yml`. See "Automated pre-flight checks" below |
@@ -221,21 +223,25 @@ to it (or posted) as pre-known facts so it doesn't have to re-derive them.
 ### Automated Claude review
 
 `.github/workflows/claude-review.yml` reviews a PR automatically once it's
-labeled `needs review` (and again whenever CI finishes, in case the label
-landed while CI was still pending) — but never spends a Claude turn until
-the pre-flight checks above have passed.
+labeled `needs review`, on every non-draft push, and whenever CI finishes —
+but never spends a Claude turn until the pre-flight checks above have passed.
 
 The workflow itself has two jobs: a small `gate` job, and the actual `review`
 job it feeds via `needs:`/`if:`. This exists because the `workflow_run: CI
-completed` trigger fires on every push to every open PR, not just ones
-actually waiting on a review — without the gate, the full `review` job
-(checkout, waiting on pre-flight checks, potentially Claude) would spin up
-every time regardless. `gate` checks whether the PR currently has the `needs
-review` label for CI-completion events (the label-landing and `/claude-review`
-triggers are already precise, so `gate` passes them through unconditionally)
-and only lets `review` start if so. This is a coarse, cheap filter, not the
-authoritative decision - `review` still does its own full, fresh check once
-it starts:
+completed` trigger (and a plain push) fires on every open PR regardless of
+state, not just ones actually waiting on a review — without the gate, the
+full `review` job (checkout, waiting on pre-flight checks, potentially
+Claude) would spin up every time regardless. The label-landing and
+`/claude-review` triggers are already precise/trusted by construction (see
+the workflow's own comments), so `gate` passes those straight through; for a
+plain push or CI completing, it checks whether this PR has ever had *any*
+review submitted, deliberately **not** whether it currently carries `needs
+review` — the label's current value at the moment this job runs can't be
+trusted, since this workflow and `pr-status-labels.yml` trigger off similar
+events independently with no ordering guarantee, so it could easily still
+reflect the previous commit's state either way. This is a coarse, cheap
+filter, not the authoritative decision - `review` still does its own full,
+fresh check once it starts:
 
 1. It force-reruns the label sync (`sync-pr-labels.js` directly, not a
    re-derived judgment call) — if the result is `ci failing` or

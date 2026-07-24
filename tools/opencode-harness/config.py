@@ -35,6 +35,7 @@ class Config:
     opencode_model: str | None
     router_model: str
     router_timeout_seconds: int
+    review_timeout_seconds: int
     opencode_timeout_seconds: int
     max_local_validation_attempts: int
     max_stuck_cycles: int
@@ -63,6 +64,7 @@ class Config:
             opencode_model=None,
             router_model=os.environ.get("HARNESS_ROUTER_MODEL", "opencode-go/deepseek-v4-flash"),
             router_timeout_seconds=_int("HARNESS_ROUTER_TIMEOUT", 120),
+            review_timeout_seconds=_int("HARNESS_REVIEW_TIMEOUT", 900),
             opencode_timeout_seconds=_int("HARNESS_OPENCODE_TIMEOUT", 14400),
             max_local_validation_attempts=_int("HARNESS_MAX_LOCAL_ATTEMPTS", 3),
             max_stuck_cycles=_int("HARNESS_MAX_STUCK_CYCLES", 3),

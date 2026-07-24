@@ -71,7 +71,19 @@ asked to edit files.
    its exact output is fed back to opencode and it retries (up to
    `HARNESS_MAX_LOCAL_ATTEMPTS`). Only once everything passes does the
    harness itself `git commit` (with a conventional-commits message it
-   generates) and `git push`.
+   generates) - then, before ever pushing, runs one self-review pass over
+   that exact commit with the model this harness's own routing table
+   recommends for "Code review" (see "Model routing" below). Deterministic
+   validation already caught anything a test/lint could catch; this pass is
+   specifically for what it can't - a real correctness bug, a security
+   issue, a weakened/deleted/skipped test, a forbidden suppression, or a
+   directly-added/removed GitHub label. A clean verdict (or the reviewer
+   itself failing to run or answer - never a hard blocker) pushes as-is;
+   a blocking finding gets exactly one more opencode attempt to address it
+   through the same fix-and-validate loop, and the result is pushed either
+   way - a follow-up that fails to even validate falls back to the original,
+   already-validated commit rather than losing it. Only then does the
+   harness `git push`.
 4. From there the repo's own automation takes back over: CI runs,
    `pr-status-labels.yml` re-syncs labels and `claude-review.yml` reviews;
    once the result is `ready to merge` with a genuine approval and no
@@ -195,6 +207,7 @@ own opencode is authenticated against a different provider instead.
 | `HARNESS_POLL_INTERVAL` | `180` | Seconds between cycles |
 | `HARNESS_ROUTER_MODEL` | `opencode-go/deepseek-v4-flash` | Cheap/fast model used to classify each task before picking the model that actually does the work - see "Model routing" below |
 | `HARNESS_ROUTER_TIMEOUT` | `120` | Seconds before the classifier call itself is killed - it only has to answer a question, not edit anything, so this is far shorter than `HARNESS_OPENCODE_TIMEOUT` |
+| `HARNESS_REVIEW_TIMEOUT` | `900` (15m) | Seconds before the self-review pass (see "What it does" step 3) is killed - longer than the classifier's since it has to actually read a diff, far shorter than a full fix attempt |
 | `HARNESS_OPENCODE_TIMEOUT` | `14400` (4h) | Seconds before an opencode invocation is killed. Killing the whole process group, not just opencode itself, so nothing it spawned (e.g. a `pre-commit`/`cargo` call from its bash tool) is left running orphaned |
 | `HARNESS_MAX_LOCAL_ATTEMPTS` | `3` | Consecutive *identical* local validation failures before giving up *this cycle* - an attempt whose failure differs from the last one counts as progress and doesn't count against this (up to a hard cap of 3x this value regardless), so a chain of distinct, real bugs (fix one, reveal the next) gets a fair shot instead of exhausting the budget on genuine progress |
 | `HARNESS_MAX_STUCK_CYCLES` | `3` | Cycles the same problem may survive before the PR/issue is marked stuck |
@@ -248,6 +261,12 @@ since that model is cheap enough to prefer outright for that kind of task.
 Every other alternative below is purely informational (kept for context on
 why that model was chosen); the router itself never picks between a row's
 model and a non-`deepseek-v4-flash` alternative.
+
+The self-review pass (step 3 above) is the one caller that doesn't classify
+at all - it's always specifically a "Code review" task, so it resolves that
+row's model directly (`model_router.model_for_task_type`), skipping the
+classifier call entirely (still respecting an explicit `--model` pin, same
+as everywhere else).
 
 | Task | Model used | Alternative (informational only) | Notes |
 |---|---|---|---|

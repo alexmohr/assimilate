@@ -215,12 +215,16 @@ def _build_classifier_prompt(task_context: str) -> str:
     )
 
 
-def _extract_assistant_text(raw_output: str) -> str:
+def extract_assistant_text(raw_output: str) -> str:
     """Pulls the model's own text out of `opencode run --format json`'s
     newline-delimited event stream - see opencode_runner._format_event for the
     same event shapes handled there for logging. Falls back to the raw output
     untouched if nothing parses (e.g. a completely different output shape),
-    so `_find_json_object` still gets a chance to find something.
+    so `find_json_object` still gets a chance to find something.
+
+    Public - shared by anything that needs a JSON verdict out of a raw
+    `opencode run --format json` result, not just this module's own
+    classification call (see harness.py's self-review gate).
     """
     parts = []
     for line in raw_output.splitlines():
@@ -238,10 +242,11 @@ def _extract_assistant_text(raw_output: str) -> str:
     return "\n".join(parts) if parts else raw_output
 
 
-def _find_json_object(text: str) -> str | None:
+def find_json_object(text: str) -> str | None:
     """First balanced `{...}` object in `text` - a simple depth counter is
-    more robust than a greedy regex here, since the classifier's answer can
-    legitimately contain nested braces (e.g. inside `reason`).
+    more robust than a greedy regex here, since the answer can legitimately
+    contain nested braces (e.g. inside a free-text field like `reason` or
+    `findings`).
     """
     start = text.find("{")
     if start == -1:
@@ -284,9 +289,14 @@ def _resolve_model(classification: dict) -> str:
     return DEFAULT_FALLBACK_MODEL
 
 
-def _parse_classification(raw_output: str) -> dict | None:
-    text = _extract_assistant_text(raw_output)
-    blob = _find_json_object(text)
+def parse_json_response(raw_output: str) -> dict | None:
+    """Extracts and parses the single JSON object a model was asked to answer
+    with, out of a raw `opencode run --format json` result. Returns None if
+    nothing in the output parses as a JSON object - a failed/timed-out run,
+    or a model that ignored the "respond with ONLY JSON" instruction entirely.
+    """
+    text = extract_assistant_text(raw_output)
+    blob = find_json_object(text)
     if blob is None:
         return None
     try:
@@ -294,6 +304,18 @@ def _parse_classification(raw_output: str) -> dict | None:
     except json.JSONDecodeError:
         return None
     return data if isinstance(data, dict) else None
+
+
+def model_for_task_type(cfg: Config, task_type: str) -> str:
+    """Public entry point for a caller that already knows the task_type and
+    has no need to classify anything - e.g. harness.py's self-review gate,
+    which is always specifically a "code review" task. Still respects an
+    explicit `--model` pin the same way `route()` does, so a human forcing
+    one model applies to the review pass too, not just the fix itself.
+    """
+    if cfg.opencode_model:
+        return cfg.opencode_model
+    return _resolve_model({"task_type": task_type})
 
 
 def route(cfg: Config, task_context: str, task_label: str) -> ModelDecision:
@@ -329,7 +351,7 @@ def route(cfg: Config, task_context: str, task_label: str) -> ModelDecision:
         )
         return ModelDecision(model=DEFAULT_FALLBACK_MODEL, classification=None)
 
-    classification = _parse_classification(result.output)
+    classification = parse_json_response(result.output)
     if classification is None:
         log.warning(
             "model router: could not parse a classification for %s, falling back to %s",

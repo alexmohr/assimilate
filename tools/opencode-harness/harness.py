@@ -508,6 +508,92 @@ def _pr_task_context(
     )
 
 
+def _commit_with_self_review(
+    cfg: Config, prompt: str, model: str, commit_message: str, task_label: str
+) -> bool:
+    """Commits whatever opencode's fix-and-validate loop just produced, then
+    runs exactly one review pass over that commit - using the model this
+    harness's own routing table recommends for "Code review" - before this
+    harness ever pushes it. Returns False only if there was nothing to
+    commit at all (mirrors git_ops.commit's own contract); otherwise the repo
+    is left at a commit ready to push, having had its one review pass.
+
+    The diff is committed *first*, then reviewed - not reviewed as an
+    uncommitted working-tree diff - specifically so the reviewer's own
+    opencode session (told not to edit anything, but nothing enforces that)
+    can never lose the actual fix: whatever it leaves behind in the working
+    tree afterward is unconditionally discarded via discard_uncommitted_changes,
+    which is only safe here because the fix itself is already sitting in a
+    real commit rather than only in the working tree.
+
+    Exactly one review pass, never a loop: if it reports a blocking finding,
+    one more opencode attempt (through the same run_fix_and_validate retry
+    machinery every other fix uses) gets to address it and, if that
+    converges, is committed as a second commit - but the result is pushed
+    either way. A follow-up attempt that fails to even validate is discarded
+    back to the original, already-validated commit rather than losing it -
+    a test/lint failure is a harder signal than one reviewer's opinion, and
+    this gate exists to catch problems tests miss, not to block a working fix
+    over an unresolved advisory finding.
+    """
+    if not git_ops.commit(cfg.repo_dir, commit_message):
+        return False
+    reviewed_sha = git_ops.head_sha(cfg.repo_dir)
+
+    diff_text = git_ops.diff_between(cfg.repo_dir, f"{reviewed_sha}^", reviewed_sha)
+    review_model = model_router.model_for_task_type(cfg, "code_review")
+    result = opencode_runner.run_opencode(
+        prompts.build_self_review_prompt(diff_text),
+        cfg.repo_dir,
+        review_model,
+        cfg.review_timeout_seconds,
+    )
+    # Safe precisely because reviewed_sha already holds the actual fix as a
+    # real commit - this can never lose it, only undo stray edits the
+    # reviewer's own session made on top.
+    git_ops.discard_uncommitted_changes(cfg.repo_dir)
+
+    if not result.ok:
+        log.warning(
+            "self-review: run failed for %s, proceeding without it: %s",
+            task_label,
+            result.output[:300],
+        )
+        return True
+
+    verdict = model_router.parse_json_response(result.output)
+    if verdict is None or not isinstance(verdict.get("blocking"), bool):
+        log.warning(
+            "self-review: could not parse a verdict for %s, proceeding without it", task_label
+        )
+        return True
+
+    if not verdict["blocking"]:
+        log.info("self-review: %s looks clean", task_label)
+        return True
+
+    findings = str(verdict.get("findings") or "")
+    log.info(
+        "self-review: %s found a blocking issue, giving opencode one more attempt: %s",
+        task_label,
+        findings[:300],
+    )
+    retry_prompt = prompts.build_retry_prompt(prompt, "self-review", findings)
+    ok, message = run_fix_and_validate(cfg, retry_prompt, model)
+    if not ok:
+        log.warning(
+            "self-review: follow-up fix for %s did not converge (%s); pushing the original, "
+            "already-validated commit instead",
+            task_label,
+            message,
+        )
+        git_ops.discard_uncommitted_changes(cfg.repo_dir)
+        return True
+
+    git_ops.commit(cfg.repo_dir, f"fix: address self-review findings ({task_label})")
+    return True
+
+
 def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
     """Attempts to fix `pr`. Returns True only if a fix was actually pushed -
     this is what "solved problems" counts for --max-solved."""
@@ -684,7 +770,9 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
         git_ops.discard_uncommitted_changes(cfg.repo_dir)
         return False
 
-    committed = git_ops.commit(cfg.repo_dir, _commit_message_for(pr, cfg))
+    committed = _commit_with_self_review(
+        cfg, prompt, model, _commit_message_for(pr, cfg), f"PR #{pr.number}"
+    )
     if not committed:
         log.warning("PR #%d: opencode made no net changes; nothing to push", pr.number)
         return False
@@ -964,7 +1052,9 @@ def _implement_issue(cfg: Config, state: HarnessState, issue: dict) -> bool:
         git_ops.discard_uncommitted_changes(cfg.repo_dir)
         return False
 
-    committed = git_ops.commit(cfg.repo_dir, f"fix: {_sanitize_subject(issue['title'])}")
+    committed = _commit_with_self_review(
+        cfg, prompt, model, f"fix: {_sanitize_subject(issue['title'])}", f"issue #{number}"
+    )
     if not committed:
         log.warning("issue #%d: opencode made no changes", number)
         return False

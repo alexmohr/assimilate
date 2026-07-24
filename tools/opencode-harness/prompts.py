@@ -69,6 +69,37 @@ def build_retry_prompt(
     )
 
 
+def build_self_review_prompt(diff_text: str, max_diff_chars: int = 16000) -> str:
+    """One review pass over a diff this harness already committed (see
+    harness.py's self-review gate), run once the fix-and-validate loop
+    already thinks it's done and before the commit is ever pushed. Scoped to
+    genuinely blocking problems the deterministic validation gate (tests,
+    lint, pre-commit) can't catch on its own - not style, not anything a
+    linter would already flag.
+    """
+    truncated = diff_text
+    if len(truncated) > max_diff_chars:
+        truncated = "...(truncated)...\n" + truncated[-max_diff_chars:]
+    return (
+        "You are reviewing a diff that was just produced in this repository and "
+        "already passed its automated tests/lint/pre-commit checks, before it gets "
+        "pushed. Look only for genuinely blocking problems a test suite wouldn't "
+        "catch: a real correctness bug, a security issue, a test weakened/deleted/"
+        "skipped to make it pass, a forbidden `#[allow(...)]`/`deny.toml` ignore "
+        "entry, or a GitHub label added/removed directly. Do not flag style "
+        "preferences or anything a linter would already catch.\n\n"
+        f"Diff:\n```diff\n{truncated}\n```\n\n"
+        "Respond with ONLY a single JSON object - no prose, no markdown code "
+        "fences - in exactly this shape:\n"
+        "{\n"
+        '  "blocking": true|false,\n'
+        '  "findings": "<empty string if not blocking, otherwise what to fix '
+        'and why>"\n'
+        "}\n\nDo not edit, create, or delete any files - only read the diff above "
+        "and answer."
+    )
+
+
 def build_issue_prompt(number: int, title: str, body: str) -> str:
     return "\n\n".join(
         [

@@ -51,17 +51,18 @@ label change, every `coverage failed`/`duplicate code`/`merge conflict`
 change, and every CI completion, so the status label always reflects current
 reality — **agents must never add or remove the status labels themselves**
 (`pending`, `needs review`, `changes requested`, `ci failing`, `merge conflict`,
-`precheck failed`, `ready to merge`, `needs human review`, `coverage failed`,
-`duplicate code`); only push a fix, submit a review, or set the verdict
-labels per the Workflow section to move them.
+`check failed`, `precheck failed`, `ready to merge`, `needs human review`,
+`coverage failed`, `duplicate code`); only push a fix, submit a review, or
+set the verdict labels per the Workflow section to move them.
 
 | Label | Meaning | Set when |
 |---|---|---|
-| `pending` | Nothing to review yet | Default state — CI hasn't concluded on this commit yet, or CI is green but a precheck stage (coverage-diff, duplicate-code) hasn't finished |
-| `needs review` | CI (and every precheck stage) is green; no other blocking verdict yet, but not ready to merge either | Set once CI has actually concluded (see `pending` above) and nothing more specific below applies — including while `needs human review` is outstanding, a review verdict has gone stale, or the last automated review attempt errored |
+| `pending` | Nothing to review yet | Default state — CI hasn't concluded on this commit yet (and no other check has already failed either), or CI is green but a precheck stage (coverage-diff, duplicate-code) hasn't finished |
+| `needs review` | CI (and every check/precheck stage) is green; no other blocking verdict yet, but not ready to merge either | Set once CI — and every other check on the commit — has actually concluded with nothing failing (see `pending`/`check failed` above) and nothing more specific below applies — including while `needs human review` is outstanding, a review verdict has gone stale, or the last automated review attempt errored. Never set while any stage (other than the derived `PR Merge Gate` check itself) has already failed |
 | `changes requested` | A reviewer requested changes | GitHub review decision is `CHANGES_REQUESTED` — fires regardless of whether CI has concluded on this exact commit yet, since a real, current review verdict is meaningful on its own |
 | `ci failing` | Latest commit's CI run did not succeed | `CI` workflow conclusion is not `success` — always wins, and strips `ready to merge` |
 | `merge conflict` | Real conflicts with the base branch | `mergeable_state == "dirty"` — checked continuously (it's a free API field), same precedence tier as `ci failing` |
+| `check failed` | Some check on the commit other than CI itself, coverage-diff, or duplicate-code failed (e.g. `no-ai-check.yml`) | A single-shot look at every check run on the commit (excluding only the derived `PR Merge Gate` and the calling workflow's own in-progress job) finds one that's completed with a failing conclusion. Checked independently of whether CI itself has concluded yet — an already-failed check can never be un-failed by more waiting, so this settles the status immediately rather than reporting `pending` |
 | `precheck failed` | A deterministic pre-review stage failed | **Purely derived** — `sync-pr-labels.js` computes it fresh every run from `coverage failed` and/or `duplicate code`, never set directly by anything. This is the one label to look at if you just want "did any pre-flight stage fail" without caring which. See "Automated pre-flight checks" below |
 | `coverage failed` | The coverage-diff pre-review stage failed | Set only by `.github/scripts/analyze-coverage-diff.js` via the standalone `.github/workflows/coverage-diff-check.yml`. See "Automated pre-flight checks" below |
 | `duplicate code` | The duplicate-code-scan pre-review stage failed | Set only by `.github/scripts/analyze-duplication.js` via the standalone `.github/workflows/duplicate-code-check.yml`. See "Automated pre-flight checks" below |

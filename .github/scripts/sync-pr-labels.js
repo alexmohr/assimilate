@@ -41,6 +41,19 @@ const STATUS_LABELS = {
     color: "b60205",
     description: "PR has real conflicts with the base branch — cannot be merged.",
   },
+  // Any check run on the commit *other than* CI itself, coverage-diff, or
+  // duplicate-code (each of which already has its own, more specific status
+  // above/below) that has completed with a failing conclusion - e.g.
+  // `no-ai-check.yml`'s "No AI Banners" job, or anything else added to the
+  // pipeline later. Deliberately excludes `PR Merge Gate` - see GATE_CHECK_NAME
+  // and the `completeness` computation below for why that one's exclusion is
+  // never optional (it's this exact sync's own derived, circular output).
+  CHECK_FAILED: {
+    name: "check failed",
+    color: "d73a4a",
+    description:
+      "A check other than CI, coverage-diff, or duplicate-code failed on this commit — cannot be merged.",
+  },
   PRECHECK_FAILED: {
     name: "precheck failed",
     color: "d93f0b",
@@ -626,6 +639,27 @@ module.exports = async ({
   const ciFailed = ciConclusion !== null && !["success", "skipped", "neutral"].includes(ciConclusion);
   const mergeConflict = mergeableState === "dirty";
 
+  // Single-shot (timeoutMs: 0 - never polls/waits) look at every check run
+  // on this commit, computed unconditionally and up front so a stage other
+  // than CI/coverage-diff/duplicate-code that's already completed with a
+  // failing conclusion (e.g. no-ai-check.yml's "No AI Banners" job) is never
+  // missed regardless of which branch below would otherwise fire - `needs
+  // review` (or any status beyond a known-bad one) must never be assigned
+  // while a real stage failure like this is sitting unaddressed. Excludes
+  // only this exact sync's own derived, circular `PR Merge Gate` check (see
+  // GATE_CHECK_NAME) and the calling workflow's own still-running job(s)
+  // (selfCheckNames) - every other check run, including CI's own per-job
+  // checks, coverage-diff, and duplicate-code, is fair game here, but those
+  // three already have their own more specific status above/below that takes
+  // priority whenever it applies.
+  const completeness = await waitForAllChecks(github, core, {
+    owner,
+    repo,
+    ref: pr.head.sha,
+    excludeNames: [...selfCheckNames, GATE_CHECK_NAME],
+    timeoutMs: 0,
+  });
+
   let status;
   let summary;
   // See the comment on createGateCheck for what this controls.
@@ -660,6 +694,18 @@ module.exports = async ({
   ) {
     status = STATUS_LABELS.CHANGES_REQUESTED;
     summary = "A reviewer requested changes — address them and re-request review.";
+  } else if (completeness.completed && !completeness.ok) {
+    // Some check other than CI/coverage-diff/duplicate-code (each already
+    // handled above) has already completed with a failing conclusion -
+    // settled, known-bad, exactly like `ci failing` or `merge conflict`
+    // above. Checked *before* the `ciConclusion === null` branch below,
+    // deliberately: this can already be true even while CI itself hasn't
+    // concluded yet (e.g. `no-ai-check.yml` runs independently of CI and
+    // finishes fast) - no amount of waiting on CI or anything else can
+    // un-fail an already-completed, already-failed check, so there's nothing
+    // to gain from reporting "still pending" over a real, known failure.
+    status = STATUS_LABELS.CHECK_FAILED;
+    summary = `A check other than CI is failing: ${completeness.failed.join(", ")}.`;
   } else if (ciConclusion === null) {
     // CI hasn't concluded even once on this commit yet - defer every
     // review-related signal below (a stale changes-requested verdict, a
@@ -705,49 +751,27 @@ module.exports = async ({
     // An approving review is not required: waiting on approval when CI
     // hasn't even confirmed the commit builds/passes is a contradiction
     // (nobody should approve a red build), and the deterministic gates above
-    // (CI, merge conflicts, coverage/duplication, an active changes-requested
-    // verdict, sensitive-path sign-off) already cover the cases that matter.
-    // See skills/review/SKILL.md.
+    // (CI, merge conflicts, coverage/duplication, any other failed check, an
+    // active changes-requested verdict, sensitive-path sign-off) already
+    // cover the cases that matter. See skills/review/SKILL.md.
     //
-    // But CI green alone doesn't mean *every* stage has actually run yet -
-    // hasCoverageFailed/hasDuplicateCode/hasClaudeReviewFailed above are only
-    // ever set on *failure*; their absence is ambiguous between "passed" and
-    // "hasn't finished yet", and coverage-diff-check.yml/duplicate-code-
-    // check.yml/claude-review.yml all fire off the same CI-completion event
-    // with no ordering guarantee between them (see skills/review/SKILL.md).
-    // A single-shot (non-polling: timeoutMs 0) look at every other check run
-    // on this commit closes that gap - if anything relevant is still
-    // in-flight, fall back to NEEDS_REVIEW instead of asserting ready-to-
-    // merge prematurely. selfCheckNames lets the calling workflow exclude
-    // its own currently-running job (always still "in progress" at the
-    // moment it's the one calling this) so it isn't mistaken for a stalled
-    // check - see the call sites in claude-review.yml, duplicate-code-
-    // check.yml, coverage-diff-check.yml, and pr-status-labels.yml.
-    const completeness = await waitForAllChecks(github, core, {
-      owner,
-      repo,
-      ref: pr.head.sha,
-      excludeNames: [...selfCheckNames, GATE_CHECK_NAME],
-      timeoutMs: 0,
-    });
-    // waitForAllChecks only reports on check runs that already exist - it
-    // can't tell "hasn't even been created yet" apart from "there was
-    // nothing to wait for", so a check that simply hasn't started registering
-    // yet is silently treated as if it had already passed. Concretely: this
-    // job's own sync can finish and see zero pending checks a full instant
-    // before coverage-diff-check.yml/duplicate-code-check.yml have even been
-    // scheduled by GitHub Actions (both trigger off this exact same
-    // workflow_run: CI completed event, with no ordering guarantee between
-    // them or this job - see skills/review/SKILL.md), wrongly granting
-    // ready-to-merge before either has assessed this commit at all. Confirmed
-    // live on PR #373: a stale `coverage failed` label sat alongside a
-    // passing "Coverage Diff Check" run for hours with no fresh sync to
-    // reconcile them. Requiring both named checks to have actually completed
-    // for this exact head sha (any conclusion - completeness.ok above already
-    // covers their pass/fail once they exist) closes that gap without
-    // needing to know every check's name up front, the same way
-    // labelReflectsCurrentCommit already guards the opposite direction (a
-    // failing label stale from a prior commit).
+    // CI (and every other check) already known to be green/passing at this
+    // point (the `completeness` computed above already ruled out any failing
+    // check) doesn't mean *every* stage has actually run yet, though -
+    // coverage-diff-check.yml/duplicate-code-check.yml fire off the same
+    // CI-completion event `pr-status-labels.yml` itself reacts to, with no
+    // ordering guarantee between them, so one or both simply not having
+    // registered a check run yet is indistinguishable from "nothing to wait
+    // for" in `completeness.completed` alone - a check that hasn't been
+    // scheduled yet by GitHub Actions doesn't exist for `waitForAllChecks` to
+    // see at all. Confirmed live on PR #373: a stale `coverage failed` label
+    // sat alongside an already-passing "Coverage Diff Check" run for hours
+    // with no fresh sync ever reconciling the two. Requiring both named
+    // checks to have actually completed for this exact head sha (any
+    // conclusion - completeness.ok already covers their pass/fail once they
+    // exist) closes that gap without needing to know every check's name up
+    // front, the same way labelReflectsCurrentCommit already guards the
+    // opposite direction (a failing label stale from a prior commit).
     const coverageChecked = await labelReflectsCurrentCommit(
       github,
       owner,
@@ -762,12 +786,12 @@ module.exports = async ({
       pr.head.sha,
       DUPLICATE_CODE_CHECK_NAME,
     );
-    if (completeness.completed && completeness.ok && coverageChecked && duplicateChecked) {
+    if (completeness.completed && coverageChecked && duplicateChecked) {
+      // completeness.ok is already implied true here: the
+      // `completeness.completed && !completeness.ok` branch above would
+      // have caught a failing check before ever reaching this point.
       status = STATUS_LABELS.READY_TO_MERGE;
       summary = "CI is green — ready to merge.";
-    } else if (completeness.completed && !completeness.ok) {
-      status = STATUS_LABELS.NEEDS_REVIEW;
-      summary = `CI is green, but another check is failing: ${completeness.failed.join(", ")}.`;
     } else {
       // Not "nothing to review yet" in quite the same sense as the
       // ciConclusion === null branch above (CI itself is done), but every

@@ -4,6 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
+import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -17,15 +18,39 @@ vi.mock('./BaseSpinner.vue', () => ({
   default: { template: '<div class="base-spinner" />' },
 }))
 
+const toastSuccess = vi.fn()
+const toastError = vi.fn()
+vi.mock('../composables/useToast', () => ({
+  useToast: () => ({ success: toastSuccess, error: toastError }),
+}))
+
 import { apiClient } from '../api/client'
 import ArchiveFileBrowser from './ArchiveFileBrowser.vue'
+
+function makeArchive(name: string, overrides: Partial<ArchiveEntry> = {}): ArchiveEntry {
+  return {
+    name,
+    start: '2026-06-01T12:00:00Z',
+    hostname: 'web-server-01',
+    comment: '',
+    original_size: 2048,
+    deduplicated_size: 1024,
+    matched: true,
+    agent_hostname: 'web-server-01',
+    ...overrides,
+  }
+}
 
 describe('ArchiveFileBrowser', () => {
   beforeEach(() => {
     vi.resetAllMocks()
   })
 
-  async function mountWithWait(props: { repoId: number | null; archiveName: string | null }) {
+  async function mountWithWait(props: {
+    repoId: number | null
+    archive: ArchiveEntry | null
+    isAdmin?: boolean
+  }) {
     const wrapper = mount(ArchiveFileBrowser, { props })
     await flushPromises()
     await nextTick()
@@ -35,7 +60,10 @@ describe('ArchiveFileBrowser', () => {
   }
 
   async function mountWithEntries(
-    props: { repoId: number; archiveName: string } = { repoId: 5, archiveName: 'test-archive' },
+    props: { repoId: number; archive: ArchiveEntry; isAdmin?: boolean } = {
+      repoId: 5,
+      archive: makeArchive('test-archive'),
+    },
   ) {
     vi.mocked(apiClient.get).mockResolvedValue({
       data: {
@@ -55,29 +83,38 @@ describe('ArchiveFileBrowser', () => {
     return wrapper
   }
 
-  it('renders empty state when archiveName is null', () => {
+  it('renders empty state when archive is null', () => {
     const wrapper = mount(ArchiveFileBrowser, {
-      props: { repoId: null, archiveName: null },
+      props: { repoId: null, archive: null },
     })
     expect(wrapper.text()).toContain('Select an archive to browse its contents.')
   })
 
-  it('renders empty state when archiveName is empty string', () => {
-    const wrapper = mount(ArchiveFileBrowser, {
-      props: { repoId: 1, archiveName: '' },
-    })
-    expect(wrapper.text()).toContain('Select an archive to browse its contents.')
-  })
-
-  it('renders browser header when archiveName is provided and contents loaded', async () => {
+  it('renders browser header when archive is provided and contents loaded', async () => {
     vi.mocked(apiClient.get).mockResolvedValue({
       data: { index_status: 'done', entries: [] },
     })
 
-    const wrapper = await mountWithWait({ repoId: 5, archiveName: 'test-archive' })
+    const wrapper = await mountWithWait({ repoId: 5, archive: makeArchive('test-archive') })
 
     expect(wrapper.find('.browser-title').exists()).toBe(true)
     expect(wrapper.text()).toContain('test-archive')
+  })
+
+  it('shows the archive meta bar with date, original, and dedup size', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: { index_status: 'done', entries: [] },
+    })
+
+    const wrapper = await mountWithWait({
+      repoId: 5,
+      archive: makeArchive('test-archive', { original_size: 2048, deduplicated_size: 1024 }),
+    })
+
+    const metaBar = wrapper.find('.archive-meta-bar')
+    expect(metaBar.exists()).toBe(true)
+    expect(metaBar.text()).toContain('2.0 KB')
+    expect(metaBar.text()).toContain('1.0 KB')
   })
 
   it('shows empty directory message when contents are empty', async () => {
@@ -85,7 +122,7 @@ describe('ArchiveFileBrowser', () => {
       data: { index_status: 'done', entries: [] },
     })
 
-    const wrapper = await mountWithWait({ repoId: 5, archiveName: 'test-archive' })
+    const wrapper = await mountWithWait({ repoId: 5, archive: makeArchive('test-archive') })
 
     expect(wrapper.text()).toContain('Empty directory.')
   })
@@ -93,7 +130,7 @@ describe('ArchiveFileBrowser', () => {
   it('shows error state when contents fail to load', async () => {
     vi.mocked(apiClient.get).mockRejectedValue(new Error('Repository error'))
 
-    const wrapper = await mountWithWait({ repoId: 5, archiveName: 'test-archive' })
+    const wrapper = await mountWithWait({ repoId: 5, archive: makeArchive('test-archive') })
 
     expect(wrapper.find('.browser-title').exists()).toBe(true)
     expect(wrapper.text()).toContain('test-archive')
@@ -169,6 +206,59 @@ describe('ArchiveFileBrowser', () => {
     createElementSpy.mockRestore()
     appendChildSpy.mockRestore()
     removeChildSpy.mockRestore()
+  })
+
+  it('does not show restore or delete buttons when isAdmin is false', async () => {
+    const wrapper = await mountWithEntries({
+      repoId: 5,
+      archive: makeArchive('test-archive'),
+      isAdmin: false,
+    })
+
+    expect(wrapper.findAll('button[title*="Restore"]').length).toBe(0)
+    expect(wrapper.findAll('button[title*="Delete"]').length).toBe(0)
+  })
+
+  it('shows restore buttons and a whole-archive delete button when isAdmin is true', async () => {
+    const wrapper = await mountWithEntries({
+      repoId: 5,
+      archive: makeArchive('test-archive'),
+      isAdmin: true,
+    })
+
+    expect(wrapper.findAll('button[title*="Restore"]').length).toBeGreaterThan(0)
+    expect(wrapper.find('button[title="Delete whole archive"]').exists()).toBe(true)
+  })
+
+  it('clicking restore calls restoreEntry and shows a success toast', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({ data: { success: true } })
+    window.confirm = vi.fn().mockReturnValue(true)
+
+    const wrapper = await mountWithEntries({
+      repoId: 5,
+      archive: makeArchive('test-archive'),
+      isAdmin: true,
+    })
+
+    const restoreBtn = wrapper.find('button[title="Restore whole archive to host"]')
+    expect(restoreBtn.exists()).toBe(true)
+    await restoreBtn.trigger('click')
+    await flushPromises()
+
+    expect(apiClient.post).toHaveBeenCalled()
+    expect(toastSuccess).toHaveBeenCalledWith('Restored the whole archive.')
+  })
+
+  it('clicking the whole-archive delete button emits delete-archive with the archive', async () => {
+    const archive = makeArchive('test-archive')
+    const wrapper = await mountWithEntries({ repoId: 5, archive, isAdmin: true })
+
+    const deleteBtn = wrapper.find('button[title="Delete whole archive"]')
+    expect(deleteBtn.exists()).toBe(true)
+    await deleteBtn.trigger('click')
+
+    expect(wrapper.emitted('delete-archive')).toBeTruthy()
+    expect(wrapper.emitted('delete-archive')?.[0]).toEqual([archive])
   })
 
   it('renders filter inputs and handles interaction', async () => {
@@ -251,14 +341,14 @@ describe('ArchiveFileBrowser', () => {
     wrapper.unmount()
   })
 
-  it('switching archiveName resets and reloads', async () => {
+  it('switching archive resets and reloads', async () => {
     vi.mocked(apiClient.get).mockResolvedValue({
       data: { index_status: 'done', entries: [] },
     })
 
-    const wrapper = await mountWithWait({ repoId: 5, archiveName: 'first-archive' })
+    const wrapper = await mountWithWait({ repoId: 5, archive: makeArchive('first-archive') })
 
-    await wrapper.setProps({ archiveName: 'second-archive' })
+    await wrapper.setProps({ archive: makeArchive('second-archive') })
 
     await flushPromises()
     await nextTick()

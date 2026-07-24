@@ -10,11 +10,7 @@ import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useClipboard } from '../composables/useClipboard'
-import {
-  useArchiveBrowser,
-  type ArchiveEntry,
-  type ContentEntry,
-} from '../composables/useArchiveBrowser'
+import { useArchiveBrowser, type ArchiveEntry } from '../composables/useArchiveBrowser'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useToast } from '../composables/useToast'
 import { formatBytes, formatDate, relativeTime } from '../utils/format'
@@ -23,21 +19,14 @@ import { extractError } from '../utils/error'
 import { normalizeBackupStatus, type NormalizedBackupStatus } from '../utils/backupStatus'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
-import {
-  Folder,
-  File,
-  Download,
-  RotateCcw,
-  Trash2,
-  CheckCircle,
-  AlertTriangle,
-  AlertCircle,
-} from '@lucide/vue'
+import { Trash2, CheckCircle, AlertTriangle, AlertCircle } from '@lucide/vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import QuotaPanel from '../components/QuotaPanel.vue'
 import BaseModal from '../components/BaseModal.vue'
 import BaseHostLink from '../components/BaseHostLink.vue'
+import ArchiveBrowserLayout from '../components/ArchiveBrowserLayout.vue'
+import ArchiveFileBrowser from '../components/ArchiveFileBrowser.vue'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import type { ActiveRepoOp, RepoOpKind, RepoWithStats } from '../types/repo'
 import type { TagRow } from '../types/tag'
@@ -451,25 +440,14 @@ onMessage('RepoOpChanged', (payload) => {
 })
 
 // Archive browser
-const {
-  sortedArchives,
-  archivesLoading,
-  archivesError,
-  selectedArchive,
-  contentsLoading,
-  contentsError,
-  indexing,
-  breadcrumbs,
-  dirs,
-  files,
-  loadArchives,
-  selectArchive,
-  navigateTo: archiveNavigateTo,
-  entryName,
-  downloadEntry,
-  restoreEntry,
-  deleteArchiveByName,
-} = useArchiveBrowser(repoIdRef)
+const { sortedArchives, archivesLoading, archivesError, loadArchives, deleteArchiveByName } =
+  useArchiveBrowser(repoIdRef)
+
+const selectedArchive = ref<ArchiveEntry | null>(null)
+
+function selectArchive(archive: ArchiveEntry): void {
+  selectedArchive.value = archive
+}
 
 const archivePendingDeletion = ref<ArchiveEntry | null>(null)
 const archiveDeleteLoading = ref(false)
@@ -484,16 +462,6 @@ function closeArchiveDeleteDialog(): void {
   }
 }
 
-async function restoreArchiveEntry(entry: ContentEntry): Promise<void> {
-  try {
-    const restored = await restoreEntry(entry)
-    if (!restored) return
-    toastSuccess(entry.path.length > 0 ? `Restored ${entry.path}.` : 'Restored the whole archive.')
-  } catch (e: unknown) {
-    toastError(extractError(e))
-  }
-}
-
 async function confirmArchiveDeletion(): Promise<void> {
   const archive = archivePendingDeletion.value
   if (!archive) return
@@ -501,6 +469,9 @@ async function confirmArchiveDeletion(): Promise<void> {
   try {
     await deleteArchiveByName(archive)
     archivePendingDeletion.value = null
+    if (selectedArchive.value?.name === archive.name) {
+      selectedArchive.value = null
+    }
     await refreshRepo()
     toastSuccess('Archive deletion started. It will disappear once borg finishes.')
   } catch (e: unknown) {
@@ -524,7 +495,7 @@ const unmatchedHostnames = computed(() => [
 ])
 
 const archiveFilter = ref('')
-const collapsedGroups = ref<Set<string>>(new Set())
+const expandedGroups = ref<Set<string>>(new Set())
 const groupArchivesByHost = ref(true)
 const archiveSortMode = ref<ArchiveSortMode>('date-desc')
 
@@ -627,15 +598,15 @@ const groupedArchives = computed<ArchiveGroup[]>(() => {
 })
 
 function toggleGroup(hostname: string): void {
-  if (collapsedGroups.value.has(hostname)) {
-    collapsedGroups.value.delete(hostname)
+  if (expandedGroups.value.has(hostname)) {
+    expandedGroups.value.delete(hostname)
   } else {
-    collapsedGroups.value.add(hostname)
+    expandedGroups.value.add(hostname)
   }
 }
 
 function isGroupCollapsed(hostname: string): boolean {
-  return collapsedGroups.value.has(hostname)
+  return !expandedGroups.value.has(hostname)
 }
 
 const isAdmin = computed(() => authStore.isAdmin)
@@ -924,13 +895,13 @@ watch(
     allTags.value = []
     repoTagIds.value = []
     archiveFilter.value = ''
-    collapsedGroups.value = new Set()
+    expandedGroups.value = new Set()
     selectedArchive.value = null
     repoSchedules.value = []
     await loadRepo()
     if (repo.value) {
       await Promise.all([loadTags(), loadArchives(), checkHostKeyMismatch()])
-      await selectArchiveFromQuery()
+      selectArchiveFromQuery()
       if (activeTab.value === 'schedules') {
         await loadRepoSchedules()
       }
@@ -948,19 +919,19 @@ onMounted(async () => {
   await loadRepo()
   if (repo.value) {
     await Promise.all([loadTags(), loadArchives(), checkHostKeyMismatch()])
-    await selectArchiveFromQuery()
+    selectArchiveFromQuery()
     if (activeTab.value === 'schedules') {
       await loadRepoSchedules()
     }
   }
 })
 
-async function selectArchiveFromQuery(): Promise<void> {
+function selectArchiveFromQuery(): void {
   const archiveQuery = route.query.archive as string | undefined
   if (archiveQuery && activeTab.value === 'archives') {
     const match = sortedArchives.value.find((a) => a.name === archiveQuery)
     if (match) {
-      await selectArchive(match)
+      selectArchive(match)
     }
   }
 }
@@ -969,7 +940,7 @@ watch(
   () => route.query.archive,
   async () => {
     if (sortedArchives.value.length > 0) {
-      await selectArchiveFromQuery()
+      selectArchiveFromQuery()
     }
   },
 )
@@ -1660,62 +1631,35 @@ async function resetImport(): Promise<void> {
           </button>
         </div>
 
-        <div class="archives-layout">
-          <!-- Archive list -->
-          <div class="panel archives-panel">
-            <div class="panel-header">
-              <span class="panel-title">Archives</span>
-            </div>
+        <ArchiveBrowserLayout>
+          <template #list>
+            <!-- Archive list -->
+            <div class="panel archives-panel">
+              <div class="panel-header">
+                <span class="panel-title">Archives</span>
+              </div>
 
-            <div
-              v-if="archivesLoading"
-              class="state-msg state-msg-sm"
-            >
-              <span class="spinner" />
-              Loading archives...
-            </div>
-            <div
-              v-else-if="archivesError"
-              class="state-msg state-msg-sm state-error"
-            >
-              {{ archivesError }}
-            </div>
-            <div
-              v-else-if="sortedArchives.length === 0"
-              class="state-msg state-msg-sm"
-            >
-              No archives found.
-            </div>
-            <template v-else>
-              <div class="archive-controls">
-                <input
-                  v-model="archiveFilter"
-                  class="filter-input"
-                  type="text"
-                  placeholder="Filter archives..."
-                />
-                <select
-                  v-model="archiveSortMode"
-                  class="select-input archive-sort-select"
-                >
-                  <option
-                    v-for="option in archiveSortModeOptions"
-                    :key="option.value"
-                    :value="option.value"
-                  >
-                    {{ option.label }}
-                  </option>
-                </select>
-                <button
-                  class="btn btn-sm btn-ghost archive-group-toggle"
-                  :class="{ active: groupArchivesByHost }"
-                  @click="groupArchivesByHost = !groupArchivesByHost"
-                >
-                  {{ groupArchivesByHost ? 'Grouped by host' : 'Flat list' }}
-                </button>
+              <div
+                v-if="archivesLoading"
+                class="state-msg state-msg-sm"
+              >
+                <span class="spinner" />
+                Loading archives...
               </div>
               <div
-                v-if="hasArchiveFilter"
+                v-else-if="archivesError"
+                class="state-msg state-msg-sm state-error"
+              >
+                {{ archivesError }}
+              </div>
+              <div
+                v-else-if="sortedArchives.length === 0"
+                class="state-msg state-msg-sm"
+              >
+                No archives found.
+              </div>
+              <div
+                v-else-if="hasArchiveFilter"
                 class="archive-filter-banner"
               >
                 <span>
@@ -1728,262 +1672,140 @@ async function resetImport(): Promise<void> {
                   Show all archives
                 </button>
               </div>
-              <div
-                v-if="orderedArchives.length === 0"
-                class="state-msg state-msg-sm"
-              >
-                No matching archives.
-              </div>
-              <div
-                v-else-if="groupArchivesByHost"
-                class="archive-groups"
-              >
-                <div
-                  v-for="group in groupedArchives"
-                  :key="group.hostname"
-                  class="archive-group"
-                >
+              <template v-else>
+                <div class="archive-controls">
+                  <input
+                    v-model="archiveFilter"
+                    class="filter-input"
+                    type="text"
+                    placeholder="Filter archives..."
+                  />
+                  <select
+                    v-model="archiveSortMode"
+                    class="select-input archive-sort-select"
+                  >
+                    <option
+                      v-for="option in archiveSortModeOptions"
+                      :key="option.value"
+                      :value="option.value"
+                    >
+                      {{ option.label }}
+                    </option>
+                  </select>
                   <button
-                    class="group-header"
-                    :class="{ collapsed: isGroupCollapsed(group.hostname) }"
-                    @click="toggleGroup(group.hostname)"
+                    class="btn btn-sm btn-ghost archive-group-toggle"
+                    :class="{ active: groupArchivesByHost }"
+                    @click="groupArchivesByHost = !groupArchivesByHost"
                   >
-                    <span class="group-chevron">&#9656;</span>
-                    <BaseHostLink
-                      :hostname="
-                        group.agentHostname && group.matched ? group.agentHostname : group.hostname
-                      "
-                      class="host-link group-hostname"
-                      :class="{ 'group-unmatched': !group.matched }"
-                      @click.stop
-                    />
-                    <span
-                      v-if="!group.matched"
-                      class="match-icon match-warn"
-                      title="Unmatched"
-                      >&#9888;</span
-                    >
-                    <span class="group-count">{{ group.archives.length }}</span>
+                    {{ groupArchivesByHost ? 'Grouped by host' : 'Flat list' }}
                   </button>
+                </div>
+                <div
+                  v-if="orderedArchives.length === 0"
+                  class="state-msg state-msg-sm"
+                >
+                  No matching archives.
+                </div>
+                <div
+                  v-else-if="groupArchivesByHost"
+                  class="archive-groups"
+                >
                   <div
-                    v-show="!isGroupCollapsed(group.hostname)"
-                    class="group-archives"
+                    v-for="group in groupedArchives"
+                    :key="group.hostname"
+                    class="archive-group"
                   >
-                    <div
-                      v-for="archive in group.archives"
-                      :key="archive.name"
-                      class="archive-row"
-                      :class="{ selected: selectedArchive?.name === archive.name }"
-                      @click="selectArchive(archive)"
+                    <button
+                      class="group-header"
+                      :class="{ collapsed: isGroupCollapsed(group.hostname) }"
+                      @click="toggleGroup(group.hostname)"
                     >
-                      <span class="archive-date">{{ formatDate(archive.start) }}</span>
-                      <span class="archive-name">{{ archive.name }}</span>
-                      <button
-                        v-if="isAdmin"
-                        class="btn btn-sm btn-ghost archive-row-delete"
-                        title="Delete archive"
-                        @click.stop="requestArchiveDeletion(archive)"
+                      <span class="group-chevron">&#9656;</span>
+                      <BaseHostLink
+                        :hostname="
+                          group.agentHostname && group.matched
+                            ? group.agentHostname
+                            : group.hostname
+                        "
+                        class="host-link group-hostname"
+                        :class="{ 'group-unmatched': !group.matched }"
+                        @click.stop
+                      />
+                      <span
+                        v-if="!group.matched"
+                        class="match-icon match-warn"
+                        title="Unmatched"
+                        >&#9888;</span
                       >
-                        <Trash2 :size="12" />
-                      </button>
+                      <span class="group-count">{{ group.archives.length }}</span>
+                    </button>
+                    <div
+                      v-show="!isGroupCollapsed(group.hostname)"
+                      class="group-archives"
+                    >
+                      <div
+                        v-for="archive in group.archives"
+                        :key="archive.name"
+                        class="archive-row"
+                        :class="{ selected: selectedArchive?.name === archive.name }"
+                        @click="selectArchive(archive)"
+                      >
+                        <span class="archive-date">{{ formatDate(archive.start) }}</span>
+                        <span class="archive-name">{{ archive.name }}</span>
+                        <button
+                          v-if="isAdmin"
+                          class="btn btn-sm btn-ghost archive-row-delete"
+                          title="Delete archive"
+                          @click.stop="requestArchiveDeletion(archive)"
+                        >
+                          <Trash2 :size="12" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-              <div
-                v-else
-                class="archive-flat-list"
-              >
                 <div
-                  v-for="archive in orderedArchives"
-                  :key="archive.name"
-                  class="archive-row archive-row-detailed"
-                  :class="{ selected: selectedArchive?.name === archive.name }"
-                  @click="selectArchive(archive)"
+                  v-else
+                  class="archive-flat-list"
                 >
-                  <span class="archive-name">{{ archive.name }}</span>
-                  <span class="archive-host">{{ archive.agent_hostname ?? archive.hostname }}</span>
-                  <span class="archive-date">{{ formatDate(archive.start) }}</span>
-                  <span class="archive-size">{{ formatBytes(archive.original_size) }}</span>
-                  <span class="archive-size">{{ formatBytes(archive.deduplicated_size) }}</span>
-                  <button
-                    v-if="isAdmin"
-                    class="btn btn-sm btn-ghost archive-row-delete"
-                    title="Delete archive"
-                    @click.stop="requestArchiveDeletion(archive)"
+                  <div
+                    v-for="archive in orderedArchives"
+                    :key="archive.name"
+                    class="archive-row archive-row-detailed"
+                    :class="{ selected: selectedArchive?.name === archive.name }"
+                    @click="selectArchive(archive)"
                   >
-                    <Trash2 :size="12" />
-                  </button>
+                    <span class="archive-name">{{ archive.name }}</span>
+                    <span class="archive-host">{{
+                      archive.agent_hostname ?? archive.hostname
+                    }}</span>
+                    <span class="archive-date">{{ formatDate(archive.start) }}</span>
+                    <span class="archive-size">{{ formatBytes(archive.original_size) }}</span>
+                    <span class="archive-size">{{ formatBytes(archive.deduplicated_size) }}</span>
+                    <button
+                      v-if="isAdmin"
+                      class="btn btn-sm btn-ghost archive-row-delete"
+                      title="Delete archive"
+                      @click.stop="requestArchiveDeletion(archive)"
+                    >
+                      <Trash2 :size="12" />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </template>
-          </div>
-
-          <!-- File browser -->
-          <div
-            v-if="selectedArchive"
-            class="panel browser-panel"
-          >
-            <div class="panel-header">
-              <span class="panel-title">Files &mdash; {{ selectedArchive.name }}</span>
+              </template>
             </div>
-
-            <div class="archive-meta-bar">
-              <span class="archive-meta-item">
-                <span class="archive-meta-label">Date</span>
-                <span class="archive-meta-value">{{ formatDate(selectedArchive.start) }}</span>
-              </span>
-              <span class="archive-meta-sep" />
-              <span class="archive-meta-item">
-                <span class="archive-meta-label">Original</span>
-                <span class="archive-meta-value">{{
-                  formatBytes(selectedArchive.original_size)
-                }}</span>
-              </span>
-              <span class="archive-meta-sep" />
-              <span class="archive-meta-item">
-                <span class="archive-meta-label">Dedup</span>
-                <span class="archive-meta-value">{{
-                  formatBytes(selectedArchive.deduplicated_size)
-                }}</span>
-              </span>
+          </template>
+          <template #browser>
+            <div class="panel browser-panel">
+              <ArchiveFileBrowser
+                :repo-id="repoId"
+                :archive="selectedArchive"
+                :is-admin="isAdmin"
+                @delete-archive="requestArchiveDeletion"
+              />
             </div>
-
-            <div class="archive-breadcrumb">
-              <button
-                v-for="(seg, i) in breadcrumbs"
-                :key="seg.path"
-                class="crumb"
-                :class="{ 'crumb-last': i === breadcrumbs.length - 1 }"
-                @click="archiveNavigateTo(seg.path)"
-              >
-                {{ seg.label }}
-              </button>
-            </div>
-
-            <BaseSpinner
-              v-if="contentsLoading"
-              size="sm"
-            />
-            <div
-              v-else-if="indexing"
-              class="state-msg state-msg-sm"
-            >
-              <BaseSpinner size="sm" />
-              Indexing archive contents — this only happens once…
-            </div>
-            <div
-              v-else-if="contentsError"
-              class="state-msg state-msg-sm state-error"
-            >
-              {{ contentsError }}
-            </div>
-            <div
-              v-else-if="dirs.length === 0 && files.length === 0"
-              class="state-msg state-msg-sm"
-            >
-              Empty directory.
-            </div>
-            <table
-              v-else
-              class="data-table"
-            >
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Size</th>
-                  <th>Modified</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="entry in dirs"
-                  :key="entry.displayName + entry.path"
-                  :class="{ clickable: entry.displayName !== '.' }"
-                  @click="entry.displayName !== '.' && archiveNavigateTo(entry.path)"
-                >
-                  <td class="td-name">
-                    <Folder
-                      :size="16"
-                      class="entry-icon"
-                    />
-                    {{ entry.displayName }}
-                  </td>
-                  <td class="td-size muted">&mdash;</td>
-                  <td class="td-date">{{ formatDate(entry.mtime) }}</td>
-                  <td class="td-action">
-                    <span class="entry-actions">
-                      <button
-                        class="btn btn-sm btn-ghost"
-                        :title="entry.path ? 'Download as .tar.lz4' : 'Download whole archive'"
-                        @click.stop="downloadEntry(entry)"
-                      >
-                        <Download :size="14" />
-                      </button>
-                      <button
-                        v-if="isAdmin"
-                        class="btn btn-sm btn-ghost"
-                        :title="entry.path ? 'Restore to host' : 'Restore whole archive to host'"
-                        @click.stop="restoreArchiveEntry(entry)"
-                      >
-                        <RotateCcw :size="14" />
-                      </button>
-                      <button
-                        v-if="isAdmin && entry.path.length === 0 && selectedArchive"
-                        class="btn btn-sm btn-ghost"
-                        title="Delete whole archive"
-                        @click.stop="requestArchiveDeletion(selectedArchive)"
-                      >
-                        <Trash2 :size="14" />
-                      </button>
-                    </span>
-                  </td>
-                </tr>
-                <tr
-                  v-for="entry in files"
-                  :key="entry.path"
-                >
-                  <td class="td-name">
-                    <File
-                      :size="16"
-                      class="entry-icon"
-                    />
-                    {{ entryName(entry) }}
-                  </td>
-                  <td class="td-size">{{ formatBytes(entry.size) }}</td>
-                  <td class="td-date">{{ formatDate(entry.mtime) }}</td>
-                  <td class="td-action">
-                    <span class="entry-actions">
-                      <button
-                        class="btn btn-sm btn-ghost"
-                        title="Download"
-                        @click.stop="downloadEntry(entry)"
-                      >
-                        <Download :size="14" />
-                      </button>
-                      <button
-                        v-if="isAdmin"
-                        class="btn btn-sm btn-ghost"
-                        title="Restore to host"
-                        @click.stop="restoreArchiveEntry(entry)"
-                      >
-                        <RotateCcw :size="14" />
-                      </button>
-                    </span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div
-            v-else
-            class="panel browser-panel empty-browser"
-          >
-            <span class="muted">Select an archive to browse its contents.</span>
-          </div>
-        </div>
+          </template>
+        </ArchiveBrowserLayout>
       </div>
 
       <!-- Schedules Tab -->
@@ -3058,13 +2880,6 @@ async function resetImport(): Promise<void> {
 }
 
 /* Archives layout */
-.archives-layout {
-  display: grid;
-  grid-template-columns: 1fr 1.2fr;
-  gap: 1rem;
-  align-items: start;
-}
-
 .panel {
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -3240,7 +3055,7 @@ async function resetImport(): Promise<void> {
 
 .archive-row-detailed {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) auto auto auto auto;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) 9.5rem 4.25rem 4.25rem auto;
   gap: 0.75rem;
   padding-left: 0.75rem;
 }
@@ -3268,183 +3083,6 @@ async function resetImport(): Promise<void> {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.data-table {
-  min-width: 100%;
-  border-collapse: collapse;
-  font-size: 0.85rem;
-}
-
-.data-table th {
-  text-align: left;
-  padding: 0.5rem 0.75rem;
-  color: var(--text-muted);
-  font-weight: 600;
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  border-bottom: 1px solid var(--border);
-}
-
-.data-table td {
-  padding: 0.6rem 0.75rem;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.data-table tr:last-child td {
-  border-bottom: none;
-}
-
-.data-table tr.clickable {
-  cursor: pointer;
-  transition: background 0.1s;
-}
-
-.data-table tr.clickable:hover {
-  background: var(--bg-hover);
-}
-
-.data-table tr.selected td {
-  background: var(--accent-subtle);
-  color: var(--text-primary);
-}
-
-.td-mono {
-  font-family: var(--mono);
-  font-size: 0.8rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.td-date {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.td-host {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-}
-
-.td-name {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-family: var(--mono);
-  font-size: 0.82rem;
-}
-
-.td-size {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.td-action {
-  text-align: right;
-}
-
-.entry-actions {
-  display: inline-flex;
-  gap: 0.25rem;
-}
-
-.entry-icon {
-  flex-shrink: 0;
-  color: var(--text-muted);
-}
-
-.archive-meta-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.5rem 1rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-base);
-}
-
-.archive-meta-item {
-  display: flex;
-  align-items: baseline;
-  gap: 0.35rem;
-}
-
-.archive-meta-label {
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.archive-meta-value {
-  font-size: 0.82rem;
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-}
-
-.archive-meta-sep {
-  width: 1px;
-  height: 0.9rem;
-  background: var(--border);
-  flex-shrink: 0;
-}
-
-.archive-breadcrumb {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.1rem;
-  padding: 0.6rem 1rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-base);
-}
-
-.crumb {
-  background: none;
-  border: none;
-  color: var(--accent);
-  cursor: pointer;
-  font-size: 0.82rem;
-  font-family: var(--mono);
-  padding: 0.15rem 0.3rem;
-  border-radius: var(--radius-sm);
-  transition:
-    background 0.1s,
-    color 0.1s;
-}
-
-.crumb:hover {
-  background: var(--accent-subtle);
-  color: var(--accent-hover);
-}
-
-.crumb-last {
-  color: var(--text-primary);
-  cursor: default;
-}
-
-.crumb-last:hover {
-  background: none;
-  color: var(--text-primary);
-}
-
-.crumb:not(.crumb-last)::after {
-  content: ' /';
-  color: var(--text-muted);
-  margin-left: 0.2rem;
-}
-
-.empty-browser {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 200px;
-  font-size: 0.875rem;
 }
 
 .spinner {
@@ -3502,13 +3140,6 @@ async function resetImport(): Promise<void> {
   word-break: break-all;
   background: transparent;
   padding: 0;
-}
-
-/* Responsive */
-@media (max-width: 1100px) {
-  .archives-layout {
-    grid-template-columns: 1fr;
-  }
 }
 
 /* Unmatched banner */

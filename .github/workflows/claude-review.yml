@@ -68,20 +68,23 @@ jobs:
             //
             // Gating those two on the PR's *current* "needs review" label
             // (an earlier version of this check) doesn't actually bound
-            // anything: per sync-pr-labels.js, "needs review" is the
-            // default/fallback status ("Awaiting CI completion") applied
-            // to essentially every open PR from the moment it's opened
-            // until CI finishes, and again after almost every subsequent
-            // push - not a one-time maintainer opt-in. A first-time
-            // external contributor's brand-new PR carries it immediately,
-            // so checking it lets `synchronize` re-trigger on literally
-            // every single push, exactly the quota-griefing this gate
-            // exists to prevent. Check whether this PR has ever had *any*
-            // review submitted instead - reviews are never deleted (only
-            // dismissed, which keeps the review itself), so unlike a
-            // label this can't be raced away by a concurrent label sync,
-            // and it only becomes true once the PR has already gone
-            // through one of the two genuinely bounded triggers above.
+            // anything, even now that sync-pr-labels.js only assigns
+            // "needs review" once CI (and every precheck stage) has
+            // actually gone green - see its own `pending`/PENDING status
+            // for everything before that. The problem isn't what the label
+            // *means* now, it's *when* this job can trust its current
+            // value: this workflow and pr-status-labels.yml both trigger
+            // off similar synchronize/workflow_run events independently,
+            // with no ordering guarantee between them, so the label this
+            // job would read at an arbitrary moment could easily still
+            // reflect the *previous* commit's state - stale in either
+            // direction, not just "still says needs review from before".
+            // Check whether this PR has ever had *any* review submitted
+            // instead - reviews are never deleted (only dismissed, which
+            // keeps the review itself), so unlike a label this can't be
+            // raced away by a concurrent label sync, and it only becomes
+            // true once the PR has already gone through one of the two
+            // genuinely bounded triggers above.
             if (context.eventName !== "workflow_run" && context.eventName !== "pull_request_target") {
               core.setOutput("should_run", "true");
               return;

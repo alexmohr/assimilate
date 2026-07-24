@@ -47,10 +47,22 @@ const STATUS_LABELS = {
     description:
       "A deterministic pre-review stage failed — purely derived from the `coverage failed` / `duplicate code` labels below, never set directly.",
   },
+  // Distinct from `needs review`: this is genuinely "nothing to review yet",
+  // not "reviewed and something's still outstanding" - see the
+  // `ciConclusion === null` branch below for exactly what's deferred behind
+  // this (a stale changes-requested verdict, a pending human-sign-off
+  // reminder, a failed automated-review attempt, or simply nothing at all)
+  // until CI has actually concluded once on this commit.
+  PENDING: {
+    name: "pending",
+    color: "ededed",
+    description: "CI (or a precheck stage) hasn't concluded on this commit yet — nothing to review yet.",
+  },
   NEEDS_REVIEW: {
     name: "needs review",
     color: "fbca04",
-    description: "No outstanding blocking review verdict yet.",
+    description:
+      "CI (and any precheck stage) is green — no other blocking verdict yet, but not ready to merge either.",
   },
   CHANGES_REQUESTED: {
     name: "changes requested",
@@ -648,6 +660,25 @@ module.exports = async ({
   ) {
     status = STATUS_LABELS.CHANGES_REQUESTED;
     summary = "A reviewer requested changes — address them and re-request review.";
+  } else if (ciConclusion === null) {
+    // CI hasn't concluded even once on this commit yet - defer every
+    // review-related signal below (a stale changes-requested verdict, a
+    // human-sign-off reminder, a failed automated-review attempt, or simply
+    // nothing outstanding at all) behind a known-good build first, the same
+    // "nobody should approve a red build" reasoning `ready to merge` already
+    // applies (see skills/review/SKILL.md) - `needs review` inviting review
+    // attention before CI has even run once is exactly the misleading,
+    // always-true default this status exists to avoid. `needs human review`
+    // itself is unaffected: that's a separate, additive label applied below
+    // regardless of this branch, so the sign-off reminder is never hidden by
+    // this - only the *main* status is deferred. Positioned after the
+    // CHANGES_REQUESTED (current) branch above, deliberately: a real,
+    // current review verdict is meaningful information on its own and
+    // shouldn't be hidden behind "still waiting on CI" the way the more
+    // advisory signals below are.
+    status = STATUS_LABELS.PENDING;
+    summary = "Awaiting CI completion.";
+    pending = true;
   } else if (reviewDecision === "CHANGES_REQUESTED") {
     // A real CHANGES_REQUESTED verdict exists, but every such review is
     // against an older commit - none of them have seen the code as it
@@ -738,7 +769,11 @@ module.exports = async ({
       status = STATUS_LABELS.NEEDS_REVIEW;
       summary = `CI is green, but another check is failing: ${completeness.failed.join(", ")}.`;
     } else {
-      status = STATUS_LABELS.NEEDS_REVIEW;
+      // Not "nothing to review yet" in quite the same sense as the
+      // ciConclusion === null branch above (CI itself is done), but every
+      // precheck stage isn't necessarily settled yet - same "don't invite
+      // review attention on an incomplete picture" reasoning applies.
+      status = STATUS_LABELS.PENDING;
       const stillWaiting = new Set(completeness.completed ? [] : completeness.pending);
       if (!coverageChecked) stillWaiting.add(COVERAGE_DIFF_CHECK_NAME);
       if (!duplicateChecked) stillWaiting.add(DUPLICATE_CODE_CHECK_NAME);
@@ -746,7 +781,11 @@ module.exports = async ({
       pending = true;
     }
   } else {
-    status = STATUS_LABELS.NEEDS_REVIEW;
+    // Residual case: ciConclusion is a concluded-but-neither-success-nor-
+    // failure value (e.g. "skipped"/"neutral" - excluded from `ciFailed`
+    // above). Nothing upstream distinguishes this from "still running" in
+    // practice, so it gets the same treatment.
+    status = STATUS_LABELS.PENDING;
     summary = "Awaiting CI completion.";
     pending = true;
   }

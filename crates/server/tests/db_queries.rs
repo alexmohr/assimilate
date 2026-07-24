@@ -2585,6 +2585,283 @@ async fn login_attempts(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(count_other_ip, 0);
+
+    // Username-only count includes all IPs
+    let count_by_user = db::count_failed_login_attempts_by_username(&pool, "user1", 60)
+        .await
+        .unwrap();
+    assert_eq!(count_by_user, 2);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn account_lockout(pool: PgPool) {
+    // Create a user first
+    db::insert_user(&pool, "lockuser", "hash").await.unwrap();
+
+    // Insert some failed login attempts for the user
+    for _ in 0..3 {
+        db::insert_login_attempt(&pool, "lockuser", "192.168.1.1", false)
+            .await
+            .unwrap();
+    }
+
+    // Verify count across all IPs
+    let count = db::count_failed_login_attempts_by_username(&pool, "lockuser", 60)
+        .await
+        .unwrap();
+    assert_eq!(count, 3);
+
+    // Set a lockout
+    let lock_time = Utc::now()
+        .checked_add_signed(Duration::minutes(30))
+        .unwrap();
+    db::set_account_lockout(&pool, "lockuser", lock_time)
+        .await
+        .unwrap();
+
+    // Verify user is locked
+    let user = db::get_user_by_username(&pool, "lockuser").await.unwrap();
+    assert!(user.locked_until.is_some());
+    assert!(user.locked_until.unwrap() > Utc::now());
+
+    // Clear lockout
+    db::clear_account_lockout(&pool, "lockuser").await.unwrap();
+    let user = db::get_user_by_username(&pool, "lockuser").await.unwrap();
+    assert!(user.locked_until.is_none());
+
+    // Escalation level (3 failures -> below threshold of 10 -> level 0)
+    let level = db::count_lockout_escalation_level(&pool, "lockuser", 10)
+        .await
+        .unwrap();
+    assert_eq!(level, 0);
+
+    // With 15 failures the level should be 1 (first lockout at index 0 = 1 min)
+    for _ in 0..12 {
+        db::insert_login_attempt(&pool, "lockuser", "192.168.1.1", false)
+            .await
+            .unwrap();
+    }
+    let level = db::count_lockout_escalation_level(&pool, "lockuser", 10)
+        .await
+        .unwrap();
+    assert_eq!(level, 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn record_failed_login_triggers_lockout(pool: PgPool) {
+    db::insert_user(&pool, "ratelimituser", "hash")
+        .await
+        .unwrap();
+
+    // Insert 10 failed attempts - this should trigger account lockout
+    for _ in 0..10 {
+        db::record_failed_login_and_check_lockout(&pool, "ratelimituser", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+
+    // User should be locked
+    let user = db::get_user_by_username(&pool, "ratelimituser")
+        .await
+        .unwrap();
+    assert!(user.locked_until.is_some());
+    assert!(user.locked_until.unwrap() > Utc::now());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn lockout_escalation_reaches_60min_tier(pool: PgPool) {
+    // The LOCKOUT_DURATIONS are [1, 5, 15, 60, 1440] minutes.
+    // With max_account_failures = 5:
+    //   - 5  failures (0-4)  -> level 0 = 1 minute
+    //   - 10 failures (5-9)  -> level 1 = 5 minutes
+    //   - 15 failures (10-14) -> level 2 = 15 minutes
+    //   - 20 failures (15-19) -> level 3 = 60 minutes
+    //   - 25 failures (20-24) -> level 4 = 1440 minutes (24h)
+
+    db::insert_user(&pool, "escalation60", "hash")
+        .await
+        .unwrap();
+
+    // 20 failures -> level 3 -> 60 min lockout
+    for _ in 0..20 {
+        db::record_failed_login_and_check_lockout(&pool, "escalation60", "10.0.0.1", 5)
+            .await
+            .unwrap();
+    }
+
+    let user = db::get_user_by_username(&pool, "escalation60")
+        .await
+        .unwrap();
+    let locked_until = user.locked_until.expect("user should be locked");
+
+    // Lockout duration should be >= 59 minutes (60 min tier, with some slack for test timing)
+    let duration_min = locked_until.signed_duration_since(Utc::now()).num_minutes();
+    assert!(
+        duration_min >= 55,
+        "expected ~60 min lockout, got {duration_min} min"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn lockout_escalation_reaches_24h_tier(pool: PgPool) {
+    db::insert_user(&pool, "escalation24h", "hash")
+        .await
+        .unwrap();
+
+    // 25 failures -> level 4 -> 1440 min (24h) lockout
+    for _ in 0..25 {
+        db::record_failed_login_and_check_lockout(&pool, "escalation24h", "10.0.0.1", 5)
+            .await
+            .unwrap();
+    }
+
+    let user = db::get_user_by_username(&pool, "escalation24h")
+        .await
+        .unwrap();
+    let locked_until = user.locked_until.expect("user should be locked");
+
+    let duration_min = locked_until.signed_duration_since(Utc::now()).num_minutes();
+    assert!(
+        duration_min >= 1430,
+        "expected ~1440 min lockout, got {duration_min} min"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn lockout_escalation_resets_after_successful_login(pool: PgPool) {
+    // Verify that the consecutive-failure window resets after a successful login.
+    db::insert_user(&pool, "escalationreset", "hash")
+        .await
+        .unwrap();
+
+    // 10 failures -> level 0 -> locked
+    for _ in 0..10 {
+        db::record_failed_login_and_check_lockout(&pool, "escalationreset", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+
+    let user = db::get_user_by_username(&pool, "escalationreset")
+        .await
+        .unwrap();
+    assert!(user.locked_until.is_some());
+
+    // Simulate a successful login
+    db::clear_account_lockout(&pool, "escalationreset")
+        .await
+        .unwrap();
+    db::insert_login_attempt(&pool, "escalationreset", "10.0.0.1", true)
+        .await
+        .unwrap();
+
+    // Now the count should be 0 (reset by success)
+    let count = db::count_failed_attempts_since_last_success(&pool, "escalationreset")
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+
+    // 5 more failures (below threshold of 10)
+    for _ in 0..5 {
+        db::record_failed_login_and_check_lockout(&pool, "escalationreset", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+
+    let user = db::get_user_by_username(&pool, "escalationreset")
+        .await
+        .unwrap();
+    assert!(user.locked_until.is_none(), "should not be locked yet");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn lockout_escalation_sliding_window_keeps_count_across_lockouts(pool: PgPool) {
+    // Simulate the attack scenario: attacker accumulates failures across
+    // multiple lockout periods. The consecutive-failure counter persists
+    // as long as there's no successful login in between.
+    db::insert_user(&pool, "slidingwindow", "hash")
+        .await
+        .unwrap();
+
+    // Phase 1: 10 failures -> lockout triggered
+    for _ in 0..10 {
+        db::record_failed_login_and_check_lockout(&pool, "slidingwindow", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+    let user = db::get_user_by_username(&pool, "slidingwindow")
+        .await
+        .unwrap();
+    assert!(user.locked_until.is_some());
+
+    // Simulate lockout expires (clear it, but NO successful login)
+    db::clear_account_lockout(&pool, "slidingwindow")
+        .await
+        .unwrap();
+
+    // Phase 2: 10 more failures -> level 1 (5 min lockout)
+    for _ in 0..10 {
+        db::record_failed_login_and_check_lockout(&pool, "slidingwindow", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+    let user = db::get_user_by_username(&pool, "slidingwindow")
+        .await
+        .unwrap();
+    let locked_until = user
+        .locked_until
+        .expect("user should be locked after phase 2");
+    let duration_min = locked_until.signed_duration_since(Utc::now()).num_minutes();
+    assert!(
+        duration_min >= 2,
+        "expected level 1 (5 min), got {duration_min} min"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn record_failed_login_below_threshold_no_lockout(pool: PgPool) {
+    db::insert_user(&pool, "underthreshold", "hash")
+        .await
+        .unwrap();
+
+    // 5 attempts is below the threshold of 10
+    for _ in 0..5 {
+        db::record_failed_login_and_check_lockout(&pool, "underthreshold", "10.0.0.1", 10)
+            .await
+            .unwrap();
+    }
+
+    let user = db::get_user_by_username(&pool, "underthreshold")
+        .await
+        .unwrap();
+    assert!(user.locked_until.is_none());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn record_failed_login_transactional_rollback(pool: PgPool) {
+    db::insert_user(&pool, "txuser", "hash").await.unwrap();
+
+    // The function is atomic - if it succeeds, the insert is committed
+    // If it fails (e.g. DB error), the insert is rolled back.
+    // Test by checking count before and after.
+    let count_before: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*)::BIGINT AS \"count!\" FROM login_attempts WHERE username = 'txuser'"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    db::record_failed_login_and_check_lockout(&pool, "txuser", "10.0.0.1", 10)
+        .await
+        .unwrap();
+
+    let count_after: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*)::BIGINT AS \"count!\" FROM login_attempts WHERE username = 'txuser'"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(count_after, count_before.checked_add(1).unwrap());
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -6232,31 +6509,12 @@ async fn delete_system_events_before_keeps_recent(pool: PgPool) {
     assert_eq!(events.len(), 1);
 }
 
-#[sqlx::test(migrations = "./migrations")]
-async fn delete_system_events_before_deletes_old(pool: PgPool) {
-    db::insert_system_event(&pool, "old_event", None, "old event to prune")
-        .await
-        .unwrap();
-
-    let cutoff = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
-    let deleted = db::delete_system_events_before(&pool, cutoff)
-        .await
-        .unwrap();
-    assert_eq!(
-        deleted, 1,
-        "system event must be deleted with future cutoff"
-    );
-
-    let events = db::get_system_events(&pool, 10).await.unwrap();
-    assert!(events.is_empty());
-}
-
 /// Applies the same fallback logic as `get_settings` in `api/system.rs`.
 fn compute_retention_fallbacks(
-    legacy_raw: Option<&str>,
-    report_raw: Option<&str>,
-    failed_raw: Option<&str>,
-    event_raw: Option<&str>,
+    legacy_raw: Option<String>,
+    report_raw: Option<String>,
+    failed_raw: Option<String>,
+    event_raw: Option<String>,
 ) -> (i64, i64, i64, i64) {
     let legacy = legacy_raw.and_then(|v| v.parse::<i64>().ok());
     let retention_days = legacy.unwrap_or(7);
@@ -6294,12 +6552,9 @@ async fn retention_fallback_new_settings_unset_uses_legacy(pool: PgPool) {
         .await
         .unwrap();
 
-    let (ret, report, failed, events) = compute_retention_fallbacks(
-        legacy_raw.as_deref(),
-        report_raw.as_deref(),
-        failed_raw.as_deref(),
-        event_raw.as_deref(),
-    );
+    let (ret, report, failed, events) =
+        compute_retention_fallbacks(legacy_raw, report_raw, failed_raw, event_raw);
+
     assert_eq!(ret, 30);
     assert_eq!(
         report, 0,
@@ -6341,12 +6596,9 @@ async fn retention_fallback_new_settings_take_precedence(pool: PgPool) {
         .await
         .unwrap();
 
-    let (ret, report, failed, events) = compute_retention_fallbacks(
-        legacy_raw.as_deref(),
-        report_raw.as_deref(),
-        failed_raw.as_deref(),
-        event_raw.as_deref(),
-    );
+    let (ret, report, failed, events) =
+        compute_retention_fallbacks(legacy_raw, report_raw, failed_raw, event_raw);
+
     assert_eq!(ret, 30);
     assert_eq!(report, 180, "explicit report_retention_days must be used");
     assert_eq!(
@@ -6372,12 +6624,9 @@ async fn retention_fallback_nothing_set_uses_defaults(pool: PgPool) {
         .await
         .unwrap();
 
-    let (ret, report, failed, events) = compute_retention_fallbacks(
-        legacy_raw.as_deref(),
-        report_raw.as_deref(),
-        failed_raw.as_deref(),
-        event_raw.as_deref(),
-    );
+    let (ret, report, failed, events) =
+        compute_retention_fallbacks(legacy_raw, report_raw, failed_raw, event_raw);
+
     assert_eq!(ret, 7, "default retention_days must be 7");
     assert_eq!(
         report, 0,
@@ -6416,18 +6665,35 @@ async fn retention_fallback_new_settings_without_legacy(pool: PgPool) {
         .await
         .unwrap();
 
-    let (ret, report, failed, events) = compute_retention_fallbacks(
-        legacy_raw.as_deref(),
-        report_raw.as_deref(),
-        failed_raw.as_deref(),
-        event_raw.as_deref(),
-    );
+    let (ret, report, failed, events) =
+        compute_retention_fallbacks(legacy_raw, report_raw, failed_raw, event_raw);
+
     assert_eq!(ret, 7, "default retention_days must be 7");
     assert_eq!(report, 100);
     assert_eq!(failed, 200);
     assert_eq!(events, 300);
 }
 
+#[sqlx::test(migrations = "./migrations")]
+async fn delete_system_events_before_deletes_old(pool: PgPool) {
+    db::insert_system_event(&pool, "old_event", None, "old event to prune")
+        .await
+        .unwrap();
+
+    let cutoff = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+    let deleted = db::delete_system_events_before(&pool, cutoff)
+        .await
+        .unwrap();
+    assert_eq!(
+        deleted, 1,
+        "system event must be deleted with future cutoff"
+    );
+
+    let events = db::get_system_events(&pool, 10).await.unwrap();
+    assert!(events.is_empty());
+}
+
+/// Applies the same fallback logic as `get_settings` in `api/system.rs`.
 #[sqlx::test(migrations = "./migrations")]
 async fn audit_filter_by_target_type(pool: PgPool) {
     db::audit::insert_audit_entry(

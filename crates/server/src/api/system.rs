@@ -9,6 +9,7 @@ use shared::{
     protocol::{ServerToAgent, ServerToUi},
     types::RepoId,
 };
+use sqlx::PgPool;
 use ssh_key::{Algorithm, LineEnding, rand_core::OsRng};
 
 use super::deploy::{agent_binary_dir, query_available_agent_version};
@@ -163,6 +164,61 @@ pub struct SettingsResponse {
     pub borg_query_timeout_secs: u64,
 }
 
+/// Reads a setting and parses it, logging (without failing the request) if
+/// the stored value is present but not parseable.
+async fn parsed_setting<T: std::str::FromStr>(
+    pool: &PgPool,
+    key: &str,
+) -> Result<Option<T>, ApiError>
+where
+    T::Err: std::fmt::Display,
+{
+    Ok(db::get_setting(pool, key).await?.and_then(|v| {
+        v.parse::<T>()
+            .inspect_err(|e| tracing::warn!(setting = key, value = %v, error = %e, "failed to parse setting"))
+            .ok()
+    }))
+}
+
+/// Reads the effective system settings back from the database. Used by both
+/// the GET and PUT handlers so the PUT response always reflects what was
+/// actually persisted, rather than echoing back request fields that may not
+/// have been provided (and therefore not written).
+async fn fetch_settings_response(pool: &PgPool) -> Result<SettingsResponse, ApiError> {
+    let legacy = parsed_setting::<i64>(pool, "retention_days").await?;
+    let retention_days = legacy.unwrap_or(7);
+
+    let report_retention_days = parsed_setting::<i64>(pool, "report_retention_days")
+        .await?
+        .unwrap_or(0);
+
+    let failed_report_retention_days = parsed_setting::<i64>(pool, "failed_report_retention_days")
+        .await?
+        .or(legacy)
+        .unwrap_or(365);
+
+    let system_event_retention_days = parsed_setting::<i64>(pool, "system_event_retention_days")
+        .await?
+        .or(legacy)
+        .unwrap_or(90);
+
+    let timezone = db::get_schedule_timezone(pool).await?;
+
+    let borg_query_timeout_secs = parsed_setting::<u64>(pool, "borg_query_timeout_secs")
+        .await?
+        .filter(|&s| s > 0)
+        .unwrap_or(300);
+
+    Ok(SettingsResponse {
+        retention_days,
+        report_retention_days,
+        failed_report_retention_days,
+        system_event_retention_days,
+        timezone: timezone.name().to_owned(),
+        borg_query_timeout_secs,
+    })
+}
+
 #[utoipa::path(
     get,
     path = "/api/system/settings",
@@ -183,69 +239,7 @@ pub async fn get_settings(
     _admin: RequireAdmin,
     State(state): State<AppState>,
 ) -> Result<Json<SettingsResponse>, ApiError> {
-    let retention_raw = db::get_setting(&state.pool, "retention_days").await?;
-    let legacy = retention_raw.as_deref().and_then(|v| {
-        v.parse::<i64>()
-            .inspect_err(|e| {
-                tracing::warn!(
-                    value = %v,
-                    error = %e,
-                    "failed to parse retention_days setting"
-                );
-            })
-            .ok()
-    });
-    let retention_days = legacy.unwrap_or(7);
-
-    let report_retention_days = db::get_setting(&state.pool, "report_retention_days")
-        .await?
-        .and_then(|v| {
-            v.parse::<i64>().inspect_err(|e| {
-                tracing::warn!(value = %v, error = %e, "failed to parse report_retention_days setting");
-            }).ok()
-        })
-        .unwrap_or(0);
-
-    let failed_report_retention_days = db::get_setting(&state.pool, "failed_report_retention_days")
-        .await?
-        .and_then(|v| {
-            v.parse::<i64>().inspect_err(|e| {
-                tracing::warn!(value = %v, error = %e, "failed to parse failed_report_retention_days setting");
-            }).ok()
-        })
-        .or(legacy)
-        .unwrap_or(365);
-
-    let system_event_retention_days = db::get_setting(&state.pool, "system_event_retention_days")
-        .await?
-        .and_then(|v| {
-            v.parse::<i64>().inspect_err(|e| {
-                tracing::warn!(value = %v, error = %e, "failed to parse system_event_retention_days setting");
-            }).ok()
-        })
-        .or(legacy)
-        .unwrap_or(90);
-
-    let timezone = db::get_schedule_timezone(&state.pool).await?;
-
-    let borg_query_timeout_secs = db::get_setting(&state.pool, "borg_query_timeout_secs")
-        .await?
-        .and_then(|v| {
-            v.parse::<u64>().inspect_err(|e| {
-                tracing::warn!(value = %v, error = %e, "failed to parse borg_query_timeout_secs setting");
-            }).ok()
-        })
-        .filter(|&s| s > 0)
-        .unwrap_or(300);
-
-    Ok(Json(SettingsResponse {
-        retention_days,
-        report_retention_days,
-        failed_report_retention_days,
-        system_event_retention_days,
-        timezone: timezone.name().to_owned(),
-        borg_query_timeout_secs,
-    }))
+    Ok(Json(fetch_settings_response(&state.pool).await?))
 }
 
 /// Request payload for updating system settings.
@@ -352,24 +346,7 @@ pub async fn update_settings(
     )
     .await?;
 
-    let effective_tz = db::get_schedule_timezone(&state.pool).await?;
-
-    let legacy = Some(body.retention_days);
-
-    let report_retention_days = body.report_retention_days.unwrap_or(0);
-
-    let failed_report_retention_days = body.failed_report_retention_days.or(legacy).unwrap_or(365);
-
-    let system_event_retention_days = body.system_event_retention_days.or(legacy).unwrap_or(90);
-
-    Ok(Json(SettingsResponse {
-        retention_days: body.retention_days,
-        report_retention_days,
-        failed_report_retention_days,
-        system_event_retention_days,
-        timezone: effective_tz.name().to_owned(),
-        borg_query_timeout_secs,
-    }))
+    Ok(Json(fetch_settings_response(&state.pool).await?))
 }
 
 /// `PostgreSQL` storage usage breakdown.

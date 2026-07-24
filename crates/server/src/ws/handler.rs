@@ -1848,6 +1848,11 @@ mod tests {
             shutdown_token: tokio_util::sync::CancellationToken::new(),
             client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
             task_registry: shared::task_registry::TaskRegistry::default(),
+
+            user_rate_limiter: crate::rate_limit::UserRateLimiter::new(
+                60,
+                std::time::Duration::from_mins(1),
+            ),
         }
     }
 

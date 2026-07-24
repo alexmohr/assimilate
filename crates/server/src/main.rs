@@ -20,7 +20,10 @@ use server::{
     middleware::csp_headers,
     notifications::NotificationService,
     openapi::ApiDoc,
-    rate_limit::{RateLimiter, rate_limit_middleware},
+    rate_limit::{
+        IpRateLimitMiddlewareState, IpRateLimiter, UserRateLimiter, auth_tracking_middleware,
+        ip_rate_limit_middleware,
+    },
     tunnel::TunnelManager,
     ws,
 };
@@ -113,11 +116,11 @@ async fn main() -> Result<(), StartupError> {
 
     spawn_background_tasks(&state, &tunnel_manager);
 
-    let login_router = build_login_router(&state, client_ip_resolver);
+    let login_router = build_login_router(&state, &client_ip_resolver);
     let registry = state.registry.clone();
     let task_registry = state.task_registry.clone();
     let background_task_tracker = state.background_task_tracker.clone();
-    let app = build_router(login_router)
+    let app = build_router(&state, login_router)
         .with_state(state)
         .layer(axum_middleware::from_fn(csp_headers))
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024));
@@ -229,6 +232,8 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
     } = args;
     let task_registry = shared::task_registry::TaskRegistry::default();
 
+    let user_rate_limiter = UserRateLimiter::new(60, Duration::from_mins(1));
+
     AppState {
         pool,
         encryption_key,
@@ -242,13 +247,14 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         background_task_tracker: server::background_tasks::BackgroundTaskTracker::default(),
         repo_lock: server::RepoLock::default(),
         import_tasks: server::ImportTaskRegistry::default(),
-        pending_dryruns: server::new_pending_map(),
-        pending_restores: server::new_pending_map(),
-        pending_migrations: server::new_pending_map(),
-        pending_deletes: server::new_pending_map(),
+        pending_dryruns: std::sync::Arc::default(),
+        pending_restores: std::sync::Arc::default(),
+        pending_migrations: std::sync::Arc::default(),
+        pending_deletes: std::sync::Arc::default(),
         shutdown_token,
         client_ip_resolver,
         task_registry,
+        user_rate_limiter,
     }
 }
 
@@ -362,14 +368,18 @@ fn spawn_background_tasks(state: &AppState, tunnel_manager: &TunnelManager) {
     state.task_registry.register(resume_handle);
 }
 
-fn build_login_router(state: &AppState, client_ip_resolver: ClientIpResolver) -> Router<AppState> {
-    let login_rate_limiter = RateLimiter::new(10, Duration::from_mins(1), client_ip_resolver);
+fn build_login_router(state: &AppState, client_ip_resolver: &ClientIpResolver) -> Router<AppState> {
+    let login_ip_limiter = IpRateLimiter::new(10, Duration::from_mins(1));
+    let login_rate_limit_state = IpRateLimitMiddlewareState {
+        limiter: login_ip_limiter,
+        resolver: client_ip_resolver.clone(),
+    };
 
     Router::new()
         .route("/api/auth/login", post(api::auth::login))
         .layer(axum_middleware::from_fn_with_state(
-            login_rate_limiter,
-            rate_limit_middleware,
+            login_rate_limit_state,
+            ip_rate_limit_middleware,
         ))
         .with_state(state.clone())
 }
@@ -867,9 +877,17 @@ fn misc_routes() -> Router<AppState> {
         .merge(Scalar::with_url("/api/docs", ApiDoc::openapi()))
 }
 
-fn build_router(login_router: Router<AppState>) -> Router<AppState> {
-    Router::new()
+fn build_router(state: &AppState, login_router: Router<AppState>) -> Router<AppState> {
+    let authenticated_routes = Router::new()
+        .merge(login_router)
         .merge(core_routes())
+        .layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            auth_tracking_middleware,
+        ));
+
+    Router::new()
+        .merge(authenticated_routes)
         .merge(agent_routes())
         .merge(repo_routes())
         .merge(schedule_and_config_routes())
@@ -880,7 +898,6 @@ fn build_router(login_router: Router<AppState>) -> Router<AppState> {
         .merge(tunnel_routes())
         .merge(notification_routes())
         .merge(misc_routes())
-        .merge(login_router)
 }
 
 async fn configure_docs_and_static(app: Router) -> Router {

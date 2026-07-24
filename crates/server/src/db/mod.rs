@@ -21,6 +21,9 @@ use sqlx::PgPool;
 
 use crate::error::ApiError;
 
+/// Exponential backoff durations for account lockout (indexed by escalation level).
+pub const LOCKOUT_DURATIONS: &[i64] = &[1, 5, 15, 60, 1440];
+
 /// Sentinel `agent_token_hash` value for imported placeholder agents that have
 /// no real authentication token.
 pub const IMPORTED_TOKEN_HASH: &str = "imported:no-auth";
@@ -3979,6 +3982,8 @@ pub struct UserRow {
     pub created_at: DateTime<Utc>,
     /// When the user last logged in.
     pub last_login_at: Option<DateTime<Utc>>,
+    /// When the account is locked until (if applicable).
+    pub locked_until: Option<DateTime<Utc>>,
 }
 
 /// A row from the `sessions` table.
@@ -4007,7 +4012,7 @@ pub async fn insert_user(
     sqlx::query_as!(
         UserRow,
         "INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id, username, \
-         must_change_password, created_at, last_login_at",
+         must_change_password, created_at, last_login_at, locked_until",
         username,
         password_hash,
     )
@@ -4024,8 +4029,8 @@ pub async fn insert_user(
 pub async fn get_user_by_username(pool: &PgPool, username: &str) -> Result<UserRow, ApiError> {
     sqlx::query_as!(
         UserRow,
-        "SELECT id, username, must_change_password, created_at, last_login_at FROM users WHERE \
-         username = $1",
+        "SELECT id, username, must_change_password, created_at, last_login_at, locked_until FROM \
+         users WHERE username = $1",
         username,
     )
     .fetch_one(pool)
@@ -4053,12 +4058,13 @@ pub async fn get_user_password_hash(
         must_change_password: bool,
         created_at: DateTime<Utc>,
         last_login_at: Option<DateTime<Utc>>,
+        locked_until: Option<DateTime<Utc>>,
     }
 
     let row = sqlx::query_as!(
         FullRow,
-        "SELECT id, username, password_hash, must_change_password, created_at, last_login_at FROM \
-         users WHERE username = $1",
+        "SELECT id, username, password_hash, must_change_password, created_at, last_login_at, \
+         locked_until FROM users WHERE username = $1",
         username,
     )
     .fetch_one(pool)
@@ -4074,6 +4080,7 @@ pub async fn get_user_password_hash(
         must_change_password: row.must_change_password,
         created_at: row.created_at,
         last_login_at: row.last_login_at,
+        locked_until: row.locked_until,
     };
     Ok((user, row.password_hash))
 }
@@ -4086,8 +4093,8 @@ pub async fn get_user_password_hash(
 pub async fn get_user_by_id(pool: &PgPool, user_id: i64) -> Result<UserRow, ApiError> {
     sqlx::query_as!(
         UserRow,
-        "SELECT id, username, must_change_password, created_at, last_login_at FROM users WHERE id \
-         = $1",
+        "SELECT id, username, must_change_password, created_at, last_login_at, locked_until FROM \
+         users WHERE id = $1",
         user_id,
     )
     .fetch_one(pool)
@@ -4104,8 +4111,8 @@ pub async fn get_user_by_id(pool: &PgPool, user_id: i64) -> Result<UserRow, ApiE
 pub async fn list_users(pool: &PgPool) -> Result<Vec<UserRow>, ApiError> {
     sqlx::query_as!(
         UserRow,
-        "SELECT id, username, must_change_password, created_at, last_login_at FROM users ORDER BY \
-         id",
+        "SELECT id, username, must_change_password, created_at, last_login_at, locked_until FROM \
+         users ORDER BY id",
     )
     .fetch_all(pool)
     .await
@@ -4316,6 +4323,228 @@ pub async fn insert_login_attempt(
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// Count failed login attempts for a username across ALL IPs within the given
+/// window (account-scoped, not per-IP).
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the query fails.
+pub async fn count_failed_login_attempts_by_username(
+    pool: &PgPool,
+    username: &str,
+    window_minutes: i32,
+) -> Result<i64, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct CountRow {
+        count: Option<i64>,
+    }
+
+    let row = sqlx::query_as!(
+        CountRow,
+        "SELECT COUNT(*) as count FROM login_attempts WHERE username = $1 AND success = false AND \
+         attempted_at > NOW() - ($2 || ' minutes')::INTERVAL",
+        username,
+        window_minutes.to_string(),
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(row.count.unwrap_or(0))
+}
+
+/// Set the lockout time for an account.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the query fails.
+pub async fn set_account_lockout(
+    pool: &PgPool,
+    username: &str,
+    locked_until: DateTime<Utc>,
+) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE users SET locked_until = $1 WHERE username = $2",
+        locked_until,
+        username,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// Clear the lockout for an account.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the query fails.
+pub async fn clear_account_lockout(pool: &PgPool, username: &str) -> Result<(), ApiError> {
+    sqlx::query!(
+        "UPDATE users SET locked_until = NULL WHERE username = $1",
+        username,
+    )
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(())
+}
+
+/// Return the escalation level (index into the lockout-durations array) for a
+/// user. The first lockout (at exactly `max_account_failures` failures) yields
+/// index 0 so that the shortest duration is used first.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the query fails.
+pub async fn count_lockout_escalation_level(
+    pool: &PgPool,
+    username: &str,
+    max_account_failures: i64,
+) -> Result<i64, ApiError> {
+    let count = count_failed_attempts_since_last_success(pool, username).await?;
+    if count == 0 {
+        return Ok(0);
+    }
+    Ok(count
+        .saturating_sub(1)
+        .checked_div(max_account_failures)
+        .unwrap_or(0))
+}
+
+/// Count failed login attempts since the last successful login for the given
+/// username. If there has never been a successful login, counts all failures.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the query fails.
+pub async fn count_failed_attempts_since_last_success(
+    pool: &PgPool,
+    username: &str,
+) -> Result<i64, ApiError> {
+    #[derive(sqlx::FromRow)]
+    struct CountRow {
+        count: Option<i64>,
+    }
+
+    let row = sqlx::query_as!(
+        CountRow,
+        "SELECT COUNT(*) as count FROM login_attempts WHERE username = $1 AND success = false AND \
+         attempted_at > COALESCE((SELECT MAX(attempted_at) FROM login_attempts WHERE username = \
+         $1 AND success = true), '-infinity'::TIMESTAMPTZ)",
+        username,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    Ok(row.count.unwrap_or(0))
+}
+
+/// Atomically insert a failed login attempt, check whether the account-scoped
+/// failure threshold has been reached, and if so set the account lockout.
+/// The system event for lockout is recorded outside the transaction (harmless
+/// if it fails).
+///
+/// Uses a sliding/consecutive-failure window -- counts all failed attempts since
+/// the last successful login, so lockout escalation is independent of any fixed
+/// calendar window and can correctly reach the 60-minute and 24-hour tiers.
+/// Record a failed login attempt and check if the account should be locked.
+///
+/// # Errors
+///
+#[derive(sqlx::FromRow)]
+struct RecordCountRow {
+    count: Option<i64>,
+}
+
+/// Record a failed login attempt and check if the account should be locked.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if a database query fails.
+pub async fn record_failed_login_and_check_lockout(
+    pool: &PgPool,
+    username: &str,
+    ip: &str,
+    max_account_failures: i64,
+) -> Result<(), ApiError> {
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+
+    sqlx::query!(
+        "INSERT INTO login_attempts (username, ip, success) VALUES ($1, $2, false)",
+        username,
+        ip,
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+
+    // Count all failures *since the last successful login* (consecutive failures).
+    // This is the key fix: no fixed time window, so escalation can reach any tier
+    // regardless of lockout duration.
+    let row = sqlx::query_as!(
+        RecordCountRow,
+        "SELECT COUNT(*) as count FROM login_attempts WHERE username = $1 AND success = false AND \
+         attempted_at > COALESCE((SELECT MAX(attempted_at) FROM login_attempts WHERE username = \
+         $1 AND success = true), '-infinity'::TIMESTAMPTZ)",
+        username,
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+
+    let count = row.count.unwrap_or(0);
+
+    if count >= max_account_failures {
+        let escalation_level = count
+            .saturating_sub(1)
+            .checked_div(max_account_failures)
+            .unwrap_or(0);
+        let duration_minutes = LOCKOUT_DURATIONS
+            .get(usize::try_from(escalation_level).unwrap_or(0))
+            .copied()
+            .unwrap_or(*LOCKOUT_DURATIONS.last().unwrap_or(&1));
+        let locked_until = Utc::now()
+            .checked_add_signed(chrono::Duration::try_minutes(duration_minutes).unwrap_or_default())
+            .unwrap_or(Utc::now());
+
+        let result = sqlx::query!(
+            "UPDATE users SET locked_until = $1 WHERE username = $2",
+            locked_until,
+            username,
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::Database)?;
+
+        // Only log the lockout event if the user actually exists. For
+        // nonexistent usernames (the bcrypt dummy-hash path) the UPDATE
+        // silently affects 0 rows and logging a fake event would pollute
+        // the audit trail.
+        let user_exists = result.rows_affected() > 0;
+
+        tx.commit().await.map_err(ApiError::Database)?;
+
+        if user_exists {
+            let _ = insert_system_event(
+                pool,
+                "account_locked",
+                None,
+                &format!(
+                    "Account '{username}' locked until {locked_until} after {count} failed \
+                     attempts"
+                ),
+            )
+            .await;
+        }
+
+        return Ok(());
+    }
+
+    tx.commit().await.map_err(ApiError::Database)?;
     Ok(())
 }
 
@@ -4798,7 +5027,7 @@ pub async fn delete_backup_reports_with_archive_before(
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::Database`] if the database query fails.
+/// Returns [`ApiError::Database`] if the query fails.
 pub async fn get_user_preferences(
     pool: &PgPool,
     user_id: i64,

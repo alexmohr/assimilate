@@ -1,11 +1,11 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "small_model": "deepseek-v4-flash",
+  "small_model": "opencode-go/deepseek-v4-flash",
   "agent": {
     "search": {
       "description": "Fast, cheap, read-only repo search and exploration - use this to locate files, symbols, call sites, or config before reasoning about them, instead of spending a more expensive primary agent's own turns on raw grep/read work.",
       "mode": "subagent",
-      "model": "deepseek-v4-flash",
+      "model": "opencode-go/deepseek-v4-flash",
       "permission": {
         "edit": "deny",
         "bash": "deny",
@@ -15,17 +15,17 @@
     "docs-writer": {
       "description": "Writes or updates Markdown documentation (docs/, README files, code comments) from an already-understood change - use once the actual code change is done and only the write-up is left.",
       "mode": "subagent",
-      "model": "qwen3.7-plus"
+      "model": "opencode-go/qwen3.7-plus"
     },
     "test-writer": {
       "description": "Writes unit/integration tests for already-implemented behavior - use once the code change itself is done and only test coverage is left.",
       "mode": "subagent",
-      "model": "kimi-k2.7-code"
+      "model": "opencode-go/kimi-k2.7-code"
     },
     "reviewer": {
       "description": "Reviews a diff for correctness, duplicated logic, and test coverage without editing anything - use for a second opinion before or after opencode-harness pushes a fix.",
       "mode": "subagent",
-      "model": "glm-5.2",
+      "model": "opencode-go/glm-5.2",
       "permission": {
         "edit": "deny",
         "bash": "ask"

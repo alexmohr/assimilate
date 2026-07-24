@@ -61,7 +61,7 @@ class Config:
             base_branch=os.environ.get("HARNESS_BASE_BRANCH", "main"),
             poll_interval_seconds=_int("HARNESS_POLL_INTERVAL", 180),
             opencode_model=None,
-            router_model=os.environ.get("HARNESS_ROUTER_MODEL", "deepseek-v4-flash"),
+            router_model=os.environ.get("HARNESS_ROUTER_MODEL", "opencode-go/deepseek-v4-flash"),
             router_timeout_seconds=_int("HARNESS_ROUTER_TIMEOUT", 120),
             opencode_timeout_seconds=_int("HARNESS_OPENCODE_TIMEOUT", 14400),
             max_local_validation_attempts=_int("HARNESS_MAX_LOCAL_ATTEMPTS", 3),

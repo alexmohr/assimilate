@@ -182,8 +182,10 @@ gateway. Using the wrong one for how you've authenticated opencode surfaces
 as an opaque `UnknownError: Unexpected server error` from opencode itself,
 not as a harness bug. Run `opencode models` to see which provider prefixes
 are actually configured and working before pointing `--model`/`HARNESS_ROUTER_MODEL`
-at one - the bare model ids used by default here (see "Model routing" below)
-may need a provider prefix added for your own opencode setup.
+at one - the routing table below defaults to the `opencode-go/` prefix (this
+harness's own hosted-gateway setup); change it in `model_router.py` (and
+`config.py`'s `HARNESS_ROUTER_MODEL` default, and `opencode.json`) if your
+own opencode is authenticated against a different provider instead.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -191,7 +193,7 @@ may need a provider prefix added for your own opencode setup.
 | `HARNESS_REPO_DIR` | `.` | Path to the local clone the harness operates on |
 | `HARNESS_BASE_BRANCH` | `main` | Base branch for rebases and new issue branches |
 | `HARNESS_POLL_INTERVAL` | `180` | Seconds between cycles |
-| `HARNESS_ROUTER_MODEL` | `deepseek-v4-flash` | Cheap/fast model used to classify each task before picking the model that actually does the work - see "Model routing" below |
+| `HARNESS_ROUTER_MODEL` | `opencode-go/deepseek-v4-flash` | Cheap/fast model used to classify each task before picking the model that actually does the work - see "Model routing" below |
 | `HARNESS_ROUTER_TIMEOUT` | `120` | Seconds before the classifier call itself is killed - it only has to answer a question, not edit anything, so this is far shorter than `HARNESS_OPENCODE_TIMEOUT` |
 | `HARNESS_OPENCODE_TIMEOUT` | `14400` (4h) | Seconds before an opencode invocation is killed. Killing the whole process group, not just opencode itself, so nothing it spawned (e.g. a `pre-commit`/`cargo` call from its bash tool) is left running orphaned |
 | `HARNESS_MAX_LOCAL_ATTEMPTS` | `3` | Consecutive *identical* local validation failures before giving up *this cycle* - an attempt whose failure differs from the last one counts as progress and doesn't count against this (up to a hard cap of 3x this value regardless), so a chain of distinct, real bugs (fix one, reveal the next) gets a fair shot instead of exhausting the budget on genuine progress |
@@ -233,40 +235,47 @@ a large refactor, a security-sensitive review, a one-line boilerplate change -
 is never the right tradeoff between cost and capability. By default (no
 `--model` flag) the harness classifies each task before doing any real work:
 it hands a short description of the task to the cheap/fast `HARNESS_ROUTER_MODEL`
-and asks it to pick the model that should actually do the job from the table
-below (see `model_router.py`). One classification per fix attempt - a PR's
-merge-conflict resolution, its post-conflict validation retry, and its main
-CI/review fix all share the same routed model; a task shouldn't switch models
-mid-retry.
+and asks it to name which kind of task it is from the table below - it never
+picks a model itself (see `model_router.py`). One classification per fix
+attempt - a PR's merge-conflict resolution, its post-conflict validation
+retry, and its main CI/review fix all share the same routed model; a task
+shouldn't switch models mid-retry.
 
-| Task | Recommended model | Alternative | Notes |
+The model for the classified task is then resolved deterministically: always
+the row's own model, *except* "Simple boilerplate code" - the one row whose
+alternative is specifically `deepseek-v4-flash` - which routes there instead,
+since that model is cheap enough to prefer outright for that kind of task.
+Every other alternative below is purely informational (kept for context on
+why that model was chosen); the router itself never picks between a row's
+model and a non-`deepseek-v4-flash` alternative.
+
+| Task | Model used | Alternative (informational only) | Notes |
 |---|---|---|---|
-| Fix failing PRs / CI failures | `kimi-k2.7-code` | `glm-5.2` | Kimi is a good default for code repair. Use GLM when the failure requires deeper architecture reasoning. |
-| Implement new features | `kimi-k2.7-code` | `glm-5.2` | Kimi for most coding; GLM for large cross-module features. |
-| Large refactors | `glm-5.2` | `kimi-k2.7-code` | Better when many files and dependencies are involved. |
-| Code review | `glm-5.2` | `kimi-k2.7-code` | GLM as reviewer, Kimi as implementer. |
-| Debug mysterious bugs | `glm-5.2` | `kimi-k2.7-code` | Use the stronger reasoning model first. |
-| Write tests | `kimi-k2.7-code` | `qwen3.7-plus` | Good balance of speed and correctness. |
-| Unit test fixes | `kimi-k2.7-code` | `deepseek-v4-pro` | Usually straightforward. |
-| Documentation generation | `qwen3.7-plus` | `kimi-k2.7-code` | Saves your stronger models for harder tasks. |
-| Simple boilerplate code | `qwen3.7-plus` | `deepseek-v4-flash` | High quota, lower importance. |
-| Dependency upgrades | `glm-5.2` | `kimi-k2.7-code` | Needs awareness of ecosystem changes. |
-| Security review | `glm-5.2` | `kimi-k2.7-code` | Prefer deeper reasoning. |
-| Architecture design | `glm-5.2` | `grok-4.5` | Planning > raw coding speed. |
-| Repo exploration / onboarding | `glm-5.2` | `kimi-k2.7-code` | Long context and reasoning matter. |
-| Small bug fixes | `kimi-k2.7-code` | `qwen3.7-plus` | Fast turnaround. |
-| Mass automated PR repair bot | `kimi-k2.7-code` | `qwen3.7-plus` | Best quota/capability ratio. |
-| Cheap background agent tasks | `deepseek-v4-flash` | `mimo-v2.5` | Use only for low-risk work. |
+| Fix failing PRs / CI failures | `opencode-go/kimi-k2.7-code` | `opencode-go/glm-5.2` | Kimi is a good default for code repair. Use GLM when the failure requires deeper architecture reasoning. |
+| Implement new features | `opencode-go/kimi-k2.7-code` | `opencode-go/glm-5.2` | Kimi for most coding; GLM for large cross-module features. |
+| Large refactors | `opencode-go/glm-5.2` | `opencode-go/kimi-k2.7-code` | Better when many files and dependencies are involved. |
+| Code review | `opencode-go/glm-5.2` | `opencode-go/kimi-k2.7-code` | GLM as reviewer, Kimi as implementer. |
+| Debug mysterious bugs | `opencode-go/glm-5.2` | `opencode-go/kimi-k2.7-code` | Use the stronger reasoning model first. |
+| Write tests | `opencode-go/kimi-k2.7-code` | `opencode-go/qwen3.7-plus` | Good balance of speed and correctness. |
+| Unit test fixes | `opencode-go/kimi-k2.7-code` | `opencode-go/deepseek-v4-pro` | Usually straightforward. |
+| Documentation generation | `opencode-go/qwen3.7-plus` | `opencode-go/kimi-k2.7-code` | Saves your stronger models for harder tasks. |
+| Simple boilerplate code | `opencode-go/deepseek-v4-flash` **(alternative used)** | `opencode-go/qwen3.7-plus` (row model) | High quota, lower importance. |
+| Dependency upgrades | `opencode-go/glm-5.2` | `opencode-go/kimi-k2.7-code` | Needs awareness of ecosystem changes. |
+| Security review | `opencode-go/glm-5.2` | `opencode-go/kimi-k2.7-code` | Prefer deeper reasoning. |
+| Architecture design | `opencode-go/glm-5.2` | `opencode-go/grok-4.5` | Planning > raw coding speed. |
+| Repo exploration / onboarding | `opencode-go/glm-5.2` | `opencode-go/kimi-k2.7-code` | Long context and reasoning matter. |
+| Small bug fixes | `opencode-go/kimi-k2.7-code` | `opencode-go/qwen3.7-plus` | Fast turnaround. |
+| Mass automated PR repair bot | `opencode-go/kimi-k2.7-code` | `opencode-go/qwen3.7-plus` | Best quota/capability ratio. |
+| Cheap background agent tasks | `opencode-go/deepseek-v4-flash` | `opencode-go/mimo-v2.5` | Use only for low-risk work. |
 
-The classifier is asked to answer with a strict JSON object (`task_type`,
-`complexity`, `files_affected`, `recommended_model`, `reason`); its
-`recommended_model` is only trusted when it actually matches a model in the
-table above (primary or alternative) - a hallucinated or malformed model
-string falls back to the chosen `task_type`'s own recommended model, and an
-unparsable or failed classification run falls back to
-`model_router.DEFAULT_FALLBACK_MODEL` (`kimi-k2.7-code`) - this harness's own
-job is overwhelmingly "Fix failing PRs / CI failures" and "Mass automated PR
-repair bot", both of which land there anyway.
+The classifier answers with a strict JSON object (`task_type`, `complexity`,
+`files_affected`, `reason`) - `complexity`/`files_affected` aren't currently
+used to pick the model, they're logged alongside the decision for
+diagnostics. An unrecognized `task_type`, or an unparsable/failed
+classification run, falls back to `model_router.DEFAULT_FALLBACK_MODEL`
+(`opencode-go/kimi-k2.7-code`) - this harness's own job is overwhelmingly
+"Fix failing PRs / CI failures" and "Mass automated PR repair bot", both of
+which land there anyway.
 
 Passing `--model` (still CLI-only, same as before this feature existed) pins
 every task to that one model and skips the classifier call entirely - useful
@@ -279,7 +288,7 @@ The repo root also ships an `opencode.json` defining a few narrow-purpose
 subagents an interactive `opencode` session (human or agent-driven) can
 delegate to via the Task tool or `@agent-name`, so the primary/expensive model
 doesn't spend its own turns on work a cheaper, more specialized model handles
-just as well - e.g. the `search` subagent runs on `deepseek-v4-flash` and is
+just as well - e.g. the `search` subagent runs on `opencode-go/deepseek-v4-flash` and is
 denied edit/bash/webfetch entirely, so it can only locate files/symbols and
 report back. See that file for the full list (`docs-writer`, `test-writer`,
 `reviewer`) and `https://opencode.ai/docs/agents/` for the config schema.

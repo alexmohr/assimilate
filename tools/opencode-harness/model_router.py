@@ -9,12 +9,15 @@ strong enough for those is wasteful for a one-line boilerplate fix.
 
 Instead, before doing any real work, the harness hands a short description of
 the task to a cheap, fast classifier model (see `Config.router_model`) and
-asks it to pick the right model for the *actual* job from `ROUTING_TABLE`
-below. The classifier's own JSON answer is validated against that table
-before ever being handed to `opencode --model` - a hallucinated or malformed
-model string would otherwise surface as an opaque `UnknownError` from
-opencode itself several minutes into a run (see tools/opencode-harness/
-README.md's provider-prefix note), not as a clear routing bug.
+asks it only to name the `task_type` from `ROUTING_TABLE` below that best
+matches - never a model id directly, so there's nothing for it to hallucinate
+that could surface as an opaque `UnknownError` from opencode itself several
+minutes into a run (see tools/opencode-harness/README.md's provider-prefix
+note). The model itself is then picked deterministically from that
+`task_type`: always `ModelRoute.primary`, *except* when a route's alternative
+is specifically the cheap background model (`deepseek-v4-flash`), in which
+case that alternative is used instead - `_resolve_model` below is the single
+place this decision is made.
 
 `Config.opencode_model` (the CLI-only `--model` flag) is still an escape
 hatch: passing it pins every task to that one model and skips classification
@@ -40,7 +43,14 @@ log = logging.getLogger("harness.router")
 # parsed into a model this table actually recognizes) - "Fix failing PRs /
 # CI failures" and "Mass automated PR repair bot" both land here anyway,
 # and that's what this harness spends most of its time doing.
-DEFAULT_FALLBACK_MODEL = "kimi-k2.7-code"
+#
+# Every model id here is provider-prefixed (`opencode-go/...`) since that's
+# what `opencode --model` actually needs to accept it - a bare model name
+# alone fails with an opaque `UnknownError: Unexpected server error` (see
+# README.md's provider-prefix note). Change the prefix here (and in
+# config.py's HARNESS_ROUTER_MODEL default, and opencode.json) together if
+# you're not routing through opencode's own hosted gateway.
+DEFAULT_FALLBACK_MODEL = "opencode-go/kimi-k2.7-code"
 
 _ROUTER_TIMEOUT_INSTRUCTION = (
     "\n\nDo not edit, create, or delete any files - only read what you need to "
@@ -64,111 +74,111 @@ class ModelRoute:
 ROUTING_TABLE: dict[str, ModelRoute] = {
     "bug_fix": ModelRoute(
         "Fix failing PRs / CI failures",
-        "kimi-k2.7-code",
-        "glm-5.2",
+        "opencode-go/kimi-k2.7-code",
+        "opencode-go/glm-5.2",
         "Kimi is a good default for code repair. Use GLM when the failure requires "
         "deeper architecture reasoning.",
     ),
     "feature": ModelRoute(
         "Implement new features",
-        "kimi-k2.7-code",
-        "glm-5.2",
+        "opencode-go/kimi-k2.7-code",
+        "opencode-go/glm-5.2",
         "Kimi for most coding; GLM for large cross-module features.",
     ),
     "refactor": ModelRoute(
         "Large refactors",
-        "glm-5.2",
-        "kimi-k2.7-code",
+        "opencode-go/glm-5.2",
+        "opencode-go/kimi-k2.7-code",
         "Better when many files and dependencies are involved.",
     ),
     "code_review": ModelRoute(
         "Code review",
-        "glm-5.2",
-        "kimi-k2.7-code",
+        "opencode-go/glm-5.2",
+        "opencode-go/kimi-k2.7-code",
         "GLM as reviewer, Kimi as implementer.",
     ),
     "debug": ModelRoute(
         "Debug mysterious bugs",
-        "glm-5.2",
-        "kimi-k2.7-code",
+        "opencode-go/glm-5.2",
+        "opencode-go/kimi-k2.7-code",
         "Use the stronger reasoning model first.",
     ),
     "write_tests": ModelRoute(
         "Write tests",
-        "kimi-k2.7-code",
-        "qwen3.7-plus",
+        "opencode-go/kimi-k2.7-code",
+        "opencode-go/qwen3.7-plus",
         "Good balance of speed and correctness.",
     ),
     "unit_test_fix": ModelRoute(
         "Unit test fixes",
-        "kimi-k2.7-code",
-        "deepseek-v4-pro",
+        "opencode-go/kimi-k2.7-code",
+        "opencode-go/deepseek-v4-pro",
         "Usually straightforward.",
     ),
     "documentation": ModelRoute(
         "Documentation generation",
-        "qwen3.7-plus",
-        "kimi-k2.7-code",
+        "opencode-go/qwen3.7-plus",
+        "opencode-go/kimi-k2.7-code",
         "Saves your stronger models for harder tasks.",
     ),
     "boilerplate": ModelRoute(
         "Simple boilerplate code",
-        "qwen3.7-plus",
-        "deepseek-v4-flash",
+        "opencode-go/qwen3.7-plus",
+        "opencode-go/deepseek-v4-flash",
         "High quota, lower importance.",
     ),
     "dependency_upgrade": ModelRoute(
         "Dependency upgrades",
-        "glm-5.2",
-        "kimi-k2.7-code",
+        "opencode-go/glm-5.2",
+        "opencode-go/kimi-k2.7-code",
         "Needs awareness of ecosystem changes.",
     ),
     "security_review": ModelRoute(
         "Security review",
-        "glm-5.2",
-        "kimi-k2.7-code",
+        "opencode-go/glm-5.2",
+        "opencode-go/kimi-k2.7-code",
         "Prefer deeper reasoning.",
     ),
     "architecture": ModelRoute(
         "Architecture design",
-        "glm-5.2",
-        "grok-4.5",
+        "opencode-go/glm-5.2",
+        "opencode-go/grok-4.5",
         "Planning > raw coding speed.",
     ),
     "repo_exploration": ModelRoute(
         "Repo exploration / onboarding",
-        "glm-5.2",
-        "kimi-k2.7-code",
+        "opencode-go/glm-5.2",
+        "opencode-go/kimi-k2.7-code",
         "Long context and reasoning matter.",
     ),
     "small_bug_fix": ModelRoute(
         "Small bug fixes",
-        "kimi-k2.7-code",
-        "qwen3.7-plus",
+        "opencode-go/kimi-k2.7-code",
+        "opencode-go/qwen3.7-plus",
         "Fast turnaround.",
     ),
     "mass_pr_repair": ModelRoute(
         "Mass automated PR repair bot",
-        "kimi-k2.7-code",
-        "qwen3.7-plus",
+        "opencode-go/kimi-k2.7-code",
+        "opencode-go/qwen3.7-plus",
         "Best quota/capability ratio.",
     ),
     "cheap_background": ModelRoute(
         "Cheap background agent tasks",
-        "deepseek-v4-flash",
-        "mimo-v2.5",
+        "opencode-go/deepseek-v4-flash",
+        "opencode-go/mimo-v2.5",
         "Use only for low-risk work.",
     ),
 }
 
-# Every model id this harness is allowed to hand to `opencode --model` as a
-# *routed* choice - anything the classifier returns outside this set is
-# treated as a hallucination, never passed through as-is (see _resolve_model).
-_VALID_MODELS: frozenset[str] = frozenset(
-    {route.primary for route in ROUTING_TABLE.values()}
-    | {route.alternative for route in ROUTING_TABLE.values()}
-    | {DEFAULT_FALLBACK_MODEL}
-)
+# The one alternative model this table is still allowed to route to (see
+# _resolve_model) - `deepseek-v4-flash` is cheap enough that using it whenever
+# it's a route's alternative is worth the capability tradeoff even outside
+# the "cheap background" task_type it's the primary for. Every other
+# alternative is ignored: the classifier only ever names a task_type, never a
+# model, so there's no per-task judgment call left for it to make between a
+# route's primary and its (non-deepseek) alternative.
+_CHEAP_BACKGROUND_MODEL = "opencode-go/deepseek-v4-flash"
 
 
 @dataclass(frozen=True)
@@ -180,21 +190,19 @@ class ModelDecision:
     classification: dict | None
 
 
-def _routing_table_markdown() -> str:
-    lines = ["| task_type | recommended_model | alternative_model | notes |", "|---|---|---|---|"]
+def _task_types_markdown() -> str:
+    lines = ["| task_type | description |", "|---|---|"]
     for key, route in ROUTING_TABLE.items():
-        lines.append(
-            f"| {key} ({route.label}) | {route.primary} | {route.alternative} | {route.notes} |"
-        )
+        lines.append(f"| {key} | {route.label} |")
     return "\n".join(lines)
 
 
 def _build_classifier_prompt(task_context: str) -> str:
     return (
         "You are a fast, cheap task classifier for an automated coding pipeline "
-        "that delegates the actual work to one of several models with different "
-        "cost/capability tradeoffs.\n\n"
-        f"Model routing table:\n{_routing_table_markdown()}\n\n"
+        "that delegates the actual work to a model chosen for the kind of task "
+        "this is - you only classify, you never pick the model yourself.\n\n"
+        f"task_type values to choose from:\n{_task_types_markdown()}\n\n"
         f"Task to classify:\n\n{task_context}\n\n"
         "Respond with ONLY a single JSON object - no prose, no markdown code "
         "fences - in exactly this shape:\n"
@@ -202,9 +210,6 @@ def _build_classifier_prompt(task_context: str) -> str:
         '  "task_type": "<one of the task_type values from the table above>",\n'
         '  "complexity": "low|medium|high",\n'
         '  "files_affected": "single|few|multiple",\n'
-        '  "recommended_model": "<the recommended_model or alternative_model of '
-        "the chosen task_type row - pick the alternative when its note applies "
-        'to this task>",\n'
         '  "reason": "<one sentence>"\n'
         "}" + _ROUTER_TIMEOUT_INSTRUCTION
     )
@@ -260,22 +265,20 @@ def _normalize_task_type(raw: str) -> str:
 
 
 def _resolve_model(classification: dict) -> str:
-    """The classifier is asked to name a model directly (see the prompt) so it
-    can pick the alternative when its own note applies - but that string is
-    never trusted blindly: only a model id that actually appears in
-    ROUTING_TABLE is passed through. Falls back to the chosen task_type's own
-    primary model, then to DEFAULT_FALLBACK_MODEL, if the model string itself
-    doesn't check out (a hallucinated id, a provider-prefixed variant this
-    table doesn't know about, or a missing/malformed field).
+    """Deterministically resolves a `task_type` to a model - always
+    `ModelRoute.primary`, except when the route's alternative is specifically
+    `_CHEAP_BACKGROUND_MODEL`, in which case that alternative is used instead.
+    The classifier itself never names a model (see the prompt) - only a
+    `task_type` - so there's nothing here to trust or validate beyond that
+    string actually matching a known key; an unrecognized or missing
+    `task_type` falls back to DEFAULT_FALLBACK_MODEL.
     """
-    candidate = classification.get("recommended_model")
-    if isinstance(candidate, str) and candidate.strip() in _VALID_MODELS:
-        return candidate.strip()
-
     task_type = classification.get("task_type")
     if isinstance(task_type, str):
         route = ROUTING_TABLE.get(_normalize_task_type(task_type))
         if route is not None:
+            if route.alternative == _CHEAP_BACKGROUND_MODEL:
+                return route.alternative
             return route.primary
 
     return DEFAULT_FALLBACK_MODEL

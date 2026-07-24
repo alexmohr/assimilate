@@ -413,8 +413,39 @@ def _problem_summary(
     return "\n\n".join(parts) if parts else "(no diagnostic content was available)"
 
 
+def _stage_signature(pr: PrDetail) -> str:
+    """Cheap signature of which stages currently need fixing - CI, merge
+    conflict, coverage precheck, duplicate-code precheck, review - built
+    entirely from data `gh.get_pr` already fetched, no extra API calls.
+
+    Deliberately excludes the derived `PR Merge Gate` check: that check only
+    ever reflects these same five signals (see sync-pr-labels.js), it never
+    fails independently, so there's nothing "except the gate" to exclude in
+    practice - it simply never enters the signature in the first place.
+
+    Used to tell "still the exact same problem" apart from "a different stage
+    started failing since this PR was marked stuck, with no new commit
+    pushed" - see PrAttempt.stuck_stage_signature.
+    """
+    return "|".join(
+        f"{name}={value}"
+        for name, value in (
+            ("ci", pr.ci_failing),
+            ("merge", pr.merge_conflict),
+            ("coverage", pr.coverage_failed),
+            ("duplicate", pr.duplicate_code),
+            ("review", pr.changes_requested),
+        )
+    )
+
+
 def _mark_stuck(
-    cfg: Config, pr: PrDetail, reason: str, details: str | None = None, question: bool = False
+    cfg: Config,
+    state: HarnessState,
+    pr: PrDetail,
+    reason: str,
+    details: str | None = None,
+    question: bool = False,
 ) -> None:
     """Stops the harness retrying `pr` and posts why.
 
@@ -432,6 +463,7 @@ def _mark_stuck(
     if cfg.dry_run:
         log.info("[dry-run] would mark PR #%d stuck: %s", pr.number, reason)
         return
+    state.set_stuck_stage_signature(pr.number, _stage_signature(pr))
     gh.add_label(cfg.repo, pr.number, cfg.stuck_label)
     if question:
         gh.add_label(cfg.repo, pr.number, cfg.question_label)
@@ -495,6 +527,7 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
         )
         _mark_stuck(
             cfg,
+            state,
             pr,
             f"the same problem has persisted across {attempts - 1} attempts",
             details,
@@ -516,7 +549,7 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
 
     rebase_outcome = _resolve_conflicts(cfg)
     if rebase_outcome is RebaseOutcome.FAILED:
-        _mark_stuck(cfg, pr, "could not resolve merge conflicts")
+        _mark_stuck(cfg, state, pr, "could not resolve merge conflicts")
         return False
 
     if rebase_outcome is RebaseOutcome.CLEAN and git_ops.head_sha(
@@ -585,6 +618,7 @@ def handle_pr_fix(cfg: Config, state: HarnessState, pr: PrDetail) -> bool:
                 )
                 _mark_stuck(
                     cfg,
+                    state,
                     pr,
                     "opencode's merge-conflict resolution failed local validation",
                     details,
@@ -699,6 +733,7 @@ def _check_and_fix_pr(cfg: Config, state: HarnessState, number: int) -> bool | N
         if cfg.stuck_label not in detail.labels:
             _mark_stuck(
                 cfg,
+                state,
                 detail,
                 "this PR carries the repo's own `needs human review` label with no other "
                 "fixable problem outstanding",
@@ -737,12 +772,34 @@ def _check_and_fix_pr(cfg: Config, state: HarnessState, number: int) -> bool | N
             state.clear_pr(number)
         else:
             head_sha = gh.get_pr_head_sha(cfg.repo, number)
-            if recorded is not None and recorded.last_head_sha == head_sha:
+            same_commit = recorded is not None and recorded.last_head_sha == head_sha
+            # A stage other than the derived `PR Merge Gate` check flipping
+            # since this PR was parked (e.g. a slow coverage-diff/duplicate-
+            # code run finally posting a failure, or CI being re-run) is new
+            # information the plain head-sha check can't see on its own - see
+            # PrAttempt.stuck_stage_signature. Only meaningful once a
+            # signature was actually recorded (an older state file predating
+            # this field, or a PR stuck via a path that skipped it, both
+            # leave it empty - never treated as "changed" against itself).
+            same_stages = (
+                recorded is not None
+                and recorded.stuck_stage_signature != ""
+                and recorded.stuck_stage_signature == _stage_signature(detail)
+            )
+            if same_commit and same_stages:
                 log.info("PR #%d still stuck (no new commits), skipping", number)
                 return None
-            log.info(
-                "PR #%d has new commits since being marked stuck; clearing and retrying", number
-            )
+            if same_commit:
+                log.info(
+                    "PR #%d: a different stage is failing than when it was marked stuck "
+                    "(no new commit); clearing and retrying",
+                    number,
+                )
+            else:
+                log.info(
+                    "PR #%d has new commits since being marked stuck; clearing and retrying",
+                    number,
+                )
             gh.remove_label(cfg.repo, number, cfg.stuck_label)
             if cfg.question_label in detail.labels:
                 gh.remove_label(cfg.repo, number, cfg.question_label)

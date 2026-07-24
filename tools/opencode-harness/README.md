@@ -115,7 +115,19 @@ asked to edit files.
    it, which a per-PR "did *this* branch get a new commit" check alone can
    never observe. PRs stuck specifically for the `needs human review`
    reason are left alone by this - that one only ever clears when a human
-   removes the label themselves, regardless of what base does.
+   removes the label themselves, regardless of what base does. Nor is a new
+   commit or a base-branch merge the only thing that can un-stick a PR on its
+   *own* commit: the harness also compares which stage (CI, merge conflict,
+   coverage precheck, duplicate-code precheck, review) was failing at the
+   moment it gave up against which stage is failing now, and clears
+   `opencode-harness-stuck` (+ `opencode-harness-question`, if set) the moment
+   they differ, even with no new commit pushed - a stage other than the
+   derived `PR Merge Gate` check (see "Merge gate" in
+   `skills/review/SKILL.md`) settling late (a slow coverage-diff/duplicate-code
+   run finally posting a result) or being re-run can otherwise fail
+   differently than whatever originally got the PR parked, and that's new
+   information worth a fresh look rather than something to sit on until a
+   human notices.
 6. **Once there are zero open PRs, or no open PR is actionable this cycle**
    (see step 1's `HARNESS_FALLBACK_TO_ISSUES`), it picks the newest open
    issue, implements it on a new `opencode/issue-<n>` branch using the same

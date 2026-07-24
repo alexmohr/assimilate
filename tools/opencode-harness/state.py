@@ -30,6 +30,18 @@ class PrAttempt:
     # needs its own un-stick condition distinct from the ordinary
     # fingerprint/head-sha circuit breaker below.
     stuck_reason: str = ""
+    # Which of ci/merge/coverage/duplicate-code/review were failing at the
+    # moment this PR was marked stuck (see harness.py's _stage_signature) -
+    # deliberately excludes the derived `PR Merge Gate` check itself, which
+    # only ever reflects these same five and never fails independently.
+    # Compared against the PR's *current* signature on every later cycle: the
+    # plain head-sha check alone can't tell "still the exact same problem"
+    # apart from "a different stage started failing since this PR was parked,
+    # with no new commit pushed" (e.g. a slow-to-complete workflow finally
+    # posting a failing conclusion, or one being re-run) - the latter is new
+    # information worth a fresh look, not something the harness should sit on
+    # until a human notices and pushes a commit or clears the label by hand.
+    stuck_stage_signature: str = ""
 
 
 @dataclass
@@ -67,6 +79,7 @@ class HarnessState:
                     "attempts": a.attempts,
                     "last_head_sha": a.last_head_sha,
                     "stuck_reason": a.stuck_reason,
+                    "stuck_stage_signature": a.stuck_stage_signature,
                 }
                 for number, a in self.pr_attempts.items()
             },
@@ -96,6 +109,21 @@ class HarnessState:
 
     def clear_pr(self, pr_number: int) -> None:
         self.pr_attempts.pop(str(pr_number), None)
+        self.save()
+
+    def set_stuck_stage_signature(self, pr_number: int, signature: str) -> None:
+        """Records which stages were failing at the moment `pr_number` was
+        marked stuck - see PrAttempt.stuck_stage_signature. Creates the entry
+        if a fix attempt was never actually recorded for this PR, same as
+        set_stuck_reason below (the needs_human_review branch can mark a PR
+        stuck without ever calling record_attempt).
+        """
+        key = str(pr_number)
+        existing = self.pr_attempts.get(key)
+        if existing is None:
+            self.pr_attempts[key] = PrAttempt(stuck_stage_signature=signature)
+        else:
+            existing.stuck_stage_signature = signature
         self.save()
 
     def set_stuck_reason(self, pr_number: int, reason: str) -> None:

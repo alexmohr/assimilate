@@ -538,70 +538,6 @@ onMounted(async () => {
   max-width: 900px;
 }
 
-.page-description {
-  font-size: 0.875rem;
-  line-height: 1.5;
-  color: var(--text-secondary);
-  margin-bottom: 1rem;
-}
-
-@media (max-width: 768px) {
-  .page-description {
-    display: none;
-  }
-}
-
-.header-actions {
-  display: flex;
-  gap: 0.5rem;
-  margin-left: auto;
-}
-
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 1.5rem;
-}
-
-.search-input {
-  width: 260px;
-}
-
-.state-msg {
-  text-align: center;
-  padding: 3rem;
-  color: var(--text-muted);
-}
-
-.state-error {
-  color: var(--danger);
-}
-
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.875rem;
-}
-
-.data-table th {
-  text-align: left;
-  padding: 0.625rem 0.75rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border);
-}
-
-.data-table td {
-  padding: 0.625rem 0.75rem;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-primary);
-}
-
-.name-cell {
-  font-weight: 600;
-}
-
 .desc-cell {
   color: var(--text-secondary);
   font-size: 0.8125rem;
@@ -616,87 +552,14 @@ onMounted(async () => {
   gap: 0.375rem;
 }
 
-.modal {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.5rem;
-  width: 100%;
-  max-width: 400px;
-  box-shadow: var(--shadow-lg);
-}
-
 .modal-wide {
   max-width: 500px;
-}
-
-.modal h2 {
-  font-size: 1.05rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0 0 1rem;
 }
 
 .modal-subtitle {
   font-size: 0.8125rem;
   color: var(--text-secondary);
   margin: -0.5rem 0 1rem;
-}
-
-.modal-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.form-group label {
-  font-size: 0.8125rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.form-group input,
-.form-group select {
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-input);
-  color: var(--text-primary);
-  font-size: 0.875rem;
-}
-
-.form-group input:focus,
-.form-group select:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
-.modal-error {
-  font-size: 0.8125rem;
-  color: var(--danger);
-  padding: 0.5rem 0.75rem;
-  background: var(--danger-subtle);
-  border-radius: var(--radius-sm);
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
-}
-
-.confirm-text {
-  color: var(--text-secondary);
-  line-height: 1.6;
-  font-size: 0.875rem;
-  margin-bottom: 0.5rem;
 }
 
 .members-list {

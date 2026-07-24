@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, can_create_agent, can_delete_agent, can_delete_own_agent, can_create_repo, can_delete_repo, can_delete_own_repo, can_create_schedule, can_delete_schedule, can_delete_own_schedule, can_manage_tags, can_view_all_repos, can_manage_tunnels, created_at FROM roles ORDER BY name",
+  "query": "INSERT INTO roles (name, can_create_agent, can_delete_agent, can_delete_own_agent, can_create_repo, can_delete_repo, can_delete_own_repo, can_create_schedule, can_delete_schedule, can_delete_own_schedule, can_manage_tags, can_view_all_repos, can_manage_tunnels, can_upgrade_agent) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id, name, can_create_agent, can_delete_agent, can_delete_own_agent, can_create_repo, can_delete_repo, can_delete_own_repo, can_create_schedule, can_delete_schedule, can_delete_own_schedule, can_manage_tags, can_view_all_repos, can_manage_tunnels, can_upgrade_agent, created_at",
   "describe": {
     "columns": [
       {
@@ -75,14 +75,35 @@
       },
       {
         "ordinal": 14,
+        "name": "can_upgrade_agent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 15,
         "name": "created_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Text",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Bool"
+      ]
     },
     "nullable": [
+      false,
       false,
       false,
       false,
@@ -100,5 +121,5 @@
       false
     ]
   },
-  "hash": "02ba0cf54d629f7b90abf0886c0d25522bca4668255b0b1468057274b5a993c1"
+  "hash": "b062901e995713818c0f6556504249e5a55ae976724fa2c65db0ab66bbad40c7"
 }

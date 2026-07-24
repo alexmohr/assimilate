@@ -299,6 +299,7 @@ pub async fn me(
         (None, false)
     };
     let role = users::get_user_role_string(&state.pool, auth.user_id).await?;
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
 
     Ok(Json(MeResponse {
         id: auth.user_id,
@@ -307,6 +308,7 @@ pub async fn me(
         must_change_password: user.must_change_password,
         session_expires_at,
         remember_me,
+        can_upgrade_agent: effective.can_upgrade_agent,
     }))
 }
 
@@ -463,4 +465,23 @@ pub async fn update_preferences(
     }
     db::set_user_preferences(&state.pool, auth.user_id, &body).await?;
     Ok(Json(PreferencesResponse { inner: body }))
+}
+
+#[cfg(test)]
+mod tests {
+    use shared::responses::MeResponse;
+
+    #[test]
+    fn me_response_includes_can_upgrade_agent() {
+        let response = MeResponse {
+            id: 0,
+            username: "test".to_string(),
+            role: "admin".to_string(),
+            must_change_password: false,
+            session_expires_at: None,
+            remember_me: false,
+            can_upgrade_agent: true,
+        };
+        assert!(response.can_upgrade_agent);
+    }
 }

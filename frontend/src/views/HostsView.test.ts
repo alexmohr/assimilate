@@ -7,6 +7,8 @@ import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiClient } from '../api/client'
+import { useAuthStore } from '../stores/auth'
+import type { AuthUser } from '../stores/auth'
 import HostsView from './HostsView.vue'
 
 vi.mock('../api/client', () => ({
@@ -111,7 +113,18 @@ async function mountWithAgent(
   const router = makeRouter()
   await router.push('/agents')
   await router.isReady()
-  const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+  const pinia = createPinia()
+  const authStore = useAuthStore(pinia)
+  authStore.user = {
+    id: 1,
+    username: 'test-user',
+    role: 'admin',
+    must_change_password: false,
+    created_at: '2026-01-01T00:00:00Z',
+    last_login_at: null,
+    can_upgrade_agent: true,
+  } as AuthUser
+  const wrapper = mount(HostsView, { global: { plugins: [pinia, router] } })
   await flushPromises()
   return wrapper
 }

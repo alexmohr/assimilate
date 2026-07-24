@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT r.id, r.name, r.can_create_agent, r.can_delete_agent, r.can_delete_own_agent, r.can_create_repo, r.can_delete_repo, r.can_delete_own_repo, r.can_create_schedule, r.can_delete_schedule, r.can_delete_own_schedule, r.can_manage_tags, r.can_view_all_repos, r.can_manage_tunnels, r.created_at FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = $1 ORDER BY r.name",
+  "query": "SELECT r.id, r.name, r.can_create_agent, r.can_delete_agent, r.can_delete_own_agent, r.can_create_repo, r.can_delete_repo, r.can_delete_own_repo, r.can_create_schedule, r.can_delete_schedule, r.can_delete_own_schedule, r.can_manage_tags, r.can_view_all_repos, r.can_manage_tunnels, r.can_upgrade_agent, r.created_at FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = $1 ORDER BY r.name",
   "describe": {
     "columns": [
       {
@@ -75,6 +75,11 @@
       },
       {
         "ordinal": 14,
+        "name": "can_upgrade_agent",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 15,
         "name": "created_at",
         "type_info": "Timestamptz"
       }
@@ -99,8 +104,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "b2a89d718c5e2c3cf3ef5e710e5752b4e3067c80189dbba60e367c2b4f17a25a"
+  "hash": "2d93febd603a4d3ce2808fe236ba168b84ae3e525cdb2b537952badaa42e7d1f"
 }

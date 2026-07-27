@@ -71,19 +71,12 @@ asked to edit files.
    its exact output is fed back to opencode and it retries (up to
    `HARNESS_MAX_LOCAL_ATTEMPTS`). Only once everything passes does the
    harness itself `git commit` (with a conventional-commits message it
-   generates) - then, before ever pushing, runs one self-review pass over
-   that exact commit with the model this harness's own routing table
-   recommends for "Code review" (see "Model routing" below). Deterministic
-   validation already caught anything a test/lint could catch; this pass is
-   specifically for what it can't - a real correctness bug, a security
-   issue, a weakened/deleted/skipped test, a forbidden suppression, or a
-   directly-added/removed GitHub label. A clean verdict (or the reviewer
-   itself failing to run or answer - never a hard blocker) pushes as-is;
-   a blocking finding gets exactly one more opencode attempt to address it
-   through the same fix-and-validate loop, and the result is pushed either
-   way - a follow-up that fails to even validate falls back to the original,
-   already-validated commit rather than losing it. Only then does the
-   harness `git push`.
+   generates) and `git push`. No review pass runs here, and none runs
+   separately once CI is green either: this repo's own `claude-review.yml`
+   already reviews every PR once its checks settle (see
+   `pre-review-checks.js`, which waits for every other check on the commit
+   to finish before the actual review runs) - a second automated review pass
+   over the same commit would just be spending twice for one job.
 4. From there the repo's own automation takes back over: CI runs,
    `pr-status-labels.yml` re-syncs labels and `claude-review.yml` reviews;
    once the result is `ready to merge` with a genuine approval and no
@@ -207,7 +200,6 @@ own opencode is authenticated against a different provider instead.
 | `HARNESS_POLL_INTERVAL` | `180` | Seconds between cycles |
 | `HARNESS_ROUTER_MODEL` | `opencode-go/deepseek-v4-flash` | Cheap/fast model used to classify each task before picking the model that actually does the work - see "Model routing" below |
 | `HARNESS_ROUTER_TIMEOUT` | `120` | Seconds before the classifier call itself is killed - it only has to answer a question, not edit anything, so this is far shorter than `HARNESS_OPENCODE_TIMEOUT` |
-| `HARNESS_REVIEW_TIMEOUT` | `900` (15m) | Seconds before the self-review pass (see "What it does" step 3) is killed - longer than the classifier's since it has to actually read a diff, far shorter than a full fix attempt |
 | `HARNESS_OPENCODE_TIMEOUT` | `14400` (4h) | Seconds before an opencode invocation is killed. Killing the whole process group, not just opencode itself, so nothing it spawned (e.g. a `pre-commit`/`cargo` call from its bash tool) is left running orphaned |
 | `HARNESS_MAX_LOCAL_ATTEMPTS` | `3` | Consecutive *identical* local validation failures before giving up *this cycle* - an attempt whose failure differs from the last one counts as progress and doesn't count against this (up to a hard cap of 3x this value regardless), so a chain of distinct, real bugs (fix one, reveal the next) gets a fair shot instead of exhausting the budget on genuine progress |
 | `HARNESS_MAX_STUCK_CYCLES` | `3` | Cycles the same problem may survive before the PR/issue is marked stuck |
@@ -254,19 +246,18 @@ attempt - a PR's merge-conflict resolution, its post-conflict validation
 retry, and its main CI/review fix all share the same routed model; a task
 shouldn't switch models mid-retry.
 
-The model for the classified task is then resolved deterministically: always
-the row's own model, *except* "Simple boilerplate code" - the one row whose
-alternative is specifically `deepseek-v4-flash` - which routes there instead,
-since that model is cheap enough to prefer outright for that kind of task.
-Every other alternative below is purely informational (kept for context on
-why that model was chosen); the router itself never picks between a row's
-model and a non-`deepseek-v4-flash` alternative.
-
-The self-review pass (step 3 above) is the one caller that doesn't classify
-at all - it's always specifically a "Code review" task, so it resolves that
-row's model directly (`model_router.model_for_task_type`), skipping the
-classifier call entirely (still respecting an explicit `--model` pin, same
-as everywhere else).
+The model for the classified task is then resolved deterministically. A
+`complexity: "low"` verdict always downgrades to `deepseek-v4-flash`
+regardless of task_type - a simple instance of an otherwise expensive task
+(e.g. a small, single-file "Repo exploration" question) doesn't need that
+row's model just because the *category* usually does. Otherwise: the row's
+own model, *except* "Simple boilerplate code" - the one row whose
+alternative is specifically `deepseek-v4-flash` - which routes there instead
+regardless of complexity, since that model is cheap enough to prefer
+outright for that kind of task. Every other alternative below is purely
+informational (kept for context on why that model was chosen); the router
+itself never picks between a row's model and a non-`deepseek-v4-flash`
+alternative.
 
 | Task | Model used | Alternative (informational only) | Notes |
 |---|---|---|---|
@@ -282,14 +273,15 @@ as everywhere else).
 | Dependency upgrades | `opencode-go/glm-5.2` | `opencode-go/kimi-k2.7-code` | Needs awareness of ecosystem changes. |
 | Security review | `opencode-go/glm-5.2` | `opencode-go/kimi-k2.7-code` | Prefer deeper reasoning. |
 | Architecture design | `opencode-go/glm-5.2` | `opencode-go/grok-4.5` | Planning > raw coding speed. |
-| Repo exploration / onboarding | `opencode-go/glm-5.2` | `opencode-go/kimi-k2.7-code` | Long context and reasoning matter. |
+| Repo exploration / onboarding | `opencode-go/deepseek-v4-flash` | `opencode-go/glm-5.2` | Read-only search/orientation - the same job the `search` opencode.json subagent already does on deepseek-v4-flash. Cheap and fast is the right default; GLM is there for a question that genuinely needs deep reasoning, not just wide reading. |
 | Small bug fixes | `opencode-go/kimi-k2.7-code` | `opencode-go/qwen3.7-plus` | Fast turnaround. |
 | Mass automated PR repair bot | `opencode-go/kimi-k2.7-code` | `opencode-go/qwen3.7-plus` | Best quota/capability ratio. |
 | Cheap background agent tasks | `opencode-go/deepseek-v4-flash` | `opencode-go/mimo-v2.5` | Use only for low-risk work. |
 
 The classifier answers with a strict JSON object (`task_type`, `complexity`,
-`files_affected`, `reason`) - `complexity`/`files_affected` aren't currently
-used to pick the model, they're logged alongside the decision for
+`files_affected`, `reason`) - `complexity` picks between a row's model and
+the cheap background model as described above; `files_affected` isn't
+currently used to pick the model, it's logged alongside the decision for
 diagnostics. An unrecognized `task_type`, or an unparsable/failed
 classification run, falls back to `model_router.DEFAULT_FALLBACK_MODEL`
 (`opencode-go/kimi-k2.7-code`) - this harness's own job is overwhelmingly

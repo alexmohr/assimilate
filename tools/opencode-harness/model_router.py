@@ -9,15 +9,18 @@ strong enough for those is wasteful for a one-line boilerplate fix.
 
 Instead, before doing any real work, the harness hands a short description of
 the task to a cheap, fast classifier model (see `Config.router_model`) and
-asks it only to name the `task_type` from `ROUTING_TABLE` below that best
-matches - never a model id directly, so there's nothing for it to hallucinate
-that could surface as an opaque `UnknownError` from opencode itself several
-minutes into a run (see tools/opencode-harness/README.md's provider-prefix
-note). The model itself is then picked deterministically from that
-`task_type`: always `ModelRoute.primary`, *except* when a route's alternative
-is specifically the cheap background model (`deepseek-v4-flash`), in which
-case that alternative is used instead - `_resolve_model` below is the single
-place this decision is made.
+asks it to name the `task_type` from `ROUTING_TABLE` below that best matches,
+plus a `complexity` rating - never a model id directly, so there's nothing
+for it to hallucinate that could surface as an opaque `UnknownError` from
+opencode itself several minutes into a run (see
+tools/opencode-harness/README.md's provider-prefix note). The model itself is
+then picked deterministically from that `task_type`/`complexity` pair: a
+"low" complexity rating always downgrades to the cheap background model
+regardless of task_type (a simple instance of an otherwise expensive task
+type doesn't need the expensive model); otherwise `ModelRoute.primary`,
+*except* when a route's alternative is specifically the cheap background
+model (`deepseek-v4-flash`), in which case that alternative is used instead -
+`_resolve_model` below is the single place this decision is made.
 
 `Config.opencode_model` (the CLI-only `--model` flag) is still an escape
 hatch: passing it pins every task to that one model and skips classification
@@ -147,9 +150,12 @@ ROUTING_TABLE: dict[str, ModelRoute] = {
     ),
     "repo_exploration": ModelRoute(
         "Repo exploration / onboarding",
+        "opencode-go/deepseek-v4-flash",
         "opencode-go/glm-5.2",
-        "opencode-go/kimi-k2.7-code",
-        "Long context and reasoning matter.",
+        "Read-only search/orientation work - the same job the opencode.json "
+        "`search` subagent already does on deepseek-v4-flash. Cheap and fast "
+        "is the right tradeoff here; only escalate by hand for a question that "
+        "genuinely needs deep cross-file reasoning, not just wide reading.",
     ),
     "small_bug_fix": ModelRoute(
         "Small bug fixes",
@@ -270,18 +276,29 @@ def _normalize_task_type(raw: str) -> str:
 
 
 def _resolve_model(classification: dict) -> str:
-    """Deterministically resolves a `task_type` to a model - always
-    `ModelRoute.primary`, except when the route's alternative is specifically
-    `_CHEAP_BACKGROUND_MODEL`, in which case that alternative is used instead.
+    """Deterministically resolves a `task_type` to a model.
+
+    The classifier also rates `complexity` (low/medium/high) on every call -
+    a "low complexity" verdict means this instance of the task is simple
+    regardless of which task_type it landed in (a one-file `debug` task and a
+    ten-file one aren't the same job), so it always downgrades to
+    `_CHEAP_BACKGROUND_MODEL` rather than paying for that row's primary.
+    Otherwise: always `ModelRoute.primary`, except when the route's
+    alternative is specifically `_CHEAP_BACKGROUND_MODEL`, in which case that
+    alternative is used instead (a row like "Simple boilerplate code" is
+    cheap-model material at any complexity rating).
+
     The classifier itself never names a model (see the prompt) - only a
-    `task_type` - so there's nothing here to trust or validate beyond that
-    string actually matching a known key; an unrecognized or missing
-    `task_type` falls back to DEFAULT_FALLBACK_MODEL.
+    `task_type` and a `complexity` - so there's nothing here to trust or
+    validate beyond that string actually matching a known key; an
+    unrecognized or missing `task_type` falls back to DEFAULT_FALLBACK_MODEL.
     """
     task_type = classification.get("task_type")
     if isinstance(task_type, str):
         route = ROUTING_TABLE.get(_normalize_task_type(task_type))
         if route is not None:
+            if classification.get("complexity") == "low":
+                return _CHEAP_BACKGROUND_MODEL
             if route.alternative == _CHEAP_BACKGROUND_MODEL:
                 return route.alternative
             return route.primary
@@ -304,18 +321,6 @@ def parse_json_response(raw_output: str) -> dict | None:
     except json.JSONDecodeError:
         return None
     return data if isinstance(data, dict) else None
-
-
-def model_for_task_type(cfg: Config, task_type: str) -> str:
-    """Public entry point for a caller that already knows the task_type and
-    has no need to classify anything - e.g. harness.py's self-review gate,
-    which is always specifically a "code review" task. Still respects an
-    explicit `--model` pin the same way `route()` does, so a human forcing
-    one model applies to the review pass too, not just the fix itself.
-    """
-    if cfg.opencode_model:
-        return cfg.opencode_model
-    return _resolve_model({"task_type": task_type})
 
 
 def route(cfg: Config, task_context: str, task_label: str) -> ModelDecision:

@@ -173,28 +173,36 @@ test.describe('Schedules management', () => {
     // Diagnostic: the Overdue badge has failed to appear in CI (but not in a
     // local repro of the same seed data) across every run so far, always with
     // /api/stats/health showing last_backup_at: null for this host - i.e. its
-    // schedule_id + agent_id subquery finds no backup_reports row at all. This
-    // checks the SAME row via a completely different query path
-    // (list_reports_for_schedule, filtered only by schedule_id) to determine
-    // whether the backdated report genuinely isn't associated with this
-    // schedule's id, or whether the bug is specific to get_health_summary's
-    // query.
-    const scheduleReportsResp = await page.request.get(
-      `/api/schedules/${staleSchedule!.id}/reports`,
-    )
-    expect(scheduleReportsResp.ok()).toBe(true)
-    const scheduleReports = (await scheduleReportsResp.json()) as Array<{
-      agent_id: number
-      schedule_id: number | null
+    // schedule_id + agent_id subquery finds no backup_reports row at all. A
+    // previous run confirmed /api/schedules/{id}/reports (filtered only by
+    // schedule_id, a completely different query from get_health_summary) ALSO
+    // returns [] for this schedule's id, ruling out a health-query-specific
+    // bug - the row genuinely isn't attached to this schedule's id at test
+    // time. Look the row up by hostname instead (no schedule_id filter at
+    // all) to see what schedule_id/name it actually has right now.
+    const activityResp = await page.request.get('/api/stats/activity', {
+      params: { hostname: 'stale-report-01', limit: 20 },
+    })
+    expect(activityResp.ok()).toBe(true)
+    const activityEntries = (await activityResp.json()) as Array<{
+      hostname: string
       archive_name: string | null
+      schedule_id: number | null
+      schedule_name: string | null
       started_at: string
-      finished_at: string | null
+      finished_at: string
     }>
-    const staleReport = scheduleReports.find((r) => r.archive_name === 'stale-report-01-backup-old')
+    const staleActivityEntry = activityEntries.find(
+      (a) => a.archive_name === 'stale-report-01-backup-old',
+    )
     expect(
-      staleReport,
-      `backdated report not found via /api/schedules/${staleSchedule!.id}/reports; got: ${JSON.stringify(scheduleReports)}`,
+      staleActivityEntry,
+      `backdated report not found via /api/stats/activity?hostname=stale-report-01; got: ${JSON.stringify(activityEntries)}; staleSchedule.id=${staleSchedule!.id}`,
     ).toBeDefined()
+    expect(
+      staleActivityEntry?.schedule_id,
+      `backdated report's schedule_id (${staleActivityEntry?.schedule_id}, name=${staleActivityEntry?.schedule_name}) does not match staleSchedule.id (${staleSchedule!.id})`,
+    ).toBe(staleSchedule!.id)
 
     const [healthResponse] = await Promise.all([
       page.waitForResponse((resp) => resp.url().includes('/api/stats/health') && resp.ok()),

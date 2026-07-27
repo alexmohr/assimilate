@@ -42,13 +42,6 @@ class PrAttempt:
     # information worth a fresh look, not something the harness should sit on
     # until a human notices and pushes a commit or clears the label by hand.
     stuck_stage_signature: str = ""
-    # head_sha the harness's self-review gate has already run against (see
-    # harness.py's _maybe_self_review) - that gate only fires once CI is
-    # green, and re-runs it on every settled-green poll cycle would spend a
-    # GLM call repeatedly on a commit whose verdict can't have changed since
-    # the last one. Cleared implicitly: a new commit means a new head_sha, so
-    # this simply won't match and the gate fires again on its own.
-    last_self_reviewed_sha: str = ""
 
 
 @dataclass
@@ -87,7 +80,6 @@ class HarnessState:
                     "last_head_sha": a.last_head_sha,
                     "stuck_reason": a.stuck_reason,
                     "stuck_stage_signature": a.stuck_stage_signature,
-                    "last_self_reviewed_sha": a.last_self_reviewed_sha,
                 }
                 for number, a in self.pr_attempts.items()
             },
@@ -148,21 +140,6 @@ class HarnessState:
             self.pr_attempts[key] = PrAttempt(stuck_reason=reason)
         else:
             existing.stuck_reason = reason
-        self.save()
-
-    def set_self_reviewed_sha(self, pr_number: int, sha: str) -> None:
-        """Records that the self-review gate has already run against `sha`
-        for `pr_number` - see PrAttempt.last_self_reviewed_sha. Creates the
-        entry if no fix attempt was ever recorded for this PR (a PR that
-        never needed a fix in the first place still needs this recorded, or
-        the gate would re-run on it every single cycle it stays green).
-        """
-        key = str(pr_number)
-        existing = self.pr_attempts.get(key)
-        if existing is None:
-            self.pr_attempts[key] = PrAttempt(last_self_reviewed_sha=sha)
-        else:
-            existing.last_self_reviewed_sha = sha
         self.save()
 
     def mark_issue_started(self, issue_number: int) -> None:

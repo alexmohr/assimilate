@@ -69,38 +69,6 @@ def build_retry_prompt(
     )
 
 
-def build_self_review_prompt(diff_text: str, max_diff_chars: int = 16000) -> str:
-    """One review pass over a PR's full diff against base (see harness.py's
-    `_maybe_self_review`), run only once every CI check but the derived `PR
-    Merge Gate` has already gone green - the last automated look before the
-    PR would otherwise just sit waiting on a human or this repo's own Claude
-    reviewer. Scoped to genuinely blocking problems the deterministic
-    validation gate (tests, lint, pre-commit) can't catch on its own - not
-    style, not anything a linter would already flag.
-    """
-    truncated = diff_text
-    if len(truncated) > max_diff_chars:
-        truncated = "...(truncated)...\n" + truncated[-max_diff_chars:]
-    return (
-        "You are reviewing a pull request's full diff against its base branch. It "
-        "has already passed its automated tests/lint/pre-commit checks in CI. Look "
-        "only for genuinely blocking problems a test suite wouldn't "
-        "catch: a real correctness bug, a security issue, a test weakened/deleted/"
-        "skipped to make it pass, a forbidden `#[allow(...)]`/`deny.toml` ignore "
-        "entry, or a GitHub label added/removed directly. Do not flag style "
-        "preferences or anything a linter would already catch.\n\n"
-        f"Diff:\n```diff\n{truncated}\n```\n\n"
-        "Respond with ONLY a single JSON object - no prose, no markdown code "
-        "fences - in exactly this shape:\n"
-        "{\n"
-        '  "blocking": true|false,\n'
-        '  "findings": "<empty string if not blocking, otherwise what to fix '
-        'and why>"\n'
-        "}\n\nDo not edit, create, or delete any files - only read the diff above "
-        "and answer."
-    )
-
-
 def build_issue_prompt(number: int, title: str, body: str) -> str:
     return "\n\n".join(
         [

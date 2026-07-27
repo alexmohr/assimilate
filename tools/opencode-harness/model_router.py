@@ -323,18 +323,6 @@ def parse_json_response(raw_output: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def model_for_task_type(cfg: Config, task_type: str) -> str:
-    """Public entry point for a caller that already knows the task_type and
-    has no need to classify anything - e.g. harness.py's self-review gate,
-    which is always specifically a "code review" task. Still respects an
-    explicit `--model` pin the same way `route()` does, so a human forcing
-    one model applies to the review pass too, not just the fix itself.
-    """
-    if cfg.opencode_model:
-        return cfg.opencode_model
-    return _resolve_model({"task_type": task_type})
-
-
 def route(cfg: Config, task_context: str, task_label: str) -> ModelDecision:
     """Classifies `task_context` with `cfg.router_model` and returns the model
     to actually use for it. `task_label` is only for logging (e.g. "PR #123").

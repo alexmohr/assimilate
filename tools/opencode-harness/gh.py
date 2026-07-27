@@ -41,9 +41,6 @@ _FAILING_CHECK_CONCLUSIONS_GQL = {
     "ACTION_REQUIRED",
     "STARTUP_FAILURE",
 }
-# Conclusions that count as passing for PrDetail.ci_green - skipped/neutral
-# count as passing, same convention as .github/scripts/lib/wait-for-check.js.
-_PASSING_CHECK_CONCLUSIONS_GQL = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 
 # Posted by sync-pr-labels.js (see GATE_CHECK_NAME there) only after every
 # other check on the commit has already finished - it's the one check run
@@ -180,37 +177,6 @@ class PrDetail:
                 elif state in ("FAILURE", "ERROR"):
                     return False
         return any_in_progress
-
-    @property
-    def ci_green(self) -> bool:
-        """True once every check on the head commit other than `PR Merge Gate`
-        has completed with a passing conclusion - the gate is excluded because
-        it's a derived, circular check that only posts once everything else
-        here has already settled (see `_GATE_CHECK_NAME`), so waiting on it
-        too would mean this is never true. False for an empty rollup (nothing
-        has reported yet) as well as for anything still in progress or failed.
-
-        Used to gate the harness's self-review pass (see harness.py's
-        `_maybe_self_review`) so it only spends that model call once there's a
-        stable, fully green diff worth reviewing - never on a commit that's
-        still mid-CI or already known to need another fix regardless of what
-        a reviewer thinks of it.
-        """
-        if not self.status_check_rollup:
-            return False
-        for item in self.status_check_rollup:
-            typename = item.get("__typename")
-            if typename == "CheckRun":
-                if item.get("name") == _GATE_CHECK_NAME:
-                    continue
-                if item.get("status") != "COMPLETED":
-                    return False
-                if item.get("conclusion") not in _PASSING_CHECK_CONCLUSIONS_GQL:
-                    return False
-            elif typename == "StatusContext":
-                if (item.get("state") or "").upper() != "SUCCESS":
-                    return False
-        return True
 
     @property
     def needs_fix(self) -> bool:

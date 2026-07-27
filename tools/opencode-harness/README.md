@@ -71,28 +71,13 @@ asked to edit files.
    its exact output is fed back to opencode and it retries (up to
    `HARNESS_MAX_LOCAL_ATTEMPTS`). Only once everything passes does the
    harness itself `git commit` (with a conventional-commits message it
-   generates) and `git push` - no review pass here, since remote CI hasn't
-   even run against this exact commit yet.
-4. **Self-review runs separately, only once a PR is fully green.** Every
-   cycle, a PR with nothing left to fix - every check passed except the
-   derived `PR Merge Gate` (see `PrDetail.ci_green`) - gets exactly one GLM
-   review pass over its full diff against base, using the model this
-   harness's own routing table recommends for "Code review" (see "Model
-   routing" below), before the harness moves on (`_maybe_self_review`).
-   Deterministic validation already caught anything a test/lint could catch;
-   this pass is specifically for what it can't - a real correctness bug, a
-   security issue, a weakened/deleted/skipped test, a forbidden suppression,
-   or a directly-added/removed GitHub label. It runs at most once per
-   head_sha: a clean verdict (or the reviewer itself failing to run or
-   answer - never a hard blocker) is remembered so it's never re-spent on an
-   unchanged commit; a blocking finding gets exactly one opencode attempt
-   (routed to a cheaper model - the review already did the expensive part)
-   to address it, and if that converges it's committed and pushed as a new
-   commit, which moves head_sha and lets CI settle again before this same
-   gate re-evaluates it on a later cycle. A commit still mid-CI, or already
-   known broken (`ci failing`, `merge conflict`, etc. - handle_pr_fix owns
-   fixing those), never reaches this gate at all.
-5. From there the repo's own automation takes back over: CI runs,
+   generates) and `git push`. No review pass runs here, and none runs
+   separately once CI is green either: this repo's own `claude-review.yml`
+   already reviews every PR once its checks settle (see
+   `pre-review-checks.js`, which waits for every other check on the commit
+   to finish before the actual review runs) - a second automated review pass
+   over the same commit would just be spending twice for one job.
+4. From there the repo's own automation takes back over: CI runs,
    `pr-status-labels.yml` re-syncs labels and `claude-review.yml` reviews;
    once the result is `ready to merge` with a genuine approval and no
    `needs human review` label, `pr-status-labels.yml` can squash-merge it
@@ -101,7 +86,7 @@ asked to edit files.
    [#390](https://github.com/alexmohr/assimilate/issues/390), so until then
    a human still clicks merge. The harness never merges anything itself. It
    just polls; once a PR is merged or closed it moves to the next one.
-6. If the *same* underlying problem (same failing-check content, same
+5. If the *same* underlying problem (same failing-check content, same
    review comments, etc.) survives `HARNESS_MAX_STUCK_CYCLES` push attempts,
    the harness stops touching that PR: it adds its own
    `opencode-harness-stuck` label (distinct from the repo's status labels)
@@ -148,7 +133,7 @@ asked to edit files.
    differently than whatever originally got the PR parked, and that's new
    information worth a fresh look rather than something to sit on until a
    human notices.
-7. **Once there are zero open PRs, or no open PR is actionable this cycle**
+6. **Once there are zero open PRs, or no open PR is actionable this cycle**
    (see step 1's `HARNESS_FALLBACK_TO_ISSUES`), it picks the newest open
    issue, implements it on a new `opencode/issue-<n>` branch using the same
    fix-and-validate loop, and opens a PR — which flows back into step 1 on
@@ -215,7 +200,6 @@ own opencode is authenticated against a different provider instead.
 | `HARNESS_POLL_INTERVAL` | `180` | Seconds between cycles |
 | `HARNESS_ROUTER_MODEL` | `opencode-go/deepseek-v4-flash` | Cheap/fast model used to classify each task before picking the model that actually does the work - see "Model routing" below |
 | `HARNESS_ROUTER_TIMEOUT` | `120` | Seconds before the classifier call itself is killed - it only has to answer a question, not edit anything, so this is far shorter than `HARNESS_OPENCODE_TIMEOUT` |
-| `HARNESS_REVIEW_TIMEOUT` | `900` (15m) | Seconds before the self-review pass (see "What it does" step 4) is killed - longer than the classifier's since it has to actually read a diff, far shorter than a full fix attempt |
 | `HARNESS_OPENCODE_TIMEOUT` | `14400` (4h) | Seconds before an opencode invocation is killed. Killing the whole process group, not just opencode itself, so nothing it spawned (e.g. a `pre-commit`/`cargo` call from its bash tool) is left running orphaned |
 | `HARNESS_MAX_LOCAL_ATTEMPTS` | `3` | Consecutive *identical* local validation failures before giving up *this cycle* - an attempt whose failure differs from the last one counts as progress and doesn't count against this (up to a hard cap of 3x this value regardless), so a chain of distinct, real bugs (fix one, reveal the next) gets a fair shot instead of exhausting the budget on genuine progress |
 | `HARNESS_MAX_STUCK_CYCLES` | `3` | Cycles the same problem may survive before the PR/issue is marked stuck |
@@ -274,15 +258,6 @@ outright for that kind of task. Every other alternative below is purely
 informational (kept for context on why that model was chosen); the router
 itself never picks between a row's model and a non-`deepseek-v4-flash`
 alternative.
-
-The self-review pass (step 4 above) is the one caller that doesn't classify
-at all - it's always specifically a "Code review" task, so it resolves that
-row's model directly (`model_router.model_for_task_type`), skipping the
-classifier call - and the complexity downgrade - entirely (still respecting
-an explicit `--model` pin, same as everywhere else). The one-attempt fix it
-gives opencode if it finds something is routed as a "Fix failing PRs / CI
-failures" task instead - the review already spent the expensive model
-identifying the problem, so implementing the fix doesn't need it too.
 
 | Task | Model used | Alternative (informational only) | Notes |
 |---|---|---|---|

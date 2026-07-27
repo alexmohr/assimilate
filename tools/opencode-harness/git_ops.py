@@ -203,6 +203,16 @@ def changed_files_between(cwd: Path, ref_a: str, ref_b: str) -> list[str]:
     return _run(cwd, ["diff", "--name-only", ref_a, ref_b]).stdout.splitlines()
 
 
+def merge_base(cwd: Path, ref_a: str, ref_b: str) -> str:
+    """The commit `ref_b` diverged from `ref_a` at - lets a caller reproduce
+    `git diff a...b` (diff against the merge base, not a direct two-tree
+    comparison) via the existing two-ref `diff_between` below, without
+    assuming `ref_a` and `ref_b` still share a tip - `ref_a` (a base branch)
+    may have moved on independently since `ref_b` branched off it.
+    """
+    return _run(cwd, ["merge-base", ref_a, ref_b]).stdout.strip()
+
+
 def diff_between(cwd: Path, ref_a: str, ref_b: str) -> str:
     """Full diff text between two *committed* refs - used to hand a reviewer
     model the exact content of a commit this harness already made (see

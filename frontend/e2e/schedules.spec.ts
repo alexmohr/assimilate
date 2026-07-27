@@ -170,6 +170,32 @@ test.describe('Schedules management', () => {
     const staleSchedule = schedules.find((s) => s.name === 'Stale nightly report')
     expect(staleSchedule).toBeDefined()
 
+    // Diagnostic: the Overdue badge has failed to appear in CI (but not in a
+    // local repro of the same seed data) across every run so far, always with
+    // /api/stats/health showing last_backup_at: null for this host - i.e. its
+    // schedule_id + agent_id subquery finds no backup_reports row at all. This
+    // checks the SAME row via a completely different query path
+    // (list_reports_for_schedule, filtered only by schedule_id) to determine
+    // whether the backdated report genuinely isn't associated with this
+    // schedule's id, or whether the bug is specific to get_health_summary's
+    // query.
+    const scheduleReportsResp = await page.request.get(
+      `/api/schedules/${staleSchedule!.id}/reports`,
+    )
+    expect(scheduleReportsResp.ok()).toBe(true)
+    const scheduleReports = (await scheduleReportsResp.json()) as Array<{
+      agent_id: number
+      schedule_id: number | null
+      archive_name: string | null
+      started_at: string
+      finished_at: string | null
+    }>
+    const staleReport = scheduleReports.find((r) => r.archive_name === 'stale-report-01-backup-old')
+    expect(
+      staleReport,
+      `backdated report not found via /api/schedules/${staleSchedule!.id}/reports; got: ${JSON.stringify(scheduleReports)}`,
+    ).toBeDefined()
+
     const [healthResponse] = await Promise.all([
       page.waitForResponse((resp) => resp.url().includes('/api/stats/health') && resp.ok()),
       page.goto(`/schedules/${staleSchedule!.id}`),

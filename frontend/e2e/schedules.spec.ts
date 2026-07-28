@@ -170,69 +170,8 @@ test.describe('Schedules management', () => {
     const staleSchedule = schedules.find((s) => s.name === 'Stale nightly report')
     expect(staleSchedule).toBeDefined()
 
-    // Diagnostic: the Overdue badge has failed to appear in CI (but not in a
-    // local repro of the same seed data) across every run so far, always with
-    // /api/stats/health showing last_backup_at: null for this host - i.e. its
-    // schedule_id + agent_id subquery finds no backup_reports row at all. A
-    // previous run confirmed /api/schedules/{id}/reports (filtered only by
-    // schedule_id, a completely different query from get_health_summary) ALSO
-    // returns [] for this schedule's id, ruling out a health-query-specific
-    // bug - the row genuinely isn't attached to this schedule's id at test
-    // time. Look the row up by hostname instead (no schedule_id filter at
-    // all) to see what schedule_id/name it actually has right now.
-    const activityResp = await page.request.get('/api/stats/activity', {
-      params: { hostname: 'stale-report-01', limit: 20 },
-    })
-    expect(activityResp.ok()).toBe(true)
-    const activityEntries = (await activityResp.json()) as Array<{
-      hostname: string
-      archive_name: string | null
-      schedule_id: number | null
-      schedule_name: string | null
-      started_at: string
-      finished_at: string
-    }>
-    const staleActivityEntry = activityEntries.find(
-      (a) => a.archive_name === 'stale-report-01-backup-old',
-    )
-    expect(
-      staleActivityEntry,
-      `backdated report not found via /api/stats/activity?hostname=stale-report-01; got: ${JSON.stringify(activityEntries)}; staleSchedule.id=${staleSchedule!.id}`,
-    ).toBeDefined()
-    expect(
-      staleActivityEntry?.schedule_id,
-      `backdated report's schedule_id (${staleActivityEntry?.schedule_id}, name=${staleActivityEntry?.schedule_name}) does not match staleSchedule.id (${staleSchedule!.id})`,
-    ).toBe(staleSchedule!.id)
-
-    const [healthResponse] = await Promise.all([
-      page.waitForResponse((resp) => resp.url().includes('/api/stats/health') && resp.ok()),
-      page.goto(`/schedules/${staleSchedule!.id}`),
-    ])
-    expect(healthResponse.ok()).toBe(true)
+    await page.goto(`/schedules/${staleSchedule!.id}`)
     await page.waitForLoadState('networkidle')
-
-    // Diagnostic: assert directly on the API payload the page itself received,
-    // so a failure here pinpoints a backend/seed data problem instead of only
-    // showing "Overdue text never appeared" with no indication of why.
-    const healthEntries = (await healthResponse.json()) as Array<{
-      schedule_id: number
-      hostname: string
-      is_overdue: boolean
-      last_backup_at: string | null
-      last_status: string | null
-      cron_expression: string | null
-    }>
-    const staleHealthEntry = healthEntries.find(
-      (h) => h.schedule_id === staleSchedule!.id && h.hostname === 'stale-report-01',
-    )
-    expect(
-      staleHealthEntry,
-      `no health entry for stale-report-01 in: ${JSON.stringify(healthEntries)}`,
-    ).toBeDefined()
-    expect(
-      staleHealthEntry?.is_overdue,
-      `health entry was not overdue: ${JSON.stringify(staleHealthEntry)}`,
-    ).toBe(true)
 
     const targetsRow = page.locator('.info-row-targets')
     await expect(targetsRow.getByText('Overdue')).toBeVisible({ timeout: 10_000 })

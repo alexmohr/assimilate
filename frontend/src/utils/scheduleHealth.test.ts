@@ -78,13 +78,15 @@ describe('scheduleIssuesFromEntries', () => {
   })
 
   it('returns a Warning chip when no entry has failed but one has a warning', () => {
-    const issues = scheduleIssuesFromEntries(
-      [makeEntry({ last_status: 'warning' })],
-      1,
-      makeRouter(),
-    )
+    const router = makeRouter()
+    const issues = scheduleIssuesFromEntries([makeEntry({ last_status: 'warning' })], 1, router)
     expect(issues).toHaveLength(1)
     expect(issues[0]).toMatchObject({ key: 'warning', label: 'Warning', severity: 'warning' })
+
+    issues[0].onClick()
+    expect(router.push).toHaveBeenCalledWith(
+      '/activity?category=backup&schedule_id=1&status=warning',
+    )
   })
 
   it('prefers a Failed chip over Warning when both are present across entries', () => {

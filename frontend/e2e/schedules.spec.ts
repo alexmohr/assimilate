@@ -19,12 +19,11 @@ test.describe('Schedules management', () => {
     await expect(page.getByText('server-daily').first()).toBeVisible()
     await expect(page.getByText('database-hourly').first()).toBeVisible()
     await expect(page.getByText('media-weekly').first()).toBeVisible()
-    await expect(page.getByText('web-server-01').first()).toBeVisible()
-    await expect(page.getByText('db-server-01').first()).toBeVisible()
-    await expect(page.getByText('media-store-01').first()).toBeVisible()
   })
 
-  test('overdue schedule card shows an expandable per-host detail toggle', async ({ page }) => {
+  test('overdue schedule card shows an Overdue chip with a per-host detail tooltip', async ({
+    page,
+  }) => {
     await loginAsAdmin(page)
 
     // The demo's seeded health data has no overdue hosts, so intercept
@@ -32,8 +31,7 @@ test.describe('Schedules management', () => {
     // (schedule 1, see 'schedule detail shows cron expression...' below)
     // overdue without an error message - this reproduces a host whose own
     // last report is stale even though the schedule itself looks on track,
-    // which is exactly what the expandable "N host(s) overdue" toggle exists
-    // to surface.
+    // which is exactly what the Overdue chip's tooltip exists to surface.
     await page.route(
       (url) => url.pathname === '/api/stats/health',
       async (route) => {
@@ -65,16 +63,14 @@ test.describe('Schedules management', () => {
     await page.waitForLoadState('networkidle')
 
     const card = page.locator('.schedule-card', { hasText: 'server-daily' })
-    await expect(card.getByText('1 host overdue')).toBeVisible()
-    await expect(
-      card.getByText('Production Web Server (web-server-01) — last backup:'),
-    ).not.toBeVisible()
+    const overdueChip = card.locator('.entity-issue-chip.sev-warning')
+    await expect(overdueChip).toBeVisible()
+    await expect(overdueChip).toContainText('Overdue')
 
-    await card.getByText('1 host overdue').click()
-
-    await expect(
-      card.getByText('Production Web Server (web-server-01) — last backup:'),
-    ).toBeVisible()
+    await expect(overdueChip).toHaveAttribute(
+      'title',
+      /Production Web Server \(web-server-01\) — last backup:/,
+    )
   })
 
   test('clicking a schedule navigates to detail page', async ({ page }) => {

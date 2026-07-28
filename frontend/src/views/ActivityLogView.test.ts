@@ -48,6 +48,7 @@ interface ActivityRow {
   finished_at: string
   status: string
   duration_secs: number
+  run_id?: string
 }
 
 interface SystemEvent {
@@ -77,6 +78,7 @@ const ACTIVITY_ROWS: ActivityRow[] = [
     finished_at: '2026-01-01T10:05:00Z',
     status: 'success',
     duration_secs: 300,
+    run_id: 'run-101',
   },
   {
     id: 102,
@@ -325,6 +327,25 @@ describe('ActivityLogView', () => {
       const firstRow = rows[0]
       expect(firstRow.find('.run-card-hostname').text()).toBeTruthy()
       expect(firstRow.find('.run-card-meta').text()).toBeTruthy()
+    })
+
+    it('filters to a single run when its View run button is clicked', async () => {
+      setupDefaultMocks()
+      const wrapper = mountView()
+      await flushPromises()
+
+      const cardWithRun = wrapper
+        .findAll('.run-card:not(.run-card-system)')
+        .find((c) => c.find('.btn-run-filter').exists())
+      expect(cardWithRun).toBeTruthy()
+
+      await cardWithRun!.find('.btn-run-filter').trigger('click')
+      await flushPromises()
+
+      expect(mockGet).toHaveBeenCalledWith(
+        '/stats/activity',
+        expect.objectContaining({ params: expect.objectContaining({ run_id: 'run-101' }) }),
+      )
     })
 
     it('renders backup rows with status badges', async () => {

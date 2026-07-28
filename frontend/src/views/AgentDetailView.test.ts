@@ -379,6 +379,25 @@ describe('AgentDetailView — backups tab', () => {
     expect(highlighted.classes()).toContain('result-failed')
     expect(wrapper.text()).toContain('Connection refused')
   })
+
+  it('pins the newest report when several share the status query param', async () => {
+    const olderFailed = { ...mockReports[2], id: 4, finished_at: '2026-06-02T10:00:00Z' }
+    const newerFailed = { ...mockReports[2], id: 5, finished_at: '2026-06-04T10:00:00Z' }
+    setupApi([olderFailed, newerFailed])
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
+    await router.push({ query: { tab: 'backups', status: 'failed' } })
+    await flushPromises()
+
+    const highlighted = wrapper.find('.result-card-highlighted')
+    expect(highlighted.exists()).toBe(true)
+    expect(highlighted.attributes('id')).toBe('report-5')
+  })
 })
 
 describe('AgentDetailView — schedules tab', () => {

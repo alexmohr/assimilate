@@ -456,6 +456,60 @@ describe('SchedulesView', () => {
     expect(wrapper.text()).not.toContain('database-hourly')
   })
 
+  it('filters by health status: success', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const selects = wrapper.findAll('select')
+    const healthSelect = selects.find((s) => s.find('option[value="failed"]').exists())
+    expect(healthSelect).toBeTruthy()
+    await healthSelect!.setValue('success')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('server-daily')
+    expect(wrapper.text()).not.toContain('database-hourly')
+    expect(wrapper.text()).not.toContain('media-weekly')
+  })
+
+  it('filters by health status: failed', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const selects = wrapper.findAll('select')
+    const healthSelect = selects.find((s) => s.find('option[value="failed"]').exists())
+    await healthSelect!.setValue('failed')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('database-hourly')
+    expect(wrapper.text()).not.toContain('server-daily')
+  })
+
+  it('filters by health status: warning', async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules') return Promise.resolve({ data: mockSchedules })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/stats/health') {
+        return Promise.resolve({
+          data: [{ ...mockHealth[0], last_status: 'warning' }, mockHealth[1]],
+        })
+      }
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const selects = wrapper.findAll('select')
+    const healthSelect = selects.find((s) => s.find('option[value="failed"]').exists())
+    await healthSelect!.setValue('warning')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('server-daily')
+    expect(wrapper.text()).not.toContain('database-hourly')
+  })
+
   it('calls run now API on run button click and shows success toast', async () => {
     setupApiSuccess()
     mockApiClient.post.mockResolvedValue({ data: {} })

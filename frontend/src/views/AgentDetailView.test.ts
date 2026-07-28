@@ -362,8 +362,11 @@ describe('AgentDetailView — backups tab', () => {
     expect(wrapper.text()).toContain('some file changed during backup')
   })
 
-  it('pins, expands and highlights the newest report matching the status query param', async () => {
-    setupApi()
+  async function mountBackupsWithStatus(
+    reports: unknown[],
+    status: string,
+  ): Promise<VueWrapper<ComponentPublicInstance>> {
+    setupApi(reports)
     const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
@@ -371,8 +374,13 @@ describe('AgentDetailView — backups tab', () => {
     await flushPromises()
 
     const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
-    await router.push({ query: { tab: 'backups', status: 'failed' } })
+    await router.push({ query: { tab: 'backups', status } })
     await flushPromises()
+    return wrapper
+  }
+
+  it('pins, expands and highlights the newest report matching the status query param', async () => {
+    const wrapper = await mountBackupsWithStatus(mockReports, 'failed')
 
     const highlighted = wrapper.find('.result-card-highlighted')
     expect(highlighted.exists()).toBe(true)
@@ -383,16 +391,7 @@ describe('AgentDetailView — backups tab', () => {
   it('pins the newest report when several share the status query param', async () => {
     const olderFailed = { ...mockReports[2], id: 4, finished_at: '2026-06-02T10:00:00Z' }
     const newerFailed = { ...mockReports[2], id: 5, finished_at: '2026-06-04T10:00:00Z' }
-    setupApi([olderFailed, newerFailed])
-    const wrapper = renderWithPlugins(AgentDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-
-    const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
-    await router.push({ query: { tab: 'backups', status: 'failed' } })
-    await flushPromises()
+    const wrapper = await mountBackupsWithStatus([olderFailed, newerFailed], 'failed')
 
     const highlighted = wrapper.find('.result-card-highlighted')
     expect(highlighted.exists()).toBe(true)

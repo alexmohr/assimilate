@@ -7084,3 +7084,54 @@ async fn repo_tags_use_repo_scope(pool: PgPool) {
     let all_repo_tags = db::list_tags(&pool, "repo").await.unwrap();
     assert!(all_repo_tags.iter().any(|t| t.name == "critical"));
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn fail_started_backups_for_agent_reconnect_covers_all_repos(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "reconnect-host", None, "hash", None)
+        .await
+        .unwrap();
+    let other_agent = db::insert_agent(&pool, "other-host", None, "hash", None)
+        .await
+        .unwrap();
+    let repo_a = create_test_repo_with_host(&pool, "reconnect-repo-a", "storage-a.local").await;
+    let repo_b = create_test_repo_with_host(&pool, "reconnect-repo-b", "storage-b.local").await;
+
+    db::insert_backup_started(&pool, agent.id, repo_a.id, None, Utc::now(), None, None)
+        .await
+        .unwrap();
+    db::insert_backup_pending(&pool, agent.id, repo_b.id, None, "run-b", Utc::now())
+        .await
+        .unwrap();
+    // A different agent's in-flight backup must be left untouched.
+    db::insert_backup_started(
+        &pool,
+        other_agent.id,
+        repo_a.id,
+        None,
+        Utc::now(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let mut repo_ids =
+        db::fail_started_backups_for_agent_reconnect(&pool, agent.id, "reconnect-host")
+            .await
+            .unwrap();
+    repo_ids.sort_unstable();
+    assert_eq!(repo_ids, vec![repo_a.id, repo_b.id]);
+
+    let reports_a = db::list_reports_for_agent(&pool, agent.id, None, 10)
+        .await
+        .unwrap();
+    assert!(reports_a.iter().all(|r| r.status == "failed"
+        && r.error_message.as_deref()
+            == Some("Agent 'reconnect-host' reconnected; previous backup abandoned")));
+
+    let other_reports = db::list_reports_for_agent(&pool, other_agent.id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(other_reports.len(), 1);
+    assert_eq!(other_reports.first().unwrap().status, "started");
+}

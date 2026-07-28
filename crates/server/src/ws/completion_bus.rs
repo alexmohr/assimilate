@@ -238,4 +238,57 @@ mod tests {
             .expect("task should not panic");
         assert_eq!(outcome, CompletionOutcome::AgentDisconnected);
     }
+
+    #[tokio::test]
+    async fn wait_for_completion_wakes_on_abandonment_event_despite_agent_staying_connected() {
+        // Simulates an agent reconnect under the same hostname: the registry
+        // never reports a disconnect (a replacement registration keeps
+        // `is_connected` true throughout), so the only way a waiter tied to
+        // the abandoned session can ever resolve is an explicit publish - the
+        // same one `abandon_stale_operations_on_reconnect` sends once it marks
+        // the stale backup as failed.
+        let bus = CompletionBus::new();
+        let registry = AgentRegistry::new();
+        let (tx, _) = tokio::sync::mpsc::channel(1);
+        registry
+            .register("host-a".to_string(), tx, false, None)
+            .await;
+        let rx = bus.subscribe();
+
+        let wait = tokio::spawn({
+            let registry = registry.clone();
+            async move {
+                wait_for_completion_with_poll_interval(
+                    &registry,
+                    rx,
+                    "host-a",
+                    1,
+                    Duration::from_millis(10),
+                )
+                .await
+            }
+        });
+
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        // The agent reconnects under the same hostname - registry still shows
+        // it connected the whole time.
+        let (tx2, _) = tokio::sync::mpsc::channel(1);
+        let replaced = registry
+            .register("host-a".to_string(), tx2, false, None)
+            .await;
+        assert!(replaced);
+        assert!(registry.is_connected("host-a").await);
+
+        bus.publish(OperationOutcome {
+            hostname: "host-a".to_string(),
+            repo_id: 1,
+            success: false,
+        });
+
+        let outcome = tokio::time::timeout(Duration::from_secs(1), wait)
+            .await
+            .expect("wait_for_completion should resolve once the abandonment event is published")
+            .expect("task should not panic");
+        assert_eq!(outcome, CompletionOutcome::Failed);
+    }
 }

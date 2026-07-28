@@ -1041,6 +1041,84 @@ pub async fn set_repo_importing(
     Ok(())
 }
 
+/// Guards `repo_import_state.importing` for the duration of a sync/import
+/// operation, clearing it back to `false` on drop - including during a panic
+/// unwind - so a panic partway through the sync work can't leave a repo stuck
+/// showing "syncing" forever. Unlike [`crate::repo_op_tracker::RepoOpTracker`]'s
+/// in-memory active-op tracking (which already has a panic-safe
+/// `RepoOpGuard`), this DB-persisted flag had no such net: a scheduled repo
+/// sync skips any repo already marked `importing`, so a stuck flag also
+/// permanently blocks that repo's own periodic sync, not just the UI's
+/// "syncing" indicator.
+///
+/// `Drop` can't await, so cleanup runs as a spawned task (mirroring
+/// `RepoOpGuard`); call [`Self::clear_now`] on the normal-completion path so
+/// the flag is cleared before you return, instead of racing the spawned task.
+/// Calling `clear_now` disarms the `Drop` cleanup, so a concurrent operation
+/// that legitimately re-sets `importing = true` for this `repo_id` right
+/// after can't be clobbered by a stale deferred clear.
+pub struct ImportingGuard {
+    pool: PgPool,
+    repo_id: i64,
+    task_registry: shared::task_registry::TaskRegistry,
+    cleared: bool,
+}
+
+impl ImportingGuard {
+    /// Sets `importing = true` for `repo_id` and returns a guard that clears
+    /// it back to `false` on drop.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ApiError::Database`] if the database query fails.
+    pub async fn acquire(
+        pool: &PgPool,
+        repo_id: i64,
+        task_registry: shared::task_registry::TaskRegistry,
+    ) -> Result<Self, ApiError> {
+        set_repo_importing(pool, repo_id, true).await?;
+        Ok(Self {
+            pool: pool.clone(),
+            repo_id,
+            task_registry,
+            cleared: false,
+        })
+    }
+
+    /// Clears the importing flag immediately, awaiting the write instead of
+    /// leaving it to the guard's deferred `Drop` cleanup.
+    pub async fn clear_now(mut self) {
+        self.cleared = true;
+        if let Err(e) = set_repo_importing(&self.pool, self.repo_id, false).await {
+            tracing::error!(
+                repo_id = self.repo_id,
+                error = %e,
+                "failed to clear importing flag"
+            );
+        }
+    }
+}
+
+impl Drop for ImportingGuard {
+    fn drop(&mut self) {
+        if self.cleared {
+            return;
+        }
+        let pool = self.pool.clone();
+        let repo_id = self.repo_id;
+        let handle = tokio::spawn(async move {
+            if let Err(e) = set_repo_importing(&pool, repo_id, false).await {
+                tracing::error!(
+                    repo_id,
+                    error = %e,
+                    "failed to clear importing flag on guard drop"
+                );
+            }
+        });
+        self.task_registry.register(handle);
+    }
+}
+
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -3536,6 +3614,37 @@ pub async fn fail_other_started_backups(
     .await
     .map_err(ApiError::Database)?;
     Ok(result.rows_affected())
+}
+
+/// Marks every in-flight (`pending`/`started`) backup report for an agent as
+/// abandoned, across all repos - called when the agent's connection is
+/// replaced by a new one (see [`crate::ws::registry::AgentRegistry::register`]),
+/// since a reconnect means the previous session, and anything it was in the
+/// middle of, is gone for good regardless of which repo it targeted. Returns
+/// the distinct repo IDs that had a row updated, so the caller can wake up
+/// anything still waiting on those operations via the completion bus instead
+/// of leaving it blocked on a session that will never report back.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn fail_started_backups_for_agent_reconnect(
+    pool: &PgPool,
+    agent_id: i64,
+    hostname: &str,
+) -> Result<Vec<i64>, ApiError> {
+    let mut repo_ids: Vec<i64> = sqlx::query_scalar!(
+        "UPDATE backup_reports SET status = 'failed', finished_at = NOW(), error_message = $1 \
+         WHERE agent_id = $2 AND status IN ('pending', 'started') RETURNING repo_id",
+        format!("Agent '{hostname}' reconnected; previous backup abandoned"),
+        agent_id,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    repo_ids.sort_unstable();
+    repo_ids.dedup();
+    Ok(repo_ids)
 }
 
 /// # Errors

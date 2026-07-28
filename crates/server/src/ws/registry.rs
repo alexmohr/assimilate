@@ -32,20 +32,29 @@ impl AgentRegistry {
         }
     }
 
-    /// Register a newly connected agent.
+    /// Register a newly connected agent. Returns `true` if this replaced an
+    /// already-registered connection for the same hostname (a reconnect) -
+    /// callers use this to detect that the previous session is gone and any
+    /// in-flight operations tied to it are now abandoned, since
+    /// [`is_connected`](Self::is_connected) alone can't tell a fresh session
+    /// apart from the one that was there before.
     pub async fn register(
         &self,
         hostname: String,
         sender: mpsc::Sender<ServerToAgent>,
         supports_restart: bool,
         restart_unavailable_reason: Option<String>,
-    ) {
+    ) -> bool {
         let connection = AgentConnection {
             sender,
             supports_restart,
             restart_unavailable_reason,
         };
-        self.connections.write().await.insert(hostname, connection);
+        self.connections
+            .write()
+            .await
+            .insert(hostname, connection)
+            .is_some()
     }
 
     /// Remove a disconnected agent from the registry.
@@ -91,5 +100,58 @@ impl AgentRegistry {
                 )
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::mpsc;
+
+    use super::AgentRegistry;
+
+    #[tokio::test]
+    async fn register_reports_first_registration_as_not_a_replacement() {
+        let registry = AgentRegistry::new();
+        let (tx, _rx) = mpsc::channel(1);
+
+        let replaced = registry
+            .register("agent-a".to_owned(), tx, true, None)
+            .await;
+
+        assert!(!replaced);
+        assert!(registry.is_connected("agent-a").await);
+    }
+
+    #[tokio::test]
+    async fn register_reports_reconnect_as_a_replacement() {
+        let registry = AgentRegistry::new();
+        let (tx1, _rx1) = mpsc::channel(1);
+        let (tx2, _rx2) = mpsc::channel(1);
+
+        let first = registry
+            .register("agent-a".to_owned(), tx1, true, None)
+            .await;
+        let second = registry
+            .register("agent-a".to_owned(), tx2, true, None)
+            .await;
+
+        assert!(!first);
+        assert!(second);
+    }
+
+    #[tokio::test]
+    async fn register_does_not_report_replacement_for_a_different_hostname() {
+        let registry = AgentRegistry::new();
+        let (tx1, _rx1) = mpsc::channel(1);
+        let (tx2, _rx2) = mpsc::channel(1);
+
+        registry
+            .register("agent-a".to_owned(), tx1, true, None)
+            .await;
+        let replaced = registry
+            .register("agent-b".to_owned(), tx2, true, None)
+            .await;
+
+        assert!(!replaced);
     }
 }

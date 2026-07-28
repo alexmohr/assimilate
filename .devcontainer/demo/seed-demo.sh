@@ -38,7 +38,7 @@ sync_repo() {
 }
 
 echo "==> Creating borg repositories on disk..."
-for REPO_NAME in server-daily database-hourly media-weekly; do
+for REPO_NAME in server-daily database-hourly media-weekly stale-report-repo; do
     REPO_DIR="/backup/repos/$REPO_NAME"
     if [ ! -d "$REPO_DIR" ]; then
         su -c "BORG_PASSPHRASE=demo-passphrase-123 borg init --encryption=repokey-blake2 $REPO_DIR" borg
@@ -53,12 +53,12 @@ DELETE FROM schedules WHERE name = 'Stale nightly report';
 DELETE FROM ssh_tunnels WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM agent_hostname_patterns WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod','unassigned-01','offline-due-01','disabled-only-01','stale-report-01');
-DELETE FROM repo_quotas WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly'));
+DELETE FROM repo_quotas WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo'));
 DELETE FROM server_quotas WHERE ssh_host = 'localhost';
-DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly'));
+DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo'));
 DELETE FROM notification_rules;
 DELETE FROM notification_channels;
-DELETE FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly');
+DELETE FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo');
 DELETE FROM system_events;
 DELETE FROM audit_log;
 DELETE FROM login_attempts;
@@ -128,6 +128,34 @@ REPO_WEEKLY_ID=$(api POST "/api/repos" "{
     \"passphrase\": \"demo-passphrase-123\",
     \"compression\": \"lz4\"
 }" | jq -r '.id')
+
+# Dedicated repo for the stale-report-01 demo below, never shared with a
+# schedule that runs real backups and never synced. list_archive_names_for_repo
+# treats every backup_reports.archive_name for a repo as a "known" archive, and
+# a full/scheduled sync (sync_existing_archives, SyncMode::Existing) deletes any
+# backup_reports row whose archive_name isn't found in a real `borg list` of
+# that repo (see delete_archive_records_by_names in db/mod.rs). The backdated
+# report seeded below has no matching real archive on disk, so if it shared a
+# repo that ever gets synced (like server-daily, synced for web-server-01's
+# real backups), it gets silently deleted by that reconciliation within
+# minutes - this is what caused the Retry-button e2e test to fail against the
+# live demo despite passing every local check.
+STALE_REPORT_REPO_ID=$(api POST "/api/repos" "{
+    \"name\": \"stale-report-repo\",
+    \"repo_path\": \"/backup/repos/stale-report-repo\",
+    \"ssh_user\": \"borg\",
+    \"ssh_host\": \"localhost\",
+    \"ssh_port\": 22,
+    \"passphrase\": \"demo-passphrase-123\",
+    \"compression\": \"lz4\"
+}" | jq -r '.id')
+api PUT "/api/repos/$STALE_REPORT_REPO_ID" "{
+    \"repo_path\": \"/backup/repos/stale-report-repo\",
+    \"ssh_user\": \"borg\",
+    \"ssh_host\": \"localhost\",
+    \"ssh_port\": 22,
+    \"sync_schedule\": null
+}" > /dev/null
 
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<'SQL' > /dev/null
 DO $$
@@ -345,7 +373,7 @@ api POST "/api/schedules" "{
 api POST "/api/schedules" "{
     \"name\": \"Stale nightly report\",
     \"agent_ids\": [$STALE_REPORT_ID],
-    \"repo_id\": $REPO_DAILY_ID,
+    \"repo_id\": $STALE_REPORT_REPO_ID,
     \"cron_expression\": \"0 5 * * *\",
     \"enabled\": true,
     \"keep_hourly\": 0,
@@ -365,7 +393,7 @@ api POST "/api/schedules" "{
 # staleness, not a failure.
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 <<SQL
 INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, status, archive_name)
-SELECT $STALE_REPORT_ID, $REPO_DAILY_ID, s.id,
+SELECT $STALE_REPORT_ID, $STALE_REPORT_REPO_ID, s.id,
        NOW() - interval '4 days' - interval '5 minutes', NOW() - interval '4 days',
        'success', 'stale-report-01-backup-old'
 FROM schedules s WHERE s.name = 'Stale nightly report';

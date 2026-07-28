@@ -14,6 +14,7 @@ FROM python:3.12-alpine AS docs-builder
 WORKDIR /app
 COPY docs/ docs/
 COPY mkdocs.yml .
+COPY frontend/public/icon.png frontend/public/icon.png
 RUN pip install --no-cache-dir -r docs/requirements.txt && mkdocs build --strict
 
 # Stage 3: Build Rust server binary

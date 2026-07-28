@@ -77,6 +77,16 @@ describe('scheduleIssuesFromEntries', () => {
     expect(issues[0]).toMatchObject({ key: 'overdue', label: 'Overdue', severity: 'warning' })
   })
 
+  it('returns a Warning chip when no entry has failed but one has a warning', () => {
+    const issues = scheduleIssuesFromEntries(
+      [makeEntry({ last_status: 'warning' })],
+      1,
+      makeRouter(),
+    )
+    expect(issues).toHaveLength(1)
+    expect(issues[0]).toMatchObject({ key: 'warning', label: 'Warning', severity: 'warning' })
+  })
+
   it('prefers a Failed chip over Warning when both are present across entries', () => {
     const issues = scheduleIssuesFromEntries(
       [makeEntry({ last_status: 'warning' }), makeEntry({ last_status: 'failed' })],

@@ -15,12 +15,13 @@ import { useMobile } from '../composables/useMobile'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
-import { Plus, SlidersHorizontal, Server, AlertCircle, Clock } from '@lucide/vue'
+import { Plus, SlidersHorizontal, Server } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import MergeAgentDialog from '../components/MergeAgentDialog.vue'
 import AgentDeployDialog from '../components/AgentDeployDialog.vue'
+import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
 import type { DashboardOverview } from '../types/dashboard'
 import type { AgentRow } from '../types/agent'
 import type { TagRow } from '../types/tag'
@@ -226,10 +227,27 @@ function agentHealthStatus(agent: AgentRow): AgentHealth | null {
   return healthByHost.value[agent.hostname] ?? null
 }
 
-function agentHasIssues(agent: AgentRow): boolean {
+function agentIssues(agent: AgentRow): EntityIssue[] {
   const h = agentHealthStatus(agent)
-  if (!h) return false
-  return h.failed > 0 || h.overdue > 0
+  if (!h) return []
+  const issues: EntityIssue[] = []
+  if (h.failed > 0) {
+    issues.push({
+      key: 'failed',
+      label: `${h.failed} failed`,
+      severity: 'danger',
+      onClick: () => navigateToAgentIssue(agent, 'failed'),
+    })
+  }
+  if (h.overdue > 0) {
+    issues.push({
+      key: 'overdue',
+      label: `${h.overdue} overdue`,
+      severity: 'warning',
+      onClick: () => navigateToAgentIssue(agent, 'overdue'),
+    })
+  }
+  return issues
 }
 
 function navigateToAgentIssue(agent: AgentRow, kind: 'failed' | 'overdue'): void {
@@ -695,7 +713,7 @@ watch(
         v-for="agent in filteredAgents"
         :key="agent.id"
         class="host-card"
-        :class="{ 'host-card-hidden': agent.is_hidden }"
+        :class="{ 'host-card-hidden': agent.is_hidden, 'host-card-notable': !isOnline(agent) }"
         @click="navigateToAgent(agent)"
       >
         <div class="card-top">
@@ -720,12 +738,6 @@ watch(
             >
               Imported
             </span>
-            <span
-              class="status-badge"
-              :class="isOnline(agent) ? 'status-online' : 'status-offline'"
-            >
-              {{ isOnline(agent) ? 'Online' : 'Offline' }}
-            </span>
           </div>
         </div>
         <div class="card-stats">
@@ -742,29 +754,11 @@ watch(
             <span class="stat-label">Agent</span>
           </div>
         </div>
-        <div
-          v-if="agentHasIssues(agent)"
-          class="card-issues"
-        >
-          <button
-            v-if="agentHealthStatus(agent)!.failed > 0"
-            class="issue-row issue-row-failed"
-            @click.stop="navigateToAgentIssue(agent, 'failed')"
-          >
-            <AlertCircle :size="12" />
-            {{ agentHealthStatus(agent)!.failed }} failed
-            <span class="issue-row-arrow">→</span>
-          </button>
-          <button
-            v-if="agentHealthStatus(agent)!.overdue > 0"
-            class="issue-row issue-row-overdue"
-            @click.stop="navigateToAgentIssue(agent, 'overdue')"
-          >
-            <Clock :size="12" />
-            {{ agentHealthStatus(agent)!.overdue }} overdue
-            <span class="issue-row-arrow">→</span>
-          </button>
-        </div>
+        <EntityStatusBadges
+          :notable="!isOnline(agent)"
+          notable-label="Offline"
+          :issues="agentIssues(agent)"
+        />
         <div
           v-if="hostActiveBackups(agent).length > 0"
           class="card-active-backup"
@@ -1116,6 +1110,10 @@ watch(
   box-shadow: var(--shadow);
 }
 
+.host-card-notable {
+  background: var(--bg-hover);
+}
+
 .card-top {
   display: flex;
   align-items: flex-start;
@@ -1181,54 +1179,6 @@ watch(
   display: flex;
   flex-wrap: wrap;
   gap: 0.3rem;
-}
-
-.card-issues {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.issue-row {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.4rem 0.6rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  background: none;
-  font-size: 0.75rem;
-  font-weight: 500;
-  font-family: inherit;
-  cursor: pointer;
-  text-align: left;
-  transition:
-    border-color 0.15s,
-    background 0.15s;
-}
-
-.issue-row-arrow {
-  margin-left: auto;
-  opacity: 0.6;
-  font-size: 0.72rem;
-}
-
-.issue-row-failed {
-  color: var(--danger);
-  background: var(--danger-subtle);
-}
-
-.issue-row-failed:hover {
-  border-color: var(--danger);
-}
-
-.issue-row-overdue {
-  color: var(--warning);
-  background: var(--warning-subtle);
-}
-
-.issue-row-overdue:hover {
-  border-color: var(--warning);
 }
 
 .card-active-backup {

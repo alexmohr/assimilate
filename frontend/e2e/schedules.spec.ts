@@ -1,12 +1,50 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+import type { Page } from '@playwright/test'
 import { expect, loginAsAdmin, test } from './fixtures'
 
 interface ScheduleListEntry {
   id: number
   name: string
   target_hostnames: string[]
+}
+
+// Overrides the web-server-01 / server-daily health entry (schedule 1, see
+// 'schedule detail shows cron expression...' below) for /api/stats/health so
+// tests can force a specific chip (Overdue/Failed) to render without relying
+// on the demo's seeded health state.
+async function mockScheduleOneHealth(
+  page: Page,
+  overrides: Record<string, unknown>,
+): Promise<void> {
+  await page.route(
+    (url) => url.pathname === '/api/stats/health',
+    async (route) => {
+      const response = await route.fetch()
+      const entries = (await response.json()) as Array<Record<string, unknown>>
+      const withoutTarget = entries.filter(
+        (e) => !(e.schedule_id === 1 && e.hostname === 'web-server-01'),
+      )
+      withoutTarget.push({
+        schedule_id: 1,
+        hostname: 'web-server-01',
+        target_name: 'server-daily',
+        last_status: 'success',
+        last_backup_at: '2020-01-01T02:00:00Z',
+        is_overdue: false,
+        last_error_message: null,
+        cron_expression: '0 2 * * *',
+        schedule_enabled: true,
+        ...overrides,
+      })
+      return route.fulfill({
+        status: response.status(),
+        contentType: 'application/json',
+        body: JSON.stringify(withoutTarget),
+      })
+    },
+  )
 }
 
 test.describe('Schedules management', () => {
@@ -26,38 +64,11 @@ test.describe('Schedules management', () => {
   }) => {
     await loginAsAdmin(page)
 
-    // The demo's seeded health data has no overdue hosts, so intercept
-    // /api/stats/health and mark the web-server-01 / server-daily entry
-    // (schedule 1, see 'schedule detail shows cron expression...' below)
-    // overdue without an error message - this reproduces a host whose own
-    // last report is stale even though the schedule itself looks on track,
-    // which is exactly what the Overdue chip's tooltip exists to surface.
-    await page.route(
-      (url) => url.pathname === '/api/stats/health',
-      async (route) => {
-        const response = await route.fetch()
-        const entries = (await response.json()) as Array<Record<string, unknown>>
-        const withoutTarget = entries.filter(
-          (e) => !(e.schedule_id === 1 && e.hostname === 'web-server-01'),
-        )
-        withoutTarget.push({
-          schedule_id: 1,
-          hostname: 'web-server-01',
-          target_name: 'server-daily',
-          last_status: 'success',
-          last_backup_at: '2020-01-01T02:00:00Z',
-          is_overdue: true,
-          last_error_message: null,
-          cron_expression: '0 2 * * *',
-          schedule_enabled: true,
-        })
-        return route.fulfill({
-          status: response.status(),
-          contentType: 'application/json',
-          body: JSON.stringify(withoutTarget),
-        })
-      },
-    )
+    // The demo's seeded health data has no overdue hosts, so this reproduces
+    // a host whose own last report is stale even though the schedule itself
+    // looks on track, which is exactly what the Overdue chip's tooltip
+    // exists to surface.
+    await mockScheduleOneHealth(page, { is_overdue: true })
 
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
@@ -71,6 +82,47 @@ test.describe('Schedules management', () => {
       'title',
       /Production Web Server \(web-server-01\) — last backup:/,
     )
+  })
+
+  test("clicking a schedule card's Overdue chip navigates to the schedule detail page", async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await mockScheduleOneHealth(page, { is_overdue: true })
+
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator('.schedule-card', { hasText: 'server-daily' })
+    const overdueChip = card.locator('.entity-issue-chip.sev-warning')
+    await expect(overdueChip).toBeVisible()
+
+    await overdueChip.click()
+    await page.waitForLoadState('networkidle')
+
+    await expect(page).toHaveURL(/\/schedules\/1$/)
+  })
+
+  test("clicking a schedule card's Failed chip navigates to the filtered activity log", async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await mockScheduleOneHealth(page, {
+      last_status: 'failed',
+      last_error_message: 'Simulated failure',
+    })
+
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator('.schedule-card', { hasText: 'server-daily' })
+    const failedChip = card.locator('.entity-issue-chip.sev-danger')
+    await expect(failedChip).toBeVisible()
+
+    await failedChip.click()
+    await page.waitForLoadState('networkidle')
+
+    await expect(page).toHaveURL(/\/activity\?category=backup&schedule_id=1&status=failed/)
   })
 
   test('clicking a schedule navigates to detail page', async ({ page }) => {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+import type { Route } from '@playwright/test'
 import { expect, loginAsAdmin, test } from './fixtures'
 
 test.describe('Repositories management journey', () => {
@@ -70,5 +71,33 @@ test.describe('Repositories management journey', () => {
       text.includes('backup') ||
       text.includes('Backup')
     expect(hasRelatedInfo).toBe(true)
+  })
+
+  test('repo card shows a clickable unmatched chip that navigates to the archives tab', async ({
+    page,
+  }) => {
+    await page.route('**/api/repos/stats', async (route: Route) => {
+      const response = await route.fetch()
+      const repos = (await response.json()) as Array<Record<string, unknown>>
+      if (repos.length > 0) repos[0].unmatched_count = 3
+      return route.fulfill({
+        status: response.status(),
+        contentType: 'application/json',
+        body: JSON.stringify(repos),
+      })
+    })
+
+    await loginAsAdmin(page)
+    await page.goto('/repos')
+    await page.waitForLoadState('networkidle')
+
+    const chip = page.locator('.repo-card .entity-issue-chip.sev-warning').first()
+    await expect(chip).toBeVisible()
+    await expect(chip).toContainText('unmatched')
+
+    await chip.click()
+    await page.waitForLoadState('networkidle')
+
+    await expect(page).toHaveURL(/\/repos\/\d+\?tab=archives/)
   })
 })

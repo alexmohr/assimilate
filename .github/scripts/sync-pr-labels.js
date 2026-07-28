@@ -386,15 +386,17 @@ async function needsHumanSignOff(github, owner, repo, prNumber, pr) {
 }
 
 // Whether a human's removal of `needs human review` still stands for the
-// PR's current head commit. Nothing in this codebase ever calls removeLabel
-// on HUMAN_LABEL (grep it - only ever added, in the toAdd loop below), so
-// any "unlabeled" event in its history is a human's own sign-off action via
-// the GitHub UI, not something this automation did. Without this check,
-// needsHumanSignOff() above would simply re-derive "true" from the same
-// unchanged file patterns on the very next sync and the label would
-// reappear immediately - the additive-only, human-clears-it-only contract
-// documented in skills/review/SKILL.md would be pure documentation with no
-// code behind it.
+// PR's current head commit. This automation itself also removes HUMAN_LABEL
+// now (see the otherGatesClear stripping block below: CI/merge-conflict/a
+// precheck stage failing means review isn't the relevant gate yet), so an
+// "unlabeled" event in the PR's history is no longer proof on its own that a
+// human signed off - it's only trustworthy once TRUSTED_AUTOMATION_LOGIN is
+// ruled out as the actor (mirroring claudeApprovedIsGenuine's provenance
+// check in the other direction). Without that check, a PR whose label this
+// workflow stripped for a CI failure would look permanently signed-off the
+// moment CI turned green again, silently bypassing the sign-off gate for
+// good - needsHumanSignOff() would never even get a chance to re-derive
+// "true", since this function is what decides whether it's asked at all.
 //
 // Scoped to the current commit the same way claude-approved/claude-changes-
 // requested are (see the eventAction === "synchronize" handling above): a
@@ -418,6 +420,7 @@ async function humanSignOffStillStands(github, owner, repo, prNumber, headSha) {
 
   const latest = labelEvents[labelEvents.length - 1];
   if (latest.event !== "unlabeled") return false; // most recent action re-added it
+  if (latest.actor && latest.actor.login === TRUSTED_AUTOMATION_LOGIN) return false; // this workflow's own removal, not a human's
 
   const { data: commit } = await github.rest.repos.getCommit({ owner, repo, ref: headSha });
   const commitDate = new Date(commit.commit.committer?.date || commit.commit.author.date);
@@ -628,9 +631,6 @@ module.exports = async ({
       : Promise.resolve(false),
   ]);
   const reviewDecision = resolveEffectiveReviewDecision(nativeReviewDecision, existingLabels);
-  // A human's own removal of the label overrides re-derivation from the
-  // same unchanged file patterns - see humanSignOffStillStands() above.
-  const needsHuman = hasHumanLabel || (autoNeedsHuman && !signOffStillStands);
   // Only a label backed by a completed check run on *this* commit counts as
   // an actual failure of this commit - see labelReflectsCurrentCommit above.
   const coverageFailedForThisCommit = hasCoverageFailed && coverageLabelCurrent;
@@ -638,6 +638,42 @@ module.exports = async ({
 
   const ciFailed = ciConclusion !== null && !["success", "skipped", "neutral"].includes(ciConclusion);
   const mergeConflict = mergeableState === "dirty";
+
+  // `needs human review` is the repo's *last* gate, not a parallel one: a PR
+  // whose CI is red, has a real merge conflict, or is failing a
+  // deterministic pre-review check doesn't need a human's judgment call yet
+  // - it needs those objective, code-fixable problems resolved first.
+  // autoNeedsHuman is a pure function of PR content (sensitive paths,
+  // security keywords), so the very next sync after otherGatesClear flips
+  // back to true re-derives the same "yes" on its own - deferring the label
+  // here doesn't lose track of a real sign-off requirement, it just stops
+  // asking for one before there's anything reviewable.
+  const otherGatesClear =
+    !ciFailed && !mergeConflict && !coverageFailedForThisCommit && !duplicateCodeForThisCommit;
+  // A human's own removal of the label overrides re-derivation from the
+  // same unchanged file patterns - see humanSignOffStillStands() above.
+  const needsHuman = otherGatesClear && (hasHumanLabel || (autoNeedsHuman && !signOffStillStands));
+
+  if (hasHumanLabel && !otherGatesClear) {
+    // Same unconditional-strip pattern as the claude-approved guarantee
+    // above: a maintainer shouldn't have to clear `needs human review` by
+    // hand only to watch it (correctly) reappear once CI/merge/precheck
+    // settle, and leaving it set while the PR isn't even buildable yet just
+    // gives them a second, currently-irrelevant thing to look at. This is
+    // provenance-checked in humanSignOffStillStands so a later sync (once
+    // otherGatesClear flips back to true) never mistakes this automated
+    // removal for a real human sign-off.
+    await github.rest.issues
+      .removeLabel({ owner, repo, issue_number: prNumber, name: HUMAN_LABEL.name })
+      .catch((err) => {
+        if (err.status !== 404) throw err;
+      });
+    existingLabels = existingLabels.filter((name) => name !== HUMAN_LABEL.name);
+    core.info(
+      `PR #${prNumber}: stripped needs human review - CI/merge conflict/a precheck stage is ` +
+        "currently failing, so review isn't the blocking gate yet.",
+    );
+  }
 
   // Single-shot (timeoutMs: 0 - never polls/waits) look at every check run
   // on this commit, computed unconditionally and up front so a stage other

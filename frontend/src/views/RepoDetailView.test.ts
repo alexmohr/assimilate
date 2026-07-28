@@ -119,12 +119,40 @@ const mockRepo: RepoWithStats = {
 
 const refreshedHostKey = 'ssh-ed25519 AAAANEW'
 
+const mockRepoSchedule = {
+  id: 5,
+  agent_id: 10,
+  repo_id: 1,
+  target_hostnames: ['web-server-01'],
+  schedule_type: 'backup',
+  cron_expression: '0 2 * * *',
+  enabled: true,
+  canary_enabled: false,
+  last_run_at: '2026-05-30T02:00:00Z',
+  next_run_at: '2026-05-31T02:00:00Z',
+  exclude_patterns: [],
+  ignore_global_excludes: false,
+  keep_hourly: 24,
+  keep_daily: 7,
+  keep_weekly: 4,
+  keep_monthly: 6,
+  keep_yearly: 1,
+  compact_enabled: true,
+  pre_backup_commands: '[]',
+  post_backup_commands: '[]',
+}
+
 let repoState: RepoWithStats
 
 function setupApiSuccess(repo: RepoWithStats = mockRepo, scanHostKey = refreshedHostKey): void {
   repoState = { ...repo }
   vi.mocked(apiClient.get).mockImplementation((url: string) => {
     if (url === `/repos/${repo.id}`) return Promise.resolve({ data: repoState })
+    if (url === `/repos/${repo.id}/schedules`) return Promise.resolve({ data: [mockRepoSchedule] })
+    if (url === '/agents') {
+      return Promise.resolve({ data: [{ id: 10, hostname: 'web-server-01' }] })
+    }
+    if (url === '/stats/health') return Promise.resolve({ data: [] })
     if (String(url).startsWith('/tags')) return Promise.resolve({ data: [] })
     if (String(url).endsWith('/tags')) return Promise.resolve({ data: [] })
     return Promise.resolve({ data: [] })
@@ -318,6 +346,61 @@ describe('RepoDetailView', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('No archives found')
+  })
+
+  it('runs a schedule now from the Schedules tab', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(RepoDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const schedulesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Schedules')
+    expect(schedulesTab).toBeDefined()
+    await schedulesTab!.trigger('click')
+    await flushPromises()
+
+    const runBtn = wrapper.findAll('button').find((b) => b.text() === 'Run')
+    expect(runBtn).toBeDefined()
+    await runBtn!.trigger('click')
+    await flushPromises()
+
+    // Toast container is teleported so verify via the apiClient call and the
+    // loading state clearing back to 'Run', matching this file's other
+    // toast-triggering tests (e.g. 'shows error toast when sync request fails').
+    expect(vi.mocked(apiClient.post)).toHaveBeenCalledWith(
+      `/schedules/${mockRepoSchedule.id}/run`,
+      {},
+    )
+    expect(wrapper.findAll('button').find((b) => b.text() === 'Run')).toBeDefined()
+  })
+
+  it('shows an error toast when running a schedule now fails', async () => {
+    setupApiSuccess()
+    vi.mocked(apiClient.post).mockRejectedValue(new Error('Connection refused'))
+
+    const wrapper = renderWithPlugins(RepoDetailView, {
+      props: { id: '1' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+
+    const schedulesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Schedules')
+    await schedulesTab!.trigger('click')
+    await flushPromises()
+
+    const runBtn = wrapper.findAll('button').find((b) => b.text() === 'Run')
+    expect(runBtn).toBeDefined()
+    await runBtn!.trigger('click')
+    await flushPromises()
+
+    expect(vi.mocked(apiClient.post)).toHaveBeenCalledWith(
+      `/schedules/${mockRepoSchedule.id}/run`,
+      {},
+    )
+    // Loading state clears even on failure -- button returns to 'Run'.
+    expect(wrapper.findAll('button').find((b) => b.text() === 'Run')).toBeDefined()
   })
 
   it('shows archive list mode options when archives exist', async () => {

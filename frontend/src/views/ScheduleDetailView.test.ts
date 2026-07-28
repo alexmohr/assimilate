@@ -391,6 +391,18 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(buttons).not.toContain('Cancel Backup')
   })
 
+  it('clicking Run Now triggers the schedule with an empty body', async () => {
+    mockApiClient.post.mockResolvedValue({ data: {} })
+    const wrapper = await createEditWrapper()
+
+    const runNowButton = wrapper.findAll('button').find((b) => b.text() === 'Run Now')
+    expect(runNowButton).toBeTruthy()
+    await runNowButton!.trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.post).toHaveBeenCalledWith('/schedules/1/run', {})
+  })
+
   it('shows an Overdue badge and Retry button for an overdue target, with an offline note', async () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })

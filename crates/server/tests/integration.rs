@@ -509,23 +509,21 @@ async fn wait_for_import_completion(pool: &PgPool, repo_id: i64) {
 
 #[cfg(test)]
 async fn clean_tables(pool: &PgPool) {
-    sqlx::query("DELETE FROM backup_reports")
-        .execute(pool)
-        .await
-        .unwrap();
-    sqlx::query("DELETE FROM schedules")
-        .execute(pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "TRUNCATE TABLE audit_log, login_attempts, system_events, system_settings, server_quotas, \
+         notification_deliveries, notification_rules, ssh_tunnels, agent_hostname_patterns, \
+         agent_tags, schedule_targets, per_agent_excludes, per_agent_commands, \
+         per_agent_file_change_patterns, archive_tags, archive_files, archive_index_jobs, \
+         archive_paths, archives, backup_sources, backup_reports, canary_results, repo_tags, \
+         repo_stats, repo_import_state, repo_last_op, repo_quotas, repo_relocation_pending_hosts, \
+         schedules, dismissed_dashboard_findings, push_subscriptions, api_tokens, sessions, \
+         user_roles, user_groups, repo_permissions, users, groups, tags, repos, agents, \
+         notification_channels CASCADE",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
     sqlx::query("UPDATE excludes_global_config SET raw_text = ''")
-        .execute(pool)
-        .await
-        .unwrap();
-    sqlx::query("DELETE FROM repos")
-        .execute(pool)
-        .await
-        .unwrap();
-    sqlx::query("DELETE FROM agents")
         .execute(pool)
         .await
         .unwrap();
@@ -640,6 +638,7 @@ async fn test_agent_crud() {
 #[ignore = "requires DATABASE_URL"]
 async fn test_notification_channels_list() {
     let pool = setup_pool().await;
+    clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone());
 
@@ -654,6 +653,7 @@ async fn test_notification_channels_list() {
 #[ignore = "requires DATABASE_URL"]
 async fn test_notification_channel_create_webhook() {
     let pool = setup_pool().await;
+    clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone());
 
@@ -679,6 +679,7 @@ async fn test_notification_channel_create_webhook() {
 #[ignore = "requires DATABASE_URL"]
 async fn test_tunnels_list() {
     let pool = setup_pool().await;
+    clean_tables(&pool).await;
     create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone());
 
@@ -1591,6 +1592,7 @@ async fn test_reset_import_cancels_active_sync() {
 #[ignore = "requires DATABASE_URL"]
 async fn test_auth_me_without_session() {
     let pool = setup_pool().await;
+    clean_tables(&pool).await;
     let mut app = build_test_app(pool.clone());
 
     let req = Request::builder()
@@ -2993,6 +2995,7 @@ fn mcp_session_request(method: &str, uri: &str) -> Request<Body> {
 #[ignore = "requires DATABASE_URL"]
 async fn must_change_password_blocks_regular_endpoints() {
     let pool = setup_pool().await;
+    clean_tables(&pool).await;
     create_must_change_password_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone());
 
@@ -3008,6 +3011,7 @@ async fn must_change_password_blocks_regular_endpoints() {
 #[ignore = "requires DATABASE_URL"]
 async fn must_change_password_allows_me_endpoint() {
     let pool = setup_pool().await;
+    clean_tables(&pool).await;
     create_must_change_password_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone());
 

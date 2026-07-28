@@ -87,4 +87,82 @@ test.describe('Hosts management', () => {
 
     await expect(page).toHaveURL(/\/agents\/web-server-01\?tab=backups&status=failed/)
   })
+
+  test('agent card shows an Overdue chip that navigates to the schedules tab', async ({ page }) => {
+    await page.route('**/api/stats/health', async (route: Route) => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            hostname: 'web-server-01',
+            target_name: 'server-daily',
+            last_status: 'success',
+            last_backup_at: '2020-01-01T02:00:00Z',
+            is_overdue: true,
+            last_error_message: null,
+          },
+        ]),
+      })
+    })
+
+    await loginAsAdmin(page)
+    await page.goto('/agents')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator('.host-card').filter({ hasText: 'web-server-01' }).first()
+
+    const overdueChip = card.locator('.entity-issue-chip.sev-warning')
+    await expect(overdueChip).toBeVisible()
+    await expect(overdueChip).toContainText('overdue')
+
+    await overdueChip.click()
+    await page.waitForLoadState('networkidle')
+
+    await expect(page).toHaveURL(/\/agents\/web-server-01\?tab=schedules&health=overdue/)
+  })
+
+  test("agent detail schedules tab's Failed chip navigates to the filtered activity log", async ({
+    page,
+  }) => {
+    // schedule 1 ("server-daily") targets web-server-01 - see schedules.spec.ts.
+    await page.route(
+      (url) => url.pathname === '/api/stats/health',
+      async (route: Route) => {
+        const response = await route.fetch()
+        const entries = (await response.json()) as Array<Record<string, unknown>>
+        const withoutTarget = entries.filter(
+          (e) => !(e.schedule_id === 1 && e.hostname === 'web-server-01'),
+        )
+        withoutTarget.push({
+          schedule_id: 1,
+          hostname: 'web-server-01',
+          target_name: 'server-daily',
+          last_status: 'failed',
+          last_backup_at: '2020-01-01T02:00:00Z',
+          is_overdue: false,
+          last_error_message: 'Simulated failure',
+          cron_expression: '0 2 * * *',
+          schedule_enabled: true,
+        })
+        return route.fulfill({
+          status: response.status(),
+          contentType: 'application/json',
+          body: JSON.stringify(withoutTarget),
+        })
+      },
+    )
+
+    await loginAsAdmin(page)
+    await page.goto('/agents/web-server-01?tab=schedules')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator('.schedule-card').filter({ hasText: 'server-daily' })
+    const failedChip = card.locator('.entity-issue-chip.sev-danger')
+    await expect(failedChip).toBeVisible()
+
+    await failedChip.click()
+    await page.waitForLoadState('networkidle')
+
+    await expect(page).toHaveURL(/\/activity\?category=backup&schedule_id=1&status=failed/)
+  })
 })

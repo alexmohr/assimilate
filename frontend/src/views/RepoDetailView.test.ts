@@ -144,15 +144,20 @@ const mockRepoSchedule = {
 
 let repoState: RepoWithStats
 
-function setupApiSuccess(repo: RepoWithStats = mockRepo, scanHostKey = refreshedHostKey): void {
+function setupApiSuccess(
+  repo: RepoWithStats = mockRepo,
+  scanHostKey = refreshedHostKey,
+  schedules: unknown[] = [mockRepoSchedule],
+  health: unknown[] = [],
+): void {
   repoState = { ...repo }
   vi.mocked(apiClient.get).mockImplementation((url: string) => {
     if (url === `/repos/${repo.id}`) return Promise.resolve({ data: repoState })
-    if (url === `/repos/${repo.id}/schedules`) return Promise.resolve({ data: [mockRepoSchedule] })
+    if (url === `/repos/${repo.id}/schedules`) return Promise.resolve({ data: schedules })
     if (url === '/agents') {
       return Promise.resolve({ data: [{ id: 10, hostname: 'web-server-01' }] })
     }
-    if (url === '/stats/health') return Promise.resolve({ data: [] })
+    if (url === '/stats/health') return Promise.resolve({ data: health })
     if (String(url).startsWith('/tags')) return Promise.resolve({ data: [] })
     if (String(url).endsWith('/tags')) return Promise.resolve({ data: [] })
     return Promise.resolve({ data: [] })
@@ -354,6 +359,56 @@ describe('RepoDetailView', () => {
     )
     // Loading state clears even on failure -- button returns to 'Run'.
     expect(wrapper.find('button[title="Run backup now"]').text()).toBe('Run')
+  })
+
+  it('shows a Disabled pill and tints the card for a disabled schedule', async () => {
+    setupApiSuccess(mockRepo, refreshedHostKey, [{ ...mockRepoSchedule, enabled: false }])
+    const wrapper = await renderRepoDetail()
+
+    const schedulesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Schedules')
+    await schedulesTab!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.entity-status-pill').text()).toBe('Disabled')
+    expect(wrapper.find('.schedule-card').classes()).toContain('schedule-card-notable')
+  })
+
+  it("shows a Failed chip that navigates to the schedule's filtered activity log", async () => {
+    setupApiSuccess(
+      mockRepo,
+      refreshedHostKey,
+      [mockRepoSchedule],
+      [
+        {
+          schedule_id: mockRepoSchedule.id,
+          hostname: 'web-server-01',
+          target_name: 'server-daily',
+          last_status: 'failed',
+          last_backup_at: '2026-05-30T02:00:00Z',
+          is_overdue: false,
+          last_error_message: 'Repository lock could not be acquired',
+          cron_expression: '0 2 * * *',
+          schedule_enabled: true,
+        },
+      ],
+    )
+    const wrapper = await renderRepoDetail()
+
+    const schedulesTab = wrapper.findAll('.tab-btn').find((b) => b.text() === 'Schedules')
+    await schedulesTab!.trigger('click')
+    await flushPromises()
+
+    const failedChip = wrapper.find('.entity-issue-chip.sev-danger')
+    expect(failedChip.exists()).toBe(true)
+    await failedChip.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.vm.$router.currentRoute.value.path).toBe('/activity')
+    expect(wrapper.vm.$router.currentRoute.value.query).toMatchObject({
+      category: 'backup',
+      schedule_id: String(mockRepoSchedule.id),
+      status: 'failed',
+    })
   })
 
   it('shows archive list mode options when archives exist', async () => {

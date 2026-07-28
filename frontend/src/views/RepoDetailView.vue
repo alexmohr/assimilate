@@ -20,44 +20,22 @@ import { useToast } from '../composables/useToast'
 import { formatBytes, formatDate, relativeTime } from '../utils/format'
 import { cronToHuman } from '../utils/cron'
 import { extractError } from '../utils/error'
-import { normalizeBackupStatus, type NormalizedBackupStatus } from '../utils/backupStatus'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
-import {
-  Folder,
-  File,
-  Download,
-  RotateCcw,
-  Trash2,
-  CheckCircle,
-  AlertTriangle,
-  AlertCircle,
-} from '@lucide/vue'
+import { Folder, File, Download, RotateCcw, Trash2 } from '@lucide/vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import QuotaPanel from '../components/QuotaPanel.vue'
 import BaseModal from '../components/BaseModal.vue'
 import BaseHostLink from '../components/BaseHostLink.vue'
+import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
+import { scheduleIssuesFromEntries, type ScheduleHealthEntry } from '../utils/scheduleHealth'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import type { ActiveRepoOp, RepoOpKind, RepoWithStats } from '../types/repo'
 import type { TagRow } from '../types/tag'
 
 type TabId = 'overview' | 'archives' | 'schedules'
 
-interface AgentRow {
-  id: number
-  hostname: string
-  display_name: string | null
-}
-
-interface HealthEntry {
-  schedule_id: number
-  hostname: string
-  last_status: string | null
-  last_backup_at: string | null
-  is_overdue: boolean
-  last_error_message: string | null
-}
 type ArchiveSortMode =
   | 'date-desc'
   | 'date-asc'
@@ -209,50 +187,9 @@ useEscapeKey(showResetAndSyncDialog, () => {
 const repoSchedules = ref<ScheduleRow[]>([])
 const repoSchedulesLoading = ref(false)
 const repoSchedulesError = ref<string | null>(null)
-const scheduleAgents = ref<AgentRow[]>([])
-const scheduleHealth = ref<HealthEntry[]>([])
-const scheduleExpandedError = ref<number | null>(null)
+const scheduleHealth = ref<ScheduleHealthEntry[]>([])
 const scheduleRunNowLoading = ref<number | null>(null)
 const { success: scheduleToastSuccess, error: scheduleToastError } = useToast()
-
-const scheduleAgentMap = computed(() => {
-  const m = new Map<string, AgentRow>()
-  scheduleAgents.value.forEach((a) => m.set(a.hostname, a))
-  return m
-})
-
-const scheduleHealthBySchedule = computed(() => {
-  const m = new Map<number, HealthEntry[]>()
-  scheduleHealth.value.forEach((h) => {
-    const entries = m.get(h.schedule_id) ?? []
-    entries.push(h)
-    m.set(h.schedule_id, entries)
-  })
-  return m
-})
-
-interface EnrichedSchedule extends ScheduleRow {
-  hostLabels: string[]
-  health: HealthEntry | null
-}
-
-const enrichedRepoSchedules = computed<EnrichedSchedule[]>(() =>
-  repoSchedules.value.map((s) => {
-    const hostLabels = s.target_hostnames.map((hostname) => {
-      const agent = scheduleAgentMap.value.get(hostname)
-      return agent?.display_name ? `${agent.display_name} (${hostname})` : hostname
-    })
-    const entries = scheduleHealthBySchedule.value.get(s.id) ?? []
-    const health: HealthEntry | null =
-      entries.find((h) => h.is_overdue) ??
-      entries.find(
-        (h) => h.last_status !== null && normalizeBackupStatus(h.last_status) === 'failed',
-      ) ??
-      entries[0] ??
-      null
-    return { ...s, hostLabels, health }
-  }),
-)
 
 function scheduleTypeLabel(t: ScheduleType): string {
   switch (t) {
@@ -265,63 +202,23 @@ function scheduleTypeLabel(t: ScheduleType): string {
   }
 }
 
-function scheduleHealthStatus(entry: HealthEntry | null): NormalizedBackupStatus | null {
-  return entry?.last_status != null ? normalizeBackupStatus(entry.last_status) : null
+function scheduleHealthEntries(s: ScheduleRow): ScheduleHealthEntry[] {
+  return scheduleHealth.value.filter((h) => h.schedule_id === s.id)
 }
 
-function scheduleStatusClass(entry: HealthEntry | null): string {
-  if (!entry) return ''
-  if (entry.is_overdue) return 'status-overdue'
-  switch (scheduleHealthStatus(entry)) {
-    case 'success':
-      return 'status-success'
-    case 'warning':
-      return 'status-warning'
-    case 'failed':
-    case 'cancelled':
-      return 'status-failed'
-    case 'started':
-    case 'pending':
-      return 'status-started'
-    case null:
-      return ''
-  }
-}
-
-function scheduleStatusLabel(entry: HealthEntry | null): string {
-  if (!entry) return ''
-  if (entry.is_overdue) return 'Overdue'
-  switch (scheduleHealthStatus(entry)) {
-    case 'success':
-      return 'Success'
-    case 'warning':
-      return 'Warning'
-    case 'failed':
-    case 'cancelled':
-      return 'Failed'
-    case 'started':
-    case 'pending':
-      return 'Running'
-    case null:
-      return 'No data'
-  }
-}
-
-function toggleScheduleError(id: number): void {
-  scheduleExpandedError.value = scheduleExpandedError.value === id ? null : id
+function scheduleIssues(s: ScheduleRow): EntityIssue[] {
+  return scheduleIssuesFromEntries(scheduleHealthEntries(s), s.id, router)
 }
 
 async function loadRepoSchedules(): Promise<void> {
   repoSchedulesLoading.value = true
   repoSchedulesError.value = null
   try {
-    const [schRes, agentRes, healthRes] = await Promise.all([
+    const [schRes, healthRes] = await Promise.all([
       apiClient.get<ScheduleRow[]>(`/repos/${repoId.value}/schedules`),
-      apiClient.get<AgentRow[]>('/agents'),
-      apiClient.get<HealthEntry[]>('/stats/health'),
+      apiClient.get<ScheduleHealthEntry[]>('/stats/health'),
     ])
     repoSchedules.value = schRes.data
-    scheduleAgents.value = agentRes.data
     scheduleHealth.value = healthRes.data
   } catch {
     repoSchedulesError.value = 'Failed to load schedules.'
@@ -2002,7 +1899,7 @@ async function resetImport(): Promise<void> {
           {{ repoSchedulesError }}
         </div>
         <div
-          v-else-if="enrichedRepoSchedules.length === 0"
+          v-else-if="repoSchedules.length === 0"
           class="state-msg"
         >
           No schedules configured for this repository.
@@ -2012,45 +1909,18 @@ async function resetImport(): Promise<void> {
           class="repo-schedule-grid"
         >
           <div
-            v-for="s in enrichedRepoSchedules"
+            v-for="s in repoSchedules"
             :key="s.id"
             class="schedule-card"
-            :class="{ disabled: !s.enabled }"
+            :class="{ 'schedule-card-notable': !s.enabled }"
             @click="router.push(`/schedules/${s.id}`)"
           >
-            <div class="card-top">
-              <div class="card-info">
-                <span class="card-hostname">{{ s.name || `Schedule #${s.id}` }}</span>
-                <span class="card-repo">{{ s.hostLabels.join(', ') || 'No hosts assigned' }}</span>
-              </div>
-              <div class="card-badges">
-                <span
-                  v-if="s.health && (s.health.last_status || s.health.is_overdue)"
-                  class="health-badge"
-                  :class="scheduleStatusClass(s.health)"
-                >
-                  <CheckCircle
-                    v-if="s.health.last_status === 'success' && !s.health.is_overdue"
-                    :size="12"
-                  />
-                  <AlertTriangle
-                    v-else-if="s.health.last_status === 'warning' || s.health.is_overdue"
-                    :size="12"
-                  />
-                  <AlertCircle
-                    v-else-if="s.health.last_status === 'failed'"
-                    :size="12"
-                  />
-                  {{ scheduleStatusLabel(s.health) }}
-                </span>
-                <span
-                  class="status-badge"
-                  :class="s.enabled ? 'status-online' : 'status-offline'"
-                >
-                  {{ s.enabled ? 'Enabled' : 'Disabled' }}
-                </span>
-              </div>
-            </div>
+            <span class="card-hostname">{{ s.name || `Schedule #${s.id}` }}</span>
+            <EntityStatusBadges
+              :notable="!s.enabled"
+              notable-label="Disabled"
+              :issues="scheduleIssues(s)"
+            />
             <div class="card-meta">
               <span class="host-count">
                 {{ s.target_hostnames.length }}
@@ -2062,29 +1932,6 @@ async function resetImport(): Promise<void> {
               >
                 {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
               </span>
-            </div>
-            <div
-              v-if="s.health?.last_error_message"
-              class="card-error"
-              @click.stop
-            >
-              <button
-                class="error-toggle"
-                @click="toggleScheduleError(s.id)"
-              >
-                <AlertCircle :size="12" />
-                {{
-                  s.health?.last_status === 'warning'
-                    ? 'Last backup had a warning'
-                    : 'Last backup failed'
-                }}
-                <span class="toggle-arrow">{{ scheduleExpandedError === s.id ? '▴' : '▾' }}</span>
-              </button>
-              <pre
-                v-if="scheduleExpandedError === s.id"
-                class="error-pre"
-                >{{ s.health.last_error_message }}</pre
-              >
             </div>
             <div class="card-stats">
               <div class="stat">
@@ -3640,108 +3487,8 @@ async function resetImport(): Promise<void> {
   box-shadow: var(--shadow);
 }
 
-.schedule-card.disabled {
-  opacity: 0.5;
-}
-
-.card-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.card-badges {
-  display: flex;
-  gap: 0.4rem;
-  align-items: center;
-  flex-shrink: 0;
-}
-
-.health-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.health-badge.status-success {
-  background: var(--success-subtle);
-  color: var(--success);
-}
-
-.health-badge.status-warning {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.health-badge.status-failed {
-  background: var(--danger-subtle);
-  color: var(--danger);
-}
-
-.health-badge.status-overdue {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.health-badge.status-started {
-  background: var(--info-subtle);
-  color: var(--info);
-}
-
-.card-error {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.error-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  background: none;
-  border: none;
-  color: var(--danger);
-  font-size: 0.75rem;
-  font-weight: 500;
-  cursor: pointer;
-  padding: 0.2rem 0;
-}
-
-.error-toggle:hover {
-  text-decoration: underline;
-}
-
-.toggle-arrow {
-  font-size: 0.6rem;
-  margin-left: 0.1rem;
-}
-
-.error-pre {
-  background: var(--bg-input);
-  border: 1px solid var(--danger-subtle);
-  border-radius: var(--radius-sm);
-  padding: 0.6rem 0.75rem;
-  font-size: 0.72rem;
-  font-family: var(--mono);
-  color: var(--danger);
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 150px;
-  overflow-y: auto;
-  margin: 0;
-}
-
-.card-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  min-width: 0;
+.schedule-card-notable {
+  background: var(--bg-hover);
 }
 
 .card-hostname {
@@ -3752,17 +3499,6 @@ async function resetImport(): Promise<void> {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.card-repo {
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  font-family: var(--mono);
-  line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 
 .card-meta {
@@ -3778,7 +3514,7 @@ async function resetImport(): Promise<void> {
   font-size: 0.65rem;
   font-weight: 600;
   letter-spacing: 0.02em;
-  background: var(--bg-hover);
+  background: var(--bg-card);
   color: var(--text-secondary);
 }
 

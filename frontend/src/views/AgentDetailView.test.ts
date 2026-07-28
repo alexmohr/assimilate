@@ -420,8 +420,21 @@ describe('AgentDetailView — schedules tab', () => {
     expect(agentSchedules).toEqual([{ ...schedules[0] }])
   })
 
+  async function mountSchedulesTab(
+    schedules: unknown[],
+  ): Promise<VueWrapper<ComponentPublicInstance>> {
+    setupApi(mockReports, [{ id: 10, name: 'shared-repo' }], schedules)
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await openSchedulesTab(wrapper)
+    return wrapper
+  }
+
   it('renders schedule cards on the schedules tab', async () => {
-    const schedules = [
+    const wrapper = await mountSchedulesTab([
       {
         id: 1,
         repo_id: 10,
@@ -432,14 +445,7 @@ describe('AgentDetailView — schedules tab', () => {
         enabled: true,
         next_run_at: null,
       },
-    ]
-    setupApi(mockReports, [{ id: 10, name: 'shared-repo' }], schedules)
-    const wrapper = renderWithPlugins(AgentDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-    await openSchedulesTab(wrapper)
+    ])
 
     expect(wrapper.text()).toContain('Nightly Backup')
     expect(wrapper.find('.entity-status-pill').exists()).toBe(false)
@@ -459,7 +465,7 @@ describe('AgentDetailView — schedules tab', () => {
   })
 
   it('shows a Disabled pill and tints the card for a disabled schedule', async () => {
-    const schedules = [
+    const wrapper = await mountSchedulesTab([
       {
         id: 1,
         repo_id: 10,
@@ -470,14 +476,7 @@ describe('AgentDetailView — schedules tab', () => {
         enabled: false,
         next_run_at: null,
       },
-    ]
-    setupApi(mockReports, [{ id: 10, name: 'shared-repo' }], schedules)
-    const wrapper = renderWithPlugins(AgentDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-    await openSchedulesTab(wrapper)
+    ])
 
     expect(wrapper.find('.entity-status-pill').text()).toBe('Disabled')
     expect(wrapper.find('.schedule-card').classes()).toContain('schedule-card-notable')

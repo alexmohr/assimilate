@@ -54,7 +54,7 @@ test.describe('Hosts management', () => {
     await expect(loadBtn).not.toBeDisabled()
   })
 
-  test('agent card shows expandable CardError for failed backups', async ({ page }) => {
+  test('agent card shows a Failed chip that navigates to the failed backup', async ({ page }) => {
     // Intercept the health API to inject a failure with an error message for web-server-01.
     await page.route('**/api/stats/health', async (route: Route) => {
       await route.fulfill({
@@ -78,17 +78,13 @@ test.describe('Hosts management', () => {
 
     const card = page.locator('.host-card').filter({ hasText: 'web-server-01' }).first()
 
-    const errorToggle = card.locator('.error-toggle')
-    await expect(errorToggle).toBeVisible()
+    const failedChip = card.locator('.entity-issue-chip.sev-danger')
+    await expect(failedChip).toBeVisible()
+    await expect(failedChip).toContainText('failed')
 
-    const errorPre = card.locator('.error-pre')
-    await expect(errorPre).not.toBeVisible()
+    await failedChip.click()
+    await page.waitForLoadState('networkidle')
 
-    await errorToggle.click()
-    await expect(errorPre).toBeVisible()
-    await expect(errorPre).toContainText('Repository lock could not be acquired')
-
-    await errorToggle.click()
-    await expect(errorPre).not.toBeVisible()
+    await expect(page).toHaveURL(/\/agents\/web-server-01\?tab=backups&status=failed/)
   })
 })

@@ -766,9 +766,8 @@ mod tests {
         assert_eq!(OnFailure::default(), OnFailure::Stop);
     }
 
-    #[test]
-    fn borg_encryption_display_roundtrip() {
-        let variants = [
+    fn borg_encryption_variants() -> [(BorgEncryption, &'static str); 7] {
+        [
             (BorgEncryption::Repokey, "repokey"),
             (BorgEncryption::RepokeyBlake2, "repokey-blake2"),
             (BorgEncryption::Keyfile, "keyfile"),
@@ -776,7 +775,12 @@ mod tests {
             (BorgEncryption::Authenticated, "authenticated"),
             (BorgEncryption::AuthenticatedBlake2, "authenticated-blake2"),
             (BorgEncryption::None, "none"),
-        ];
+        ]
+    }
+
+    #[test]
+    fn borg_encryption_display_roundtrip() {
+        let variants = borg_encryption_variants();
         for (variant, expected) in variants {
             assert_eq!(variant.to_string(), expected);
             assert_eq!(expected.parse::<BorgEncryption>().unwrap(), variant);
@@ -786,15 +790,7 @@ mod tests {
 
     #[test]
     fn borg_encryption_as_borg_arg() {
-        let variants = [
-            (BorgEncryption::Repokey, "repokey"),
-            (BorgEncryption::RepokeyBlake2, "repokey-blake2"),
-            (BorgEncryption::Keyfile, "keyfile"),
-            (BorgEncryption::KeyfileBlake2, "keyfile-blake2"),
-            (BorgEncryption::Authenticated, "authenticated"),
-            (BorgEncryption::AuthenticatedBlake2, "authenticated-blake2"),
-            (BorgEncryption::None, "none"),
-        ];
+        let variants = borg_encryption_variants();
         for (variant, expected) in variants {
             assert_eq!(variant.as_borg_arg(), expected);
         }

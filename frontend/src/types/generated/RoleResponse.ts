@@ -64,4 +64,8 @@ export type RoleResponse = {
    * Whether the role can manage tunnels.
    */
   can_manage_tunnels: boolean;
+  /**
+   * Whether the role can upgrade agents.
+   */
+  can_upgrade_agent: boolean;
 };

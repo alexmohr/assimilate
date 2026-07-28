@@ -27,6 +27,7 @@ interface Role {
   can_manage_tags: boolean
   can_view_all_repos: boolean
   can_manage_tunnels: boolean
+  can_upgrade_agent: boolean
 }
 
 type PermissionKey =
@@ -42,6 +43,7 @@ type PermissionKey =
   | 'can_manage_tags'
   | 'can_view_all_repos'
   | 'can_manage_tunnels'
+  | 'can_upgrade_agent'
 
 const PERMISSION_LABELS: { key: PermissionKey; label: string }[] = [
   { key: 'can_create_agent', label: 'Create Agent' },
@@ -56,6 +58,7 @@ const PERMISSION_LABELS: { key: PermissionKey; label: string }[] = [
   { key: 'can_manage_tags', label: 'Manage Tags' },
   { key: 'can_view_all_repos', label: 'View All Repos' },
   { key: 'can_manage_tunnels', label: 'Manage Tunnels' },
+  { key: 'can_upgrade_agent', label: 'Upgrade Agent' },
 ]
 
 const SEEDED_ROLES = new Set(['admin', 'operator', 'viewer'])
@@ -79,6 +82,7 @@ const createForm = ref<{ name: string } & Record<PermissionKey, boolean>>({
   can_manage_tags: false,
   can_view_all_repos: false,
   can_manage_tunnels: false,
+  can_upgrade_agent: false,
 })
 const createError = ref<string | null>(null)
 const createSubmitting = ref(false)
@@ -98,6 +102,7 @@ const editForm = ref<Record<PermissionKey, boolean>>({
   can_manage_tags: false,
   can_view_all_repos: false,
   can_manage_tunnels: false,
+  can_upgrade_agent: false,
 })
 const editError = ref<string | null>(null)
 const editSubmitting = ref(false)
@@ -145,6 +150,7 @@ function openCreate(): void {
     can_manage_tags: false,
     can_view_all_repos: false,
     can_manage_tunnels: false,
+    can_upgrade_agent: false,
   }
   createError.value = null
   showCreateModal.value = true
@@ -172,6 +178,7 @@ async function submitCreate(): Promise<void> {
       can_manage_tags: createForm.value.can_manage_tags,
       can_view_all_repos: createForm.value.can_view_all_repos,
       can_manage_tunnels: createForm.value.can_manage_tunnels,
+      can_upgrade_agent: createForm.value.can_upgrade_agent,
     })
     showCreateModal.value = false
     await fetchRoles()
@@ -197,6 +204,7 @@ function openEdit(role: Role): void {
     can_manage_tags: role.can_manage_tags,
     can_view_all_repos: role.can_view_all_repos,
     can_manage_tunnels: role.can_manage_tunnels,
+    can_upgrade_agent: role.can_upgrade_agent,
   }
   editError.value = null
   showEditModal.value = true
@@ -378,17 +386,18 @@ onMounted(fetchRoles)
             />
           </div>
           <div class="permissions-grid">
-            <label
+            <template
               v-for="perm in PERMISSION_LABELS"
               :key="perm.key"
-              class="perm-checkbox"
             >
-              <input
-                v-model="createForm[perm.key]"
-                type="checkbox"
-              />
-              <span>{{ perm.label }}</span>
-            </label>
+              <label class="perm-checkbox">
+                <input
+                  v-model="createForm[perm.key]"
+                  type="checkbox"
+                />
+                <span>{{ perm.label }}</span>
+              </label>
+            </template>
           </div>
           <div
             v-if="createError"
@@ -429,17 +438,18 @@ onMounted(fetchRoles)
           @submit.prevent="submitEdit"
         >
           <div class="permissions-grid">
-            <label
+            <template
               v-for="perm in PERMISSION_LABELS"
               :key="perm.key"
-              class="perm-checkbox"
             >
-              <input
-                v-model="editForm[perm.key]"
-                type="checkbox"
-              />
-              <span>{{ perm.label }}</span>
-            </label>
+              <label class="perm-checkbox">
+                <input
+                  v-model="editForm[perm.key]"
+                  type="checkbox"
+                />
+                <span>{{ perm.label }}</span>
+              </label>
+            </template>
           </div>
           <div
             v-if="editError"
@@ -476,8 +486,8 @@ onMounted(fetchRoles)
       <div class="modal">
         <h2>Delete Role</h2>
         <p class="confirm-text">
-          Are you sure you want to delete the role <strong>{{ deleteTarget?.name }}</strong
-          >? Users assigned this role will lose its permissions.
+          Deleting role <strong>{{ deleteTarget?.name }}</strong> will permanently remove it. Users
+          assigned this role will lose its permissions.
         </p>
         <div
           v-if="deleteError"
@@ -487,17 +497,17 @@ onMounted(fetchRoles)
         </div>
         <div class="modal-actions">
           <button
-            class="btn btn-ghost"
-            @click="showDeleteModal = false"
-          >
-            Cancel
-          </button>
-          <button
             class="btn btn-danger"
             :disabled="deleteSubmitting"
             @click="confirmDelete"
           >
             {{ deleteSubmitting ? 'Deleting...' : 'Delete' }}
+          </button>
+          <button
+            class="btn btn-ghost"
+            @click="showDeleteModal = false"
+          >
+            Cancel
           </button>
         </div>
       </div>
@@ -510,7 +520,7 @@ onMounted(fetchRoles)
   max-width: 1200px;
 }
 
-.page-description {
+.roles-page .page-description {
   font-size: 0.875rem;
   line-height: 1.5;
   color: var(--text-secondary);
@@ -518,49 +528,49 @@ onMounted(fetchRoles)
 }
 
 @media (max-width: 768px) {
-  .page-description {
+  .roles-page .page-description {
     display: none;
   }
 }
 
-.header-actions {
+.roles-page .header-actions {
   display: flex;
   gap: 0.5rem;
   margin-left: auto;
 }
 
-.toolbar {
+.roles-page .toolbar {
   display: flex;
   align-items: center;
   gap: 0.75rem;
   margin-bottom: 1.5rem;
 }
 
-.search-input {
+.roles-page .search-input {
   width: 260px;
 }
 
-.state-msg {
+.roles-page .state-msg {
   text-align: center;
   padding: 3rem;
   color: var(--text-muted);
 }
 
-.state-error {
+.roles-page .state-error {
   color: var(--danger);
 }
 
-.matrix-wrap {
+.roles-page .matrix-wrap {
   overflow-x: auto;
 }
 
-.matrix-table {
+.roles-page .matrix-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.8125rem;
 }
 
-.matrix-table th {
+.roles-page .matrix-table th {
   text-align: center;
   padding: 0.5rem 0.35rem;
   font-weight: 600;
@@ -593,14 +603,14 @@ onMounted(fetchRoles)
   min-width: 120px;
 }
 
-.matrix-table td {
+.roles-page .matrix-table td {
   padding: 0.5rem 0.35rem;
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-primary);
   text-align: center;
 }
 
-.matrix-table tr.seeded {
+.roles-page .matrix-table tr.seeded {
   background: var(--bg-hover);
 }
 
@@ -656,7 +666,7 @@ onMounted(fetchRoles)
   justify-content: flex-end;
 }
 
-.modal {
+.roles-page .modal {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -666,36 +676,36 @@ onMounted(fetchRoles)
   box-shadow: var(--shadow-lg);
 }
 
-.modal-wide {
+.roles-page .modal-wide {
   max-width: 550px;
 }
 
-.modal h2 {
+.roles-page .modal h2 {
   font-size: 1.05rem;
   font-weight: 700;
   color: var(--text-primary);
   margin: 0 0 1rem;
 }
 
-.modal-form {
+.roles-page .modal-form {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
 }
 
-.form-group {
+.roles-page .form-group {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
 }
 
-.form-group label {
+.roles-page .form-group label {
   font-size: 0.8125rem;
   font-weight: 500;
   color: var(--text-secondary);
 }
 
-.form-group input {
+.roles-page .form-group input {
   padding: 0.5rem 0.75rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -704,12 +714,12 @@ onMounted(fetchRoles)
   font-size: 0.875rem;
 }
 
-.form-group input:focus {
+.roles-page .form-group input:focus {
   outline: none;
   border-color: var(--accent);
 }
 
-.permissions-grid {
+.roles-page .permissions-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 0.5rem;
@@ -719,7 +729,7 @@ onMounted(fetchRoles)
   background: var(--bg-input);
 }
 
-.perm-checkbox {
+.roles-page .perm-checkbox {
   display: flex;
   align-items: center;
   gap: 0.4rem;
@@ -728,12 +738,12 @@ onMounted(fetchRoles)
   cursor: pointer;
 }
 
-.perm-checkbox input[type='checkbox'] {
+.roles-page .perm-checkbox input[type='checkbox'] {
   accent-color: var(--accent);
   cursor: pointer;
 }
 
-.modal-error {
+.roles-page .modal-error {
   font-size: 0.8125rem;
   color: var(--danger);
   padding: 0.5rem 0.75rem;
@@ -741,14 +751,14 @@ onMounted(fetchRoles)
   border-radius: var(--radius-sm);
 }
 
-.modal-actions {
+.roles-page .modal-actions {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
   margin-top: 0.5rem;
 }
 
-.confirm-text {
+.roles-page .confirm-text {
   color: var(--text-secondary);
   line-height: 1.6;
   font-size: 0.875rem;

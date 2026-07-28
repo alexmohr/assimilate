@@ -10,7 +10,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use super::{auth::RequireAdmin, helpers};
+use super::{auth::AuthUser, helpers};
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
@@ -129,22 +129,24 @@ pub async fn query_available_agent_version(binary_dir: &std::path::Path) -> Opti
         (status = 200, description = "Deploy result", body = DeployAgentResponse),
         (status = 400, description = "Validation error"),
         (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden"),
+        (status = 403, description = "Forbidden -- upgrade agent permission required"),
         (status = 404, description = "Not found"),
         (status = 500, description = "Agent binary not found or internal error"),
     )
 )]
-/// Deploy the agent binary to a host via SSH (admin only).
+/// Deploy the agent binary to a host via SSH (requires `can_upgrade_agent` permission).
 ///
 /// # Errors
 ///
 /// Returns an error if the underlying operation fails.
 pub async fn deploy_agent(
     State(state): State<AppState>,
-    _admin: RequireAdmin,
+    auth: AuthUser,
     Path(hostname): Path<String>,
     ApiJson(req): ApiJson<DeployAgentRequest>,
 ) -> Result<Json<DeployAgentResponse>, ApiError> {
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
+    require_upgrade_agent(&effective)?;
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
     helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
     helpers::validate_non_empty(&req.server_url, "server_url")?;
@@ -280,19 +282,23 @@ pub struct FetchServiceUnitResponse {
             FetchServiceUnitResponse),
         (status = 400, description = "Validation error"),
         (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden"),
+        (status = 403, description = "Forbidden -- upgrade agent permission required"),
     )
 )]
-/// Read the existing systemd service unit from a remote host via SSH (admin only).
+/// Read the existing systemd service unit from a remote host via SSH
+/// (requires `can_upgrade_agent` permission).
 ///
 /// # Errors
 ///
 /// Returns [`ApiError::BadGateway`] if the upstream operation (e.g. SSH or borg) fails.
 pub async fn fetch_service_unit(
-    _admin: RequireAdmin,
+    State(state): State<AppState>,
+    auth: AuthUser,
     Path(_hostname): Path<String>,
     ApiJson(req): ApiJson<FetchServiceUnitRequest>,
 ) -> Result<Json<FetchServiceUnitResponse>, ApiError> {
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
+    require_upgrade_agent(&effective)?;
     helpers::validate_non_empty(&req.ssh_host, "ssh_host")?;
     helpers::validate_non_empty(&req.ssh_user, "ssh_user")?;
 
@@ -324,6 +330,16 @@ fn agent_is_current(
             .zip(agent_version)
             .is_some_and(|(av, dv)| av == dv)
     }
+}
+
+/// Require the calling user to have the `can_upgrade_agent` permission.
+fn require_upgrade_agent(effective: &db::RoleRow) -> Result<(), ApiError> {
+    if !effective.can_upgrade_agent {
+        return Err(ApiError::Forbidden(
+            "upgrade agent permission required".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -402,5 +418,51 @@ mod tests {
             Some("1.2.4"),
             Some("1.2.3")
         ));
+    }
+
+    #[test]
+    fn require_upgrade_agent_allows_with_permission() {
+        let row = db::RoleRow {
+            can_upgrade_agent: true,
+            ..make_empty_role()
+        };
+        assert!(require_upgrade_agent(&row).is_ok());
+    }
+
+    #[test]
+    fn require_upgrade_agent_denies_without_permission() {
+        let row = db::RoleRow {
+            can_upgrade_agent: false,
+            ..make_empty_role()
+        };
+        let result = require_upgrade_agent(&row);
+        assert!(result.is_err());
+        match result {
+            Err(ApiError::Forbidden(msg)) => {
+                assert_eq!(msg, "upgrade agent permission required");
+            }
+            _ => panic!("expected Forbidden error"),
+        }
+    }
+
+    fn make_empty_role() -> db::RoleRow {
+        db::RoleRow {
+            id: 0,
+            name: String::new(),
+            can_create_agent: false,
+            can_delete_agent: false,
+            can_delete_own_agent: false,
+            can_create_repo: false,
+            can_delete_repo: false,
+            can_delete_own_repo: false,
+            can_create_schedule: false,
+            can_delete_schedule: false,
+            can_delete_own_schedule: false,
+            can_manage_tags: false,
+            can_view_all_repos: false,
+            can_manage_tunnels: false,
+            can_upgrade_agent: false,
+            created_at: chrono::Utc::now(),
+        }
     }
 }

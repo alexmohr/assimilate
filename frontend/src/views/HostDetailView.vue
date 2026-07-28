@@ -991,7 +991,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
               {{ agent.restart_unavailable_reason }}
             </span>
             <button
-              v-if="deployButtonLabel() && !isImported"
+              v-if="deployButtonLabel() && !isImported && authStore.canUpgradeAgent"
               class="btn btn-sm btn-ghost"
               @click="showDeployDialog = true"
             >

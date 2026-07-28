@@ -2907,10 +2907,6 @@ async fn run_borg_info_for_stats(
     }
 }
 
-#[allow(
-    clippy::cast_possible_truncation,
-    reason = "borg durations are small positive second counts; removal tracked in #284"
-)]
 fn parse_archive_stats(json: &serde_json::Value, info: &serde_json::Value) -> db::ArchiveStats {
     let raw_stats = info.get("stats");
     db::ArchiveStats {
@@ -2933,7 +2929,14 @@ fn parse_archive_stats(json: &serde_json::Value, info: &serde_json::Value) -> db
         duration_secs: info
             .get("duration")
             .and_then(serde_json::Value::as_f64)
-            .unwrap_or(0.0) as i64,
+            .map_or(0, |d| {
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    reason = "borg durations are small positive second counts"
+                )]
+                let secs = d as i64;
+                secs
+            }),
         repo_unique_csize: json
             .get("cache")
             .and_then(|v| v.get("stats"))

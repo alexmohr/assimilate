@@ -1,10 +1,34 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { type VueWrapper, describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
 import RolesView from './RolesView.vue'
+
+async function openDeleteModalForCustomRole(wrapper: VueWrapper): Promise<void> {
+  const allRows = wrapper.findAll('tr')
+  const customRoleRow = allRows.find((r) => r.text().includes('custom-role'))
+  expect(customRoleRow).toBeDefined()
+
+  const deleteBtn = customRoleRow!.find('.btn-danger-text')
+  expect(deleteBtn!.exists()).toBe(true)
+  await deleteBtn!.trigger('click')
+
+  await flushPromises()
+
+  expect(wrapper.find('.overlay').exists()).toBe(true)
+}
+
+async function cancelModal(wrapper: VueWrapper): Promise<void> {
+  expect(wrapper.find('.overlay').exists()).toBe(true)
+
+  const cancelBtn = wrapper.findAll('button').find((b) => b.text() === 'Cancel')
+  expect(cancelBtn).toBeDefined()
+  await cancelBtn!.trigger('click')
+
+  expect(wrapper.find('.overlay').exists()).toBe(false)
+}
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -33,6 +57,7 @@ interface Role {
   can_manage_tags: boolean
   can_view_all_repos: boolean
   can_manage_tunnels: boolean
+  can_upgrade_agent: boolean
 }
 
 function makeRole(id: number, name: string, isSeeded: boolean, allPerms: boolean): Role {
@@ -52,6 +77,7 @@ function makeRole(id: number, name: string, isSeeded: boolean, allPerms: boolean
     can_manage_tags: allPerms,
     can_view_all_repos: allPerms,
     can_manage_tunnels: allPerms,
+    can_upgrade_agent: allPerms,
   }
 }
 
@@ -59,6 +85,7 @@ const mockRoles: Role[] = [
   makeRole(1, 'admin', true, true),
   makeRole(2, 'operator', true, false),
   makeRole(3, 'viewer', true, false),
+  makeRole(4, 'custom-role', false, false),
 ]
 
 const mockApiGet = apiClient.get as ReturnType<typeof vi.fn>
@@ -106,7 +133,7 @@ describe('RolesView', () => {
 
     const counts = wrapper.findAll('.perm-count')
     expect(counts.length).toBeGreaterThan(0)
-    expect(counts[0].text()).toContain('/12')
+    expect(counts[0].text()).toContain('/13')
   })
 
   it('renders New button', async () => {
@@ -128,5 +155,135 @@ describe('RolesView', () => {
     const no = wrapper.findAll('.perm-no')
     expect(yes.length).toBeGreaterThan(0)
     expect(no.length).toBeGreaterThan(0)
+  })
+
+  it('renders the create role form when New is clicked', async () => {
+    const wrapper = renderWithPlugins(RolesView)
+
+    await flushPromises()
+
+    const newButton = wrapper.findAll('button').find((b) => b.text().includes('New'))
+    expect(newButton).toBeDefined()
+    await newButton!.trigger('click')
+
+    expect(wrapper.find('form').exists()).toBe(true)
+    expect(wrapper.find('input#create-role-name').exists()).toBe(true)
+    const perms = wrapper.findAll('.perm-checkbox')
+    expect(perms.length).toBe(13)
+  })
+
+  it('closes the create modal when Cancel is clicked', async () => {
+    const wrapper = renderWithPlugins(RolesView)
+
+    await flushPromises()
+
+    const newButton = wrapper.findAll('button').find((b) => b.text().includes('New'))
+    expect(newButton).toBeDefined()
+    await newButton!.trigger('click')
+
+    await cancelModal(wrapper)
+  })
+
+  it('submits the create form', async () => {
+    const mockApiPost = apiClient.post as ReturnType<typeof vi.fn>
+    mockApiPost.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(RolesView)
+
+    await flushPromises()
+
+    const newButton = wrapper.findAll('button').find((b) => b.text().includes('New'))
+    expect(newButton).toBeDefined()
+    await newButton!.trigger('click')
+
+    const nameInput = wrapper.find('input#create-role-name')
+    await nameInput.setValue('custom-role')
+
+    await flushPromises()
+
+    const form = wrapper.find('form')
+    await form.trigger('submit.prevent')
+
+    await flushPromises()
+
+    expect(mockApiPost).toHaveBeenCalledWith(
+      '/roles',
+      expect.objectContaining({ name: 'custom-role' }),
+    )
+    expect(wrapper.find('.overlay').exists()).toBe(false)
+  })
+
+  it('opens the edit modal and populates the form', async () => {
+    const wrapper = renderWithPlugins(RolesView)
+
+    await flushPromises()
+
+    const editButtons = wrapper.findAll('button').filter((b) => b.text() === 'Edit')
+    expect(editButtons.length).toBeGreaterThan(0)
+    await editButtons[0].trigger('click')
+
+    expect(wrapper.find('.overlay').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Edit Role')
+    expect(wrapper.text()).toContain('admin')
+  })
+
+  it('submits the edit form', async () => {
+    const mockApiPut = apiClient.put as ReturnType<typeof vi.fn>
+    mockApiPut.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(RolesView)
+
+    await flushPromises()
+
+    const editButtons = wrapper.findAll('button').filter((b) => b.text() === 'Edit')
+    await editButtons[0].trigger('click')
+
+    const form = wrapper.find('form')
+    await form.trigger('submit.prevent')
+
+    await flushPromises()
+
+    expect(mockApiPut).toHaveBeenCalled()
+    expect(wrapper.find('.overlay').exists()).toBe(false)
+  })
+
+  it('opens the delete modal and cancels', async () => {
+    const wrapper = renderWithPlugins(RolesView)
+
+    await flushPromises()
+
+    await openDeleteModalForCustomRole(wrapper)
+    expect(wrapper.text()).toContain('Delete Role')
+
+    await cancelModal(wrapper)
+  })
+
+  it('confirms the delete and removes the role', async () => {
+    const mockApiDelete = apiClient.delete as ReturnType<typeof vi.fn>
+    mockApiDelete.mockResolvedValue({})
+    const wrapper = renderWithPlugins(RolesView)
+
+    await flushPromises()
+
+    await openDeleteModalForCustomRole(wrapper)
+
+    const confirmBtn = wrapper.findAll('button').find((b) => b.text() === 'Delete')
+    expect(confirmBtn).toBeDefined()
+    expect(confirmBtn!.element.getAttribute('disabled')).toBeNull()
+    await confirmBtn!.trigger('click')
+
+    await flushPromises()
+
+    expect(mockApiDelete).toHaveBeenCalledWith('/roles/4')
+    expect(wrapper.find('.overlay').exists()).toBe(false)
+  })
+
+  it('opens the edit modal and cancels', async () => {
+    const wrapper = renderWithPlugins(RolesView)
+
+    await flushPromises()
+
+    const editButtons = wrapper.findAll('button').filter((b) => b.text() === 'Edit')
+    await editButtons[0].trigger('click')
+
+    await cancelModal(wrapper)
   })
 })

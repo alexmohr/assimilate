@@ -15,6 +15,7 @@ import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
 import { parseLines } from '../utils/validation'
 import { normalizeBackupStatus } from '../utils/backupStatus'
+import { isAgentOffline, lastSeenText } from '../utils/agent'
 import { AlertTriangle } from '@lucide/vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import FileChangePatternsEditor from '../components/FileChangePatternsEditor.vue'
@@ -201,9 +202,8 @@ function healthForAgent(agentId: number): HealthSummaryResponse | null {
 
 function connectivityNote(agentId: number): string {
   const agent = agentMap.value.get(agentId)
-  if (!agent || agent.is_connected !== false) return ''
-  const lastSeen = agent.last_seen_at ? formatDateShort(agent.last_seen_at) : 'never'
-  return `Agent offline (last seen ${lastSeen})`
+  if (!agent || !isAgentOffline(agent)) return ''
+  return `Agent offline (${lastSeenText(agent)})`
 }
 
 function multiSelectLabel(): string {

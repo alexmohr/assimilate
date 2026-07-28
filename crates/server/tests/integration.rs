@@ -598,6 +598,20 @@ fn delete_request(uri: &str) -> Request<Body> {
         .unwrap()
 }
 
+/// A POST with no body and no `Content-Type` header at all - unlike
+/// `json_request(.., None)`, which still sends `Content-Type: application/json`
+/// with an empty body (a JSON parse error, not "no body"). Used to simulate a
+/// caller predating an endpoint's JSON body being introduced.
+#[cfg(test)]
+fn post_request_without_body(uri: &str) -> Request<Body> {
+    Request::builder()
+        .uri(uri)
+        .method("POST")
+        .header("cookie", session_cookie())
+        .body(Body::empty())
+        .unwrap()
+}
+
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
 async fn test_agent_crud() {
@@ -3158,6 +3172,74 @@ async fn test_run_schedule_now_restricted_to_agent_ids() {
     let mut expected = vec![agent_a, agent_b];
     expected.sort_unstable();
     assert_eq!(pending_agents, expected);
+}
+
+/// Regression test for: `run_schedule_now` used to require a JSON body
+/// unconditionally, which would reject any pre-existing caller (a saved
+/// script, an external integration) that sends no body and no `Content-Type`
+/// at all - the contract before `agent_ids` filtering was added. The body is
+/// now optional, and an absent one is treated the same as `{}`.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_run_schedule_now_without_a_body_runs_every_target() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "run-now-no-body-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('run-now-no-body', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    let req = post_request_without_body(&format!("/api/schedules/{schedule_id}/run"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    let pending_agents: Vec<i64> = sqlx::query_scalar(
+        "SELECT agent_id FROM backup_reports WHERE schedule_id = $1 AND status = 'pending'",
+    )
+    .bind(schedule_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(pending_agents, vec![agent_id]);
+}
+
+/// Regression test for: duplicate `agent_ids` entries used to be compared
+/// against the (deduplicated) filtered-targets count, so a request like
+/// `{"agent_ids": [a, a]}` for a genuinely valid target `a` was wrongly
+/// rejected as containing an id that isn't a target of this schedule.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_run_schedule_now_allows_duplicate_agent_ids() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "run-now-dup-repo").await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('run-now-dup', 'hash') RETURNING \
+         id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    let req = json_request(
+        "POST",
+        &format!("/api/schedules/{schedule_id}/run"),
+        Some(json!({ "agent_ids": [agent_id, agent_id] })),
+    );
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
 }
 
 // -- archive resync reliability --

@@ -16,6 +16,7 @@ import { useToast } from '../composables/useToast'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus, type NormalizedBackupStatus } from '../utils/backupStatus'
+import { isAgentOffline, lastSeenText } from '../utils/agent'
 import {
   Plus,
   Clock,
@@ -240,9 +241,8 @@ function statusLabel(entry: HealthEntry | null): string {
 
 function connectivityNote(hostname: string): string {
   const agent = agentMap.value.get(hostname)
-  if (!agent || agent.is_connected !== false) return ''
-  const lastSeen = agent.last_seen_at ? formatDateShort(agent.last_seen_at) : 'never'
-  return ` — agent offline (last seen ${lastSeen})`
+  if (!agent || !isAgentOffline(agent)) return ''
+  return ` — agent offline (${lastSeenText(agent)})`
 }
 
 function overdueMessage(entries: HealthEntry[]): string {

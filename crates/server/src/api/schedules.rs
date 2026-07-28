@@ -793,7 +793,10 @@ pub struct RunScheduleRequest {
     )
 )]
 /// Trigger a schedule to run immediately, optionally restricted to a subset
-/// of its target agents.
+/// of its target agents. The body is optional - a request sent with no
+/// `Content-Type` header (as any caller predating the `agent_ids` filter
+/// would send) is treated the same as `{}`, running every target, so this
+/// stays backwards compatible with callers outside this codebase.
 ///
 /// # Errors
 ///
@@ -803,7 +806,7 @@ pub async fn run_schedule_now(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(id): Path<i64>,
-    Json(payload): Json<RunScheduleRequest>,
+    payload: Option<Json<RunScheduleRequest>>,
 ) -> Result<StatusCode, ApiError> {
     let schedule = db::get_schedule_by_id(&state.pool, id).await?;
     let Some(schedule_repo_id) = schedule.repo_id else {
@@ -816,14 +819,16 @@ pub async fn run_schedule_now(
     })
     .await?;
 
+    let agent_ids = payload.and_then(|Json(p)| p.agent_ids);
     let targets = db::get_schedule_targets_for_run(&state.pool, id).await?;
-    let targets = match payload.agent_ids {
+    let targets = match agent_ids {
         Some(agent_ids) if !agent_ids.is_empty() => {
+            let requested: std::collections::HashSet<i64> = agent_ids.into_iter().collect();
             let filtered: Vec<_> = targets
                 .into_iter()
-                .filter(|t| agent_ids.contains(&t.agent_id))
+                .filter(|t| requested.contains(&t.agent_id))
                 .collect();
-            if filtered.len() != agent_ids.len() {
+            if filtered.len() != requested.len() {
                 return Err(ApiError::BadRequest(
                     "one or more agent_ids are not targets of this schedule".into(),
                 ));

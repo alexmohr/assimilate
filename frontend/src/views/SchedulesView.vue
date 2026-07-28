@@ -16,6 +16,7 @@ import { useToast } from '../composables/useToast'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus, type NormalizedBackupStatus } from '../utils/backupStatus'
+import { isAgentOffline, lastSeenText } from '../utils/agent'
 import {
   Plus,
   Clock,
@@ -30,18 +31,7 @@ import CardError from '../components/CardError.vue'
 import type { AgentRow } from '../types/agent'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import type { Repo } from '../types/repo'
-
-interface HealthEntry {
-  schedule_id: number
-  hostname: string
-  target_name: string
-  last_status: string | null
-  last_backup_at: string | null
-  is_overdue: boolean
-  last_error_message: string | null
-  cron_expression: string | null
-  schedule_enabled: boolean | null
-}
+import type { HealthSummaryResponse as HealthEntry } from '../types/generated/HealthSummaryResponse'
 
 const schedules = ref<ScheduleRow[]>([])
 const repos = ref<Repo[]>([])
@@ -96,6 +86,7 @@ interface EnrichedSchedule extends ScheduleRow {
   hostLabels: string[]
   repo: Repo | null
   health: HealthEntry | null
+  overdueEntries: HealthEntry[]
   isRunning: boolean
 }
 
@@ -106,6 +97,11 @@ const agentMap = computed(() => {
   agents.value.forEach((agent) => map.set(agent.hostname, agent))
   return map
 })
+
+function hostLabel(hostname: string): string {
+  const displayName = agentMap.value.get(hostname)?.display_name
+  return displayName ? `${displayName} (${hostname})` : hostname
+}
 
 const healthBySchedule = computed(() => {
   const m = new Map<number, HealthEntry[]>()
@@ -119,10 +115,7 @@ const healthBySchedule = computed(() => {
 
 const enrichedSchedules = computed<EnrichedSchedule[]>(() =>
   schedules.value.map((s) => {
-    const hostLabels = s.target_hostnames.map((hostname) => {
-      const agent = agentMap.value.get(hostname)
-      return agent?.display_name ? `${agent.display_name} (${hostname})` : hostname
-    })
+    const hostLabels = s.target_hostnames.map(hostLabel)
     const repo: Repo | null = s.repo_id != null ? (repoMap.value.get(s.repo_id) ?? null) : null
     const entries = healthBySchedule.value.get(s.id) ?? []
     const healthEntry: HealthEntry | null =
@@ -132,10 +125,11 @@ const enrichedSchedules = computed<EnrichedSchedule[]>(() =>
       ) ??
       entries[0] ??
       null
+    const overdueEntries = entries.filter((h) => h.is_overdue)
     const isRunning = entries.some(
       (h) => h.last_status != null && RUNNING_STATUSES.has(h.last_status),
     )
-    return { ...s, hostLabels, repo, health: healthEntry, isRunning }
+    return { ...s, hostLabels, repo, health: healthEntry, overdueEntries, isRunning }
   }),
 )
 
@@ -245,6 +239,21 @@ function statusLabel(entry: HealthEntry | null): string {
   }
 }
 
+function connectivityNote(hostname: string): string {
+  const agent = agentMap.value.get(hostname)
+  if (!agent || !isAgentOffline(agent)) return ''
+  return ` — agent offline (${lastSeenText(agent)})`
+}
+
+function overdueMessage(entries: HealthEntry[]): string {
+  return entries
+    .map((h) => {
+      const last = h.last_backup_at ? formatDateShort(h.last_backup_at) : 'never'
+      return `${hostLabel(h.hostname)} — last backup: ${last}${connectivityNote(h.hostname)}`
+    })
+    .join('\n')
+}
+
 async function fetchAll(): Promise<void> {
   await run(async () => {
     const [schRes, repoRes, agentsRes, healthRes] = await Promise.all([
@@ -267,7 +276,7 @@ function navigateToSchedule(s: ScheduleRow): void {
 async function runNow(s: ScheduleRow): Promise<void> {
   runNowLoading.value = s.id
   try {
-    await apiClient.post(`/schedules/${s.id}/run`)
+    await apiClient.post(`/schedules/${s.id}/run`, {})
     toastSuccess(`${scheduleTypeLabel(s.schedule_type)} started.`)
   } catch (e: unknown) {
     toastError(extractError(e))
@@ -479,6 +488,12 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
             s.health.last_status === 'warning' ? 'Last backup had a warning' : 'Last backup failed'
           "
           :message="s.health.last_error_message"
+        />
+        <CardError
+          v-if="s.overdueEntries.length > 0"
+          tone="warning"
+          :label="`${s.overdueEntries.length} host${s.overdueEntries.length === 1 ? '' : 's'} overdue`"
+          :message="overdueMessage(s.overdueEntries)"
         />
         <div class="card-stats">
           <div class="stat">

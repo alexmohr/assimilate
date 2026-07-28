@@ -32,7 +32,7 @@ use crate::{
         permissions::UpsertPermissionRequest,
         quota::UpsertQuotaRequest,
         repos::{CreateRepoRequest, InitRepoRequest, UpdateRepoRequest},
-        schedules::{CreateScheduleRequest, UpdateScheduleRequest},
+        schedules::{CreateScheduleRequest, RunScheduleRequest, UpdateScheduleRequest},
         search::{SearchEntry, SearchResponse},
         server_quotas::UpsertServerQuotaRequest,
         system::{
@@ -201,6 +201,7 @@ use crate::{
         DeployAgentResponse,
         CreateScheduleRequest,
         UpdateScheduleRequest,
+        RunScheduleRequest,
         ScheduleRow,
         ScheduleTargetRow,
         DryRunRequest,

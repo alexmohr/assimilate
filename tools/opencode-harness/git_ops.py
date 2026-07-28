@@ -100,6 +100,25 @@ _CLEAN_EXCLUDES = [
 ]
 
 
+def _force_clean_working_tree(cwd: Path) -> None:
+    """Discards any uncommitted changes and abandons any in-progress rebase,
+    regardless of what's currently checked out.
+
+    Must run before any `git checkout -B`: that command itself refuses to
+    switch branches when doing so would clobber uncommitted changes to
+    tracked files, so a tree left dirty by a previous cycle that crashed (or
+    was killed) mid-edit - the harness's own top-level loop just logs and
+    moves on, it never cleans up - would make the next checkout fail with
+    "local changes would be overwritten", on any branch, forever, since
+    nothing else would ever clean it back up. All three commands are
+    best-effort (`check=False`): there may be nothing to abort/reset/clean,
+    and that's fine.
+    """
+    _run(cwd, ["rebase", "--abort"], check=False)
+    _run(cwd, ["reset", "--hard"], check=False)
+    _run(cwd, ["clean", "-fdx", *_CLEAN_EXCLUDES], check=False)
+
+
 def checkout_branch_at_remote(cwd: Path, branch: str) -> None:
     """Get a clean local checkout of `branch` matching origin exactly.
 
@@ -107,6 +126,7 @@ def checkout_branch_at_remote(cwd: Path, branch: str) -> None:
     never leaves stale local edits in the way of a fresh attempt.
     """
     _clear_stale_locks(cwd)
+    _force_clean_working_tree(cwd)
     fetch(cwd, branch)
     _run(cwd, ["checkout", "-B", branch, f"origin/{branch}"])
     _run(cwd, ["reset", "--hard", f"origin/{branch}"])
@@ -115,6 +135,7 @@ def checkout_branch_at_remote(cwd: Path, branch: str) -> None:
 
 def checkout_new_branch_from_base(cwd: Path, branch: str, base: str) -> None:
     _clear_stale_locks(cwd)
+    _force_clean_working_tree(cwd)
     fetch(cwd, base)
     _run(cwd, ["checkout", "-B", branch, f"origin/{base}"])
     _run(cwd, ["clean", "-fdx", *_CLEAN_EXCLUDES])

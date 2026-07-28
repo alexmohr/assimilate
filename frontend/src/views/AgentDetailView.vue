@@ -23,11 +23,13 @@ import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import SshKeyDeployPanel from '../components/SshKeyDeployPanel.vue'
 import FileChangePatternsEditor from '../components/FileChangePatternsEditor.vue'
 import BackupProgressCard from '../components/BackupProgressCard.vue'
+import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
 import { parseFileChangePatterns } from '../utils/fileChangePatterns'
 import type { AgentRow } from '../types/agent'
 import type { ReportRow } from '../types/report'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
-import { normalizeBackupStatus, type NormalizedBackupStatus } from '../utils/backupStatus'
+import { normalizeBackupStatus } from '../utils/backupStatus'
+import { scheduleIssuesFromEntries, type ScheduleHealthEntry } from '../utils/scheduleHealth'
 import type { TagRow } from '../types/tag'
 import type { CreateAgentResponse } from '../types/generated'
 import type { Repo } from '../types/repo'
@@ -55,18 +57,6 @@ const tabs: { id: TabId; label: string }[] = [
   { id: 'schedules', label: 'Schedules' },
   { id: 'backups', label: 'Backups' },
 ]
-
-interface ScheduleHealthEntry {
-  schedule_id: number
-  hostname: string
-  target_name: string
-  last_status: string | null
-  last_backup_at: string | null
-  is_overdue: boolean
-  last_error_message: string | null
-  cron_expression: string | null
-  schedule_enabled: boolean | null
-}
 
 const agent = ref<AgentRow | null>(null)
 const repos = ref<Repo[]>([])
@@ -655,55 +645,12 @@ const agentSchedules = computed(() => {
   return hostname ? schedules.value.filter((s) => s.target_hostnames.includes(hostname)) : []
 })
 
-function scheduleRunStatus(h: ScheduleHealthEntry | null): NormalizedBackupStatus | null {
-  return h?.last_status != null ? normalizeBackupStatus(h.last_status) : null
+function scheduleHealthEntries(s: ScheduleRow): ScheduleHealthEntry[] {
+  return scheduleHealth.value.filter((h) => h.schedule_id === s.id)
 }
 
-function scheduleHealthFor(s: ScheduleRow): ScheduleHealthEntry | null {
-  const entries = scheduleHealth.value.filter((h) => h.schedule_id === s.id)
-  return (
-    entries.find((h) => h.is_overdue) ??
-    entries.find((h) => scheduleRunStatus(h) === 'failed') ??
-    entries[0] ??
-    null
-  )
-}
-
-function scheduleHealthClass(h: ScheduleHealthEntry | null): string {
-  if (!h) return ''
-  if (h.is_overdue) return 'status-overdue'
-  switch (scheduleRunStatus(h)) {
-    case 'success':
-      return 'status-success'
-    case 'warning':
-      return 'status-warning'
-    case 'failed':
-    case 'cancelled':
-      return 'status-failed'
-    case 'started':
-    case 'pending':
-    case null:
-      return ''
-  }
-}
-
-function scheduleHealthLabel(h: ScheduleHealthEntry | null): string {
-  if (!h) return ''
-  if (h.is_overdue) return 'Overdue'
-  switch (scheduleRunStatus(h)) {
-    case 'success':
-      return 'Success'
-    case 'warning':
-      return 'Warning'
-    case 'failed':
-    case 'cancelled':
-      return 'Failed'
-    case 'started':
-    case 'pending':
-      return 'Running'
-    case null:
-      return ''
-  }
+function scheduleIssues(s: ScheduleRow): EntityIssue[] {
+  return scheduleIssuesFromEntries(scheduleHealthEntries(s), s.id, router)
 }
 
 function repoNameForSchedule(s: ScheduleRow): string {
@@ -1721,37 +1668,24 @@ watch(wsStatus, (newStatus, oldStatus) => {
             :key="s.id"
             class="schedule-card"
             :class="{
-              disabled: !s.enabled,
-              'schedule-card-highlighted': overdueHighlighted && scheduleHealthFor(s)?.is_overdue,
+              'schedule-card-notable': !s.enabled,
+              'schedule-card-highlighted':
+                overdueHighlighted && scheduleHealthEntries(s).some((h) => h.is_overdue),
             }"
             @click="navigateToSchedule(s)"
           >
-            <div class="card-top">
-              <div class="card-info">
-                <span class="card-hostname">{{ s.name || repoNameForSchedule(s) }}</span>
-              </div>
-              <div class="card-badges">
-                <span
-                  class="status-badge"
-                  :class="s.enabled ? 'status-online' : 'status-offline'"
-                >
-                  {{ s.enabled ? 'Enabled' : 'Disabled' }}
-                </span>
-              </div>
-            </div>
+            <span class="card-hostname">{{ s.name || repoNameForSchedule(s) }}</span>
+            <EntityStatusBadges
+              :notable="!s.enabled"
+              notable-label="Disabled"
+              :issues="scheduleIssues(s)"
+            />
             <div class="card-meta">
               <span
                 class="type-badge"
                 :class="`type-${s.schedule_type ?? 'backup'}`"
               >
                 {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
-              </span>
-              <span
-                v-if="scheduleHealthFor(s) && scheduleHealthLabel(scheduleHealthFor(s))"
-                class="health-badge"
-                :class="scheduleHealthClass(scheduleHealthFor(s))"
-              >
-                {{ scheduleHealthLabel(scheduleHealthFor(s)) }}
               </span>
             </div>
             <div class="card-stats">
@@ -2426,65 +2360,13 @@ watch(wsStatus, (newStatus, oldStatus) => {
   box-shadow: var(--shadow);
 }
 
-.schedule-card.disabled {
-  opacity: 0.5;
+.schedule-card-notable {
+  background: var(--bg-hover);
 }
 
 .schedule-card-highlighted {
   border-color: var(--warning);
   box-shadow: 0 0 0 3px var(--warning-subtle);
-}
-
-.health-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.health-badge.status-success {
-  background: var(--success-subtle);
-  color: var(--success);
-}
-
-.health-badge.status-warning {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.health-badge.status-failed {
-  background: var(--danger-subtle);
-  color: var(--danger);
-}
-
-.health-badge.status-overdue {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.card-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.card-badges {
-  display: flex;
-  gap: 0.4rem;
-  align-items: center;
-  flex-shrink: 0;
-}
-
-.card-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  min-width: 0;
 }
 
 .card-hostname {

@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises, type DOMWrapper, type VueWrapper } from '@vue/test-utils'
 import { ref, nextTick, type ComponentPublicInstance } from 'vue'
 import { renderWithPlugins } from '../test-utils'
-import HostDetailView from './HostDetailView.vue'
+import AgentDetailView from './AgentDetailView.vue'
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -168,14 +168,14 @@ async function openSchedulesTab(wrapper: VueWrapper<ComponentPublicInstance>): P
   await flushPromises()
 }
 
-describe('HostDetailView — backups tab', () => {
+describe('AgentDetailView — backups tab', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
   it('shows filter buttons on the backups tab', async () => {
     setupApi()
-    const wrapper = renderWithPlugins(HostDetailView, {
+    const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
@@ -191,7 +191,7 @@ describe('HostDetailView — backups tab', () => {
 
   it('shows sort toggle button on the backups tab', async () => {
     setupApi()
-    const wrapper = renderWithPlugins(HostDetailView, {
+    const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
@@ -203,7 +203,7 @@ describe('HostDetailView — backups tab', () => {
 
   it('renders all reports by default', async () => {
     setupApi()
-    const wrapper = renderWithPlugins(HostDetailView, {
+    const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
@@ -215,7 +215,7 @@ describe('HostDetailView — backups tab', () => {
 
   it('shows the repo and schedule name on each report so a failure can be traced', async () => {
     setupApi()
-    const wrapper = renderWithPlugins(HostDetailView, {
+    const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
@@ -232,7 +232,7 @@ describe('HostDetailView — backups tab', () => {
 
   it('omits the schedule link when a report has no schedule_id', async () => {
     setupApi([{ ...mockReports[0], schedule_id: null, schedule_name: null }])
-    const wrapper = renderWithPlugins(HostDetailView, {
+    const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
@@ -246,7 +246,7 @@ describe('HostDetailView — backups tab', () => {
 
   it('filters to only warning reports when Warning is clicked', async () => {
     setupApi()
-    const wrapper = renderWithPlugins(HostDetailView, {
+    const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
@@ -263,7 +263,7 @@ describe('HostDetailView — backups tab', () => {
 
   it('filters to only failed reports when Failed is clicked', async () => {
     setupApi()
-    const wrapper = renderWithPlugins(HostDetailView, {
+    const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
@@ -280,7 +280,7 @@ describe('HostDetailView — backups tab', () => {
 
   it('restores all reports when All is clicked after filtering', async () => {
     setupApi()
-    const wrapper = renderWithPlugins(HostDetailView, {
+    const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
@@ -302,7 +302,7 @@ describe('HostDetailView — backups tab', () => {
 
   it('shows empty filter message when no reports match the filter', async () => {
     setupApi([mockReports[0]])
-    const wrapper = renderWithPlugins(HostDetailView, {
+    const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
@@ -319,7 +319,7 @@ describe('HostDetailView — backups tab', () => {
 
   it('shows empty state when no reports exist', async () => {
     setupApi([])
-    const wrapper = renderWithPlugins(HostDetailView, {
+    const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
@@ -331,7 +331,7 @@ describe('HostDetailView — backups tab', () => {
 
   it('highlights the report matching the archive query param', async () => {
     setupApi()
-    const wrapper = renderWithPlugins(HostDetailView, {
+    const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
@@ -349,7 +349,7 @@ describe('HostDetailView — backups tab', () => {
 
   it('auto-expands the report matching the archive query param', async () => {
     setupApi()
-    const wrapper = renderWithPlugins(HostDetailView, {
+    const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
@@ -364,7 +364,7 @@ describe('HostDetailView — backups tab', () => {
 
   it('pins, expands and highlights the newest report matching the status query param', async () => {
     setupApi()
-    const wrapper = renderWithPlugins(HostDetailView, {
+    const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
@@ -381,7 +381,7 @@ describe('HostDetailView — backups tab', () => {
   })
 })
 
-describe('HostDetailView — schedules tab', () => {
+describe('AgentDetailView — schedules tab', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
@@ -408,7 +408,7 @@ describe('HostDetailView — schedules tab', () => {
       },
     ]
     setupApi(mockReports, [{ id: 10, name: 'shared-repo' }], schedules)
-    const wrapper = renderWithPlugins(HostDetailView, {
+    const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
@@ -434,7 +434,7 @@ describe('HostDetailView — schedules tab', () => {
       },
     ]
     setupApi(mockReports, [{ id: 10, name: 'shared-repo' }], schedules)
-    const wrapper = renderWithPlugins(HostDetailView, {
+    const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
@@ -442,13 +442,13 @@ describe('HostDetailView — schedules tab', () => {
     await openSchedulesTab(wrapper)
 
     expect(wrapper.text()).toContain('Nightly Backup')
-    expect(wrapper.text()).toContain('Enabled')
+    expect(wrapper.find('.entity-status-pill').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('Sequential')
   })
 
   it('shows empty state when no schedules target the agent', async () => {
     setupApi(mockReports, [{ id: 10, name: 'shared-repo' }], [])
-    const wrapper = renderWithPlugins(HostDetailView, {
+    const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
@@ -456,6 +456,31 @@ describe('HostDetailView — schedules tab', () => {
     await openSchedulesTab(wrapper)
 
     expect(wrapper.text()).toContain('No schedules for this agent.')
+  })
+
+  it('shows a Disabled pill and tints the card for a disabled schedule', async () => {
+    const schedules = [
+      {
+        id: 1,
+        repo_id: 10,
+        name: 'Weekend Archive',
+        target_hostnames: ['test-host'],
+        schedule_type: 'backup',
+        cron_expression: '0 3 * * 0',
+        enabled: false,
+        next_run_at: null,
+      },
+    ]
+    setupApi(mockReports, [{ id: 10, name: 'shared-repo' }], schedules)
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await openSchedulesTab(wrapper)
+
+    expect(wrapper.find('.entity-status-pill').text()).toBe('Disabled')
+    expect(wrapper.find('.schedule-card').classes()).toContain('schedule-card-notable')
   })
 
   function setupApiWithHealth(
@@ -505,18 +530,19 @@ describe('HostDetailView — schedules tab', () => {
 
   function renderWithHealth() {
     setupApiWithHealth(overdueSchedule, overdueHealth)
-    return renderWithPlugins(HostDetailView, {
+    return renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
   }
 
-  it('shows an Overdue health badge on a schedule with no recent run', async () => {
+  it('shows an Overdue issue chip on a schedule with no recent run', async () => {
     const wrapper = renderWithHealth()
     await flushPromises()
     await openSchedulesTab(wrapper)
 
-    expect(wrapper.find('.health-badge').text()).toBe('Overdue')
+    const chip = wrapper.find('.entity-issue-chip.sev-warning')
+    expect(chip.text()).toBe('Overdue')
     expect(wrapper.find('.schedule-card').classes()).not.toContain('schedule-card-highlighted')
   })
 
@@ -532,7 +558,7 @@ describe('HostDetailView — schedules tab', () => {
   })
 })
 
-describe('HostDetailView — backup progress', () => {
+describe('AgentDetailView — backup progress', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     for (const key of Object.keys(wsHandlers)) delete wsHandlers[key]
@@ -543,7 +569,7 @@ describe('HostDetailView — backup progress', () => {
     eventHostname: string = 'test-host',
   ) {
     setupApi([], [{ id: 10, name: 'server-daily' }])
-    const wrapper = renderWithPlugins(HostDetailView, {
+    const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
@@ -623,7 +649,7 @@ describe('HostDetailView — backup progress', () => {
       started_at: '2026-07-06T09:55:00Z',
     }
     setupApi([runningReport], [{ id: 10, name: 'server-daily' }])
-    const wrapper = renderWithPlugins(HostDetailView, {
+    const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
@@ -633,14 +659,14 @@ describe('HostDetailView — backup progress', () => {
   })
 })
 
-describe('HostDetailView — default file change patterns', () => {
+describe('AgentDetailView — default file change patterns', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
   it('shows empty state when no default patterns are configured', async () => {
     setupApi()
-    const wrapper = renderWithPlugins(HostDetailView, {
+    const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
@@ -664,7 +690,7 @@ describe('HostDetailView — default file change patterns', () => {
       if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
       return Promise.resolve({ data: [] })
     })
-    const wrapper = renderWithPlugins(HostDetailView, {
+    const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
@@ -682,7 +708,7 @@ describe('HostDetailView — default file change patterns', () => {
     vi.mocked(apiClient.put).mockResolvedValue({
       data: { ...mockAgent, default_file_change_patterns_raw: '*/var/log* ignore' },
     })
-    const wrapper = renderWithPlugins(HostDetailView, {
+    const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })

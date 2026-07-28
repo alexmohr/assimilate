@@ -17,17 +17,10 @@ import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus, type NormalizedBackupStatus } from '../utils/backupStatus'
 import { isAgentOffline, lastSeenText } from '../utils/agent'
-import {
-  Plus,
-  Clock,
-  AlertTriangle,
-  CheckCircle,
-  AlertCircle,
-  SlidersHorizontal,
-} from '@lucide/vue'
+import { Plus, Clock, SlidersHorizontal } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
-import CardError from '../components/CardError.vue'
+import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
 import type { AgentRow } from '../types/agent'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import type { Repo } from '../types/repo'
@@ -201,42 +194,46 @@ function healthStatus(entry: HealthEntry | null | undefined): NormalizedBackupSt
   return entry?.last_status != null ? normalizeBackupStatus(entry.last_status) : null
 }
 
-function statusClass(entry: HealthEntry | null): string {
-  if (!entry) return ''
-  if (entry.is_overdue) return 'status-overdue'
-  switch (healthStatus(entry)) {
-    case 'success':
-      return 'status-success'
-    case 'warning':
-      return 'status-warning'
-    case 'failed':
-    case 'cancelled':
-      return 'status-failed'
-    case 'started':
-    case 'pending':
-      return 'status-started'
-    case null:
-      return ''
+function navigateToScheduleIssue(s: ScheduleRow, kind: 'failed' | 'warning' | 'overdue'): void {
+  if (kind === 'overdue') {
+    router.push(`/schedules/${s.id}`)
+    return
   }
+  router.push(`/activity?category=backup&schedule_id=${s.id}&status=${kind}`)
 }
 
-function statusLabel(entry: HealthEntry | null): string {
-  if (!entry) return ''
-  if (entry.is_overdue) return 'Overdue'
-  switch (healthStatus(entry)) {
-    case 'success':
-      return 'Success'
-    case 'warning':
-      return 'Warning'
-    case 'failed':
-    case 'cancelled':
-      return 'Failed'
-    case 'started':
-    case 'pending':
-      return 'Running'
-    case null:
-      return 'No data'
+function scheduleIssues(s: EnrichedSchedule): EntityIssue[] {
+  const entries = healthBySchedule.value.get(s.id) ?? []
+  const issues: EntityIssue[] = []
+  if (s.overdueEntries.length > 0) {
+    issues.push({
+      key: 'overdue',
+      label: 'Overdue',
+      severity: 'warning',
+      title: overdueMessage(s.overdueEntries),
+      onClick: () => navigateToScheduleIssue(s, 'overdue'),
+    })
   }
+  const failedEntry = entries.find((h) => healthStatus(h) === 'failed')
+  const warningEntry = entries.find((h) => healthStatus(h) === 'warning')
+  if (failedEntry) {
+    issues.push({
+      key: 'failed',
+      label: 'Failed',
+      severity: 'danger',
+      title: failedEntry.last_error_message ?? undefined,
+      onClick: () => navigateToScheduleIssue(s, 'failed'),
+    })
+  } else if (warningEntry) {
+    issues.push({
+      key: 'warning',
+      label: 'Warning',
+      severity: 'warning',
+      title: warningEntry.last_error_message ?? undefined,
+      onClick: () => navigateToScheduleIssue(s, 'warning'),
+    })
+  }
+  return issues
 }
 
 function connectivityNote(hostname: string): string {
@@ -431,49 +428,20 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
         v-for="s in filteredSchedules"
         :key="s.id"
         class="schedule-card"
-        :class="{ disabled: !s.enabled }"
+        :class="{ 'schedule-card-notable': !s.enabled }"
         @click="navigateToSchedule(s)"
       >
-        <div class="card-top">
-          <div class="card-info">
-            <span class="card-hostname">{{
-              s.name || s.repo?.name || (s.repo_id != null ? `repo #${s.repo_id}` : 'no repository')
-            }}</span>
-            <span class="card-repo">
-              {{ s.hostLabels.join(', ') || 'No hosts assigned' }}
-            </span>
-          </div>
-          <div class="card-badges">
-            <span
-              v-if="s.health && (s.health.last_status || s.health.is_overdue)"
-              class="health-badge"
-              :class="statusClass(s.health)"
-            >
-              <CheckCircle
-                v-if="s.health.last_status === 'success' && !s.health.is_overdue"
-                :size="12"
-              />
-              <AlertTriangle
-                v-else-if="s.health.last_status === 'warning' || s.health.is_overdue"
-                :size="12"
-              />
-              <AlertCircle
-                v-else-if="s.health.last_status === 'failed'"
-                :size="12"
-              />
-              {{ statusLabel(s.health) }}
-            </span>
-            <span
-              class="status-badge"
-              :class="s.enabled ? 'status-online' : 'status-offline'"
-            >
-              {{ s.enabled ? 'Enabled' : 'Disabled' }}
-            </span>
-          </div>
-        </div>
+        <span class="card-hostname">{{
+          s.name || s.repo?.name || (s.repo_id != null ? `repo #${s.repo_id}` : 'no repository')
+        }}</span>
+        <EntityStatusBadges
+          :notable="!s.enabled"
+          notable-label="Disabled"
+          :issues="scheduleIssues(s)"
+        />
         <div class="card-meta">
           <span class="host-count">
-            {{ s.target_hostnames.length }} host{{ s.target_hostnames.length === 1 ? '' : 's' }}
+            {{ s.target_hostnames.length }} agent{{ s.target_hostnames.length === 1 ? '' : 's' }}
           </span>
           <span
             class="type-badge"
@@ -482,19 +450,6 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
             {{ scheduleTypeLabel(s.schedule_type ?? 'backup') }}
           </span>
         </div>
-        <CardError
-          v-if="s.health?.last_error_message"
-          :label="
-            s.health.last_status === 'warning' ? 'Last backup had a warning' : 'Last backup failed'
-          "
-          :message="s.health.last_error_message"
-        />
-        <CardError
-          v-if="s.overdueEntries.length > 0"
-          tone="warning"
-          :label="`${s.overdueEntries.length} host${s.overdueEntries.length === 1 ? '' : 's'} overdue`"
-          :message="overdueMessage(s.overdueEntries)"
-        />
         <div class="card-stats">
           <div class="stat">
             <span class="stat-value">{{
@@ -658,65 +613,8 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
   box-shadow: var(--shadow);
 }
 
-.schedule-card.disabled {
-  opacity: 0.5;
-}
-
-.card-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.card-badges {
-  display: flex;
-  gap: 0.4rem;
-  align-items: center;
-  flex-shrink: 0;
-}
-
-.health-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  font-size: 0.65rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.health-badge.status-success {
-  background: var(--success-subtle);
-  color: var(--success);
-}
-
-.health-badge.status-warning {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.health-badge.status-failed {
-  background: var(--danger-subtle);
-  color: var(--danger);
-}
-
-.health-badge.status-overdue {
-  background: var(--warning-subtle);
-  color: var(--warning);
-}
-
-.health-badge.status-started {
-  background: var(--info-subtle);
-  color: var(--info);
-}
-
-.card-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  min-width: 0;
+.schedule-card-notable {
+  background: var(--bg-hover);
 }
 
 .card-hostname {
@@ -727,17 +625,6 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.card-repo {
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  font-family: var(--mono);
-  line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 
 .card-meta {
@@ -753,7 +640,7 @@ onMessage('DataChanged', () => fetchAll().catch(logger.error))
   font-size: 0.65rem;
   font-weight: 600;
   letter-spacing: 0.02em;
-  background: var(--bg-hover);
+  background: var(--bg-card);
   color: var(--text-secondary);
 }
 

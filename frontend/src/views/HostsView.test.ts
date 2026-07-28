@@ -293,35 +293,78 @@ describe('HostsView issue rows', () => {
     vi.clearAllMocks()
   })
 
-  it('renders separate failed and overdue rows instead of a combined label', async () => {
+  it('renders separate failed and overdue issue chips instead of a combined label', async () => {
     const { wrapper } = await mountWithHealth()
 
-    const failedRow = wrapper.find('.issue-row-failed')
-    const overdueRow = wrapper.find('.issue-row-overdue')
-    expect(failedRow.exists()).toBe(true)
-    expect(overdueRow.exists()).toBe(true)
-    expect(failedRow.text()).toContain('1 failed')
-    expect(overdueRow.text()).toContain('1 overdue')
+    const failedChip = wrapper.find('.entity-issue-chip.sev-danger')
+    const overdueChip = wrapper.find('.entity-issue-chip.sev-warning')
+    expect(failedChip.exists()).toBe(true)
+    expect(overdueChip.exists()).toBe(true)
+    expect(failedChip.text()).toContain('1 failed')
+    expect(overdueChip.text()).toContain('1 overdue')
   })
 
-  it('navigates to the backups tab filtered to failed when the failed row is clicked', async () => {
+  it('navigates to the backups tab filtered to failed when the failed chip is clicked', async () => {
     const { wrapper, router } = await mountWithHealth()
 
-    await wrapper.find('.issue-row-failed').trigger('click')
+    await wrapper.find('.entity-issue-chip.sev-danger').trigger('click')
     await flushPromises()
 
     expect(router.currentRoute.value.path).toBe('/agents/flaky-host')
     expect(router.currentRoute.value.query).toMatchObject({ tab: 'backups', status: 'failed' })
   })
 
-  it('navigates to the schedules tab filtered to overdue when the overdue row is clicked', async () => {
+  it('navigates to the schedules tab filtered to overdue when the overdue chip is clicked', async () => {
     const { wrapper, router } = await mountWithHealth()
 
-    await wrapper.find('.issue-row-overdue').trigger('click')
+    await wrapper.find('.entity-issue-chip.sev-warning').trigger('click')
     await flushPromises()
 
     expect(router.currentRoute.value.path).toBe('/agents/flaky-host')
     expect(router.currentRoute.value.query).toMatchObject({ tab: 'schedules', health: 'overdue' })
+  })
+
+  async function mountSingleAgent(
+    overrides: Record<string, unknown>,
+  ): Promise<ReturnType<typeof mount>> {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') return Promise.resolve({ data: [{ ...issueAgent, ...overrides }] })
+      if (url === '/stats/health') return Promise.resolve({ data: [] })
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({
+          data: {
+            protection: {
+              protected_agent_links: [],
+              unassigned_agents: [],
+              never_succeeded_agents: [],
+              disabled_only_agents: [],
+            },
+          },
+        })
+      }
+      if (url === '/system/version') return Promise.resolve({ data: { agent_version: null } })
+      return Promise.resolve({ data: [] })
+    })
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+    return wrapper
+  }
+
+  it('shows an Offline pill and tints the card when the agent is disconnected', async () => {
+    const wrapper = await mountSingleAgent({ is_connected: false })
+
+    expect(wrapper.find('.host-card').classes()).toContain('host-card-notable')
+    expect(wrapper.find('.entity-status-pill').text()).toBe('Offline')
+  })
+
+  it('shows nothing in the badge row for a healthy online agent with no issues', async () => {
+    const wrapper = await mountSingleAgent({ is_connected: true })
+
+    expect(wrapper.find('.host-card').classes()).not.toContain('host-card-notable')
+    expect(wrapper.find('.entity-badge-row').exists()).toBe(false)
   })
 })
 

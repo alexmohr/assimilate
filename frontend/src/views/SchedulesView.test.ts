@@ -224,24 +224,30 @@ describe('SchedulesView', () => {
     expect(wrapper.text()).toContain('media-weekly')
   })
 
-  it('shows target hosts on the schedule card', async () => {
+  it('shows the agent count on the schedule card without the raw agent list', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Web Server (web-server-01), db-server-01')
-    expect(wrapper.text()).toContain('1 host')
-    expect(wrapper.text()).toContain('2 hosts')
+    expect(wrapper.text()).toContain('1 agent')
+    expect(wrapper.text()).toContain('2 agents')
+    expect(wrapper.text()).not.toContain('Web Server (web-server-01), db-server-01')
   })
 
-  it('shows enabled/disabled badge', async () => {
+  it('shows nothing for an enabled schedule and a Disabled pill for a disabled one', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const text = wrapper.text()
-    expect(text).toContain('Enabled')
-    expect(text).toContain('Disabled')
+    const cards = wrapper.findAll('.schedule-card')
+    const enabledCard = cards.find((c) => c.text().includes('server-daily'))
+    const disabledCard = cards.find((c) => c.text().includes('media-weekly'))
+
+    expect(enabledCard!.find('.entity-status-pill').exists()).toBe(false)
+    expect(enabledCard!.classes()).not.toContain('schedule-card-notable')
+
+    expect(disabledCard!.find('.entity-status-pill').text()).toBe('Disabled')
+    expect(disabledCard!.classes()).toContain('schedule-card-notable')
   })
 
   it('renders schedule type badges', async () => {
@@ -261,12 +267,15 @@ describe('SchedulesView', () => {
     expect(wrapper.text()).toContain('human(0 2 * * *)')
   })
 
-  it('shows health badge for success status', async () => {
+  it('shows no badge row at all for a healthy, non-overdue schedule', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Success')
+    const healthyCard = wrapper
+      .findAll('.schedule-card')
+      .find((c) => c.text().includes('server-daily'))
+    expect(healthyCard!.find('.entity-badge-row').exists()).toBe(false)
   })
 
   it('shows overdue health badge', async () => {
@@ -277,15 +286,65 @@ describe('SchedulesView', () => {
     expect(wrapper.text()).toContain('Overdue')
   })
 
-  it('shows last backup failed error toggle when error message present', async () => {
+  it('shows both Overdue and Failed chips for a schedule that is both', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Last backup failed')
+    const card = wrapper.findAll('.schedule-card').find((c) => c.text().includes('database-hourly'))
+    expect(card!.find('.entity-issue-chip.sev-warning').text()).toBe('Overdue')
+    expect(card!.find('.entity-issue-chip.sev-danger').text()).toBe('Failed')
   })
 
-  it('shows an overdue toggle with per-host detail when a host has no error message', async () => {
+  it("shows the failed run's error message in the Failed chip's tooltip", async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const card = wrapper.findAll('.schedule-card').find((c) => c.text().includes('database-hourly'))
+    expect(card!.find('.entity-issue-chip.sev-danger').attributes('title')).toBe(
+      'Connection refused',
+    )
+  })
+
+  it('navigates to the activity log filtered to this schedule when the Failed chip is clicked', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const card = wrapper.findAll('.schedule-card').find((c) => c.text().includes('database-hourly'))
+    await card!.find('.entity-issue-chip.sev-danger').trigger('click')
+    await flushPromises()
+
+    const router = (
+      wrapper.vm as unknown as {
+        $router: { currentRoute: { value: { path: string; query: Record<string, string> } } }
+      }
+    ).$router
+    expect(router.currentRoute.value.path).toBe('/activity')
+    expect(router.currentRoute.value.query).toMatchObject({
+      category: 'backup',
+      schedule_id: '2',
+      status: 'failed',
+    })
+  })
+
+  it('navigates to the schedule detail page when the Overdue chip is clicked', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+
+    const card = wrapper.findAll('.schedule-card').find((c) => c.text().includes('database-hourly'))
+    await card!.find('.entity-issue-chip.sev-warning').trigger('click')
+    await flushPromises()
+
+    const router = (
+      wrapper.vm as unknown as { $router: { currentRoute: { value: { path: string } } } }
+    ).$router
+    expect(router.currentRoute.value.path).toBe('/schedules/2')
+  })
+
+  it('shows an Overdue chip whose tooltip lists per-host detail', async () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules') return Promise.resolve({ data: [mockSchedules[0]] })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
@@ -296,19 +355,13 @@ describe('SchedulesView', () => {
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('1 host overdue')
+    const chip = wrapper.find('.entity-issue-chip.sev-warning')
+    expect(chip.text()).toBe('Overdue')
+    expect(chip.attributes('title')).toContain('Web Server (web-server-01) — last backup:')
     expect(wrapper.text()).not.toContain('Last backup failed')
-
-    const toggle = wrapper.findAll('.error-toggle').find((b) => b.text().includes('overdue'))
-    expect(toggle).toBeTruthy()
-    expect(wrapper.text()).not.toContain('Web Server (web-server-01) — last backup:')
-
-    await toggle!.trigger('click')
-
-    expect(wrapper.text()).toContain('Web Server (web-server-01) — last backup:')
   })
 
-  it('shows an agent-offline note for an overdue host whose agent is disconnected', async () => {
+  it('shows an agent-offline note in the Overdue tooltip for a disconnected agent', async () => {
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules') return Promise.resolve({ data: [mockSchedules[0]] })
       if (url === '/repos') return Promise.resolve({ data: mockRepos })
@@ -338,10 +391,8 @@ describe('SchedulesView', () => {
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const toggle = wrapper.findAll('.error-toggle').find((b) => b.text().includes('overdue'))
-    await toggle!.trigger('click')
-
-    expect(wrapper.text()).toContain('agent offline (last seen')
+    const chip = wrapper.find('.entity-issue-chip.sev-warning')
+    expect(chip.attributes('title')).toContain('agent offline (last seen')
   })
 
   it('shows empty state when no schedules exist', async () => {

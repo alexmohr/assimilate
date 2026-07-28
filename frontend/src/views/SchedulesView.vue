@@ -15,8 +15,13 @@ import { useMobile } from '../composables/useMobile'
 import { useToast } from '../composables/useToast'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
-import { normalizeBackupStatus, type NormalizedBackupStatus } from '../utils/backupStatus'
+import { normalizeBackupStatus } from '../utils/backupStatus'
 import { isAgentOffline, lastSeenText } from '../utils/agent'
+import {
+  scheduleRunStatus,
+  scheduleIssuesFromEntries,
+  type ScheduleHealthEntry,
+} from '../utils/scheduleHealth'
 import { Plus, Clock, SlidersHorizontal } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -24,12 +29,11 @@ import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatus
 import type { AgentRow } from '../types/agent'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import type { Repo } from '../types/repo'
-import type { HealthSummaryResponse as HealthEntry } from '../types/generated/HealthSummaryResponse'
 
 const schedules = ref<ScheduleRow[]>([])
 const repos = ref<Repo[]>([])
 const agents = ref<AgentRow[]>([])
-const health = ref<HealthEntry[]>([])
+const health = ref<ScheduleHealthEntry[]>([])
 const { loading, error, run } = useAsyncAction('Failed to load schedules.')
 const router = useRouter()
 type SortField = 'agent' | 'next_run' | 'last_run' | 'type'
@@ -78,8 +82,8 @@ const repoMap = computed(() => {
 interface EnrichedSchedule extends ScheduleRow {
   hostLabels: string[]
   repo: Repo | null
-  health: HealthEntry | null
-  overdueEntries: HealthEntry[]
+  health: ScheduleHealthEntry | null
+  overdueEntries: ScheduleHealthEntry[]
   isRunning: boolean
 }
 
@@ -97,7 +101,7 @@ function hostLabel(hostname: string): string {
 }
 
 const healthBySchedule = computed(() => {
-  const m = new Map<number, HealthEntry[]>()
+  const m = new Map<number, ScheduleHealthEntry[]>()
   health.value.forEach((h) => {
     const entries = m.get(h.schedule_id) ?? []
     entries.push(h)
@@ -111,7 +115,7 @@ const enrichedSchedules = computed<EnrichedSchedule[]>(() =>
     const hostLabels = s.target_hostnames.map(hostLabel)
     const repo: Repo | null = s.repo_id != null ? (repoMap.value.get(s.repo_id) ?? null) : null
     const entries = healthBySchedule.value.get(s.id) ?? []
-    const healthEntry: HealthEntry | null =
+    const healthEntry: ScheduleHealthEntry | null =
       entries.find((h) => h.is_overdue) ??
       entries.find(
         (h) => h.last_status !== null && normalizeBackupStatus(h.last_status) === 'failed',
@@ -142,11 +146,11 @@ const filteredSchedules = computed(() => {
   if (filterHealth.value === 'overdue') {
     list = list.filter((s) => s.health?.is_overdue)
   } else if (filterHealth.value === 'success') {
-    list = list.filter((s) => healthStatus(s.health) === 'success')
+    list = list.filter((s) => scheduleRunStatus(s.health) === 'success')
   } else if (filterHealth.value === 'warning') {
-    list = list.filter((s) => healthStatus(s.health) === 'warning')
+    list = list.filter((s) => scheduleRunStatus(s.health) === 'warning')
   } else if (filterHealth.value === 'failed') {
-    list = list.filter((s) => healthStatus(s.health) === 'failed')
+    list = list.filter((s) => scheduleRunStatus(s.health) === 'failed')
   }
 
   if (filterText.value.trim()) {
@@ -190,50 +194,21 @@ function toggleSort(field: SortField): void {
   }
 }
 
-function healthStatus(entry: HealthEntry | null | undefined): NormalizedBackupStatus | null {
-  return entry?.last_status != null ? normalizeBackupStatus(entry.last_status) : null
-}
-
-function navigateToScheduleIssue(s: ScheduleRow, kind: 'failed' | 'warning' | 'overdue'): void {
-  if (kind === 'overdue') {
-    router.push(`/schedules/${s.id}`)
-    return
-  }
-  router.push(`/activity?category=backup&schedule_id=${s.id}&status=${kind}`)
-}
-
+// Enriches the shared chip set with SchedulesView-specific tooltips: this
+// page aggregates across every host a schedule targets, so a bare "Overdue"
+// or "Failed" chip benefits from a hover detail of which host and why.
+// AgentDetailView's schedule cards are already scoped to a single host and
+// use scheduleIssuesFromEntries directly without this enrichment.
 function scheduleIssues(s: EnrichedSchedule): EntityIssue[] {
   const entries = healthBySchedule.value.get(s.id) ?? []
-  const issues: EntityIssue[] = []
-  if (s.overdueEntries.length > 0) {
-    issues.push({
-      key: 'overdue',
-      label: 'Overdue',
-      severity: 'warning',
-      title: overdueMessage(s.overdueEntries),
-      onClick: () => navigateToScheduleIssue(s, 'overdue'),
-    })
-  }
-  const failedEntry = entries.find((h) => healthStatus(h) === 'failed')
-  const warningEntry = entries.find((h) => healthStatus(h) === 'warning')
-  if (failedEntry) {
-    issues.push({
-      key: 'failed',
-      label: 'Failed',
-      severity: 'danger',
-      title: failedEntry.last_error_message ?? undefined,
-      onClick: () => navigateToScheduleIssue(s, 'failed'),
-    })
-  } else if (warningEntry) {
-    issues.push({
-      key: 'warning',
-      label: 'Warning',
-      severity: 'warning',
-      title: warningEntry.last_error_message ?? undefined,
-      onClick: () => navigateToScheduleIssue(s, 'warning'),
-    })
-  }
-  return issues
+  const issues = scheduleIssuesFromEntries(entries, s.id, router)
+  return issues.map((issue) => {
+    if (issue.key === 'overdue') {
+      return { ...issue, title: overdueMessage(s.overdueEntries) }
+    }
+    const entry = entries.find((h) => scheduleRunStatus(h) === issue.key)
+    return entry?.last_error_message ? { ...issue, title: entry.last_error_message } : issue
+  })
 }
 
 function connectivityNote(hostname: string): string {
@@ -242,7 +217,7 @@ function connectivityNote(hostname: string): string {
   return ` — agent offline (${lastSeenText(agent)})`
 }
 
-function overdueMessage(entries: HealthEntry[]): string {
+function overdueMessage(entries: ScheduleHealthEntry[]): string {
   return entries
     .map((h) => {
       const last = h.last_backup_at ? formatDateShort(h.last_backup_at) : 'never'
@@ -257,7 +232,7 @@ async function fetchAll(): Promise<void> {
       apiClient.get<ScheduleRow[]>('/schedules'),
       apiClient.get<Repo[]>('/repos'),
       apiClient.get<AgentRow[]>('/agents'),
-      apiClient.get<HealthEntry[]>('/stats/health'),
+      apiClient.get<ScheduleHealthEntry[]>('/stats/health'),
     ])
     schedules.value = schRes.data
     repos.value = repoRes.data

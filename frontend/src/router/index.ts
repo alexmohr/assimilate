@@ -21,7 +21,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/agents', component: () => import('../views/HostsView.vue'), name: 'agents' },
   {
     path: '/agents/:hostname',
-    component: () => import('../views/HostDetailView.vue'),
+    component: () => import('../views/AgentDetailView.vue'),
     name: 'agent-detail',
     props: true,
   },

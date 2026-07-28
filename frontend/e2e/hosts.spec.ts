@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import type { Route } from '@playwright/test'
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expect, loginAsAdmin, mockScheduleOneHealth, test } from './fixtures'
 
 test.describe('Hosts management', () => {
   test('hosts list shows connected agent hosts and imported placeholders', async ({ page }) => {
@@ -125,32 +125,10 @@ test.describe('Hosts management', () => {
     page,
   }) => {
     // schedule 1 ("server-daily") targets web-server-01 - see schedules.spec.ts.
-    await page.route(
-      (url) => url.pathname === '/api/stats/health',
-      async (route: Route) => {
-        const response = await route.fetch()
-        const entries = (await response.json()) as Array<Record<string, unknown>>
-        const withoutTarget = entries.filter(
-          (e) => !(e.schedule_id === 1 && e.hostname === 'web-server-01'),
-        )
-        withoutTarget.push({
-          schedule_id: 1,
-          hostname: 'web-server-01',
-          target_name: 'server-daily',
-          last_status: 'failed',
-          last_backup_at: '2020-01-01T02:00:00Z',
-          is_overdue: false,
-          last_error_message: 'Simulated failure',
-          cron_expression: '0 2 * * *',
-          schedule_enabled: true,
-        })
-        return route.fulfill({
-          status: response.status(),
-          contentType: 'application/json',
-          body: JSON.stringify(withoutTarget),
-        })
-      },
-    )
+    await mockScheduleOneHealth(page, {
+      last_status: 'failed',
+      last_error_message: 'Simulated failure',
+    })
 
     await loginAsAdmin(page)
     await page.goto('/agents/web-server-01?tab=schedules')

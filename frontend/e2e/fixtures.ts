@@ -74,6 +74,44 @@ export async function loginAsViewer(page: Page): Promise<void> {
   await login(page, 'viewer1', 'viewer1')
 }
 
+// Overrides the web-server-01 / server-daily health entry (schedule 1, seeded
+// by the demo) for /api/stats/health so tests can force a specific chip
+// (Overdue/Failed) to render without relying on the demo's seeded health
+// state. Used by both the schedules list and the agent-detail schedules tab,
+// which read the same schedule via the same endpoint.
+export async function mockScheduleOneHealth(
+  page: Page,
+  overrides: Record<string, unknown>,
+): Promise<void> {
+  await page.route(
+    (url) => url.pathname === '/api/stats/health',
+    async (route) => {
+      const response = await route.fetch()
+      const entries = (await response.json()) as Array<Record<string, unknown>>
+      const withoutTarget = entries.filter(
+        (e) => !(e.schedule_id === 1 && e.hostname === 'web-server-01'),
+      )
+      withoutTarget.push({
+        schedule_id: 1,
+        hostname: 'web-server-01',
+        target_name: 'server-daily',
+        last_status: 'success',
+        last_backup_at: '2020-01-01T02:00:00Z',
+        is_overdue: false,
+        last_error_message: null,
+        cron_expression: '0 2 * * *',
+        schedule_enabled: true,
+        ...overrides,
+      })
+      return route.fulfill({
+        status: response.status(),
+        contentType: 'application/json',
+        body: JSON.stringify(withoutTarget),
+      })
+    },
+  )
+}
+
 // Wraps the built-in `page` fixture to collect Istanbul coverage after each
 // test when VITE_COVERAGE=true. The browser accumulates `window.__coverage__`
 // throughout the test; we read it out just before Playwright closes the page

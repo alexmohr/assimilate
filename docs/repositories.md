@@ -50,7 +50,7 @@ The Repositories list page shows all registered repositories with:
 - **Group by tag** — organize repositories into tag groups
 - **Sort buttons** — sort by Name, Size, or Last Backup
 
-Each repository card shows the name, SSH target, enabled state, encryption type, compression algorithm, unmatched host warnings, archive count, deduplicated size, and last backup time.
+Each repository card shows the name, SSH target, encryption type, compression algorithm, archive count, deduplicated size, and last backup time. A disabled repository tints the card and adds a **Disabled** pill; a repository with unmatched imported archives shows an **N unmatched** chip — click it to jump to the Archives tab.
 
 ![Repository Detail](assets/screenshots/repo-detail.png)
 

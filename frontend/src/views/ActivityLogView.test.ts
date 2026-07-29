@@ -5,17 +5,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { createRouter, createMemoryHistory } from 'vue-router'
+import { mockApiClient, mockTimezone } from '../test-utils/sharedMocks'
 
-const mocks = vi.hoisted(() => ({
-  mockTimezone: () => ({
-    useTimezone: vi.fn(),
-    getConfiguredTimezone: vi.fn().mockReturnValue(undefined),
-  }),
-  mockApiClient: () => ({ apiClient: { get: vi.fn() } }),
-}))
-
-vi.mock('../composables/useTimezone', () => mocks.mockTimezone())
-vi.mock('../api/client', () => mocks.mockApiClient())
+vi.mock('../composables/useTimezone', () => mockTimezone())
+vi.mock('../api/client', () => mockApiClient())
 
 const wsMessageHandlers = new Map<string, Array<(payload?: unknown) => void>>()
 
@@ -114,7 +107,7 @@ const WARNING_MOCK_REPORTS: ReportRow[] = [
     deduplicated_size: 256,
     files_processed: 100,
     duration_secs: 240,
-    error_message: null,
+    error_message: 'some file changed during backup; slow read on /var/www/logs',
     warnings: ['some file changed during backup', 'slow read on /var/www/logs'],
     borg_version: '1.2.0',
     archive_name: null,
@@ -399,6 +392,11 @@ describe('ActivityLogView', () => {
       expect(warningPre.exists()).toBe(true)
       expect(warningPre.text()).toContain('some file changed during backup')
       expect(warningPre.text()).toContain('slow read on /var/www/logs')
+
+      // A warning-only report still carries a non-null error_message (the
+      // backup_warning notification path reads it), but the Error box must
+      // not render alongside the Warnings box for the same report.
+      expect(wrapper.find('pre.error-pre').exists()).toBe(false)
     })
     it('keeps the expanded detail panel open when a background DataChanged event arrives', async () => {
       const wrapper = await mountDefault()

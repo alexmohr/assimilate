@@ -599,6 +599,11 @@ SET warnings = ARRAY[
         'file changed while we backed it up: /var/www/config.php',
         'slow read on /var/log/nginx/access.log'
     ],
+    -- The agent populates error_message for warning-only runs too (the
+    -- backup_warning notification path reads it); the UI hides the
+    -- redundant Error box for warning-status reports instead of the agent
+    -- dropping the message, so this mirrors real agent behavior.
+    error_message = 'file changed while we backed it up: /var/www/config.php; slow read on /var/log/nginx/access.log',
     status = 'warning'
 WHERE id = (
     SELECT id FROM backup_reports

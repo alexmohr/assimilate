@@ -433,7 +433,8 @@ impl BackupEngine {
             1 if stderr_has_warnings(&stderr) => {
                 let warnings = parse_warnings(&stderr);
                 let warnings = filter_file_change_warnings(warnings, &target.file_change_patterns)?;
-                warn!("Borg reported warnings: {}", warnings.join("; "));
+                let summary = warnings.join("; ");
+                warn!("Borg reported warnings: {summary}");
                 let stats = parse_json_stats(&output.stdout)?;
                 Ok(CreateResult {
                     status: BackupStatus::Warning,
@@ -442,7 +443,14 @@ impl BackupEngine {
                     deduplicated_size: stats.deduplicated_size,
                     repo_unique_csize: stats.repo_unique_csize,
                     files_processed: stats.files_processed,
-                    error_message: None,
+                    // Kept populated (not None) despite duplicating `warnings`:
+                    // dispatch_backup_completion_notification's backup_warning
+                    // path reads only this field for the email/push body, so
+                    // clearing it silently drops warning text from
+                    // notifications. The duplicate-display bug this was meant
+                    // to fix is handled at the UI layer instead (report
+                    // detail views hide the Error box when status is Warning).
+                    error_message: Some(summary),
                     warnings,
                     archive_name,
                     borg_command,
@@ -1241,7 +1249,14 @@ mod tests {
         let result = engine.run_backup(&target, None, None).await.unwrap();
 
         assert_eq!(result.status, BackupStatus::Warning);
-        assert!(result.error_message.is_none());
+        assert!(result.error_message.is_some());
+        assert!(
+            result
+                .error_message
+                .as_ref()
+                .unwrap()
+                .contains("file changed")
+        );
         assert_eq!(result.warnings.len(), 2);
         assert!(result.warnings[0].contains("file changed while we backed it up"));
         assert!(result.warnings[1].contains("file changed while we backed it up"));

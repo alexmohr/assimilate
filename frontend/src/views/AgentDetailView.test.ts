@@ -117,7 +117,7 @@ const mockReports = [
     deduplicated_size: 256,
     files_processed: 98,
     duration_secs: 310,
-    error_message: null,
+    error_message: 'some file changed during backup',
     warnings: ['some file changed during backup'],
     borg_version: '1.2.0',
     archive_name: 'test-host-2026-06-02T10:00:00',
@@ -259,6 +259,25 @@ describe('AgentDetailView — backups tab', () => {
     const cards = wrapper.findAll('.result-card')
     expect(cards).toHaveLength(1)
     expect(cards[0].classes()).toContain('result-warning')
+  })
+
+  it('shows the Warnings box but not a duplicate Error box for a warning-only report', async () => {
+    setupApi()
+    const wrapper = renderWithPlugins(AgentDetailView, {
+      props: { hostname: 'test-host' },
+      storeState: { auth: { user: { role: 'admin' } } },
+    })
+    await flushPromises()
+    await openBackupsTab(wrapper)
+
+    const warningCard = wrapper
+      .findAll('.result-card')
+      .find((c) => c.classes().includes('result-warning'))
+    expect(warningCard).toBeDefined()
+    await warningCard!.trigger('click')
+
+    expect(warningCard!.find('.result-warnings').exists()).toBe(true)
+    expect(warningCard!.find('.result-error').exists()).toBe(false)
   })
 
   it('filters to only failed reports when Failed is clicked', async () => {

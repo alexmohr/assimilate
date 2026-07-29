@@ -30,7 +30,7 @@ The Agents list page provides:
 - **Tag filter** — filter by one or more tags
 - **Sort buttons** — sort by Name, Status, Last Seen, or Agent Version
 
-Each agent card shows the hostname, display name, online/offline status, schedule count, last seen time, agent version, and overdue indicators. Imported agents show **Merge into...** and **Adopt** buttons for managing unmatched archive agents.
+Each agent card shows the hostname, display name, schedule count, last seen time, and agent version. An offline or disabled agent tints the card and adds an **Offline**/**Disabled** pill; a **Failed** or **Overdue** chip appears when a backup on that agent needs attention — click it to jump straight to the filtered backup history or schedule that needs a look. Imported agents show **Merge into...** and **Adopt** buttons for managing unmatched archive agents.
 
 ## Agent Deployment
 

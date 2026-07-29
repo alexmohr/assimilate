@@ -29,9 +29,9 @@ The Schedules list page shows all configured backup schedules with:
 - **Health filter** — filter by Passed only, Failed only, or Overdue only
 - **Sort buttons** — sort by Agent, Next Run, Last Run, or Type
 
-Each schedule card shows the repository or schedule name, the agents included in the schedule, agent count, execution mode (Parallel/Sequential), health status, enabled state, schedule type, cron description, next run time, last run time, and a **Run** button for manual triggering.
+Each schedule card shows the repository or schedule name, agent count, execution mode (Parallel/Sequential), enabled state, schedule type, cron description, next run time, last run time, and a **Run** button for manual triggering. A disabled schedule tints the card and adds a **Disabled** pill; a **Failed**, **Warning**, or **Overdue** chip appears when a target needs attention — click it to jump to the filtered activity log (Failed/Warning) or the schedule detail page (Overdue).
 
-When a schedule is Overdue, the card shows an expandable "N host(s) overdue" row — click it to see which target host(s) are behind and when each last reported a backup. Overdue is evaluated per host: a schedule can show Overdue even while its own next/last run times look on track, if one of its target hosts hasn't completed a backup within its cron interval plus a 30-minute grace period. If the host's agent is currently disconnected, the row also notes that ("Agent offline (last seen ...)") so you can tell at a glance whether the host is overdue because it's offline or because something else went wrong.
+Overdue is evaluated per host: a schedule can show Overdue even while its own next/last run times look on track, if one of its target hosts hasn't completed a backup within its cron interval plus a 30-minute grace period. Hover the Overdue chip to see which target host(s) are behind and when each last reported a backup; if a host's agent is currently disconnected, the tooltip also notes that ("Agent offline (last seen ...)") so you can tell at a glance whether the host is overdue because it's offline or because something else went wrong.
 
 ![Schedule Detail](assets/screenshots/schedule-detail.png)
 

@@ -932,7 +932,10 @@ function filterByRun(runId: string): void {
                   <pre class="status-pre warning-pre">{{ expandedDetail.warnings.join('\n') }}</pre>
                 </div>
                 <div
-                  v-if="expandedDetail.error_message"
+                  v-if="
+                    expandedDetail.error_message &&
+                    normalizeBackupStatus(expandedDetail.status) !== 'warning'
+                  "
                   class="detail-section detail-error-section"
                 >
                   <h3 class="detail-heading status-heading error-heading">Error</h3>

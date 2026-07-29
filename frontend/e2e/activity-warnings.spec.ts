@@ -18,7 +18,8 @@ function makeWarningReport(): object {
     deduplicated_size: 128,
     files_processed: 150,
     duration_secs: 300,
-    error_message: null,
+    error_message:
+      'file changed while being read: /var/www/config.php; slow read on /var/log/nginx/access.log',
     warnings: [
       'file changed while being read: /var/www/config.php',
       'slow read on /var/log/nginx/access.log',

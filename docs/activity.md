@@ -17,23 +17,15 @@ The Activity page has four tabs that filter the timeline by event type:
 
 ## Backup Activity
 
-The Backup tab (and the "All" view) shows one row per backup run:
+The Backup tab (and the "All" view) shows one card per backup run, with the start timestamp, hostname of the agent that ran the backup, target repository name, status (`success`, `warning`, or `failed`), and duration.
 
-| Column | Description |
-|--------|-------------|
-| Timestamp | When the backup started |
-| Machine | Hostname of the agent that ran the backup |
-| Target | Repository name the backup targeted |
-| Status | `success`, `warning`, or `failed` |
-| Duration | Elapsed time for the run |
-
-Click any row to expand it and see detailed statistics:
+Click any card to expand it and see detailed statistics:
 
 - **Timing** — start, finish, and duration
 - **Sizes** — original, compressed, and deduplicated
 - **Stats** — files processed, borg version
 - **Warnings** — a list of warning messages (if the run completed with warnings)
-- **Error** — error message (if the run failed)
+- **Error** — error message, shown only for a failed run — a warning-only run's message already appears in the Warnings section above, so it isn't duplicated here
 
 ## Filters
 

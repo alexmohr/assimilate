@@ -1794,7 +1794,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
                 <pre class="result-output">{{ (r.warnings ?? []).join('\n') }}</pre>
               </div>
               <div
-                v-if="r.error_message"
+                v-if="r.error_message && normalizeBackupStatus(r.status) !== 'warning'"
                 class="result-error"
               >
                 <strong class="result-section-label">Error</strong>

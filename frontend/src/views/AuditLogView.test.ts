@@ -5,18 +5,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { createPinia } from 'pinia'
+import { mockApiClient, mockTimezone } from '../test-utils/sharedMocks'
 
-vi.mock('../composables/useTimezone', function () {
-  return {
-    useTimezone: vi.fn(),
-    getConfiguredTimezone: vi.fn().mockReturnValue(undefined),
-  }
-})
-
-vi.mock('../api/client', function () {
-  const mockGet = vi.fn()
-  return { apiClient: { get: mockGet } }
-})
+vi.mock('../composables/useTimezone', () => mockTimezone())
+vi.mock('../api/client', () => mockApiClient())
 
 import { apiClient } from '../api/client'
 import AuditLogView from './AuditLogView.vue'

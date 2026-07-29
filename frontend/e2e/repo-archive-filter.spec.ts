@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expandAllArchiveGroups, expect, loginAsAdmin, test } from './fixtures'
 
 test.describe('archive filter via ?archive= query parameter', () => {
   test('AC-E1: navigating to repo detail with ?archive=<name> shows the filter banner', async ({
@@ -20,6 +20,7 @@ test.describe('archive filter via ?archive= query parameter', () => {
     // Go to the Archives tab to see archive names
     await page.getByRole('button', { name: 'Archives' }).click()
     await page.waitForURL(/tab=archives/)
+    await expandAllArchiveGroups(page)
 
     // Read the first archive name from the list
     const firstArchiveName = page.locator('.archive-row .archive-name').first()
@@ -36,11 +37,12 @@ test.describe('archive filter via ?archive= query parameter', () => {
     await expect(banner).toBeVisible()
     await expect(banner).toContainText(archiveName)
 
-    // Only one archive row should be visible
-    await expect(page.locator('.archive-row')).toHaveCount(1)
-
-    // The matching archive row should be selected
-    await expect(page.locator('.archive-row.selected')).toBeVisible()
+    // The archive browser and its controls are hidden while filtered to a
+    // single archive - only the banner and the matching archive's file
+    // browser are shown.
+    await expect(page.locator('.archive-row')).toHaveCount(0)
+    await expect(page.locator('.archive-controls')).not.toBeVisible()
+    await expect(page.locator('.browser-title')).toContainText(archiveName)
   })
 
   test('AC-E2: clicking "Show all archives" restores the full archive list', async ({ page }) => {
@@ -57,6 +59,7 @@ test.describe('archive filter via ?archive= query parameter', () => {
     // Go to the Archives tab to see archive names and get the total count
     await page.getByRole('button', { name: 'Archives' }).click()
     await page.waitForURL(/tab=archives/)
+    await expandAllArchiveGroups(page)
 
     // Get the first archive name
     const firstArchiveName = page.locator('.archive-row .archive-name').first()
@@ -73,12 +76,13 @@ test.describe('archive filter via ?archive= query parameter', () => {
     await page.goto(`/repos/${repoId}?tab=archives&archive=${encodeURIComponent(archiveName)}`)
     await page.waitForURL(/tab=archives/)
 
-    // Verify the banner is visible and only 1 archive is shown
+    // Verify the banner is visible and the archive browser is hidden
     await expect(page.locator('.archive-filter-banner')).toBeVisible()
-    await expect(page.locator('.archive-row')).toHaveCount(1)
+    await expect(page.locator('.archive-row')).toHaveCount(0)
 
     // Click "Show all archives"
     await page.getByRole('button', { name: 'Show all archives' }).click()
+    await expandAllArchiveGroups(page)
 
     // Wait for the filter banner to disappear
     await expect(page.locator('.archive-filter-banner')).not.toBeVisible()

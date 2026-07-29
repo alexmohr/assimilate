@@ -136,3 +136,19 @@ export const test = base.extend<{ page: Page }>({
 })
 
 export { expect }
+
+// Archive host groups start collapsed by default, so .archive-row elements
+// are hidden until their group is expanded. Wait for the list to settle into
+// some terminal state first, since callers vary in how much they've already
+// waited for the archives fetch to resolve.
+export async function expandAllArchiveGroups(page: Page): Promise<void> {
+  await page
+    .locator('.archive-group, .archive-row-detailed, .state-msg-sm')
+    .first()
+    .waitFor({ state: 'visible', timeout: 20_000 })
+    .catch(() => {})
+  const collapsed = page.locator('.group-header.collapsed')
+  while ((await collapsed.count()) > 0) {
+    await collapsed.first().click()
+  }
+}

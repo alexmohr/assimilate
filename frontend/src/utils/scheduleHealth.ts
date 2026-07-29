@@ -65,3 +65,20 @@ export function scheduleIssuesFromEntries(
   }
   return issues
 }
+
+/**
+ * Attaches a hover-detail `title` to each non-overdue issue, taken from the
+ * matching health entry's `last_error_message`. Shared by every view that
+ * renders `scheduleIssuesFromEntries()`'s output; overdue issues are left
+ * untouched since each caller has its own (or no) overdue-title logic.
+ */
+export function withErrorTitles(
+  issues: EntityIssue[],
+  entries: ScheduleHealthEntry[],
+): EntityIssue[] {
+  return issues.map((issue) => {
+    if (issue.key === 'overdue') return issue
+    const entry = entries.find((h) => scheduleRunStatus(h) === issue.key)
+    return entry?.last_error_message ? { ...issue, title: entry.last_error_message } : issue
+  })
+}

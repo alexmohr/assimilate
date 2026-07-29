@@ -31,7 +31,7 @@ import BaseHostLink from '../components/BaseHostLink.vue'
 import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
 import {
   scheduleIssuesFromEntries,
-  scheduleRunStatus,
+  withErrorTitles,
   type ScheduleHealthEntry,
 } from '../utils/scheduleHealth'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
@@ -212,12 +212,7 @@ function scheduleHealthEntries(s: ScheduleRow): ScheduleHealthEntry[] {
 
 function scheduleIssues(s: ScheduleRow): EntityIssue[] {
   const entries = scheduleHealthEntries(s)
-  const issues = scheduleIssuesFromEntries(entries, s.id, router)
-  return issues.map((issue) => {
-    if (issue.key === 'overdue') return issue
-    const entry = entries.find((h) => scheduleRunStatus(h) === issue.key)
-    return entry?.last_error_message ? { ...issue, title: entry.last_error_message } : issue
-  })
+  return withErrorTitles(scheduleIssuesFromEntries(entries, s.id, router), entries)
 }
 
 async function loadRepoSchedules(): Promise<void> {

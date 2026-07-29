@@ -416,6 +416,21 @@ describe('AgentDetailView — backups tab', () => {
     expect(highlighted.exists()).toBe(true)
     expect(highlighted.attributes('id')).toBe('report-5')
   })
+
+  it('re-pins the matching report when the status query param changes on an already-mounted page', async () => {
+    const wrapper = await mountBackupsWithStatus(mockReports, 'failed')
+
+    let highlighted = wrapper.find('.result-card-highlighted')
+    expect(highlighted.attributes('id')).toBe('report-3')
+
+    const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
+    await router.push({ query: { tab: 'backups', status: 'warning' } })
+    await flushPromises()
+
+    highlighted = wrapper.find('.result-card-highlighted')
+    expect(highlighted.exists()).toBe(true)
+    expect(highlighted.attributes('id')).toBe('report-2')
+  })
 })
 
 describe('AgentDetailView — schedules tab', () => {

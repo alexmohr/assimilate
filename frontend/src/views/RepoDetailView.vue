@@ -29,7 +29,11 @@ import QuotaPanel from '../components/QuotaPanel.vue'
 import BaseModal from '../components/BaseModal.vue'
 import BaseHostLink from '../components/BaseHostLink.vue'
 import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
-import { scheduleIssuesFromEntries, type ScheduleHealthEntry } from '../utils/scheduleHealth'
+import {
+  scheduleIssuesFromEntries,
+  scheduleRunStatus,
+  type ScheduleHealthEntry,
+} from '../utils/scheduleHealth'
 import type { ScheduleRow, ScheduleType } from '../types/schedule'
 import type { ActiveRepoOp, RepoOpKind, RepoWithStats } from '../types/repo'
 import type { TagRow } from '../types/tag'
@@ -207,7 +211,13 @@ function scheduleHealthEntries(s: ScheduleRow): ScheduleHealthEntry[] {
 }
 
 function scheduleIssues(s: ScheduleRow): EntityIssue[] {
-  return scheduleIssuesFromEntries(scheduleHealthEntries(s), s.id, router)
+  const entries = scheduleHealthEntries(s)
+  const issues = scheduleIssuesFromEntries(entries, s.id, router)
+  return issues.map((issue) => {
+    if (issue.key === 'overdue') return issue
+    const entry = entries.find((h) => scheduleRunStatus(h) === issue.key)
+    return entry?.last_error_message ? { ...issue, title: entry.last_error_message } : issue
+  })
 }
 
 async function loadRepoSchedules(): Promise<void> {

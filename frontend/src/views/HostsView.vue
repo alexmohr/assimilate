@@ -740,6 +740,19 @@ watch(
             </span>
           </div>
         </div>
+        <div class="card-status-row">
+          <span
+            v-if="isOnline(agent)"
+            class="status-badge status-online"
+          >
+            Online
+          </span>
+          <EntityStatusBadges
+            :notable="!isOnline(agent)"
+            notable-label="Offline"
+            :issues="agentIssues(agent)"
+          />
+        </div>
         <div class="card-stats">
           <div class="stat">
             <span class="stat-value">{{ scheduleCount(agent) }}</span>
@@ -754,11 +767,6 @@ watch(
             <span class="stat-label">Agent</span>
           </div>
         </div>
-        <EntityStatusBadges
-          :notable="!isOnline(agent)"
-          notable-label="Offline"
-          :issues="agentIssues(agent)"
-        />
         <div
           v-if="hostActiveBackups(agent).length > 0"
           class="card-active-backup"
@@ -1141,6 +1149,13 @@ watch(
 .card-display {
   font-size: 0.8rem;
   color: var(--text-muted);
+}
+
+.card-status-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
 }
 
 .card-stats {

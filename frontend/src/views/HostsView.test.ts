@@ -410,3 +410,83 @@ describe('HostsView deploy button label', () => {
     expect(wrapper.text()).toContain('Upgrade')
   })
 })
+
+describe('HostsView status pill placement', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('renders the online pill next to the issue indicators, above the stats row', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/agents') {
+        return Promise.resolve({
+          data: [
+            {
+              id: 1,
+              hostname: 'flaky-host',
+              display_name: null,
+              agent_version: null,
+              agent_git_sha: null,
+              agent_build_time: null,
+              agent_commit_count: null,
+              created_at: '2026-06-01T00:00:00Z',
+              last_seen_at: null,
+              is_connected: true,
+              is_imported: false,
+              is_hidden: false,
+              default_backup_paths: [],
+            },
+          ],
+        })
+      }
+      if (url === '/stats/health') {
+        return Promise.resolve({
+          data: [
+            {
+              hostname: 'flaky-host',
+              target_name: 'home',
+              last_status: 'failed',
+              last_backup_at: null,
+              is_overdue: true,
+              last_error_message: null,
+            },
+          ],
+        })
+      }
+      if (url === '/stats/dashboard-overview') {
+        return Promise.resolve({
+          data: {
+            protection: {
+              protected_agent_links: [],
+              unassigned_agents: [],
+              never_succeeded_agents: [],
+              disabled_only_agents: [],
+            },
+          },
+        })
+      }
+      if (url === '/system/version') {
+        return Promise.resolve({ data: { agent_version: null } })
+      }
+      return Promise.resolve({ data: [] })
+    })
+
+    const router = makeRouter()
+    await router.push('/agents')
+    await router.isReady()
+    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
+    await flushPromises()
+
+    const statusRow = wrapper.get('.card-status-row')
+    expect(statusRow.find('.status-online').exists()).toBe(true)
+    expect(statusRow.text()).toContain('Online')
+    expect(statusRow.text()).toContain('1 failed')
+    expect(statusRow.text()).toContain('1 overdue')
+
+    const card = wrapper.get('.host-card')
+    const statusRowIndex = card.html().indexOf('card-status-row')
+    const statsRowIndex = card.html().indexOf('card-stats')
+    expect(statusRowIndex).toBeGreaterThan(-1)
+    expect(statsRowIndex).toBeGreaterThan(statusRowIndex)
+  })
+})

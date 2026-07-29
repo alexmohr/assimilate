@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expandAllArchiveGroups, expect, loginAsAdmin, test } from './fixtures'
 
 test.describe('Archive browsing & diff journey', () => {
   test('archives tab loads showing archive entries with names, dates, and hosts', async ({
@@ -13,6 +13,7 @@ test.describe('Archive browsing & diff journey', () => {
 
     await expect(page.getByRole('button', { name: 'Archives' })).toBeVisible()
     await expect(page.locator('.panel-title').filter({ hasText: 'Archives' })).toBeVisible()
+    await expandAllArchiveGroups(page)
 
     const firstRow = page.locator('.archive-row').first()
     await expect(firstRow).toBeVisible({ timeout: 30_000 })
@@ -24,6 +25,7 @@ test.describe('Archive browsing & diff journey', () => {
     await loginAsAdmin(page)
     await page.goto('/repos/1?tab=archives')
     await page.waitForLoadState('networkidle')
+    await expandAllArchiveGroups(page)
 
     await expect(page.getByText(/web-server-01-backup/).first()).toBeVisible()
   })
@@ -32,6 +34,7 @@ test.describe('Archive browsing & diff journey', () => {
     await loginAsAdmin(page)
     await page.goto('/repos/1?tab=archives')
     await page.waitForLoadState('networkidle')
+    await expandAllArchiveGroups(page)
 
     await page
       .getByText(/web-server-01-backup/)
@@ -50,6 +53,7 @@ test.describe('Archive browsing & diff journey', () => {
     await loginAsAdmin(page)
     await page.goto('/repos/1?tab=archives')
     await page.waitForLoadState('networkidle')
+    await expandAllArchiveGroups(page)
 
     await page
       .getByText(/web-server-01-backup/)
@@ -71,6 +75,7 @@ test.describe('Archive browsing & diff journey', () => {
     await loginAsAdmin(page)
     await page.goto('/repos/1?tab=archives')
     await page.waitForLoadState('networkidle')
+    await expandAllArchiveGroups(page)
 
     await page
       .getByText(/web-server-01-backup/)
@@ -85,6 +90,7 @@ test.describe('Archive browsing & diff journey', () => {
     await loginAsAdmin(page)
     await page.goto('/repos/1?tab=archives')
     await page.waitForLoadState('networkidle')
+    await expandAllArchiveGroups(page)
 
     await page
       .getByText(/web-server-01-backup/)

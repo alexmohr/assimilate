@@ -87,6 +87,28 @@ test.describe('Schedules management', () => {
     await expect(page).toHaveURL(/\/activity\?category=backup&schedule_id=1&status=failed/)
   })
 
+  test("clicking a schedule card's Warning chip navigates to the filtered activity log", async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await mockScheduleOneHealth(page, {
+      last_status: 'warning',
+      last_error_message: 'Simulated warning',
+    })
+
+    await page.goto('/schedules')
+    await page.waitForLoadState('networkidle')
+
+    const card = page.locator('.schedule-card', { hasText: 'server-daily' })
+    const warningChip = card.locator('.entity-issue-chip', { hasText: 'Warning' })
+    await expect(warningChip).toBeVisible()
+
+    await warningChip.click()
+    await page.waitForLoadState('networkidle')
+
+    await expect(page).toHaveURL(/\/activity\?category=backup&schedule_id=1&status=warning/)
+  })
+
   test('clicking a schedule navigates to detail page', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules')

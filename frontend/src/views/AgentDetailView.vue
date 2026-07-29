@@ -85,6 +85,7 @@ const pinnedStatus = computed(() => {
   return isRunStatusFilter(s) ? s : undefined
 })
 const pinnedReportId = ref<number | null>(null)
+const pinnedForStatus = ref<typeof pinnedStatus.value>(undefined)
 
 function isOverdueQuery(value: unknown): value is 'overdue' {
   return value === 'overdue'
@@ -94,7 +95,7 @@ const overdueHighlighted = computed(() => isOverdueQuery(route.query.health))
 const filteredSortedReports = computed(() => {
   let result = reports.value
   if (filterStatus.value !== 'all') {
-    result = result.filter((r) => r.status === filterStatus.value)
+    result = result.filter((r) => normalizeBackupStatus(r.status) === filterStatus.value)
   }
   return [...result].sort((a, b) => {
     const diff = new Date(b.finished_at).getTime() - new Date(a.finished_at).getTime()
@@ -608,11 +609,13 @@ async function loadTabData(): Promise<void> {
 watch(
   [reports, pinnedStatus],
   ([, status]) => {
-    if (!status || pinnedReportId.value !== null) return
+    if (!status) return
+    if (pinnedForStatus.value === status && pinnedReportId.value !== null) return
     const match = [...reports.value]
-      .filter((r) => r.status === status)
+      .filter((r) => normalizeBackupStatus(r.status) === status)
       .sort((a, b) => new Date(b.finished_at).getTime() - new Date(a.finished_at).getTime())[0]
     if (!match) return
+    pinnedForStatus.value = status
     pinnedReportId.value = match.id
     expandedReportId.value = match.id
     nextTick(() => {

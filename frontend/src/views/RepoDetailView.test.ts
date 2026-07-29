@@ -154,9 +154,6 @@ function setupApiSuccess(
   vi.mocked(apiClient.get).mockImplementation((url: string) => {
     if (url === `/repos/${repo.id}`) return Promise.resolve({ data: repoState })
     if (url === `/repos/${repo.id}/schedules`) return Promise.resolve({ data: schedules })
-    if (url === '/agents') {
-      return Promise.resolve({ data: [{ id: 10, hostname: 'web-server-01' }] })
-    }
     if (url === '/stats/health') return Promise.resolve({ data: health })
     if (String(url).startsWith('/tags')) return Promise.resolve({ data: [] })
     if (String(url).endsWith('/tags')) return Promise.resolve({ data: [] })
@@ -400,6 +397,7 @@ describe('RepoDetailView', () => {
 
     const failedChip = wrapper.find('.entity-issue-chip.sev-danger')
     expect(failedChip.exists()).toBe(true)
+    expect(failedChip.attributes('title')).toBe('Repository lock could not be acquired')
     await failedChip.trigger('click')
     await flushPromises()
 

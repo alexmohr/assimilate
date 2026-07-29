@@ -173,19 +173,24 @@ mod tests {
         assert_eq!(outcome, CompletionOutcome::Failed);
     }
 
-    #[tokio::test]
-    async fn wait_for_completion_keeps_waiting_while_agent_stays_connected() {
-        // A long-running backup must not be abandoned just because it's slow;
-        // with no completion event and a connected agent, the wait never resolves
-        // on its own.
+    /// Sets up a `CompletionBus`/`AgentRegistry` pair with `host-a` connected
+    /// and a `wait_for_completion_with_poll_interval` waiter (10ms poll, so
+    /// disconnect-driven tests resolve quickly) already running against
+    /// `host-a`/repo `1`. Shared by every test below that needs a waiter in
+    /// the background to then race some event against.
+    async fn setup_connected_waiter() -> (
+        CompletionBus,
+        AgentRegistry,
+        tokio::task::JoinHandle<CompletionOutcome>,
+    ) {
         let bus = CompletionBus::new();
         let registry = AgentRegistry::new();
         let (tx, _) = tokio::sync::mpsc::channel(1);
         registry
             .register("host-a".to_string(), tx, false, None)
             .await;
-        let rx = bus.subscribe();
 
+        let rx = bus.subscribe();
         let wait = tokio::spawn({
             let registry = registry.clone();
             async move {
@@ -199,6 +204,15 @@ mod tests {
                 .await
             }
         });
+        (bus, registry, wait)
+    }
+
+    #[tokio::test]
+    async fn wait_for_completion_keeps_waiting_while_agent_stays_connected() {
+        // A long-running backup must not be abandoned just because it's slow;
+        // with no completion event and a connected agent, the wait never resolves
+        // on its own.
+        let (_bus, _registry, wait) = setup_connected_waiter().await;
 
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(!wait.is_finished());
@@ -207,27 +221,7 @@ mod tests {
 
     #[tokio::test]
     async fn wait_for_completion_detects_agent_disconnect() {
-        let bus = CompletionBus::new();
-        let registry = AgentRegistry::new();
-        let (tx, _) = tokio::sync::mpsc::channel(1);
-        registry
-            .register("host-a".to_string(), tx, false, None)
-            .await;
-        let rx = bus.subscribe();
-
-        let wait = tokio::spawn({
-            let registry = registry.clone();
-            async move {
-                wait_for_completion_with_poll_interval(
-                    &registry,
-                    rx,
-                    "host-a",
-                    1,
-                    Duration::from_millis(10),
-                )
-                .await
-            }
-        });
+        let (_bus, registry, wait) = setup_connected_waiter().await;
 
         tokio::time::sleep(Duration::from_millis(30)).await;
         registry.unregister("host-a").await;
@@ -247,27 +241,7 @@ mod tests {
         // the abandoned session can ever resolve is an explicit publish - the
         // same one `abandon_stale_operations_on_reconnect` sends once it marks
         // the stale backup as failed.
-        let bus = CompletionBus::new();
-        let registry = AgentRegistry::new();
-        let (tx, _) = tokio::sync::mpsc::channel(1);
-        registry
-            .register("host-a".to_string(), tx, false, None)
-            .await;
-        let rx = bus.subscribe();
-
-        let wait = tokio::spawn({
-            let registry = registry.clone();
-            async move {
-                wait_for_completion_with_poll_interval(
-                    &registry,
-                    rx,
-                    "host-a",
-                    1,
-                    Duration::from_millis(10),
-                )
-                .await
-            }
-        });
+        let (bus, registry, wait) = setup_connected_waiter().await;
 
         tokio::time::sleep(Duration::from_millis(30)).await;
         // The agent reconnects under the same hostname - registry still shows

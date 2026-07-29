@@ -20,6 +20,7 @@ import { isAgentOffline, lastSeenText } from '../utils/agent'
 import {
   scheduleRunStatus,
   scheduleIssuesFromEntries,
+  withErrorTitles,
   type ScheduleHealthEntry,
 } from '../utils/scheduleHealth'
 import { Plus, Clock, SlidersHorizontal } from '@lucide/vue'
@@ -201,14 +202,10 @@ function toggleSort(field: SortField): void {
 // use scheduleIssuesFromEntries directly without this enrichment.
 function scheduleIssues(s: EnrichedSchedule): EntityIssue[] {
   const entries = healthBySchedule.value.get(s.id) ?? []
-  const issues = scheduleIssuesFromEntries(entries, s.id, router)
-  return issues.map((issue) => {
-    if (issue.key === 'overdue') {
-      return { ...issue, title: overdueMessage(s.overdueEntries) }
-    }
-    const entry = entries.find((h) => scheduleRunStatus(h) === issue.key)
-    return entry?.last_error_message ? { ...issue, title: entry.last_error_message } : issue
-  })
+  const issues = withErrorTitles(scheduleIssuesFromEntries(entries, s.id, router), entries)
+  return issues.map((issue) =>
+    issue.key === 'overdue' ? { ...issue, title: overdueMessage(s.overdueEntries) } : issue,
+  )
 }
 
 function connectivityNote(hostname: string): string {

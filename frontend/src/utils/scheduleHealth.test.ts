@@ -7,6 +7,7 @@ import {
   navigateToScheduleIssue,
   scheduleIssuesFromEntries,
   scheduleRunStatus,
+  withErrorTitles,
   type ScheduleHealthEntry,
 } from './scheduleHealth'
 
@@ -122,5 +123,30 @@ describe('scheduleIssuesFromEntries', () => {
     expect(router.push).toHaveBeenCalledWith(
       '/activity?category=backup&schedule_id=7&status=failed',
     )
+  })
+})
+
+describe('withErrorTitles', () => {
+  it('sets the title of a Failed/Warning issue from the matching entry', () => {
+    const entries = [makeEntry({ last_status: 'failed', last_error_message: 'disk full' })]
+    const issues = scheduleIssuesFromEntries(entries, 1, makeRouter())
+
+    expect(withErrorTitles(issues, entries)).toEqual([
+      expect.objectContaining({ title: 'disk full' }),
+    ])
+  })
+
+  it('leaves the issue untouched when the matching entry has no error message', () => {
+    const entries = [makeEntry({ last_status: 'failed', last_error_message: null })]
+    const issues = scheduleIssuesFromEntries(entries, 1, makeRouter())
+
+    expect(withErrorTitles(issues, entries)[0].title).toBeUndefined()
+  })
+
+  it('leaves the Overdue issue untouched', () => {
+    const entries = [makeEntry({ is_overdue: true })]
+    const issues = scheduleIssuesFromEntries(entries, 1, makeRouter())
+
+    expect(withErrorTitles(issues, entries)).toEqual(issues)
   })
 })

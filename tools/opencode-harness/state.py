@@ -42,6 +42,19 @@ class PrAttempt:
     # information worth a fresh look, not something the harness should sit on
     # until a human notices and pushes a commit or clears the label by hand.
     stuck_stage_signature: str = ""
+    # Head sha of the PR the last time the harness actually *posted* a
+    # `needs_human_review` stuck comment (see harness.py's
+    # _check_and_fix_pr) - distinct from stuck_reason/stuck_stage_signature,
+    # which track why/what for the ordinary un-stick logic. `needs human
+    # review` toggling off and back on with no new commit (e.g. CI flickers
+    # red for a cycle, which now strips the label - see sync-pr-labels.js -
+    # then goes green again with the same content re-deriving it) used to
+    # make the harness re-post the identical "pausing... needs a decision"
+    # comment every time, five times over five days on PR #334 with nothing
+    # new for a human to act on. Comparing against the *current* head sha
+    # lets a genuinely new commit still get a fresh notice while pure label
+    # churn on the same commit doesn't.
+    needs_human_review_notified_sha: str = ""
 
 
 @dataclass
@@ -80,6 +93,7 @@ class HarnessState:
                     "last_head_sha": a.last_head_sha,
                     "stuck_reason": a.stuck_reason,
                     "stuck_stage_signature": a.stuck_stage_signature,
+                    "needs_human_review_notified_sha": a.needs_human_review_notified_sha,
                 }
                 for number, a in self.pr_attempts.items()
             },
@@ -106,6 +120,17 @@ class HarnessState:
         )
         self.save()
         return 1
+
+    def peek_attempts(self, pr_number: int) -> int:
+        """Returns the currently recorded attempt count for `pr_number`
+        without advancing it - used when this cycle's diagnostic content
+        wasn't actually informative (see harness.py's
+        _ci_logs_are_placeholder_only), so a cycle that told opencode
+        nothing new doesn't get counted as evidence the same problem is
+        recurring. 0 if no attempt has ever been recorded.
+        """
+        existing = self.pr_attempts.get(str(pr_number))
+        return existing.attempts if existing is not None else 0
 
     def clear_pr(self, pr_number: int) -> None:
         self.pr_attempts.pop(str(pr_number), None)
@@ -140,6 +165,23 @@ class HarnessState:
             self.pr_attempts[key] = PrAttempt(stuck_reason=reason)
         else:
             existing.stuck_reason = reason
+        self.save()
+
+    def needs_human_review_notified_sha(self, pr_number: int) -> str:
+        """Head sha the harness last posted a `needs_human_review` stuck
+        comment for - see PrAttempt.needs_human_review_notified_sha. Empty
+        if no such comment has ever been posted for this PR.
+        """
+        existing = self.pr_attempts.get(str(pr_number))
+        return existing.needs_human_review_notified_sha if existing is not None else ""
+
+    def set_needs_human_review_notified_sha(self, pr_number: int, sha: str) -> None:
+        key = str(pr_number)
+        existing = self.pr_attempts.get(key)
+        if existing is None:
+            self.pr_attempts[key] = PrAttempt(needs_human_review_notified_sha=sha)
+        else:
+            existing.needs_human_review_notified_sha = sha
         self.save()
 
     def mark_issue_started(self, issue_number: int) -> None:

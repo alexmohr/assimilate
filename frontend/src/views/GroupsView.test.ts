@@ -131,4 +131,53 @@ describe('GroupsView', () => {
     expect(headerText).toContain('Members')
     expect(headerText).toContain('Actions')
   })
+
+  it('opens and cancels the create modal', async () => {
+    const wrapper = renderWithPlugins(GroupsView)
+    await flushPromises()
+
+    await wrapper.find('button.btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('.overlay').length).toBe(1)
+
+    await wrapper.find('.overlay .btn-ghost').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('.overlay').length).toBe(0)
+  })
+
+  it('opens and cancels the edit modal', async () => {
+    const wrapper = renderWithPlugins(GroupsView)
+    await flushPromises()
+
+    const editBtns = wrapper.findAll('tbody .btn-ghost').filter((b) => b.text() === 'Edit')
+    await editBtns[0].trigger('click')
+    await flushPromises()
+
+    const overlay = wrapper.find('.overlay')
+    expect(overlay.exists()).toBe(true)
+    expect(overlay.text()).toContain('Edit Group')
+
+    await overlay.find('.btn-ghost').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('.overlay').length).toBe(0)
+  })
+
+  it('opens and cancels the delete modal', async () => {
+    const wrapper = renderWithPlugins(GroupsView)
+    await flushPromises()
+
+    const deleteBtns = wrapper.findAll('.btn-danger-text')
+    await deleteBtns[0].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.overlay').exists()).toBe(true)
+
+    await wrapper.find('.overlay .btn-ghost').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('.overlay').length).toBe(0)
+  })
 })

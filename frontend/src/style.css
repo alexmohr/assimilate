@@ -345,6 +345,71 @@
     font-size: 0.82rem;
   }
 
+  .modal {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    width: 100%;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .modal h2 {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0 0 1rem;
+  }
+
+  .modal-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .form-group label {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+
+  .form-group input,
+  .form-group select {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font-size: 0.875rem;
+  }
+
+  .form-group input:focus,
+  .form-group select:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .modal-error {
+    font-size: 0.8125rem;
+    color: var(--danger);
+    padding: 0.5rem 0.75rem;
+    background: var(--danger-subtle);
+    border-radius: var(--radius-sm);
+  }
+
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
+
   .confirm-text {
     color: var(--text-secondary);
     line-height: 1.6;
@@ -367,6 +432,85 @@
     display: flex;
     gap: 0.5rem;
     margin-left: auto;
+  }
+
+  .page-description {
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+  }
+
+  @media (max-width: 768px) {
+    .page-description {
+      display: none;
+    }
+  }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .search-input {
+    width: 260px;
+  }
+
+  .state-msg {
+    text-align: center;
+    padding: 3rem;
+    color: var(--text-muted);
+  }
+
+  .state-error {
+    color: var(--danger);
+  }
+
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+  }
+
+  .data-table th {
+    text-align: left;
+    padding: 0.625rem 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .data-table td {
+    padding: 0.625rem 0.75rem;
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+  }
+
+  .quota-status-badge {
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .quota-badge-ok {
+    background: var(--success-subtle, oklch(0.95 0.05 145));
+    color: var(--success);
+  }
+
+  .quota-badge-warning,
+  .quota-badge-warn {
+    background: var(--warning-subtle);
+    color: var(--warning);
+  }
+
+  .quota-badge-critical,
+  .quota-badge-crit {
+    background: var(--danger-subtle);
+    color: var(--danger);
   }
 }
 

@@ -5,11 +5,10 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { apiClient } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 import { useTheme } from '../composables/useTheme'
 import { useEscapeKey } from '../composables/useEscapeKey'
-import { useClipboard } from '../composables/useClipboard'
+import { useTokenManagement } from '../composables/useTokenManagement'
 import { formatDate } from '../utils/format'
 import { validatePassword } from '../utils/validation'
 import { extractError } from '../utils/error'
@@ -17,14 +16,6 @@ import { Trash2 } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 
 type TabId = 'password' | 'tokens' | 'appearance'
-
-interface ApiToken {
-  id: number
-  user_id: number
-  name: string
-  created_at: string
-  last_used_at: string | null
-}
 
 const authStore = useAuthStore()
 const { theme, setTheme, loadFromBackend } = useTheme()
@@ -36,17 +27,26 @@ const passwordError = ref('')
 const passwordSuccess = ref('')
 const passwordSubmitting = ref(false)
 
-const tokens = ref<ApiToken[]>([])
-const tokensLoading = ref(true)
-const showCreateModal = ref(false)
-const createName = ref('')
-const createError = ref('')
-const createSubmitting = ref(false)
-const newTokenPlaintext = ref('')
-const { copied: tokenCopied, copy: copyToClipboard } = useClipboard()
-const showDeleteModal = ref(false)
-const deleteTarget = ref<ApiToken | null>(null)
-const deleteSubmitting = ref(false)
+const {
+  tokens,
+  tokensLoading,
+  showCreateModal,
+  createName,
+  createError,
+  createSubmitting,
+  newTokenPlaintext,
+  tokenCopied,
+  copyToClipboard,
+  showDeleteModal,
+  deleteTarget,
+  deleteSubmitting,
+  fetchTokens,
+  openCreate: openCreateToken,
+  submitCreate: submitCreateToken,
+  closeCreateModal,
+  openDelete: openDeleteToken,
+  confirmDelete: confirmDeleteToken,
+} = useTokenManagement()
 
 useEscapeKey(showCreateModal, closeCreateModal)
 
@@ -74,63 +74,6 @@ async function handlePasswordSubmit(): Promise<void> {
     passwordError.value = extractError(e, 'Failed to change password')
   } finally {
     passwordSubmitting.value = false
-  }
-}
-
-async function fetchTokens(): Promise<void> {
-  tokensLoading.value = true
-  try {
-    const res = await apiClient.get<{ tokens: ApiToken[] }>('/tokens')
-    tokens.value = res.data.tokens
-  } finally {
-    tokensLoading.value = false
-  }
-}
-
-function openCreateToken(): void {
-  createName.value = ''
-  createError.value = ''
-  newTokenPlaintext.value = ''
-  showCreateModal.value = true
-}
-
-async function submitCreateToken(): Promise<void> {
-  createError.value = ''
-  createSubmitting.value = true
-  try {
-    const res = await apiClient.post<{ token: ApiToken; plaintext: string }>('/tokens', {
-      name: createName.value,
-    })
-    newTokenPlaintext.value = res.data.plaintext
-    await fetchTokens()
-  } catch (e: unknown) {
-    createError.value = extractError(e, 'Failed to create token')
-  } finally {
-    createSubmitting.value = false
-  }
-}
-
-function closeCreateModal(): void {
-  showCreateModal.value = false
-  newTokenPlaintext.value = ''
-  tokenCopied.value = false
-}
-
-function openDeleteToken(token: ApiToken): void {
-  deleteTarget.value = token
-  showDeleteModal.value = true
-}
-
-async function confirmDeleteToken(): Promise<void> {
-  if (!deleteTarget.value) return
-  deleteSubmitting.value = true
-  try {
-    await apiClient.delete(`/tokens/${deleteTarget.value.id}`)
-    showDeleteModal.value = false
-    deleteTarget.value = null
-    await fetchTokens()
-  } finally {
-    deleteSubmitting.value = false
   }
 }
 

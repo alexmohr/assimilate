@@ -11,6 +11,7 @@ import { logger } from '../utils/logger'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { Plus, Trash2 } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
+import ModalFormFooter from '../components/ModalFormFooter.vue'
 
 interface Group {
   id: number
@@ -350,28 +351,13 @@ onMounted(async () => {
               placeholder="Optional description"
             />
           </div>
-          <div
-            v-if="createError"
-            class="modal-error"
-          >
-            {{ createError }}
-          </div>
-          <div class="modal-actions">
-            <button
-              type="button"
-              class="btn btn-ghost"
-              @click="showCreateModal = false"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              class="btn btn-primary"
-              :disabled="createSubmitting || !createForm.name.trim()"
-            >
-              {{ createSubmitting ? 'Creating...' : 'Create' }}
-            </button>
-          </div>
+          <ModalFormFooter
+            :error="createError"
+            :submitting="createSubmitting"
+            :disabled="!createForm.name.trim()"
+            submit-text="Create"
+            @cancel="showCreateModal = false"
+          />
         </form>
       </div>
     </div>
@@ -406,28 +392,13 @@ onMounted(async () => {
               placeholder="Optional description"
             />
           </div>
-          <div
-            v-if="editError"
-            class="modal-error"
-          >
-            {{ editError }}
-          </div>
-          <div class="modal-actions">
-            <button
-              type="button"
-              class="btn btn-ghost"
-              @click="showEditModal = false"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              class="btn btn-primary"
-              :disabled="editSubmitting || !editForm.name.trim()"
-            >
-              {{ editSubmitting ? 'Saving...' : 'Save' }}
-            </button>
-          </div>
+          <ModalFormFooter
+            :error="editError"
+            :submitting="editSubmitting"
+            :disabled="!editForm.name.trim()"
+            submit-text="Save"
+            @cancel="showEditModal = false"
+          />
         </form>
       </div>
     </div>
@@ -444,27 +415,15 @@ onMounted(async () => {
           Are you sure you want to delete <strong>{{ deleteTarget?.name }}</strong
           >? Members will be removed from this group.
         </p>
-        <div
-          v-if="deleteError"
-          class="modal-error"
-        >
-          {{ deleteError }}
-        </div>
-        <div class="modal-actions">
-          <button
-            class="btn btn-ghost"
-            @click="showDeleteModal = false"
-          >
-            Cancel
-          </button>
-          <button
-            class="btn btn-danger"
-            :disabled="deleteSubmitting"
-            @click="confirmDelete"
-          >
-            {{ deleteSubmitting ? 'Deleting...' : 'Delete' }}
-          </button>
-        </div>
+        <form @submit.prevent="confirmDelete">
+          <ModalFormFooter
+            :error="deleteError"
+            :submitting="deleteSubmitting"
+            submit-text="Delete"
+            variant="danger"
+            @cancel="showDeleteModal = false"
+          />
+        </form>
       </div>
     </div>
 
@@ -538,66 +497,6 @@ onMounted(async () => {
   max-width: 900px;
 }
 
-.page-description {
-  font-size: 0.875rem;
-  line-height: 1.5;
-  color: var(--text-secondary);
-  margin-bottom: 1rem;
-}
-
-@media (max-width: 768px) {
-  .page-description {
-    display: none;
-  }
-}
-
-.header-actions {
-  display: flex;
-  gap: 0.5rem;
-  margin-left: auto;
-}
-
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 1.5rem;
-}
-
-.search-input {
-  width: 260px;
-}
-
-.state-msg {
-  text-align: center;
-  padding: 3rem;
-  color: var(--text-muted);
-}
-
-.state-error {
-  color: var(--danger);
-}
-
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.875rem;
-}
-
-.data-table th {
-  text-align: left;
-  padding: 0.625rem 0.75rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border);
-}
-
-.data-table td {
-  padding: 0.625rem 0.75rem;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-primary);
-}
-
 .name-cell {
   font-weight: 600;
 }
@@ -617,79 +516,17 @@ onMounted(async () => {
 }
 
 .modal {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.5rem;
-  width: 100%;
   max-width: 400px;
-  box-shadow: var(--shadow-lg);
 }
 
 .modal-wide {
   max-width: 500px;
 }
 
-.modal h2 {
-  font-size: 1.05rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0 0 1rem;
-}
-
 .modal-subtitle {
   font-size: 0.8125rem;
   color: var(--text-secondary);
   margin: -0.5rem 0 1rem;
-}
-
-.modal-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.form-group label {
-  font-size: 0.8125rem;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.form-group input,
-.form-group select {
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-input);
-  color: var(--text-primary);
-  font-size: 0.875rem;
-}
-
-.form-group input:focus,
-.form-group select:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
-.modal-error {
-  font-size: 0.8125rem;
-  color: var(--danger);
-  padding: 0.5rem 0.75rem;
-  background: var(--danger-subtle);
-  border-radius: var(--radius-sm);
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
 }
 
 .confirm-text {

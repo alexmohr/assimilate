@@ -2,6 +2,23 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { expandAllArchiveGroups, expect, loginAsAdmin, test } from './fixtures'
+import type { Page } from '@playwright/test'
+
+/** Navigate to server-daily's Archives tab (all host groups expanded) and return its repo ID. */
+async function goToServerDailyArchives(page: Page): Promise<string> {
+  await page.goto('/repos')
+  await page.getByText('server-daily').click()
+  await page.waitForURL(/\/repos\/\d+/)
+  const repoUrl = page.url()
+  const repoId = new URL(repoUrl).pathname.match(/\/repos\/(\d+)/)?.[1]
+  expect(repoId).toBeTruthy()
+
+  await page.getByRole('button', { name: 'Archives' }).click()
+  await page.waitForURL(/tab=archives/)
+  await expandAllArchiveGroups(page)
+
+  return repoId ?? ''
+}
 
 test.describe('archive filter via ?archive= query parameter', () => {
   test('AC-E1: navigating to repo detail with ?archive=<name> shows the filter banner', async ({
@@ -9,18 +26,7 @@ test.describe('archive filter via ?archive= query parameter', () => {
   }) => {
     await loginAsAdmin(page)
 
-    // Navigate to repos list and click server-daily to get its ID
-    await page.goto('/repos')
-    await page.getByText('server-daily').click()
-    await page.waitForURL(/\/repos\/\d+/)
-    const repoUrl = page.url()
-    const repoId = new URL(repoUrl).pathname.match(/\/repos\/(\d+)/)?.[1]
-    expect(repoId).toBeTruthy()
-
-    // Go to the Archives tab to see archive names
-    await page.getByRole('button', { name: 'Archives' }).click()
-    await page.waitForURL(/tab=archives/)
-    await expandAllArchiveGroups(page)
+    const repoId = await goToServerDailyArchives(page)
 
     // Read the first archive name from the list
     const firstArchiveName = page.locator('.archive-row .archive-name').first()
@@ -48,18 +54,7 @@ test.describe('archive filter via ?archive= query parameter', () => {
   test('AC-E2: clicking "Show all archives" restores the full archive list', async ({ page }) => {
     await loginAsAdmin(page)
 
-    // Navigate to repos list and click server-daily to get its ID
-    await page.goto('/repos')
-    await page.getByText('server-daily').click()
-    await page.waitForURL(/\/repos\/\d+/)
-    const repoUrl = page.url()
-    const repoId = new URL(repoUrl).pathname.match(/\/repos\/(\d+)/)?.[1]
-    expect(repoId).toBeTruthy()
-
-    // Go to the Archives tab to see archive names and get the total count
-    await page.getByRole('button', { name: 'Archives' }).click()
-    await page.waitForURL(/tab=archives/)
-    await expandAllArchiveGroups(page)
+    const repoId = await goToServerDailyArchives(page)
 
     // Get the first archive name
     const firstArchiveName = page.locator('.archive-row .archive-name').first()

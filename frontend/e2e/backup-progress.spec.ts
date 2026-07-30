@@ -102,6 +102,18 @@ function sendWsMsg(ws: WebSocketRoute, type: string, payload: unknown): void {
   ws.send(JSON.stringify({ type, payload }))
 }
 
+// Routes the UI WebSocket and, once registered, returns a promise that
+// resolves with the route once the client connects - wrapped in an object so
+// awaiting connectWs() itself doesn't block on the (later) connection.
+async function connectWs(page: Page): Promise<{ wsReady: Promise<WebSocketRoute> }> {
+  let resolveWs!: (w: WebSocketRoute) => void
+  const wsReady = new Promise<WebSocketRoute>((resolve) => {
+    resolveWs = resolve
+  })
+  await page.routeWebSocket('**/ws/ui', (route) => resolveWs(route))
+  return { wsReady }
+}
+
 function makeArchiveProgressLine(nfiles: number, originalSize: number, path: string): string {
   return JSON.stringify({ type: 'archive_progress', nfiles, original_size: originalSize, path })
 }
@@ -111,15 +123,7 @@ test.describe('backup progress card', () => {
 
   test.beforeEach(async ({ page }) => {
     ws = null
-    let resolveWs!: (w: WebSocketRoute) => void
-    const wsReady = new Promise<WebSocketRoute>((resolve) => {
-      resolveWs = resolve
-    })
-
-    await page.routeWebSocket('**/ws/ui', (route) => {
-      ws = route
-      resolveWs(route)
-    })
+    const { wsReady } = await connectWs(page)
 
     await mockScheduleDetailApis(page)
     await loginAsAdmin(page)
@@ -249,15 +253,7 @@ test.describe('backup progress card — mid-backup page load', () => {
 
   test.beforeEach(async ({ page }) => {
     ws = null
-    let resolveWs!: (w: WebSocketRoute) => void
-    const wsReady = new Promise<WebSocketRoute>((resolve) => {
-      resolveWs = resolve
-    })
-
-    await page.routeWebSocket('**/ws/ui', (route) => {
-      ws = route
-      resolveWs(route)
-    })
+    const { wsReady } = await connectWs(page)
 
     // Override the reports endpoint to return an in-progress report so that
     // loadReports() sets backupRunning = true before any WS message arrives.
@@ -477,14 +473,7 @@ test.describe('activity log — live backup log', () => {
 
   test.beforeEach(async ({ page }) => {
     ws = null
-    let resolveWs!: (w: WebSocketRoute) => void
-    const wsReady = new Promise<WebSocketRoute>((resolve) => {
-      resolveWs = resolve
-    })
-    await page.routeWebSocket('**/ws/ui', (route) => {
-      ws = route
-      resolveWs(route)
-    })
+    const { wsReady } = await connectWs(page)
     await mockActivityLogApis(page)
     await loginAsAdmin(page)
     ws = await wsReady
